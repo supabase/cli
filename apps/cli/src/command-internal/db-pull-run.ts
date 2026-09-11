@@ -91,10 +91,9 @@ const DEPRECATION_LINE =
   "Flag --use-pg-delta has been deprecated, use --declarative with [experimental.pgdelta] enabled = true in your config.toml instead.";
 
 /**
- * Explains the in-sync non-zero exit. Go prints its generic
- * `Try rerunning the command with --debug…` footer here, which reads like a
- * crash for what is really a finding; the message and exit code stay Go-identical
- * (see `docs/go-cli-divergences.md`).
+ * Explains the in-sync non-zero exit instead of the generic "Try rerunning the command with
+ * --debug…" footer, which would read like a crash for what is really a finding. See
+ * `docs/go-cli-divergences.md` for the established message/exit-code contract.
  */
 const IN_SYNC_SUGGESTION =
   "The remote database is already in sync with your local migrations — nothing to pull.";
@@ -102,15 +101,14 @@ const IN_SYNC_SUGGESTION =
 /** Migration-file mode for the initial pg_dump seed. */
 const MIGRATION_FILE_MODE = 0o644;
 
-// `--experimental` without `--declarative` used to dump remote SQL through Go's
-// multigres AST splitter. That path is deprecated: the in-process declarative
-// export covers the same per-object-files outcome. Printed only when the
-// experimental gate selected this branch (not when `--declarative` already did).
+// `--experimental` without `--declarative` is a deprecated path: the in-process declarative
+// export covers the same per-object-files outcome. Printed only when the experimental gate
+// selected this branch, not when `--declarative` already did.
 const EXPERIMENTAL_STRUCTURED_DUMP_DEPRECATION_LINE =
   "The --experimental structured-dump mode for `db pull` is deprecated and will be removed in a future release. Use --declarative instead to pull the remote schema as per-object files.";
 
 export type DbPullInvoke = {
-  /** Skip `Finished supabase db pull.` — Go's `db remote commit` has no PostRun line. */
+  /** Skip printing `Finished supabase db pull.` for callers that must not emit it. */
   readonly skipFinishedLine?: boolean;
   /**
    * Overrides `--yes`/`SUPABASE_YES`/`supabase/.env` resolution for an
@@ -119,15 +117,12 @@ export type DbPullInvoke = {
    */
   readonly assumeYes?: boolean;
   /**
-   * Forces migration mode regardless of the ambient `--experimental`/
-   * `SUPABASE_EXPERIMENTAL` gate (which `resolveExperimentalWithProjectEnv`
-   * would otherwise honor) — for an in-process caller (`pull`) whose entire
-   * design — its dirty-guard, its confirmation message, its SIDE_EFFECTS.md —
-   * assumes this step only ever writes into `supabase/migrations`. Without
-   * this override, an ambient experimental flag silently switches this step
-   * to the declarative export path, writing `supabase/schemas/**` and
-   * potentially `config.toml`'s `schema_paths`, with none of that guarded or
-   * disclosed by the caller. `undefined` keeps the existing resolution.
+   * Forces migration mode regardless of the ambient `--experimental`/`SUPABASE_EXPERIMENTAL`
+   * gate, for an in-process caller (`pull`) whose dirty-guard, confirmation message, and
+   * SIDE_EFFECTS.md all assume this step only ever writes into `supabase/migrations`. Without
+   * this override, an ambient experimental flag would silently switch to the declarative export
+   * path, writing `supabase/schemas/**` and potentially `config.toml`'s `schema_paths`
+   * unguarded. `undefined` keeps the existing resolution.
    */
   readonly forceMigrationMode?: boolean;
 };
@@ -168,19 +163,16 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
   const debug = yield* DebugFlag;
   const cliArgs = yield* CliArgs;
 
-  // `--yes` OR `SUPABASE_YES`. The project `.env` is loaded before the migration
+  // `--yes` or `SUPABASE_YES`. The project `.env` is loaded before the migration
   // history prompt, so a `SUPABASE_YES` set only in `supabase/.env` auto-confirms
   // the native initial-migra history repair too.
   const projectEnv = yield* loadProjectEnv(fs, path, cliSettings.workdir);
   const yes = yield* resolveYesWithProjectEnv(projectEnv);
-  // `EXPERIMENTAL` resolves from *either* the global `--experimental` pflag or
-  // `SUPABASE_EXPERIMENTAL`, with the same bound-pflag-wins-over-env precedence
-  // `resolveExperimentalWithProjectEnv` already implements for `db
-  // reset`/declarative generate/sync — reuse it here instead of re-deriving the
-  // gate. Resolved once up front, same as `yes` above; declarative mode ignores it
-  // below. `invoke?.forceMigrationMode` overrides this entirely for an in-process
-  // caller (`pull`) that must never take the declarative export path — see
-  // `DbPullInvoke.forceMigrationMode`'s doc comment.
+  // `EXPERIMENTAL` resolves from either the global `--experimental` flag or
+  // `SUPABASE_EXPERIMENTAL`, reusing `resolveExperimentalWithProjectEnv`'s flag-over-env
+  // precedence instead of re-deriving it. Resolved once, same as `yes` above; declarative mode
+  // ignores it. `invoke?.forceMigrationMode` overrides this for an in-process caller that must
+  // never take the declarative export path — see {@link DbPullInvoke.forceMigrationMode}.
   const experimental = invoke?.forceMigrationMode
     ? false
     : yield* resolveExperimentalWithProjectEnv(projectEnv);
@@ -194,12 +186,10 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
     yield* applyProjectEnv(projectEnv);
     const name = Option.getOrElse(flags.name, () => "remote_schema");
     // `--declarative` and the deprecated `--use-pg-delta` both bind to the same
-    // `useDeclarative` outcome, so when BOTH are passed the LAST occurrence in
-    // argv wins (e.g. `--declarative --use-pg-delta=false` => migration mode). The
-    // parsed Options don't carry order, so for the both-present case this replays
-    // the last-occurrence rule off the raw argv; OR-ing the two would instead
-    // diverge on conflicting values. When only one (or neither) is present, its
-    // Option value already equals its argv value, so the OR is exact.
+    // `useDeclarative` outcome. When both are passed, the last occurrence in argv wins
+    // (e.g. `--declarative --use-pg-delta=false` => migration mode); since parsed Options don't
+    // carry order, the both-present case replays that rule off the raw argv instead of ORing the
+    // two, which would diverge on conflicting values.
     const useDeclarative =
       Option.isSome(flags.declarative) && Option.isSome(flags.usePgDelta)
         ? (resolveDeclarativeFromArgs(cliArgs.args) ?? false)
@@ -260,26 +250,18 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
       );
     }
 
-    // Go's `ParseDatabaseConfig` resolves the linked ref via the hard `LoadProjectRef`, THEN
-    // reads the `[remotes.<ref>]`-merged config (`LoadConfig`, which prints "Loading config
-    // override" unconditionally the moment a remote matches — `pkg/config/config.go:605`) —
-    // and only AFTER that calls `NewDbConfigWithPassword`, which does the actual connection
-    // work (TCP probe / temp-role mint over the Management API, `internal/utils/flags/
-    // db_url.go:87-97`). Pre-load the ref and re-read config here, before `resolver.resolve()`
-    // below, so the override print (and the merged-config validation) happen in that same
-    // order. Previously this read — and its print — ran AFTER `resolve()`, so a `resolve()`
-    // failure (bad password, unreachable host, network-ban lookup, …) left the user never
-    // knowing which `[remotes.*]` block had matched (review: PRRT_kwDOErm0O86XHvYl). `--local`/
-    // `--db-url` never merge a remote block, so only the linked path pre-resolves a ref.
+    // Pre-load the ref and re-read config here, before `resolver.resolve()` below, so the
+    // override print and merged-config validation happen before the connection attempt: a
+    // `resolve()` failure (bad password, unreachable host, network-ban lookup, …) must still
+    // tell the user which `[remotes.*]` block matched. `--local`/`--db-url` never merge a
+    // remote block, so only the linked path pre-resolves a ref.
     let linkedRef: string | undefined;
     if (connType === "linked") {
       const projectRefResolver = yield* ProjectRefResolver;
       linkedRef = yield* projectRefResolver.loadProjectRef(flags.projectRef);
-      // Cache the ref the moment it's known, not after `toml`/`localInputs` below (both
-      // fallible) resolve: the project cache should still be written even when a LATER step
-      // (config validation, connection, the pull itself) fails, so this is set right after
-      // the ref resolves rather than only after `toml`/`localInputs`/`resolver.resolve()` all
-      // succeed (`diff.handler.ts`'s identical fix).
+      // Cache the ref the moment it's known, not after `toml`/`localInputs` below resolve
+      // (both fallible): the project cache should still be written even when a later step
+      // (config validation, connection, the pull itself) fails.
       linkedRefForCache = linkedRef;
     }
     const toml = yield* readDbToml(fs, path, cliSettings.workdir, linkedRef);
@@ -301,11 +283,10 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
             runtimeInfo.platform,
             debug,
             // So the shadow's own container spec reflects the matching `[remotes.<ref>]`
-            // override, same as `toml` above — see `diff.handler.ts`'s identical call site.
+            // override, same as `toml` above.
             connType === "linked" ? linkedRef : undefined,
-            // `toml`'s OWN remote-override-key tracking (same matched block) — so a
-            // remote-set bootstrap field isn't re-overridden by a conflicting `SUPABASE_*`
-            // env var when deriving the shadow's container spec.
+            // `toml`'s remote-override-key tracking (same matched block), so a remote-set
+            // bootstrap field isn't re-overridden by a conflicting `SUPABASE_*` env var here.
             toml.remoteOverrideKeys,
           ),
         );
@@ -323,11 +304,9 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
     if (linkedRef !== undefined) linkedRefForCache = linkedRef;
     const targetUrl = toPostgresURL(resolved.conn);
     const ctx: PgDeltaContext = {
-      // `SUPABASE_PROJECT_ID` env override wins, then config.toml's `project_id`, then
-      // the workdir basename fallback, with the matched `[remotes.<ref>]` block's own
-      // `project_id` (`toml.projectId`, already gated on `remoteOverrideKeys` by
-      // `readDbToml`) suppressing the raw env argument on the linked path — see
-      // that helper's own doc comment, and `diff.handler.ts`'s identical call site.
+      // Precedence: `SUPABASE_PROJECT_ID` env override, then config.toml's `project_id`, then
+      // the workdir basename fallback — with the matched `[remotes.<ref>]` block's own
+      // `project_id` suppressing the raw env argument on the linked path.
       projectId: resolvePgDeltaProjectId(cliSettings.projectId, toml, cliSettings.workdir),
       cwd: cliSettings.workdir,
       denoVersion: toml.denoVersion,
@@ -359,7 +338,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
               isIPv6ConnectivityError(error.message)
             ) {
               // A pooler resolution failure is treated as "no fallback" (re-fail the
-              // ORIGINAL diff error), not surfaced as its own error.
+              // original diff error), not surfaced as its own error.
               const pooler = yield* resolver
                 .resolvePoolerFallback({
                   dbUrl: flags.dbUrl,
@@ -439,10 +418,9 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
               declarativeDirRel,
             ).pipe(Effect.mapError((cause) => new DbPullWriteError({ message: cause.message })));
           }
-          // Prints the config's declarative_schema_path or the relative
-          // `supabase/schemas` default — never the resolved absolute directory
-          // (established output contract). The json payload below keeps the
-          // absolute path for machine consumers.
+          // Prints the config's declarative_schema_path or the relative `supabase/schemas`
+          // default, never the resolved absolute directory (established output contract). The
+          // json payload below keeps the absolute path for machine consumers.
           yield* output.raw(`Declarative schema written to ${bold(declarativeDirRel)}\n`, "stderr");
           return {
             kind: "declarative",
@@ -477,21 +455,18 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
             }),
           );
         }
-        // Initial pull, migra engine: seed the migration file with a pg_dump of the
-        // remote schema, then run the migra diff below as a second pass appended to
-        // the same file, which captures default privileges / managed schemas pg_dump
-        // can't emit. pg-delta initial pulls skip the dump: they diff against an
-        // empty shadow, which already yields the full schema.
+        // Initial pull, migra engine: seed the migration file with a pg_dump of the remote
+        // schema, then run the migra diff below as a second pass appended to the same file,
+        // which captures default privileges/managed schemas pg_dump can't emit. pg-delta
+        // initial pulls skip the dump, since diffing against an empty shadow already yields
+        // the full schema.
         const seededFromDump = sync.kind === "missing" && !usePgDeltaDiff;
         // Tracks whether the pg_dump seed wrote any bytes: an empty dump + empty diff
         // is "in sync", a non-empty dump is a valid initial migration on its own.
         let seedWroteBytes = false;
 
-        // Built above, before `resolver.resolve()` (see that build's doc comment — it's what
-        // used to run here, right before the initial-dump write below, but even that was still
-        // after `resolver.resolve()`/`connection.connect()`). `Option.getOrThrow` is safe here:
-        // this point is only reached after the declarative-export branch already
-        // returned, so `localInputs` was always built.
+        // `Option.getOrThrow` is safe here: this point is only reached after the
+        // declarative-export branch already returned, so `localInputs` was always built.
         const pullLocalInputs = Option.getOrThrow(localInputs);
 
         if (seededFromDump) {
@@ -521,11 +496,10 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
           // Stream pg_dump → migration file, (re)truncating per attempt so a pooler
           // retry leaves only the successful attempt's bytes.
           const runSchemaDump = (target: PgConnInput) => {
-            // Reset per attempt alongside the truncate, zeroing the file before the
-            // pooler retry. In-sync is decided from the file on disk, so only the
-            // final successful attempt's bytes count: a partial direct write that
-            // then IPv6-fails must not leave this flag stuck true, or an empty pooler
-            // retry would be mis-reported as a schema write.
+            // Reset per attempt alongside the truncate: in-sync is decided from the file on
+            // disk, so only the final successful attempt's bytes count. A partial direct write
+            // that then IPv6-fails must not leave this flag stuck true, or an empty pooler retry
+            // would be mis-reported as a schema write.
             seedWroteBytes = false;
             return fs
               .writeFile(migrationPath, new Uint8Array(0), { mode: MIGRATION_FILE_MODE })
@@ -616,19 +590,17 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
               ),
               targetLocal: resolved.isLocal,
               migrationMode,
-              // `toml.schemaPathPatterns`, NOT `pullLocalInputs.context.config.db.migrations.
-              // schema_paths`: the latter is the raw `@supabase/config` field, which never
-              // applies `SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS` — `toml` above
-              // (`readDbToml`) already resolves that env override.
+              // `toml.schemaPathPatterns` is used here, not the raw `@supabase/config` field on
+              // `pullLocalInputs`, since only `toml` (via `readDbToml`) resolves the
+              // `SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS` env override.
               schemaPaths: toml.schemaPathPatterns,
               pgDelta: toml.pgDelta,
             };
-            // `withShadowDatabase` (`shadow-cache.ts`) owns the interrupt-safe lifecycle
-            // and the cache seam. Each pooler-retry attempt still acquires and releases its own
-            // shadow — on the warm path every attempt restores a fresh container from the same
-            // cached snapshot. The key's webhooks policy must mirror what
-            // `prepareShadowSource` selects for this mode (legacy migrate forces `pg_net`
-            // on, next follows config), or the two engines could restore each other's tars.
+            // `withShadowDatabase` owns the interrupt-safe lifecycle and the cache seam. Each
+            // pooler-retry attempt still acquires and releases its own shadow; on the warm path
+            // every attempt restores a fresh container from the same cached snapshot. The key's
+            // webhooks policy must mirror what {@link prepareShadowSource} selects for this mode,
+            // or the two engines could restore each other's tars.
             return yield* withShadowDatabase(
               spawner,
               shadowInput,
@@ -715,14 +687,12 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
         // execution-aware plan unit.
         const writtenMigrations: Array<{ path: string; version: string }> = [];
         if (usePgDeltaDiff) {
-          // pg-delta: one migration file per plan unit via the shared writer. A
-          // single-unit plan (the common case) keeps the exact `<ts>_<name>.sql`
-          // filename; multi-unit plans append the unit name and give each file a
-          // strictly increasing timestamp so execution + migration-history order stay
-          // stable. The full set is collision-checked against existing migrations and
-          // each file is written exclusively so a pre-existing migration is never
-          // overwritten. Empty plans are handled by the `diffEmpty` in-sync branch
-          // above, so `planFiles` is non-empty here.
+          // pg-delta: one migration file per plan unit via the shared writer. A single-unit
+          // plan (the common case) keeps the exact `<ts>_<name>.sql` filename; multi-unit plans
+          // append the unit name with a strictly increasing timestamp so execution and
+          // migration-history order stay stable. Each file is written exclusively so a
+          // pre-existing migration is never overwritten; `planFiles` is non-empty here since
+          // empty plans are handled by the `diffEmpty` branch above.
           const planFiles = diffOutcome.files ?? [];
           const writtenUnits = yield* writePgDeltaMigrations(fs, path, {
             workdir: cliSettings.workdir,
@@ -777,15 +747,11 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
             }
           }
 
-          // A dump that produced nothing followed by an empty diff leaves the file
-          // empty → in sync. `runSchemaDump` above already truncated `migrationPath`
-          // to 0 bytes and the `!diffEmpty` append branch above was skipped (its
-          // guard is the same `diffEmpty`), so nothing else could have written
-          // content there — remove the empty file before reporting in-sync, or it
-          // sits on disk as a phantom local migration (with no remote counterpart)
-          // that a later pull's history reconciliation trips over, and that
-          // `--with-migration-history` cannot clear since fetching empty remote
-          // history never deletes local files.
+          // A dump that produced nothing followed by an empty diff leaves the file empty, since
+          // nothing else could have written content there. Remove it before reporting in-sync,
+          // or it sits on disk as a phantom local migration a later pull's history
+          // reconciliation trips over — one that `--with-migration-history` cannot clear, since
+          // fetching empty remote history never deletes local files.
           if (seededFromDump && !seedWroteBytes && diffEmpty) {
             yield* fs.remove(migrationPath).pipe(Effect.ignore);
             return yield* Effect.fail(
@@ -799,9 +765,8 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
         }
 
         for (const written of writtenMigrations) {
-          // Prints the workdir-relative path (established output contract).
-          // Display-only — `writtenMigrations` keeps absolute paths for file I/O
-          // and the json payload.
+          // Prints the workdir-relative path (established output contract); `writtenMigrations`
+          // itself keeps absolute paths for file I/O and the json payload.
           yield* output.raw(
             `Schema written to ${bold(path.relative(cliSettings.workdir, written.path))}\n`,
             "stderr",
@@ -822,9 +787,8 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
             ? invoke.assumeYes
             : yield* promptYesNo(output, yes, updateHistoryTitle, true);
         if (shouldUpdate) {
-          // The migration file(s) in `writtenMigrations` are already on disk at this
-          // point — a failure here must still report them as written (CLI-1272 review:
-          // `pull.aggregate.ts`'s `hasWrittenSoFar`), so re-raise the SAME
+          // The migration file(s) in `writtenMigrations` are already on disk at this point, so
+          // a failure here must still report them as written: re-raise the same
           // `DbPullWriteError` `updateMigrationHistory` fails with, carrying their paths.
           yield* updateMigrationHistory(session, fs, path, writtenMigrations).pipe(
             Effect.mapError(
@@ -840,9 +804,9 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
 
         return {
           kind: "migration",
-          // `schemaFiles` lists EVERY written migration path in write order (a
-          // pg-delta plan writes one file per unit); `dbPull`'s emission
-          // derives the released `schemaWritten` string field from its first entry.
+          // `schemaFiles` lists every written migration path in write order (a pg-delta plan
+          // writes one file per unit); `dbPull`'s emission derives the released `schemaWritten`
+          // string field from its first entry.
           schemaFiles: writtenMigrations.map((written) => written.path),
           remoteHistoryUpdated,
           engine: usePgDeltaDiff ? "pg-delta" : "migra",

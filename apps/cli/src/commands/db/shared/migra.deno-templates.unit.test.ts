@@ -7,8 +7,6 @@ import { EDGE_RUNTIME_SCRIPT_ERROR_SENTINEL } from "../../../command-internal/ed
 import { migraDiffScript, migraDiffShellScript } from "./migra.deno-templates.ts";
 import { listSchemasSql } from "./migra.ts";
 
-// Resolve the Go template sources relative to this file so the byte-equality
-// assertion fails loudly if the embedded copies drift from upstream.
 const goDiffTemplatesDir = fileURLToPath(
   new URL("../../../../../cli-go/internal/db/diff/templates/", import.meta.url),
 );
@@ -26,8 +24,6 @@ describe("embedded migra templates", () => {
 });
 
 describe("embedded user-schema queries", () => {
-  // An unscoped pg_depend anti-join hid user schemas whose oid collided with a
-  // row in another catalog (supabase/cli#6375).
   it.each([
     ["listSchemasSql", listSchemasSql],
     ["dropObjectsSql", dropObjectsSql],

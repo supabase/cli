@@ -21,16 +21,9 @@ import type { ConfigPullDestination } from "./pull.scope.ts";
 import type { ConfigPullPlan } from "./pull.plan.ts";
 
 /**
- * Pure formatters, payload builders, and input adapters for `config pull` —
- * no Effect, no services, unit-testable in isolation. The API-scope
- * classification, target-naming phrase, value/path rendering, and
- * masked/unmanaged/not-returned caveat wording shared with `config diff` live
- * in `../config.format.ts` (hoisted, CLI-2064). `configPullPayload`/
- * `renderConfigPullText`/`ConfigPullOutcome`/`ConfigPullContext`/
- * `CONFIG_PULL_PAYLOAD_VERSION` are hoisted to
- * `command-internal/config-pull-run.ts` (CLI-1272, reused by the `supabase
- * pull` orchestrator) and re-exported here so this file's own call sites and
- * test suite keep resolving them from the same path.
+ * Pure formatters, payload builders, and input adapters for `config pull` — no Effect, no
+ * services. Classification/rendering shared with `config diff` lives in `../config.format.ts`;
+ * the exports below come from `command-internal/config-pull-run.ts`, shared with `supabase pull`.
  */
 
 export { CONFIG_PULL_PAYLOAD_VERSION, configPullPayload, renderConfigPullText };
@@ -51,45 +44,23 @@ export function configPullDestinationLine(
 }
 
 /**
- * The label segment of `plan.createdTable` (always `["remotes", label]`, see
- * {@link ConfigPullPlan.createdTable}'s own doc comment) — the only
- * untrusted piece of that path, so every caller rendering it into TEXT output
- * (the confirmation prompt, the render body's new-block note, the summary
- * message's block-only wording) runs it through `sanitizeInlineName`
- * here rather than re-deriving the indexing at each call site.
+ * The label segment of `plan.createdTable` (always `["remotes", label]`; see
+ * {@link ConfigPullPlan.createdTable}) — the only untrusted piece of that path. Centralizing the
+ * `sanitizeInlineName` call here avoids re-deriving the indexing at each render call site.
  */
 export function configPullCreatedBlockLabel(createdTable: ReadonlyArray<string>): string {
   return sanitizeInlineName(createdTable[1] ?? "");
 }
 
 /**
- * One-line summary reflecting the run's ACTUAL outcome — the caveats travel
- * with the machine-mode `message` field the same way `config diff`'s do, so
- * an agent echoing just `.message` never mistakes a partial/declined/dry-run
- * result for a completed write. Distinguishes "nothing to write" (no
- * differences at all, no block to create) from "wrote nothing" (differences
- * existed, but every one was skipped/declined/dry-run) — the two read very
- * differently to a script deciding whether to alert.
+ * One-line summary reflecting the run's actual outcome, distinguishing "nothing to write" (no
+ * differences existed) from "wrote nothing" (differences existed but were all skipped, declined,
+ * or dry-run) and giving a block-only run (`plan.createdTable` set, no value writes) its own
+ * wording, distinct from both.
  *
- * A BLOCK-ONLY run (`plan.createdTable` set, no value writes — a zero-drift
- * branch target, CLI-2064's bug B) gets its own wording, distinguishable both
- * from "nothing to write" (a block WAS created, or would be) and from a
- * value-writing run (`counts.written` stays 0 either way, see
- * `configPullPayload`) — and, within that wording, "no config
- * differences to apply" (`counts.total === 0`: there was truly nothing to
- * compare) is itself distinct from every difference having been SKIPPED
- * (`counts.total > 0` but every one landed in `plan.skipped` — env()
- * references, local-only fields, a dropped unvalidatable family, …): the
- * block still only ever got created for its `project_id`, but claiming "no
- * differences" would be false when differences existed and were simply never
- * written.
- *
- * `opts.withCaveats` (default `true`) governs whether the masked/unmanaged/
- * not-returned `Note:`s are appended: the machine-mode `message` keeps them
- * (an agent reading only `.message` must never miss a caveat), but the TEXT
- * one-line disposition printed AFTER the change-by-change body omits them —
- * that body already rendered the same `Note:` lines once, and repeating them
- * verbatim in the final summary line said nothing new.
+ * @param opts.withCaveats - Appends the masked/unmanaged/not-returned `Note:`s (default `true`).
+ * The machine-mode `message` always keeps them; the text-mode one-line summary omits them since
+ * the change-by-change body already rendered them.
  */
 export function configPullSummaryMessage(
   changeSet: ConfigChangeSet,

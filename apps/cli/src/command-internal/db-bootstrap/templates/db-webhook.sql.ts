@@ -1,10 +1,4 @@
-/**
- * Transcribed verbatim from `apps/cli-go/internal/db/start/templates/webhook.sql`
- * (Go `//go:embed templates/webhook.sql`, `apps/cli-go/internal/db/start/start.go:36-37`).
- * Not a Go `text/template` — embedded byte-for-byte into the Postgres
- * container's entrypoint heredoc (`NewContainerConfig`, `start.go:63-116`) for
- * PG >= 15 only. Do not hand-edit — re-transcribe from the Go source if it changes.
- */
+/** Embedded byte-for-byte into the Postgres container's entrypoint heredoc for PG >= 15 only. */
 export const START_DB_WEBHOOK_SQL = `BEGIN;
 
 -- Create supabase_functions schema

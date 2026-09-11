@@ -2351,7 +2351,7 @@
       },
       "additionalProperties": false
     },
-    "workers": {
+    "compute": {
       "anyOf": [
         {
           "type": "object",
@@ -2361,7 +2361,7 @@
               "properties": {
                 "runtime": {
                   "type": "string",
-                  "description": "Runtime the worker is built on: `dockerfile` to build the directory's own\nDockerfile, or one of the catalog runtimes (`node`, `deno`). Guessed from\nmarker files when unset.",
+                  "description": "Runtime the compute is built on: `dockerfile` to build the directory's own\nDockerfile, or one of the catalog runtimes (`node`, `deno`). Guessed from\nmarker files when unset.",
                   "examples": ["node"]
                 },
                 "size": {
@@ -2371,25 +2371,25 @@
                 },
                 "exposure": {
                   "type": "string",
-                  "description": "How the worker is reached: `public` gives it an internet-facing URL,\n`private` keeps it reachable only from inside the project. Every deploy\nsends a complete spec, so the value recorded here is what keeps a private\nworker private; `--exposure` overrides it for one deploy. Defaults to\n`public`.",
+                  "description": "How the compute is reached: `public` gives it an internet-facing URL,\n`private` keeps it reachable only from inside the project. Every deploy\nsends a complete spec, so the value recorded here is what keeps a private\ncompute private; `--exposure` overrides it for one deploy. Defaults to\n`public`.",
                   "examples": ["private"]
                 },
                 "instances": {
                   "type": "integer",
                   "minimum": 0,
-                  "description": "Number of instances to run. Every deploy sends a complete spec, so a count\nrecorded here is what keeps a scaled worker scaled; `--instances` overrides\nit for one deploy. Defaults to 1.",
+                  "description": "Number of instances to run. Every deploy sends a complete spec, so a count\nrecorded here is what keeps a scaled compute scaled; `--instances` overrides\nit for one deploy. Defaults to 1.",
                   "examples": [3]
                 },
                 "source": {
                   "type": "string",
-                  "description": "Directory holding the worker's code, relative to the project root, when it\ndoes not live at `supabase/workers/<name>/`.",
+                  "description": "Directory holding the compute's code, relative to the project root, when it\ndoes not live at `supabase/compute/<name>/`.",
                   "examples": ["packages/api"]
                 }
               },
               "additionalProperties": false
             }
           },
-          "description": "Worker-specific configuration keyed by worker name.",
+          "description": "Compute-specific configuration keyed by compute name.",
           "default": {}
         },
         {
@@ -2400,6 +2400,10 @@
     "experimental": {
       "type": "object",
       "properties": {
+        "compute": {
+          "type": "boolean",
+          "description": "Enable the experimental compute command family."
+        },
         "stack": {
           "type": "boolean",
           "description": "Use the new local stack backend for top-level start and stop commands."
@@ -4854,7 +4858,7 @@
                     },
                     "additionalProperties": false
                   },
-                  "workers": {
+                  "compute": {
                     "anyOf": [
                       {
                         "type": "object",
@@ -4864,7 +4868,7 @@
                             "properties": {
                               "runtime": {
                                 "type": "string",
-                                "description": "Runtime the worker is built on: `dockerfile` to build the directory's own\nDockerfile, or one of the catalog runtimes (`node`, `deno`). Guessed from\nmarker files when unset.",
+                                "description": "Runtime the compute is built on: `dockerfile` to build the directory's own\nDockerfile, or one of the catalog runtimes (`node`, `deno`). Guessed from\nmarker files when unset.",
                                 "examples": ["node"]
                               },
                               "size": {
@@ -4874,25 +4878,25 @@
                               },
                               "exposure": {
                                 "type": "string",
-                                "description": "How the worker is reached: `public` gives it an internet-facing URL,\n`private` keeps it reachable only from inside the project. Every deploy\nsends a complete spec, so the value recorded here is what keeps a private\nworker private; `--exposure` overrides it for one deploy. Defaults to\n`public`.",
+                                "description": "How the compute is reached: `public` gives it an internet-facing URL,\n`private` keeps it reachable only from inside the project. Every deploy\nsends a complete spec, so the value recorded here is what keeps a private\ncompute private; `--exposure` overrides it for one deploy. Defaults to\n`public`.",
                                 "examples": ["private"]
                               },
                               "instances": {
                                 "type": "integer",
                                 "minimum": 0,
-                                "description": "Number of instances to run. Every deploy sends a complete spec, so a count\nrecorded here is what keeps a scaled worker scaled; `--instances` overrides\nit for one deploy. Defaults to 1.",
+                                "description": "Number of instances to run. Every deploy sends a complete spec, so a count\nrecorded here is what keeps a scaled compute scaled; `--instances` overrides\nit for one deploy. Defaults to 1.",
                                 "examples": [3]
                               },
                               "source": {
                                 "type": "string",
-                                "description": "Directory holding the worker's code, relative to the project root, when it\ndoes not live at `supabase/workers/<name>/`.",
+                                "description": "Directory holding the compute's code, relative to the project root, when it\ndoes not live at `supabase/compute/<name>/`.",
                                 "examples": ["packages/api"]
                               }
                             },
                             "additionalProperties": false
                           }
                         },
-                        "description": "Worker-specific configuration keyed by worker name.",
+                        "description": "Compute-specific configuration keyed by compute name.",
                         "default": {}
                       },
                       {
@@ -4903,6 +4907,10 @@
                   "experimental": {
                     "type": "object",
                     "properties": {
+                      "compute": {
+                        "type": "boolean",
+                        "description": "Enable the experimental compute command family."
+                      },
                       "stack": {
                         "type": "boolean",
                         "description": "Use the new local stack backend for top-level start and stop commands."

@@ -261,10 +261,8 @@ describe("inspect db specs (per-subcommand correctness)", () => {
       return Effect.gen(function* () {
         yield* runInspectQuery(testCase.spec, localFlags, "native");
 
-        // The embedded SQL is sent verbatim.
         expect(ctx.querySql).toBe(testCase.spec.sql);
 
-        // Query parameters match the subcommand's shape.
         if (testCase.params === "none") {
           expect(ctx.queryParams).toEqual([]);
         } else {
@@ -278,7 +276,6 @@ describe("inspect db specs (per-subcommand correctness)", () => {
           }
         }
 
-        // The rendered table contains the headers and the projected cells.
         for (const header of testCase.spec.headers) {
           expect(ctx.out.stdoutText).toContain(header);
         }
@@ -292,10 +289,6 @@ describe("inspect db specs (per-subcommand correctness)", () => {
     });
   }
 
-  // Cell-level truth for blocking's per-column backtick-wrapping: col 2
-  // (`blocking_statement`) is backtick-wrapped, so a null/empty value renders as
-  // the two literal backticks (glamour's empty-code-span rule), while col 5
-  // (`blocked_statement`) stays bare, so an empty value renders as "".
   it("projects a null blocking_statement to the two-backtick empty code span, keeping blocked_statement bare", () => {
     const row: Record<string, unknown> = {
       blocked_pid: 1,

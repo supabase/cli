@@ -134,8 +134,7 @@ const decodeState = (
   }
   if (!isRecord(raw.secrets))
     return Effect.fail(stateError("Persisted secret values must be a record"));
-  // Schema.Record validates values but does not enforce dynamic object-key checks
-  // while decoding JSON, so retain this format-level slot-name guard.
+  // Schema.Record doesn't enforce key-format checks while decoding JSON, so validate slot names here.
   for (const slot of Object.keys(raw.secrets))
     if (!/^[A-Za-z0-9_.:/-]+$/.test(slot))
       return Effect.fail(stateError(`Persisted secret slot key is invalid: ${slot}`));
@@ -313,9 +312,7 @@ export const withRegistryLock = <A, E, R>(
         );
         const install = Effect.gen(function* () {
           const token = yield* Effect.try({
-            // Registry tokens are ephemeral identity labels; ownership is proven
-            // by the held loopback lease and atomic canonical link.
-            // oxlint-disable-next-line effecttsgo/crypto-random-uuid-in-effect
+            // oxlint-disable-next-line effecttsgo/crypto-random-uuid-in-effect -- ephemeral label; ownership is proven by the held lease, not this ID.
             try: () => globalThis.crypto.randomUUID(),
             catch: (cause) =>
               stateError(`Unable to allocate registry lock token: ${String(cause)}`),
@@ -341,8 +338,7 @@ export const withRegistryLock = <A, E, R>(
       ),
       Effect.retry({
         while: (error) => Predicate.isTagged(error, "RegistryBusyError"),
-        // Registry transactions include port leasing and atomic state writes; allow a few
-        // seconds for a concurrent owner to finish before failing closed.
+        // Allow a few seconds for a concurrent owner's port lease and state write to finish.
         schedule: Schedule.spaced("25 millis").pipe(Schedule.upTo({ times: 80 })),
       }),
       Effect.mapError((error) =>
@@ -517,10 +513,9 @@ export const makeStackStateStore = (options: {
       FileSystem.FileSystem | Path.Path | Crypto.Crypto
     > => withRegistryLock(options.stateRoot, replaceUnlocked(stackId, next));
 
-    // FileSystem.remove({ recursive: false }) maps to fs.rm, which refuses to
-    // remove directories on Node. Native rmdir is intentionally used here so
-    // a concurrent child creation fails with ENOTEMPTY instead of recursively
-    // deleting a newly-created lease or control file.
+    // fs.remove({ recursive: false }) maps to Node's fs.rm, which refuses to remove directories.
+    // Native rmdir is used instead so a concurrent child creation fails with ENOTEMPTY rather
+    // than recursively deleting a newly created lease or control file.
     const removeEmptyDirectory = (directory: string, label: string) =>
       Effect.tryPromise({
         try: () => rmdir(directory),

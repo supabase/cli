@@ -7,9 +7,6 @@ const decodeCliConfig = Schema.decodeUnknownSync(CliConfigSchema);
 
 describe("getDefaultCliConfig", () => {
   test("all schema defaults are mutually valid", () => {
-    // Decoding `{}` runs every business-rule check embedded in the schema, so
-    // a future default that conflicts with another fails here, loudly, rather
-    // than at import time in some consumer.
     expect(() => getDefaultCliConfig()).not.toThrow();
   });
 
@@ -65,8 +62,6 @@ describe("omitDefaultValues", () => {
   });
 
   test("sections emptied by subtraction disappear, cascading upward", () => {
-    // `api.tls.enabled` defaults to `false`: the leaf is pruned, leaving
-    // `tls: {}`, which is dropped, leaving `api: {}`, which is dropped.
     const config = decodeCliConfig({ api: { tls: { enabled: false } } });
     expect(omitDefaultValues(config)).toEqual({});
   });
@@ -89,11 +84,8 @@ describe("omitDefaultValues", () => {
   });
 
   test("remotes pass through untouched, even when set to global defaults", () => {
-    // `api.max_rows = 1000` IS the global default, but inside a remote block
-    // it overrides whatever the base config resolves to — subtracting it
-    // against global defaults would silently change the branch's effective
-    // value. See ADR 0018: a remote block's baseline is the merged base
-    // config, never the default config.
+    // `max_rows: 1000` matches the global default but must still survive: it's set
+    // inside the remote block.
     const config = decodeCliConfig({
       api: { max_rows: 500 },
       remotes: { staging: { project_id: "abcdefghijklmnopqrst", api: { max_rows: 1000 } } },
@@ -104,18 +96,12 @@ describe("omitDefaultValues", () => {
   });
 
   test("preserves a record entry named __proto__ as an own data property", () => {
-    // Both smol-toml (`[functions.__proto__]`) and JSON.parse produce an own
-    // `__proto__` key, and the schema decode preserves it — so the subtraction
-    // walk must define it as an own data property rather than let a plain
-    // `result[key] = value` assignment hit the legacy prototype setter and
-    // silently drop the function from the sparse output.
     const raw: unknown = JSON.parse('{"functions": {"__proto__": {"verify_jwt": false}}}');
     const sparse = omitDefaultValues(decodeCliConfig(raw));
     const functions = sparse.functions ?? {};
     expect(Object.hasOwn(functions, "__proto__")).toBe(true);
     const entry = Object.getOwnPropertyDescriptor(functions, "__proto__")?.value;
     expect(entry).toMatchObject({ verify_jwt: false });
-    // The walk must not have poisoned the container's prototype either.
     expect(Object.getPrototypeOf(functions)).toBe(Object.prototype);
   });
 
@@ -137,12 +123,6 @@ describe("subtractCliConfig", () => {
   });
 
   test("sparsifies a branch via its merged effective config, not the decoded block", () => {
-    // The ADR 0018 call shape for CLI-2156/2064: both operands are *effective*
-    // configs, and the branch's is the raw remote subtree merged over the raw
-    // base document BEFORE decoding. Decoding the sparse `[remotes.*]` block
-    // on its own would materialize the global default `db.port = 54322` in
-    // place of the omitted-and-therefore-inherited base override `54399`, and
-    // the overlay would wrongly pin the branch to the global default.
     const rawBase = { api: { max_rows: 500 }, db: { port: 54399 } };
     const rawRemote = { project_id: "abcdefghijklmnopqrst", api: { max_rows: 1000 } };
     const base = decodeCliConfig(rawBase);
@@ -156,15 +136,10 @@ describe("subtractCliConfig", () => {
       project_id: "abcdefghijklmnopqrst",
       api: { max_rows: 1000 },
     });
-    // The base-only `db.port` override the remote inherits must not surface.
     expect(overlay).not.toHaveProperty("db");
   });
 
   test("subtraction is directional against the baseline, not the defaults", () => {
-    // The CLI-2156 remote-block scenario: subtract a merged effective config
-    // against the merged BASE config. `api.max_rows: 1000` equals the global
-    // default but differs from the baseline's 500 — kept. `db.port: 54399`
-    // differs from the global default but equals the baseline's — removed.
     const baseline = decodeCliConfig({ api: { max_rows: 500 }, db: { port: 54399 } });
     const config = decodeCliConfig({ api: { max_rows: 1000 }, db: { port: 54399 } });
     expect(subtractCliConfig(config, baseline)).toEqual({ api: { max_rows: 1000 } });
@@ -172,13 +147,6 @@ describe("subtractCliConfig", () => {
 });
 
 describe("EffectiveConfig operand widening (CLI-2230)", () => {
-  // `EffectiveConfig` covers any deeply-partial operand, not just a decoded
-  // `CliConfig` — the hosted-subset `ProjectConfig` `toProjectConfig` produces
-  // (`./project-config/project-config.ts`) is one such operand, and is never
-  // a fully-materialized document. These pin the runtime behavior both
-  // helpers already had against genuinely sparse operands, not just against
-  // full decodes.
-
   test("subtractCliConfig: equal sparse operands cancel out entirely", () => {
     expect(subtractCliConfig({ api: { max_rows: 100 } }, { api: { max_rows: 100 } })).toEqual({});
   });
@@ -201,9 +169,6 @@ describe("EffectiveConfig operand widening (CLI-2230)", () => {
   });
 
   test("omitDefaultValues: does not flood in default-valued siblings the sparse operand never mentioned", () => {
-    // Only the two keys actually present on the operand may appear on the
-    // result — a flooding implementation would additionally materialize
-    // every other `api.*` default (`port`, `schemas`, `db_schema`, …).
     const sparse = omitDefaultValues({ api: { max_rows: 500, extra_search_path: [] } });
     expect(sparse).toEqual({ api: { max_rows: 500, extra_search_path: [] } });
     expect(Object.keys(sparse.api ?? {}).sort()).toEqual(["extra_search_path", "max_rows"]);

@@ -9,10 +9,9 @@ const MODE: CliE2eMode =
 
 export const isRecording = MODE === "record";
 
-// The replay server + tests/setup.ts key recording off the RECORD env var
-// directly. Keep RECORD in sync with MODE in BOTH directions so an explicit
-// CLI_E2E_MODE wins over a stale RECORD env — e.g. CLI_E2E_MODE=replay must NOT
-// record and wipe fixtures just because RECORD=true lingers in the shell.
+// The replay server + tests/setup.ts key recording off RECORD directly, so keep
+// it in sync with MODE in both directions: an explicit CLI_E2E_MODE=replay must
+// not record and wipe fixtures just because RECORD=true lingers in the shell.
 if (isRecording) {
   process.env["RECORD"] = "true";
 } else {

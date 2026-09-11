@@ -1,50 +1,15 @@
-// Workaround for a doubled "Expected: Expected ..." prefix in
-// effect@4.0.0-beta.93's own primitive parsers. Several `Primitive`s under
-// `effect/unstable/cli` (`choice` — used by `Flag.choice`/
-// `Flag.choiceWithValue` — plus the schema-backed `integer`, `float`,
-// `boolean`, and `date`) fail with a raw message that already starts with
-// the word "Expected" (e.g. `Expected "micro" | "small", got "nano"` or
-// `Expected a valid date, got Invalid Date`), and `CliError.InvalidValue`'s
-// own `message` getter independently prepends its own `"Expected: "` label
-// on top of that — so any flag or argument backed by one of these
-// primitives renders "Expected: Expected ...". Detect this from
-// `error.expected` (the field the buggy primitives actually populate)
-// rather than searching the fully composed `error.message`: `error.value`
-// is user-controlled and interpolated into that same message (including a
-// second time inside `expected` itself, via `choice`'s "got <value>"
-// suffix), so a message-wide, first-occurrence string replace can target
-// the wrong spot if the value itself happens to contain the literal text
-// "Expected: Expected ". Anchoring on `error.expected` and rebuilding the
-// message from the same template `CliError.InvalidValue` uses avoids ever
-// scanning `error.value`. Remove once upstream `effect` fixes this (see
-// CLI-1898).
+// Some of effect's own CLI primitive parsers (`choice`, and the schema-backed `integer`, `float`,
+// `boolean`, `date`) fail with an `expected` string that already starts with "Expected", which
+// `CliError.InvalidValue`'s own message getter then prefixes again, rendering
+// "Expected: Expected ...". Anchors on `error.expected` rather than the composed `message`, since
+// `error.value` is user-controlled and can itself contain that literal text.
 //
-// TODO: remove once Effect-TS/effect#6312 is fixed upstream.
-// https://github.com/Effect-TS/effect/issues/6312
-//
-// Shared by two call sites that each see `InvalidValue` failures at a
-// different point in `effect`'s CLI runtime:
-// - `subcommand-flag-suggestions.ts` formats errors that reach the
-//   `CliOutput.Formatter` via the `ShowHelp` envelope — i.e. ordinary
-//   subcommand/argument flags, validated while `Command.runWith` parses the
-//   command tree.
-// - `normalize-error.ts` formats errors from `GlobalFlag.setting` flags
-//   (`--output-format`, and the `--output`/`-o`, `--dns-resolver`,
-//   `--agent`), which `Command.runWith` validates in a later step that runs
-//   *outside* the `ShowHelp` path and therefore never reaches the
-//   formatter — it surfaces as a raw failure through `runCli`'s catch-all
-//   instead.
+// TODO(CLI-1898): remove once https://github.com/Effect-TS/effect/issues/6312 is fixed upstream.
 const EXPECTED_PREFIX = "Expected ";
 
-// Go-parity passthrough (CLI-1983, CLI-1990): flags that byte-match Go
-// pflag's parse-time diagnostics (`stringSliceFlag`'s malformed-CSV
-// failure, `migration down --last`, and `storage cp --jobs` via
-// `Flag.mapTryCatch`) fail with the COMPLETE Go message as `expected` —
-// pflag's `invalid argument %q for %q flag: %v` (pflag v1.0.10
-// `errors.go:116`). Wrapping that in `CliError.InvalidValue`'s own
-// `Invalid value for flag --X: "V". Expected: ...` template would
-// double-frame it and break the CLI's stderr contract (byte-parity
-// with the Go CLI), so render it verbatim instead.
+// Some flags already fail with pflag's own byte-exact diagnostic (e.g. malformed CSV in a
+// string-slice flag), which the CLI's stderr contract must reproduce verbatim. Wrapping it in
+// `CliError.InvalidValue`'s own template would double-frame it, so render it as-is instead.
 const PFLAG_INVALID_ARGUMENT_PREFIX = "invalid argument ";
 
 export interface InvalidValueMessageFields {
@@ -55,11 +20,10 @@ export interface InvalidValueMessageFields {
 }
 
 /**
- * Rebuilds a `CliError.InvalidValue` message from its own template when
- * `expected` carries the doubled "Expected" prefix, or passes `expected`
- * through verbatim when it is a complete pflag-format diagnostic (Go
- * flag-parse parity). Returns `undefined` when `expected` is unaffected, so
- * callers can fall back to the error's own untouched `message`.
+ * Rebuilds a `CliError.InvalidValue` message from its own template when `expected` carries the
+ * doubled "Expected" prefix, or passes `expected` through verbatim when it's already a complete
+ * pflag-format diagnostic. Returns `undefined` when unaffected, so callers fall back to the
+ * error's own message.
  */
 export function formatInvalidValueMessage(error: InvalidValueMessageFields): string | undefined {
   if (error.expected.startsWith(PFLAG_INVALID_ARGUMENT_PREFIX)) return error.expected;

@@ -1,24 +1,11 @@
 /**
- * The config-derivation prelude Go's `StartDatabase` (`apps/cli-go/internal/db/start/
- * start.go:133-190`) relies on being ALREADY resolved on `utils.Config` by the time it runs
- * (Go's `Config.Load` folds every `SUPABASE_*` override into the single global `Config`
- * struct once, at process start, before either `db start` or `supabase start`'s own `Run`
- * ever executes) — every field here feeds either the Postgres container spec itself or the
- * fresh-volume `SetupLocalDatabase`-equivalent pipeline. Shared by both callers of
- * `startDatabase` (`./start-database.ts`) so a future Go change to one of these
- * fields' derivation only needs to change in one TS home — see `apps/cli/CLAUDE.md`'s
- * "Hoist Before You Duplicate" rule and CLI-1954's own report for why this was split out
- * from `commands/start/start.handler.ts`.
+ * Resolves the config fields `startDatabase` needs from `config`/`projectEnvValues`, folding in
+ * any `SUPABASE_*` override. Shared by `db start` and `supabase start` so each field's derivation
+ * has one home.
  *
- * Deliberately NOT included here (stays each caller's own concern, since it's either
- * `supabase start`-only or caller-timing-sensitive — see `start-database.ts`'s header):
- * `--exclude` gate evaluation, JWKS resolution (`supabase start` resolves it once, eagerly,
- * for its long-running containers too; `db start` resolves it lazily, conditionally, deep
- * inside the fresh-volume setup step, matching Go's own `initSchema15`-local
- * `ResolveJWKS` call — the two callers' timing genuinely differs, so `startDatabase`
- * takes this as a caller-supplied `Effect` instead), the Postgres registry-image resolve
- * (`db start` resolves lazily, per-container; `supabase start` already resolved it as part
- * of its own batched pre-pull before bring-up — same caller-supplied-`Effect` treatment).
+ * Excludes `--exclude` gate evaluation, JWKS resolution, and the Postgres registry-image resolve:
+ * their timing differs between the two callers, so `startDatabase` takes them as a
+ * caller-supplied `Effect` instead. See `start-database.ts`.
  */
 
 import type { CliConfig } from "@supabase/config";
@@ -45,15 +32,9 @@ export interface DbBootstrapConfigInput {
   readonly projectEnvValues: Readonly<Record<string, string>> | undefined;
   readonly workdir: string;
   /**
-   * Config keys a matched `[remotes.<ref>]` block contributed at viper's OVERRIDE tier
-   * (Go's `v.Set`, applied ABOVE `AutomaticEnv` — `apps/cli-go/pkg/config/config.go:
-   * 724`) — see `db-config.toml-read.ts`'s `RemoteOverride.
-   * remoteOverrideKeys` doc comment for the full precedence rationale. Every
-   * `envOverride*` call below must NOT re-apply a `SUPABASE_*` value for a field
-   * the remote block already set. Defaults to empty: `db start`/`db reset` never resolve
-   * a remote block for this config read (see `buildLocalDbContainerInputs`'s own
-   * doc comment), so they're unaffected; `db diff --linked`/`db pull` (CLI-1956) pass
-   * the set their sibling `readDbToml` call already computed.
+   * Config keys a matched `[remotes.<ref>]` block set at override tier; every `envOverride*` call
+   * below must not re-apply a `SUPABASE_*` value for a field this set already covers. Defaults to
+   * empty for `db start`/`db reset`, which never resolve a remote block here.
    */
   readonly remoteOverrideKeys?: ReadonlySet<string>;
 }
@@ -65,14 +46,14 @@ export interface DbBootstrapConfig {
   readonly s3Region: string | undefined;
   readonly s3AccessKey: string | undefined;
   readonly s3SecretKey: string | undefined;
-  /** Go's one-shot fresh-DB setup jobs' own `Enabled` gates — see `start-database.ts`'s header. */
+  /** Effective enabled flags read by the one-shot fresh-DB setup jobs, after any override. */
   readonly realtimeEnabledForSetup: boolean;
   readonly storageEnabledForSetup: boolean;
   readonly authEnabledForSetup: boolean;
   readonly realtimeIpVersion: "IPv4" | "IPv6";
   readonly realtimeMaxHeaderLength: number;
   readonly storageFileSizeLimit: CliConfig["storage"]["file_size_limit"];
-  /** Pull/create image (`utils.Config.Db.Image` after slim rewrite). The caller still resolves the registry candidate itself. */
+  /** Pull/create image; the caller still resolves the registry candidate itself. */
   readonly postgresImage: string;
   /** Unprefixed docker.io identity for INITDB version-compare. Never a slim ghcr ref. */
   readonly postgresConfigImage: string;
@@ -82,14 +63,11 @@ export interface DbBootstrapConfig {
 }
 
 /**
- * Wraps a synchronous `envOverride*` read that throws on a malformed value into a
- * typed failure, matching Go's `Config.Load` hard-failing on a bad Viper decode
- * (`pkg/config/config.go:749-756`) before any Docker work — instead of leaking an untyped
- * Effect defect. Message format (`invalid config for <path>: <cause>`) matches
- * `commands/start/start.handler.ts`'s own identically-shaped `wrapConfigOverride`, which
- * this module doesn't import from (that one stays private to `start.handler.ts`, covering
- * many more start-only fields; duplicating this ~10-line generic wrapper avoids a
- * `command-internal/` -> `commands/start/` dependency for a trivial utility).
+ * Wraps a synchronous `envOverride*` read that throws on a malformed value into a typed failure
+ * instead of an untyped Effect defect.
+ *
+ * @param dottedFieldPath - Config path embedded in the error message (`invalid config for
+ * <path>: <cause>`).
  */
 function wrapConfigOverride<T, E>(
   dottedFieldPath: string,
@@ -106,14 +84,12 @@ function wrapConfigOverride<T, E>(
 }
 
 /**
- * Resolves every field {@link startDatabase} (`./start-database.ts`) needs from
- * `config`/`projectEnvValues`, in Go's own `Config.Load` sense: values already folded from
- * any `SUPABASE_*` override, ready to feed the Postgres container spec and the fresh-volume
- * setup pipeline. `mapConfigError` lets each caller tag a malformed-override failure with
- * its own command-specific error type — `db start` uses `DbConfigLoadError`;
- * `supabase start` uses its own `StartInvalidConfigError`, matching the class its
- * existing tests already assert for these fields — mirroring the `mapConfigLoadError`
- * idiom `local-project-context.ts`'s `loadLocalProjectContext` already uses.
+ * Resolves every field {@link startDatabase} needs from `config`/`projectEnvValues`: values
+ * already folded with any `SUPABASE_*` override, ready to feed the Postgres container spec and
+ * the fresh-volume setup pipeline.
+ *
+ * @param mapConfigError - Lets each caller tag a malformed-override failure with its own error
+ * type.
  */
 export const resolveDbBootstrapConfig = <E>(
   fs: FileSystem.FileSystem,
@@ -126,20 +102,14 @@ export const resolveDbBootstrapConfig = <E>(
     const remoteOverrideKeys = input.remoteOverrideKeys ?? new Set<string>();
     const remoteWins = makeRemoteWins(remoteOverrideKeys);
 
-    // Go's `Config.Load` folds `SUPABASE_DB_MAJOR_VERSION` into `c.Db.MajorVersion` before the
-    // image-selection switch runs (`pkg/config/config.go:585-586,819-827`) — every later read of
-    // `utils.Config.Db.MajorVersion` sees this same value. Not wrapped: `checkDbToml`
-    // (called by both callers before this function) already validates this override.
-    // A matched remote block's `db.major_version` was installed at viper's OVERRIDE tier
-    // (above `AutomaticEnv`), so it must win over a conflicting `SUPABASE_DB_MAJOR_VERSION`.
+    // Not wrapped: checkDbToml already validates this override. A matched remote block's value
+    // wins over a conflicting SUPABASE_DB_MAJOR_VERSION.
     const majorVersion = remoteWins("db.major_version")
       ? config.db.major_version
       : envOverrideMajorVersion(config.db.major_version, projectEnvValues);
-    // `experimental.orioledb_version` -> `Config.Db.Image` rewrite (`pkg/config/config.go:
-    // 1041-1046`), plus its four sibling S3 fields Go reads into the Postgres container's `S3_*`
-    // env alongside it (`apps/cli-go/internal/db/start/start.go:70-77`). Both `envOverride`
-    // calls never throw (return the override or the configured value verbatim), so no wrap needed.
-    // Same remote-over-env precedence as `majorVersion` above applies to each of these.
+    // orioledb_version and the four S3 fields feed the Postgres container's image/env directly.
+    // `envOverride` never throws, so these don't need `wrapConfigOverride`. Same remote-over-env
+    // precedence as `majorVersion` applies to each.
     const orioledbVersion = remoteWins("experimental.orioledb_version")
       ? config.experimental.orioledb_version
       : envOverride(
@@ -172,13 +142,9 @@ export const resolveDbBootstrapConfig = <E>(
           projectEnvValues,
         );
 
-    // Go's one-shot fresh-DB setup jobs (`initSchema15`) read `utils.Config.
-    // {Realtime,Storage,Auth}.Enabled` — the EFFECTIVE, env-overridden value — and run
-    // regardless of `--exclude` (`internal/db/start/start.go:270,299,321`) whenever they
-    // actually execute. `supabase start` also reads the SAME override for its own `gates.*`
-    // (`start.gates.ts`'s `resolveStartGates`, wrapped there too) — this wrap is
-    // harmless, redundant belt-and-suspenders for that caller, and the ONLY protection `db
-    // start` has (it has no `--exclude`/`gates` equivalent at all).
+    // The one-shot fresh-DB setup jobs use the effective, overridden enabled value and run
+    // regardless of `--exclude`. Wrapping here is `db start`'s only protection against a
+    // malformed override; it has no `--exclude`/gates equivalent of its own.
     const realtimeEnabledForSetup = yield* wrapConfigOverride(
       "realtime.enabled",
       () =>
@@ -219,21 +185,14 @@ export const resolveDbBootstrapConfig = <E>(
       mapConfigError,
     );
 
-    // Both the long-running Realtime container (`supabase start` only) AND the PG15+ one-shot
-    // Realtime setup job (both callers, via `startSetupLocalDatabase`) must see the SAME
-    // already-overridden values (Go's single `utils.Config.Realtime` source of truth,
-    // `internal/start/start.go:922,928`, `internal/db/start/start.go:283,290`).
+    // The long-running Realtime container and the one-shot PG15+ setup job must see the same
+    // overridden value.
     const realtimeIpVersion = yield* wrapConfigOverride(
       "realtime.ip_version",
       () => {
-        // `envOverrideRealtimeIpVersion` itself reads `process.env` unconditionally
-        // (`envOverride`'s own fallback, regardless of `projectEnvValues`), so it can't
-        // simply be called with a neutered `projectEnvValues` here — that would still let a
-        // raw shell `SUPABASE_REALTIME_IP_VERSION` beat the remote block's viper OVERRIDE-tier
-        // value. Skip the override call entirely on this branch instead, re-validating into
-        // the same narrow type (the value is already guaranteed one of these two literals by
-        // `@supabase/config`'s own schema decode — `stringEnum(["IPv4","IPv6"])` — this only
-        // narrows the TS type to match {@link DbBootstrapConfig.realtimeIpVersion}).
+        // `envOverrideRealtimeIpVersion` reads `process.env` unconditionally, so it can't be
+        // called at all when the remote block wins — a raw env var would still beat it. The
+        // throw below only narrows the type; the schema already guarantees one of these values.
         if (remoteWins("realtime.ip_version")) {
           const value = config.realtime.ip_version;
           if (value !== "IPv4" && value !== "IPv6") {
@@ -254,15 +213,9 @@ export const resolveDbBootstrapConfig = <E>(
       mapConfigError,
     );
 
-    // Same reasoning for Storage's file-size limit — both the long-running container
-    // (`supabase start` only) AND the one-shot storage migrate job (both callers) must see the
-    // same already-overridden value (Go's `internal/start/start.go:1004`, `internal/db/start/
-    // start.go:307`, both reading the single `utils.Config.Storage.FileSizeLimit`).
-    // `@supabase/config`'s schema accepts `file_size_limit` as a plain string — it does not parse
-    // the size grammar itself, so a malformed value must be validated eagerly here (Go's
-    // `sizeInBytes.UnmarshalText`, `pkg/config/config.go:39-49`, decodes it unconditionally during
-    // `Config.Load`, before either caller touches Docker) rather than left to surface only when a
-    // container env builder happens to re-parse it.
+    // Same reasoning as Realtime's IP version above. `@supabase/config`'s schema stores
+    // `file_size_limit` as a plain string without parsing it, so a malformed value must be
+    // validated eagerly here rather than surfacing later inside a container env builder.
     const storageFileSizeLimit = remoteWins("storage.file_size_limit")
       ? config.storage.file_size_limit
       : (envOverride(
@@ -276,10 +229,8 @@ export const resolveDbBootstrapConfig = <E>(
       mapConfigError,
     );
 
-    // Go's `Config.Load` rewrites `c.Db.Image` from `supabase/.temp/postgres-version` (a
-    // linked-project pin written by `supabase link`) BEFORE either caller reads it
-    // (`pkg/config/config.go:827-863`) — never fails (a missing/unreadable pin file resolves to
-    // the embedded default), so no wrap needed.
+    // Reads a `supabase/.temp/postgres-version` pin written by `supabase link`; a missing or
+    // unreadable pin falls back to the embedded default, so this never fails.
     const { image: postgresImage, configImage: postgresConfigImage } = yield* resolveDbImage(
       fs,
       path,
@@ -287,9 +238,8 @@ export const resolveDbBootstrapConfig = <E>(
       majorVersion,
       orioledbVersion,
     );
-    // Ditto for `c.Realtime.Image`/`c.Storage.Image`/`c.Auth.Image` — read once, reused by the
-    // fresh-DB one-shot setup jobs' images regardless of whether this run's volume turns out to
-    // be fresh at all. Never fails, same reasoning.
+    // Read once and reused by the fresh-DB one-shot setup jobs regardless of whether this run's
+    // volume turns out to be fresh; never fails.
     const serviceVersionOverrides = yield* readServiceVersionOverrides(
       fs,
       path,
@@ -297,9 +247,6 @@ export const resolveDbBootstrapConfig = <E>(
       majorVersion,
     );
 
-    // Overridden by SUPABASE_DB_HEALTH_TIMEOUT — Go's Config.Load binds this generically before
-    // StartDatabase's health wait reads it (pkg/config/config.go:580-586, internal/db/start/
-    // start.go:180).
     const dbHealthTimeout = remoteWins("db.health_timeout")
       ? config.db.health_timeout
       : envOverride("SUPABASE_DB_HEALTH_TIMEOUT", config.db.health_timeout, projectEnvValues);
@@ -311,11 +258,8 @@ export const resolveDbBootstrapConfig = <E>(
         ),
     });
 
-    // Go's `config.Load` reads `supabase/.temp/storage-migration` (written by `supabase link`)
-    // into `Config.Storage.TargetMigration` whenever present (`pkg/config/config.go:844-846`),
-    // feeding `DB_MIGRATIONS_FREEZE_AT` for the fresh-DB one-shot Storage migrate job. Any read
-    // error (including not-exist) or blank content resolves to "", matching Go's `err == nil &&
-    // len(version) > 0` gate — never fails.
+    // Feeds `DB_MIGRATIONS_FREEZE_AT` for the one-shot Storage migrate job. Any read error
+    // (including not-exist) or blank content resolves to "".
     const storageTargetMigration = yield* fs
       .readFileString(tempPaths(path, workdir).storageMigration)
       .pipe(

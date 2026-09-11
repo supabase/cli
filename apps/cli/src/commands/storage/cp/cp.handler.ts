@@ -70,11 +70,8 @@ export const storageCp = Effect.fn("storage.cp")(function* (flags: StorageCpFlag
   const runtimeInfo = yield* RuntimeInfo;
 
   const jobsFlag = Option.getOrElse(flags.jobs, () => 1);
-  // A non-uint `--jobs` is already rejected in `cp.command.ts` with pflag's
-  // uint parse error. The remaining clamp handles `--jobs 0` specifically: a
-  // zero-sized job queue with an unbuffered channel and a zero-run priming
-  // loop deadlocks the first Put. We clamp `0 → 1` to avoid that hang — do
-  // not remove it.
+  // `--jobs 0` clamps to 1 to avoid a job-queue deadlock on the first item; a non-uint `--jobs`
+  // is already rejected in `cp.command.ts`.
   const jobs = jobsFlag < 1 ? 1 : jobsFlag;
   const contentTypeFlag = Option.getOrElse(flags.contentType, () => "");
   const cacheControlRaw = Option.getOrElse(flags.cacheControl, () => "max-age=3600");
@@ -86,9 +83,7 @@ export const storageCp = Effect.fn("storage.cp")(function* (flags: StorageCpFlag
   yield* Effect.gen(function* () {
     yield* assertStorageWorkdir(cliSettings.workdir);
 
-    // `--project-ref` never implies `--linked` and must not be silently
-    // discarded on the local target — see push.handler.ts's identical guard
-    // (db push) for the full TS-only rationale.
+    // `--project-ref` only applies to the linked project; it never implies `--linked`.
     if (Option.isSome(flags.projectRef) && flags.local) {
       return yield* Effect.fail(
         new StorageMutuallyExclusiveFlagsError({
@@ -105,8 +100,8 @@ export const storageCp = Effect.fn("storage.cp")(function* (flags: StorageCpFlag
       yield* output.raw(`Loading config override: [remotes.${loaded.appliedRemote}]\n`, "stderr");
     }
 
-    // Parse both URLs leniently (NOT the strict storage-URL parser), BEFORE
-    // building the client — an invalid url fails without an api-keys lookup.
+    // Parses both URLs leniently (not the strict storage-URL parser) before building the
+    // client, so an invalid URL fails without an api-keys lookup.
     const srcUrl = yield* parseCpUrl(flags.src, "src");
     const dstUrl = yield* parseCpUrl(flags.dst, "dst");
     const srcIsStorage = srcUrl.scheme === STORAGE_SCHEME;
@@ -186,7 +181,7 @@ const writeChunk = (handle: FileSystem.File, chunk: Uint8Array) => handle.writeA
 
 // Download (remote → local)
 
-/** Go `api.DownloadObject` (`objects.go:135-142`): O_EXCL create, then stream. */
+/** Downloads a single object: creates the file exclusively (fails if it exists), then streams into it. */
 const downloadSingle = (
   gateway: StorageGateway,
   fs: FileSystem.FileSystem,
@@ -211,7 +206,7 @@ const downloadSingle = (
     }),
   );
 
-/** Go `DownloadStorageObjectAll` (`cp.go:63-97`): BFS, O_TRUNC, mkdir parents. */
+/** Recursively downloads a remote prefix: BFS walk, truncating existing files, creating parent dirs. */
 const downloadAll = (
   gateway: StorageGateway,
   output: typeof Output.Service,
@@ -233,13 +228,9 @@ const downloadAll = (
       : localPath0;
 
     const tasks: Array<{ objectPath: string; dstPath: string; isDir: boolean }> = [];
-    // Capture the walk error as a value rather than failing on it immediately:
-    // Go returns `errors.Join(walkErr, jq.Collect())` (`cp.go:96`), so two
-    // ordering rules hold. (1) The `count == 0 → "Object not found"` check
-    // precedes the join (`cp.go:93-95`), masking a walk error when nothing was
-    // visited. (2) A walk that errors partway still runs the already-queued
-    // downloads before the walk error surfaces — so the check is sequenced after
-    // the download pass below, not before it.
+    // Captured as a value, not failed immediately: an "Object not found" (nothing visited) must
+    // mask a walk error, and a walk that errors partway must still run the already-queued
+    // downloads before the walk error surfaces — so this is checked after the download pass below.
     const iterError = yield* iterateStoragePathsAll(gateway, output, remotePath, (objectPath) =>
       Effect.gen(function* () {
         const relPath = objectPath.startsWith(remotePath)
@@ -285,10 +276,8 @@ const downloadAll = (
       { concurrency: jobs },
     );
 
-    // Surface the walk error only after the queued downloads have run, matching
-    // `errors.Join(walkErr, jq.Collect())`. A download failure propagates from
-    // the pass above (the job queue's first error); the rare walk-error +
-    // download-error pair is collapsed to whichever fails first.
+    // Surfaced only after the queued downloads have run; a download failure propagates from the
+    // pass above first, so a rare walk-error + download-error pair collapses to whichever fails first.
     if (iterError !== undefined) {
       return yield* Effect.fail(iterError);
     }
@@ -327,7 +316,7 @@ const resolveContentType = (ctx: UploadCtx, filePath: string) =>
     return contentTypeForUpload(sniff, filePath);
   });
 
-/** Go `api.UploadObject` single (`cp.go:55`): no x-upsert, no "Uploading:" line. */
+/** Uploads a single file without overwrite and without an "Uploading:" progress line. */
 const uploadSingle = (ctx: UploadCtx, remoteDstPath: string, localPath: string) =>
   Effect.gen(function* () {
     const contentType = yield* resolveContentType(ctx, localPath);
@@ -339,7 +328,7 @@ const uploadSingle = (ctx: UploadCtx, remoteDstPath: string, localPath: string) 
     ctx.summary.uploaded.push({ from: localPath, to: remoteDstPath });
   });
 
-/** Go `UploadStorageObjectAll` (`cp.go:99-172`): walk + dst-key + auto-create. */
+/** Recursively uploads a local directory: walks files, resolves each destination key, auto-creating the bucket if needed. */
 const uploadAll = (ctx: UploadCtx, remotePath: string, localPath: string, jobs: number) =>
   Effect.gen(function* () {
     const noSlash = remotePath.endsWith("/") ? remotePath.slice(0, -1) : remotePath;
@@ -412,7 +401,7 @@ const autoCreateAndRetry = (
 ) =>
   Effect.gen(function* () {
     const [bucket, prefix] = splitBucketPrefix(dstPath);
-    // Go only auto-creates when a prefix follows the bucket (`cp.go:154`).
+    // Only auto-creates the bucket when a prefix follows it; a bare bucket destination fails instead.
     if (prefix.length === 0) {
       return yield* Effect.fail(original);
     }
@@ -482,7 +471,7 @@ const walkUploadDir = (
     const names = [...(yield* fs.readDirectory(dir))].sort();
     for (const name of names) {
       const abs = path.join(dir, name);
-      // afero.Walk uses Lstat (no-follow); a symlink is not regular → skipped.
+      // Symlinks are detected via `readLink` and skipped without following them.
       const isSymlink = yield* fs.readLink(abs).pipe(
         Effect.as(true),
         Effect.catch(() => Effect.succeed(false)),

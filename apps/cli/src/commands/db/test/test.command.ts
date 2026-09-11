@@ -9,17 +9,10 @@ import {
 import { testDbRuntimeLayer } from "../../../command-internal/test-db.layers.ts";
 
 /**
- * `db test` is a hidden alias for `test db` (registered hidden by the
- * parent, `../db.command.ts`'s `dbTestCommand.pipe(Command.unlisted)`).
- *
- * `db test` and `test db` share one implementation, registered as two
- * separate commands with identical flags and Short text. The native TS port
- * mirrors that: both this file and `../../test/db/db.command.ts` import the
- * shared config/handler/runtime-layer from `command-internal/legacy-test-db.*`
- * instead of either command owning the implementation directly —
- * `commands/<family>/` files may not import another family's
- * internals (`code-structure.unit.test.ts`), so the implementation lives
- * outside `commands/` entirely.
+ * `db test` is a hidden alias for `test db`, registered hidden by the parent
+ * (`../db.command.ts`'s `dbTestCommand.pipe(Command.unlisted)`). Both commands share one
+ * implementation, hoisted to `command-internal/` since `commands/<family>/` files may not
+ * import another family's internals (`code-structure.unit.test.ts`).
  */
 export const dbTestCommand = Command.make("test", testDbConfig).pipe(
   Command.withDescription(TEST_DB_DESCRIPTION),

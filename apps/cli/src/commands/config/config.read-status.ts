@@ -5,23 +5,11 @@ import {
 } from "../../command-internal/http-errors.ts";
 
 /**
- * Purpose-written messages for the status codes a wrong or inaccessible ref
- * most plausibly produces when reading `GET /v2/projects/{ref}/config` —
- * shared by `config diff`, `config pull`, and `config push`, since all three
- * read the same endpoint and a bad ref/token fails the same way for each.
- * Every other status falls back to `unexpectedStatusMessage`.
- *
- * `apiHost` (the CLI's own resolved `cliSettings.apiUrl`, not anything the
- * response body names) hedges the 404 case: `config push` is an established
- * command that used to hit six long-lived v1 endpoints, so a 404 here can
- * also mean this v2 endpoint isn't served by the configured API host at all
- * (an older self-hosted Management API, a proxy, a `SUPABASE_PROFILE`
- * pointing elsewhere) rather than a wrong project ref. `apiUrl` traces back
- * to a `SUPABASE_PROFILE` YAML file's `api_url:` value, which is validated
- * as a well-formed `http(s)://` URL but not stripped of embedded control
- * characters (`profile-load.ts` returns the raw matched string, not
- * a re-serialized one) — sanitized the same way `ref` already is, so a
- * crafted profile can't inject terminal control sequences via this message.
+ * Purpose-written messages for the status codes reading `GET /v2/projects/{ref}/config` most
+ * plausibly produces, shared by `config diff`/`pull`/`push`. The 404 case also hedges on
+ * `apiHost`, since a misconfigured API host may not serve this endpoint at all — and sanitizes
+ * it (not guaranteed free of control characters) like `ref`, so a crafted profile can't inject
+ * terminal escape sequences. Everything else falls back to `unexpectedStatusMessage`.
  */
 export function configReadStatusMessage(
   status: number,

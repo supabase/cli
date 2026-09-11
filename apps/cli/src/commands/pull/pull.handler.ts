@@ -65,8 +65,7 @@ import {
 } from "./pull.errors.ts";
 import type { PullFlags } from "./pull.command.ts";
 
-/** Error construction for `resolveConfigTarget` (`../../command-internal/project-target.ts`),
- *  keeping `pull`'s own minted tagged error classes (`pull.errors.ts`). */
+/** Wires `pull`'s own tagged error classes into `resolveConfigTarget`. */
 const pullTargetErrors = configTargetErrorsFor({
   notLinked: PullBranchNotLinkedError,
   parentRefInvalid: PullParentRefInvalidError,
@@ -81,31 +80,24 @@ const mapBranchResolveError = mapHttpError({
   statusMessage: unexpectedStatusMessage,
 });
 
-/** The union of every typed error the four Phase-3 step runners
- *  (`pull.steps.ts`) can fail with — keeps `firstFailureCause` (Phase 3, below)
- *  typed instead of erasing the error channel to `unknown`. */
+/** The union of every typed error the four step runners (`pull.steps.ts`) can fail with — keeps
+ *  `firstFailureCause` typed instead of erasing the error channel to `unknown`. */
 type PullStepFailureCause =
   | Effect.Error<ReturnType<typeof pullConfigStep>>
   | Effect.Error<ReturnType<typeof pullMigrationHistoryStep>>
   | Effect.Error<ReturnType<typeof pullDbStep>>
   | Effect.Error<ReturnType<typeof pullFunctionsStep>>;
 
-/** The config step's own machine payload, verbatim — `runPlan`'s fields plus
- *  the run's actual `{dryRun, declined}` disposition (unknown until the
- *  aggregated confirmation resolves). One call site so every one of the four
- *  places that builds a config `PullStepResult` (dry run, declined,
- *  and the real Phase 3 apply) shapes the payload identically. */
+/** The config step's own machine payload, verbatim — `runPlan`'s fields plus the run's actual
+ *  `{dryRun, declined}` disposition. One call site so every place that builds a config
+ *  `PullStepResult` shapes the payload identically. */
 const configPullPayloadFor = (runPlan: ConfigPullRunPlan, outcome: ConfigPullOutcome) =>
   configPullPayload(runPlan.changeSet, runPlan.scope, runPlan.plan, runPlan.context, outcome);
 
 /**
- * Emits the aggregate exactly like every non-failure disposition (dry run,
- * declined, or a fully-succeeded run) — text mode renders the aligned summary
- * block to stdout, machine mode reports one `output.success` envelope. The
- * mixed-failure disposition (Phase 4) does NOT use this: it needs the
- * text-mode render to still happen while machine mode instead feeds the
- * payload into `MachineErrorContext` ahead of a re-failed cause, so it is
- * inlined at that one call site instead of being folded in here.
+ * Emits the aggregate for every non-failure disposition (dry run, declined, or fully
+ * succeeded). The mixed-failure disposition is inlined separately instead, since machine mode
+ * there feeds the payload into `MachineErrorContext` ahead of a re-failed cause.
  */
 const pullEmit = (output: typeof Output.Service, aggregate: PullAggregate) =>
   output.format === "text"
@@ -113,13 +105,9 @@ const pullEmit = (output: typeof Output.Service, aggregate: PullAggregate) =>
     : output.success(pullSummaryMessage(aggregate), pullPayload(aggregate));
 
 /**
- * Runs `effect`, capturing a typed failure into `{kind: "failed", cause}`
- * instead of letting it propagate — but a defect or interruption in its
- * `Cause` propagates immediately via `Effect.failCause`, preserving the
- * original `Cause` (never swallowed as a mere per-step failure). Backs Phase
- * 3's partial-failure isolation: each of the four steps runs even when an
- * earlier one failed, and the ORIGINAL `Cause` of the first typed failure is
- * preserved (not rebuilt) for re-failing once every step has reported.
+ * Runs `effect`, capturing a typed failure into `{kind: "failed", cause}` instead of letting it
+ * propagate; a defect or interruption still propagates immediately via `Effect.failCause`. Lets
+ * every step run even when an earlier one failed, preserving the first failure to re-fail with.
  */
 function pullCaptureStep<A, E, R>(
   effect: Effect.Effect<A, E, R>,
@@ -142,12 +130,9 @@ function pullCaptureStep<A, E, R>(
 }
 
 /**
- * Appends `extra` to `result`'s own `failure.suggestion` on its own line —
- * never replacing whatever is already there. A no-op for a non-failed
- * result. Shared by `pullDbStepFailureResult`'s `--with-migration-history`
- * remedy and `pullWithRetryHint`'s generic per-step retry command below,
- * so both compose onto the same field in a fixed order without clobbering
- * each other.
+ * Appends `extra` to `result`'s own `failure.suggestion` on its own line, never replacing
+ * what's already there. A no-op for a non-failed result, so multiple suggestion sources can
+ * compose without clobbering each other.
  */
 function pullAppendSuggestion(result: PullStepResult, extra: string): PullStepResult {
   if (result.failure === undefined) {
@@ -164,28 +149,11 @@ function pullAppendSuggestion(result: PullStepResult, extra: string): PullStepRe
 }
 
 /**
- * The db step's own failure result, with one addition: when the underlying
- * cause is `DbPullMigrationConflictError` (the remote migration history
- * doesn't match local files), its built-in suggestion — a list of `supabase
- * migration repair` commands — never mentions the more direct fix `pull`
- * itself offers. `db pull` doesn't know it's being called from `pull`, so this
- * lives here rather than on the shared error class (still used by other
- * callers). Scoped to the `suggestion` field only; the underlying error class
- * and its own message/suggestion text are untouched.
- *
- * The suggested command names the exact target `pull` itself resolved
- * (`ref`, and `remoteLabel` when one was passed) via `pullWithMigrationHistoryCommand`
- * (`pull.aggregate.ts`) — omitting it would let a bare `supabase pull
- * --with-migration-history` rerun silently target the checkout's linked
- * project instead of whatever this run actually resolved (a branch, an
- * explicit different ref, ...), a data-safety concern given the command
- * writes to the remote migration history table.
- *
- * `workdir` relativizes any `writtenSoFar` migration path the underlying
- * `DbPullWriteError` may carry (populated when the migration file write
- * succeeded but the subsequent remote-history update failed) — threaded
- * through to `pullFailedStepResult` exactly like the `migration_history`
- * step's own `workdir` argument below.
+ * The db step's failure result, with one addition: when the cause is
+ * `DbPullMigrationConflictError`, appends a suggestion to rerun with `--with-migration-history`,
+ * naming the exact `ref`/`remoteLabel` this run resolved. A bare rerun could otherwise silently
+ * retarget the checkout's linked project instead, which matters since the command writes to the
+ * remote migration history table.
  */
 function pullDbStepFailureResult(
   cause: unknown,
@@ -204,11 +172,9 @@ function pullDbStepFailureResult(
 }
 
 /**
- * Appends the exact standalone command to retry just THIS failed step
- * (`pullRetryHint`, `pull.aggregate.ts`) on top of whatever the step's
- * own failure already says — including, for the db step, the
- * `--with-migration-history` remedy `pullDbStepFailureResult` may have
- * already appended above. A no-op for a non-failed result.
+ * Appends the standalone command to retry just this failed step on top of whatever the step's
+ * own failure already says — including, for the db step, the `--with-migration-history` remedy
+ * `pullDbStepFailureResult` may have already appended. A no-op for a non-failed result.
  */
 function pullWithRetryHint(
   result: PullStepResult,
@@ -219,12 +185,10 @@ function pullWithRetryHint(
 }
 
 /**
- * `supabase pull` — orchestrates `config pull`, an optional `migration
- * fetch`, `db pull`, and `functions download` behind one target resolution,
- * one confirmation, and one aggregated result (ADR 0024). See that ADR and
- * the command's `SIDE_EFFECTS.md` for the full side-effect inventory —
- * notably, the `db` step writes `supabase_migrations.schema_migrations` on
- * the REMOTE database, not just local files, and requires Docker.
+ * `supabase pull` orchestrates `config pull`, an optional `migration fetch`, `db pull`, and
+ * `functions download` behind one target resolution, one confirmation, and one aggregated
+ * result (see ADR 0024). The `db` step also writes to the remote database's migration history
+ * table and requires Docker.
  */
 export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
   const output = yield* Output;
@@ -245,24 +209,21 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
   let resolvedRef: string | undefined;
 
   yield* Effect.gen(function* () {
-    // Phase 0.1: reject the Go-compat `-o/--output` flag outright — `pull` is
-    // a net-new TS command with no Go parity contract (CLI-2156).
+    // Rejects `-o`/`--output` outright; `pull` only supports `--output-format`.
     if (Option.isSome(goOutputFlag)) {
       return yield* new PullOutputFlagUnsupportedError({
         message: unsupportedOutputFlagMessage("pull"),
       });
     }
 
-    // Phase 0.2: the resolved `--workdir`/`SUPABASE_WORKDIR` must exist and
-    // be a directory before anything else — beats every step's own target
+    // Must exist and be a directory before anything else — beats every step's own target
     // resolution and network calls.
     yield* validateWorkdirIsDirectory(cliSettings.workdir, fs).pipe(
       Effect.mapError((error) => new PullWorkdirError({ message: error.message })),
     );
 
-    // Phase 0.3-0.4: open the base config source, then resolve the pull
-    // target exactly once — every sub-step below targets `ref` directly
-    // instead of re-resolving (ADR 0024's "resolve once" decision).
+    // Resolves the pull target exactly once; every sub-step below targets `ref` directly
+    // instead of re-resolving (ADR 0024).
     const source = yield* openConfigPullSource();
     const { ref, branch } = yield* resolveConfigTarget(
       requested,
@@ -271,62 +232,45 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
     );
     resolvedRef = ref;
 
-    // Phase 1: preview. `planConfigPullRun` does everything up through
-    // the schema-validation gate — no git check, no prompt, no write.
+    // `planConfigPullRun` does everything up through the schema-validation gate: no git check,
+    // no prompt, no write.
     const runPlan = yield* planConfigPullRun({
       target: { ref, branch },
       remoteLabel,
       source,
     });
 
-    // Every retry hint below (Phase 3's `pullWithRetryHint`/`pullDbStepFailureResult`)
-    // names the PLANNED remote destination's label, never the raw `remoteLabel` flag
-    // value above — for a branch-derived implicit target, `runPlan.context.destination`
-    // names the `[remotes.<branch>]` block the plan actually targets even though
-    // `--remote-label` was never passed. Feeding the raw flag value back into a retry
-    // hint would target the wrong (or no) block on a bare rerun when the config step's
-    // own TOCTOU guard (or any other config-step failure) trips before that block is
-    // ever created. `undefined` for a root destination, matching the raw flag's own
-    // `undefined` for that case.
+    // Retry hints below use the planned remote destination's label, not the raw `remoteLabel`
+    // flag: for a branch-derived implicit target, that's the `[remotes.<branch>]` block the
+    // plan actually targets, which may differ from an unset `--remote-label`.
     const plannedRemoteLabel =
       runPlan.context.destination.kind === "remote" ? runPlan.context.destination.label : undefined;
 
-    // The config dirty check is scoped to whether the CONFIG step itself has
-    // work to write — mirrors `config pull`'s own guard (CLI-2064 bug A): a
-    // converged config (nothing to pull into the file) never spawns `git
-    // status` at all, so an uncommitted-but-otherwise-clean config file never
-    // aborts a pull that was never going to touch it.
+    // Only checks git status when the config step actually has work to write, so an
+    // uncommitted-but-otherwise-clean config file never aborts a pull that wasn't going to
+    // touch it.
     const configDirty =
       flags.force || !runPlan.hasWork
         ? false
         : Option.getOrElse(yield* pathHasUncommittedChanges(runPlan.configFilePath), () => false);
 
-    // Unlike the config step, the db step always attempts to run (no flag
-    // skips it) and has no preview machinery of its own — there is no way to
-    // know ahead of time whether it will find schema drift and actually write
-    // into `supabase/migrations` this invocation (ADR 0024's "resolve once,
-    // no preview for db/functions" scope). Gating this check on
-    // `shouldFetchMigrationHistory` alone would silently miss real
-    // uncommitted work whenever the db step is the one about to write, so the
-    // migrations directory is checked unconditionally instead — skipped only
-    // by `--force` — regardless of whether the migration-history step itself
-    // also runs this invocation.
+    // The db step always runs and has no preview machinery (ADR 0024), so migrations are
+    // checked unconditionally for uncommitted changes — not just when migration-history also
+    // runs — skipped only by `--force`.
     const migrationsDir = path.join(cliSettings.workdir, "supabase", "migrations");
     const migrationsDirty = flags.force
       ? false
       : Option.getOrElse(yield* pathHasUncommittedChanges(migrationsDir), () => false);
 
-    // The functions step always runs unconditionally too, with no "does it
-    // have work" signal at all without calling the API first — same
-    // unconditional treatment as migrations, minus the drift uncertainty.
+    // Functions always runs too, with no way to know if there's work without calling the API
+    // first — checked unconditionally like migrations.
     const functionsDir = path.join(cliSettings.workdir, "supabase", "functions");
     const functionsDirty = flags.force
       ? false
       : Option.getOrElse(yield* pathHasUncommittedChanges(functionsDir), () => false);
 
-    // Tracked separately (not collapsed into one boolean) so the confirmation
-    // body and the abort error can each name exactly which path(s) are dirty.
-    // Ordered config → migrations → functions, matching `PULL_STEP_ORDER`.
+    // Tracked separately (not collapsed into one boolean) so the confirmation body and the
+    // abort error can each name exactly which path(s) are dirty.
     const dirtyPaths: ReadonlyArray<string> = [
       ...(configDirty ? [runPlan.context.configPath] : []),
       ...(migrationsDirty ? ["supabase/migrations"] : []),
@@ -334,17 +278,11 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
     ];
     const dirty = dirtyPaths.length > 0;
 
-    // Auto-run migration history whenever `supabase/migrations` is missing or
-    // empty, even without `--with-migration-history` — the confirmed
-    // bootstrap-auto-run decision (ADR 0024): there is nothing to overwrite,
-    // and it is what makes a fresh checkout work by default. Mirrors
-    // `migration fetch`'s OWN "existing files" check exactly (a raw,
-    // unfiltered directory listing — NOT the filtered `loadLocalVersions`
-    // count `db diff`/`pull` reconciliation uses elsewhere) so the two can
-    // never disagree about whether the directory is "empty": a directory
-    // holding only a `README.md`/`.gitkeep`/deprecated `_init.sql` reads as
-    // non-empty here, exactly as it does to `migration fetch`'s own
-    // overwrite-confirmation guard.
+    // Auto-runs whenever `supabase/migrations` is missing or empty, even without
+    // `--with-migration-history` (ADR 0024's bootstrap decision): a fresh checkout has nothing
+    // to overwrite. Uses the same raw, unfiltered directory listing `migration fetch`'s own
+    // overwrite-confirmation guard uses, so a directory holding only a README/.gitkeep reads as
+    // non-empty in both places.
     const shouldFetchMigrationHistory = flags.withMigrationHistory
       ? true
       : (yield* fs.readDirectory(migrationsDir).pipe(
@@ -364,16 +302,13 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
         ? "flag"
         : "bootstrap";
 
-    // Phase 2: one confirmation, asymmetric preview (a real diff for config,
-    // a qualitative description for db/functions/migration-history).
+    // One confirmation with an asymmetric preview: a real diff for config, a qualitative
+    // description for db/functions/migration-history.
     //
-    // Rendered whenever the changeset has ANY change at all — not just when
-    // `runPlan.hasWork` (which can be `false` even with real changes present, when every
-    // one of them was skipped as an env-reference, an unpushable family, etc.). Gating on
-    // `hasWork` alone would silently fall back to "No config differences found." even
-    // though the diff found real (if unwritable) drift — mirrors standalone `config
-    // pull`'s own `!runPlan.hasWork` branch (`command-internal/config-pull-run.ts`'s
-    // `runConfigPull`), which renders `renderConfigPullText` regardless of `hasWork`.
+    // Rendered whenever the changeset has any change at all, not just when `runPlan.hasWork`
+    // (which can be `false` even with real changes, when every one was skipped as an
+    // env-reference, an unpushable family, etc.) — otherwise a real (if unwritable) diff would
+    // silently read as "No config differences found."
     const configDiffText =
       runPlan.changeSet.changes.length > 0
         ? renderConfigPullText(
@@ -393,10 +328,8 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
       dirtyPaths,
     });
 
-    // Printed once, ahead of BOTH the dry-run early return and the real
-    // confirmation prompt below, so a dry run sees the same disclosure body
-    // (config diff/no-diff, migration-history/db/functions lines, dirty
-    // warning) a real run would — not just the 4-row status summary.
+    // Printed ahead of both the dry-run early return and the real confirmation prompt, so a
+    // dry run sees the same disclosure body a real run would, not just the status summary.
     if (output.format === "text") {
       yield* output.raw(confirmBody);
     }
@@ -472,8 +405,8 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
       return;
     }
 
-    // Phase 3: execute. Each step is failure-isolated — one failing does not
-    // stop the rest from running and being reported.
+    // Each step is failure-isolated: one failing doesn't stop the rest from running and being
+    // reported.
     const stepContext: PullStepContext = { ref, assumeYes: true };
     let firstFailureCause: Cause.Cause<PullStepFailureCause> | undefined;
     const results: Array<PullStepResult> = [];
@@ -482,10 +415,8 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
     if (configCapture.kind === "ok") {
       results.push(
         pullConfigStepResult(
-          // `pullConfigStep` (`pull.steps.ts`) returns the plan's own
-          // ABSOLUTE `configFilePath` (`loaded.path`) — overridden here to the
-          // workdir-relative `context.configPath` `PullConfigStepOutcome`
-          // documents, matching the dry-run/declined branches above.
+          // `pullConfigStep` returns the plan's absolute `configFilePath`; overridden here to
+          // the workdir-relative path, matching the dry-run/declined branches above.
           { ...configCapture.value, configFilePath: runPlan.context.configPath },
           configPullPayloadFor(runPlan, { dryRun: false, declined: false }),
         ),
@@ -563,7 +494,6 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
       firstFailureCause ??= functionsCapture.cause;
     }
 
-    // Phase 4: aggregate, emit, exit.
     const aggregate = pullAggregate({
       ref,
       branch,
@@ -584,9 +514,8 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
     }
     return yield* Effect.failCause(firstFailureCause);
   }).pipe(
-    // CLI Invariant #1: telemetry flushes on EVERY invocation,
-    // including target-resolution failures; the linked-project cache write
-    // only fires once a ref has actually resolved.
+    // Telemetry flushes on every invocation, including target-resolution failures; the
+    // linked-project cache write only fires once a ref has resolved.
     Effect.ensuring(
       Effect.suspend(() =>
         resolvedRef === undefined ? Effect.void : linkedProjectCache.cache(resolvedRef),

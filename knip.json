@@ -19,8 +19,9 @@
       "ignore": [
         "scripts/*.ts",
         "tests/**/*.ts",
+        "src/shared/feedback/database.types.ts",
         "src/shared/telemetry/event-catalog.ts",
-        "src/shared/workers/stacks/**"
+        "src/shared/compute/stacks/**"
       ],
       "ignoreBinaries": ["mkfifo"],
       "ignoreDependencies": ["prettier"]

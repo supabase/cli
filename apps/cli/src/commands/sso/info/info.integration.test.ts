@@ -59,11 +59,6 @@ describe("sso info integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // Established output contract: the ACS URL row renders as
-  // `Single sign-on URL (ACS URL) | https://…` (single space before the
-  // column separator). An earlier attempt to preserve the markdown source's
-  // trailing space produced two spaces against our flat renderer's padding.
-  // Pin the exact byte sequence so it can't drift back.
   it.live("emits exactly one space between the ACS URL label and the column separator", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
@@ -104,7 +99,6 @@ describe("sso info integration", () => {
       expect(out.stdoutText).toContain('"acs_url"');
       expect(out.stdoutText).toContain('"entity_id"');
       expect(out.stdoutText).toContain('"relay_state"');
-      // Keys are alphabetized — acs_url should appear before entity_id.
       const acsIndex = out.stdoutText.indexOf("acs_url");
       const entityIndex = out.stdoutText.indexOf("entity_id");
       expect(acsIndex).toBeLessThan(entityIndex);

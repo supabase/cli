@@ -38,9 +38,6 @@ describe("globalFlagValues", () => {
         Effect.provide(layer),
         Effect.tap((values) =>
           Effect.sync(() => {
-            // The key set must exactly match GLOBAL_FLAGS's own ids —
-            // this is what fails loudly if the array grows without a matching
-            // read here.
             expect(Object.keys(values).sort()).toEqual(GLOBAL_FLAGS.map((flag) => flag.id).sort());
             expect(values).toEqual({
               agent: "yes",
@@ -86,11 +83,8 @@ describe("resolveDebugWithProjectEnv", () => {
   it.live(
     "ignores a --debug=false-style token after the -- operand terminator (not an explicit false)",
     () => {
-      // `DebugFlag: true` stands in for a REAL `--debug` occurrence before the `--`
-      // terminator; the trailing `--debug=false` is a positional operand (e.g. a migration
-      // name that happens to look like a flag) — `debugFlagExplicitlyFalse`'s
-      // `argsBeforeOperandTerminator` guard must never see it, so the resolved value stays
-      // the flag's own `true` rather than being flipped to `false`.
+      // `DebugFlag: true` stands in for a real `--debug` before the `--`; the trailing
+      // `--debug=false` is a positional operand (e.g. a migration name).
       const layer = Layer.mergeAll(
         Layer.succeed(DebugFlag, true),
         Layer.succeed(CliArgs, { args: ["db", "pull", "--", "--debug=false"] }),
@@ -109,10 +103,8 @@ describe("resolveDebugWithProjectEnv", () => {
   it.live(
     "ignores a --debug=false token consumed as another flag's value (e.g. --password)",
     () => {
-      // `--password` is a `VALUE_CONSUMING_LONG_FLAGS` entry, so real pflag semantics parse
-      // `--password --debug=false` as `--password`'s space-separated value being the literal
-      // string `"--debug=false"`, not a changed `--debug` — `nonValueConsumedTokens` must skip
-      // it, so the resolved value stays the flag's own `true`.
+      // `--password` is a `VALUE_CONSUMING_LONG_FLAGS` entry, so `--debug=false` here is its
+      // space-separated value, not a changed `--debug`.
       const layer = Layer.mergeAll(
         Layer.succeed(DebugFlag, true),
         Layer.succeed(CliArgs, { args: ["db", "pull", "--password", "--debug=false"] }),

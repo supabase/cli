@@ -13,21 +13,17 @@ import { resolveStorageCredentials } from "./storage-credentials.ts";
 import { resolveLocalConfigValues } from "./local-config-values.ts";
 
 /**
- * Cross-caller parity coverage: for a table of Go-parity misconfigurations, drives BOTH real
+ * Cross-caller parity coverage: for a table of shared misconfigurations, drives both real
  * pipelines — D (`readDbToml`, Effect/raw-TOML) and L (`resolveLocalConfigValues`,
- * `@supabase/config`-decoded) — and asserts they fail with the SAME shared error-message
- * substring, since both now route through the single `validateResolvedConfig`. The two
- * pipelines don't need byte-identical exception wrapping, just the same core Go-parity message
- * text (`.toContain(...)` on both sides with the same expected string). A third caller — the
- * storage-credentials resolver (S, `resolveStorageCredentials`) — shares the `api.port`
- * and `api.tls` presence branches through the exported helpers and the `auth.jwt_secret` /
- * `auth.service_role_key` resolution (length rule, `encrypted:` decryption); its own describe
- * block below drives that pipeline.
+ * `@supabase/config`-decoded) — and asserts they fail with the same error-message substring,
+ * since both route through the single `validateResolvedConfig`. A third caller, the
+ * storage-credentials resolver (S), shares the `api.port`/`api.tls` presence branches and the
+ * `auth.jwt_secret`/`auth.service_role_key` resolution; its own describe block below drives
+ * that pipeline.
  *
  * D's harness replicates the `withConfig`/`read`/`failsWith` pattern from
- * `db-config.toml-read.unit.test.ts` (file-local there, not exported — faithfully
- * reproduced here rather than imported). L's harness replicates the `baseConfig`/`WORKDIR`
- * pattern from `local-config-values.unit.test.ts` (same reasoning).
+ * `db-config.toml-read.unit.test.ts` (file-local there, not exported). L's harness replicates
+ * the `baseConfig`/`WORKDIR` pattern from `local-config-values.unit.test.ts`.
  */
 
 function withConfig(content: string) {
@@ -216,9 +212,8 @@ const scenarios: ReadonlyArray<ParityScenario> = [
         },
       },
     },
-    // D's assertion goes through `JSON.stringify(exit.cause)`, which backslash-escapes the
-    // message's embedded double quotes — trim the substring to the quote-free prefix, same
-    // convention D's own suite uses for this message.
+    // D's assertion runs the message through `JSON.stringify`, which backslash-escapes double
+    // quotes; trim to the quote-free prefix.
     message: "auth.hook.custom_access_token.secrets must be formatted as",
   },
   {
@@ -269,10 +264,8 @@ const scenarios: ReadonlyArray<ParityScenario> = [
   },
   {
     name: "auth.email.smtp present table missing a required field",
-    // Both pipelines read every smtp field straight off the raw TOML/document rather than a
-    // schema-decoded, always-defaulted value (this section's presence-based `enabled`
-    // default) — L needs the raw `document` (5th param) for this, matching D's raw
-    // smol-toml document.
+    // Both pipelines read every smtp field straight off the raw TOML/document, not a
+    // schema-decoded, always-defaulted value — L needs the raw `document` (5th param) for this.
     toml: ["[auth.email.smtp]", 'user = "u"'],
     overrides: { auth: { enabled: true, site_url: "http://localhost:3000" } },
     document: { auth: { email: { smtp: { user: "u" } } } },
@@ -286,11 +279,8 @@ const scenarios: ReadonlyArray<ParityScenario> = [
   },
   {
     name: "experimental.webhooks present without enabled = true",
-    // Both pipelines read webhooks presence from the raw document rather than the always-defaulted
-    // decoded `enabled` — L needs the raw `document` (5th param) for this,
-    // matching D's raw smol-toml document. D previously never populated `webhooksPresent`/
-    // `webhooksEnabled` on its `ExperimentalInput` at all, so this branch was D-unreachable
-    // (review: PRRT_kwDOErm0O86WE42i) — now shared like every other scenario in this table.
+    // Both pipelines read webhooks presence from the raw document rather than the
+    // always-defaulted decoded `enabled` — L needs the raw `document` (5th param) for this.
     toml: ["[experimental.webhooks]", "enabled = false"],
     overrides: { experimental: { webhooks: { enabled: false } } },
     document: { experimental: { webhooks: { enabled: false } } },
@@ -299,13 +289,12 @@ const scenarios: ReadonlyArray<ParityScenario> = [
   },
 ];
 
-// Explicitly SKIPPED (only one caller runs the branch, or the branch isn't exercised the same
-// way by both — see the module header in `config-validate.ts` for the full explicitly
-// out-of-scope list):
+// Explicitly skipped (only one caller runs the branch, or the branch isn't exercised the same
+// way by both — see the module header in `config-validate.ts` for the full out-of-scope list):
 // - `remotes[*].project_id`, `auth.sms`, `auth.external` — D-only, never part of the shared
 // validator (`ConfigValidationInput` has no fields for these at all).
 // - `project_id`, `studio`, `local_smtp` — L-only, D has no equivalent sections. `api.tls`
-// presence is D-skipped for the same reason but IS shared with S via
+// presence is D-skipped for the same reason but is shared with S via
 // `validateApiTlsPresence` — see the S block below.
 describe("validateResolvedConfig cross-caller parity (D vs L)", () => {
   for (const scenario of scenarios) {
@@ -318,11 +307,10 @@ describe("validateResolvedConfig cross-caller parity (D vs L)", () => {
   }
 });
 
-// The `api.port` branch is L-only in the D-vs-L table above (D has no api section), but it is
-// now ALSO shared with the storage-credentials resolver (S) through `validateApiPort`
-// (#6467 review), as are the `auth.jwt_secret` length rule and `encrypted:` decryption
-// (#6467 follow-up). Drive S's real pipeline and L against the same misconfiguration and assert
-// the identical message, so the shared branches cannot drift for either caller.
+// The `api.port` branch is L-only in the table above (D has no api section) but is shared with
+// the storage-credentials resolver (S) through `validateApiPort`, as are the `auth.jwt_secret`
+// length rule and `encrypted:` decryption. Drive S and L against the same misconfiguration and
+// assert the identical message, so the shared branches cannot drift.
 describe("shared api + auth validation branches, cross-caller parity (S vs L)", () => {
   /** Drives S's real pipeline (`resolveStorageCredentials`, local branch) to failure. */
   const failsWithS = (config: CliConfig, message: string) =>

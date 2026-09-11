@@ -1,26 +1,14 @@
 import { CliConfigSchema } from "../base.ts";
 
-/**
- * Schema-derived `x-secret` leaf paths under {@link CliConfigSchema}, and the
- * predicate built on top of them. Extracted from `../project.ts` (CLI-2230's
- * secret-omission finding): `../project.ts` sits outside the pure browser-safe
- * graph (`../entrypoint-purity.unit.test.ts`'s `expectedPureGraphFiles`) — it
- * imports `effect`'s `FileSystem`/`Redacted` platform surface — while
- * `../project-config/project-config.ts` (which needs this same predicate to
- * omit secret leaves from a document-sourced `ProjectConfig`) is itself part
- * of that pure graph. Moving the collector here, rather than duplicating it,
- * gives both callers one source of truth for "which `CliConfig` paths are
- * `x-secret`", per this repo's policy of moving code to its correct owner
- * over duplicating it.
- */
+// Lives here (not `../project.ts`) so `../project-config/project-config.ts`, which needs the
+// same secret predicate, doesn't have to import `../project.ts`'s platform-specific graph.
 function collectSecretPathPatterns(
   node: unknown,
   prefix: ReadonlyArray<string> = [],
 ): Array<ReadonlyArray<string>> {
-  // The walker narrows each AST piece structurally instead of asserting a
-  // node shape: an AST change then makes the walk find nothing (which the
-  // exhaustive secret-strip test catches as a vanished pattern set) rather
-  // than silently reading through a stale asserted shape.
+  // Narrows each AST piece structurally rather than asserting a shape, so an AST change makes
+  // the walk find nothing (caught by the exhaustive secret-strip test) instead of silently
+  // reading through a stale assertion.
   const patterns: Array<ReadonlyArray<string>> = [];
   if (!isAstNodeLike(node)) {
     return patterns;
@@ -64,14 +52,8 @@ function isAstNodeLike(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Derived from `CliConfigSchema` once, at module load — the schema's
- * annotations are the single source of truth for which paths are secret; no
- * hand-maintained list exists alongside it. A pattern segment is either a
- * literal key or `"*"` (a dynamic `Schema.Record` key, e.g. `db.vault.*`,
- * `edge_runtime.secrets.*`, `remotes.*.auth.jwt_secret`). Exported (beyond
- * {@link isSecretPath}) so `../project-config/project-config.unit.test.ts`
- * can build an exhaustive secret-strip probe from the same source of truth,
- * rather than a second hand-picked field list.
+ * Every `x-secret` leaf path in {@link CliConfigSchema}, derived once at module load. A pattern
+ * segment is either a literal key or `"*"` for a dynamic `Schema.Record` key (e.g. `db.vault.*`).
  */
 export const secretPathPatterns = collectSecretPathPatterns(CliConfigSchema.ast);
 

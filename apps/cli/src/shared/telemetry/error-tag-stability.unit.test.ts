@@ -4,43 +4,19 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 
 /**
- * Guards the telemetry identity of every CLI error.
+ * Guards the telemetry identity of every CLI error: the string passed to
+ * `Data.TaggedError("...")` becomes `error_fingerprint` on the `cli_command_executed` event, so
+ * changing it (not renaming the class) silently splits one error's history into two
+ * fingerprints, undetected until dashboards look wrong.
  *
- * The string passed to `Data.TaggedError("...")` is not cosmetic: it flows
- * straight into the `error_fingerprint` property on the `cli_command_executed`
- * PostHog event (as `tag:<TagName>`, sometimes with a `:suffix`). Renaming the
- * *class* is free -- the tag is looked up independently by convention, not by
- * class identity -- but changing the *string literal* silently splits one
- * error's history into two fingerprints with no error, no warning, and no
- * easy way to notice until repeat-rate/trend dashboards look wrong months
- * later.
+ * Enumerates every production `Data.TaggedError` tag under `apps/cli/src` and
+ * `packages/config/src`, resolving tags built via template interpolation
+ * (`mintConfigTargetErrors`) at runtime by constructing each class — see
+ * {@link collectComputedTagDeclarations}. Compares the set against the committed
+ * `__fixtures__/error-tags.txt` snapshot.
  *
- * This suite enumerates every production `Data.TaggedError("...")`
- * declaration reachable from `apps/cli/src` (including the multi-line form
- * the formatter produces for long class names), PLUS:
- *
- * - the tags `mintConfigTargetErrors` (`command-internal/project-target.ts`)
- *   computes via template interpolation (`` Data.TaggedError(`${prefix}...`)
- *   ``), which a source-text regex can never see. Those are collected at
- *   RUNTIME instead, by importing each known caller module and reading the
- *   real `_tag` off a constructed instance -- see
- *   {@link collectComputedTagDeclarations}.
- * - the external tags declared by `@supabase/config`
- *   (`packages/config/src/errors.ts`), which `externalActionabilityByTag` in
- *   `error-actionability.ts` also treats as telemetry identities.
- *
- * and compares the resulting set of tag literals against the committed
- * snapshot in `__fixtures__/error-tags.txt`.
- *
- * Known gap (deliberately not closed): the snapshot is a SET of tags, not an
- * owner-to-tag mapping, so it cannot detect two classes swapping tags with
- * each other in the same change (each tag still exists, just attached to the
- * other class). Recording an owner->tag mapping would close that gap, but at
- * the cost of failing on ordinary, safe class renames -- which is exactly
- * the false positive this suite exists to eliminate. That failure mode is
- * real but vanishingly unlikely (it requires two tags to swap in a single
- * commit and both survive review), so it is accepted rather than designed
- * around.
+ * Known gap: the snapshot is a set, not an owner-to-tag mapping, so two classes swapping tags
+ * in one change would pass undetected — accepted to avoid breaking ordinary class renames.
  */
 
 const cliSrcDir = fileURLToPath(new URL("../..", import.meta.url));
@@ -65,12 +41,9 @@ const TEST_FILE_SUFFIXES = [
 ] as const;
 
 /**
- * The production callers whose tags `mintConfigTargetErrors` computes via
- * template interpolation (`command-internal/project-target.ts`'s doc
- * comment). Paths are relative to `cliSrcDir`. Every exported class in these
- * modules -- minted or plain-literal alike -- is resolved at runtime instead
- * of by static regex, so this list is also the source of truth for which
- * files {@link collectStaticDeclarations} must skip to avoid double-counting.
+ * Files whose tags `mintConfigTargetErrors` computes via template interpolation, resolved at
+ * runtime instead of by static regex. Also the list {@link collectStaticDeclarations} skips to
+ * avoid double-counting. Paths are relative to `cliSrcDir`.
  */
 const COMPUTED_TAG_SOURCE_FILES: ReadonlyArray<string> = [
   "commands/config/pull/pull.errors.ts",
@@ -101,11 +74,9 @@ function isProductionSourceFile(filePath: string): boolean {
 }
 
 /**
- * Statically regexes every `Data.TaggedError("...")` string-literal
- * declaration out of the given production files. Deliberately skips
- * `COMPUTED_TAG_SOURCE_FILES` -- their tags (both minted and plain-literal)
- * come from {@link collectComputedTagDeclarations} instead, so a file never
- * contributes the same declaration through both paths.
+ * Statically regexes every `Data.TaggedError("...")` string-literal declaration out of the
+ * given production files, skipping `COMPUTED_TAG_SOURCE_FILES` (those come from
+ * {@link collectComputedTagDeclarations} instead) so a file never contributes twice.
  */
 function collectStaticDeclarations(
   filePaths: ReadonlyArray<string>,
@@ -128,17 +99,12 @@ function collectStaticDeclarations(
 }
 
 /**
- * Runtime half of the computed-tag guard: imports each
- * `COMPUTED_TAG_SOURCE_FILES` module and walks `Object.entries` over its
- * exports, constructing anything that looks like a `Data.TaggedError` class
- * to read its real, fully-interpolated `_tag` off the instance. A source-text
- * regex cannot see `` Data.TaggedError(`${prefix}BranchNotFoundError`) `` --
- * this can, because it runs the interpolation instead of parsing around it.
+ * Runtime half of the computed-tag guard: imports each `COMPUTED_TAG_SOURCE_FILES` module,
+ * constructs every exported class, and reads its real, fully-interpolated `_tag` off the
+ * instance — a source-text regex can't see `` Data.TaggedError(`${prefix}...`) ``.
  *
- * Every export in these modules is a `Data.TaggedError`-derived class taking
- * a plain args object (see each file), so `new Export({})` is safe: the
- * generated base constructor never validates its shape at runtime, it only
- * assigns whatever properties are present.
+ * `new Export({})` is safe because every export here is a `Data.TaggedError`-derived class
+ * whose generated constructor assigns whatever properties are present without validating them.
  */
 async function collectComputedTagDeclarations(): Promise<Array<TaggedErrorDeclaration>> {
   const declarations: Array<TaggedErrorDeclaration> = [];
@@ -161,9 +127,8 @@ async function collectComputedTagDeclarations(): Promise<Array<TaggedErrorDeclar
   return declarations;
 }
 
-/** Single comparator used for both the committed fixture and the live scan, so a
- * `localeCompare`-vs-default-sort mismatch can never make an order-sensitive
- * comparison lie (see `readSnapshotTags`/regeneration below). */
+/** Shared comparator for the fixture and the live scan, so a `localeCompare`-vs-default-sort
+ * mismatch can't make the comparison lie. */
 function compareTags(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
@@ -233,14 +198,10 @@ describe("error tag stability", () => {
     const productionDeclarations = await collectProductionDeclarations();
 
     /**
-     * Tags that more than one production class intentionally shares. Keyed
-     * on the TAG -- the actual telemetry identity -- never on today's class
-     * names: this suite's whole premise is that class names are free to
-     * rename, so gating "is this collision fine" on the CURRENT names would
-     * itself break the very first time someone does a legitimate rename of
-     * one of the two classes below while correctly preserving the tag. Add
-     * an entry here only when two classes are deliberately meant to report
-     * as the same fingerprint.
+     * Tags shared by more than one production class, keyed on the tag itself rather than
+     * today's class names — keying on names would break the first time either class is
+     * legitimately renamed. Add an entry only when two classes are meant to share a
+     * fingerprint.
      */
     const allowedSharedTags: ReadonlySet<string> = new Set([
       // shared/functions/download.errors.ts and delete.errors.ts both

@@ -127,12 +127,9 @@ describe("restartServicesAndReloadKong", () => {
             restarted.push(args[1] ?? "");
             inFlight++;
             if (inFlight === 4) yield* Deferred.succeed(barrier, undefined);
-            // Every one of the four restarts blocks here until ALL FOUR are in flight
-            // simultaneously (Go's `utils.WaitAll`, a goroutine per service — reset.go:259-271).
-            // If `restartSatelliteServices` ever regressed to a sequential restart (e.g.
-            // `concurrency: 1`), the second restart would never even be DISPATCHED until the
-            // first resolves, so `inFlight` would never reach 4 and this `await` would hang
-            // forever, timing out the test instead of silently passing.
+            // Each restart blocks here until all four are in flight simultaneously. A
+            // sequential restart would never dispatch the second call until the first resolves,
+            // so `inFlight` would never reach 4 and this await would hang forever.
             yield* Deferred.await(barrier);
           } else if (args[0] === "container" && args[1] === "inspect" && args[2] === KONG_ID) {
             // Kong excluded from the stack — skips the reload, keeping this test focused on
@@ -284,14 +281,13 @@ describe("restartServicesAndReloadKong", () => {
       Effect.map((error) => {
         expect(error).toBeInstanceOf(KongReloadError);
         if (!(error instanceof KongReloadError)) return;
-        // Byte-matches Go: `DockerExecOnceWithStream` sets a fixed `error executing command`
-        // for a non-zero exec exit code (`utils/docker.go:646-648`) — not the exit code itself.
+        // A non-zero exec exit code surfaces as the fixed `error executing command` text, not the
+        // exit code itself.
         expect(error.message).toContain("failed to reload kong: error executing command");
         expect(error.message).toContain("nginx: [error] invalid config");
         expect(error.suggestion).toContain(`docker restart ${KONG_ID}`);
-        // Pins the `--nginx-conf` flag (reset.go:269, reset_test.go:512) — a bare
-        // `kong reload` regenerates nginx.conf from Kong's default template and
-        // drops the custom `email_templates` server, reintroducing #6059.
+        // A bare `kong reload` regenerates nginx.conf from Kong's default template and drops the
+        // custom `email_templates` server, so the `--nginx-conf` flag is required.
         expect(mock.spawned).toContainEqual([
           "exec",
           KONG_ID,

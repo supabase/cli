@@ -20,8 +20,8 @@ import {
 } from "../state/SecretStore.ts";
 
 /**
- * The runtime-facing contract deliberately contains no Docker/native concepts. Concrete drivers
- * own resources; this controller owns accepted durable intent and lifecycle transitions.
+ * The runtime-facing contract has no Docker/native concepts. Concrete drivers own resources;
+ * this controller owns accepted durable intent and lifecycle transitions.
  */
 export interface LifecycleInput {
   readonly stackId: StackId;
@@ -55,10 +55,9 @@ export interface LifecycleController {
   readonly start: (
     options?: LifecycleStartOptions,
   ) => Effect.Effect<PersistedStackState, StackError, LifecycleRequirements>;
-  // Each invocation builds a fresh read/transition effect while sharing the controller semaphore.
-  // oxlint-disable-next-line effecttsgo/lazy-effect
+  // oxlint-disable-next-line effecttsgo/lazy-effect -- fresh effect per call; callers serialize with their own semaphore.
   readonly stop: () => Effect.Effect<PersistedStackState, StackError, LifecycleRequirements>;
-  // oxlint-disable-next-line effecttsgo/lazy-effect
+  // oxlint-disable-next-line effecttsgo/lazy-effect -- fresh effect per call; callers serialize with their own semaphore.
   readonly destroy: () => Effect.Effect<void, StackError, LifecycleRequirements>;
 }
 

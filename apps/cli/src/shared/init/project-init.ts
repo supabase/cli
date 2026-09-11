@@ -23,9 +23,8 @@ function sanitizeProjectId(src: string): string {
   return truncateText(sanitized, maxProjectIdLength);
 }
 
-// Mirrors Go's `jsonc.ToJSONInPlace` (github.com/tidwall/jsonc): strips line and
-// block comments and trailing commas while preserving string contents, so an
-// existing JSONC settings file parses exactly as it does in the Go CLI.
+// Strips line and block comments and trailing commas while preserving
+// string contents, so an existing JSONC settings file parses correctly.
 function stripJsonComments(contents: string): string {
   const src = contents.replace(/^\uFEFF/, "");
   const out: Array<string> = [];
@@ -34,7 +33,6 @@ function stripJsonComments(contents: string): string {
   while (i < src.length) {
     const char = src.charAt(i);
 
-    // String literal \u2014 copy verbatim, honoring escape sequences.
     if (char === '"') {
       pendingCommaIndex = -1;
       out.push(char);
@@ -55,7 +53,6 @@ function stripJsonComments(contents: string): string {
       continue;
     }
 
-    // Line comment.
     if (char === "/" && src.charAt(i + 1) === "/") {
       i += 2;
       while (i < src.length && src.charAt(i) !== "\n") {
@@ -64,7 +61,6 @@ function stripJsonComments(contents: string): string {
       continue;
     }
 
-    // Block comment.
     if (char === "/" && src.charAt(i + 1) === "*") {
       i += 2;
       while (i < src.length && !(src.charAt(i) === "*" && src.charAt(i + 1) === "/")) {
@@ -110,9 +106,9 @@ const decodeJsonObject = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
 );
 
-// Parses a settings file through a Schema boundary so malformed JSON surfaces as
-// a typed `InitParseSettingsError` (recoverable, never a fiber defect) and a
-// non-object document is rejected \u2014 matching Go's `json.Decoder` into a map.
+// Parses a settings file through a Schema boundary so malformed JSON surfaces
+// as a typed `InitParseSettingsError` (never a fiber defect) and a
+// non-object document is rejected.
 function parseJsonObject(pathname: string, contents: string) {
   return decodeJsonObject(stripJsonComments(contents)).pipe(
     Effect.mapError(
@@ -131,22 +127,18 @@ export interface ProjectInitOptions {
   readonly useOrioledb: boolean;
   readonly interactive: boolean;
   /**
-   * Auto-confirms the interactive IDE-settings prompts, mirroring Go's
-   * `viper.GetBool("YES")` branch inside `PromptYesNo` (`console.go:70-72`):
-   * with `--yes`/`SUPABASE_YES`, `init -i` echoes the accepted VS Code prompt
-   * to stderr and writes the settings instead of blocking on a TTY (CLI-1974).
-   * Callers without a `--yes` flag pass `false`.
+   * Auto-confirms the interactive IDE-settings prompts: with `--yes`/
+   * `SUPABASE_YES`, `init -i` echoes the accepted VS Code prompt to stderr
+   * and writes the settings instead of blocking on a TTY. Callers without a
+   * `--yes` flag pass `false`.
    */
   readonly yes: boolean;
   readonly withVscodeSettings: boolean;
   readonly withIntellijSettings: boolean;
 }
 
-// Go pins every init-scaffolded file to 0644 and every directory to 0755
-// (`internal/init/init.go:89,121,138,151,166` via `utils.WriteFile`/
-// `MkdirIfNotExistFS`, `internal/utils/misc.go:273,281-284`; config.toml at
-// `internal/utils/config.go:234,243`). Node's umask-masked defaults coincide
-// under the common `022`, but pin explicitly to match Go under any umask.
+// Files/directories are pinned to 0644/0755 explicitly rather than relying
+// on Node's umask-masked defaults, which only coincide under the common 022.
 const INIT_FILE_MODE = 0o644;
 const INIT_DIR_MODE = 0o755;
 
@@ -228,11 +220,7 @@ export const writeIntelliJConfig = Effect.fnUntraced(function* (
   }
 });
 
-// Mirrors Go's `PromptForIDESettings` (`apps/cli-go/internal/init/init.go:61-75`,
-// deleted in CLI-1970; last present at commit 7b469f5b3):
-// both questions go through `PromptYesNo`, so `--yes`/`SUPABASE_YES` auto-accepts
-// the VS Code prompt with the `[Y/n] y` stderr echo and never reaches the
-// IntelliJ one — Go returns after writing the VS Code settings (CLI-1974).
+// `--yes`/`SUPABASE_YES` auto-accepts the VS Code prompt without reaching IntelliJ.
 const promptForIdeSettings = Effect.fnUntraced(function* (cwd: string, yes: boolean) {
   const output = yield* Output;
 
@@ -276,27 +264,24 @@ const ensureSupabaseGitignore = Effect.fnUntraced(function* (cwd: string) {
     if (existing.includes(INIT_GITIGNORE_TEMPLATE)) {
       return;
     }
-    // Go always prepends a line break when appending to an existing file, even
-    // an empty one (`apps/cli-go/internal/init/init.go:80-96`, deleted in
-    // CLI-1970; last present at commit 7b469f5b3: the `err == nil`
-    // branch of `FileContainsBytes` covers empty files too).
+    // Always prepends a line break before appending, even to an empty file,
+    // producing a leading blank line in that case.
     yield* fs.writeFileString(gitignorePath, `${existing}\n${INIT_GITIGNORE_TEMPLATE}`);
     return;
   }
 
-  // The append branch above deliberately passes no mode: the file already
-  // exists there, and `writeFile`'s mode only applies at creation (as does
-  // Go's `OpenFile(..., os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)`).
+  // No mode here: the file already exists, and `writeFileString`'s mode only
+  // applies at creation.
   yield* fs.writeFileString(gitignorePath, INIT_GITIGNORE_TEMPLATE, { mode: INIT_FILE_MODE });
 });
 
 /**
  * Scaffolds the local project files (config.toml, .gitignore, optional IDE
- * settings). This owns the mechanical filesystem work only — it does not decide
- * how an already-initialized project is reported. When `config.toml` already
- * exists and `force` is not set it short-circuits with `created: false` and
- * writes nothing, leaving the caller free to treat that as a hard error (Go
- * parity) or a graceful no-op.
+ * settings). This owns the mechanical filesystem work only — it does not
+ * decide how an already-initialized project is reported. When
+ * `config.toml` already exists and `force` is not set it short-circuits
+ * with `created: false` and writes nothing, leaving the caller free to
+ * treat that as a hard error or a graceful no-op.
  */
 export const initProject = Effect.fnUntraced(function* (options: ProjectInitOptions) {
   const fs = yield* FileSystem.FileSystem;
@@ -322,14 +307,11 @@ export const initProject = Effect.fnUntraced(function* (options: ProjectInitOpti
   );
   yield* ensureSupabaseGitignore(options.cwd);
 
-  // Go gates the IDE prompts on `-i` plus a TTY stdin only (`cmd/init.go:40`).
-  // TS additionally requires text mode (json/stream-json runs stay payload-only
-  // and never scaffold IDE settings as an undisclosed side effect) and — because
-  // clack renders its prompt UI on stdout, unlike Go's stderr prompts — an
-  // interactive stdout. `yes` lifts the stdout requirement: no clack prompt is
-  // rendered when the answer is auto-confirmed (the `[Y/n] y` echo goes to
-  // stderr), so `init -i --yes` with a piped stdout writes the VS Code settings
-  // exactly like Go (CLI-1974).
+  // Requires text mode (json/stream-json stay payload-only and never scaffold
+  // IDE settings as an undisclosed side effect) and an interactive stdout,
+  // since clack renders its prompt UI there. `yes` lifts the stdout
+  // requirement: no prompt renders when the answer is auto-confirmed, so
+  // `init -i --yes` with a piped stdout still writes the VS Code settings.
   const effectiveInteractive =
     options.interactive &&
     tty.stdinIsTty &&

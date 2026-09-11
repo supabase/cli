@@ -245,9 +245,6 @@ describe("withCommandTelemetry", () => {
   });
 
   it.live("records a flag set via its shorthand under the canonical name", () => {
-    // Go's changedFlags() uses pflag Visit, which reports the canonical `schema`
-    // name even when the user typed the `-s` shorthand (cmd/db.go:506). The alias
-    // map lets the TS instrumentation match the single-dash form.
     const analytics = mockContextualAnalytics();
 
     return Effect.void.pipe(
@@ -267,7 +264,6 @@ describe("withCommandTelemetry", () => {
       Effect.tap(() =>
         Effect.sync(() => {
           const event = analytics.captured[0];
-          // Slice flag stays redacted (not an EnumFlag/bool), but it IS recorded.
           expect(event?.properties.flags).toEqual({ schema: "<redacted>" });
         }),
       ),
@@ -275,8 +271,6 @@ describe("withCommandTelemetry", () => {
   });
 
   it.live("records db dump shorthand flags (-x/-f) under their canonical names", () => {
-    // db dump declares -s/-x/-f/-p shorthands; Go's changedFlags() reports the
-    // canonical long names, so the instrumentation alias map must map all of them.
     const analytics = mockContextualAnalytics();
 
     return Effect.void.pipe(
@@ -303,8 +297,6 @@ describe("withCommandTelemetry", () => {
   });
 
   it.live("records db query shorthand -f under its canonical name file", () => {
-    // db query declares only the -f/file shorthand; Go's changedFlags() reports the
-    // canonical `file`, so `db query -f query.sql` must log `file`, not `f`.
     const analytics = mockContextualAnalytics();
 
     return Effect.void.pipe(
@@ -331,8 +323,6 @@ describe("withCommandTelemetry", () => {
   });
 
   it.live("records declarative generate shorthands -s/-p under canonical names", () => {
-    // Go registers --schema/-s and --password/-p (cmd/db_schema_declarative.go:495,500);
-    // changedFlags() reports the canonical schema/password.
     const analytics = mockContextualAnalytics();
 
     return Effect.void.pipe(
@@ -368,8 +358,6 @@ describe("withCommandTelemetry", () => {
   });
 
   it.live("records declarative sync shorthands -s/-f under canonical names", () => {
-    // Go registers --schema/-s and --file/-f (cmd/db_schema_declarative.go:484-485);
-    // changedFlags() reports the canonical schema/file.
     const analytics = mockContextualAnalytics();
 
     return Effect.void.pipe(
@@ -499,7 +487,6 @@ describe("withCommandTelemetry", () => {
     "passes a Flag.withDefault-wrapped Flag.choice value through verbatim (Map(Optional(Single)))",
     () => {
       const analytics = mockContextualAnalytics();
-      // Mirrors gen signing-key's real `algorithm` flag construction exactly —
       // `.pipe(Flag.withDefault(...))` composes as `Map(Optional(Single))`.
       const config = {
         algorithm: Flag.choice("algorithm", ["RS256", "ES256"] as const).pipe(
@@ -533,9 +520,6 @@ describe("withCommandTelemetry", () => {
     "resolves a Flag.choice's shorthand alias to its canonical name (Go parity: pflag.Visit)",
     () => {
       const analytics = mockContextualAnalytics();
-      // Mirrors sso add's real `type` flag construction exactly — `-t` is a
-      // registered alias (Flag.withAlias("t")) that must be mapped to the
-      // canonical "type" name for extractChangedFlagNames to record it at all.
       const config = {
         type: Flag.choice("type", ["saml"] as const).pipe(Flag.withAlias("t")),
       };
@@ -693,9 +677,8 @@ describe("withCommandTelemetry", () => {
   });
 
   it.live("propagates fiber interruption from telemetry capture", () => {
-    // A capture failure or defect is swallowed (best-effort telemetry), but an
-    // interruption landing during the trailing capture must not be — the fiber
-    // is being cancelled and swallowing would fight the cancellation.
+    // A capture failure or defect is swallowed (best-effort telemetry), but an interruption
+    // landing during the trailing capture must not be.
     return Effect.void.pipe(
       withCommandTelemetry(),
       Effect.provide(interruptingAnalytics()),
@@ -717,11 +700,6 @@ describe("withCommandTelemetry", () => {
   });
 
   it.live("classifies db lint machine-mode fail-on like its typed text-mode error", () => {
-    // Go records the telemetry exit code from the real process exit code
-    // (`cmd/root.go:177` -> `exitCode(err)` = 1). `db lint`/`db advisors` set
-    // ProcessControl's exit code in json/stream-json mode after a --fail-on
-    // trigger and return success (to keep the machine payload on stdout intact),
-    // so the instrumentation must report 1, not the Effect's success.
     const analytics = mockContextualAnalytics();
     const processControl = mockProcessControl();
 
@@ -781,12 +759,8 @@ describe("withCommandTelemetry", () => {
   });
 
   it.live("classifies a command that sets its exit code outside the instrumentation", () => {
-    // `db dump` converts its run failure into an exit code in the command pipe
-    // (`Effect.catchTag(...)` applied AFTER this wrapper), not inside the
-    // handler like `db lint`/`db advisors`. Instrumentation is the innermost
-    // wrapper, so it still sees the typed failure and must classify it rather
-    // than fall back to the process-controlled `unknown` bucket. Reordering
-    // that pipe would silently degrade this command's telemetry.
+    // Instrumentation is the innermost wrapper here, so it still sees `db dump`'s typed failure
+    // and must classify it rather than falling back to the process-controlled `unknown` bucket.
     const analytics = mockContextualAnalytics();
     const processControl = mockProcessControl();
     const failure = new DbDumpRunError({ message: "container exited 1" });
@@ -850,11 +824,6 @@ describe("withCommandTelemetry", () => {
   it.live(
     "records config diff --exit-code drift (exit 2) truthfully, without failure metadata",
     () => {
-      // `config diff --exit-code` sets ProcessControl's exit code to 2 to signal
-      // drift WITHOUT failing the Effect (diff.handler.ts's own 0/1/2 convention:
-      // 2 means "drift found", not "command failed"). That is the command's own
-      // successful outcome, not a process-controlled failure — it must not
-      // collapse to 1 or attach db lint/db advisors-style failure classification.
       const analytics = mockContextualAnalytics();
       const processControl = mockProcessControl();
 
@@ -920,10 +889,7 @@ describe("withCommandTelemetry", () => {
   );
 
   it.live("classifies a config diff load failure normally (exit 1, cause-derived metadata)", () => {
-    // A real command failure on `config diff` (e.g. an unparseable config
-    // file) must not be swept into the drift-signal exception above — it
-    // still fails the Effect, so recordedExitCode stays 1 with the usual
-    // cause-derived classification.
+    // Must not be swept into the drift-signal exception above — this still fails the Effect.
     const analytics = mockContextualAnalytics();
     const failure = new ConfigDiffLoadConfigError({ message: "invalid config" });
 
@@ -998,7 +964,6 @@ describe("withCommandTelemetry", () => {
         Effect.sync(() => {
           const event = analytics.captured[0];
           const flags = event?.properties.flags as Record<string, unknown>;
-          // Keys should be insertion-ordered alphabetically.
           expect(Object.keys(flags)).toEqual(["project-ref", "timestamp"]);
         }),
       ),
@@ -1024,7 +989,6 @@ describe("withCommandTelemetry", () => {
           expect((error as InvalidOutputFormatError).message).toBe(
             'invalid argument "table" for "-o, --output" flag: must be one of [ env | pretty | json | toml | yaml ]',
           );
-          // Go rejects at parse time, before telemetry — so no event is emitted.
           expect(analytics.captured).toEqual([]);
         }),
       ),
@@ -1050,10 +1014,6 @@ describe("withCommandTelemetry", () => {
       ),
     );
   });
-
-  // Identity stitching parity: Go's Execute() reads s.distinctID() after the
-  // command handler runs (cmd/root.go:177) and the post-run cli_command_executed
-  // capture uses the stitched id. Mirror that with Effect.serviceOption.
 
   it.live("attributes cli_command_executed to the stitched gotrue id", () => {
     const analytics = mockContextualAnalytics();
@@ -1122,8 +1082,6 @@ describe("withCommandTelemetry", () => {
   it.live(
     "does not require IdentityStitch — capture fires and distinct_id is absent when service is not provided",
     () => {
-      // Proves Effect.serviceOption adds no hard R requirement: the stitch layer is
-      // intentionally absent and the instrumentation must still fire the event.
       const analytics = mockContextualAnalytics();
 
       return Effect.void.pipe(
@@ -1133,7 +1091,6 @@ describe("withCommandTelemetry", () => {
         Effect.provide(mockOutput({ format: "text" }).layer),
         Effect.provide(Stdio.layerTest({ args: Effect.succeed(["backups", "list"]) })),
         Effect.provide(commandRuntimeLayer(["backups", "list"])),
-        // Note: no stitch layer provided — serviceOption must default to None
         Effect.tap(() =>
           Effect.sync(() => {
             expect(analytics.captured).toHaveLength(1);
@@ -1144,14 +1101,7 @@ describe("withCommandTelemetry", () => {
     },
   );
 
-  // Value-consuming flag skip parity: Go's pflag.Changed records only the flag
-  // name, not the value token that follows it in space-separated form.
-  // `--schema --linked` must record only `schema` (--linked is the value for
-  // --schema, consumed by pflag, so pflag.Changed("linked") is false).
-
   it.live("does not record a flag token that was consumed as another flag's value", () => {
-    // `db lint --schema --linked`: Go pflag consumes `--linked` as the value
-    // for `--schema`. changedFlags() sees only `schema`.
     const analytics = mockContextualAnalytics();
 
     return Effect.void.pipe(
@@ -1171,7 +1121,6 @@ describe("withCommandTelemetry", () => {
       Effect.tap(() =>
         Effect.sync(() => {
           const flags = analytics.captured[0]?.properties.flags as Record<string, unknown>;
-          // Only `schema` should be recorded; `linked` was consumed as the value.
           expect(flags).toEqual({ schema: "<redacted>" });
           expect(Object.keys(flags)).not.toContain("linked");
         }),
@@ -1180,7 +1129,6 @@ describe("withCommandTelemetry", () => {
   });
 
   it.live("records both flags when the value is attached via = (--schema=public --linked)", () => {
-    // `--schema=public` carries the value inline; `--linked` is a separate flag.
     const analytics = mockContextualAnalytics();
 
     return Effect.void.pipe(
@@ -1200,7 +1148,6 @@ describe("withCommandTelemetry", () => {
       Effect.tap(() =>
         Effect.sync(() => {
           const flags = analytics.captured[0]?.properties.flags as Record<string, unknown>;
-          // Both flags recorded: `schema` (= form, no skip) and `linked` (boolean).
           expect(Object.keys(flags).sort()).toEqual(["linked", "schema"]);
         }),
       ),
@@ -1208,8 +1155,6 @@ describe("withCommandTelemetry", () => {
   });
 
   it.live("skips value token for bare short value-consuming flag (-s public --linked)", () => {
-    // `-s public` bare short form: `public` is consumed as the schema value.
-    // `--linked` is a separate boolean flag and IS recorded.
     const analytics = mockContextualAnalytics();
 
     return Effect.void.pipe(
@@ -1229,9 +1174,7 @@ describe("withCommandTelemetry", () => {
       Effect.tap(() =>
         Effect.sync(() => {
           const flags = analytics.captured[0]?.properties.flags as Record<string, unknown>;
-          // `schema` (via -s alias) and `linked` (separate boolean flag) recorded.
           expect(Object.keys(flags).sort()).toEqual(["linked", "schema"]);
-          // `public` was consumed as the -s value, not treated as a flag name.
           expect(Object.keys(flags)).not.toContain("public");
         }),
       ),
@@ -1239,8 +1182,6 @@ describe("withCommandTelemetry", () => {
   });
 
   it.live("skips value token after bare --db-url and records only db-url", () => {
-    // `--db-url x --local`: `x` is consumed as the db-url value; `--local` is
-    // a separate boolean flag and is recorded. This mirrors Go's pflag.Changed.
     const analytics = mockContextualAnalytics();
 
     return Effect.void.pipe(
@@ -1260,25 +1201,13 @@ describe("withCommandTelemetry", () => {
         Effect.sync(() => {
           const flags = analytics.captured[0]?.properties.flags as Record<string, unknown>;
           expect(Object.keys(flags).sort()).toEqual(["db-url", "local"]);
-          // "x" must not appear as a recorded flag name.
           expect(Object.keys(flags)).not.toContain("x");
         }),
       ),
     );
   });
 
-  // Global/persistent flag parity (CLI-1896): Go's changedFlags() walks
-  // cmd.Parent()'s PersistentFlags() in addition to the leaf's own flags
-  // (cmd/root_analytics.go:53-76), so a global flag like --debug resolves to
-  // its real value even though no command declares it locally. The wrapper
-  // reads command-internal/global-flags.ts itself rather than relying on the
-  // per-command `flags` option to carry global flag values.
-
   it.live("records a changed global boolean flag's real value (e.g. --debug)", () => {
-    // Go reports `flags: {debug: true}` for `supabase --debug telemetry disable`
-    // (isBooleanFlag is always safe, regardless of markFlagTelemetrySafe) — the
-    // TS port previously had no way to resolve `debug` at all and fell back to
-    // "<redacted>" for every global flag, even booleans.
     const analytics = mockContextualAnalytics();
 
     return Effect.void.pipe(
@@ -1417,14 +1346,10 @@ describe("withCommandTelemetry", () => {
   it.live(
     "still redacts a global choice flag shadowed by a command's own differently-typed local flag (db diff's local string --output, Go parity)",
     () => {
-      // `db diff` declares its own local `output: Flag.string("output")` (a
-      // file path, `cmd/db.go:622`) rather than a `Flag.choice` — mirroring
-      // Go, where that command's own non-enum flag object governs
-      // `isEnumFlag`, not root's persistent `*utils.EnumFlag`. Simulate that
-      // shape here: `output` is declared in the handler's own `flags` record
-      // (so `isFromHandler` is true) but absent from `config`, so it must NOT
-      // inherit safety from `GLOBAL_CHOICE_FLAG_NAMES` just because the CLI
-      // name collides with the global `--output` choice flag.
+      // `db diff` declares its own local `output: Flag.string("output")` (a file path) rather
+      // than a `Flag.choice`. Simulated here: `output` is in the handler's own `flags` record
+      // (so `isFromHandler` is true) but absent from `config`, so it must not inherit safety from
+      // `GLOBAL_CHOICE_FLAG_NAMES` just because the CLI name collides with the global flag.
       const analytics = mockContextualAnalytics();
 
       return Effect.void.pipe(
@@ -1449,10 +1374,6 @@ describe("withCommandTelemetry", () => {
   );
 
   it.live("falls back to redacted when a changed global flag's service isn't wired", () => {
-    // Defensive case: `Effect.serviceOption` must never throw/defect when a
-    // narrow harness (or, hypothetically, an incompletely-wired real command)
-    // doesn't provide a global flag's context — it degrades to the prior
-    // REDACTED_VALUE behavior instead of crashing.
     const analytics = mockContextualAnalytics();
 
     return Effect.void.pipe(
@@ -1462,7 +1383,6 @@ describe("withCommandTelemetry", () => {
       Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(Stdio.layerTest({ args: Effect.succeed(["backups", "list", "--debug"]) })),
       Effect.provide(commandRuntimeLayer(["backups", "list"])),
-      // Note: no DebugFlag layer provided.
       Effect.tap(() =>
         Effect.sync(() => {
           const event = analytics.captured[0];
@@ -1473,8 +1393,6 @@ describe("withCommandTelemetry", () => {
   });
 
   it.live("stops recording flags at the -- end-of-options sentinel", () => {
-    // `test db -- --linked`: pflag stops parsing flags at `--`, so `--linked`
-    // is a positional arg, not a changed flag. changedFlags() never sees it.
     const analytics = mockContextualAnalytics();
 
     return Effect.void.pipe(
@@ -1490,8 +1408,6 @@ describe("withCommandTelemetry", () => {
       Effect.provide(commandRuntimeLayer(["test", "db"])),
       Effect.tap(() =>
         Effect.sync(() => {
-          // No changed flags → the flags map is omitted entirely; `--linked`
-          // after `--` must never be recorded.
           const flags = analytics.captured[0]?.properties.flags;
           expect(flags).toBeUndefined();
         }),
@@ -1499,14 +1415,7 @@ describe("withCommandTelemetry", () => {
     );
   });
 
-  // CLI-1896 review follow-up (Codex): a global flag's SHORTHAND must resolve
-  // through the same fallback its long form already does.
-
   it.live("resolves a global flag's shorthand (-o) through the global fallback", () => {
-    // `-o json` must resolve to the canonical `output` flag the same way
-    // `--output json` already does: Go's `pflag.Visit` reports the canonical
-    // `flag.Name` for either form (`cmd/root_analytics.go:53-76`), and `-o` is
-    // `--output`'s only registered persistent shorthand (`cmd/root.go:330`).
     const analytics = mockContextualAnalytics();
 
     return Effect.void.pipe(
@@ -1520,9 +1429,6 @@ describe("withCommandTelemetry", () => {
       Effect.tap(() =>
         Effect.sync(() => {
           const event = analytics.captured[0];
-          // `output` is a global choice flag — passed through verbatim
-          // (Go parity: isEnumFlag, CLI-1904), and it must be PRESENT, not
-          // silently dropped.
           expect(event?.properties.flags).toEqual({ output: "json" });
         }),
       ),
@@ -1532,15 +1438,10 @@ describe("withCommandTelemetry", () => {
   it.live(
     "does not fabricate a global flag from a local flag's value token (secrets set --env-file --debug)",
     () => {
-      // `--env-file` is a value-consuming local string flag. In bare
-      // space-separated form, pflag consumes the very next token as its
-      // VALUE regardless of its shape, so Go's changedFlags() never marks
-      // `debug` as changed for this invocation — the whole token is
-      // `env-file`'s value. Without `env-file` registered in
-      // VALUE_CONSUMING_LONG_FLAGS, extractChangedFlagNames would wrongly
-      // treat the trailing `--debug` as a separate flag, and CLI-1896's
-      // global-flag fallback would then fabricate a `flags.debug` value Go
-      // never records.
+      // `--env-file` is a value-consuming local string flag, so in bare space-separated form the
+      // next token is its value regardless of shape. Without `env-file` registered in
+      // `VALUE_CONSUMING_LONG_FLAGS`, `extractChangedFlagNames` would wrongly treat the trailing
+      // `--debug` as a separate flag and the global-flag fallback would fabricate a value for it.
       const analytics = mockContextualAnalytics();
 
       return Effect.void.pipe(

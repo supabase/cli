@@ -60,12 +60,10 @@ export const dbPush = Effect.fn("db.push")(function* (flags: DbPushFlags) {
     // push defaults `--linked` to true, so no target flag → linked.
     const connType = target.connType ?? "linked";
 
-    // TS-only guard: `--project-ref` never implies `--linked` and must not be
-    // silently discarded on a non-linked target. Deliberately STRICTER than the
-    // `SUPABASE_PROJECT_ID` env var, which is read unconditionally but simply
-    // goes unused (no error) on a `--local`/`--db-url` target — an explicitly
-    // typed `--project-ref` flag silently doing nothing on e.g. `db push
-    // --local` is a footgun the env var doesn't share, so this errors instead.
+    // `--project-ref` never implies `--linked` and must not be silently discarded on a
+    // non-linked target. This is stricter than `SUPABASE_PROJECT_ID`, which is read
+    // unconditionally but simply goes unused on `--local`/`--db-url` — an explicitly
+    // typed flag doing nothing silently would be a footgun the env var doesn't share.
     if (Option.isSome(flags.projectRef) && connType !== "linked") {
       return yield* Effect.fail(
         new DbPushTargetFlagsError({
@@ -85,16 +83,11 @@ export const dbPush = Effect.fn("db.push")(function* (flags: DbPushFlags) {
       linkedRefForCache = projectRef;
     }
 
-    // Single config load, except that `--skip-vault` omits only `[db.vault]`
-    // secret resolution: decodes the whole config with env-expansion +
-    // weak-typed boolean parsing (so `enabled = "env(SEED_ENABLED)"` etc.
-    // load), applies `SUPABASE_*` env overrides, merges a matching
-    // `[remotes.<ref>]` block, and decrypts selected `encrypted:` secrets
-    // with the shell AND project-`.env` `DOTENV_PRIVATE_KEY*` keys — aborting
-    // here (before connecting or writing) on any undecryptable/invalid
-    // config. This must resolve BEFORE `resolver.resolve()`'s network
-    // activity (temp-role minting, pooler fallback) so a matching
-    // `[remotes.<ref>]` override prints before it.
+    // Single config load (except `--skip-vault`, which omits `[db.vault]` secret
+    // resolution): decodes with env-expansion + weak-typed booleans, applies
+    // `SUPABASE_*` overrides, merges a matching `[remotes.<ref>]` block, and decrypts
+    // `encrypted:` secrets — aborting here on any invalid config, before
+    // `resolver.resolve()`'s network activity, so a remote override prints first.
     const toml = yield* checkDbToml(fs, path, workdir, projectRef !== "" ? projectRef : undefined, {
       resolveVaultSecrets: !flags.skipVault,
     });

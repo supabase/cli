@@ -20,13 +20,9 @@ interface PullStatusErrorArgs {
 }
 
 /**
- * `--project-ref` target-resolution errors, minted the same way
- * `config diff`/`config pull` mint theirs (`mintConfigTargetErrors`).
- * The tags are template-interpolated inside that shared helper, so
- * `error-actionability-coverage.unit.test.ts`'s static scan cannot see them
- * there — each minted class is re-exported here under its own top-level
- * export statement, under a `Pull`-prefixed name, so the scan and its
- * runtime classification check both register it.
+ * `--project-ref` target-resolution errors, minted via `mintConfigTargetErrors`. Its tags are
+ * template-interpolated, so `error-actionability-coverage.unit.test.ts`'s static scan can't see
+ * them there — each class is re-exported below under its own top-level export so the scan finds it.
  */
 const pullTargetErrors = mintConfigTargetErrors("Pull");
 
@@ -52,11 +48,8 @@ export type PullParentRefInvalidError = InstanceType<typeof PullParentRefInvalid
 export const PullBranchNotReadyError = pullTargetErrors.BranchNotReadyError;
 export type PullBranchNotReadyError = InstanceType<typeof PullBranchNotReadyError>;
 
-/**
- * A transport/decode failure resolving a branch-shaped `--project-ref`
- * (`GET`-by-UUID or `FIND`-by-name), mirroring `config diff`/`config pull`'s
- * own `*BranchResolveNetworkError`.
- */
+/** A transport/decode failure resolving a branch-shaped `--project-ref` (`GET`-by-UUID or
+ *  `FIND`-by-name). */
 export class PullBranchResolveNetworkError extends Data.TaggedError(
   "PullBranchResolveNetworkError",
 )<PullNetworkErrorArgs> {
@@ -67,10 +60,7 @@ export class PullBranchResolveNetworkError extends Data.TaggedError(
   }
 }
 
-/**
- * An unexpected HTTP status resolving a branch-shaped `--project-ref`,
- * mirroring `config diff`/`config pull`'s own `*BranchResolveStatusError`.
- */
+/** An unexpected HTTP status resolving a branch-shaped `--project-ref`. */
 export class PullBranchResolveStatusError extends Data.TaggedError(
   "PullBranchResolveStatusError",
 )<PullStatusErrorArgs> {
@@ -79,11 +69,8 @@ export class PullBranchResolveStatusError extends Data.TaggedError(
   }
 }
 
-/**
- * The Go-compat global `-o/--output` flag was passed. `pull` is a net-new TS
- * command with no Go parity contract, so machine output goes through
- * `--output-format` only (mirrors `config diff`/`config pull`, CLI-2156).
- */
+/** The global `-o`/`--output` flag was passed; `pull` only supports `--output-format` for
+ *  machine output. */
 export class PullOutputFlagUnsupportedError extends Data.TaggedError(
   "PullOutputFlagUnsupportedError",
 )<{ readonly message: string }> {
@@ -106,14 +93,9 @@ export class PullWorkdirError extends Data.TaggedError("PullWorkdirError")<{
 }
 
 /**
- * At least one of the config file, `supabase/migrations`, or
- * `supabase/functions` has uncommitted (or untracked) changes and there is no
- * human on hand to read the warning and answer the prompt honestly — mirrors
- * `config pull`'s own `ConfigPullUncommittedChangesError` dirty-guard
- * over the config file, generalized here to the other two directories `pull`
- * also writes into, since the orchestrator owns this check once instead of
- * delegating to `config pull`'s own guard. Only `--force` overrides this
- * guard; `--yes` never does, on any TTY.
+ * At least one of the config file, `supabase/migrations`, or `supabase/functions` has
+ * uncommitted or untracked changes with no interactive prompt to confirm past it. Only
+ * `--force` overrides this guard; `--yes` never does.
  */
 export class PullUncommittedChangesError extends Data.TaggedError("PullUncommittedChangesError")<{
   readonly message: string;

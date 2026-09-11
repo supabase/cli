@@ -49,14 +49,11 @@ function contextProperties(context: AnalyticsContext): Record<string, unknown> {
   });
 }
 
-// Builds the PostHog `groups` map for a captured event, or `undefined` when no
-// group attribution applies. Go keys the organization group by the org ID (not
-// the slug) for BOTH the GroupIdentify and the event groups
-// (`linkedProjectGroups`, apps/cli-go/internal/telemetry/project.go:99-103); the
-// slug is only a GroupIdentify property value. Keying events by slug would
-// attach cli_command_executed to a different group than the identify published.
-// Go also omits the org group when the ID is empty (project.go:99-100
-// `if linked.OrganizationID != ""`).
+/**
+ * Builds the PostHog `groups` map for a captured event, or `undefined` when no group attribution
+ * applies. Keys the organization group by ID, not slug, so `cli_command_executed` attaches to
+ * the same group `groupIdentify` published; omits the org group entirely when the ID is empty.
+ */
 export function resolveGroups(
   context: AnalyticsContext,
   linkedProject: Option.Option<LinkedProjectCacheValue>,
@@ -77,7 +74,6 @@ export function resolveGroups(
   };
 }
 
-// Mirrors apps/cli-go/cmd/root_analytics.go:149-165 envSignals().
 export function collectEnvSignals(): Record<string, true | string> | undefined {
   const signals: Record<string, true | string> = {};
 
@@ -102,14 +98,10 @@ export function collectEnvSignals(): Record<string, true | string> | undefined {
   return Object.keys(signals).length === 0 ? undefined : signals;
 }
 
-// Mirrors apps/cli-go/internal/telemetry/project.go:40 LoadLinkedProject(fsys).
-// Best-effort: any error returns None. Resolves workdir from `SUPABASE_WORKDIR`
-// env or `process.cwd()`. The `--workdir` flag value is not accessible at
-// root scope where the analytics layer is constructed (Effect CLI's global
-// flag services are only available inside Command.runWith). When `--workdir` is
-// set but the user invokes from outside that directory, the linked-project
-// cache lookup misses and the event loses group attribution — matches Go's
-// behaviour when the user runs without first `cd`-ing into the project.
+// Best-effort: any error returns None. Resolves workdir from `SUPABASE_WORKDIR` or
+// `process.cwd()` since global flag services (`--workdir`) aren't accessible at this
+// construction scope — so a lookup can miss group attribution when the user invokes from outside
+// that directory.
 function makeLoadLinkedProject(
   fs: FileSystem.FileSystem,
   path: Path.Path,

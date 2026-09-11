@@ -197,8 +197,8 @@ export const probeReadiness = (
       "Readiness deadline",
     );
     const attempt = target.mode === "http" ? httpAttempt(target) : tcpAttempt(target);
-    // A zero budget preserves the legacy `0s` meaning: perform one immediate probe, with no
-    // retry delay. A positive budget interrupts whichever owned request/socket is still active.
+    // A zero deadline runs one immediate probe with no retry delay; a positive deadline can
+    // interrupt whichever owned request/socket is still active.
     if (Duration.isZero(deadline)) return yield* attempt;
     const schedule =
       retries === undefined

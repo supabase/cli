@@ -1,19 +1,10 @@
 /**
- * Layer-exposure test for `testDbRuntimeLayer`.
- *
- * Verifies that `IdentityStitch` is exposed at the top level of the
- * runtime layer so that `withCommandTelemetry` can read
- * `stitchedDistinctId()` via `Effect.serviceOption(IdentityStitch)` and
- * attribute the `cli_command_executed` event to the gotrue id.
- *
- * The bug this guards against: `Layer.provide(A, B)` satisfies A's dep on B
- * but does NOT expose B to sibling layers inside a `Layer.mergeAll`. If
- * `identityStitchLayer` is only provided to the child `dbConfig` layer
- * and NOT added to the top-level `Layer.mergeAll`, then
- * `serviceOption(IdentityStitch)` returns `None` and `test db --linked`'s
- * `cli_command_executed` is mis-attributed to the device id.
- *
- * Mirrors `db/lint/lint.layers.unit.test.ts`.
+ * Verifies `IdentityStitch` is exposed at the top level of
+ * `testDbRuntimeLayer`, not just provided to the child `dbConfig` layer —
+ * see `CLAUDE.md`'s "Layer.provide does not share to siblings" invariant.
+ * Otherwise `withCommandTelemetry` can't read `stitchedDistinctId()` and
+ * `test db --linked`'s `cli_command_executed` is mis-attributed to the
+ * device id.
  */
 
 import { describe, expect, it } from "@effect/vitest";
@@ -85,7 +76,7 @@ function ambientStubs() {
 
   return Layer.mergeAll(
     BunServices.layer,
-    // The runtime layer under test builds the REAL commandSettingsLayer against
+    // The runtime layer under test builds the real commandSettingsLayer against
     // the real filesystem — see isolatedHomeLayer's docs.
     isolatedHomeLayer(tempRoot.current),
     mockTty(),

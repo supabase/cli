@@ -160,9 +160,6 @@ describe("shadowCacheKey", () => {
   });
 
   it("collapses auto_expose_new_tables to the behavior applyApiPrivileges actually takes", () => {
-    // `applyApiPrivileges` (`db-setup.ts`) returns early for unset AND explicit `true`, so
-    // those two bake the identical cluster and must share a snapshot instead of forcing a ~90MB
-    // re-export; only an explicit `false` execs the revoke SQL and earns its own key.
     const base = baseKeyInputs();
     const unset = shadowCacheKey({ ...base, autoExposeNewTables: Option.none() });
     const explicitTrue = shadowCacheKey({ ...base, autoExposeNewTables: Option.some(true) });
@@ -239,9 +236,7 @@ describe("shadowCacheKey", () => {
 
   it("cannot collide scalar fields across line boundaries", () => {
     const base = baseKeyInputs();
-    // A newline embedded in one unrestricted scalar must not be able to forge the next
-    // payload line: rootKey `p\ndb_password="q"` + password `r` vs rootKey `p` + a password
-    // whose tail mimics the same text.
+    // rootKey's tail mimics a `db_password` line to try to forge the next payload line.
     const left = shadowCacheKey({
       ...base,
       rootKey: 'p"\ndb_password="q',
@@ -262,7 +257,7 @@ describe("shadowCacheKey", () => {
       vault: [...base.vault, { name: "pending", value: "", resolved: false }],
     });
     expect(withUnresolved).toBe(shadowCacheKey(base));
-    // A RESOLVED empty value does land in the cluster, so it must re-key.
+    // A resolved empty value still lands in the cluster and must re-key.
     const withResolvedEmpty = shadowCacheKey({
       ...base,
       vault: [...base.vault, { name: "pending", value: "", resolved: true }],
@@ -272,8 +267,7 @@ describe("shadowCacheKey", () => {
 
   it("cannot collide vault name/value pairs across the tuple boundary", () => {
     const base = baseKeyInputs();
-    // `name=a=b, value=c` vs `name=a, value=b=c` — a bare `=`-joined encoding serializes both
-    // as `vault=a=b=c`.
+    // `name=a=b, value=c` and `name=a, value=b=c` would collide under a bare `=`-joined encoding.
     const left = shadowCacheKey({
       ...base,
       vault: [{ name: "a=b", value: "c", resolved: true }],

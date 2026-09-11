@@ -6,11 +6,6 @@ import {
   statusCodeActionability,
 } from "../../shared/telemetry/error-actionability.ts";
 
-// ---------------------------------------------------------------------------
-// HTTP-bound errors — one (Network + UnexpectedStatus) pair per `errors.Errorf`
-// call site.
-// ---------------------------------------------------------------------------
-
 export class OrgsListNetworkError extends Data.TaggedError("OrgsListNetworkError")<{
   readonly message: string;
   readonly decode?: boolean;
@@ -57,12 +52,8 @@ export class OrgsCreateUnexpectedStatusError extends Data.TaggedError(
   }
 }
 
-// ---------------------------------------------------------------------------
-// Pure-path error — `orgs list --output env` is explicitly rejected. `orgs
-// create` does NOT have an equivalent branch — the `EncodeOutput` env
-// encoder happily flattens the single object into `ID=… NAME=… SLUG=…`.
-// ---------------------------------------------------------------------------
-
+// `orgs create --output env` isn't rejected: a single organization flattens cleanly into
+// `ID=... NAME=... SLUG=...`; only `orgs list`'s array output is unsupported.
 export class OrgsEnvNotSupportedError extends Data.TaggedError("OrgsEnvNotSupportedError")<{
   readonly message: string;
 }> {

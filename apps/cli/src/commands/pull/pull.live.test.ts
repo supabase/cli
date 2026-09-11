@@ -2,13 +2,9 @@ import { expect } from "vitest";
 
 import { requireLiveSuccess, test } from "../../../tests/helpers/live.ts";
 
-// Golden path only: the one thing mocks cannot prove is the real four-step
-// orchestration (`config pull`, migration-history fetch, `db pull`'s
-// shadow-db diff, `functions download`) actually reaching a live Management
-// API and its provisioned project's data plane in one pass, against a fresh
-// `supabase init` checkout (the `workspace` fixture behind `cli`). Branch
-// coverage for dry-run/declined/partial-failure dispositions lives in
-// pull.aggregate.unit.test.ts and any handler-level integration test.
+// Golden path only: the real four-step orchestration reaching a live Management API and its
+// project's data plane in one pass, against a fresh `supabase init` checkout. Branch coverage for
+// other dispositions lives in pull.aggregate.unit.test.ts and handler-level integration tests.
 test("pulls config, migration history, db schema, and functions from a fresh project", async ({
   cli,
   project,

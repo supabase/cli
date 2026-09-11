@@ -11,9 +11,8 @@ import type { DbSession } from "../../../command-internal/db-connection.service.
 import { DbPullWriteError } from "./pull.errors.ts";
 import { updateMigrationHistory, type PulledMigration } from "./pull.sync.ts";
 
-// Records exec statements and successful upserts in one ordered log so the tests
-// can assert the transaction envelope (BEGIN / UPSERT / COMMIT / ROLLBACK) around
-// the version writes. `failUpsertAt` fails the Nth upsert to simulate a dropped
+// Records exec statements and successful upserts in order so tests can assert the
+// transaction envelope. `failUpsertAt` fails the Nth upsert to simulate a dropped
 // connection mid-loop.
 function mockSession(opts: { readonly failUpsertAt?: number } = {}) {
   const calls: Array<string> = [];
@@ -62,11 +61,10 @@ describe("updateMigrationHistory", () => {
 
       yield* updateMigrationHistory(session, fs, path, migrations).pipe(Effect.provide(out.layer));
 
-      // The create-table setup runs its own BEGIN/COMMIT first; the upsert
-      // transaction is the trailing envelope around every version write.
       expect(calls).not.toContain("ROLLBACK");
+      // Sliced to the trailing 4 calls since createMigrationTable's own BEGIN/COMMIT
+      // runs first.
       expect(calls.slice(-4)).toEqual(["BEGIN", "UPSERT", "UPSERT", "COMMIT"]);
-      // The success line matches the established output contract.
       expect(out.stderrText).toContain(
         "Repaired migration history: [20240101000000 20240101000001] => applied",
       );
@@ -87,14 +85,11 @@ describe("updateMigrationHistory", () => {
         Effect.flip,
       );
 
-      // First upsert applied, second failed → the upsert transaction ends in
-      // ROLLBACK, never COMMIT (the create-table setup's own COMMIT ran earlier).
+      // Sliced to the trailing 3 calls for the same reason as above.
       expect(calls.slice(-3)).toEqual(["BEGIN", "UPSERT", "ROLLBACK"]);
       expect(calls[calls.length - 1]).toBe("ROLLBACK");
-      // Error message shape stays byte-identical to the pre-transaction version.
       expect(error).toBeInstanceOf(DbPullWriteError);
       expect(error.message).toBe("failed to update migration table: connection reset by peer");
-      // No success line when the repair failed.
       expect(out.stderrText).not.toContain("Repaired migration history");
     }).pipe(Effect.provide(BunServices.layer)),
   );

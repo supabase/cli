@@ -118,10 +118,9 @@ export const resolveFunctionConfig = async (options: {
   if (canonicalInfo === undefined || !canonicalInfo.isDirectory) return undefined;
   const globalDefaults = overrides.$default;
   const functionOverride = overrides[slug];
-  // `$default` cannot be a function slug (the slug schema only accepts letters,
-  // digits, `_`, and `-`) and therefore provides a collision-free global
-  // default for functions discovered after the stack started. A closed
-  // per-function override is spread last so it always wins.
+  // `$default` cannot be a function slug (the slug schema only accepts letters, digits, `_`,
+  // and `-`), so it's a collision-free global default; the per-function override is spread
+  // last so it always wins.
   const override = {
     ...globalDefaults,
     ...functionOverride,
@@ -145,9 +144,8 @@ export const resolveFunctionConfig = async (options: {
   if (entrypointInfo === undefined || !entrypointInfo.isFile || entrypointInfo.isSymbolicLink)
     return undefined;
 
-  // Per-function import maps are relative to that function's directory. The
-  // reserved global default is explicitly root-relative, so one shared map is
-  // reused by every slug (including slugs created after serve starts).
+  // Per-function import maps are relative to that function's directory; the reserved global
+  // default is root-relative, so one shared map is reused by every slug.
   const functionImportMap = functionOverride?.importMapPath ?? functionOverride?.import_map;
   const globalImportMap = globalDefaults?.importMapRoot ?? globalDefaults?.import_map_root;
   let importMapPath =

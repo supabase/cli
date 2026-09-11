@@ -86,8 +86,7 @@ describe("storage rm", () => {
   });
 
   it.live("auto-confirms via SUPABASE_YES even without the --yes flag", () => {
-    // viper AutomaticEnv (root.go:318-320) means `SUPABASE_YES` is equivalent to
-    // `--yes`; the flag layer is left at its default `false` to prove the env path.
+    // The --yes flag itself stays false here, to isolate the env-var path.
     process.env["SUPABASE_YES"] = "1";
     const { layer, out, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
@@ -109,10 +108,7 @@ describe("storage rm", () => {
   });
 
   it.live("auto-confirms from SUPABASE_YES in the project .env (Go loadNestedEnv)", () => {
-    // SUPABASE_YES lives only in supabase/.env, not the shell — both the
-    // `--local` and (default) `--linked` branches load the project `.env`
-    // files before the confirmation prompt, so the deletion auto-confirms
-    // with no --yes flag and no env var set in the shell.
+    // SUPABASE_YES here lives only in supabase/.env, not the shell.
     const { layer, out, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -136,10 +132,7 @@ describe("storage rm", () => {
   it.live(
     "surfaces not-linked guidance before a malformed project .env (Go LoadProjectRef-before-LoadConfig)",
     () => {
-      // The linked-project ref is resolved strictly before the config load
-      // that reads the project `.env` files, so an unlinked workdir must
-      // fail with the not-linked guidance even when `supabase/.env` is
-      // malformed — the malformed file must never be reached.
+      // The malformed supabase/.env must never be read; ref resolution fails first.
       const { layer, requests } = setupStorage(tmp.current, {
         toml: 'project_id = "test"\n',
         linkedFails: true,
@@ -182,8 +175,6 @@ describe("storage rm", () => {
   });
 
   it.live("honors a piped 'y' on non-TTY stdin and deletes", () => {
-    // Go scans piped stdin before defaulting (`console.go:74-82`); a piped `y`
-    // overrides the `n` default and deletes, even on a non-terminal.
     const { layer, requests, out } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -201,14 +192,11 @@ describe("storage rm", () => {
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(requests.some((r) => r.method === "DELETE")).toBe(true);
-      // The consumed answer is echoed after the label on non-TTY stdin.
       expect(out.stderrText).toContain("[y/N] y");
     });
   });
 
   it.live("falls back to the default (no) on an unparseable piped answer", () => {
-    // Unrecognized input is treated as unanswered, so the confirmation
-    // prompt keeps the `n` default and the deletion is skipped.
     const { layer, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -615,8 +603,7 @@ describe("storage rm", () => {
   });
 
   it.live("deletes from the project given via --project-ref, overriding VALID_REF", () => {
-    // `opts.projectRef` (the fake's own fallback) is left at its default
-    // (VALID_REF) — the flag must win over it and drive the gateway host.
+    // The fake's default projectRef is VALID_REF; the flag must win over it.
     const FLAG_REF = "flagflagflagflagflag";
     const { layer, requests, linkedCache } = setupStorage(tmp.current, {
       yes: true,
@@ -665,12 +652,8 @@ describe("storage rm", () => {
   it.live(
     "does not delete anything when --workdir names a config-less subdirectory of a real ancestor project",
     () => {
-      // CLI-2285 regression, destructive-command variant: the ancestor
-      // project's config.toml declares a non-default [api] port — if this
-      // silently climbed to it, `storage rm -r` would target whatever
-      // (possibly running) local stack that ancestor points at. An EXPLICIT
-      // --workdir must hard-fail before the gateway is ever built, so no
-      // DELETE is ever issued.
+      // An explicit --workdir must hard-fail rather than climb to an ancestor's
+      // config.toml, which could point at a different (possibly running) local stack.
       writeAncestorConfig(tmp.current, 'project_id = "test"\n[api]\nport = 65432\n');
       const sub = join(tmp.current, "nested", "dir");
       mkdirSync(sub, { recursive: true });
@@ -699,10 +682,6 @@ describe("storage rm", () => {
   it.live(
     "a defaulted workdir with no project anywhere still proceeds using the embedded default config",
     () => {
-      // Mirrors the regression above with explicitWorkdir flipped: a
-      // DEFAULTED workdir must keep its established tolerant fallback
-      // (`loadStorageConfig`'s `decodeDefaultCliConfig({})` branch)
-      // rather than hard-failing — the deletion still proceeds.
       const { layer, requests } = setupStorage(tmp.current, {
         local: true,
         yes: true,

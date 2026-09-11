@@ -2,13 +2,18 @@
 
 This file applies to the `apps/cli` workspace. Read it fully before touching code here. The
 repository root [`AGENTS.md`](../../AGENTS.md) owns common Effect, quality, package, and testing
-rules; this guide records contracts specific to the CLI.
+rules, including the [comment policy](../../AGENTS.md#comments); this guide records contracts
+specific to the CLI.
 
 ## Source tree and ownership
 
 Keep top-level commands in `src/commands/`, shared command-family
 helpers in the family directory, cross-family helpers in `src/command-internal/`, and universal
 infrastructure in `src/shared/`. The entrypoint is `src/main.ts` → `src/cli/root.ts` → commands.
+
+Keep opt-in command implementations under `src/commands/experimental/` (for example, `compute/`
+and `stack/`). This folder organizes source code; it does not register an `experimental` command
+namespace. `src/cli/root.ts` owns the public command tree and feature-flag registration.
 
 Use the existing command shape:
 
@@ -69,6 +74,22 @@ Every applicable command must preserve these invariants:
    `--output-format`; a new command may reject `--output` with guidance to use
    `--output-format`, as established by `config diff` and `config pull`.
 7. Preserve telemetry names, timing, identity, and payloads; see [Telemetry](#telemetry).
+
+## Experimental feature registration
+
+Resolve opt-in booleans with `command-internal/experimental-feature.ts`: environment `1`/`0`
+overrides the project setting, and an unset or empty value uses the config. Invalid environment
+values are typed failures on applicable command paths. Disabled families are absent from the
+command tree, help, and completion; enabled help is marked experimental and stays out of stable
+generated command documentation. Environment opt-ins do not write project configuration.
+Keep config-discovery failure policy explicit and cover TOML, JSON, precedence, and disabled
+behavior.
+
+Experimental paths may change outside the stable compatibility promise, but before renaming a
+family identify published config, disk, server, and telemetry boundaries and record the approved
+compatibility decision in the PR. For the Compute transition, no local compatibility aliases or
+migrations are required. Compute error tags intentionally start new fingerprints; server-owned
+contracts remain unchanged. Update tests, generated schemas, and side-effect documentation.
 
 ## Go delegation
 

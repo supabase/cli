@@ -55,7 +55,6 @@ import {
 import { type StarterTemplate, TemplateService } from "./bootstrap.templates.ts";
 import type { BootstrapFlags } from "./bootstrap.command.ts";
 
-// Built-in starter.
 const SCRATCH_TEMPLATE: StarterTemplate = {
   name: "scratch",
   description: "An empty project from scratch.",
@@ -79,24 +78,21 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
   const telemetryState = yield* TelemetryState;
   const workdirFlag = yield* WorkdirFlag;
   const dnsResolver = yield* DnsResolverFlag;
-  // `--yes` OR `SUPABASE_YES`.
   const yesFlag = yield* resolveYes;
 
   const isText = output.format === "text";
   const retry = { schedule: retrySchedule, times: BOOTSTRAP_MAX_RETRIES } as const;
 
-  // `process.chdir` changes into the resolved workdir; restore the original cwd in a
-  // finalizer so the surrounding process is left untouched once this command
-  // returns (every step below reads its own explicit `workdir` var, never
-  // `process.cwd()`, so nothing else depends on the chdir staying in effect).
+  // Restores the original cwd once bootstrap returns, since `process.chdir` below is a global
+  // process mutation; every step reads its own `workdir` var, never `process.cwd()`, so nothing
+  // else depends on the chdir staying in effect.
   const originalCwd = process.cwd();
   let createdRef: string | undefined;
-  // Resolved bootstrap workdir, hoisted so the linked-project-cache finalizer writes
-  // beside the other `supabase/.temp/` files instead of `cliSettings.workdir`.
+  // Hoisted so the linked-project-cache finalizer writes beside the other `supabase/.temp/`
+  // files instead of `cliSettings.workdir`.
   let resolvedWorkdir: string | undefined;
 
   yield* Effect.gen(function* () {
-    // A. Resolve workdir (flag -> env -> prompt -> cwd).
     // Reads the prefixed `SUPABASE_WORKDIR` only (never plain `WORKDIR`).
     const workdirRaw = Option.isSome(workdirFlag)
       ? workdirFlag.value
@@ -113,7 +109,6 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
       : path.join(runtimeInfo.cwd, workdirInput);
     resolvedWorkdir = workdir;
 
-    // B. List templates + resolve the starter.
     const samples = yield* templateService.listSamples;
     const allTemplates = [...samples, SCRATCH_TEMPLATE];
     let starter: StarterTemplate;
@@ -134,7 +129,6 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
       starter = allTemplates.find((t) => t.name === choice) ?? SCRATCH_TEMPLATE;
     }
 
-    // C. mkdir + overwrite prompt.
     yield* fs.makeDirectory(workdir, { recursive: true });
     const entries = yield* fs
       .readDirectory(workdir)
@@ -144,10 +138,8 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
         ),
       );
     if (entries.length > 0) {
-      // Established prompt behavior: `--yes`/`SUPABASE_YES` auto-confirms with
-      // the `<title> [Y/n] y` stderr echo instead of silently skipping the
-      // prompt, and a non-TTY stdin scans one piped line (100ms) before
-      // falling back to the Yes default.
+      // `--yes`/`SUPABASE_YES` auto-confirms with a `<title> [Y/n] y` stderr echo; non-TTY
+      // stdin scans one piped line (100ms) before falling back to Yes.
       const overwrite = yield* promptYesNo(
         output,
         yesFlag,
@@ -161,15 +153,11 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
       }
     }
 
-    // D. chdir + "Using workdir" to stderr.
-    // Only prints the line when the resolved workdir differs from the
-    // original cwd.
     yield* Effect.sync(() => process.chdir(workdir));
     if (workdir !== runtimeInfo.cwd) {
       yield* output.raw(`Using workdir ${bold(workdir)}\n`, "stderr");
     }
 
-    // E. Download template OR scaffold a blank project.
     if (starter.url.length > 0) {
       if (isText) yield* output.raw(`Downloading: ${starter.url}\n`, "stdout");
       yield* templateService.download(starter.url, workdir);
@@ -185,12 +173,8 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
       });
     }
 
-    // F. Ensure login (browser flow when no token).
     yield* ensureLogin({ openBrowser: tty.stdinIsTty });
 
-    // G. Create project (echoes via the shared create core).
-    // `-p` binds to `DB_PASSWORD`; with the `SUPABASE` env prefix the env
-    // fallback is `SUPABASE_DB_PASSWORD` (consumed by `flags.PromptPassword`).
     const seededPassword = Option.isSome(flags.password)
       ? flags.password.value
       : (process.env["SUPABASE_DB_PASSWORD"] ?? "");
@@ -209,9 +193,8 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
     const projectRef = created.ref;
     createdRef = projectRef.length > 0 ? projectRef : undefined;
 
-    // H. Fetch api keys with backoff; each attempt prints "Linking project...".
-    // The notify wrapper reproduces the established retry-callback shape
-    // (`<err>\nRetry (n/8):` after each failed attempt); a fresh counter per block.
+    // A fresh notifier per retry block keeps this step's "Retry (n/8)" counter independent of
+    // the health-poll and push retries below.
     const apiKeysNotify = bootstrapRetryNotify();
     const keys = yield* Effect.gen(function* () {
       if (isText) yield* output.raw("Linking project...\n", "stderr");
@@ -219,15 +202,9 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
     }).pipe(apiKeysNotify, Effect.retry(retry));
     const { anon } = extractServiceKeys(keys);
 
-    // I. Load config.toml + link services (best-effort, anon key) + mandatory
-    // project-ref write. Established ordering: the config load runs FIRST —
-    // right before `link.LinkServices` — and a malformed config.toml aborts
-    // bootstrap here (a hard `return err`), before `link.LinkServices`, the
-    // health poll, or the `.env` write ever run. This also fixes the "Loading
-    // config override: [remotes.x]" print's position to match. `applyProjectEnv`'s
-    // scope (mirroring the established process-lifetime `os.Setenv`) is opened
-    // here and stays open for the rest of the handler — see the `Effect.scoped`
-    // on this function's own outer pipe below.
+    // Config load must run before link/health/`.env` steps: a malformed config.toml aborts here
+    // rather than after side effects start. `applyProjectEnv`'s scope stays open for the rest of
+    // this handler (closed by the outer `Effect.scoped` below).
     const projectEnv = yield* loadProjectEnv(fs, path, workdir);
     yield* applyProjectEnv(projectEnv);
     const pushYes = yield* resolveYesWithProjectEnv(projectEnv);
@@ -246,7 +223,6 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
     yield* fs.makeDirectory(path.dirname(paths.projectRef), { recursive: true });
     yield* fs.writeFileString(paths.projectRef, projectRef);
 
-    // J. Poll health until db is healthy.
     const healthNotify = bootstrapRetryNotify();
     yield* Effect.gen(function* () {
       if (isText) yield* output.raw("Checking project health...\n", "stderr");
@@ -262,11 +238,8 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
       }
     }).pipe(healthNotify, Effect.retry(retry));
 
-    // K. Derive db config + write .env (non-fatal). Kept as the naive
-    // direct-host connection (matching the established `NewDbConfigWithPassword`
-    // shape, minus its own IPv6/pooler-fallback — a pre-existing, out-of-scope
-    // `.env` divergence: unlike step L below, `.env` is never used to actually
-    // connect, so it doesn't need the real probe+fallback resolution).
+    // Uses a naive direct-host db config with no IPv6/pooler fallback, since `.env` is written
+    // for reference only and, unlike the push connection below, is never used to actually connect.
     const dbConfig = deriveDbConfig(projectRef, created.dbPassword, cliSettings.projectHost);
     const supabaseUrl = `https://${projectRef}.${cliSettings.projectHost}`;
     const envFilePath = path.join(workdir, ".env");
@@ -296,60 +269,14 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
       ),
     );
 
-    // L. Push migrations — native call to `dbPushCore` (CLI-1953):
-    // `includeAll: false, includeRoles: true, includeSeed: true, dryRun: false`.
-    //
-    // The connection itself is resolved via `resolveLinkedConn` — the
-    // same dial-direct-host / fall-back-to-IPv4-pooler logic used elsewhere,
-    // not the naive `deriveDbConfig` used for `.env` above. New Supabase
-    // projects commonly have an IPv6-only direct DB host, so without this
-    // fallback the push would burn all 9 retries and fail on IPv4-only
-    // networks — the exact regression this fix closes. `created.dbPassword`
-    // is always non-empty by this point (the create step already prompted
-    // for/generated one), so the temp-login-role branches are never actually
-    // reached; only the TCP probe and a read of the
-    // `<workdir>/supabase/.temp/pooler-url` file `link.LinkServices` already
-    // wrote in step I. Given a non-empty password, the only reachable
-    // failure is the direct host being unreachable with no saved pooler URL
-    // yet (`DbConfigIpv6Error`) — the established resolver still
-    // returns its best-effort direct-host config alongside that error,
-    // logging it to stderr and pressing on rather than aborting. The push
-    // dials fresh on every call and bootstrap retries the push itself, so
-    // this leniency buys real reconnect attempts across the backoff window —
-    // e.g. while a freshly created project's link/pooler metadata is still
-    // propagating — not a guaranteed repeat failure. Reproduced below: catch
-    // that one error tag, log it, and fall back to the same direct-host
-    // shape already computed for `.env` above (step K's `dbConfig`) instead
-    // of failing bootstrap outright.
-    //
-    // The project ref or config.toml is never re-resolved for push (reuses
-    // what step I already loaded above) — so this passes
-    // `workdir`/`projectRef`/`toml` straight through as plain values instead
-    // of calling `dbPush` (the full flags-based command), which would
-    // re-resolve them via `ProjectRefResolver`/`DbConfigResolver`
-    // — both keyed off `CommandSettings.workdir`, stale after this handler's
-    // own `process.chdir` above (step D) since that layer is built once,
-    // before the handler runs.
-    //
-    // `bootstrapRetryNotify`/`Effect.retry(retry)` reproduce the
-    // established retry-reset-and-notify wrap around the push call, matching
-    // the api-keys/health-poll retries above — only the push itself is
-    // retried, not the connection resolution (which runs once, outside the
-    // loop). No instrumentation wrap: `dbPushCore` is the bare handler
-    // function, not `push.command.ts`'s wrapped command, so it never fires
-    // its own `cli_command_executed` — no double-count risk.
-    //
-    // `resolveLinkedConn` (unlike `DbConfigResolver.resolve`) returns a
-    // bare connection with no `suggestionContext` attached — that context is normally
-    // stapled on by the resolver layer bootstrap deliberately bypasses (see this
-    // call's own doc comment above). Attach it here too, so a connect failure inside
-    // the native push (refused/auth/IPv6/wrong-profile) still renders the
-    // established connect-suggestion hint instead of silently falling back
-    // to the generic "--debug" suggestion.
+    // `resolveLinkedConn` doesn't attach a suggestionContext like the full resolver does; build
+    // one manually so a connect failure inside the push below still gets the established hint.
     const suggestionContext: ConnectSuggestionContext = {
       dashboardUrl: cliSettings.dashboardUrl,
       profileName: cliSettings.profile,
     };
+    // Falls back to the naive `dbConfig` on `DbConfigIpv6Error` instead of aborting, since a
+    // freshly created project's pooler metadata may still be propagating.
     const resolvedConn = yield* resolveLinkedConn(
       projectRef,
       workdir,
@@ -363,6 +290,9 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
       ),
     );
     const conn = { ...resolvedConn, suggestionContext };
+    // Passes workdir/projectRef/toml through directly rather than calling the full `dbPush`
+    // command, since its CommandSettings-based resolvers would be stale after this handler's
+    // own chdir above.
     const pushNotify = bootstrapRetryNotify();
     yield* dbPushCore({
       workdir,
@@ -381,7 +311,6 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
       emitStructuredResult: false,
     }).pipe(pushNotify, Effect.retry(retry));
 
-    // M. Start suggestion.
     if (isText) {
       const suggestion = suggestAppStart(runtimeInfo.cwd, workdir, starter.start, aqua);
       yield* emitSuccessTrailer(`${suggestion}\n`);
@@ -413,20 +342,15 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
       ),
     ),
     Effect.ensuring(telemetryState.flush),
-    // Load-bearing: `applyProjectEnv` (step I) uses `Effect.acquireRelease`
-    // to revert `SUPABASE_INTERNAL_IMAGE_REGISTRY` when its scope closes. Its
-    // lifetime must span the rest of this handler (link services, health poll,
-    // `.env` write, and the push step's own edge-runtime/pg-delta cache use of
-    // that env var) — matching the established process-lifetime `os.Setenv`
-    // behavior — so the scope is closed here, at the outermost pipe, not
-    // narrowly around a single step.
+    // `applyProjectEnv` above uses `Effect.acquireRelease` to revert
+    // `SUPABASE_INTERNAL_IMAGE_REGISTRY` when its scope closes; that scope must span the rest of
+    // this handler (link services, health poll, `.env` write, and the push step's own use of
+    // that var), so it's closed here rather than narrowly around a single step.
     Effect.scoped,
   );
 });
 
-// Whether `cause` is the generated client's `SchemaError` — a 200 response the
-// client could not decode, as opposed to a transport failure (DNS, TLS,
-// timeout).
+// True when `cause` is the generated client's undecodable `SchemaError`, not a transport failure.
 function isDecodeFailureCause(cause: unknown): boolean {
   if (typeof cause !== "object" || cause === null || !("_tag" in cause)) {
     return false;
@@ -434,7 +358,7 @@ function isDecodeFailureCause(cause: unknown): boolean {
   return cause._tag === "SchemaError";
 }
 
-// Non-200 branch: `Error status %d: %s`.
+// Non-200 branch: `Error status <status>: <body>`.
 const mapHealthError = (cause: unknown): Effect.Effect<never, BootstrapHealthError> => {
   if (HttpClientError.isHttpClientError(cause) && cause.response !== undefined) {
     const status = cause.response.status;

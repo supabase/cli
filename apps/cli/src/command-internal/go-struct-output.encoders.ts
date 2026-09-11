@@ -6,32 +6,13 @@ import {
 } from "../shared/telemetry/error-actionability.ts";
 
 /**
- * Byte-faithful reproductions of the established `-o yaml` / `-o toml` output for
- * **struct** payloads (CLI-1975) — an output contract raw Go structs were
- * originally passed through `gopkg.in/yaml.v3` and `github.com/BurntSushi/toml` to produce.
- * Neither library reads `json:` tags, so the emitted keys are derived from
- * the original Go **field names**, not the snake_case JSON the Management API returns:
+ * Byte-faithful `-o yaml`/`-o toml` output for struct payloads, matching `gopkg.in/yaml.v3` and
+ * `github.com/BurntSushi/toml`. Neither library reads `json:` tags, so emitted keys are the
+ * original Go field names, not the snake_case JSON the API returns.
  *
- * - yaml.v3 lowercases the whole field name (`ProjectRef` → `projectref`)
- * and renders nil pointers as explicit `null`.
- * - BurntSushi keeps the PascalCase field name (`ProjectRef`), omits nil
- * pointers entirely, and renders `time.Time` as a native TOML datetime.
- *
- * Because the TypeScript CLI only ever sees the decoded snake_case JSON, each
- * payload family declares a {@link GoType} spec mirroring the original struct
- * (field order = original declaration order). The two encoders here then reproduce the
- * exact established bytes — including zero-value filling for
- * non-pointer fields, nil-vs-empty slice handling, yaml.v3's scalar quoting
- * heuristics and 4-space indentation algorithm, and BurntSushi's 2-space table
- * indentation and blank-line placement.
- *
- * Everything in this file is pure and Effect-free so it stays unit-testable.
- * The golden bytes asserted in the unit tests were captured from a scratch Go
- * program (BurntSushi toml v1.6.0,
- * yaml.v3 v3.0.1) over the same payloads.
+ * Each payload family declares a {@link GoType} spec mirroring the original struct so the decoded
+ * JSON can be re-expressed with each library's own casing, nil handling, and quoting rules.
  */
-
-// Go struct specs
 
 export type GoType =
   | { readonly kind: "string" }
@@ -81,10 +62,9 @@ export function goMap(value: GoType): GoType {
 }
 
 /**
- * A struct field spec entry: `[jsonName, type]` derives the Go field name
- * mechanically (each snake_case token capitalized: `api_key` → `ApiKey`,
- * matching oapi-codegen's generated names — verified against `types.gen.go`),
- * or `[jsonName, type, goName]` for explicit names.
+ * A struct field spec entry: `[jsonName, type]` derives the Go field name mechanically (each
+ * snake_case token capitalized: `api_key` → `ApiKey`), or `[jsonName, type, goName]` for explicit
+ * names.
  */
 export type GoFieldSpec =
   | readonly [json: string, type: GoType]
@@ -102,13 +82,10 @@ export function goStruct(fields: ReadonlyArray<GoFieldSpec>): GoType {
 }
 
 /**
- * The anonymous wrapper struct Go list commands use for TOML output, e.g.
- * `struct{ Branches []api.BranchResponse `toml:"branches"` }` — the `toml:`
- * tag keeps the wrapper key lowercase while the elements keep Go field names.
- *
- * Also models Go's single-key `map[string]any{"providers": items}` wrapper
- * (`sso list`, all formats): a one-field lowercase-keyed struct renders
- * identically to a one-key map in both encoders.
+ * The anonymous wrapper struct list commands use for TOML output (a `toml:` tag keeps the wrapper
+ * key lowercase while the elements keep Go field names), and also models a single-key map wrapper
+ * (`sso list`), since a one-field lowercase-keyed struct renders identically to a one-key map in
+ * both encoders.
  */
 export function goTomlListWrapper(key: string, elem: GoType): GoType {
   return { kind: "struct", fields: [{ json: key, go: key, type: goSlice(elem) }] };
@@ -121,8 +98,6 @@ export function goFieldName(jsonName: string): string {
     .map((part) => (part.length === 0 ? part : part[0]?.toUpperCase() + part.slice(1)))
     .join("");
 }
-
-// Normalized Go value tree (decoded JSON + spec → what the Go structs hold)
 
 type GoValue =
   | { readonly k: "nil" }
@@ -290,18 +265,13 @@ function normalizeAny(value: unknown): GoValue {
 }
 
 /**
- * Render an RFC3339 input the way Go formats a decoded `time.Time` with
- * `time.RFC3339Nano`: the fraction truncated (not rounded) to nanoseconds —
- * `time`'s `parseNanoseconds` keeps at most 9 fractional digits, so
- * `.1234567895` decodes as `.123456789` — then trailing zeros trimmed (the
- * dot is dropped when the fraction is all zeros) and a zero offset rendered
- * as `Z`.
+ * Formats an RFC3339 input the way Go renders a decoded `time.Time` with `time.RFC3339Nano`: the
+ * fraction truncated (not rounded) to at most 9 digits, then trailing zeros trimmed and a zero
+ * offset rendered as `Z`.
  */
 function normalizeGoTime(value: string): string {
-  // Go accepts `,` as the fractional separator on decode (`commaOrPeriod`,
-  // `time/format.go`; probed: `time.Time.UnmarshalJSON` parses
-  // `…00,123Z` and re-marshals it as `…00.123Z`), so both separators
-  // normalize to the dot Go emits (review r3684270625).
+  // Both `.` and `,` are accepted as the fractional separator on decode; normalize to the dot Go
+  // emits.
   const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})([.,]\d+)?(Z|[+-]\d{2}:\d{2})$/.exec(value);
   if (match === null) return value;
   const [, base, fraction, offset] = match;
@@ -314,16 +284,11 @@ function normalizeGoTime(value: string): string {
   return `${base}${frac}${zone}`;
 }
 
-// Go float formatting (strconv.FormatFloat(f, 'g', -1, bits))
-
 /**
- * Shortest round-trip digits for a float32 value (Go marshals via the typed
- * field), matching Ryu as used by `strconv.FormatFloat(f, 'g', -1, 32)`: the
- * fewest significant digits that parse back to the same float32, taking the
- * candidate correctly rounded from the exact binary value — an exact decimal
- * tie goes to the even final digit, where JS `toPrecision` would round half
- * up (verified against Go: 4249.03125 → `4249.0312`, 4249.09375 →
- * `4249.0938`). Returns `<digits>e<±exp>` for {@link goFormatFloat}.
+ * Shortest round-trip digits for a float32 value, matching `strconv.FormatFloat(f, 'g', -1, 32)`'s
+ * Ryu algorithm: the fewest significant digits that parse back to the same float32, with an exact
+ * decimal tie rounded to the even final digit (unlike JS `toPrecision`, which rounds half up).
+ * Returns `<digits>e<±exp>` for {@link goFormatFloat}.
  */
 function shortestFloat32(value: number): string {
   const rounded = Math.fround(value);
@@ -437,8 +402,6 @@ export function goFormatFloat(value: number, bits: 32 | 64): string {
   return `${sign}${digits.slice(0, dp)}.${digits.slice(dp)}`;
 }
 
-// YAML encoder (gopkg.in/yaml.v3 v3.0.1 semantics)
-
 /**
  * Encode a decoded payload as the Go CLI's `-o yaml` output for the given Go
  * struct spec. Returns the full document bytes (trailing newline included).
@@ -496,20 +459,13 @@ function yamlMapEntries(
 }
 
 /**
- * Go string ordering: `sort.Strings` compares UTF-8 bytes and yaml.v3's
- * `keyList.Less` compares runes — both equal Unicode code-point order, which
- * differs from JS `<` (UTF-16 code-unit order) when an astral character meets
- * a high-BMP one (e.g. Go sorts U+E000 before U+1F600, UTF-16 the reverse).
+ * Unicode code-point string ordering, matching both `sort.Strings` (UTF-8 byte order) and
+ * yaml.v3's `keyList.Less` (rune order) — the two are equivalent, and both differ from JS `<`
+ * (UTF-16 code-unit order) when an astral character meets a high-BMP one (Go sorts U+E000 before
+ * U+1F600, UTF-16 the reverse).
  *
- * Exported for `go-output.encoders.ts`'s `sortKeysDeep` -
- * `encoding/json`'s map-key sort is the exact same Go byte/code-point
- * order, so `gen bearer-jwt`'s `--payload` custom-claims object (and every
- * other `encodeGoJson`/`encodeGoStructJsonBody` caller) needs this same
- * comparator instead of a second, divergent copy (CLI-1961 Codex review
- * finding: verified against the real binary that `json.Marshal` of a map
- * with a U+E000 key and a U+10000 key emits the U+E000 key FIRST, while
- * plain JS `Object.keys(...).sort()` on the same two keys yields the
- * reverse order).
+ * Also used by `go-output.encoders.ts`'s `sortKeysDeep`, since `encoding/json`'s map-key sort is
+ * the same order.
  */
 export function goStringCompare(a: string, b: string): number {
   let i = 0;
@@ -523,11 +479,9 @@ export function goStringCompare(a: string, b: string): number {
 }
 
 /**
- * Port of yaml.v3's `keyList.Less` natural string ordering (sorter.go).
- * Digit runs use `unicode.IsDigit` (any Unicode `Nd` digit — probed: Go
- * orders `a3, a9, a10, a٢`, the Arabic-Indic key LAST, because the naive
- * `rune - '0'` arithmetic yields a huge value for non-ASCII digits; review
- * r3685767973). The ASCII-only {@link isDigit} stays for the scalar parser.
+ * yaml.v3's `keyList.Less` natural string ordering. Digit runs use `unicode.IsDigit` (any Unicode
+ * `Nd` digit), so a non-ASCII digit like Arabic-Indic sorts by its raw code point and ends up
+ * after ASCII digit runs. The ASCII-only {@link isDigit} stays for the scalar parser.
  */
 function yamlKeyLess(a: string, b: string): boolean {
   const ar = [...a];
@@ -558,10 +512,8 @@ function yamlKeyLess(a: string, b: string): boolean {
     }
     let ai = i;
     let bi = i;
-    // Go accumulates into `int64` WITHOUT overflow checks, so 19+-digit runs
-    // wrap negative and sort before shorter positive runs (probed:
-    // `a10000000000000000000` precedes `a9000000000000000000`;
-    // review r3689635556). `BigInt.asIntN(64, …)` reproduces the wrap.
+    // Go accumulates into `int64` without overflow checks, so a 19+-digit run wraps negative and
+    // sorts before a shorter positive run. `BigInt.asIntN(64, …)` reproduces the wrap.
     for (; ai < ar.length && isSortDigit(ar[ai] as string); ai++) {
       an = BigInt.asIntN(64, an * 10n + BigInt(((ar[ai] as string).codePointAt(0) as number) - 48));
     }
@@ -721,10 +673,9 @@ function yamlKeyScalar(key: string): string {
 type YamlStringStyle = "plain" | "single" | "double" | "literal";
 
 /**
- * Mirror of yaml.v3's style selection: `encode.go` requests literal for
- * multi-line strings and double quotes for strings that resolve to a
- * non-string tag; the emitter (`emitterc.go`) downgrades plain to single (or
- * double) based on its scalar analysis.
+ * yaml.v3's style selection: literal for multi-line strings, double quotes for a string that
+ * resolves to a non-string tag, otherwise downgraded from plain to single (or double) based on
+ * scalar analysis.
  */
 function yamlStringStyle(s: string): YamlStringStyle {
   if (s.length === 0) return "double";
@@ -758,10 +709,9 @@ function yamlHasSpecialChars(s: string): boolean {
 }
 
 /**
- * libyaml's `is_printable` (yamlprivateh.go) in code-point terms. Notably the
- * byte-oriented original never accepts a 4-byte UTF-8 lead, so every astral
- * character — as well as C0/C1 controls, DEL, surrogates, the U+FEFF BOM, and
- * U+FFFE/U+FFFF — is "not printable" and gets double-quoted escapes.
+ * libyaml's `is_printable` in code-point terms. The byte-oriented original never accepts a 4-byte
+ * UTF-8 lead, so every astral character — along with C0/C1 controls, DEL, surrogates, the U+FEFF
+ * BOM, and U+FFFE/U+FFFF — is "not printable" and gets double-quoted escapes.
  */
 function yamlIsPrintable(code: number): boolean {
   if (code === 0x0a) return true;
@@ -795,20 +745,17 @@ function yamlResolvesToString(s: string): boolean {
   if (YAML_BASE60.test(s)) return false;
   const first = s[0] as string;
   if (first === ".") {
-    // resolve()'s '.'-hint branch: strconv.ParseFloat — which ERRORS on
-    // overflow (±Inf), so an overflowing spelling stays a string and needs
-    // no quoting (probed: Go emits `1e999` plain; review r3685767974).
+    // strconv.ParseFloat errors on overflow (±Inf), so an overflowing spelling like `1e999` stays
+    // a string and needs no quoting.
     return !(/^\.\d+(?:[eE][+-]?\d+)?$/.test(s) && Number.isFinite(Number(s)));
   }
   if (first === "+" || first === "-" || isDigit(first)) {
     if (yamlIsTimestamp(s)) return false;
     const plain = s.replaceAll("_", "");
     if (goParseIntBase0(plain)) return false;
-    // strconv.ParseFloat overflow (→ ±Inf) is an error in resolve(), so the
-    // value resolves as a string and is emitted plain; underflow (1e-999 → 0)
-    // succeeds and stays float-tagged, hence quoted (probed both against Go,
-    // review r3685767974). `Number` mirrors the accepted shapes here because
-    // YAML_STYLE_FLOAT gates the syntax first.
+    // An overflowing float (→ ±Inf) is a ParseFloat error, so it resolves as a string and stays
+    // plain; an underflowing one (1e-999 → 0) succeeds and stays float-tagged, hence quoted.
+    // `Number` mirrors the accepted shapes since YAML_STYLE_FLOAT gates the syntax first.
     if (YAML_STYLE_FLOAT.test(plain) && Number.isFinite(Number(plain))) return false;
     return true;
   }
@@ -904,16 +851,13 @@ function goParseIntBase0(plain: string): boolean {
 }
 
 /**
- * yaml.v3's `parseTimestamp` layouts (resolve.go `allowedTimestampFormats`),
- * which delegates to `time.Parse` — so calendar dates and zone offsets are
- * validated exactly like Go's time package (verified against the Go binary:
- * `2025-02-31` and `2100-02-29` stay plain, `2024-02-29` is a timestamp).
+ * yaml.v3's `parseTimestamp` layouts, which delegate to `time.Parse` — so calendar dates and zone
+ * offsets are validated exactly like Go's time package (`2025-02-31` and `2100-02-29` stay plain,
+ * `2024-02-29` is a timestamp).
  */
 function yamlIsTimestamp(s: string): boolean {
-  // Fraction separator is `.` OR `,` — yaml.v3 resolves timestamps through
-  // `time.Parse`, which accepts either (`commaOrPeriod`; probed: Go
-  // double-quotes the comma form exactly like the dot form,
-  // review r3685767963).
+  // The fraction separator is `.` or `,` — yaml.v3 resolves timestamps through `time.Parse`,
+  // which accepts either.
   const match =
     /^(\d{4})-(\d{1,2})-(\d{1,2})(?:([Tt ])(\d{1,2}):(\d{1,2}):(\d{1,2})(?:[.,]\d+)?(Z|[+-]\d{2}:\d{2})?)?$/.exec(
       s,
@@ -926,9 +870,8 @@ function yamlIsTimestamp(s: string): boolean {
     if (separator !== " " && offset === undefined) return false;
     if (Number(hour) > 23 || Number(minute) > 59 || Number(second) > 59) return false;
   }
-  // time.Parse's zone-offset range checks (time/format.go): the hour is
-  // rejected above 24 and the minute above 60 — `+24:59` and `+00:60` are
-  // accepted, `+25:00` and `+23:99` are not (verified against Go 1.26).
+  // time.Parse's zone-offset range checks: the hour is rejected above 24 and the minute above 60
+  // — `+24:59` and `+00:60` are accepted, `+25:00` and `+23:99` are not.
   if (offset !== undefined && offset !== "Z") {
     if (Number(offset.slice(1, 3)) > 24 || Number(offset.slice(4, 6)) > 60) return false;
   }
@@ -1041,14 +984,12 @@ function yamlBlockLiteral(s: string, indent: number): string {
   const indicator = s.startsWith(" ") || s.startsWith("\n") ? "4" : "";
   const lines = s.split("\n");
   if (s.endsWith("\n")) lines.pop();
-  // yaml.v3 merges a leading empty line's break with the header newline
-  // (verified empirically: "\nx" → `|4-\n x\n`, "\n\nx" → `|4-\n\n x\n`).
+  // yaml.v3 merges a leading empty line's break with the header newline (e.g. "\nx" → `|4-\n
+  // x\n`).
   if (lines[0] === "") lines.shift();
   const body = lines.map((line) => (line.length === 0 ? "" : `${pad}${line}`)).join("\n");
   return ` |${indicator}${chomp}\n${body}\n`;
 }
-
-// TOML encoder (github.com/BurntSushi/toml v1.6.0 semantics)
 
 /**
  * Thrown when BurntSushi would refuse the payload: a populated
@@ -1068,26 +1009,13 @@ export class GoTomlEncodeError extends Error {
 }
 
 /**
- * Encode a decoded payload as the Go CLI's `-o toml` output for the given Go
- * struct spec. Returns the full document bytes (BurntSushi emits nothing for
- * an all-nil payload, so the result can be the empty string).
+ * Encodes a decoded payload as the Go CLI's `-o toml` output. Returns the full document, which can
+ * be empty (BurntSushi emits nothing for an all-nil payload). Throws {@link GoTomlEncodeError} to
+ * match Go's runtime failure on a populated nullable field.
  *
- * Throws {@link GoTomlEncodeError} when a populated nullable field is
- * present, matching Go's runtime failure.
- *
- * DOCUMENTED BOUND (review r3689784209): on the ERROR path only, Go's stdout
- * bytes can differ. BurntSushi encodes through an internal `bufio.Writer`, so
- * when more than 4 KiB has been generated before a late encode error (e.g. a
- * multi-KB `MetadataXml` scalar followed by a nil array element in a
- * sub-table), Go has already auto-flushed whole 4096-byte chunks to stdout —
- * probed on the repo's own `utils.EncodeOutput`: a 5000-char scalar +
- * `[1, nil]` default leaves EXACTLY 4096 bytes flushed (the buffered tail is
- * lost — NOT the full accumulated prefix), while the same payload under 4 KiB
- * leaves 0 bytes. This all-in-memory port deliberately emits nothing on
- * error: reproducing Go would mean emulating bufio's flush boundaries and
- * large-write bypass over BurntSushi's internal write granularity, for
- * unparseable partial output on a failure path. Do not "fix" this by
- * emitting the accumulated prefix — that emits MORE than Go does.
+ * On the error path only, Go's real stdout can already contain partial buffered output that this
+ * in-memory port doesn't reproduce; emit nothing on error rather than the accumulated prefix,
+ * which would emit more than Go does.
  */
 export function encodeGoToml(value: unknown, type: GoType): string {
   const state = { out: "", hasWritten: false };
@@ -1267,25 +1195,20 @@ function tomlElement(value: GoValue): string {
     case "nullable":
       throw new GoTomlEncodeError();
     case "nil":
-      // BurntSushi's `eElement` rejects nil inline-array elements (verified:
-      // `[null, "x"]` fails, while nil *map values* are silently skipped).
+      // BurntSushi's `eElement` rejects nil inline-array elements (`[null, "x"]` fails), while nil
+      // map values are silently skipped.
       throw new GoTomlEncodeError("toml: cannot encode array with nil element");
   }
 }
 
 /**
- * BurntSushi's inline-table form, used for map/struct elements of arrays that
- * are not arrays-of-tables (e.g. `interface{}` values holding
- * `[{"a":1},"x"]`): `{k = v, ...}` with nil entries skipped and, like block
- * tables, non-table values before table values — map keys byte-sorted within
- * each group (verified: `[{"a":{"b":1},"z":2},"x"]` → `[{z = 2.0, a = {b =
- * 1.0}}, "x"]`).
+ * BurntSushi's inline-table form, used for map/struct elements of arrays that aren't
+ * arrays-of-tables: `{k = v, ...}` with nil entries skipped and non-table values before table
+ * values, map keys byte-sorted within each group.
  *
- * The `", "` separator replicates `eMap`/`eStruct` exactly: it is decided by
- * the entry's *position* — for maps, group index with a trailing comma after
- * the direct group when sub-tables follow; for structs, declaration index —
- * so a skipped nil entry in the final position leaves a dangling `", "`
- * (verified: `[{"10":1,"b":null},false]` → `[{10 = 1.0, }, false]`).
+ * The `", "` separator is decided by the entry's position, not by whether it was actually
+ * written, so a skipped nil entry in the final position leaves a dangling `", "` (e.g.
+ * `[{"10":1,"b":null},false]` → `[{10 = 1.0, }, false]`).
  */
 function tomlInlineTable(value: Extract<GoValue, { k: "struct" | "map" }>): string {
   let out = "{";

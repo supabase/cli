@@ -1,0 +1,273 @@
+import { BunServices } from "@effect/platform-bun";
+import { it } from "@effect/vitest";
+import { Effect, FileSystem, Path } from "effect";
+import { describe, expect } from "vitest";
+import {
+  displayPath,
+  resolveComputeSource,
+  computeDir,
+  computeRootDir,
+  computeSourceDir,
+} from "./compute-paths.ts";
+import { InvalidComputeSourceError } from "./compute.errors.ts";
+
+const PROJECT = "/repo";
+
+/**
+ * Confinement is decided on the filesystem's terms, so these need a real one.
+ * A path that does not exist still resolves — `canonicalize` walks up to the
+ * deepest existing ancestor — which is what lets the `/repo` cases below stay
+ * pure string scenarios.
+ */
+const runFs = <A, E>(effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path>) =>
+  effect.pipe(Effect.provide(BunServices.layer));
+const runPath = <A>(fn: (path: Path.Path) => A): Effect.Effect<A> =>
+  Effect.gen(function* () {
+    return fn(yield* Path.Path);
+  }).pipe(Effect.provide(BunServices.layer));
+
+describe("compute directories", () => {
+  it.live("resolve under supabase/compute/", () =>
+    Effect.gen(function* () {
+      expect(yield* runPath((path) => computeRootDir(path, PROJECT))).toBe(
+        yield* runPath((path) => path.join(PROJECT, "supabase", "compute")),
+      );
+      expect(yield* runPath((path) => computeDir(path, PROJECT, "api"))).toBe(
+        yield* runPath((path) => path.join(PROJECT, "supabase", "compute", "api")),
+      );
+    }),
+  );
+
+  it.live("a recorded source wins and is anchored to the project root", () =>
+    Effect.gen(function* () {
+      const defaultDir = yield* runPath((path) => computeDir(path, PROJECT, "api"));
+      const sourceDir = (configuredSource: string | undefined) =>
+        runFs(
+          computeSourceDir({ projectRoot: PROJECT, defaultDir, name: "api", configuredSource }),
+        );
+
+      expect(yield* sourceDir(undefined)).toBe(defaultDir);
+      expect(yield* sourceDir("")).toBe(defaultDir);
+      expect(yield* sourceDir("packages/api")).toBe(
+        yield* runPath((path) => path.join(PROJECT, "packages", "api")),
+      );
+    }),
+  );
+
+  // `source` arrives from a committed `config.toml`, so it is as much an input
+  // as `--source` is — and `push` packages and uploads whatever it resolves to.
+  it.live.each([
+    { configuredSource: "../../elsewhere" },
+    { configuredSource: "/etc" },
+    { configuredSource: "supabase/functions/hello" },
+  ])("refuses a recorded source of $configuredSource", ({ configuredSource }) =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        runFs(
+          computeSourceDir({
+            projectRoot: PROJECT,
+            defaultDir: yield* runPath((path) => computeDir(path, PROJECT, "api")),
+            name: "api",
+            configuredSource,
+          }),
+        ),
+      );
+      expect(error).toBeInstanceOf(InvalidComputeSourceError);
+      expect(error.detail).toContain("[compute.api] source");
+    }),
+  );
+});
+
+describe("displayPath", () => {
+  it.live("prefers the relative form, and falls back to absolute when it would climb out", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* runPath((path) =>
+          displayPath(path, PROJECT, path.join(PROJECT, "supabase", "compute", "api")),
+        ),
+      ).toBe(yield* runPath((path) => path.join("supabase", "compute", "api")));
+      expect(yield* runPath((path) => displayPath(path, PROJECT, PROJECT))).toBe(".");
+      expect(
+        yield* runPath((path) =>
+          displayPath(path, path.join(PROJECT, "deep", "deeper"), "/elsewhere/api"),
+        ),
+      ).toBe("/elsewhere/api");
+    }),
+  );
+});
+
+describe("resolveComputeSource", () => {
+  const cwd = `${PROJECT}/apps/web`;
+
+  it.live("resolves a directory inside the project against the directory it was typed in", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* runFs(
+          resolveComputeSource({ projectRoot: PROJECT, cwd, raw: "../../packages/api" }),
+        ),
+      ).toBe(yield* runPath((path) => path.join(PROJECT, "packages", "api")));
+      expect(
+        yield* runFs(
+          resolveComputeSource({ projectRoot: PROJECT, cwd: PROJECT, raw: "packages/api/" }),
+        ),
+      ).toBe(yield* runPath((path) => path.join(PROJECT, "packages", "api")));
+    }),
+  );
+
+  // The starter files land in whatever this resolves to, so each of these would
+  // write into work belonging to the project or to the machine.
+  it.live.each([
+    { raw: ".", reason: "the project root itself" },
+    { raw: "", reason: "empty" },
+    { raw: "..", reason: "outside the project" },
+    { raw: "/etc", reason: "outside the project" },
+    { raw: "../elsewhere", reason: "outside the project" },
+    { raw: "supabase", reason: "the supabase directory itself" },
+    { raw: "supabase/functions", reason: "supabase/functions/" },
+    { raw: "supabase/functions/hello", reason: "supabase/functions/" },
+    { raw: "supabase/migrations", reason: "supabase/migrations/" },
+    { raw: "supabase/.temp", reason: "supabase/.temp/" },
+    { raw: "supabase/.temp/project-ref", reason: "supabase/.temp/" },
+    // Refusing the reserved directories is not enough on its own: this path is
+    // inside the project, is not `supabase/` itself, and is in no reserved
+    // subdirectory — so without this it would be authorized as a scaffold
+    // destination, and the project's config file is not that.
+    { raw: "supabase/config.toml", reason: "supabase/config.toml" },
+    { raw: "supabase/config.json", reason: "supabase/config.json" },
+  ])("refuses $raw", ({ raw, reason }) =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        runFs(resolveComputeSource({ projectRoot: PROJECT, cwd: PROJECT, raw })),
+      );
+      expect(error).toBeInstanceOf(InvalidComputeSourceError);
+      expect(error.detail).toContain(reason);
+    }),
+  );
+});
+
+// Containment on a real filesystem, because a string comparison cannot see a
+// symlink: a directory inside the project is free to point anywhere outside it,
+// and the starter files land wherever the path really resolves.
+describe("resolveComputeSource containment on a real filesystem", () => {
+  const withFixture = <A, E, R>(
+    run: (
+      project: string,
+      outside: string,
+      fs: FileSystem.FileSystem,
+      path: Path.Path,
+    ) => Effect.Effect<A, E, R>,
+  ) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const scratch = yield* fs.makeTempDirectoryScoped({ prefix: "compute-paths-" });
+        const project = path.join(scratch, "project");
+        const outside = path.join(scratch, "outside");
+        yield* fs.makeDirectory(path.join(project, "packages"), { recursive: true });
+        yield* fs.makeDirectory(path.join(outside, "api"), { recursive: true });
+        yield* fs.makeDirectory(path.join(project, "supabase", "functions", "hello"), {
+          recursive: true,
+        });
+        return yield* run(project, outside, fs, path);
+      }),
+    ).pipe(Effect.provide(BunServices.layer));
+
+  it.live("resolves a genuine directory inside the project", () =>
+    withFixture((project, _outside, _fs, path) =>
+      Effect.gen(function* () {
+        expect(
+          yield* runFs(
+            resolveComputeSource({ projectRoot: project, cwd: project, raw: "packages" }),
+          ),
+        ).toBe(path.join(project, "packages"));
+      }),
+    ),
+  );
+
+  it.live("refuses a path that reaches outside the project through a symlink", () =>
+    withFixture((project, outside, fs, path) =>
+      Effect.gen(function* () {
+        yield* fs.symlink(outside, path.join(project, "packages", "external"));
+
+        const error = yield* Effect.flip(
+          runFs(
+            resolveComputeSource({
+              projectRoot: project,
+              cwd: project,
+              raw: path.join("packages", "external", "api"),
+            }),
+          ),
+        );
+
+        expect(error).toBeInstanceOf(InvalidComputeSourceError);
+        expect(error.detail).toContain("resolves outside the project");
+      }),
+    ),
+  );
+
+  it.live("refuses a reserved directory reached through a symlink", () =>
+    withFixture((project, _outside, fs, path) =>
+      Effect.gen(function* () {
+        yield* fs.symlink(path.join(project, "supabase", "functions"), path.join(project, "fns"));
+
+        const error = yield* Effect.flip(
+          runFs(
+            resolveComputeSource({
+              projectRoot: project,
+              cwd: project,
+              raw: path.join("fns", "hello"),
+            }),
+          ),
+        );
+
+        expect(error).toBeInstanceOf(InvalidComputeSourceError);
+        expect(error.detail).toContain("supabase/functions/");
+      }),
+    ),
+  );
+
+  // A destination that does not exist yet is the normal case for `new`, and the
+  // project root itself is usually behind a symlink on macOS (`/var` ->
+  // `/private/var`). Both have to compare equal, not fail containment.
+  // A name that ends in a space is legal on Unix, and only reaches argv as one
+  // entry if the user quoted it. Trimming it pointed the scaffold at a different
+  // directory than the one asked for.
+  it.live("keeps whitespace that is part of the directory name", () =>
+    withFixture((project, _outside, _fs, path) =>
+      Effect.gen(function* () {
+        expect(
+          yield* runFs(
+            resolveComputeSource({ projectRoot: project, cwd: project, raw: "packages/api " }),
+          ),
+        ).toBe(path.join(project, "packages", "api "));
+      }),
+    ),
+  );
+
+  it.live.each([{ raw: "" }, { raw: "   " }, { raw: "\t" }])(
+    "refuses an all-whitespace --source of $raw",
+    ({ raw }) =>
+      withFixture((project, _outside, _fs, _path) =>
+        Effect.gen(function* () {
+          const error = yield* Effect.flip(
+            runFs(resolveComputeSource({ projectRoot: project, cwd: project, raw })),
+          );
+          expect(error).toBeInstanceOf(InvalidComputeSourceError);
+          expect(error.detail).toContain("is empty");
+        }),
+      ),
+  );
+
+  it.live("accepts a destination that does not exist yet", () =>
+    withFixture((project, _outside, _fs, path) =>
+      Effect.gen(function* () {
+        expect(
+          yield* runFs(
+            resolveComputeSource({ projectRoot: project, cwd: project, raw: "packages/brand-new" }),
+          ),
+        ).toBe(path.join(project, "packages", "brand-new"));
+      }),
+    ),
+  );
+});

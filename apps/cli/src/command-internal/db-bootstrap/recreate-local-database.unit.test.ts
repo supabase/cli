@@ -10,13 +10,9 @@ const COUNT_REPLICATION_SLOTS =
   "SELECT COUNT(*) FROM pg_replication_slots WHERE database IN ('postgres', '_supabase')";
 
 /**
- * A minimal {@link DbSession} mock built entirely from `Effect.succeed`/
- * `Effect.suspend` — no real filesystem/Docker I/O anywhere in the chain, unlike
- * driving the full `dbReset` composite effect through `TestClock`. That's
- * what makes the boundary tests below reliable: `resetDisconnectClients`
- * reaches its retry schedule's sleep on the very first synchronous pass, so a
- * single `TestClock.adjust` per round always lands exactly where expected —
- * see `resetDisconnectClients`'s own doc comment.
+ * A minimal {@link DbSession} mock with no real filesystem/Docker I/O, so
+ * `resetDisconnectClients` reaches its retry schedule's sleep on the first synchronous pass —
+ * a single `TestClock.adjust` per round always lands exactly where expected.
  */
 function mockSession(opts: {
   readonly counts?: ReadonlyArray<number>;
@@ -79,10 +75,9 @@ describe("resetDisconnectClients", () => {
         for (let i = 0; i < 9; i++) {
           yield* TestClock.adjust("1 seconds");
         }
-        // Not yet exhausted — 9 retries is one short of Go's hardcoded 10-retry cap.
+        // One retry short of the cap.
         expect(fiber.pollUnsafe()).toBeUndefined();
 
-        // The 10th one-second backoff crosses the boundary.
         yield* TestClock.adjust("1 seconds");
         const exit = yield* Fiber.await(fiber);
         expect(Exit.isFailure(exit)).toBe(true);
@@ -97,7 +92,6 @@ describe("resetDisconnectClients", () => {
         const mock = mockSession({ queryFails: true });
         const exit = yield* resetDisconnectClients(mock.session).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        // A single attempt — the permanent (non-retryable) failure never retries.
         expect(mock.queries.filter((sql) => sql === COUNT_REPLICATION_SLOTS)).toHaveLength(1);
       }),
   );

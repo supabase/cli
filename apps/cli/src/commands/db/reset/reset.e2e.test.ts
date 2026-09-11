@@ -18,11 +18,7 @@ describe("supabase db reset", () => {
     rmSync(workdir, { recursive: true, force: true });
   });
 
-  // Docker-free: the destructive remote-reset confirmation fires after the config
-  // load and BEFORE any connection is dialed, so a piped decline exits without a
-  // database. Declining prints an established output contract: a single
-  // `context canceled` line on stderr and exit 1, with NO `--debug`
-  // troubleshooting hint.
+  // Docker-free: the confirmation fires after config load and before any connection is dialed.
   test(
     "declining the remote reset prompt prints only context canceled, no --debug hint",
     { timeout: E2E_TIMEOUT_MS },
@@ -32,8 +28,6 @@ describe("supabase db reset", () => {
         { cwd: workdir, stdin: "n\n" },
       );
       expect(exitCode).toBe(1);
-      // The destructive confirmation (default No → `[y/N]`) actually rendered and
-      // was answered — the cancellation didn't come from some other failure path.
       expect(stripAnsi(stderr)).toContain("[y/N]");
       const lines = stripAnsi(stderr).trimEnd().split("\n");
       expect(lines.at(-1)).toBe("context canceled");

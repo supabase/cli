@@ -15,8 +15,11 @@ Bun monorepo with workspaces under `apps/` and `packages/`. `pnpm` is the packag
 Use an existing TypeScript/Bun workspace, especially `packages/api`, as the package-structure
 reference. Published `apps/cli` and `packages/config` are not private; `apps/docs` and
 `packages/cli-*` have their own shapes. Generic lint, format, and unused-code tooling is
-root-owned. Effect lint covers `packages/stack`, `apps/cli/src/commands/experimental/stack`, and
-`apps/cli/src/command-internal/experimental-feature.ts`; use the root scripts for it.
+root-owned. Effect lint covers `packages/stack`, all files under
+`apps/cli/src/commands/experimental/stack` and `apps/cli/src/commands/experimental/compute`, the
+shared `apps/cli/src/shared/compute` runtime helpers (excluding embedded starter templates), the
+Compute test fixture helper, and `apps/cli/src/command-internal/experimental-feature.ts`; use the
+root scripts for it.
 
 ### Config Naming Vocabulary
 
@@ -109,6 +112,34 @@ pnpm run generate
 pnpm exec turbo run supabase#build
 pnpm run test:live
 ```
+
+## Comments
+
+Comments exist for the next reader, not as the author's audit trail. Code states what happens; a
+comment states only the why that the code cannot carry. Most code needs no comment at all.
+
+### When to comment
+
+Write a comment only for an invariant or constraint the types cannot express, an external quirk,
+a decision that would otherwise read as a bug, or a pointer to an ADR, `SIDE_EFFECTS.md`, docs
+page, or upstream issue. If the rationale needs more than three lines, move it to documentation.
+
+### How to comment
+
+- Prefer one sentence of JSDoc on exported symbols; use tags such as `@deprecated` and `@see` when they carry useful meaning.
+- Skip JSDoc on self-explanatory internal helpers and keep inline comments to one or two lines.
+- Describe behavior in its own terms and in the present tense.
+- Published package exports need a one-line JSDoc summary. This public repository must not include internal context in comments.
+
+### Never write
+
+- Code narration, provenance/history, evidence trails, ticket IDs as provenance, or meta-commentary on code shape. A ticket ID belongs only in a `TODO(CLI-1234):` or when no ADR exists and the ticket is the only home for a decision.
+- Restatements of docs, section banners, or Go-parity framing. Link to maintained docs instead.
+- ALL-CAPS emphasis or words such as “deliberately”, “crucially”, and “exactly”.
+
+Tests should carry intent in their names; comments only explain non-obvious fixture setup. Keep
+tool directives and tool-facing JSDoc tags, and give every lint disable a short reason after `--`.
+A source file whose comment lines exceed a quarter of its code lines should move prose into docs.
 
 ## Pull requests
 

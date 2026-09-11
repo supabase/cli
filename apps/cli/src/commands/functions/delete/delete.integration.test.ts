@@ -2,8 +2,6 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option, Stdio } from "effect";
 
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
-import { CurrentAnalyticsContext } from "../../../shared/telemetry/analytics-context.ts";
-import { Analytics } from "../../../shared/telemetry/analytics.service.ts";
 import {
   buildTestRuntime,
   mockCommandSettings,
@@ -12,37 +10,13 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
-import { mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { mockContextualAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
 import { functionsDeleteHandler } from "./delete.command.ts";
 import { functionsDelete } from "./delete.handler.ts";
 
-const tempRoot = useTempWorkdir("supabase-functions-delete-legacy-");
+const tempRoot = useTempWorkdir("supabase-functions-delete-");
 
-// `withCommandTelemetry` threads `flags`/`command`/etc. through
-// `CurrentAnalyticsContext`, not the direct `capture()` call args — mirrors
-// the identical local helper in `command-telemetry.unit.test.ts`.
-// The shared `mockAnalytics()` in tests/helpers/mocks.ts deliberately doesn't
-// merge this context (most callers don't need it).
-function mockContextualAnalytics() {
-  const captured: Array<{ event: string; properties: Record<string, unknown> }> = [];
-  const layer = Layer.succeed(
-    Analytics,
-    Analytics.of({
-      capture: (event: string, properties: Record<string, unknown> = {}) =>
-        Effect.gen(function* () {
-          const context = yield* CurrentAnalyticsContext;
-          captured.push({ event, properties: { ...context, ...properties } });
-        }),
-      identify: () => Effect.void,
-      alias: () => Effect.void,
-      groupIdentify: () => Effect.void,
-    }),
-  );
-  return { layer, captured };
-}
-
-// Strip ANSI SGR (aqua slug/ref via `aqua`) so byte-assertions are
-// stable whether or not the test stdout supports color.
+// Strips ANSI color codes so assertions are stable regardless of color support.
 // eslint-disable-next-line no-control-regex
 const stripSgr = (text: string) => text.replace(/\x1b\[[0-9;]*m/gu, "");
 
@@ -71,8 +45,6 @@ describe("functions delete", () => {
       expect(api.requests[0]?.url).toBe(
         "https://api.supabase.com/v1/projects/abcdefghijklmnopqrst/functions/hello-world",
       );
-      // The slug and ref are wrapped in ANSI (aqua) in colour-capable
-      // environments — strip SGR so the byte assertion stays stable.
       expect(stripSgr(out.stdoutText)).toBe(
         "Deleted Function hello-world from project abcdefghijklmnopqrst.\n",
       );

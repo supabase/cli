@@ -122,11 +122,11 @@ const functionsConfig: Record<string, FunctionConfig> = (() => {
   }
 })();
 
-// Edge Runtime pools user workers by servicePath. Keep the source directory for the
-// common case, but give each function a process-owned temporary path when multiple
-// configured functions share that directory. Deno creates each path outside the set of
-// existing source directories, so a real function directory cannot use the same pool key.
-// maybeEntrypoint still points at the real source file, so module resolution is unchanged.
+// Edge Runtime pools user workers by servicePath. Keep the source directory
+// for the common case, but give each function a process-owned temporary
+// path when multiple configured functions share that directory, since a
+// real function directory can't be reused as a pool key. `maybeEntrypoint`
+// still points at the real source file, so module resolution is unchanged.
 const workerServicePaths = (() => {
   const sourcePathCounts = new Map<string, number>();
   for (const config of Object.values(functionsConfig)) {
@@ -146,7 +146,6 @@ const workerServicePaths = (() => {
   );
 })();
 
-/* --- JWT verification --- */
 export function extractBearerToken(rawToken: string) {
   const tokenParts = rawToken.split(" ");
   const [bearer, token] = tokenParts;
@@ -161,7 +160,7 @@ function getAuthToken(req: Request): string | AuthFailure {
   const authHeader = req.headers.get("authorization");
   const sbApiKeyCompatibilityToken = req.headers.get("sb-api-key");
 
-  // NOTE:(kallebysantos) Kong on CLI stack pass it down as 'Bearer Token' format
+  // Kong on the CLI stack passes this down as "Bearer Token" format.
   const cleanSbApiKeyCompatibilityToken = sbApiKeyCompatibilityToken?.replace("Bearer", "")?.trim();
 
   if (!authHeader && !cleanSbApiKeyCompatibilityToken) {
@@ -171,9 +170,8 @@ function getAuthToken(req: Request): string | AuthFailure {
     };
   }
 
-  // NOTE:(kallebysantos) Compatibility mode is triggered when all conditions match:
-  // - API proxy mints a temp token
-  // - Original bearer is not present or is ApiKey
+  // Compatibility mode triggers when the API proxy mints a temp token and
+  // the original bearer is absent or an API key.
   const bearerToken = extractBearerToken(authHeader ?? "");
   const token =
     !bearerToken || bearerToken.startsWith("sb_") ? cleanSbApiKeyCompatibilityToken : bearerToken;
@@ -292,7 +290,6 @@ export function prepareUserRequest(req: Request): Request {
   clonedURL.hostname = forwardedHost ?? clonedURL.hostname;
   const clonedReq = new Request(clonedURL, req.clone());
 
-  // remove custom api headers
   clonedReq.headers.delete("sb-api-key");
   EdgeRuntime.applySupabaseTag(req, clonedReq);
 
@@ -304,12 +301,10 @@ Deno.serve({
     const url = new URL(req.url);
     const { pathname } = url;
 
-    // handle health checks
     if (pathname === "/_internal/health") {
       return getResponse({ message: "ok" }, STATUS_CODE.OK);
     }
 
-    // handle metrics
     if (pathname === "/_internal/metric") {
       const metric = await EdgeRuntime.getRuntimeMetrics();
       return Response.json(metric);
@@ -378,10 +373,7 @@ Deno.serve({
     const cpuTimeSoftLimitMs = 1000;
     const cpuTimeHardLimitMs = 2000;
 
-    // NOTE(Nyannyacha): Decorator type has been set to tc39 by Lakshan's request,
-    // but in my opinion, we should probably expose this to customers at some
-    // point, as their migration process will not be easy.
-    // This need to be kept for Deno 1 compatibility.
+    // Kept as "tc39" for Deno 1 compatibility.
     const decoratorType = "tc39";
 
     const absEntrypoint = join(Deno.cwd(), functionsConfig[functionName].entrypointPath);

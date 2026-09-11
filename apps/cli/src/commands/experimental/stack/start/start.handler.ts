@@ -9,15 +9,15 @@ import { OutputFlag } from "../../../../command-internal/global-flags.ts";
 import { CommandSettings } from "../../../../config/command-settings.service.ts";
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
 import {
-  ExperimentalStackApi,
-  ExperimentalStackTargetError,
-  ExperimentalStackTargetResolver,
-  rejectExperimentalStackOutput,
-  validateExperimentalStackTarget,
+  StackApi,
+  StackTargetError,
+  StackTargetResolver,
+  rejectStackOutput,
+  validateStackTarget,
 } from "../stack.shared.ts";
 import { loadStackConfig } from "../stack-config.ts";
-import type { ExperimentalStackStartFlags } from "./start.command.ts";
-import { ExperimentalStackStartError } from "./start.errors.ts";
+import type { StackStartFlags } from "./start.command.ts";
+import { StackCommandStartError } from "./start.errors.ts";
 
 const statusPayload = (status: StackStatus) => ({
   id: status.id,
@@ -55,26 +55,24 @@ const eagerlyActivate = <
   value: T,
 ): T => (value.enabled === false ? value : Object.assign({}, value, { activation: "eager" }));
 
-const mapTargetError = (error: ExperimentalStackTargetError) =>
-  new ExperimentalStackStartError({
+const mapTargetError = (error: StackTargetError) =>
+  new StackCommandStartError({
     reason: error.reason,
     message: error.message,
     ...(error.suggestion === undefined ? {} : { suggestion: error.suggestion }),
     cause: error,
   });
 
-export const experimentalStackStart = Effect.fn("experimental.stack.start")(function* (
-  flags: ExperimentalStackStartFlags,
-) {
+export const stackStart = Effect.fn("experimental.stack.start")(function* (flags: StackStartFlags) {
   const telemetryState = yield* TelemetryState;
   const body = Effect.gen(function* () {
     const output = yield* Output;
     const settings = yield* CommandSettings;
-    const resolver = yield* ExperimentalStackTargetResolver;
-    const stackApi = yield* ExperimentalStackApi;
+    const resolver = yield* StackTargetResolver;
+    const stackApi = yield* StackApi;
     const outputFlag = yield* Effect.serviceOption(OutputFlag);
-    yield* rejectExperimentalStackOutput(outputFlag).pipe(Effect.mapError(mapTargetError));
-    yield* validateExperimentalStackTarget({
+    yield* rejectStackOutput(outputFlag).pipe(Effect.mapError(mapTargetError));
+    yield* validateStackTarget({
       stack: Option.getOrUndefined(flags.stack),
       stackId: Option.getOrUndefined(flags.stackId),
     }).pipe(Effect.mapError(mapTargetError));
@@ -90,7 +88,7 @@ export const experimentalStackStart = Effect.fn("experimental.stack.start")(func
     const config = yield* loadStackConfig(target.projectRoot).pipe(
       Effect.mapError(
         (error) =>
-          new ExperimentalStackStartError({
+          new StackCommandStartError({
             reason: "invalid-config",
             message: error.message,
             cause: error,
@@ -234,7 +232,7 @@ const stackStartError = (error: unknown) => {
           })),
           Match.orElse(() => ({ reason: "unknown" as const })),
         );
-  return new ExperimentalStackStartError({
+  return new StackCommandStartError({
     ...classification,
     message,
     ...("suggestion" in classification ? { suggestion: classification.suggestion } : {}),

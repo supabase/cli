@@ -211,8 +211,6 @@ describe("buildGotrueEnv", () => {
     });
   });
 
-  // Exercised through GOTRUE_SMS_TEST_OTP since `formatMapForEnvConfig`
-  // is only ever called from inside `buildGotrueEnv`.
   describe("GOTRUE_SMS_TEST_OTP / formatMapForEnvConfig parity", () => {
     test("formatMapForEnvConfig produces key:value pairs with no trailing comma", () => {
       expect(formatMapForEnvConfig({})).toBe("");
@@ -518,9 +516,6 @@ describe("buildGotrueEnv", () => {
       expect(env["GOTRUE_MAILER_SUBJECTS_CONFIRMATION"]).toBe("Confirm your signup");
     });
 
-    // The email template's subject is optional; the gate is strictly
-    // `subject !== undefined`, not on string length — an explicit blank
-    // subject is still emitted, distinct from an absent one below.
     test("still emits an explicit empty subject, distinct from an absent one", () => {
       const env = buildGotrueEnv({
         ...baseEnvInput,
@@ -709,7 +704,6 @@ describe("buildGotrueContainerSpec", () => {
     expect(spec.networkAliases).toEqual(["auth"]);
     expect(spec.labels).toEqual({});
 
-    // dbHost/dbPassword flow from projectId/dbUrl into the env's connection string.
     expect(spec.env["GOTRUE_DB_DATABASE_URL"]).toBe(
       "postgresql://supabase_auth_admin:secret@supabase_db_proj:5432/postgres",
     );

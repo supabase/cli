@@ -14,9 +14,8 @@ describe("parseBearerJwtExp", () => {
   });
 
   it("honors a non-zero numeric offset", () => {
-    // "+05:00" means local wall-clock time is 5 hours AHEAD of UTC, so the same wall
-    // time is an EARLIER instant than at "Z":
-    // 2030-01-01T00:00:00+05:00 -> exp 1893438000, ...Z -> exp 1893456000.
+    // A +05:00 offset means the wall-clock time is 5 hours ahead of UTC, so
+    // the same wall time is an earlier instant than at "Z".
     const withOffset = parseBearerJwtExp("2030-01-01T00:00:00+05:00");
     const atZ = parseBearerJwtExp("2030-01-01T00:00:00Z");
     expect(withOffset).toEqual({ wholeSeconds: atZ.wholeSeconds - 5 * 60 * 60, nanos: 0 });
@@ -35,10 +34,6 @@ describe("parseBearerJwtExp", () => {
   });
 
   it("rejects an invalid calendar date instead of silently rolling it over (CLI-1961)", () => {
-    // `time.Parse` genuinely errors on `2030-02-30` ("day out of range"), it does
-    // NOT roll over to March 2nd the way `Date.parse` does — pflag's wrapper
-    // discards that specific error text and falls back to the same generic
-    // message used for a syntactically-malformed value.
     expect(() => parseBearerJwtExp("2030-02-30T03:04:05Z")).toThrow(
       'invalid argument "2030-02-30T03:04:05Z" for "--exp" flag: invalid time format `2030-02-30T03:04:05Z` must be one of: `2006-01-02T15:04:05Z07:00`',
     );
@@ -79,19 +74,12 @@ describe("parseBearerJwtExp", () => {
   });
 
   it("rejects an out-of-range zone offset instead of silently signing a null exp/iat (CLI-1961 Codex review finding)", () => {
-    // Without this check, the calendar check never looks at the offset at all, so
-    // `+99:99` would pass validation, `Date.parse` would return `NaN`, and the caller
-    // would sign a token whose `exp`/`iat` claims serialize as JSON `null`
-    // (`JSON.stringify(NaN) === "null"`) instead of failing the command — this
-    // input must be rejected during flag parsing.
     expect(() => parseBearerJwtExp("2030-01-01T00:00:00+99:99")).toThrow(
       'invalid argument "2030-01-01T00:00:00+99:99" for "--exp" flag: invalid time format `2030-01-01T00:00:00+99:99` must be one of: `2006-01-02T15:04:05Z07:00`',
     );
   });
 
   it("tolerates a 24-hour/60-minute offset the same way Go's time.Parse does (`>` not `>=`)", () => {
-    // Established rationale: "The range test use > rather than >=, as some
-    // people do write offsets of 24 hours or 60 minutes."
     expect(parseBearerJwtExp("2030-01-01T00:00:00+24:00")).toEqual({
       wholeSeconds: parseBearerJwtExp("2030-01-01T00:00:00Z").wholeSeconds - 24 * 60 * 60,
       nanos: 0,
@@ -112,10 +100,6 @@ describe("parseBearerJwtExp", () => {
   });
 
   it("preserves fractional seconds instead of dropping them during parsing (CLI-1961 Codex review finding)", () => {
-    // `time.Parse(time.RFC3339, ...)` accepts (and preserves at full precision)
-    // fractional seconds even though the RFC3339 layout has no fractional
-    // directive. Dropping the `.9` here (this port's previous behavior) would
-    // produce nanos `0` instead of `900_000_000`.
     expect(parseBearerJwtExp("2030-01-01T00:00:00.9Z")).toEqual({
       wholeSeconds: 1_893_456_000,
       nanos: 900_000_000,
@@ -132,11 +116,6 @@ describe("parseBearerJwtExp", () => {
   });
 
   it("preserves a near-second nanosecond fraction as an exact integer instead of rounding it into the next second (CLI-1961 Codex review finding)", () => {
-    // A naive `wholeSeconds + Number('0.999999999')` float addition rounds UP to
-    // the exact integer `wholeSeconds + 1` in plain JS float arithmetic —
-    // `time.Time` keeps the nanoseconds in a separate integer field and the
-    // established truncate-down floor means the true parsed instant must
-    // report `nanos: 999_999_999` here, not silently become `wholeSeconds + 1, nanos: 0`.
     expect(parseBearerJwtExp("2030-01-01T00:00:00.999999999Z")).toEqual({
       wholeSeconds: 1_893_456_000,
       nanos: 999_999_999,
@@ -144,8 +123,6 @@ describe("parseBearerJwtExp", () => {
   });
 
   it("truncates (not rounds) fractional digits beyond nanosecond precision, matching Go's time.Parse", () => {
-    // `.9999999995` (10 digits) parses to nanosecond `999999999`, not a
-    // rounded-up `1000000000` that would carry into the next second.
     expect(parseBearerJwtExp("2030-01-01T00:00:00.9999999995Z")).toEqual({
       wholeSeconds: 1_893_456_000,
       nanos: 999_999_999,
@@ -153,9 +130,6 @@ describe("parseBearerJwtExp", () => {
   });
 
   it("accepts a comma as the fractional-seconds separator, matching Go's time.Parse (CLI-1961 Codex review finding)", () => {
-    // `time.Parse(time.RFC3339, "2030-01-01T00:00:00,5Z")` succeeds with the
-    // same nanosecond result as the `.5` spelling — either `.` or `,` is
-    // accepted as the fractional-seconds separator for any layout element.
     expect(parseBearerJwtExp("2030-01-01T00:00:00,5Z")).toEqual(
       parseBearerJwtExp("2030-01-01T00:00:00.5Z"),
     );
@@ -168,10 +142,6 @@ describe("parseBearerJwtExp", () => {
   });
 
   it("parses an early (0000-0099) RFC3339 year literally instead of applying JS's two-digit-year remapping (CLI-1961 Codex review finding)", () => {
-    // `0001-01-01T00:00:00Z` parses to year 1, Unix `-62135596800` —
-    // `Date.UTC`/`new Date(...)`'s legacy two-digit-year special case (year `1`
-    // silently becomes `1901`) does NOT apply here, since this is a genuine
-    // 4-digit RFC3339 year, not a 2-digit shorthand.
     expect(parseBearerJwtExp("0001-01-01T00:00:00Z")).toEqual({
       wholeSeconds: -62_135_596_800,
       nanos: 0,
@@ -205,8 +175,6 @@ describe("parseBearerJwtValidFor", () => {
   });
 
   it("preserves sub-second precision instead of flooring it away (CLI-1961)", () => {
-    // Flooring here (this port's previous behavior) would silently discard the 0.5s
-    // fraction before it ever reaches `buildBearerJwtClaims`'s final truncation.
     expect(parseBearerJwtValidFor("1.5s")).toBe(1.5);
   });
 
@@ -223,8 +191,7 @@ describe("parseBearerJwtValidFor", () => {
   });
 
   it("accepts the Greek-mu microsecond spelling, matching Go's time.ParseDuration (CLI-1961 Codex review finding)", () => {
-    // The established `unitMap` accepts "us", "µs" (U+00B5), and "μs" (U+03BC
-    // Greek mu) alike.
+    // Accepts both U+00B5 (µ, micro sign) and U+03BC (μ, Greek mu).
     expect(parseBearerJwtValidFor("1μs")).toBe(0.000_001);
   });
 });
@@ -235,9 +202,6 @@ describe("addSecondsAndFloor", () => {
   });
 
   it("carries into the next second when nanos overflow 1e9", () => {
-    // Regression coverage (`--exp` omitted, sub-second `--valid-for`): a `now`
-    // of `X.900` plus a `0.2s` delta must land in the NEXT second (`X + 1`),
-    // not stay in the current one.
     expect(addSecondsAndFloor({ wholeSeconds: 100, nanos: 900_000_000 }, 0.2)).toBe(101);
   });
 
@@ -246,9 +210,6 @@ describe("addSecondsAndFloor", () => {
   });
 
   it("never rounds an epoch-scale whole-second count up via float addition (CLI-1961 Codex review finding)", () => {
-    // The exact regression this helper exists to prevent: naive
-    // `wholeSeconds + fraction` float addition at epoch scale rounds a near-second
-    // fraction UP into the next integer.
     expect(addSecondsAndFloor({ wholeSeconds: 1_893_456_000, nanos: 999_999_999 }, 0)).toBe(
       1_893_456_000,
     );

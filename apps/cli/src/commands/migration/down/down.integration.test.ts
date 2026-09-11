@@ -109,17 +109,15 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         extensionExists: () => Effect.succeed(false),
         copyToCsv: () => Effect.succeed(new Uint8Array()),
         queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
-        // A migration file's statements arrive as one batch; replay them through
-        // `exec`/`query` so this suite's recordings and failure injection still apply.
+        // Replays each statement through exec/query so recordings and failure injection apply.
         execBatch: (statements) => sequentialExecBatch(session)(statements),
       };
       return Effect.succeed(session);
     },
   });
 
-  // `loadProjectRef` gives an explicit `--project-ref` flag top precedence, same
-  // as Go's `flags.LoadProjectRef` — mirror that so a test can prove the flag
-  // (not just the hardcoded `VALID_REF` fallback) drives the linked ref.
+  // Gives an explicit --project-ref flag precedence over the VALID_REF fallback, so a
+  // test can prove the flag drives the linked ref.
   const projectRef = Layer.succeed(ProjectRefResolver, {
     resolve: () => Effect.succeed(VALID_REF),
     resolveForLink: () => Effect.succeed(VALID_REF),
@@ -145,8 +143,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     mockTty({ stdinIsTty: opts.isTTY ?? true }),
     mockStdin(
       opts.isTTY ?? true,
-      // Migration prompts read stdin directly, so a confirm answer is
-      // supplied via piped stdin rather than the Output prompt mock.
+      // Migration prompts read stdin directly, so the confirm answer is piped in.
       opts.pipedInput ?? (opts.confirm === undefined ? undefined : opts.confirm ? "y\n" : "n\n"),
     ),
     BunServices.layer,
@@ -184,15 +181,12 @@ describe("migration down", () => {
   });
 
   it.live("resolves the DB target before rejecting --last 0", () => {
-    // The DB config resolves before the `--last === 0`
-    // check, so an unlinked/invalid target error wins over --last 0.
     const { layer } = setup(tmp.current, { failResolve: true });
     return Effect.gen(function* () {
       const exit = yield* migrationDown(flags({ last: 0 })).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
-        // The target/config error surfaces first, NOT the --last 0 error.
         expect(Option.isSome(failure) && failure.value._tag).toBe("ProjectRefNotLinkedError");
       }
     }).pipe(Effect.provide(layer));
@@ -218,10 +212,8 @@ describe("migration down", () => {
     });
     return Effect.gen(function* () {
       yield* migrationDown(flags({ last: 1 }));
-      // The connection banner prints to stderr before dialing.
       expect(stripAnsi(out.stderrText)).toContain("Connecting to local database...");
       expect(stripAnsi(out.stderrText)).toContain("Resetting database to version: 20240101000000");
-      // dropped user schemas, then re-applied the migration <= target version.
       expect(execs.some((sql) => sql.startsWith("do $$"))).toBe(true);
       expect(
         queries.some(
@@ -235,9 +227,8 @@ describe("migration down", () => {
   it.live(
     "reverts on the project given via --project-ref --linked, overriding the linked ref",
     () => {
-      // down defaults to local; only with --linked does the flag's ref get
-      // cached. The fake resolver's own fallback (VALID_REF) represents
-      // whatever the workdir would resolve to absent the flag.
+      // VALID_REF is the fake resolver's fallback, representing whatever the
+      // workdir would resolve to without the flag override.
       const FLAG_REF = "flagflagflagflagflag";
       seed(tmp.current, "20240101000000_a.sql");
       const { layer, cache } = setup(tmp.current, {
@@ -257,8 +248,6 @@ describe("migration down", () => {
   );
 
   it.live("rejects --project-ref on the default local target", () => {
-    // down defaults to local when no target flag is set — the guard must fire
-    // from the flag alone, with no explicit --local/--db-url needed.
     const FLAG_REF = "flagflagflagflagflag";
     const { layer, execs, queries, cache } = setup(tmp.current, {
       remote: ["20240101000000", "20240102000000"],
@@ -299,8 +288,7 @@ describe("migration down", () => {
   });
 
   it.live("falls back to NO (cancels) without a TTY and no piped answer", () => {
-    // Stdin is read regardless of TTY (isTTY only changes the timeout); with no piped
-    // answer the empty read falls back to the default (NO) → cancel.
+    // isTTY only changes the read timeout; stdin is still read either way.
     const { layer, out } = setup(tmp.current, {
       isTTY: false,
       remote: ["20240101000000", "20240102000000"],
@@ -337,8 +325,7 @@ describe("migration down", () => {
 
   it.live("auto-confirms from SUPABASE_YES in the project .env (Go loadNestedEnv)", () => {
     seed(tmp.current, "20240101000000_a.sql");
-    // SUPABASE_YES lives only in supabase/.env, not the shell — the project env loads it
-    // before the prompt, so the revert auto-confirms with no --yes flag and no stdin answer.
+    // SUPABASE_YES lives only in supabase/.env; the project env loads it before the prompt.
     writeFileSync(join(tmp.current, "supabase", ".env"), "SUPABASE_YES=true\n");
     const { layer, out } = setup(tmp.current, {
       format: "json",
@@ -436,7 +423,6 @@ describe("migration down", () => {
     });
     return Effect.gen(function* () {
       yield* migrationDown(flags({ last: 1 }));
-      // Dirty seed → "Updating seed hash" + hash UPSERT, but the seed SQL is NOT re-run.
       expect(stripAnsi(out.stderrText)).toContain("Updating seed hash to supabase/seed.sql...");
       expect(
         queries.some((q) => q.sql.includes("INSERT INTO supabase_migrations.seed_files")),

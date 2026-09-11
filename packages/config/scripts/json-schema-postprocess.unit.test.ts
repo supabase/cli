@@ -63,10 +63,10 @@ describe("collapseNonFiniteNumberUnions", () => {
   });
 
   test("leaves an unrelated anyOf (e.g. object-or-null) untouched", () => {
-    const schema = Schema.Struct({ workers: Schema.Unknown });
+    const schema = Schema.Struct({ compute: Schema.Unknown });
     const document = {
       properties: {
-        workers: { anyOf: [{ type: "object" }, { type: "null" }] },
+        compute: { anyOf: [{ type: "object" }, { type: "null" }] },
       },
     };
 

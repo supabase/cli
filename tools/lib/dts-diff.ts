@@ -143,10 +143,9 @@ function escapeHtml(text: string): string {
 }
 
 /**
- * A fence long enough that no backtick run inside `content` can close it —
- * the diffed `.d.ts` text is untrusted (published-tarball side) and a JSDoc
- * `@example` with its own fenced block would otherwise break out and render
- * as live markdown in the approver's step summary.
+ * A fence long enough that no backtick run inside `content` can close it — the diffed `.d.ts`
+ * text is untrusted, and a JSDoc `@example` with its own fenced block would otherwise break out
+ * and render as live markdown in the approver's step summary.
  */
 function fenceFor(content: string): string {
   const longestRun = Math.max(0, ...[...content.matchAll(/`+/g)].map((match) => match[0].length));
@@ -157,10 +156,9 @@ function fenceFor(content: string): string {
 const MAX_RENDERED_DIFF_LENGTH = 20_000;
 
 /**
- * Aggregate cap across all rendered blocks — GITHUB_STEP_SUMMARY rejects
- * uploads past 1024 KiB (the whole summary is dropped, losing the approver's
- * evidence entirely), and the per-file cap alone doesn't bound how many
- * capped files there are. Headroom is left for the surrounding summary text.
+ * Aggregate cap across all rendered blocks — GITHUB_STEP_SUMMARY rejects uploads past 1024 KiB
+ * (dropping the whole summary, losing the approver's evidence), and the per-file cap alone doesn't
+ * bound how many capped files there are. Headroom is left for the surrounding summary text.
  */
 const MAX_RENDERED_TOTAL_LENGTH = 800_000;
 

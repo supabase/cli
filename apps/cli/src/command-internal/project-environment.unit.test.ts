@@ -36,9 +36,7 @@ function fakeProjectEnv(
     },
     values,
     loadedPaths: [],
-    // Default every given value to "ambient" unless the caller says otherwise —
-    // matches how most tests use this helper (representing an already-resolved,
-    // highest-precedence value) without forcing every call site to spell it out.
+    // Defaults each value's source to "ambient" so callers don't need to spell it out.
     sources: Object.fromEntries(Object.keys(values).map((key) => [key, sources[key] ?? "ambient"])),
   };
 }
@@ -65,9 +63,6 @@ describe("resolveProjectEnvironmentValues", () => {
   });
 
   it("lets already-resolved projectEnv.values win over anything discovered locally", () => {
-    // `projectEnv.values` already reflects loadCliProjectEnvironment's correct
-    // ambient-wins-over-supabase/.env(.local) result; a redundant root .env
-    // entry for the same key must never override it.
     writeFileSync(join(root, ".env"), "SUPABASE_PROJECT_ID=root-env-project\n");
     const projectEnv = fakeProjectEnv({ SUPABASE_PROJECT_ID: "ambient-project" });
     const merged = resolveProjectEnvironmentValues(projectEnv, root);
@@ -117,8 +112,6 @@ describe("resolveProjectEnvironmentValues", () => {
   });
 
   it("preserves a literal # in an unquoted value with no leading whitespace, matching godotenv", () => {
-    // godotenv only starts an inline comment at a `#` preceded by whitespace;
-    // `foo#bar` keeps the `#` verbatim.
     writeFileSync(root + "/.env", "SUPABASE_AUTH_JWT_SECRET=long#secret\n");
     const merged = resolveProjectEnvironmentValues(fakeProjectEnv(), root);
     expect(merged["SUPABASE_AUTH_JWT_SECRET"]).toBe("long#secret");
@@ -131,29 +124,19 @@ describe("resolveProjectEnvironmentValues", () => {
   });
 
   it("strips a trailing comment after a quoted value, matching godotenv", () => {
-    // godotenv's `extractVarValue` locates the quoted span by scanning forward for the
-    // closing quote and discards anything after
-    // it as a comment — the value is `demo`, not the literal `"demo"` a check that
-    // requires the whole trimmed remainder to end with a quote would produce.
     writeFileSync(root + "/.env", 'SUPABASE_PROJECT_ID="demo" # local\n');
     const merged = resolveProjectEnvironmentValues(fakeProjectEnv(), root);
     expect(merged["SUPABASE_PROJECT_ID"]).toBe("demo");
   });
 
   it("accepts a colon-separated assignment, matching godotenv's YAML-style key/value form", () => {
-    // godotenv's `locateKeyName` treats `=` and `:` as interchangeable separators,
-    // and the repo's other dotenv parser
-    // (`packages/config/src/project.ts`'s `parseDotEnv`) already accepts both.
     writeFileSync(root + "/.env", "SUPABASE_PROJECT_ID: colon-project\n");
     const merged = resolveProjectEnvironmentValues(fakeProjectEnv(), root);
     expect(merged["SUPABASE_PROJECT_ID"]).toBe("colon-project");
   });
 
   it("prefers an env-specific file over a same-key value projectEnv.values sourced from a bare .env file", () => {
-    // `projectEnv.values` has no notion of SUPABASE_ENV-selected filenames, so
-    // a key it resolved from a plain supabase/.env file is NOT necessarily
-    // higher Go precedence than a same-named key from `.env.<env>.local` —
-    // only an "ambient" source outranks the file precedence computed locally.
+    // Only an "ambient" source outranks the file precedence computed locally.
     process.env["SUPABASE_ENV"] = "development";
     writeFileSync(
       join(supabaseDir, ".env.development.local"),
@@ -189,8 +172,6 @@ describe("resolveProjectEnvironmentValues", () => {
   });
 
   it("expands an unquoted $VAR reference to an earlier value in the same file", () => {
-    // godotenv expands unquoted/double-quoted references while loading,
-    // so a later key can reuse an earlier one.
     writeFileSync(join(root, ".env"), "BASE=demo\nSUPABASE_PROJECT_ID=$BASE\n");
     const merged = resolveProjectEnvironmentValues(fakeProjectEnv(), root);
     expect(merged["SUPABASE_PROJECT_ID"]).toBe("demo");
@@ -203,8 +184,6 @@ describe("resolveProjectEnvironmentValues", () => {
   });
 
   it("does not expand variable references inside single-quoted values", () => {
-    // godotenv never calls expandVariables for single-quoted values —
-    // they stay byte-literal.
     writeFileSync(join(root, ".env"), "BASE=demo\nSUPABASE_PROJECT_ID='$BASE'\n");
     const merged = resolveProjectEnvironmentValues(fakeProjectEnv(), root);
     expect(merged["SUPABASE_PROJECT_ID"]).toBe("$BASE");
@@ -223,11 +202,6 @@ describe("resolveProjectEnvironmentValues", () => {
   });
 
   it("preserves a backslash-escaped $VAR reference as a literal, matching godotenv's escape rule", () => {
-    // godotenv's expandVarRegex captures a leading backslash and strips ONLY
-    // that backslash, returning the rest of the match verbatim instead of
-    // doing a lookup — even when
-    // BASE is defined, `demo\$BASE` must stay `demo$BASE`, not become
-    // `demodemo`.
     writeFileSync(join(root, ".env"), "BASE=demo\nSUPABASE_PROJECT_ID=demo\\$BASE\n");
     const merged = resolveProjectEnvironmentValues(fakeProjectEnv(), root);
     expect(merged["SUPABASE_PROJECT_ID"]).toBe("demo$BASE");
@@ -246,11 +220,8 @@ describe("resolveProjectEnvironmentValues", () => {
   });
 
   it("preserves a multiline quoted value alongside an unrelated SUPABASE_* key (godotenv parity)", () => {
-    // godotenv's parser scans the whole buffer with a cursor, not line-by-line,
-    // so a quoted value spanning physical
-    // lines — e.g. a pasted PEM private key — doesn't break parsing of the rest
-    // of the file. A naive line-by-line reader would see the continuation line
-    // as malformed and abort before SUPABASE_PROJECT_ID is ever read.
+    // A quoted value spanning physical lines (e.g. a pasted PEM key) must not break
+    // parsing of the rest of the file.
     const pem = "-----BEGIN PRIVATE KEY-----\nMIIBogIBAAJ\n-----END PRIVATE KEY-----";
     writeFileSync(
       join(root, ".env"),
@@ -261,10 +232,8 @@ describe("resolveProjectEnvironmentValues", () => {
   });
 
   describe("when no project was found (projectEnv is null)", () => {
-    // `loadNestedEnv` runs unconditionally before `config.toml` is ever
-    // opened, so a missing config file must
-    // not skip dotenv loading — these cover the local fallback that derives
-    // `<workdir>/supabase`/`workdir` directly instead of giving up.
+    // A missing config.toml must not skip dotenv loading; these cover the fallback
+    // that derives `<workdir>/supabase` directly.
 
     it("still reads a supabase/-dir dotenv file directly under workdir", () => {
       writeFileSync(join(supabaseDir, ".env"), "SUPABASE_PROJECT_ID=fallback-project\n");

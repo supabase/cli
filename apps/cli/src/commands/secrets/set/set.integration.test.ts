@@ -97,8 +97,6 @@ function writeSupabaseDotEnv(content: string) {
 }
 
 function parsePostBody(body: unknown): Array<{ name: string; value: string }> {
-  // `mockCommandPlatformApi` JSON-decodes the request body when it parses; this
-  // helper just narrows the type for the test assertions.
   return body as Array<{ name: string; value: string }>;
 }
 
@@ -175,9 +173,9 @@ describe("secrets set integration", () => {
     "rejects the whole upload when a later batch has an invalid entry (no partial update)",
     () => {
       const { layer, api } = setup();
-      // Index 120 lands in the SECOND batch (batch 0 covers indices 0-99): a
-      // value exceeding the 24576-byte cap there must fail up-front validation
-      // before batch 0 (which is otherwise entirely valid) is ever sent.
+      // Index 120 lands in the second batch (batch 0 covers indices 0-99): a value exceeding
+      // the 24576-byte cap there must fail up-front validation before batch 0 (otherwise
+      // entirely valid) is ever sent.
       const secrets = Array.from({ length: 150 }, (_, i) =>
         i === 120 ? `KEY${i}=${"x".repeat(24577)}` : `KEY${i}=value${i}`,
       );
@@ -319,11 +317,8 @@ LITERAL = "plain-value"
   it.live(
     "skips an empty [edge_runtime.secrets] value instead of overwriting a remote secret (Go set.go:48-52 parity)",
     () => {
-      // `DecryptSecretHookFunc` (`pkg/config/secret.go:98`) leaves `SHA256`
-      // empty for an empty value, and only entries with a non-empty SHA256
-      // are included — so a literal `EMPTY = ""` in config.toml is never
-      // sent, which prevents it from silently overwriting a same-named
-      // remote secret with an empty string.
+      // An empty `EMPTY = ""` value in config.toml is never sent, which prevents it from
+      // silently overwriting a same-named remote secret with an empty string.
       writeConfig(
         `[edge_runtime.secrets]
 EMPTY = ""
@@ -497,13 +492,10 @@ FOO = "literal-foo"
   it.live(
     "recovers [edge_runtime.secrets] when an unrelated field fails schema decode (CLI-1867 Go parity)",
     () => {
-      // Valid TOML syntax throughout, but `analytics.port` has the wrong type
-      // for its schema field. The viper+mapstructure decode
-      // (`pkg/config/config.go:749`) mutates the target struct field-by-field,
-      // so an unrelated type error doesn't stop `EdgeRuntime.Secrets` from
-      // landing on `utils.Config` — `secrets set` still reads it. Effect
-      // Schema's `decodeUnknownSync` is atomic and would otherwise discard the
-      // whole document, silently dropping `FROM_CONFIG` too.
+      // Valid TOML throughout, but `analytics.port` has the wrong type. The CLI's established
+      // per-field decode tolerance means an unrelated type error doesn't stop
+      // `edge_runtime.secrets` from being read; Effect Schema's `decodeUnknownSync` is atomic
+      // and would otherwise discard the whole document, silently dropping `FROM_CONFIG` too.
       writeConfig(
         `[edge_runtime.secrets]
 FROM_CONFIG = "config-value"
@@ -531,15 +523,10 @@ port = "not-a-number"
   it.live(
     "recovers [edge_runtime.secrets] when a sibling field in the same edge_runtime table fails schema decode (CLI-1867 Go parity)",
     () => {
-      // Valid TOML syntax throughout, but `edge_runtime.inspector_port` has
-      // the wrong type for its schema field — a SIBLING of `secrets` inside
-      // the same `edge_runtime` table, not an unrelated top-level table. Go's
-      // viper+mapstructure decode (`pkg/config/config.go:749`) mutates the
-      // target struct field-by-field even within the same table, so
-      // `EdgeRuntime.Secrets` still lands on `utils.Config` while
-      // `InspectorPort` is left at its zero value — verified empirically
-      // against `pkg/config` directly. The recovery must therefore re-decode
-      // `secrets` on its own rather than the whole `edge_runtime` subtree.
+      // Valid TOML throughout, but `edge_runtime.inspector_port` (a sibling of `secrets` in
+      // the same table, not an unrelated top-level table) has the wrong type. The recovery
+      // must re-decode `secrets` on its own rather than the whole `edge_runtime` subtree, or
+      // the sibling error would take `FROM_CONFIG` down with it.
       writeConfig(
         `[edge_runtime]
 inspector_port = "not-a-number"
@@ -567,14 +554,10 @@ FROM_CONFIG = "config-value"
   it.live(
     "tolerates a malformed supabase/.env, logs it to the debug logger, and still sets CLI-arg secrets (CLI-1867 Go parity)",
     () => {
-      // `loadCliConfig` resolves `env(VAR)` references against
-      // `supabase/.env`/`.env.local` *before* schema decode, so a malformed
-      // dotenv line fails with `CliProjectEnvParseError` rather than
-      // `CliConfigParseError`. `Load()` (`pkg/config/config.go:788-791`)
-      // calls `loadNestedEnv` first too and swallows any error the same
-      // non-fatal way — so this must not abort the command either. `.env`
-      // is only read once a `supabase/config.toml`/`.json` is found
-      // (`findCliProjectPaths`), so a config.toml must exist here too.
+      // `loadCliConfig` resolves `env(VAR)` references against `.env`/`.env.local` before
+      // schema decode, so a malformed dotenv line fails with `CliProjectEnvParseError` rather
+      // than `CliConfigParseError`, and this must not abort the command either. `.env` is only
+      // read once a config.toml/.json is found, so one must exist here too.
       writeConfig(
         `[edge_runtime.secrets]
 FROM_CONFIG = "config-value"
@@ -599,14 +582,10 @@ FROM_CONFIG = "config-value"
   it.live(
     "recovers valid [edge_runtime.secrets] entries when a sibling entry in the same map fails schema decode (CLI-1867 Go parity)",
     () => {
-      // `GOOD` is a valid secret value; `BAD` is not (a non-string TOML value
-      // for a field whose schema expects a string-like secret). Go's
-      // mapstructure decodes `map[string]Secret` entry-by-entry
-      // (`decodeMapFromMap`), appending a per-entry error and continuing
-      // rather than discarding the whole map, so `GOOD` still lands on
-      // `utils.Config.EdgeRuntime.Secrets` even with `BAD` present. Effect
-      // Schema's `decodeUnknownSync` is atomic per record and would otherwise
-      // discard `GOOD` too when re-decoding the whole `secrets` map at once.
+      // `GOOD` is a valid secret value; `BAD` is a non-string TOML value for a field whose
+      // schema expects a string-like secret. The recovery decodes each `edge_runtime.secrets`
+      // entry independently, so `GOOD` still lands even with `BAD` present — Effect Schema's
+      // `decodeUnknownSync` is atomic per record and would otherwise discard `GOOD` too.
       writeConfig(
         `[edge_runtime.secrets]
 GOOD = "config-value"
@@ -631,11 +610,9 @@ BAD = 123
   it.live(
     "skips an empty recovered [edge_runtime.secrets] entry alongside an unrelated schema error (Go set.go:48-52 parity)",
     () => {
-      // Same empty-value skip as the happy path, but exercised through
-      // `recoverEdgeRuntimeConfig`/`filterDecodableSecrets`: `EMPTY` decodes
-      // fine on its own (it's a valid, if empty, string), so it must be
-      // dropped downstream in the same merge loop the happy path uses, not
-      // resurrected as a false "recoverable" entry.
+      // Same empty-value skip as the happy path, exercised through the recovery path instead:
+      // `EMPTY` decodes fine on its own, so it must be dropped downstream in the same merge
+      // loop the happy path uses, not resurrected as a false "recoverable" entry.
       writeConfig(
         `[edge_runtime.secrets]
 EMPTY = ""
@@ -664,13 +641,9 @@ port = "not-a-number"
   it.live(
     "does not fabricate a secret named 0 when [edge_runtime.secrets] is an array (CLI-1867 Go parity)",
     () => {
-      // `edge_runtime.secrets` as an array (instead of a table) is not
-      // recoverable structure: the mapstructure decoder never sets
-      // `WeaklyTypedInput`, so a slice source for a map-typed field hits
-      // `UnconvertibleTypeError` in `decodeMap` rather than the index-as-key
-      // `decodeMapFromSlice` path, and the whole field is left empty. Before
-      // the `isRecord` fix, `Object.entries(["actual-secret"])` would turn
-      // this into a spurious `{ "0": "actual-secret" }` entry.
+      // `edge_runtime.secrets` as an array (instead of a table) is not recoverable: the whole
+      // field is left empty rather than being misread as `{ "0": "actual-secret" }` via
+      // `Object.entries`.
       writeConfig(
         `[analytics]
 port = "not-a-number"
@@ -697,14 +670,9 @@ secrets = ["actual-secret"]
   it.live(
     "recovers the selected remote's [edge_runtime.secrets] override, not the base, on schema-decode error (CLI-1867 Go parity)",
     () => {
-      // `analytics.port` is an unrelated schema-decode error that triggers the
-      // recovery path. `remotes.staging.project_id` matches the ref the
-      // resolver defaults to (`mockCommandSettings`'s `VALID_REF`), so
-      // Go seeds `Config.ProjectId` before `Load()`
-      // (`internal/utils/flags/config_path.go:11-12`) and merges the remote
-      // override in `loadFromFile` (`pkg/config/config.go:604-609`) before the
-      // tolerant decode this PR models — the recovered secret must reflect the
-      // remote's override value, not the base document's.
+      // `analytics.port` triggers the recovery path. `remotes.staging.project_id` matches the
+      // resolved ref, so the remote override is merged before the tolerant decode — the
+      // recovered secret must reflect the remote's override value, not the base document's.
       writeConfig(
         `[edge_runtime.secrets]
 FROM_CONFIG = "base-value"
@@ -731,10 +699,8 @@ FROM_CONFIG = "remote-value"
         ]);
         expect(debugLogger.messages).toHaveLength(1);
         expect(debugLogger.messages[0]).toContain("failed to parse supabase/config.toml");
-        // Go prints the override notice unconditionally as soon as the
-        // `project_id` match is found, *before* `mapstructure` decode ever
-        // runs (`pkg/config/config.go:604-609`) — so it's still owed here
-        // even though the decode that follows fails and recovers.
+        // The override notice is owed here too, even though the decode that follows fails
+        // and recovers.
         expect(out.stderrText).toContain("Loading config override: [remotes.staging]\n");
       }).pipe(Effect.provide(layer));
     },
@@ -743,11 +709,9 @@ FROM_CONFIG = "remote-value"
   it.live(
     "prints the remote override notice to stderr when [remotes.*] matches the resolved ref (Go parity: pkg/config/config.go:605)",
     () => {
-      // No decode error here — the plain success path. `loadFromFile`
-      // prints `Loading config override: [remotes.<name>]` to stderr
-      // unconditionally whenever a `[remotes.*]` block's `project_id` matches
-      // `Config.ProjectId`, before `mapstructure` ever runs. `mockCommandSettings`
-      // defaults the resolved ref to `VALID_REF`.
+      // No decode error here — the plain success path. The override notice still prints
+      // unconditionally whenever a `[remotes.*]` block's `project_id` matches the resolved
+      // ref. `mockCommandSettings` defaults that ref to `VALID_REF`.
       writeConfig(
         `[edge_runtime.secrets]
 FROM_CONFIG = "base-value"
@@ -800,11 +764,9 @@ FROM_CONFIG = "config-value"
   it.live(
     "tolerates two [remotes.*] blocks sharing the target project_id, logs it, and still sets CLI-arg secrets (CLI-1867 Go parity)",
     () => {
-      // `flags.LoadConfig` swallows *any* `Load()` error non-fatally,
-      // including the duplicate-`project_id` error `loadFromFile` raises
-      // before `mapstructure` ever runs (`pkg/config/config.go:601`). There
-      // is no parsed document to recover a subtree from, so config-sourced
-      // secrets are dropped entirely — only CLI-arg secrets survive.
+      // Swallowed non-fatally like every other load error here. There's no parsed document to
+      // recover a subtree from, so config-sourced secrets are dropped entirely — only
+      // CLI-arg secrets survive.
       writeConfig(
         `[edge_runtime.secrets]
 FROM_CONFIG = "config-value"
@@ -833,14 +795,9 @@ project_id = "dupe-project-id"
   it.live(
     "tolerates a [remotes.*] block with a malformed project_id and still sets CLI-arg secrets (Go parity)",
     () => {
-      // `flags.LoadConfig` swallows *any* `Load()` error non-fatally,
-      // including the invalid-format error `Config.Validate` raises for
-      // every `[remotes.*].project_id` that doesn't match the ref pattern
-      // (`pkg/config/config.go:996-1001`), which runs inside the same
-      // `Config.Load()` call (`config.go:882`) as the duplicate check
-      // above. There is no parsed document to recover a subtree from, so
-      // config-sourced secrets are dropped entirely — only CLI-arg secrets
-      // survive.
+      // Swallowed non-fatally like every other load error here. There's no parsed document to
+      // recover a subtree from, so config-sourced secrets are dropped entirely — only
+      // CLI-arg secrets survive.
       writeConfig(
         `[edge_runtime.secrets]
 FROM_CONFIG = "config-value"
@@ -893,13 +850,10 @@ project_id = "not-a-valid-ref"
   it.live(
     "does not echo a literal secret value from config.toml into the debug log on a schema-decode error",
     () => {
-      // Unlike the syntax-error case above, a schema-decode failure has no
-      // blank-line-separated source codeblock to truncate: Effect's decode
-      // error puts the rejected value inline on one line (e.g. `Expected
-      // string, actual ["sk_live_TOTALLY_REAL_SECRET_VALUE"]`). The bad entry
-      // sits inside `[edge_runtime.secrets]` itself, so this also exercises
-      // the per-entry recovery path — `PLANTED_SECRET` is dropped, but the
-      // CLI-arg secret still goes through.
+      // Unlike the syntax-error case above, a schema-decode failure has no separator to
+      // truncate: the rejected value appears inline on one line. The bad entry sits inside
+      // `[edge_runtime.secrets]` itself, so this also exercises the per-entry recovery path —
+      // `PLANTED_SECRET` is dropped, but the CLI-arg secret still goes through.
       writeConfig(
         `[edge_runtime.secrets]
 PLANTED_SECRET = ["sk_live_TOTALLY_REAL_SECRET_VALUE"]
@@ -1004,7 +958,7 @@ PLANTED_SECRET = ["sk_live_TOTALLY_REAL_SECRET_VALUE"]
           envFile: Option.none(),
           secrets: ["FOO=bar"],
         });
-        // Go ignores `--output` for `set` (set.go:42) — text-mode message lands regardless.
+        // `--output` doesn't affect `set`; the text-mode message lands regardless.
         expect(out.stdoutText).toBe("Finished supabase secrets set.\n");
       }).pipe(Effect.provide(layer));
     },

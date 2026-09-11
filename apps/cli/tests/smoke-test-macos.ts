@@ -30,14 +30,12 @@ interface TestResult {
 
 const results: TestResult[] = [];
 
-// --- Native ---
-
 console.log(`\n${"=".repeat(60)}`);
 console.log("Native binary tests");
 console.log("=".repeat(60));
 
 {
-  const arch = process.arch; // "arm64" or "x64"
+  const arch = process.arch;
   const name = `native-darwin-${arch}`;
   const binPath = path.join(root, "packages", `cli-darwin-${arch}`, "bin", "supabase");
 
@@ -56,10 +54,8 @@ console.log("=".repeat(60));
   }
 }
 
-// --- Native signature ---
-
 {
-  const arch = process.arch; // "arm64" or "x64"
+  const arch = process.arch;
   const binDir = path.join(root, "packages", `cli-darwin-${arch}`, "bin");
   const binaries = ["supabase"];
   if (existsSync(path.join(binDir, "supabase-go"))) {
@@ -81,8 +77,6 @@ console.log("=".repeat(60));
   }
 }
 
-// --- npm ---
-
 console.log(`\n${"=".repeat(60)}`);
 console.log("npm (Verdaccio) test");
 console.log("=".repeat(60));
@@ -94,8 +88,6 @@ try {
   console.error(`[npm] Error:\n${describeError(e)}`);
   results.push({ name: "npm", status: "fail" });
 }
-
-// --- Brew ---
 
 console.log(`\n${"=".repeat(60)}`);
 console.log("Homebrew test");
@@ -110,7 +102,6 @@ if (!hasBrew) {
   console.log("[brew] SKIP — brew not found");
 } else {
   try {
-    // Generate the formula with local file:// URLs
     console.log("Generating Homebrew formula...");
     await $`bun run apps/cli/scripts/update-homebrew.ts --version ${version} --local`.cwd(root);
 
@@ -145,8 +136,6 @@ if (!hasBrew) {
     results.push({ name: "brew", status: "fail" });
   }
 }
-
-// --- Summary ---
 
 console.log(`\n${"=".repeat(60)}`);
 console.log("macOS Smoke Test Summary");

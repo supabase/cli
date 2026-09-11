@@ -182,8 +182,6 @@ describe("sso show integration", () => {
       });
       expect(out.stdoutText.startsWith("{")).toBe(true);
       expect(out.stdoutText).toContain(VALID_PROVIDER_ID);
-      // The JSON encoder escapes `<` / `>` / `&` by default, so metadata_xml
-      // must carry \u003c-style escapes byte-for-byte.
       expect(out.stdoutText).toContain('"metadata_xml": "\\u003c?xml version=\\"2.0\\"?\\u003e"');
       expect(out.stdoutText).not.toContain('"metadata_xml": "<?xml');
     }).pipe(Effect.provide(layer));
@@ -197,8 +195,6 @@ describe("sso show integration", () => {
         providerId: VALID_PROVIDER_ID,
         metadata: false,
       });
-      // Established output contract: lowercased field names, explicit nulls
-      // for absent values, 4-column nesting, quoted string timestamps.
       expect(out.stdoutText).toBe(`createdat: "2023-03-28T13:50:14.464Z"
 domains:
     - createdat: null
@@ -224,8 +220,6 @@ updatedat: "2023-03-28T13:50:14.464Z"
         providerId: VALID_PROVIDER_ID,
         metadata: false,
       });
-      // Established output contract: PascalCase field names, absent values
-      // omitted, sub-tables after primitives.
       expect(out.stdoutText).toBe(`CreatedAt = "2023-03-28T13:50:14.464Z"
 Id = "${VALID_PROVIDER_ID}"
 UpdatedAt = "2023-03-28T13:50:14.464Z"

@@ -26,7 +26,6 @@ const headerPlus = (ddl: string) => `${PGADMIN_DIFF_HEADER}\n\n${ddl}\n`;
 describe("processPgAdminDiffOutput", () => {
   describe("filtering rules (container_output.go:154-195)", () => {
     it("keeps DDL from every whitelisted entry type, joined under the exact 4-line pgAdmin header", () => {
-      // Go test parity: `TestProcessDiffOutput/processes valid diff entries`.
       const types = ["extension", "function", "mview", "table", "trigger_function", "type", "view"];
       const entries = types.map((type, i) => entry({ type, diff_ddl: `DDL_${i};` }));
       const result = processPgAdminDiffOutput(JSON.stringify(entries));
@@ -57,9 +56,6 @@ describe("processPgAdminDiffOutput", () => {
     });
 
     it('skips an entry with no type field at all, given a non-empty diff_ddl (defaults to "", outside the allow-list)', () => {
-      // Distinct from the `[{"unknown":1}]` acceptance-rule case below, whose empty
-      // `diff_ddl` short-circuits at the PRIOR `status === "Identical" || diff_ddl === ""`
-      // check — this covers the `type` fallback itself.
       const result = processPgAdminDiffOutput(
         JSON.stringify([
           { status: "Different", diff_ddl: "ALTER TABLE test;", group_name: "public" },
@@ -90,7 +86,6 @@ describe("processPgAdminDiffOutput", () => {
     });
 
     it("skips an entry whose group_name is an internal schema (auth)", () => {
-      // Go test parity: `TestProcessDiffOutput/filters out internal schemas`.
       const result = processPgAdminDiffOutput(JSON.stringify([entry({ group_name: "auth" })]));
       expect(result).toEqual(Result.succeed(""));
     });
@@ -141,8 +136,6 @@ describe("processPgAdminDiffOutput", () => {
     });
   });
 
-  // Go-acceptance-rules table (`json.Unmarshal` into `[]DiffEntry`, `container_output.go:127-134`),
-  // verified against Go 1.26 `encoding/json`.
   describe("Go encoding/json acceptance rules", () => {
     it("treats a top-level JSON null the same as Go's nil-slice no-op", () => {
       expect(processPgAdminDiffOutput("null")).toEqual(Result.succeed(""));
@@ -292,8 +285,7 @@ describe("processPgAdminDiffProgress", () => {
   it.each([
     ["Comparing Tables 45%", ["Comparing Tables "]],
     ["Diffing 100%", ["Diffing 1"]],
-    // `container_output.go:96`'s real regexp and JS both produce group1="10",
-    // group2="00" for "1000%" (verified against Go 1.26 `regexp`) — NOT ["1"].
+    // Greedy digit match on "1000%" yields "10", not "1".
     ["1000%", ["10"]],
     ["5%", []],
     ["Starting schema diff...", []],
@@ -315,12 +307,6 @@ describe("processPgAdminDiffProgress", () => {
   });
 
   it("matches across embedded \\r within a single line (the `s`/dotAll flag, Go's RE2 . matches \\r)", () => {
-    // A `\r`-driven progress bar overwrites the same terminal line with multiple
-    // updates, none of them `\n`-terminated, so `scanLines` treats the whole
-    // thing as ONE line. With the `s` flag, `.` matches `\r` too, so the greedy
-    // `(.*)` consumes across every embedded `\r` and the match is anchored on the
-    // LAST `%`-suffixed run — not the first, which is what this pattern would
-    // wrongly match without `s` (JS's `.` excludes `\r` by default).
     const input = "Comparing 10%\rComparing 20%\rComparing 30%";
     expect(processPgAdminDiffProgress(input)).toEqual(["Comparing 10%\rComparing 20%\rComparing "]);
   });

@@ -23,7 +23,7 @@ export class LocalDbRunningError extends Data.TaggedError("LocalDbRunningError")
   readonly message: string;
   /** Classified at the container-runtime boundary; never inferred from `message` by telemetry. */
   readonly daemonDown?: boolean;
-  /** Set when the failure is a daemon-connection error, mirroring `utils.CmdSuggestion`. */
+  /** Set when the failure is a daemon-connection error. */
   readonly suggestion?: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -286,31 +286,15 @@ const decodeChunks = (chunks: ReadonlyArray<Uint8Array>): string => {
 };
 
 /**
- * Answers "does the local Postgres container exist?" (the stack-up probe run
- * before any database bootstrap). Resolves `true` when it exists and `false`
- * when it definitively does not; any other inspect failure (e.g. the Docker
- * daemon is unreachable) fails with {@link LocalDbRunningError} instead
- * of being silently treated as "not running".
+ * Answers whether the local Postgres container exists. Resolves `true` when it exists, `false`
+ * when it definitively does not, and fails with {@link LocalDbRunningError} on any other inspect
+ * failure (e.g. an unreachable daemon) rather than treating it as "not running".
  *
- * The probe asks the Engine API directly first ({@link LocalDockerEngine}),
- * so a stalled `docker` CLI binary can no longer block it (issue #6110); only
- * when the Engine gives no definitive answer does it fall back to the
- * container-CLI spawn below, which preserves the Podman fallback and the
- * daemon-down classification (via the shared `isContainerNotFoundMessage`
- * matcher in `../container-cli.ts`).
- *
- * Shared by `db start` (`commands/db/start/start.handler.ts`) and `db reset`
- * (`commands/db/reset/reset.handler.ts`) — hoisted out of the `db __db-bootstrap`
- * Go seam by CLI-1954, since this check was already a native TS `docker container
- * inspect`, not a Go subprocess call. CLI-1955 later removed the rest of that seam
- * too (`db reset`'s container-recreate + storage-health-gate primitives are now
- * native — `recreate-local-database.ts`/`await-storage-ready.ts`), so the seam
- * itself no longer exists at all.
- *
- * `resolveDbToml` mirrors the seam's own best-effort read: the caller has
- * already run the config load/validation before reaching this check, so here
- * we only want the resolved `projectId` and tolerate falling back to the
- * workdir basename on an unreadable `.env` rather than re-throwing.
+ * Asks the Engine API first ({@link LocalDockerEngine}) so a stalled `docker` binary can't block
+ * the probe, and falls back to the container-CLI spawn (Podman fallback, daemon-down
+ * classification) only when the Engine gives no definitive answer. `resolveDbToml` is a
+ * best-effort read: only `projectId` is needed, and an unreadable `.env` falls back to the
+ * workdir basename.
  */
 export function isLocalDbRunning(
   spawner: Spawner,
@@ -321,11 +305,8 @@ export function isLocalDbRunning(
 ): Effect.Effect<boolean, LocalDbRunningError, LocalDockerEngine> {
   return Effect.scoped(
     Effect.gen(function* () {
-      // `warnOnUnresolvedEnv: false` — this doc comment's own `resolveDbToml` note:
-      // the caller has already run Go's `LoadConfig` validation (and, if the config
-      // has an OrioleDB project with an unresolved S3 `env(VAR)`, already printed
-      // Go's single `assertEnvLoaded` WARN) before reaching this probe. Re-printing
-      // it here would diverge from Go's exactly-once `flags.LoadConfig` call.
+      // Config was already validated (and any unresolved-env WARN already printed) by the
+      // caller; only the resolved projectId matters here.
       const tomlProjectId = yield* readDbToml(fs, path, workdir, undefined, {
         validate: false,
         warnOnUnresolvedEnv: false,
@@ -371,19 +352,11 @@ export function isLocalDbRunning(
         Effect.map(Number),
         Effect.mapError(() => new LocalDbRunningError({ message: "failed to inspect service" })),
       );
-      if (inspectExit === 0) return true; // container exists ⇒ running
+      if (inspectExit === 0) return true;
 
       const stderr = decodeChunks(stderrChunks).trim();
-      // Only a missing container means "not running". Any other inspect
-      // failure propagates, matching Go's `AssertSupabaseDbIsRunning`. Uses the
-      // shared, Podman-aware matcher (`isContainerNotFoundMessage`) rather than a
-      // Docker-only substring check, since `spawnContainerCli` above falls back to Podman
-      // on Docker-less hosts, and Podman's inspect-miss wording ("no container with name
-      // or ID ... found: no such container") differs from Docker's.
       if (!isContainerNotFoundMessage(stderr)) {
-        // Go's `AssertServiceIsRunning` sets `CmdSuggestion = suggestDockerInstall`
-        // on a daemon-connection failure (`misc.go:148-154`), so a down daemon
-        // still surfaces the actionable Docker Desktop hint, not just raw stderr.
+        // Surface the Docker install hint instead of raw stderr when the daemon is unreachable.
         const daemonDown = isDockerDaemonUnreachable(stderr);
         return yield* Effect.fail(
           new LocalDbRunningError({

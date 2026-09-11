@@ -50,10 +50,8 @@ export class MigrationSquashWriteError extends Data.TaggedError("MigrationSquash
 /**
  * `baselineMigrations`'s history-table batch (`DELETE_MIGRATION_BEFORE` +
  * `INSERT_MIGRATION_VERSION`) failed to send/commit. Matches the established
- * `"failed to update migration history: " + err` text. Classified `dbConnection`,
- * matching `migration repair`'s `MigrationRepairUpdateError`
- * (`repair.errors.ts:19`) — both wrap the identical history-table batch-send
- * failure shape.
+ * `"failed to update migration history: " + err` text, classified `dbConnection`
+ * like `migration repair`'s `MigrationRepairUpdateError` for the same failure shape.
  */
 export class MigrationSquashBaselineError extends Data.TaggedError("MigrationSquashBaselineError")<{
   readonly message: string;

@@ -41,14 +41,11 @@ function readStringAt(root: unknown, path: ReadonlyArray<string>): string {
 }
 
 /**
- * Runs a schema's rendered JSON Schema document through
- * {@link collapseNonFiniteNumberUnions} and {@link withSchemaMetadata}, then
- * writes it via {@link renderJsonSchema}. `collapseNonFiniteNumberUnions`
- * returns `unknown` (it's a generic JSON-tree walk with no static shape
- * guarantee); this narrows it back to an object via `isRecord` rather than an
- * `as` cast — both `toCliConfigJsonSchema()`/`toProjectConfigJsonSchema()`
- * always render a top-level object, so a non-object result here would mean
- * the collapse walk itself is broken, worth failing loudly on.
+ * Runs a schema document through {@link collapseNonFiniteNumberUnions} and
+ * {@link withSchemaMetadata}, then writes it via {@link renderJsonSchema}.
+ * Narrows the collapse step's `unknown` result with `isRecord` instead of an
+ * `as` cast, since a non-object result here would mean the collapse walk
+ * itself is broken.
  */
 async function renderCollapsedJsonSchema(
   outputPath: string,
@@ -94,28 +91,19 @@ async function renderJsonSchema(outputPath: string, json: Record<string, unknown
 }
 
 /**
- * Proves the package.json `sideEffects: false` claim (a deferred CLI-2230
- * review item) against the real compiled `dist/index.js`, rather than merely
- * asserting it. Bundles a probe importing ONLY `CliConfigSchema` for a
- * browser-ish target: `project-schema.ts`'s import-time invariant guard (and
- * the rest of the `./project-config/registry*.ts` graph it pulls in) must be
- * droppable even though it contains real side-effecting statements — that's
- * exactly what `sideEffects: false` authorizes a bundler to do, and exactly
- * what this asserts actually happened. A second, positive-control probe
- * (bundling `projectConfigMappingRows` from `dist/internal.js`) proves the
- * registry-only marker this test looks for is actually detectable by this
- * exact bundling method in the first place, before trusting its absence from
- * the first probe as meaningful.
+ * Proves `sideEffects: false` against the real compiled `dist/index.js`, not by
+ * assertion alone: bundles a probe importing only `CliConfigSchema` for a
+ * browser target, since its registry graph has real side effects but must still
+ * tree-shake away. A positive-control probe confirms the test's marker is
+ * actually detectable by this method before trusting its absence as meaningful.
  */
 async function verifyTreeShaking(): Promise<void> {
   const distIndexPath = await realpath(path.join(packageRoot, "dist", "index.js"));
   const distInternalPath = await realpath(path.join(packageRoot, "dist", "internal.js"));
   // `mkdtemp` can return a path through a symlinked prefix (e.g. macOS's
-  // `/var` -> `/private/var`) that Bun's bundler resolves to its canonical
-  // form internally when computing the probe entry's own directory — compute
-  // the relative specifier against that same canonical form, or a
-  // `path.relative` mismatch silently produces a specifier with one too many
-  // `../` segments.
+  // `/var` -> `/private/var`) that Bun's bundler resolves canonically; compute
+  // the relative specifier against that same canonical form, or `path.relative`
+  // produces a specifier with one too many `../` segments.
   const probeDir = await realpath(
     await mkdtemp(path.join(tmpdir(), "supabase-config-tree-shake-")),
   );
@@ -145,16 +133,12 @@ async function verifyTreeShaking(): Promise<void> {
       return output.text();
     }
 
-    // Only appears in `src/project-config/registry*.ts` (verified by
-    // grepping `dist/`) — a real API attribute path segment, never used by
-    // `CliConfigSchema`'s own field names (`base.ts`/`api.ts` use `schemas`,
-    // not `db_schema`).
+    // Only appears in `src/project-config/registry*.ts`; `CliConfigSchema`'s own
+    // field names (`base.ts`/`api.ts`) use `schemas`, not `db_schema`.
     const REGISTRY_ONLY_MARKER = "db_schema";
-    // Derived at runtime from the actual `CliConfigSchema` annotation it
-    // names, rather than hardcoded prose that could silently drift from the
-    // real description text — `api.enabled`'s `description`, read off the
-    // real rendered JSON Schema document (the same source `dist/schema.json`
-    // is built from).
+    // Derived at runtime from `CliConfigSchema`'s own `api.enabled` description,
+    // read off the real rendered JSON Schema document, rather than hardcoded
+    // prose that could drift from it.
     const SCHEMA_MARKER = readStringAt(toCliConfigJsonSchema(), [
       "properties",
       "api",
@@ -244,28 +228,11 @@ function buildSmokeTestScript(): string {
 }
 
 /**
- * The real CLI-2232/CLI-2234 acceptance check: packs the actual publish
- * tarball (`npm pack`, governed by `files`/`.npmignore` — the exact thing
- * `npm publish` would ship) and installs it into a fresh, isolated consumer
- * project, then imports every entrypoint and JSON artifact through a real
- * `node` process. This catches `files`/`exports` drift the previous
- * workspace-link Node smoke test missed entirely (a workspace `pnpm` link
- * resolves straight to this package's own directory, bypassing `files`
- * filtering altogether).
- *
- * Deliberately extracts the tarball directly (`tar`) rather than `npm install
- * <tarball>`: the latter would additionally try to resolve
- * `@supabase/config`'s own dependency tree (`effect`'s own `fast-check`/
- * `msgpackr`, `@effect/platform-node`'s `undici`/`mime`, …) from the npm
- * registry over the network on every build. Every runtime dependency this
- * smoke test actually needs is already resolved locally by pnpm — symlinking
- * those real, already-resolved package directories in below — the same
- * directories `packages/config/node_modules/*` itself points at — mirrors
- * exactly how pnpm links every other workspace in this monorepo (Node
- * resolves each symlink to its real path before walking further ancestor
- * `node_modules` directories, so each linked package's own transitive deps,
- * already resolved alongside it in the pnpm store, are found the same way).
- * This keeps the check hermetic, fast, and network-free.
+ * Packs the actual publish tarball (`npm pack`, respecting `files`/`.npmignore`)
+ * and installs it into a fresh consumer project, then imports every entrypoint
+ * through real `node` — catching drift a workspace `pnpm` link would miss.
+ * Extracts with `tar` (not `npm install <tarball>`) and symlinks pnpm's
+ * already-resolved deps in, keeping the check hermetic and network-free.
  */
 async function runPackAndInstallSmokeTest(): Promise<void> {
   const npmPath = Bun.which("npm");
@@ -361,7 +328,7 @@ function collectDistTargets(node: ExportsNode, into: Set<string>): void {
   }
 }
 
-/** CLI-2234: every `types`/`default`/JSON-artifact target the exports map declares must exist once the build finishes. */
+/** Every `types`/`default`/JSON-artifact target the exports map declares must exist once the build finishes. */
 async function verifyExportsMapTargetsExist(): Promise<void> {
   const packageJson = JSON.parse(await Bun.file(path.join(packageRoot, "package.json")).text()) as {
     readonly exports: ExportsMap;

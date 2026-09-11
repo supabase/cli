@@ -5,11 +5,9 @@ export const schemaPathsTransitionWarning =
   "WARNING: [db.migrations].schema_paths no longer changes the migrations baseline used by db diff or migration-style db pull. These commands always compare local migrations with the selected database. Use `supabase db schema declarative sync` to compare declarative schema files.\n";
 
 /**
- * Whether pg-delta is the active default engine. Mirrors `shouldUsePgDelta`:
- * `utils.IsPgDeltaEnabled() || usePgDelta || viper.GetBool("EXPERIMENTAL_PG_DELTA")`.
- * The three inputs are the resolved config flag (`[experimental.pgdelta].enabled`),
- * the command's `--use-pg-delta` flag, and the `SUPABASE_EXPERIMENTAL_PG_DELTA`
- * env var.
+ * Whether pg-delta is the active default engine: the resolved config flag
+ * (`[experimental.pgdelta].enabled`), the command's `--use-pg-delta` flag, or the
+ * `SUPABASE_EXPERIMENTAL_PG_DELTA` env var, whichever is set.
  */
 export function shouldUsePgDelta(inputs: {
   readonly configEnabled: boolean;
@@ -20,11 +18,10 @@ export function shouldUsePgDelta(inputs: {
 }
 
 /**
- * Reports whether `db diff` should run in pg-delta mode. Mirrors Go's
- * `resolveDiffEngine`: an explicit `--use-migra`,
- * `--use-pgadmin`, or `--use-pg-schema` is an authoritative rollback that clears
- * pg-delta mode; `--use-migra` defaults to true so only an explicit pass
- * (`useMigraChanged`) counts as opting out.
+ * Reports whether `db diff` should run in pg-delta mode. An explicit `--use-migra`,
+ * `--use-pgadmin`, or `--use-pg-schema` is an authoritative rollback that clears pg-delta mode;
+ * `--use-migra` defaults to true, so only an explicit pass (`useMigraChanged`) counts as opting
+ * out.
  */
 export function resolveDiffEngine(inputs: {
   readonly useMigraChanged: boolean;
@@ -39,11 +36,9 @@ export function resolveDiffEngine(inputs: {
 }
 
 /**
- * Selects whether migration-style `db pull` uses pg-delta for the shadow diff
- * step. Mirrors `resolvePullDiffEngine`: an explicit
- * `--diff-engine` always wins (so `--diff-engine migra` is an authoritative
- * rollback even when pg-delta is enabled in config); otherwise the default
- * follows the active engine.
+ * Selects whether migration-style `db pull` uses pg-delta for the shadow diff step. An explicit
+ * `--diff-engine` always wins (so `--diff-engine migra` is an authoritative rollback even when
+ * pg-delta is enabled in config); otherwise the default follows the active engine.
  */
 export function resolvePullDiffEngine(inputs: {
   readonly engineFlagChanged: boolean;
@@ -57,9 +52,8 @@ export function resolvePullDiffEngine(inputs: {
 }
 
 /**
- * Parses a `viper.GetBool`-style boolean env var. Go's viper delegates to
- * `strconv.ParseBool`, which accepts exactly `1 t T TRUE true True` as true and
- * treats every other value (including unparseable strings and unset) as false.
+ * Parses a boolean env var: accepts exactly `1`, `t`, `T`, `TRUE`, `true`, `True` as true, and
+ * every other value (including unparseable strings and unset) as false.
  */
 export function parseBoolEnv(raw: string | undefined): boolean {
   switch (raw) {
@@ -76,21 +70,11 @@ export function parseBoolEnv(raw: string | undefined): boolean {
 }
 
 /**
- * Resolves `db pull` declarative mode from the raw argv, replicating pflag's
- * single-variable, last-occurrence-wins binding. Go binds BOTH `--declarative`
- * and the deprecated alias `--use-pg-delta` to the same `useDeclarative`
- * variable, so when both appear the LAST
- * occurrence in argv wins — e.g. `db pull --declarative --use-pg-delta=false`
- * ends in migration mode (`false`), and `--use-pg-delta --declarative=false`
- * likewise. OR-ing the two parsed booleans would instead take the declarative
- * export path for either invocation, diverging from Go.
- *
- * pflag bool flags are switches: a bare `--declarative` is `true`; `--flag=value`
- * parses `value` via `strconv.ParseBool` (same true-set as viper above). A
- * space-separated token after a bool flag is NOT consumed (it falls through as a
- * positional), so only the `=value` form carries a value. Tokens after the `--`
- * argv terminator are positionals, not flags. Returns `undefined` when neither
- * flag is present so the caller falls back to the Go default (`false`).
+ * Resolves `db pull` declarative mode from raw argv: `--declarative` and the deprecated
+ * `--use-pg-delta` alias bind to the same outcome, so the last occurrence in argv wins (ORing
+ * the two would wrongly select declarative mode from either flag alone). A bare flag is `true`;
+ * `--flag=value` parses with {@link parseBoolEnv}'s true-set — a following space-separated token
+ * is never consumed as a value. Returns `undefined` when neither flag is present.
  */
 export function resolveDeclarativeFromArgs(args: ReadonlyArray<string>): boolean | undefined {
   const FLAG_PATTERN = /^--(?:declarative|use-pg-delta)(?:=(.*))?$/u;

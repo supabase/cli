@@ -4,7 +4,7 @@ import { resolveCliConfigValue, resolveCliConfigSubtree } from "../index.ts";
 
 // Behavioral coverage of the two public sync resolvers, imported from the
 // public `.` entrypoint (not `./resolve.ts` directly) — this is the exact
-// surface an external consumer sees, options param removed (CLI-2234).
+// surface an external consumer sees.
 
 describe("resolveCliConfigValue", () => {
   test("a plain leaf passes through unchanged", () => {

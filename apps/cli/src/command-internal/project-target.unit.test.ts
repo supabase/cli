@@ -1,9 +1,6 @@
 /**
- * Unit tests for project-target.ts's `mintConfigTargetErrors` factory and
- * `configTargetErrorsFor` builder — independent of any family's own
- * `*.errors.ts` file, so this test keeps verifying the minting mechanism even
- * if diff/pull/push's error files change shape entirely (see
- * `error-actionability-coverage.unit.test.ts`'s runtime/AST-scan split).
+ * Unit tests for the `mintConfigTargetErrors` factory and `configTargetErrorsFor`
+ * builder, independent of any family's own `*.errors.ts` file.
  */
 
 import { describe, expect, it } from "vitest";

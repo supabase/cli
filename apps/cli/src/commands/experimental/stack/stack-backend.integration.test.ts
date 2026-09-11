@@ -7,7 +7,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Option } from "effect";
 import { respondToComplete } from "../../../cli/complete.ts";
-import { rootCommandForBackend } from "../../../cli/root.ts";
+import { rootCommandForFeatures } from "../../../cli/root.ts";
 import { StackRoutingError, resolveStackBackend } from "./stack-backend.ts";
 
 const resolve = (input: Parameters<typeof resolveStackBackend>[0]) =>
@@ -21,9 +21,11 @@ const project = (config: string) => {
 };
 
 const completionFlags = (backend: "legacy" | "stack", command: string) =>
-  respondToComplete(rootCommandForBackend(backend), ["__complete", command, "--"])?.candidates.map(
-    ({ name }) => name,
-  );
+  respondToComplete(rootCommandForFeatures({ stackBackend: backend }), [
+    "__complete",
+    command,
+    "--",
+  ])?.candidates.map(({ name }) => name);
 
 describe("resolveStackBackend", () => {
   it.effect("selects the explicit stack namespace without config or env", () =>
@@ -213,22 +215,14 @@ stack = true
     expect(completionFlags("stack", "start")).not.toContain("--ignore-health-check");
   });
 
-  it("keeps status and workers on their existing command trees", () => {
+  it("keeps status and stack on their existing command trees", () => {
     for (const backend of ["legacy", "stack"] as const) {
-      const stackCommands = respondToComplete(rootCommandForBackend(backend), [
+      const stackCommands = respondToComplete(rootCommandForFeatures({ stackBackend: backend }), [
         "__complete",
         "stack",
         "",
       ])?.candidates.map(({ name }) => name);
       expect(stackCommands).toEqual(["start", "stop"]);
-
-      const experimentalCommands = respondToComplete(rootCommandForBackend(backend), [
-        "__complete",
-        "experimental",
-        "",
-      ])?.candidates.map(({ name }) => name);
-      expect(experimentalCommands).toContain("workers");
-      expect(experimentalCommands).not.toContain("stack");
 
       expect(completionFlags(backend, "status")).toContain("--override-name");
     }

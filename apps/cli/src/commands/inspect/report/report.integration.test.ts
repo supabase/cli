@@ -29,8 +29,8 @@ const LOCAL_CONN: PgConnInput = {
   database: "postgres",
 };
 
-// Map each query's wrapped COPY statement back to its file name so the mocked
-// `copyToCsv` can return the right canned CSV.
+// Maps each query's wrapped COPY statement back to its file name so the mocked `copyToCsv`
+// can return the right canned CSV.
 const WRAPPED_TO_FILE = new Map<string, string>();
 for (const { fileName, sql } of REPORT_QUERIES) {
   WRAPPED_TO_FILE.set(wrapReportQuery(sql, reportIgnoreSchemas(), "'postgres'"), fileName);
@@ -113,7 +113,7 @@ interface SetupOpts {
   stdoutIsTty?: boolean;
   cwd?: string;
   workdir?: string;
-  /** Raw CLI args slice — drives Changed-based flag detection (cobra parity). */
+  /** Raw CLI args slice, used to detect which flags were explicitly passed. */
   cliArgs?: ReadonlyArray<string>;
 }
 
@@ -154,9 +154,8 @@ const flags = (over: Partial<InspectReportFlags> = {}): InspectReportFlags => ({
   outputDir: over.outputDir ?? ".",
 });
 
-// One CSV per referenced file with the REAL column headers each query emits, so
-// column lookups resolve exactly as they would against Postgres. `locks.csv`
-// carries an old (rule 1 fail) but granted (rule 2 pass) row.
+// Real column headers for each query, so column lookups resolve as they would against
+// Postgres. `locks.csv` has an old (rule 1 fail) but granted (rule 2 pass) row.
 const DEFAULT_RULE_CSVS: Record<string, string> = {
   "locks.csv": "stmt,age,granted\nLOCK_A,00:05:00,t\n",
   "unused_indexes.csv": "index\n",
@@ -194,14 +193,12 @@ describe("inspect report", () => {
       expect(files).toContain("db_stats.csv");
       expect(files).toContain("unused_indexes.csv");
       expect(files).not.toContain("db-stats.csv");
-      // Every query was copied with both placeholders substituted.
       expect(connection.copiedSql.length).toBe(14);
       expect(
         connection.copiedSql.every(
           (s) => s.startsWith("COPY (") && s.endsWith("TO STDOUT WITH CSV HEADER"),
         ),
       ).toBe(true);
-      // The date folder is pinned to 0755 and each CSV to 0644.
       expect(statSync(dir).mode & 0o777).toBe(0o755);
       expect(statSync(join(dir, "db_stats.csv")).mode & 0o777).toBe(0o644);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(() => process.umask(prevUmask))));
@@ -231,7 +228,6 @@ describe("inspect report", () => {
       expect(Option.isSome((resolver.resolveInput as { dbUrl: Option.Option<string> }).dbUrl)).toBe(
         true,
       );
-      // The connect diagnostic reflects a non-local target.
       expect(out.stderrText).toContain("Connecting to remote database...");
     }).pipe(Effect.provide(layer));
   });
@@ -300,8 +296,6 @@ describe("inspect report", () => {
     const { layer, resolver } = setupReport({ csvs: DEFAULT_RULE_CSVS });
     return Effect.gen(function* () {
       yield* inspectReport(flags({ outputDir: base, projectRef: Option.some(FLAG_REF) }));
-      // `inspect report` never caches the ref — the resolver call it threads the
-      // flag into is the strongest observable this harness offers.
       const resolveInput = resolver.resolveInput as {
         connType: string;
         linkedProjectRef: Option.Option<string>;
@@ -342,7 +336,6 @@ describe("inspect report", () => {
         expect(out.stderrText).toContain("Running queries...");
         expect(out.stderrText).toContain("Reports saved to ");
         expect(out.stderrText).toContain("Loading default rules...");
-        // stdout carries the Glamour rules table.
         expect(out.stdoutText).toContain("RULE");
         expect(out.stdoutText).toContain("STATUS");
         expect(out.stdoutText).toContain("MATCHES");
@@ -356,10 +349,8 @@ describe("inspect report", () => {
     const { layer, out } = setupReport({ csvs: DEFAULT_RULE_CSVS });
     return Effect.gen(function* () {
       yield* inspectReport(flags({ outputDir: base }));
-      // Rule 1 fails (old lock): message + matched statement.
       expect(out.stdoutText).toContain("There is at least one lock older than 2 minutes");
       expect(out.stdoutText).toContain("LOCK_A");
-      // Rule 2 passes (lock is granted): ✔.
       expect(out.stdoutText).toContain("✔");
       expect(out.stdoutText).toContain("No duplicate indexes");
     }).pipe(Effect.provide(layer));
@@ -390,7 +381,6 @@ describe("inspect report", () => {
         yield* inspectReport(flags({ outputDir: base }));
         expect(out.stderrText).not.toContain("Loading default rules...");
         expect(out.stdoutText).toContain("Custom rule");
-        // No-match COUNT(*) returns 0, a non-empty value → fail status for this rule.
         expect(out.stdoutText).toContain("bad");
       }).pipe(Effect.provide(layer));
     },
@@ -404,8 +394,7 @@ describe("inspect report", () => {
       join(workdir, "supabase", "config.toml"),
       [
         "[[experimental.inspect.rules]]",
-        // References a CSV that was never produced — the provider returns no table
-        // and the evaluator surfaces the error as the STATUS cell (not a failure).
+        // `nope.csv` doesn't exist, so this surfaces as the rule's STATUS cell.
         'query = "SELECT COUNT(*) FROM `nope.csv`"',
         'name = "Broken rule"',
         'pass = "ok"',
@@ -425,8 +414,6 @@ describe("inspect report", () => {
     const base = tempDir("supabase-report-out-");
     const workdir = tempDir("supabase-report-workdir-");
     mkdirSync(join(workdir, "supabase"), { recursive: true });
-    // An invalid rule config (unknown key) must abort before the DB connection
-    // and before any CSV files are written.
     writeFileSync(
       join(workdir, "supabase", "config.toml"),
       [
@@ -446,8 +433,7 @@ describe("inspect report", () => {
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain("invalid keys: typo");
       }
-      // No connection and no dated output folder — config validation ran first,
-      // before mkdir / connect / COPY (base itself is the pre-created temp dir).
+      // `base` is the pre-created temp dir itself; no dated subfolder is created.
       expect(connection.copiedSql.length).toBe(0);
       expect(readdirSync(base).length).toBe(0);
     }).pipe(Effect.provide(layer));
@@ -513,8 +499,8 @@ describe("inspect report", () => {
 
   it.live("aborts with a failed-to-create-output-file error when a CSV cannot be written", () => {
     const base = tempDir("supabase-report-out-");
-    // Pre-create the first CSV target (`bloat.csv`) as a DIRECTORY so the file
-    // write fails (EISDIR) while mkdir (recursive, idempotent) still succeeds.
+    // Pre-creates `bloat.csv` as a directory so the file write fails (EISDIR) while the
+    // recursive mkdir still succeeds.
     mkdirSync(join(base, localDateFolder(), "bloat.csv"), { recursive: true });
     const { layer } = setupReport({ csvs: DEFAULT_RULE_CSVS });
     return Effect.gen(function* () {
@@ -566,7 +552,6 @@ describe("inspect report", () => {
     const { layer } = setupReport({ csvs: DEFAULT_RULE_CSVS, cwd });
     return Effect.gen(function* () {
       yield* inspectReport(flags({ outputDir: base }));
-      // Written under the absolute base, not under the CWD.
       expect(dateFolderContents(base).files.length).toBe(14);
       expect(readdirSync(cwd).length).toBe(0);
     }).pipe(Effect.provide(layer));

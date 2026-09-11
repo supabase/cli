@@ -18,18 +18,13 @@ import {
 
 /**
  * `supabase seed buckets` — seeds Storage buckets from
- * `[storage.buckets]` / `[storage.vector]` in `supabase/config.toml`.
- *
- * Port of `apps/cli-go/internal/seed/buckets/buckets.go`. When `--linked` is
- * passed, the remote Storage gateway is used with the project's service-role key;
- * otherwise the local stack is used. The seeding work lives in the hoisted
- * `seedBucketsRun` (shared with `db reset --local`); this handler owns the
- * target-flag resolution and the post-run cache + telemetry side effects.
+ * `[storage.buckets]` / `[storage.vector]` in `supabase/config.toml`. The
+ * seeding work lives in the hoisted `seedBucketsRun` (shared with `db reset
+ * --local`); this handler owns target-flag resolution and telemetry.
  */
 export const seedBuckets = Effect.fn("seed.buckets")(function* (
-  // Target (linked vs. local) is selected from the changed-flag set
-  // (`flag.Changed`), not the parsed `linked`/`local` values — only
-  // `projectRef` is read directly below.
+  // Target (linked vs. local) is selected from the changed-flag set, not the
+  // parsed `linked`/`local` values — only `projectRef` is read directly below.
   flags: BucketsFlags,
 ) {
   const telemetryState = yield* TelemetryState;
@@ -39,9 +34,8 @@ export const seedBuckets = Effect.fn("seed.buckets")(function* (
   const fs = yield* FileSystem.FileSystem;
 
   // Set once --linked resolves a ref; drives the post-run linked-project cache
-  // write + org/project group identify (`cmd/root.go`'s `ensureProjectGroupsCached`,
-  // gated on a non-empty `flags.ProjectRef`). Empty on the local
-  // path, so the cache is never written there.
+  // write and org/project group identify. Empty on the local path, so the
+  // cache is never written there.
   let linkedRef = "";
 
   yield* Effect.gen(function* () {
@@ -49,17 +43,16 @@ export const seedBuckets = Effect.fn("seed.buckets")(function* (
       Effect.mapError((error) => new SeedWorkdirError({ message: error.message })),
     );
 
-    // Resolve the project ref for --linked BEFORE loading config, so that the
-    // matching `[remotes.<name>]` override (whose `project_id == ref`) is merged
-    // over the base config by `loadCliConfig`. The target is selected from
-    // `flag.Changed`, not the flag value: `--linked` is the linked path whenever
-    // it's *set* (even `--linked=false`).
+    // Resolve the project ref for --linked before loading config, so the
+    // matching `[remotes.<name>]` override (whose `project_id == ref`) is
+    // merged over the base config by `loadCliConfig`. `--linked` selects the
+    // linked path whenever it's set, even `--linked=false`.
     const setFlags = seedChangedTargetFlags(cliArgs.args);
     const isLinked = setFlags.includes("linked");
 
     // `--project-ref` never implies `--linked` and must not be silently
     // discarded on the local target — see push.handler.ts's identical guard
-    // (db push) for the full TS-only rationale.
+    // (db push) for the rationale.
     if (Option.isSome(flags.projectRef) && !isLinked) {
       return yield* Effect.fail(
         new SeedMutuallyExclusiveFlagsError({
@@ -69,12 +62,10 @@ export const seedBuckets = Effect.fn("seed.buckets")(function* (
       );
     }
 
-    // An explicit `--workdir`/`SUPABASE_WORKDIR` that holds no project config
-    // fails HERE, before the api-keys fetch and any Storage call — fixes the
-    // "authenticates, seeds nothing, exits 0" bug. `start`/`db reset` never
-    // reach this handler (they call `seedBucketsRun` directly), so
-    // their behavior is unaffected. A DEFAULTED workdir is untouched — see
-    // `requireExplicitWorkdirProject`'s own doc comment.
+    // An explicit `--workdir`/`SUPABASE_WORKDIR` with no project config fails
+    // here, before any Storage call, instead of authenticating and seeding
+    // nothing while exiting 0. `start`/`db reset` skip this by calling
+    // `seedBucketsRun` directly.
     yield* requireExplicitWorkdirProject(cliSettings).pipe(
       Effect.mapError((error) => new SeedMissingProjectConfigError({ message: error.message })),
     );
@@ -85,8 +76,8 @@ export const seedBuckets = Effect.fn("seed.buckets")(function* (
 
     yield* seedBucketsRun({ projectRef, emitSummary: true });
   }).pipe(
-    // Caches the linked project + fires org/project group identify whenever
-    // `flags.ProjectRef` is set — only on the --linked path.
+    // Caches the linked project and fires org/project group identify — only
+    // on the --linked path, when `linkedRef` is set.
     Effect.ensuring(
       Effect.suspend(() => (linkedRef === "" ? Effect.void : linkedProjectCache.cache(linkedRef))),
     ),

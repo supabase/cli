@@ -26,11 +26,7 @@ import {
 
 type CreateInput = typeof V1CreateAProjectInput.Type;
 
-/**
- * Mirror of Go's `api.V1ProjectResponse` (`apps/cli-go/pkg/api/types.gen.go`)
- * — `projects create -o yaml|toml` encodes the raw struct, so keys derive
- * from the Go field names (CLI-1975).
- */
+/** Struct spec driving `-o yaml|toml` key casing for `projects create`'s raw response. */
 const GO_PROJECT_RESPONSE = goStruct([
   ["created_at", goString],
   ["id", goString],
@@ -53,28 +49,24 @@ export interface ProjectCreateInput {
   readonly postgresEngine: CreateInput["postgres_engine"];
   readonly templateUrl: string | undefined;
   /**
-   * Standalone `projects create` emits a `--output-format` json/stream-json
-   * success result; `bootstrap` suppresses it (it emits its own top-level
-   * result), matching Go's `create.Run` which only ever echoes via `-o`.
+   * Standalone `projects create` emits a `--output-format` json/stream-json success result;
+   * `bootstrap` suppresses it since it emits its own top-level result instead.
    */
   readonly emitStructuredResult: boolean;
 }
 
-/** Go's `printKeyValue` (`create.go`): `key` + `:` + pad to width 20 + value. */
+/** Formats `key: value`, padding `key:` to width 20. */
 function printKeyValue(key: string, value: string): string {
   return `${key}:${" ".repeat(Math.max(0, 20 - key.length))}${value}`;
 }
 
 /**
- * Ports Go's `create.Run` (`apps/cli-go/internal/projects/create/create.go:16-50`,
- * deleted in CLI-1970; last present at commit 7b469f5b3):
- * `promptMissingParams` (prompt for / echo each empty field), `POST /v1/projects`,
- * and the project echo (`Created a new project at …` plus the `-o`/pretty render).
+ * Prompts for any missing project fields, creates the project via `POST /v1/projects`, and
+ * echoes the result (`Created a new project at …` plus the `-o`/pretty render).
  *
- * Returns the created ref + the resolved db password (Go stores both globally via
- * `flags.ProjectRef` / `viper.Set("DB_PASSWORD", …)`). Does NOT validate required
- * flags (that is the standalone command's cobra PreRunE) and does NOT write the
- * linked-project cache (the caller owns that via `Effect.ensuring`).
+ * Returns the created ref and the resolved db password. Does not validate required flags
+ * (the standalone command's own pre-run does that) and does not write the linked-project
+ * cache (the caller owns that via `Effect.ensuring`).
  */
 export const projectCreateCore = Effect.fnUntraced(function* (input: ProjectCreateInput) {
   const output = yield* Output;
@@ -91,8 +83,7 @@ export const projectCreateCore = Effect.fnUntraced(function* (input: ProjectCrea
   const releaseChannel = input.releaseChannel;
   const postgresEngine = input.postgresEngine;
 
-  // promptMissingParams (`create.go:58-85`): prompt for each empty value and
-  // echo the resolved value to stderr in text mode.
+  // Prompt for each empty value and echo the resolved value to stderr in text mode.
   if (name.length === 0) {
     name = yield* promptProjectName();
   } else if (output.format === "text") {
@@ -129,9 +120,8 @@ export const projectCreateCore = Effect.fnUntraced(function* (input: ProjectCrea
 
   const creating = output.format === "text" ? yield* output.task("Creating project...") : undefined;
 
-  // `executeRaw` sends the body with Go-sorted keys (matching `json.Marshal`)
-  // and skips output decoding: the 201 response's `ref` can be the cli-e2e
-  // `__PROJECT_REF__` placeholder, which the generated schema rejects.
+  // `executeRaw` skips output decoding: the 201 response's `ref` can be the cli-e2e
+  // `__PROJECT_REF__` placeholder, which the generated schema would reject.
   const response = yield* api.executeRaw(operationDefinitions.v1CreateAProject, body).pipe(
     Effect.tapError(() => creating?.fail() ?? Effect.void),
     Effect.mapError(
@@ -154,7 +144,7 @@ export const projectCreateCore = Effect.fnUntraced(function* (input: ProjectCrea
 
   const id = readProjectField(created, "id");
 
-  // Go prints this to stderr for every output format (`create.go:33-34`).
+  // Printed to stderr for every output format.
   const projectUrl = `${dashboardUrlForProfile(cliSettings.profile)}/project/${id}`;
   yield* output.raw(`Created a new project at ${projectUrl}\n`, "stderr");
 
