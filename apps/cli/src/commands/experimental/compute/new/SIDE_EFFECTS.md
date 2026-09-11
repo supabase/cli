@@ -58,7 +58,10 @@ rather than reading the compute name off the pipe.
 
 `runtime`, `size` and `exposure` are always written, defaults included: they are
 closed sets the command prompts for, and pinning the answer is the point of
-recording it. `instances` is written only when it differs from the default of 1 —
+recording it. The exposure default follows the runtime — `private` for
+`actions-runner`, which only calls out to GitHub, and `public` for every other
+runtime — so it is the runtime that decides what an unanswered exposure prompt
+records. `instances` is written only when it differs from the default of 1 —
 it has no prompt, because how many instances a compute needs is not something a
 scaffold can guess, and an absent `instances` means exactly what `instances = 1`
 means to `push`. A `0` is an explicit count that scales the compute to nothing, so

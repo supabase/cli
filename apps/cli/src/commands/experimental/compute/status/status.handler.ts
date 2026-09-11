@@ -11,7 +11,10 @@ import {
 import { CommandPlatformApi } from "../../../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../../../config/command-settings.service.ts";
 import { displayPath } from "../../../../shared/compute/compute-paths.ts";
-import { formatApiSize } from "../../../../shared/compute/compute-runtimes.ts";
+import {
+  deployedRuntimeLabel,
+  formatApiSize,
+} from "../../../../shared/compute/compute-runtimes.ts";
 import { computeUrl } from "../../../../shared/compute/compute-url.ts";
 import { getCompute } from "../../../../shared/compute/compute-api.ts";
 import { ComputeNotDeployedError } from "../../../../shared/compute/compute.errors.ts";
@@ -70,6 +73,10 @@ export const computeStatus = Effect.fn("compute.status")(function* (flags: Compu
     }
 
     const record = found.value;
+    const runtimeLabel = deployedRuntimeLabel({
+      apiRuntime: record.spec.runtime,
+      declared: compute.entry?.runtime,
+    });
     const url =
       record.spec.exposure === "public"
         ? computeUrl(projectRef, settings.projectHost, name)
@@ -86,7 +93,7 @@ export const computeStatus = Effect.fn("compute.status")(function* (flags: Compu
     const payload = {
       compute_name: name,
       project_ref: projectRef,
-      runtime: record.spec.runtime ?? "dockerfile",
+      runtime: runtimeLabel,
       size: record.spec.size,
       exposure: record.spec.exposure,
       build_state: record.buildState,
@@ -117,7 +124,7 @@ export const computeStatus = Effect.fn("compute.status")(function* (flags: Compu
     const details: Array<readonly [string, string]> = [
       ["State", record.deleting === true ? "deleting" : record.buildState],
       ["Reason", record.stateReason ?? ""],
-      ["Runtime", record.spec.runtime ?? "dockerfile"],
+      ["Runtime", runtimeLabel],
       ["Size", formatApiSize(record.spec.size)],
       ["Image", record.imageVersion ?? ""],
       ["Access", record.spec.exposure],

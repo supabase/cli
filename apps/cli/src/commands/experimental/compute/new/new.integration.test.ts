@@ -75,6 +75,31 @@ describe("compute new", () => {
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
+
+  // The one runtime whose compute never answers a request: it registers runners
+  // and calls out to GitHub, so a scaffold that recorded `public` would hand it
+  // a URL nothing uses.
+  it.live("records a private exposure for the actions-runner runtime", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const fs = yield* FileSystem.FileSystem;
+      const repo = yield* project();
+      const { layer } = setupCompute({ workdir: repo.dir, format: "json" });
+
+      return yield* Effect.gen(function* () {
+        yield* computeNew(
+          flags({ name: Option.some("runners"), runtime: Option.some("actions-runner") }),
+        );
+
+        const computeDir = path.join(repo.dir, "supabase", "compute", "runners");
+        expect(yield* fs.exists(path.join(computeDir, "Dockerfile"))).toBe(true);
+        expect(yield* fs.exists(path.join(computeDir, "entrypoint.sh"))).toBe(true);
+        expect(yield* repo.config).toContain('runtime = "actions-runner"');
+        expect(yield* repo.config).toContain('exposure = "private"');
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
   it.live("asks for the name when the command line carries none", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;

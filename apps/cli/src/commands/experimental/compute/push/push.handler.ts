@@ -20,6 +20,7 @@ import {
 import { displayPath } from "../../../../shared/compute/compute-paths.ts";
 import type { ComputeEntry } from "../../../../shared/compute/compute-config.ts";
 import {
+  apiRuntimeFor,
   apiSizeFor,
   DEFAULT_COMPUTE_EXPOSURE,
   DEFAULT_COMPUTE_INSTANCES,
@@ -352,10 +353,11 @@ const deployOneCompute = Effect.fnUntraced(function* (input: {
     contextUploadId = slot.uploadId;
   }
 
+  const apiRuntime = apiRuntimeFor(runtime);
   const spec: ComputeDeploySpec = {
-    // A plain Dockerfile build has no catalog runtime to name; the uploaded
+    // A context-built runtime has no catalog runtime to name; the uploaded
     // context carries its own Dockerfile and is built as-is.
-    ...(runtime === "dockerfile" ? {} : { runtime }),
+    ...(apiRuntime === undefined ? {} : { runtime: apiRuntime }),
     size: apiSizeFor(size),
     exposure,
     instances,

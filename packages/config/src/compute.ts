@@ -11,9 +11,9 @@ const computeEntry = Schema.Struct({
   runtime: Schema.optionalKey(
     Schema.String.annotate({
       description: dedent`
-        Runtime the compute is built on: \`dockerfile\` to build the directory's own
-        Dockerfile, or one of the catalog runtimes (\`node\`, \`deno\`). Guessed from
-        marker files when unset.
+        Runtime the compute is built on: one of the catalog runtimes (\`node\`, \`deno\`),
+        or a runtime whose directory carries its own Dockerfile (\`dockerfile\`,
+        \`actions-runner\`). Guessed from marker files when unset.
       `,
       examples: ["node"],
       tags,

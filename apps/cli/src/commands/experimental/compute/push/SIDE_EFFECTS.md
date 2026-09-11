@@ -46,6 +46,11 @@ and the command handler does not run. See the [Compute command guide](../../../.
 the deploy response already carried a terminal `build_state`. Either way the
 run reports the accepted spec the deploy response returned.
 
+`spec.runtime` is sent only for a catalog runtime (`node`, `deno`). A runtime
+whose directory carries its own Dockerfile (`dockerfile`, `actions-runner`)
+sends no `runtime` at all: the uploaded context is built as the image it
+describes.
+
 ## Exit Codes
 
 | Code | Condition                                                                                             |

@@ -6,7 +6,10 @@ import { renderGlamourTable } from "../../../../output/glamour-table.ts";
 import { emitComputeMachineOutput, rejectComputeEnvOutput } from "../compute.output.ts";
 import { CommandPlatformApi } from "../../../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../../../config/command-settings.service.ts";
-import { formatApiSize } from "../../../../shared/compute/compute-runtimes.ts";
+import {
+  deployedRuntimeLabel,
+  formatApiSize,
+} from "../../../../shared/compute/compute-runtimes.ts";
 import { computeUrl } from "../../../../shared/compute/compute-url.ts";
 import { listCompute, type ComputeRecord } from "../../../../shared/compute/compute-api.ts";
 import { ProjectRefResolver } from "../../../../config/project-ref.service.ts";
@@ -59,13 +62,15 @@ function stateLabel(row: ComputeRow): string {
 }
 
 /**
- * The API omits `spec.runtime` only for a context-only build, so its absence
- * on a deployed compute means "dockerfile". An undeployed compute has nothing to
- * infer from, so this reports unknown rather than guessing.
+ * An undeployed compute has nothing to infer from, so this reports unknown
+ * rather than guessing; a deployed one is named by {@link deployedRuntimeLabel}.
  */
 function runtimeLabelFor(row: ComputeRow): string | undefined {
   if (row.deployed !== undefined) {
-    return row.deployed.spec.runtime ?? "dockerfile";
+    return deployedRuntimeLabel({
+      apiRuntime: row.deployed.spec.runtime,
+      declared: row.localRuntime,
+    });
   }
   return row.localRuntime;
 }

@@ -6,13 +6,33 @@
  */
 
 /**
- * A compute's runtime: its own Dockerfile, or one of the catalog base images, kept in sync with
- * `./stacks/` — a runtime offered here with no starter files there scaffolds an empty compute,
- * which `compute-stacks.macro.ts` refuses at build time.
+ * A compute's runtime: one of the catalog base images, or a starter that carries its own
+ * Dockerfile. Kept in sync with `./stacks/` — a runtime offered here with no starter files there
+ * scaffolds an empty compute, which `compute-stacks.macro.ts` refuses at build time.
  */
-export const COMPUTE_RUNTIMES = ["dockerfile", "node", "deno"] as const;
+export const COMPUTE_RUNTIMES = ["dockerfile", "node", "deno", "actions-runner"] as const;
 
 export type ComputeRuntime = (typeof COMPUTE_RUNTIMES)[number];
+
+/**
+ * Runtimes the platform builds from the uploaded context's own Dockerfile. They send no
+ * `spec.runtime`: the API names only its catalog base images, so a starter that ships a
+ * Dockerfile is deployed as the image it describes.
+ */
+const CONTEXT_BUILT_RUNTIMES: ReadonlySet<ComputeRuntime> = new Set([
+  "dockerfile",
+  "actions-runner",
+]);
+
+/** Whether the platform builds `runtime` from the context's own Dockerfile. */
+function isContextBuiltRuntime(runtime: ComputeRuntime): boolean {
+  return CONTEXT_BUILT_RUNTIMES.has(runtime);
+}
+
+/** The catalog runtime to send as `spec.runtime`, or `undefined` for a context-built runtime. */
+export function apiRuntimeFor(runtime: ComputeRuntime): ComputeRuntime | undefined {
+  return isContextBuiltRuntime(runtime) ? undefined : runtime;
+}
 
 /**
  * The runtime `new` pre-selects and the classifier falls back to for an unrecognized directory.
@@ -39,7 +59,25 @@ export const COMPUTE_RUNTIME_DESCRIPTIONS: Record<ComputeRuntime, string> = {
   dockerfile: "Build the directory's own Dockerfile; it serves plain HTTP on $PORT.",
   node: "Node.js catalog runtime (Web-standard fetch handler).",
   deno: "Deno catalog runtime (Web-standard fetch handler).",
+  "actions-runner": "Self-hosted GitHub Actions runners; one instance takes one job at a time.",
 };
+
+/**
+ * What to call the runtime of a deployed compute. The API omits `spec.runtime` for every
+ * context-built runtime, so only the declared runtime distinguishes them; a declaration the
+ * deployed spec contradicts is ignored, since the spec is what is running.
+ */
+export function deployedRuntimeLabel(options: {
+  readonly apiRuntime: string | undefined;
+  readonly declared: string | undefined;
+}): string {
+  if (options.apiRuntime !== undefined) {
+    return options.apiRuntime;
+  }
+  const declared =
+    options.declared === undefined ? undefined : parseComputeRuntime(options.declared);
+  return declared !== undefined && isContextBuiltRuntime(declared) ? declared : "dockerfile";
+}
 
 /**
  * The only instance sizes offered, denominated by memory. There is no resize — a different size
@@ -83,6 +121,15 @@ export type ComputeExposure = (typeof COMPUTE_EXPOSURES)[number];
  * every runtime offered today serves HTTP and an unlocked-down compute is one you can call.
  */
 export const DEFAULT_COMPUTE_EXPOSURE: ComputeExposure = "public";
+
+/**
+ * The exposure `new` records when `--exposure` is omitted. A runner only ever calls out to
+ * GitHub, so an internet-facing URL is surface it has no use for; every other runtime exists to
+ * answer requests.
+ */
+export function defaultExposureFor(runtime: ComputeRuntime): ComputeExposure {
+  return runtime === "actions-runner" ? "private" : DEFAULT_COMPUTE_EXPOSURE;
+}
 
 /** One-line description of each exposure, for `--exposure`'s prompt and help. */
 export const COMPUTE_EXPOSURE_DESCRIPTIONS: Record<ComputeExposure, string> = {

@@ -95,6 +95,35 @@ describe("compute status", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
+  it.live("names the context-built runtime config declared", () =>
+    Effect.gen(function* () {
+      // The API omits spec.runtime for every context build, so the entry is the
+      // only thing that distinguishes a runner from a bare Dockerfile compute.
+      const repo = yield* makeComputeProject({
+        "supabase/config.toml": `project_id = "demo"\n\n[compute.api]\nruntime = "actions-runner"\n`,
+        "supabase/compute/api/Dockerfile": "FROM ubuntu:24.04\n",
+      });
+      const { layer, out } = setupCompute({
+        workdir: repo.dir,
+        routes: {
+          [getRoute]: {
+            status: 200,
+            body: { data: computeResource({ name: "api" }) },
+          },
+        },
+      });
+
+      return yield* Effect.gen(function* () {
+        yield* computeStatus({ name: "api", projectRef: Option.none() });
+
+        const runtimeLine = out.stdoutText
+          .split("\n")
+          .find((line) => line.trim().startsWith("Runtime"));
+        expect(runtimeLine).toContain("actions-runner");
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
   it.live("falls back to the declared count when no tally came back", () =>
     Effect.gen(function* () {
       const repo = yield* project();

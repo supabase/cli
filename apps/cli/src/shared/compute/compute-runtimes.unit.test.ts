@@ -1,6 +1,9 @@
 import { describe, expect, test } from "vitest";
 import {
+  apiRuntimeFor,
   apiSizeFor,
+  defaultExposureFor,
+  deployedRuntimeLabel,
   formatApiSize,
   parseComputeExposure,
   parseComputeRuntime,
@@ -13,12 +16,58 @@ describe("parseComputeRuntime", () => {
   test("accepts the value it displays, case-insensitively, and canonicalizes it", () => {
     expect(parseComputeRuntime("Dockerfile")).toBe("dockerfile");
     expect(parseComputeRuntime("  NODE  ")).toBe("node");
+    expect(parseComputeRuntime("Actions-Runner")).toBe("actions-runner");
   });
 
   test("rejects anything outside the catalog", () => {
     expect(parseComputeRuntime("rust")).toBeUndefined();
     expect(parseComputeRuntime("sandbox")).toBeUndefined();
     expect(parseComputeRuntime("")).toBeUndefined();
+  });
+});
+
+describe("apiRuntimeFor", () => {
+  test("names the catalog base image a runtime builds on", () => {
+    expect(apiRuntimeFor("node")).toBe("node");
+    expect(apiRuntimeFor("deno")).toBe("deno");
+  });
+
+  // The API knows only its catalog images: a runtime whose starter ships a
+  // Dockerfile is deployed as the image that Dockerfile describes.
+  test("sends no runtime for a runtime built from the context's own Dockerfile", () => {
+    expect(apiRuntimeFor("dockerfile")).toBeUndefined();
+    expect(apiRuntimeFor("actions-runner")).toBeUndefined();
+  });
+});
+
+describe("deployedRuntimeLabel", () => {
+  test("reports what the deployed spec says whenever it says anything", () => {
+    expect(deployedRuntimeLabel({ apiRuntime: "node", declared: "deno" })).toBe("node");
+  });
+
+  test("names the context-built runtime config declared when the spec omits one", () => {
+    expect(deployedRuntimeLabel({ apiRuntime: undefined, declared: "actions-runner" })).toBe(
+      "actions-runner",
+    );
+    expect(deployedRuntimeLabel({ apiRuntime: undefined, declared: "dockerfile" })).toBe(
+      "dockerfile",
+    );
+  });
+
+  // Absent `spec.runtime` is itself the evidence of a context build, so a
+  // declaration that contradicts it describes something that isn't deployed.
+  test("falls back to dockerfile when the declaration cannot explain the omission", () => {
+    expect(deployedRuntimeLabel({ apiRuntime: undefined, declared: "node" })).toBe("dockerfile");
+    expect(deployedRuntimeLabel({ apiRuntime: undefined, declared: "cobol" })).toBe("dockerfile");
+    expect(deployedRuntimeLabel({ apiRuntime: undefined, declared: undefined })).toBe("dockerfile");
+  });
+});
+
+describe("defaultExposureFor", () => {
+  test("keeps a runner off the internet and leaves every other runtime public", () => {
+    expect(defaultExposureFor("actions-runner")).toBe("private");
+    expect(defaultExposureFor("node")).toBe("public");
+    expect(defaultExposureFor("dockerfile")).toBe("public");
   });
 });
 

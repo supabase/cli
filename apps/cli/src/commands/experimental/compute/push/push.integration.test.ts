@@ -272,6 +272,28 @@ describe("compute push", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
+  it.live("omits the runtime for an actions-runner compute too", () =>
+    Effect.gen(function* () {
+      const repo = yield* project({
+        "supabase/config.toml": `project_id = "demo"\n\n[compute.api]\nruntime = "actions-runner"\nexposure = "private"\n`,
+        "supabase/compute/api/Dockerfile": "FROM ubuntu:24.04\n",
+        "supabase/compute/api/entrypoint.sh": "#!/usr/bin/env bash\n",
+      });
+      const { layer, http } = setupCompute({ workdir: repo.dir, routes: routes() });
+
+      return yield* Effect.gen(function* () {
+        yield* push();
+
+        const deploy = http.requests.find((request) => request.url.endsWith("/deploy"));
+        expect((yield* decodeDeploy(deploy?.body ?? "{}")).data.attributes.spec).toEqual({
+          size: "2gb-1vcpu",
+          exposure: "private",
+          instances: 1,
+        });
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
   it.live("guesses the runtime for a directory with no config entry and says so", () =>
     Effect.gen(function* () {
       const repo = yield* project({
@@ -382,7 +404,7 @@ describe("compute push", () => {
         expect(error).toBeInstanceOf(UnknownComputeRuntimeError);
         expect((error as UnknownComputeRuntimeError).detail).toContain("cobol");
         expect((error as UnknownComputeRuntimeError).suggestion).toContain(
-          "dockerfile, node, deno",
+          "dockerfile, node, deno, actions-runner",
         );
         expect(http.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));

@@ -20,7 +20,7 @@ import {
   resolveComputeSource,
 } from "../../../../shared/compute/compute-paths.ts";
 import {
-  DEFAULT_COMPUTE_EXPOSURE,
+  defaultExposureFor,
   DEFAULT_COMPUTE_INSTANCES,
   DEFAULT_COMPUTE_RUNTIME,
   DEFAULT_COMPUTE_SIZE,
@@ -174,30 +174,36 @@ const resolveSize = Effect.fnUntraced(function* (options: {
  * complete spec each time, so an absent `exposure` in `config.toml` deploys
  * public on the next bare `push`. Writing the value down, default included,
  * is what makes `--exposure private` stick.
+ *
+ * The default follows the runtime, so a runtime that makes only outbound calls
+ * is not scaffolded with an internet-facing URL.
  */
 const resolveExposure = Effect.fnUntraced(function* (options: {
   readonly explicit: Option.Option<ComputeExposure>;
   /** Whether there is a terminal to ask on — see `canPromptFor`. */
   readonly canPrompt: boolean;
+  readonly runtime: ComputeRuntime;
 }) {
   if (Option.isSome(options.explicit)) {
     return options.explicit.value;
   }
 
+  const fallback = defaultExposureFor(options.runtime);
+
   if (options.canPrompt) {
     const output = yield* Output;
     const selected = yield* output.promptSelect(
       "Should this compute be reachable from the internet?",
-      defaultFirst([...COMPUTE_EXPOSURES], DEFAULT_COMPUTE_EXPOSURE).map((exposure) => ({
+      defaultFirst([...COMPUTE_EXPOSURES], fallback).map((exposure) => ({
         value: exposure,
         label: exposure,
         hint: COMPUTE_EXPOSURE_DESCRIPTIONS[exposure],
       })),
     );
-    return parseComputeExposure(selected) ?? DEFAULT_COMPUTE_EXPOSURE;
+    return parseComputeExposure(selected) ?? fallback;
   }
 
-  return DEFAULT_COMPUTE_EXPOSURE;
+  return fallback;
 });
 
 /**
@@ -271,7 +277,7 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
     // behind. With nowhere to ask, the defaults stand — only the name has no fallback.
     const runtime = yield* resolveRuntime({ explicit: flags.runtime, canPrompt });
     const size = yield* resolveSize({ explicit: flags.size, canPrompt });
-    const exposure = yield* resolveExposure({ explicit: flags.exposure, canPrompt });
+    const exposure = yield* resolveExposure({ explicit: flags.exposure, canPrompt, runtime });
     const instances = recordedInstances(flags.instances);
 
     // Validated before anything is written: this is the directory the starter files
