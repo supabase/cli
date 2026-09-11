@@ -1,5 +1,6 @@
 import {
   Cause,
+  Config,
   Crypto,
   Effect,
   Exit,
@@ -54,20 +55,30 @@ export const supervisorEntrypointFor = (moduleUrl: string): string => {
   return isBunVirtualPath(sourceEntrypoint) ? SUPERVISOR_DISPATCH_SENTINEL : sourceEntrypoint;
 };
 
-/** Default host values are resolved only at the process composition boundary. */
-export const defaultRuntimeEnvironment = (): StackRuntimeEnvironmentValue => {
-  // oxlint-disable-next-line effecttsgo/process-env -- composition-boundary environment read
-  const home = process.env.SUPABASE_HOME ?? `${process.env.HOME ?? homedir()}/.supabase`;
-  return {
-    stateRoot: `${home}/managed/stacks`,
-    // Keep the POSIX socket root short enough for AF_UNIX path limits.
-    // oxlint-disable-next-line effecttsgo/process-env -- composition-boundary environment read
-    tempRoot: process.platform === "win32" ? (process.env.TEMP ?? "C:\\Windows\\Temp") : "/tmp",
-    platform: process.platform === "win32" ? "windows" : "posix",
-    supervisorCommand: process.execPath,
-    supervisorEntrypoint: supervisorEntrypointFor(import.meta.url),
-  };
-};
+/** Resolves default host values from the active Effect configuration provider. */
+export const defaultRuntimeEnvironment: Effect.Effect<StackRuntimeEnvironmentValue> = Effect.gen(
+  function* () {
+    const optional = (name: string) =>
+      Config.option(Config.string(name)).pipe(Effect.orElseSucceed(() => Option.none<string>()));
+    const configuredHome = yield* optional("SUPABASE_HOME");
+    const configuredUserHome = yield* optional("HOME");
+    const home = Option.getOrElse(
+      configuredHome,
+      () => `${Option.getOrElse(configuredUserHome, homedir)}/.supabase`,
+    );
+    const configuredTemp = yield* optional("TEMP");
+    return {
+      stateRoot: `${home}/managed/stacks`,
+      tempRoot:
+        process.platform === "win32"
+          ? Option.getOrElse(configuredTemp, () => "C:\\Windows\\Temp")
+          : "/tmp",
+      platform: process.platform === "win32" ? "windows" : "posix",
+      supervisorCommand: process.execPath,
+      supervisorEntrypoint: supervisorEntrypointFor(import.meta.url),
+    };
+  },
+);
 
 type ReadinessResult =
   | { readonly kind: "ready"; readonly stackId: StackId; readonly ownerSessionId: string }
@@ -148,9 +159,7 @@ const validateCompatibleOwner = (
     const probeExit = yield* makeControlClient(metadata.endpoint, {
       stackId: options.stackId,
       ownerSessionId: metadata.ownerSessionId,
-    })
-      .probe()
-      .pipe(Effect.exit);
+    }).probe.pipe(Effect.exit);
     if (Exit.isFailure(probeExit)) {
       const failure = Cause.findErrorOption(probeExit.cause);
       if (Option.isSome(failure) && isMaintenanceTransportFailure(failure.value))

@@ -106,7 +106,7 @@ export const stackStop = Effect.fn("experimental.stack.stop")(function* (flags: 
     const target = targetOption.value;
     const stack = yield* stackApi.openStack(target.id).pipe(Effect.mapError(stopError));
     const stopping = yield* output.task(`Stopping stack ${target.id}...`);
-    yield* stack.stop().pipe(
+    yield* stack.stop.pipe(
       Effect.tapError((error) => stopping.fail(error.message)),
       Effect.tap(() => stopping.clear()),
       Effect.mapError(stopError),

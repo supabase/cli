@@ -1,15 +1,13 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Context, Crypto, Effect, Exit, FileSystem, Option, Path, Ref, Scope } from "effect";
-// oxlint-disable-next-line effecttsgo/node-builtin-import
 import {
   createServer as createHttpServer,
   request as requestHttp,
   type IncomingMessage,
   type ServerResponse,
-  // oxlint-disable-next-line effecttsgo/node-builtin-import
+  // oxlint-disable-next-line effecttsgo/node-builtin-import -- ingress protocol fixture.
 } from "node:http";
-// oxlint-disable-next-line effecttsgo/node-builtin-import
 import type { Duplex } from "node:stream";
 import { deriveStackId, type StackIdentity } from "../identity/Identity.ts";
 import { compileStack } from "../model/Compiler.ts";

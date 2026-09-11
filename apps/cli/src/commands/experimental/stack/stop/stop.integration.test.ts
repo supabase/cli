@@ -70,20 +70,22 @@ function setup(opts: {
   const id = opts.found?.id ?? "a".repeat(64);
   const stack = {
     id: StackIdSchema.make(id),
-    status: () => Effect.succeed(status(id)),
-    credentials: () => Effect.die("unused"),
+    status: Effect.succeed(status(id)),
+    credentials: Effect.die("unused"),
     prepare: () => Effect.die("unused"),
     start: () => Effect.die("unused"),
-    stop:
-      opts.stop ??
-      (() =>
-        Effect.sync(() => {
-          state.stopCalls += 1;
-        })),
-    destroy: () =>
-      Effect.sync(() => {
-        state.destroyCalled = true;
-      }),
+    stop: Effect.suspend(() =>
+      (
+        opts.stop ??
+        (() =>
+          Effect.sync(() => {
+            state.stopCalls += 1;
+          }))
+      )(),
+    ),
+    destroy: Effect.sync(() => {
+      state.destroyCalled = true;
+    }),
     logs: () => Effect.die("unused"),
     followLogs: () => Stream.empty,
   } satisfies EffectStack;

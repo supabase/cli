@@ -340,7 +340,7 @@ describe("control transport", () => {
     withServer(({ endpoint, stackId, ownerSessionId, rebind }) =>
       Effect.gen(function* () {
         expect(yield* rebind).toBe(true);
-        const probe = yield* makeControlClient(endpoint, { stackId, ownerSessionId }).probe();
+        const probe = yield* makeControlClient(endpoint, { stackId, ownerSessionId }).probe;
         expect(probe.ok).toBe(true);
       }),
     ),
@@ -357,7 +357,7 @@ describe("control transport", () => {
           stackId: "a".repeat(64),
           ownerSessionId: "dead-owner",
         });
-        const result = yield* client.stop().pipe(Effect.exit);
+        const result = yield* client.stop.pipe(Effect.exit);
         expect(Exit.isFailure(result)).toBe(true);
         if (Exit.isFailure(result)) {
           const failure = Cause.findErrorOption(result.cause);
@@ -373,7 +373,7 @@ describe("control transport", () => {
       ({ endpoint, stackId, ownerSessionId }) =>
         Effect.gen(function* () {
           const client = makeControlClient(endpoint, { stackId, ownerSessionId });
-          const response = yield* client.stop();
+          const response = yield* client.stop;
           expect(response).toMatchObject({
             ok: false,
             error: { tag: "operation-failed", stackErrorTag: "FutureStackError" },
@@ -536,12 +536,12 @@ describe("control transport", () => {
     withServer(({ endpoint, stackId, ownerSessionId }) =>
       Effect.gen(function* () {
         const client = makeControlClient(endpoint, { stackId, ownerSessionId });
-        const probe = yield* client.probe();
+        const probe = yield* client.probe;
         expect(probe).toMatchObject({ ok: true, op: "probe", stackId, ownerSessionId });
         const rpc = yield* client.rpc;
         const observed = yield* rpc.status(undefined);
         expect(observed.id).toBe(stackId);
-        expect(yield* client.stop()).toEqual({ ok: true, op: "stop" });
+        expect(yield* client.stop).toEqual({ ok: true, op: "stop" });
       }),
     ),
   );
@@ -713,7 +713,7 @@ describe("control transport", () => {
           });
           const stopCompleted = yield* Deferred.make<void>();
           const stopFiber = yield* Effect.forkChild(
-            client.stop().pipe(Effect.ensuring(Deferred.succeed(stopCompleted, undefined))),
+            client.stop.pipe(Effect.ensuring(Deferred.succeed(stopCompleted, undefined))),
           );
           yield* Deferred.await(maintenanceStarted);
           yield* TestClock.adjust("6 seconds");
@@ -745,7 +745,7 @@ describe("control transport", () => {
             stackId,
             ownerSessionId,
           });
-          const stopFiber = yield* Effect.forkChild(client.stop(), { startImmediately: true });
+          const stopFiber = yield* Effect.forkChild(client.stop, { startImmediately: true });
           yield* Deferred.await(completionStarted);
           const response = yield* Fiber.join(stopFiber);
           expect(response).toMatchObject({ ok: true, op: "stop" });
