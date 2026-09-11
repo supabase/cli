@@ -10,8 +10,10 @@ import {
   Fiber,
   FileSystem,
   Path,
+  Option,
   Ref,
   Schedule,
+  Scope,
   Stream,
 } from "effect";
 import { ChildProcess } from "effect/unstable/process";
@@ -28,6 +30,7 @@ import {
   defaultNativeProcessLauncher,
   nativeLauncherEntrypointFor,
   NATIVE_PROCESS_DISPATCH_SENTINEL,
+  NativeProcessError,
   spawnNativeProcess,
   type NativeProcess,
 } from "./NativeProcess.ts";
@@ -267,6 +270,83 @@ describe("native runtime", { timeout: 15_000 }, () => {
         expect(Array.from(stderrOutput).join("")).not.toContain(
           "Native workload exited due to signal SIGTERM",
         );
+      }),
+    ),
+  );
+
+  it.live("force-kills an explicit stop when the workload ignores the graceful signal", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const ready = yield* Deferred.make<void>();
+        const native = yield* spawnNativeProcess({
+          executable: process.execPath,
+          gracefulStopTimeout: "100 millis",
+          args: [
+            "-e",
+            'process.on("SIGTERM", () => {}); process.stdout.write("ready\\n"); setInterval(() => {}, 1000)',
+          ],
+        });
+        const stdout = yield* native.stdout.pipe(
+          Stream.decodeText,
+          Stream.splitLines,
+          Stream.runForEach((line) =>
+            line === "ready" ? Deferred.succeed(ready, undefined) : Effect.void,
+          ),
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* Deferred.await(ready).pipe(Effect.timeout("3 seconds"));
+        const exitObserver = yield* native.exitCode.pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* Fiber.interrupt(exitObserver);
+        yield* native.kill;
+        expect(yield* native.isRunning).toBe(false);
+        const exit = yield* native.exitCode.pipe(Effect.exit);
+        const error = Exit.isFailure(exit)
+          ? Option.getOrUndefined(Cause.findErrorOption(exit.cause))
+          : undefined;
+        expect(error).toBeInstanceOf(NativeProcessError);
+        yield* Fiber.join(stdout);
+      }),
+    ),
+  );
+
+  it.live("completes an explicit stop while its owner scope closes", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const ownerScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
+          Scope.close(scope, Exit.void),
+        );
+        const readySignal = yield* Deferred.make<void>();
+        const termSignal = yield* Deferred.make<void>();
+        const native = yield* spawnNativeProcess({
+          executable: process.execPath,
+          args: [
+            "-e",
+            'let signals=0; process.on("SIGTERM", () => { if (++signals > 1) process.exit(0); process.stdout.write("term\\n") }); process.stdout.write("ready\\n"); setInterval(() => {}, 1000)',
+          ],
+        }).pipe(Effect.provideService(Scope.Scope, ownerScope));
+        yield* Effect.addFinalizer(() =>
+          native.kill.pipe(Effect.timeout("5 seconds"), Effect.ignore),
+        );
+        const stdout = yield* native.stdout.pipe(
+          Stream.decodeText,
+          Stream.splitLines,
+          Stream.runForEach((line) =>
+            line === "ready"
+              ? Deferred.succeed(readySignal, undefined)
+              : line === "term"
+                ? Deferred.succeed(termSignal, undefined)
+                : Effect.void,
+          ),
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* Deferred.await(readySignal).pipe(Effect.timeout("3 seconds"));
+        const stopping = yield* native.kill.pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(termSignal).pipe(Effect.timeout("3 seconds"));
+        yield* Scope.close(ownerScope, Exit.void);
+        yield* Fiber.join(stopping).pipe(Effect.timeout("5 seconds"));
+        yield* Fiber.join(stdout);
       }),
     ),
   );
