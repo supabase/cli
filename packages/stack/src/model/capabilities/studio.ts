@@ -16,6 +16,7 @@ export const StudioModule: CapabilityModule<StudioSettings> = {
   defaultSettings: { api_url: "", openai_api_key: undefined },
   defaultEnabled: true,
   defaultActivation: "lazy",
+  defaultIdleTimeoutSeconds: 60,
   defaultVersion: version,
   dependencies: ["rest", "analytics"],
   releases: {

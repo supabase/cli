@@ -24,6 +24,28 @@ capability is lazy. Starting the stack therefore launches only
 PostgreSQL by default; capabilities configured as eager join its startup dependency closure.
 The remaining lazy capabilities activate through the stack's listeners on demand for the current
 running session.
+
+Lazy REST, Auth, Realtime, Studio, and pooler capabilities stop after 60 seconds without traffic
+by default. Traffic means an active request or stream; idle HTTP keep-alive sockets do not keep a
+service running, while open WebSocket or TCP connections do. Configure a different positive
+timeout, or disable traffic stopping for a capability, with `idleTimeoutSeconds`:
+
+```ts
+await stack.start({
+  config: {
+    capabilities: {
+      rest: { idleTimeoutSeconds: 120 },
+      realtime: { idleTimeoutSeconds: false },
+    },
+  },
+});
+```
+
+Eager capabilities never auto-stop. PostgreSQL, Storage, Functions, Mail, and Analytics do not opt into traffic stopping yet. Studio
+and its `pg-meta` companion are stopped and started together. Dependency protection keeps required
+dependencies available while a capability is running. Stopping preserves listeners and data, and
+the next request wakes the lazy capability and restarts its workloads.
+
 Native workloads have a two-minute readiness budget to allow cold starts to load shared libraries;
 container workloads retain a 30-second budget, and PostgreSQL uses its configured `health_timeout`.
 Each readiness probe returns immediately when its endpoint becomes healthy.

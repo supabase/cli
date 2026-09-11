@@ -11,6 +11,7 @@ import type {
   GatewayRouteRequest,
 } from "./Gateway.ts";
 import type { HostListener } from "../supervisor/HostListener.ts";
+import type { GatewayActivity } from "./ActivityTracker.ts";
 
 export interface TcpGatewayOptions {
   readonly address?: string;
@@ -25,6 +26,7 @@ export interface TcpGatewayOptions {
     request: GatewayRouteRequest,
     activation: ActivationResult,
   ) => Effect.Effect<BackendEndpoint, GatewayActivationError>;
+  readonly activity?: GatewayActivity;
 }
 
 export interface TcpGateway {
@@ -140,10 +142,11 @@ const handleConnection = (
       return tunnel(source, backend);
     }),
   );
+  const tracked = options.activity?.track(route.capability, operation) ?? operation;
   source.once("error", onPreActivationError);
   // Node invokes this handler outside Effect; use the owner-scoped FiberSet
   // runtime for the exact accepted connection's lifecycle.
-  const fiber = runFork(operation);
+  const fiber = runFork(tracked);
   const onSourceClose = () => fiber.interruptUnsafe();
   source.once("close", onSourceClose);
   fiber.addObserver(() => {

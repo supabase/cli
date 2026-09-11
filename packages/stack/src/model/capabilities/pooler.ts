@@ -27,6 +27,7 @@ export const PoolerModule: CapabilityModule<PoolerSettings> = {
   },
   defaultEnabled: true,
   defaultActivation: "lazy",
+  defaultIdleTimeoutSeconds: 60,
   defaultVersion: version,
   dependencies: ["database"],
   releases: {

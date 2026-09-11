@@ -3,6 +3,7 @@ import {
   Context,
   Crypto,
   Deferred,
+  Duration,
   Effect,
   Exit,
   FileSystem,
@@ -23,7 +24,7 @@ import {
   eagerCapabilities,
   type ExecutionPlan,
 } from "../model/ExecutionPlan.ts";
-import type { CapabilityName } from "../public/Capability.ts";
+import { CAPABILITY_NAMES, type CapabilityName } from "../public/Capability.ts";
 import type { StackConfig } from "../public/Config.ts";
 import {
   GatewayActivationError,
@@ -71,6 +72,7 @@ import {
 } from "../state/SecretStore.ts";
 
 import type { ActivationResult } from "../gateway/Gateway.ts";
+import { makeGatewayActivity } from "../gateway/ActivityTracker.ts";
 
 interface SupervisorLaunchAttempt {
   /** Rolls back only workloads and ingress acquired by this launch. */
@@ -187,6 +189,8 @@ export const makeSupervisor = (
       driver: runtime.driver,
     });
     const active = yield* Ref.make<ReadonlySet<CapabilityName>>(new Set());
+    const activeRoots = yield* Ref.make<ReadonlySet<CapabilityName>>(new Set());
+    const currentPlan = yield* Ref.make<ExecutionPlan | undefined>(undefined);
     const phase = yield* Ref.make<ActualPhase>("stopped");
     // A failed cleanup leaves the owner in `stopping` so callers can retry an exact cleanup.
     // This marker is set by the backend cleanup boundary and read only by start failure handling.
@@ -211,12 +215,33 @@ export const makeSupervisor = (
         }
       | { readonly _tag: "ready"; readonly result: ActivationResult }
     >();
-    const initializeActivation = (plan: ExecutionPlan) => Ref.set(active, eagerCapabilities(plan));
+    const initializeActivation = (input: LifecycleInput) =>
+      Effect.gen(function* () {
+        const { plan } = input;
+        const roots = new Set(
+          CAPABILITY_NAMES.filter(
+            (name) =>
+              input.definition.capabilities[name].enabled && plan.activation[name] === "eager",
+          ),
+        );
+        yield* Ref.set(activeRoots, roots);
+        yield* Ref.set(active, eagerCapabilities(plan));
+        yield* Ref.set(currentPlan, plan);
+        yield* Ref.set(
+          idleTimeouts,
+          new Map(
+            CAPABILITY_NAMES.map((name) => [
+              name,
+              input.definition.capabilities[name].idleTimeoutSeconds,
+            ]),
+          ),
+        );
+      });
     const resetForSession = (input: LifecycleInput) =>
       Effect.gen(function* () {
         activationOwned.clear();
         yield* launcher.clear;
-        yield* initializeActivation(input.plan);
+        yield* initializeActivation(input);
       });
     const observe = () =>
       runtime.driver.observe(options.stackId).pipe(Effect.mapError(mapRuntimeError));
@@ -281,6 +306,242 @@ export const makeSupervisor = (
       result: LifecycleResult;
     }>;
     const lifecycleActive = yield* Ref.make<ActiveLifecycle | undefined>(undefined);
+    const traffic = yield* Ref.make<ReadonlyMap<CapabilityName, number>>(new Map());
+    const idleTimeouts = yield* Ref.make<ReadonlyMap<CapabilityName, number | false>>(new Map());
+    const idleGenerations = yield* Ref.make<ReadonlyMap<CapabilityName, number>>(new Map());
+    const idleTimers = yield* Ref.make<
+      ReadonlyMap<
+        CapabilityName,
+        { readonly token: symbol; readonly fiber: Fiber.Fiber<void, unknown> }
+      >
+    >(new Map());
+
+    const idleTimeout = (
+      timeouts: ReadonlyMap<CapabilityName, number | false>,
+      plan: ExecutionPlan,
+      capability: CapabilityName,
+    ): number | false => {
+      if (plan.activation[capability] !== "lazy") return false;
+      return timeouts.get(capability) ?? false;
+    };
+
+    const canRetire = (
+      plan: ExecutionPlan,
+      roots: ReadonlySet<CapabilityName>,
+      capability: CapabilityName,
+    ): boolean => {
+      if (
+        !roots.has(capability) &&
+        ![...roots].some((root) => dependencyClosure(plan, [root]).has(capability))
+      )
+        return true;
+      return ![...roots].some(
+        (root) => root !== capability && dependencyClosure(plan, [root]).has(capability),
+      );
+    };
+
+    const appendIdleLog = (message: string): Effect.Effect<void> =>
+      options.runtime.logStore
+        .append({
+          source: "supervisor",
+          stream: "internal",
+          message,
+        })
+        .pipe(
+          Effect.catchTag("LogStoreError", (error) => Effect.logWarning(message, error)),
+          Effect.asVoid,
+        );
+
+    function retireIdle(
+      capability: CapabilityName,
+      generation: number,
+    ): Effect.Effect<void, StackError> {
+      return execution.withPermit(
+        Effect.gen(function* () {
+          const fenced = yield* admission.withPermit(
+            Effect.gen(function* () {
+              const currentGeneration = (yield* Ref.get(idleGenerations)).get(capability) ?? 0;
+              const count = (yield* Ref.get(traffic)).get(capability) ?? 0;
+              const plan = yield* Ref.get(currentPlan);
+              const roots = yield* Ref.get(activeRoots);
+              const currentPhase = yield* Ref.get(phase);
+              if (
+                generation !== currentGeneration ||
+                count !== 0 ||
+                plan === undefined ||
+                currentPhase !== "running" ||
+                (yield* Ref.get(lifecycleActive)) !== undefined ||
+                !(yield* Ref.get(active)).has(capability) ||
+                !canRetire(plan, roots, capability)
+              )
+                return false;
+
+              // Fence the route before stopping its workloads. Requests admitted after this
+              // point queue behind execution and create a fresh activation when cleanup ends.
+              yield* Ref.update(active, (current) => {
+                const next = new Set(current);
+                next.delete(capability);
+                return next;
+              });
+              yield* Ref.update(activeRoots, (current) => {
+                if (!current.has(capability)) return current;
+                const next = new Set(current);
+                next.delete(capability);
+                return next;
+              });
+              activationOwned.delete(capability);
+              return true;
+            }),
+          );
+          if (!fenced) return;
+
+          const stopped = yield* launcher
+            .stopCapabilities(new Set([capability]))
+            .pipe(Effect.mapError(mapCleanupError), Effect.exit);
+          if (Exit.isFailure(stopped)) {
+            if (Cause.hasInterrupts(stopped.cause) || Cause.hasDies(stopped.cause))
+              return yield* Effect.failCause(stopped.cause);
+            yield* admission.withPermit(
+              Ref.set(cleanupProven, false).pipe(Effect.andThen(Ref.set(phase, "stopping"))),
+            );
+            yield* appendIdleLog(
+              `Failed to stop ${capability} after inactivity: ${Cause.pretty(stopped.cause)}`,
+            );
+            return;
+          }
+
+          yield* admission.withPermit(reevaluateIdleTimersInAdmission());
+          yield* appendIdleLog(`Stopped ${capability} after inactivity`);
+        }),
+      );
+    }
+
+    function armIdleTimerInAdmission(capability: CapabilityName): Effect.Effect<void> {
+      return Effect.gen(function* () {
+        const plan = yield* Ref.get(currentPlan);
+        if (plan === undefined) return;
+        const timeout = idleTimeout(yield* Ref.get(idleTimeouts), plan, capability);
+        if (timeout === false) return;
+        const current = yield* Ref.get(active);
+        if (!current.has(capability) || !canRetire(plan, yield* Ref.get(activeRoots), capability))
+          return;
+        const count = (yield* Ref.get(traffic)).get(capability) ?? 0;
+        if (count !== 0 || (yield* Ref.get(idleTimers)).has(capability)) return;
+        const generation = (yield* Ref.get(idleGenerations)).get(capability) ?? 0;
+        const token = Symbol();
+        const fiber = yield* Effect.forkIn(
+          Effect.sleep(Duration.seconds(timeout)).pipe(
+            Effect.ensuring(
+              Ref.update(idleTimers, (timers) => {
+                const entry = timers.get(capability);
+                if (entry?.token !== token) return timers;
+                const next = new Map(timers);
+                next.delete(capability);
+                return next;
+              }),
+            ),
+            Effect.andThen(retireIdle(capability, generation)),
+          ),
+          supervisorScope,
+          { startImmediately: true },
+        );
+        yield* Ref.update(idleTimers, (timers) => {
+          const next = new Map(timers);
+          next.set(capability, { token, fiber });
+          return next;
+        });
+      });
+    }
+
+    function armIdleTimer(capability: CapabilityName): Effect.Effect<void> {
+      return admission.withPermit(armIdleTimerInAdmission(capability));
+    }
+
+    function reevaluateIdleTimersInAdmission(): Effect.Effect<void> {
+      return Ref.get(active).pipe(
+        Effect.flatMap((capabilities) =>
+          Effect.forEach(capabilities, armIdleTimerInAdmission, {
+            concurrency: "unbounded",
+            discard: true,
+          }),
+        ),
+      );
+    }
+
+    function reevaluateIdleTimers(): Effect.Effect<void> {
+      return Ref.get(active).pipe(
+        Effect.flatMap((capabilities) =>
+          Effect.forEach(capabilities, armIdleTimer, { concurrency: "unbounded", discard: true }),
+        ),
+      );
+    }
+
+    const cancelIdleTimers: Effect.Effect<void> = Effect.gen(function* () {
+      const timers = yield* Ref.modify(
+        idleTimers,
+        (current) => [Array.from(current.values()), new Map()] as const,
+      );
+      yield* Ref.update(idleGenerations, (current) => {
+        const next = new Map(current);
+        for (const capability of CAPABILITY_NAMES)
+          next.set(capability, (next.get(capability) ?? 0) + 1);
+        return next;
+      });
+      yield* Effect.forEach(timers, ({ fiber }) => Fiber.interrupt(fiber), {
+        concurrency: "unbounded",
+        discard: true,
+      });
+    });
+
+    const beginTraffic = (capability: CapabilityName): Effect.Effect<void> =>
+      Effect.gen(function* () {
+        const stale = yield* admission.withPermit(
+          Effect.gen(function* () {
+            const entry = (yield* Ref.get(idleTimers)).get(capability);
+            yield* Ref.update(idleTimers, (current) => {
+              if (entry === undefined) return current;
+              const next = new Map(current);
+              next.delete(capability);
+              return next;
+            });
+            yield* Ref.update(traffic, (current) => {
+              const next = new Map(current);
+              next.set(capability, (next.get(capability) ?? 0) + 1);
+              return next;
+            });
+            yield* Ref.update(idleGenerations, (current) => {
+              const next = new Map(current);
+              next.set(capability, (next.get(capability) ?? 0) + 1);
+              return next;
+            });
+            return entry?.fiber;
+          }),
+        );
+        if (stale !== undefined) yield* Fiber.interrupt(stale);
+      });
+    const endTraffic = (capability: CapabilityName): Effect.Effect<void> =>
+      Effect.gen(function* () {
+        const shouldArm = yield* admission.withPermit(
+          Effect.gen(function* () {
+            const count = (yield* Ref.get(traffic)).get(capability) ?? 0;
+            yield* Ref.update(traffic, (current) => {
+              const next = new Map(current);
+              if (count <= 1) next.delete(capability);
+              else next.set(capability, count - 1);
+              return next;
+            });
+            yield* Ref.update(idleGenerations, (current) => {
+              const next = new Map(current);
+              next.set(capability, (next.get(capability) ?? 0) + 1);
+              return next;
+            });
+            return count <= 1;
+          }),
+        );
+        if (shouldArm) yield* armIdleTimer(capability);
+      });
+
+    const activity = yield* makeGatewayActivity({ begin: beginTraffic, end: endTraffic });
     const ingressActivate = (
       capability: CapabilityName,
     ): Effect.Effect<ActivationResult, GatewayActivationError | StackError> =>
@@ -371,10 +632,15 @@ export const makeSupervisor = (
                   ),
                 );
                 const owner = Effect.gen(function* () {
-                  const result = yield* execution.withPermit(effect).pipe(Effect.exit);
+                  const result = yield* cancelIdleTimers.pipe(
+                    Effect.andThen(execution.withPermit(effect)),
+                    Effect.exit,
+                  );
                   // Release the admission slot before waking waiters so a completed operation
                   // cannot make the next lifecycle request look like a conflict.
                   yield* release;
+                  if (Exit.isFailure(result) && (yield* Ref.get(phase)) === "running")
+                    yield* reevaluateIdleTimers();
                   yield* Deferred.succeed(deferred, result);
                 }).pipe(Effect.ensuring(release));
                 yield* FiberSet.run(ownedFibers, owner, { startImmediately: true });
@@ -441,7 +707,7 @@ export const makeSupervisor = (
           if (cause.reasons.length > 0) return yield* Effect.failCause(cause);
         });
         const opened = yield* runtime.ingress
-          .open(input, reservation, ingressActivate)
+          .open(input, reservation, ingressActivate, activity)
           .pipe(Effect.exit);
         if (Exit.isFailure(opened)) {
           const rolledBack = yield* rollback.pipe(Effect.exit);
@@ -484,8 +750,12 @@ export const makeSupervisor = (
         }
         if (!destroy) {
           yield* Ref.set(active, new Set());
+          yield* Ref.set(activeRoots, new Set());
+          yield* Ref.set(traffic, new Map());
         } else {
           yield* launcher.clear;
+          yield* Ref.set(activeRoots, new Set());
+          yield* Ref.set(traffic, new Map());
         }
       });
     const backend: LifecycleBackend = {
@@ -519,6 +789,8 @@ export const makeSupervisor = (
           ),
         );
         const previousActive = yield* Ref.get(active);
+        const previousRoots = yield* Ref.get(activeRoots);
+        const nextRoots = new Set([...previousRoots, capability]);
         const next = new Set([...previousActive, ...dependencyClosure(plan, [capability])]);
         const input: LifecycleInput = {
           stackId: options.stackId,
@@ -535,6 +807,7 @@ export const makeSupervisor = (
         const activated = yield* runtime.activate(capability, input).pipe(Effect.exit);
         if (Exit.isFailure(activated)) {
           yield* Ref.set(active, previousActive);
+          yield* Ref.set(activeRoots, previousRoots);
           const rolledBack = yield* launched.rollback.pipe(Effect.exit);
           if (Exit.isFailure(rolledBack)) {
             yield* Ref.set(phase, "stopping");
@@ -544,6 +817,9 @@ export const makeSupervisor = (
           return yield* Effect.failCause(activated.cause);
         }
         const endpoint = activated.value;
+        yield* Ref.set(activeRoots, nextRoots);
+        yield* Ref.set(currentPlan, plan);
+        yield* reevaluateIdleTimers();
         return { capability, endpoint };
       });
 
@@ -669,6 +945,7 @@ export const makeSupervisor = (
           return yield* Effect.failCause(started.cause);
         }
         yield* Ref.set(phase, "running");
+        yield* reevaluateIdleTimers();
         yield* startBackgroundPreparation(started.value);
       });
     const start = (startOptions?: { readonly config?: StackConfig }) =>

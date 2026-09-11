@@ -39,6 +39,9 @@ const optionalCapability = <S extends Schema.Top>(settings: S) =>
     Schema.Struct({
       enabled: Schema.optionalKey(Schema.Literal(true)),
       activation: Schema.optionalKey(ActivationModeSchema),
+      idleTimeoutSeconds: Schema.optionalKey(
+        Schema.Union([Schema.Finite.check(Schema.isGreaterThan(0)), Schema.Literal(false)]),
+      ),
       version: Schema.optionalKey(Schema.String),
       settings: Schema.optionalKey(settings),
     }),
