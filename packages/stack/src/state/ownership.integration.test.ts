@@ -230,6 +230,7 @@ describe("stack ownership", () => {
       Effect.gen(function* () {
         if (process.platform === "win32") return yield* Effect.void;
         const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-crash-" });
         const childIdentity = {
           ...identity,
@@ -242,6 +243,8 @@ describe("stack ownership", () => {
           platform: "posix",
         };
         const moduleUrl = new URL("./Ownership.ts", import.meta.url).href;
+        // set the root to `packages/stack` root
+        const cwd = path.resolve(import.meta.dirname, "../..");
         const script = `
           const { Effect } = await import("effect");
           const { NodeServices } = await import("@effect/platform-node");
@@ -265,7 +268,7 @@ describe("stack ownership", () => {
           process.execPath,
           ["--input-type=module", "-e", script],
           {
-            cwd: process.cwd(),
+            cwd: cwd,
             env: {
               OWNERSHIP_MODULE: moduleUrl,
               OWNERSHIP_STACK_ID: stackId,

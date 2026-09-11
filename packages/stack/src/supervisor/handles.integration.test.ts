@@ -758,6 +758,7 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
         const supabaseHome = path.dirname(project);
         const stackModule = new URL("../public/EffectStack.ts", import.meta.url).href;
         const encodedStackModule = quoteModuleSpecifier(stackModule);
+        // set the root to `packages/stack` root
         const cwd = path.resolve(import.meta.dirname, "../..");
         const script = `
           const { Effect } = await import("effect");

@@ -32,6 +32,8 @@ describe("cross-process registry lease", () => {
         const enteredPath = path.join(root, "child-entered");
         const competingPath = path.join(root, "competing-entered");
         const moduleUrl = new URL("./StackStateStore.ts", import.meta.url).href;
+        // set the root to `packages/stack` root
+        const cwd = path.resolve(import.meta.dirname, "../..");
         const script = `
           const { Effect, FileSystem } = await import("effect");
           const { NodeServices } = await import("@effect/platform-node");
@@ -47,7 +49,7 @@ describe("cross-process registry lease", () => {
           process.execPath,
           ["--input-type=module", "-e", script],
           {
-            cwd: process.cwd(),
+            cwd,
             env: { REGISTRY_MODULE: moduleUrl, REGISTRY_ROOT: root, ENTERED_PATH: enteredPath },
             extendEnv: true,
             stdout: "pipe",
