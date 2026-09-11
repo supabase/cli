@@ -62,18 +62,6 @@ export const squashDumpSchema = Effect.fnUntraced(function* <E>(params: SquashDu
   }
 });
 
-/** Concatenates stdout chunks into one buffer. */
-const concatChunks = (chunks: ReadonlyArray<Uint8Array>): Uint8Array => {
-  const total = chunks.reduce((size, chunk) => size + chunk.length, 0);
-  const bytes = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.length;
-  }
-  return bytes;
-};
-
 /**
  * Buffered convenience over {@link squashDumpSchema} for the before/after
  * diff dumps — an `auth`/`storage` schema-only dump is tens of KB, not
@@ -97,5 +85,5 @@ export const squashDumpSchemaToString = Effect.fnUntraced(function* (params: {
     projectEnvValues: params.projectEnvValues,
     client: params.client,
   });
-  return new TextDecoder().decode(concatChunks(chunks));
+  return new TextDecoder().decode(Buffer.concat(chunks));
 });

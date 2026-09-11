@@ -1,5 +1,7 @@
 import { Context, Effect } from "effect";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
+import { ContainerEngineError } from "../public/Errors.ts";
+import type { StackRuntime } from "../public/Runtime.ts";
 import {
   makeProcessCommandRunner,
   type ContainerEngine,
@@ -65,3 +67,21 @@ export const resolveContainerEngine = (
   resolver?: ContainerEngineResolverShape,
 ): Effect.Effect<ContainerEngine, ContainerEngineFailure, ChildProcessSpawner> =>
   (resolver ?? defaultContainerEngineResolver).resolve(kind);
+
+/** Docker when the client is installed, otherwise native. */
+export const selectDefaultRuntime = (
+  resolver?: ContainerEngineResolverShape,
+): Effect.Effect<StackRuntime, ContainerEngineError, ChildProcessSpawner> =>
+  (resolver ?? defaultContainerEngineResolver).isInstalled("docker").pipe(
+    Effect.map((installed): StackRuntime =>
+      installed ? { kind: "container", engine: "docker" } : { kind: "native" },
+    ),
+    Effect.mapError(
+      (error) =>
+        new ContainerEngineError({
+          engine: "docker",
+          message: `Unable to determine whether Docker is installed: ${error.message}`,
+          cause: error,
+        }),
+    ),
+  );

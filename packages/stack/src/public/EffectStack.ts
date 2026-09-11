@@ -116,10 +116,9 @@ import {
 } from "../supervisor/Launcher.ts";
 import {
   ContainerEngineResolver,
-  defaultContainerEngineResolver,
+  selectDefaultRuntime,
   type ContainerEngineResolverShape,
 } from "../runtime/ContainerEngineResolver.ts";
-import type { ContainerEngineFailure } from "../runtime/ContainerEngine.ts";
 import { statusFor } from "../supervisor/StatusProjection.ts";
 import { EMPTY_LOG_CURSOR, readRetainedLogs, selectLogBatch } from "../supervisor/LogStore.ts";
 import {
@@ -153,24 +152,6 @@ export interface PreparedCapability {
   readonly version: string;
   readonly outcome: "cached" | "downloaded" | "pulled";
 }
-
-const selectDefaultRuntime = (
-  resolver: ContainerEngineResolverShape | undefined,
-): Effect.Effect<StackRuntime, ContainerEngineError, ChildProcessSpawnerService> => {
-  return (resolver ?? defaultContainerEngineResolver).isInstalled("docker").pipe(
-    Effect.map((installed): StackRuntime =>
-      installed ? { kind: "container", engine: "docker" } : { kind: "native" },
-    ),
-    Effect.mapError(
-      (error: ContainerEngineFailure) =>
-        new ContainerEngineError({
-          engine: "docker",
-          message: `Unable to determine whether Docker is installed: ${error.message}`,
-          cause: error,
-        }),
-    ),
-  );
-};
 
 export interface PrepareStackResult {
   readonly capabilities: ReadonlyArray<PreparedCapability>;

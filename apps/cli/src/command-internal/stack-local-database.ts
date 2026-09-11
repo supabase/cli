@@ -140,32 +140,9 @@ export const stackLocalDatabaseConn: Effect.Effect<
   return conn;
 });
 
-export const stackEnsureLocalDatabaseStarted: Effect.Effect<
-  void,
-  LocalDbRunningError,
-  CommandSettings | FileSystem.FileSystem | Path.Path
-> = Effect.gen(function* () {
-  const api = yield* Effect.serviceOption(StackApi);
-  if (Option.isNone(api)) return yield* startFailed({ message: "stack API is unavailable" });
-  const cliSettings = yield* CommandSettings;
-  const existing = yield* api.value
-    .findStack({ projectRoot: cliSettings.workdir })
-    .pipe(Effect.mapError(startFailed));
-  const config = yield* loadStackConfig(cliSettings.workdir).pipe(Effect.mapError(startFailed));
-  const stack = Option.isSome(existing)
-    ? yield* api.value.openStack(existing.value.id).pipe(Effect.mapError(startFailed))
-    : yield* api.value
-        .createStack({ projectRoot: cliSettings.workdir })
-        .pipe(Effect.mapError(startFailed));
-  const status = yield* stack.status.pipe(Effect.mapError(startFailed));
-  const database = status.capabilities.find((capability) => capability.name === "database");
-  if (status.lifecycle === "running" && database?.state === "ready") return;
-  yield* stack.start({ config }).pipe(Effect.mapError(startFailed));
-});
-
 /**
- * Start a postgres-only stack for `db start`. Fresh stacks persist the overlay; an existing
- * full project stack is started without rewriting `--exclude`.
+ * Start a postgres-only stack for `db start` and declarative local ensure. Fresh stacks persist
+ * the overlay; an existing full project stack is started without rewriting `--exclude`.
  */
 export const stackEnsurePostgresOnlyStarted: Effect.Effect<
   "already-running" | "started",

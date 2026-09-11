@@ -15,7 +15,7 @@ import { DeclarativeShadowDbError } from "./pgdelta.errors.ts";
 import { DeclarativeSeam } from "./pgdelta.seam.service.ts";
 import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
 import { StackApi, stackApiLayer } from "../../../command-internal/stack-api.ts";
-import { stackEnsureLocalDatabaseStarted } from "../../../command-internal/stack-local-database.ts";
+import { stackEnsurePostgresOnlyStarted } from "../../../command-internal/stack-local-database.ts";
 
 const shadowDockerCause = (stderr: string): { readonly docker: "daemon" } | Record<never, never> =>
   isDockerDaemonUnreachable(stderr) ? { docker: "daemon" } : {};
@@ -80,7 +80,8 @@ export const declarativeSeamLayer = Layer.effect(
         Effect.gen(function* () {
           const backend = yield* currentStackBackend;
           if (backend.kind === "stack") {
-            return yield* stackEnsureLocalDatabaseStarted.pipe(
+            return yield* stackEnsurePostgresOnlyStarted.pipe(
+              Effect.asVoid,
               Effect.provideService(CommandSettings, cliSettings),
               Effect.provideService(FileSystem.FileSystem, fs),
               Effect.provideService(Path.Path, path),

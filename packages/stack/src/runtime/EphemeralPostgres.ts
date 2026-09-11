@@ -47,7 +47,12 @@ import {
 } from "./NativeProcess.ts";
 import { bootstrapManagedPostgres } from "./PostgresDatabaseSession.ts";
 import { makeProductionRuntimeArtifactPreparer } from "../preparation/RuntimeArtifacts.ts";
-import { resolveContainerEngine, ContainerEngineResolver } from "./ContainerEngineResolver.ts";
+import {
+  resolveContainerEngine,
+  ContainerEngineResolver,
+  selectDefaultRuntime,
+  type ContainerEngineResolverShape,
+} from "./ContainerEngineResolver.ts";
 import type { ContainerEngine } from "./ContainerEngine.ts";
 import { encodeRuntimeEnvFile } from "./RuntimeEnvFile.ts";
 
@@ -70,10 +75,19 @@ const ephemeralError = (
   fields: Omit<ConstructorParameters<typeof EphemeralPostgresError>[0], "message"> = {},
 ) => new EphemeralPostgresError({ message, ...fields });
 
-const resolvedRuntime = (preference?: CreateEphemeralPostgresOptions["runtime"]): StackRuntime =>
-  preference?.kind === "container"
-    ? { kind: "container", engine: preference.engine ?? "docker" }
-    : { kind: "native" };
+const resolvedRuntime = (
+  preference: CreateEphemeralPostgresOptions["runtime"] | undefined,
+  resolver: ContainerEngineResolverShape | undefined,
+): Effect.Effect<StackRuntime, ContainerEngineError, ChildProcessSpawnerService> => {
+  if (preference !== undefined) {
+    return Effect.succeed(
+      preference.kind === "container"
+        ? { kind: "container", engine: preference.engine ?? "docker" }
+        : { kind: "native" },
+    );
+  }
+  return selectDefaultRuntime(resolver);
+};
 
 const plannedWorkload = (
   version: string,
@@ -927,7 +941,10 @@ export const createEphemeralPostgresCluster = (
   Scope.Scope | FileSystem.FileSystem | Path.Path | Crypto.Crypto | ChildProcessSpawnerService
 > =>
   Effect.gen(function* () {
-    const runtime = resolvedRuntime(options.runtime);
+    const resolver = yield* Effect.serviceOption(ContainerEngineResolver).pipe(
+      Effect.map(Option.getOrUndefined),
+    );
+    const runtime = yield* resolvedRuntime(options.runtime, resolver);
     const release = yield* resolveEphemeralPostgresRelease(options.version);
     const env = yield* Effect.serviceOption(StackRuntimeEnvironment).pipe(
       Effect.flatMap((configured) =>
@@ -967,9 +984,6 @@ export const createEphemeralPostgresCluster = (
     if (runtime.kind === "native") {
       resources = { kind: "native" };
     } else {
-      const resolver = yield* Effect.serviceOption(ContainerEngineResolver).pipe(
-        Effect.map(Option.getOrUndefined),
-      );
       const engine = yield* resolveContainerEngine(runtime.engine, resolver).pipe(
         Effect.mapError(
           (cause) =>
