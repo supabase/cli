@@ -673,10 +673,12 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
         schemaPaths: cfg.schemaPathPatterns,
         pgDelta: cfg.pgDelta,
       };
-      const runDiff = (shadow: Pick<typeof shadowInput, never> & {
-        readonly sourceUrl: string;
-        readonly targetUrlOverride?: string;
-      }) =>
+      const runDiff = (
+        shadow: Pick<typeof shadowInput, never> & {
+          readonly sourceUrl: string;
+          readonly targetUrlOverride?: string;
+        },
+      ) =>
         Effect.gen(function* () {
           const target = shadow.targetUrlOverride ?? targetUrl;
           yield* output.raw(

@@ -37,6 +37,7 @@ import {
   SHADOW_BASELINE_KEEP,
   SHADOW_BASELINE_MAX_AGE_MS,
   SHADOW_CACHE_ENV,
+  canonicalJson,
   shadowBaselineTarsToEvict,
   touchShadowBaselineTar,
 } from "./db-bootstrap/shadow-cache.ts";
@@ -102,7 +103,7 @@ export const stackShadowCacheKey = (inputs: StackShadowCacheKeyInputs): string =
     `jwt_secret=${quoted(inputs.jwtSecret)}`,
     `jwt_expiry=${inputs.jwtExpiry}`,
     `db_password=${quoted(inputs.dbPassword)}`,
-    `db_settings=${JSON.stringify(inputs.dbSettings ?? {})}`,
+    `db_settings=${canonicalJson(inputs.dbSettings ?? {})}`,
     `bootstrap=${quoted(inputs.bootstrapIdentity)}`,
   ].join("\n");
   return scryptSync(
@@ -136,17 +137,6 @@ const cacheEnabled = (projectEnv: Record<string, string> | undefined, bypass: bo
   viperEnvBoolWithProjectFallback(SHADOW_CACHE_ENV, projectEnv ?? {}, {
     whenUnset: true,
   });
-
-const canonicalSettings = (value: unknown): unknown => {
-  if (value === null || typeof value !== "object") return value ?? {};
-  if (Array.isArray(value)) return value.map(canonicalSettings);
-  return Object.fromEntries(
-    Object.entries(value)
-      .filter(([, entry]) => entry !== undefined)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, entry]) => [key, canonicalSettings(entry)]),
-  );
-};
 
 const readRolesSql = (
   fs: FileSystem.FileSystem,
@@ -444,7 +434,7 @@ export const stackAcquireShadowDatabase = <E>(
       jwtSecret: input.jwtSecret,
       jwtExpiry: input.jwtExpiry,
       dbPassword: input.password,
-      dbSettings: canonicalSettings(input.db.settings),
+      dbSettings: input.db.settings,
       rolesSql,
       bootstrapIdentity: databaseBootstrapIdentity,
     });
@@ -568,18 +558,12 @@ export const stackMigrateShadow = (
   Effect.scoped(
     Effect.gen(function* () {
       const migrationsDir = input.path.join(input.workdir, "supabase", "migrations");
-      const pending = yield* listLocalMigrationPaths(
-        input.fs,
-        input.path,
-        migrationsDir,
-      ).pipe(
+      const pending = yield* listLocalMigrationPaths(input.fs, input.path, migrationsDir).pipe(
         Effect.mapError(
           (cause) => new ShadowDbError({ message: cause.message, reason: "filesystem" }),
         ),
       );
-      const session = yield* connectShadowDatabase(
-        connFrom(handle.ephemeral, input.password),
-      );
+      const session = yield* connectShadowDatabase(connFrom(handle.ephemeral, input.password));
       yield* applyMigrations(
         session,
         input.fs,

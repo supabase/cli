@@ -109,9 +109,7 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
     yield* output.raw(`Resetting local database${toLogMessage(input.version)}\n`, "stderr");
     yield* opened.value.stack.resetDatabase().pipe(
       Effect.catchTag("StackNotRunningError", () => Effect.fail(notRunning())),
-      Effect.mapError((cause) =>
-        resetFailed(`failed to reset local database: ${cause.message}`),
-      ),
+      Effect.mapError((cause) => resetFailed(`failed to reset local database: ${cause.message}`)),
     );
     const dbConn = yield* DbConnection;
     const toml = yield* readDbToml(fs, path, workdir);
@@ -120,9 +118,13 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
     );
     yield* Effect.scoped(
       Effect.gen(function* () {
-        const session = yield* dbConn.connect(conn, { isLocal: true, dnsResolver: "native" }).pipe(
-          Effect.mapError((cause) => resetFailed(`failed to connect after reset: ${cause.message}`)),
-        );
+        const session = yield* dbConn
+          .connect(conn, { isLocal: true, dnsResolver: "native" })
+          .pipe(
+            Effect.mapError((cause) =>
+              resetFailed(`failed to connect after reset: ${cause.message}`),
+            ),
+          );
         yield* migrateAndSeed(session, fs, path, workdir, input.version, {
           migrationsEnabled: toml.migrationsEnabled,
           seed: resolveResetSeedConfig(toml.seed, input.seedFlags, path),
@@ -133,9 +135,13 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
         }).pipe(Effect.mapError((cause) => resetFailed(cause.message)));
       }),
     );
-    const after = yield* opened.value.stack.status().pipe(
-      Effect.mapError((cause) => resetFailed(`failed to inspect stack after reset: ${cause.message}`)),
-    );
+    const after = yield* opened.value.stack
+      .status()
+      .pipe(
+        Effect.mapError((cause) =>
+          resetFailed(`failed to inspect stack after reset: ${cause.message}`),
+        ),
+      );
     const storage = after.capabilities.find((capability) => capability.name === "storage");
     if (storage?.state === "ready") {
       const context = yield* loadLocalProjectContext(workdir, (message) => resetFailed(message));

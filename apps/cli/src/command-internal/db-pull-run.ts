@@ -68,10 +68,7 @@ import { type PgDeltaContext, isPgDeltaDebugEnabled, resolvePgDeltaProjectId } f
 import { prepareShadowSource } from "../commands/db/shared/shadow-source.ts";
 import { currentStackBackend } from "../commands/experimental/stack/stack-backend.ts";
 import { stackRejectNativeDockerDiffEngine } from "./stack-local-database.ts";
-import {
-  stackPrepareShadowSource,
-  stackWithShadowDatabase,
-} from "./stack-shadow.ts";
+import { stackPrepareShadowSource, stackWithShadowDatabase } from "./stack-shadow.ts";
 import type { DbPullFlags } from "../commands/db/pull/pull.command.ts";
 import {
   DbPullDumpError,
@@ -671,9 +668,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
                   spawner,
                   shadowInput,
                   (handle) =>
-                    prepareShadowSource(spawner, handle, shadowInput).pipe(
-                      Effect.flatMap(runDiff),
-                    ),
+                    prepareShadowSource(spawner, handle, shadowInput).pipe(Effect.flatMap(runDiff)),
                   { webhooks: migrationMode === "pgdelta-next" ? "config" : "enabled" },
                 );
           });

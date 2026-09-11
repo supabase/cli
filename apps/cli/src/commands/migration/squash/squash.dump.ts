@@ -3,7 +3,10 @@ import { Effect } from "effect";
 import type { PgConnInput } from "../../../command-internal/db-connection.service.ts";
 import { buildSchemaDumpEnv, type DumpOptions } from "../../../command-internal/pg-dump.env.ts";
 import { dumpSchemaScript } from "../../../command-internal/pg-dump.scripts.ts";
-import { streamPgDumpWithClient, type PgDumpClient } from "../../../command-internal/pg-dump.run.ts";
+import {
+  streamPgDumpWithClient,
+  type PgDumpClient,
+} from "../../../command-internal/pg-dump.run.ts";
 import { MigrationSquashDumpError } from "./squash.errors.ts";
 
 /**

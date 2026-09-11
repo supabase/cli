@@ -56,22 +56,19 @@ const openProjectStack = () =>
 /** Ready project stack, or none when the stack is missing or the database is not ready. */
 export const stackOpenReadyProject = openProjectStack;
 
-export const stackProjectRuntime: Effect.Effect<
-  StackRuntime | undefined,
-  never,
-  CommandSettings
-> = Effect.gen(function* () {
-  const api = yield* Effect.serviceOption(StackApi);
-  if (Option.isNone(api)) return undefined;
-  const cliSettings = yield* CommandSettings;
-  const descriptor = yield* api.value
-    .findStack({ projectRoot: cliSettings.workdir })
-    .pipe(Effect.orElseSucceed(() => Option.none()));
-  return Option.match(descriptor, {
-    onNone: () => undefined,
-    onSome: (value) => value.runtime,
+export const stackProjectRuntime: Effect.Effect<StackRuntime | undefined, never, CommandSettings> =
+  Effect.gen(function* () {
+    const api = yield* Effect.serviceOption(StackApi);
+    if (Option.isNone(api)) return undefined;
+    const cliSettings = yield* CommandSettings;
+    const descriptor = yield* api.value
+      .findStack({ projectRoot: cliSettings.workdir })
+      .pipe(Effect.orElseSucceed(() => Option.none()));
+    return Option.match(descriptor, {
+      onNone: () => undefined,
+      onSome: (value) => value.runtime,
+    });
   });
-});
 
 export class StackRuntimeUnavailableError extends Data.TaggedError("StackRuntimeUnavailableError")<{
   readonly message: string;
@@ -127,18 +124,15 @@ export const stackRejectNativeDockerDiffEngine: Effect.Effect<void, StackNativeE
     return yield* new StackNativeEngineError({ message: STACK_NATIVE_ENGINE_MESSAGE });
   });
 
-export const stackLocalDatabaseUrl: Effect.Effect<
-  string,
-  LocalDbRunningError,
-  CommandSettings
-> = Effect.gen(function* () {
-  const opened = yield* openProjectStack();
-  if (Option.isNone(opened)) return yield* notRunning();
-  const credentials = yield* opened.value.stack
-    .credentials()
-    .pipe(Effect.mapError((cause) => notRunning(cause.message)));
-  return Redacted.value(credentials.database.url);
-});
+export const stackLocalDatabaseUrl: Effect.Effect<string, LocalDbRunningError, CommandSettings> =
+  Effect.gen(function* () {
+    const opened = yield* openProjectStack();
+    if (Option.isNone(opened)) return yield* notRunning();
+    const credentials = yield* opened.value.stack
+      .credentials()
+      .pipe(Effect.mapError((cause) => notRunning(cause.message)));
+    return Redacted.value(credentials.database.url);
+  });
 
 export const stackLocalDatabaseConn: Effect.Effect<
   PgConnInput,
@@ -153,11 +147,8 @@ export const stackLocalDatabaseConn: Effect.Effect<
   return conn;
 });
 
-const stackLocalDatabaseIsRunning: Effect.Effect<
-  boolean,
-  LocalDbRunningError,
-  CommandSettings
-> = openProjectStack().pipe(Effect.map(Option.isSome));
+const stackLocalDatabaseIsRunning: Effect.Effect<boolean, LocalDbRunningError, CommandSettings> =
+  openProjectStack().pipe(Effect.map(Option.isSome));
 
 export const resolveLocalDatabaseIsRunning = (
   spawner: ChildProcessSpawnerType["Service"],

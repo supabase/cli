@@ -1526,10 +1526,7 @@ describe("db start stack backend", () => {
   const STACK_ID = StackIdSchema.make("b".repeat(64));
   const unused = () => Effect.die("unused");
 
-  function mockStackApi(opts: {
-    readonly existing?: boolean;
-    readonly databaseReady?: boolean;
-  }) {
+  function mockStackApi(opts: { readonly existing?: boolean; readonly databaseReady?: boolean }) {
     const startConfigs: Array<unknown> = [];
     const stack: EffectStack = {
       id: STACK_ID,

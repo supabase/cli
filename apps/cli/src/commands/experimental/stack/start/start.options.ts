@@ -1,4 +1,8 @@
-import { CAPABILITY_NAMES, excludeStackCapabilities, type StackConfig } from "@supabase/stack/effect";
+import {
+  CAPABILITY_NAMES,
+  excludeStackCapabilities,
+  type StackConfig,
+} from "@supabase/stack/effect";
 
 /** Optional capabilities accepted by `stack start --exclude`. */
 export const STACK_START_EXCLUDABLE_CAPABILITIES = CAPABILITY_NAMES.filter(

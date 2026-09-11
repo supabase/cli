@@ -171,7 +171,7 @@ const shadowBaselineEmbeddedDigest = (): string =>
     .digest("hex"));
 
 /** JSON with recursively key-sorted objects, so `db.settings`' own property order cannot change the key. */
-function canonicalJson(value: unknown): string {
+export function canonicalJson(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
   const entries = Object.entries(value)
@@ -472,7 +472,10 @@ const sweepShadowBaselineRetention = <E>(
   });
 
 /** Refresh mtime on a warm hit so frequently used keys survive LRU/TTL. Best-effort. */
-export const touchShadowBaselineTar = (fs: FileSystem.FileSystem, tarPath: string): Effect.Effect<void> =>
+export const touchShadowBaselineTar = (
+  fs: FileSystem.FileSystem,
+  tarPath: string,
+): Effect.Effect<void> =>
   Effect.gen(function* () {
     const now = new Date(yield* Clock.currentTimeMillis);
     yield* fs.utimes(tarPath, now, now);
