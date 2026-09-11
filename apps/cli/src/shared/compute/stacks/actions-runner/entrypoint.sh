@@ -61,7 +61,7 @@ b64url() {
 # GitHub App private keys arrive through `supabase secrets` as a single line
 # more often than not, so accept PEM, \n-escaped PEM, or base64-wrapped PEM.
 app_private_key() {
-  local raw="${GITHUB_APP_PRIVATE_KEY:-}"
+  local raw="$github_app_key"
   if [[ "$raw" == *"BEGIN"*"PRIVATE KEY"* ]]; then
     printf '%b\n' "$raw"
   else
@@ -73,7 +73,7 @@ app_jwt() {
   local now header payload signing_input signature
   now="$(date +%s)"
   header="$(printf '%s' '{"alg":"RS256","typ":"JWT"}' | b64url)"
-  payload="$(printf '{"iat":%s,"exp":%s,"iss":"%s"}' "$((now - 60))" "$((now + 540))" "$GITHUB_APP_ID" | b64url)"
+  payload="$(printf '{"iat":%s,"exp":%s,"iss":"%s"}' "$((now - 60))" "$((now + 540))" "$github_app_id" | b64url)"
   signing_input="${header}.${payload}"
   signature="$(printf '%s' "$signing_input" \
     | openssl dgst -sha256 -sign <(app_private_key) -binary \
@@ -119,14 +119,14 @@ installation_id() {
 # A PAT is used as-is; an App mints a fresh installation token per pass, which
 # keeps every token we hold short-lived.
 github_token() {
-  if [ -n "${GITHUB_PAT:-}" ]; then
-    printf '%s' "$GITHUB_PAT"
+  if [ -n "$github_pat" ]; then
+    printf '%s' "$github_pat"
     return
   fi
 
   local jwt install_id
   jwt="$(app_jwt)"
-  install_id="${GITHUB_APP_INSTALLATION_ID:-}"
+  install_id="$github_app_installation"
   if [ -z "$install_id" ]; then
     install_id="$(installation_id "$jwt")"
   fi
@@ -237,13 +237,22 @@ on_terminate() {
 
 # --- startup checks -----------------------------------------------------
 
+# A job step is a grandchild of this script and inherits its environment, so
+# the credentials are taken out of it here: a shell variable is not exported,
+# which puts the token beyond reach of anything the runner executes.
+github_pat="${GITHUB_PAT:-}"
+github_app_id="${GITHUB_APP_ID:-}"
+github_app_key="${GITHUB_APP_PRIVATE_KEY:-}"
+github_app_installation="${GITHUB_APP_INSTALLATION_ID:-}"
+unset GITHUB_PAT GITHUB_APP_ID GITHUB_APP_PRIVATE_KEY GITHUB_APP_INSTALLATION_ID
+
 [ -n "$GITHUB_OWNER" ] || fail "GITHUB_OWNER is not set. Set it to the org (or user) that owns the runners."
 
-if [ -z "${GITHUB_PAT:-}" ] && [ -z "${GITHUB_APP_ID:-}" ]; then
+if [ -z "$github_pat" ] && [ -z "$github_app_id" ]; then
   fail "No GitHub credentials. Set GITHUB_PAT, or GITHUB_APP_ID plus GITHUB_APP_PRIVATE_KEY."
 fi
 
-if [ -z "${GITHUB_PAT:-}" ] && [ -z "${GITHUB_APP_PRIVATE_KEY:-}" ]; then
+if [ -z "$github_pat" ] && [ -z "$github_app_key" ]; then
   fail "GITHUB_APP_ID is set without GITHUB_APP_PRIVATE_KEY."
 fi
 

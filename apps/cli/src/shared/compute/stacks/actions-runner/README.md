@@ -59,5 +59,9 @@ no online runner queues silently for 24 hours before it fails, so keep
 - No Docker daemon: jobs using `container:`, `services:`, or Docker-based
   actions will fail.
 - Nothing persists between jobs — the workspace is wiped after each one.
-- Self-hosted runners run whatever a workflow tells them to. Do not attach a
-  pool to a public repo where forked pull requests can run against it.
+- Self-hosted runners run whatever a workflow tells them to, and a job runs as
+  the same user as the supervisor, with sudo. Treat the credentials above as
+  readable by every workflow the pool accepts: scope the token to the minimum
+  (Administration: Read and write on just the repos it serves), give each pool
+  its own, and rotate it like any shared secret. Do not attach a pool to a
+  public repo where forked pull requests can run against it.
