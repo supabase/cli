@@ -2,20 +2,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
 import { BunServices } from "@effect/platform-bun";
-import { Deferred, Effect, Layer, Option, Redacted, Stream } from "effect";
+import { Deferred, Effect, Layer, Option, Stream } from "effect";
 import type { CliProjectEnvironment, CliProjectPaths } from "@supabase/config";
-import { Api } from "../../src/shared/auth/api.service.ts";
-import type { LoginSessionResponse, ProfileResponse } from "../../src/shared/auth/api.service.ts";
-import { Credentials } from "../../src/shared/auth/credentials.service.ts";
-import { Crypto } from "../../src/shared/auth/crypto.service.ts";
-import { ApiError } from "../../src/shared/auth/errors.ts";
 import { cliSettingsLayer } from "../../src/shared/config/cli-settings.layer.ts";
 import { CliProjectHome } from "../../src/shared/config/cli-project-home.service.ts";
 import {
   CliProjectLocalServiceVersions,
   type LocalServiceVersionsState,
 } from "../../src/shared/config/cli-project-local-service-versions.service.ts";
-import { ProjectLinkRemote } from "../../src/shared/config/project-link-remote.service.ts";
 import {
   ProjectLinkState,
   type ProjectLinkStateValue,
@@ -67,18 +61,6 @@ const defaultTestHomeDir = join(
 export function mockBrowser(): Layer.Layer<Browser> {
   return Layer.succeed(Browser, {
     open: () => Effect.void,
-  });
-}
-
-export function mockCrypto(token = "sbp_" + "a".repeat(40)): Layer.Layer<Crypto> {
-  return Layer.succeed(Crypto, {
-    generateKeyPair: Effect.sync(() => ({
-      ecdh: {} as import("node:crypto").ECDH,
-      publicKeyHex: "04abcd",
-    })),
-    generateSessionId: Effect.sync(() => "test-session-id"),
-    defaultTokenName: Effect.sync(() => "cli_test@host_123"),
-    decryptToken: () => Effect.succeed(token),
   });
 }
 
@@ -196,33 +178,6 @@ export function mockProcessControl(
     awaitExit: Deferred.await(exitDeferred),
     get exitCode() {
       return exitCode;
-    },
-  };
-}
-
-export function mockCredentials(opts: { existingToken?: string } = {}) {
-  let savedToken: string | undefined;
-  let deleteWasCalled = false;
-  return {
-    layer: Layer.succeed(Credentials, {
-      getAccessToken: Effect.sync(() => {
-        const token = opts.existingToken ?? savedToken;
-        return token ? Option.some(Redacted.make(token)) : Option.none();
-      }),
-      saveAccessToken: (token: string | Redacted.Redacted<string>) =>
-        Effect.sync(() => {
-          savedToken = typeof token === "string" ? token : Redacted.value(token);
-        }),
-      deleteAccessToken: Effect.sync(() => {
-        deleteWasCalled = true;
-        return !!(opts.existingToken ?? savedToken);
-      }),
-    }),
-    get savedToken() {
-      return savedToken;
-    },
-    get deleteWasCalled() {
-      return deleteWasCalled;
     },
   };
 }
@@ -470,56 +425,6 @@ export function mockOutput(
   };
 }
 
-export function mockApi(
-  opts: {
-    failTimes?: number;
-    response?: Partial<LoginSessionResponse>;
-    profileResponse?: Partial<ProfileResponse>;
-    profileError?: ApiError;
-  } = {},
-) {
-  let callCount = 0;
-  let profileCallCount = 0;
-  const failTimes = opts.failTimes ?? 0;
-  const response: LoginSessionResponse = {
-    access_token: "encrypted",
-    public_key: "abcd",
-    nonce: "1234",
-    ...opts.response,
-  };
-  const profileResponse: ProfileResponse = {
-    gotrue_id: "user-123",
-    primary_email: "test@example.com",
-    username: "tester",
-    ...opts.profileResponse,
-  };
-
-  return {
-    layer: Layer.succeed(Api, {
-      fetchLoginSession: () => {
-        callCount++;
-        if (callCount <= failTimes) {
-          return Effect.fail(new ApiError({ detail: "network error" }));
-        }
-        return Effect.succeed(response);
-      },
-      fetchProfile: () => {
-        profileCallCount++;
-        if (opts.profileError !== undefined) {
-          return Effect.fail(opts.profileError);
-        }
-        return Effect.succeed(profileResponse);
-      },
-    }),
-    get callCount() {
-      return callCount;
-    },
-    get profileCallCount() {
-      return profileCallCount;
-    },
-  };
-}
-
 /**
  * Like `mockAnalytics()`, but merges `CurrentAnalyticsContext` into captured event
  * properties. Use it when asserting on context-carried fields (`flags`, `groups`).
@@ -720,7 +625,7 @@ function mockCliProjectHome(
   );
 }
 
-export function mockProjectLinkState(
+function mockProjectLinkState(
   initialState?: ProjectLinkStateValue,
 ): Layer.Layer<ProjectLinkState, never, never> {
   let state = initialState;
@@ -751,62 +656,7 @@ export function mockProjectLinkState(
   );
 }
 
-export function mockProjectLinkRemote(
-  opts: {
-    projects?: ReadonlyArray<{
-      ref: string;
-      name: string;
-      region: string;
-      status: string;
-      organizationId?: string;
-      organizationSlug?: string;
-    }>;
-    linkedProject?: {
-      ref: string;
-      name: string;
-      region: string;
-      status: string;
-      organizationId?: string;
-      organizationSlug?: string;
-      versions: {
-        postgres?: string;
-        postgrest?: string;
-        auth?: string;
-        storage?: string;
-      };
-      unavailableServices?: ReadonlyArray<"postgres" | "postgrest" | "auth" | "storage">;
-    };
-  } = {},
-): Layer.Layer<ProjectLinkRemote, never, never> {
-  const projects = opts.projects ?? [];
-  const linkedProject = opts.linkedProject;
-  return Layer.succeed(
-    ProjectLinkRemote,
-    ProjectLinkRemote.of({
-      listAccessibleProjects: Effect.succeed(
-        projects.map((project) => ({
-          ...project,
-          organizationId: project.organizationId ?? "org_123",
-          organizationSlug: project.organizationSlug ?? "supabase",
-        })),
-      ),
-      fetchLinkedProject: (projectRef: string) =>
-        Effect.gen(function* () {
-          if (linkedProject === undefined) {
-            return yield* Effect.fail(new Error(`No linked project mock for ${projectRef}`));
-          }
-          return {
-            ...linkedProject,
-            organizationId: linkedProject.organizationId ?? "org_123",
-            organizationSlug: linkedProject.organizationSlug ?? "supabase",
-            unavailableServices: linkedProject.unavailableServices ?? [],
-          };
-        }),
-    }),
-  );
-}
-
-export function mockCliProjectLocalServiceVersions(
+function mockCliProjectLocalServiceVersions(
   initialState?: LocalServiceVersionsState,
 ): Layer.Layer<CliProjectLocalServiceVersions, never, never> {
   let state = initialState;
@@ -835,26 +685,6 @@ export function emptyEnv() {
     cliProjectHomeLayer,
     projectLinkStateLayer,
     cliProjectLocalServiceVersionsLayer,
-    analytics.layer,
-    mockTelemetryRuntime(),
-    envLayer,
-    mockTty(),
-    mockProcessControl().layer,
-    cliSettingsLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(cliProjectContextLayer)),
-  );
-}
-
-export function withEnv(env: Record<string, string>) {
-  const runtimeInfoLayer = mockRuntimeInfo();
-  const cliProjectContextLayer = mockCliProjectContext();
-  const envLayer = processEnvLayer(env);
-  const cliProjectHomeLayer = mockCliProjectHome();
-  const analytics = mockAnalytics();
-  return Layer.mergeAll(
-    BunServices.layer,
-    runtimeInfoLayer,
-    cliProjectContextLayer,
-    cliProjectHomeLayer,
     analytics.layer,
     mockTelemetryRuntime(),
     envLayer,

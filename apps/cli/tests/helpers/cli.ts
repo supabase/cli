@@ -291,7 +291,7 @@ function outputTail(label: string, output: string): string {
   return `${label}:\n${tail}`;
 }
 
-export function spawnSupabase(
+function spawnSupabase(
   args: string[],
   options?: {
     cwd?: string;
