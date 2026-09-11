@@ -77,7 +77,10 @@ import {
   type ContainerCommandResult,
   type ContainerCommandRunner,
 } from "../runtime/ContainerEngine.ts";
-import { ContainerEngineResolver } from "../runtime/ContainerEngineResolver.ts";
+import {
+  ContainerEngineResolver,
+  defaultContainerEngineResolver,
+} from "../runtime/ContainerEngineResolver.ts";
 import { runGit } from "../../tests/helpers/git.ts";
 
 const defaultDatabaseVersion = catalogEntryFor("database:database").defaultVersion;
@@ -122,7 +125,6 @@ const credentials = {
 const stoppedState = (): PersistedStackState => ({
   format: "supabase-stack-state-v1",
   identity: {
-    stackId,
     projectRoot: "/tmp/project",
     branchContext: "branch",
     stackName: "stack",
@@ -167,7 +169,13 @@ const withRuntimeRoot = <A, E, R>(effect: (project: string) => Effect.Effect<A, 
         tempRoot: "/tmp",
         platform: "posix",
       };
-      return yield* effect(project).pipe(Effect.provideService(StackRuntimeEnvironment, runtime));
+      return yield* effect(project).pipe(
+        Effect.provideService(StackRuntimeEnvironment, runtime),
+        Effect.provideService(ContainerEngineResolver, {
+          isInstalled: () => Effect.succeed(false),
+          resolve: (kind) => defaultContainerEngineResolver.resolve(kind),
+        }),
+      );
     }),
   ).pipe(Effect.provide(NodeServices.layer));
 
@@ -1257,6 +1265,7 @@ describe("Effect stack lifecycle handoff", () => {
           runtime: { kind: "container", engine: "docker" },
         }).pipe(
           Effect.provideService(ContainerEngineResolver, {
+            isInstalled: () => Effect.succeed(true),
             resolve: () => Effect.succeed(engine),
           }),
         );
@@ -1513,6 +1522,7 @@ describe("Effect stack lifecycle handoff", () => {
           platform: { os: "linux" },
         });
         const resolver = {
+          isInstalled: () => Effect.succeed(true),
           resolve: () => Effect.succeed(engine),
         };
         const stack = yield* createStack({
@@ -1924,7 +1934,7 @@ describe("Effect stack lifecycle handoff", () => {
                   : undefined;
               const initialState: PersistedStackState = {
                 format: "supabase-stack-state-v1",
-                identity: toPersistedIdentity(identity, id),
+                identity: toPersistedIdentity(identity),
                 runtime: { kind: "native" },
                 desiredLifecycle,
                 ports: [],

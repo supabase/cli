@@ -42,6 +42,20 @@ const canonicalGitDirectory = (
     ),
   );
 
+const hasGitRepositoryMarkers = (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  gitDirectory: string,
+): Effect.Effect<boolean, PlatformError, FileSystem.FileSystem> =>
+  Effect.gen(function* () {
+    const head = yield* fs.exists(path.join(gitDirectory, "HEAD"));
+    if (head) return true;
+    return (
+      (yield* fs.exists(path.join(gitDirectory, "objects"))) &&
+      (yield* fs.exists(path.join(gitDirectory, "refs")))
+    );
+  });
+
 const locateGitDirectory = (
   fs: FileSystem.FileSystem,
   path: Path.Path,
@@ -52,7 +66,14 @@ const locateGitDirectory = (
     while (true) {
       const gitEntry = path.join(directory, ".git");
       if (yield* fs.exists(gitEntry)) {
-        return yield* canonicalGitDirectory(fs, path, directory, gitEntry);
+        const entryInfo = yield* fs.stat(gitEntry);
+        const gitDirectory = yield* canonicalGitDirectory(fs, path, directory, gitEntry);
+        if (
+          entryInfo.type !== "Directory" ||
+          (yield* hasGitRepositoryMarkers(fs, path, gitDirectory))
+        ) {
+          return gitDirectory;
+        }
       }
       const parent = path.dirname(directory);
       if (parent === directory) {

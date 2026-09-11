@@ -51,20 +51,19 @@ export class StackRuntimeEnvironment extends Context.Service<
   StackRuntimeEnvironmentValue
 >()("@supabase/stack/StackRuntimeEnvironment") {}
 
-const ControlEndpointSchema = Schema.Union([
-  Schema.Struct({ kind: Schema.Literal("unix"), path: Schema.String }),
-  Schema.Struct({ kind: Schema.Literal("pipe"), name: Schema.String }),
-]);
-
-const OwnerMetadataSchema = Schema.Struct({
+// stackId and endpoint are derived from the identity directory and lease port.
+// Keep them in the in-memory lease value for callers, but do not duplicate them
+// in the durable control document.
+const OwnerMetadataDiskSchema = Schema.Struct({
   format: Schema.Literal(OWNERSHIP_FORMAT),
-  stackId: StackIdSchema,
   ownerSessionId: OwnerSessionIdSchema,
   leasePort: NetworkPortSchema,
-  endpoint: ControlEndpointSchema,
   rpcRelease: Schema.String,
 });
-export type OwnerMetadata = Schema.Schema.Type<typeof OwnerMetadataSchema>;
+export type OwnerMetadata = Schema.Schema.Type<typeof OwnerMetadataDiskSchema> & {
+  readonly stackId: StackId;
+  readonly endpoint: ControlEndpoint;
+};
 
 const OwnerLockSchema = Schema.Struct({
   format: Schema.Literal(OWNER_LOCK_FORMAT),
@@ -241,9 +240,22 @@ const decodeStackId = (value: string): Effect.Effect<StackId, StackStateInvalidE
     Effect.mapError((error) => stateError(`Invalid StackId: ${String(error)}`)),
   );
 
-const metadataFrom = (value: unknown): Effect.Effect<OwnerMetadata, StackStateInvalidError> =>
-  Schema.decodeUnknownEffect(OwnerMetadataSchema)(value, { onExcessProperty: "error" }).pipe(
+const metadataFrom = (
+  value: unknown,
+  stackId: StackId,
+  environment: Pick<StackRuntimeEnvironmentValue, "platform" | "tempRoot">,
+): Effect.Effect<OwnerMetadata, StackStateInvalidError> =>
+  Schema.decodeUnknownEffect(Schema.Record(Schema.String, Schema.Unknown))(value).pipe(
+    Effect.map(({ stackId: _stackId, endpoint: _endpoint, ...disk }) => disk),
+    Effect.flatMap((disk) =>
+      Schema.decodeUnknownEffect(OwnerMetadataDiskSchema)(disk, { onExcessProperty: "error" }),
+    ),
     Effect.mapError((error) => stateError(`Invalid owner metadata: ${String(error)}`)),
+    Effect.map((metadata) => ({
+      ...metadata,
+      stackId,
+      endpoint: controlEndpointFor(stackId, environment, metadata.leasePort),
+    })),
   );
 
 /**
@@ -295,25 +307,7 @@ export const readOwnerMetadata = (
     ).pipe(
       Effect.mapError((error) => stateError(`Unable to parse owner metadata: ${String(error)}`)),
     );
-    const metadata = yield* metadataFrom(parsed);
-    if (metadata.stackId !== validId)
-      return yield* stateError("Owner metadata StackId does not match its directory");
-    const expected = controlEndpointFor(validId, environment, metadata.leasePort);
-    if (metadata.endpoint.kind !== expected.kind)
-      return yield* stateError("Owner metadata endpoint kind does not match this runtime");
-    if (
-      metadata.endpoint.kind === "unix" &&
-      expected.kind === "unix" &&
-      metadata.endpoint.path !== expected.path
-    )
-      return yield* stateError("Owner metadata endpoint does not match its StackId");
-    if (
-      metadata.endpoint.kind === "pipe" &&
-      expected.kind === "pipe" &&
-      metadata.endpoint.name !== expected.name
-    )
-      return yield* stateError("Owner metadata endpoint does not match its StackId");
-    return metadata;
+    return yield* metadataFrom(parsed, validId, environment);
   });
 
 export const ownerLockExists = (
@@ -344,7 +338,7 @@ export const publishOwnership = (
 ): Effect.Effect<void, StackStateInvalidError, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(OwnerMetadataSchema))(
+    const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(OwnerMetadataDiskSchema))(
       lease.metadata,
     ).pipe(
       Effect.mapError((error) => stateError(`Unable to encode owner metadata: ${String(error)}`)),
@@ -638,9 +632,9 @@ export const acquireOwnership = (options: {
           const release = Effect.suspend(() =>
             fs.readFileString(paths.controlMetadata).pipe(
               Effect.flatMap((text) =>
-                Schema.decodeEffect(Schema.fromJsonString(OwnerMetadataSchema))(text).pipe(
+                Schema.decodeEffect(Schema.fromJsonString(OwnerMetadataDiskSchema))(text).pipe(
                   Effect.flatMap((current) =>
-                    current.stackId === validId && current.ownerSessionId === options.ownerSessionId
+                    current.ownerSessionId === options.ownerSessionId
                       ? fs.remove(paths.controlMetadata, { force: true }).pipe(
                           Effect.catchTag("PlatformError", () => Effect.void),
                           Effect.andThen(removeLeaseIfHeld(fs, lockPath, options.ownerSessionId)),

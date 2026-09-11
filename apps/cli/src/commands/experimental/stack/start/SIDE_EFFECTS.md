@@ -2,7 +2,9 @@
 
 This command creates or resumes the managed stack identified by the current
 project and optional `--stack`, or opens an existing stack with `--stack-id`.
-It loads `supabase/config.toml` for the target project and resolves explicit
+It loads `supabase/config.toml` for the target project when present and uses
+default settings when it is absent; starting the stack does not create a config
+file. It resolves explicit
 `env(NAME)` references plus supported automatic `SUPABASE_*` overrides. Shell
 values take precedence over values from `supabase/` dotenv files, which take
 precedence over project-root dotenv files. Empty automatic overrides are
@@ -46,9 +48,11 @@ capabilities. Structured output includes the same status fields. The command rea
 credentials and function/provider secrets to pass them to the stack runtime, but
 never emits those values.
 
-`--stack` and `--stack-id` are mutually exclusive. `--runtime auto` uses the
-package default; `docker` selects the Docker container runtime; `native`
-selects the native runtime. `--preparation` controls background versus
+`--stack` and `--stack-id` are mutually exclusive. For a new stack, `--runtime auto`
+selects Docker when a Docker executable is available on `PATH` and native otherwise;
+a stopped Docker daemon still selects Docker. Existing stacks reuse their persisted
+runtime. `docker` and `native` select the requested runtime without fallback.
+`--preparation` controls background versus
 on-demand artifact preparation, and `--eager` requests enabled capabilities be
 activated before the command returns.
 

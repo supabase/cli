@@ -55,7 +55,10 @@ import {
   StackRuntimeMismatchError,
 } from "../public/Errors.ts";
 import type { ContainerEngine } from "../runtime/ContainerEngine.ts";
-import { ContainerEngineResolver } from "../runtime/ContainerEngineResolver.ts";
+import {
+  ContainerEngineResolver,
+  defaultContainerEngineResolver,
+} from "../runtime/ContainerEngineResolver.ts";
 
 const databaseRelease = catalogReleaseFor("database:database");
 if (databaseRelease === undefined) throw new Error("Missing default database release");
@@ -89,6 +92,10 @@ const withRuntimeRoot = <A, E, R>(effect: (project: string) => Effect.Effect<A, 
       return yield* effect(project).pipe(
         Effect.onExit(() => cleanupOwners),
         Effect.provideService(StackRuntimeEnvironment, runtime),
+        Effect.provideService(ContainerEngineResolver, {
+          isInstalled: () => Effect.succeed(false),
+          resolve: (kind) => defaultContainerEngineResolver.resolve(kind),
+        }),
       );
     }),
   ).pipe(Effect.provide(NodeServices.layer));
@@ -242,7 +249,10 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
   it.live("persists Docker for an omitted container engine without probing", () =>
     withRuntimeRoot((project) =>
       Effect.gen(function* () {
-        const resolver = { resolve: () => Effect.die("resolver must not be called") };
+        const resolver = {
+          isInstalled: () => Effect.die("resolver must not be called"),
+          resolve: () => Effect.die("resolver must not be called"),
+        };
         yield* createStack({ projectRoot: project, runtime: { kind: "container" } }).pipe(
           Effect.provideService(ContainerEngineResolver, resolver),
         );
@@ -253,10 +263,59 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
     ),
   );
 
+  it.live("selects Docker for a new stack when the client is installed", () =>
+    withRuntimeRoot((project) =>
+      Effect.gen(function* () {
+        const calls: string[] = [];
+        const resolver = {
+          isInstalled: (kind: "docker" | "podman") =>
+            Effect.sync(() => {
+              calls.push(kind);
+              return true;
+            }),
+          resolve: () => Effect.die("engine construction must not run during create"),
+        };
+        yield* createStack({ projectRoot: project }).pipe(
+          Effect.provideService(ContainerEngineResolver, resolver),
+        );
+        expect(calls).toEqual(["docker"]);
+        expect(
+          (yield* findStack({ projectRoot: project })).pipe(Option.getOrUndefined)?.runtime,
+        ).toEqual({ kind: "container", engine: "docker" });
+      }),
+    ),
+  );
+
+  it.live("selects native for a new stack when the Docker client is absent", () =>
+    withRuntimeRoot((project) =>
+      Effect.gen(function* () {
+        const calls: string[] = [];
+        const resolver = {
+          isInstalled: (kind: "docker" | "podman") =>
+            Effect.sync(() => {
+              calls.push(kind);
+              return false;
+            }),
+          resolve: () => Effect.die("engine construction must not run during create"),
+        };
+        yield* createStack({ projectRoot: project }).pipe(
+          Effect.provideService(ContainerEngineResolver, resolver),
+        );
+        expect(calls).toEqual(["docker"]);
+        expect(
+          (yield* findStack({ projectRoot: project })).pipe(Option.getOrUndefined)?.runtime,
+        ).toEqual({ kind: "native" });
+      }),
+    ),
+  );
+
   it.live("persists explicit Podman without probing", () =>
     withRuntimeRoot((project) =>
       Effect.gen(function* () {
-        const resolver = { resolve: () => Effect.die("resolver must not be called") };
+        const resolver = {
+          isInstalled: () => Effect.die("resolver must not be called"),
+          resolve: () => Effect.die("resolver must not be called"),
+        };
         yield* createStack({
           projectRoot: project,
           runtime: { kind: "container", engine: "podman" },
@@ -274,6 +333,7 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
         const calls: string[] = [];
         const dockerCalls: string[] = [];
         const resolver = {
+          isInstalled: () => Effect.succeed(true),
           resolve: (kind: "docker" | "podman") =>
             Effect.succeed(
               kind === "podman"
@@ -300,7 +360,10 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
           projectRoot: project,
           runtime: { kind: "container", engine: "podman" },
         });
-        const resolver = { resolve: () => Effect.die("resolver must not be called") };
+        const resolver = {
+          isInstalled: () => Effect.die("resolver must not be called"),
+          resolve: () => Effect.die("resolver must not be called"),
+        };
         const stack = yield* openStack(created.id).pipe(
           Effect.provideService(ContainerEngineResolver, resolver),
         );
@@ -321,6 +384,7 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
           runtime: { kind: "container", engine: "podman" },
         }).pipe(
           Effect.provideService(ContainerEngineResolver, {
+            isInstalled: () => Effect.die("resolver must not be called"),
             resolve: () => Effect.die("resolver must not be called"),
           }),
           Effect.exit,
@@ -338,6 +402,7 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
     withRuntimeRoot((project) =>
       createStack({ projectRoot: project, runtime: { kind: "native" } }).pipe(
         Effect.provideService(ContainerEngineResolver, {
+          isInstalled: () => Effect.die("native stack must not resolve a container engine"),
           resolve: () => Effect.die("native stack must not resolve a container engine"),
         }),
       ),
@@ -365,7 +430,7 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
         const store = yield* makeStackStateStore({ stateRoot: env.stateRoot });
         yield* store.initialize(stackId, {
           format: "supabase-stack-state-v1",
-          identity: { ...identity, stackId },
+          identity,
           runtime: { kind: "native" },
           desiredLifecycle: "stopped",
           ports: [],
@@ -455,7 +520,7 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
         const store = yield* makeStackStateStore({ stateRoot: env.stateRoot });
         yield* store.initialize(stackId, {
           format: "supabase-stack-state-v1",
-          identity: { ...identity, stackId },
+          identity,
           runtime: { kind: "native" },
           desiredLifecycle: "stopped",
           ports: [],
@@ -603,7 +668,13 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
           const { Effect } = await import("effect");
           const { NodeServices } = await import("@effect/platform-node");
           const { createStack } = await import(${encodedStackModule});
-          const stack = await Effect.runPromise(Effect.scoped(createStack({ projectRoot: process.argv[1] }).pipe(Effect.provide(NodeServices.layer))));
+          const stack = await Effect.runPromise(
+            Effect.scoped(
+              createStack({ projectRoot: process.argv[1], runtime: { kind: "native" } }).pipe(
+                Effect.provide(NodeServices.layer),
+              ),
+            ),
+          );
           process.stdout.write(stack.id);
         `;
         const spawnCaller = () =>

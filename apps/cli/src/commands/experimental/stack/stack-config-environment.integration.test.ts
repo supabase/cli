@@ -4,6 +4,7 @@ import { encrypt, PrivateKey } from "eciesjs";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Option, Redacted } from "effect";
+import { compileStack } from "../../../../../../packages/stack/src/model/Compiler.ts";
 
 import { withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
 import { StackConfigError, loadStackConfig } from "./stack-config.ts";
@@ -514,7 +515,7 @@ auto_expose_new_tables = true
       const config = yield* load(root);
       if (config.capabilities?.rest === undefined || !("settings" in config.capabilities.rest))
         throw new Error("REST settings missing");
-      expect(config.capabilities.rest.settings?.auto_expose_new_tables).toBe(true);
+      expect(config.capabilities.rest.settings).not.toHaveProperty("auto_expose_new_tables");
       if (config.capabilities.storage === undefined || !("settings" in config.capabilities.storage))
         throw new Error("storage settings missing");
       expect(config.capabilities.storage.settings?.image_transformation).toEqual({ enabled: true });
@@ -537,7 +538,9 @@ auto_expose_new_tables = true
         !("settings" in absentImage.capabilities.storage)
       )
         throw new Error("absent-image storage settings missing");
-      expect(absentImage.capabilities.storage.settings?.image_transformation).toBeUndefined();
+      expect(absentImage.capabilities.storage.settings?.image_transformation).toEqual({
+        enabled: true,
+      });
 
       const absentApi = yield* load(absentApiRoot);
       if (
@@ -545,7 +548,7 @@ auto_expose_new_tables = true
         !("settings" in absentApi.capabilities.rest)
       )
         throw new Error("absent-api REST settings missing");
-      expect(absentApi.capabilities.rest.settings?.auto_expose_new_tables).toBeUndefined();
+      expect(absentApi.capabilities.rest.settings).not.toHaveProperty("auto_expose_new_tables");
 
       const explicitFalseApi = yield* load(explicitFalseApiRoot);
       if (
@@ -553,7 +556,9 @@ auto_expose_new_tables = true
         !("settings" in explicitFalseApi.capabilities.rest)
       )
         throw new Error("explicit-false REST settings missing");
-      expect(explicitFalseApi.capabilities.rest.settings?.auto_expose_new_tables).toBe(false);
+      expect(explicitFalseApi.capabilities.rest.settings).not.toHaveProperty(
+        "auto_expose_new_tables",
+      );
     });
   });
 
@@ -586,7 +591,6 @@ openai_api_key = "config-studio-key"
         supabaseEnv: [
           "SUPABASE_API_SCHEMAS=public,storage",
           "SUPABASE_ANALYTICS_BACKEND=bigquery",
-          "SUPABASE_ANALYTICS_VECTOR_PORT=54328",
           "SUPABASE_ANALYTICS_GCP_PROJECT_ID=env-project",
           "SUPABASE_DB_MAJOR_VERSION=17",
           "SUPABASE_STUDIO_OPENAI_API_KEY=env-studio-key",
@@ -608,7 +612,6 @@ openai_api_key = "config-studio-key"
       )
         throw new Error("analytics settings missing");
       expect(config.capabilities.analytics.settings?.backend).toBe("bigquery");
-      expect(config.capabilities.analytics.settings?.vector_port).toBe(54328);
       expect(config.capabilities.analytics.settings?.gcp_project_id).toBe("env-project");
       expect(config.capabilities.studio.settings?.openai_api_key).toBeDefined();
       if (config.capabilities.studio.settings?.openai_api_key === undefined)
@@ -655,6 +658,108 @@ openai_api_key = "config-studio-key"
       );
     },
   );
+
+  it.effect("defers omitted and empty pooler settings to the stack package", () => {
+    const omitted = project('project_id = "stack-config-omitted-pooler"\n');
+    const empty = project('project_id = "stack-config-empty-pooler"\n[db.pooler]\n');
+    return Effect.gen(function* () {
+      expect((yield* load(omitted)).capabilities?.pooler).toEqual({
+        settings: { pool_mode: "transaction", default_pool_size: 20, max_client_conn: 100 },
+      });
+      expect((yield* load(empty)).capabilities?.pooler).toEqual({
+        settings: { pool_mode: "transaction", default_pool_size: 20, max_client_conn: 100 },
+      });
+    });
+  });
+
+  it.effect("compiles package defaults from the CLI adapter", () => {
+    const root = project('project_id = "stack-config-compiler-defaults"\n');
+    return Effect.gen(function* () {
+      const config = yield* load(root);
+      const compiled = yield* compileStack({
+        projectRoot: root,
+        runtime: { kind: "native" },
+        config,
+      }).pipe(Effect.provide(BunServices.layer));
+      expect(compiled.definition.capabilities.pooler.enabled).toBe(true);
+      expect(compiled.definition.capabilities.pooler.activation).toBe("lazy");
+      expect(compiled.definition.capabilities.storage.settings.image_transformation?.enabled).toBe(
+        true,
+      );
+      expect(compiled.definition.capabilities.storage.activation).toBe("lazy");
+      expect(compiled.executionPlan.workloads.some(({ id }) => id === "storage:imgproxy")).toBe(
+        true,
+      );
+      expect(compiled.executionPlan.workloads.some(({ id }) => id === "analytics:vector")).toBe(
+        true,
+      );
+    });
+  });
+
+  it.effect("keeps pooler tuning while inheriting its enabled default", () => {
+    const root = project(
+      'project_id = "stack-config-compiler-pooler-tuning"\n[db.pooler]\ndefault_pool_size = 37\n',
+    );
+    return Effect.gen(function* () {
+      const config = yield* load(root);
+      const compiled = yield* compileStack({
+        projectRoot: root,
+        runtime: { kind: "native" },
+        config,
+      }).pipe(Effect.provide(BunServices.layer));
+      expect(compiled.definition.capabilities.pooler.enabled).toBe(true);
+      expect(compiled.definition.capabilities.pooler.settings.default_pool_size).toBe(37);
+      expect(compiled.definition.listeners.pooler.enabled).toBe(true);
+    });
+  });
+
+  it.effect("honors explicit capability overrides through compilation", () => {
+    const enabled = project(
+      `project_id = "stack-config-compiler-overrides"
+[db.pooler]
+enabled = false
+[storage.image_transformation]
+enabled = false
+`,
+      {
+        supabaseEnv:
+          "SUPABASE_DB_POOLER_ENABLED=true\nSUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED=true\n",
+      },
+    );
+    const disabled = project('project_id = "stack-config-compiler-disabled"\n', {
+      supabaseEnv:
+        "SUPABASE_DB_POOLER_ENABLED=false\nSUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED=false\n",
+    });
+    return Effect.gen(function* () {
+      const enabledConfig = yield* load(enabled);
+      const enabledCompiled = yield* compileStack({
+        projectRoot: enabled,
+        runtime: { kind: "native" },
+        config: enabledConfig,
+      }).pipe(Effect.provide(BunServices.layer));
+      expect(enabledCompiled.definition.capabilities.pooler.enabled).toBe(true);
+      expect(
+        enabledCompiled.definition.capabilities.storage.settings.image_transformation?.enabled,
+      ).toBe(true);
+      expect(
+        enabledCompiled.executionPlan.workloads.some(({ id }) => id === "storage:imgproxy"),
+      ).toBe(true);
+
+      const disabledConfig = yield* load(disabled);
+      const disabledCompiled = yield* compileStack({
+        projectRoot: disabled,
+        runtime: { kind: "native" },
+        config: disabledConfig,
+      }).pipe(Effect.provide(BunServices.layer));
+      expect(disabledCompiled.definition.capabilities.pooler.enabled).toBe(false);
+      expect(
+        disabledCompiled.definition.capabilities.storage.settings.image_transformation?.enabled,
+      ).toBe(false);
+      expect(
+        disabledCompiled.executionPlan.workloads.some(({ id }) => id === "storage:imgproxy"),
+      ).toBe(false);
+    });
+  });
 
   it.effect("keeps an absent raw Studio section disabled through env overrides", () => {
     const root = project('project_id = "stack-config-absent-studio-disabled"\n');

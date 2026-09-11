@@ -866,7 +866,14 @@ const resolveEffectiveCliConfig = (
   const edge = config.edge_runtime;
   const apiSchemasOverride = envOverride("SUPABASE_API_SCHEMAS", undefined, env);
   const apiExtraSearchPathOverride = envOverride("SUPABASE_API_EXTRA_SEARCH_PATH", undefined, env);
-  const imagePresent = section(section(document, "storage"), "image_transformation") !== undefined;
+  const imageDocument = section(section(document, "storage"), "image_transformation");
+  const imageEnabledOverride = envOverride(
+    "SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED",
+    undefined,
+    env,
+  );
+  const imageEnabledExplicit =
+    imageDocument?.enabled !== undefined || imageEnabledOverride !== undefined;
   const resolvedApi = {
     ...api,
     enabled: envOverrideBool("SUPABASE_API_ENABLED", api.enabled, "api.enabled", env),
@@ -903,7 +910,7 @@ const resolveEffectiveCliConfig = (
       String(storage.file_size_limit),
       env,
     ),
-    image_transformation: imagePresent
+    image_transformation: imageEnabledExplicit
       ? {
           ...storage.image_transformation,
           enabled: envOverrideBool(
@@ -998,13 +1005,6 @@ const resolveEffectiveCliConfig = (
       env,
     ),
     backend: envOverrideAnalyticsBackend(analytics.backend, env),
-    vector_port:
-      resolvedPort(
-        "SUPABASE_ANALYTICS_VECTOR_PORT",
-        analytics.vector_port ?? 0,
-        "analytics.vector_port",
-        env,
-      ) || undefined,
     gcp_project_id: envOverride("SUPABASE_ANALYTICS_GCP_PROJECT_ID", analytics.gcp_project_id, env),
     gcp_project_number: envOverride(
       "SUPABASE_ANALYTICS_GCP_PROJECT_NUMBER",
@@ -1135,9 +1135,12 @@ const configInput = (
   const dbMajorVersion = db.major_version;
   const dbSettings = db.settings;
   const realtimeResolved = realtime;
-  const imageTransformationPresent =
-    section(section(document, "storage"), "image_transformation") !== undefined;
-  const storageResolved = imageTransformationPresent
+  const imageTransformationDocument = section(section(document, "storage"), "image_transformation");
+  const imageTransformationExplicit =
+    imageTransformationDocument?.enabled !== undefined ||
+    envOverride("SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED", undefined, listenerEnvValues) !==
+      undefined;
+  const storageResolved = imageTransformationExplicit
     ? storage
     : { ...storage, image_transformation: undefined };
   const edgeEnabled = config.edge_runtime.enabled;
@@ -1179,7 +1182,15 @@ const configInput = (
     mail.pop3_port ?? 0,
     listenerEnvValues,
   );
-  const poolerEnabled = pooler.enabled;
+  const poolerDocument = section(section(document, "db"), "pooler");
+  const poolerEnabledOverride = envOverride(
+    "SUPABASE_DB_POOLER_ENABLED",
+    undefined,
+    listenerEnvValues,
+  );
+  const poolerEnabledExplicit =
+    poolerDocument?.enabled !== undefined || poolerEnabledOverride !== undefined;
+  const poolerEnabled = poolerEnabledExplicit ? pooler.enabled : undefined;
   const poolerPort = envNestedPortOrConfigured(
     "SUPABASE_DB_POOLER_PORT",
     document,
@@ -1219,10 +1230,6 @@ const configInput = (
         schemas: apiResolved.schemas,
         extra_search_path: apiResolved.extra_search_path,
         max_rows: apiResolved.max_rows,
-        ...(apiResolved.auto_expose_new_tables === undefined
-          ? {}
-          : { auto_expose_new_tables: apiResolved.auto_expose_new_tables }),
-        tls: apiResolved.tls,
         external_url: apiResolved.external_url,
       }),
       auth:
@@ -1238,7 +1245,6 @@ const configInput = (
         image_transformation: storageResolved.image_transformation,
         buckets: storageResolved.buckets,
         s3_protocol: storageResolved.s3_protocol,
-        analytics: storageResolved.analytics,
         vector: storageResolved.vector,
       }),
       functions: capability(
@@ -1257,16 +1263,20 @@ const configInput = (
       }),
       analytics: capability(analyticsEnabled, {
         backend: analyticsResolved.backend,
-        vector_port: analyticsResolved.vector_port,
         gcp_project_id: analyticsResolved.gcp_project_id,
         gcp_project_number: analyticsResolved.gcp_project_number,
         gcp_jwt_path: analyticsResolved.gcp_jwt_path,
       }),
-      pooler: capability(poolerEnabled, {
-        pool_mode: poolerResolved.pool_mode,
-        default_pool_size: poolerResolved.default_pool_size,
-        max_client_conn: poolerResolved.max_client_conn,
-      }),
+      pooler:
+        poolerEnabled !== false
+          ? {
+              settings: {
+                pool_mode: poolerResolved.pool_mode,
+                default_pool_size: poolerResolved.default_pool_size,
+                max_client_conn: poolerResolved.max_client_conn,
+              },
+            }
+          : { enabled: false as const },
     },
     listeners: {
       api: apiListener(
@@ -1389,15 +1399,13 @@ export const loadStackConfig = (projectRoot: string): StackConfigEffect =>
       projectRoot,
       (message) => new StackConfigError({ message }),
     );
-    const loaded = context.loaded;
-    if (loaded === null)
-      return yield* new StackConfigError({
-        message: `No Supabase project configuration found in ${projectRoot}. Run supabase init first.`,
-      });
-
     const effectiveInput = yield* Effect.try({
       try: () =>
-        resolveEffectiveCliConfig(context.config, loaded.document, context.projectEnvValues),
+        resolveEffectiveCliConfig(
+          context.config,
+          context.loaded?.document,
+          context.projectEnvValues,
+        ),
       catch: (cause) =>
         new StackConfigError({
           message: cause instanceof Error ? cause.message : "invalid config overrides",
@@ -1446,7 +1454,13 @@ export const loadStackConfig = (projectRoot: string): StackConfigEffect =>
     );
     const input = yield* Effect.try({
       try: () =>
-        configInput(projectRoot, path, validatedConfig, loaded.document, context.projectEnvValues),
+        configInput(
+          projectRoot,
+          path,
+          validatedConfig,
+          context.loaded?.document,
+          context.projectEnvValues,
+        ),
       catch: (cause) =>
         new StackConfigError({
           message:

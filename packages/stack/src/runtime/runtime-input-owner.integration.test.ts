@@ -17,7 +17,6 @@ const withPlatform = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.scoped(effect).pipe(Effect.provide(NodeServices.layer));
 
 const identityFor = (projectRoot: string): PersistedStackState["identity"] => ({
-  stackId,
   projectRoot,
   branchContext: "ordinary-workspace",
   stackName: "runtime-input-owner",
@@ -59,7 +58,7 @@ const vectorFixture = () =>
     const fs = yield* FileSystem.FileSystem;
     const root = yield* fs.makeTempDirectoryScoped({ prefix: "runtime-input-vector-" });
     const base = yield* compiledState(root, {
-      capabilities: { analytics: { settings: { vector_port: 9001 } } },
+      capabilities: { analytics: { settings: {} } },
     });
     const state: PersistedStackState = {
       ...base,

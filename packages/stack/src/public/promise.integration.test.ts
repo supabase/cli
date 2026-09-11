@@ -268,7 +268,6 @@ describe("Promise stack facade", () => {
     const stack = adaptEffectStack(source);
     const config = {
       capabilities: {
-        database: { settings: { vault: { DB_PASSWORD: "vault-secret" } } },
         storage: { settings: { buckets: { assets: { public: false } } } },
         auth: { settings: { external: { github: { secret: "github-secret" } } } },
         functions: {
@@ -285,13 +284,11 @@ describe("Promise stack facade", () => {
     await stack.prepare({ config });
     await stack.start({ config });
     for (const value of [preparedConfig, startedConfig]) {
-      const database = value?.capabilities?.database?.settings;
       const auth = value?.capabilities?.auth;
       const functions = value?.capabilities?.functions;
       const authSettings = auth !== undefined && "settings" in auth ? auth.settings : undefined;
       const functionSettings =
         functions !== undefined && "settings" in functions ? functions.settings : undefined;
-      expect(Redacted.isRedacted(database?.vault?.DB_PASSWORD)).toBe(true);
       expect(Redacted.isRedacted(authSettings?.external?.github?.secret)).toBe(true);
       expect(Redacted.isRedacted(functionSettings?.edge_runtime?.secrets?.EDGE_TOKEN)).toBe(true);
       expect(Redacted.isRedacted(functionSettings?.functions?.hello?.env?.FUNCTION_TOKEN)).toBe(

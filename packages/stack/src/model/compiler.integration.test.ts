@@ -131,6 +131,27 @@ describe("closed capability compiler", () => {
     }),
   );
 
+  it.live("rejects settings without a local runtime consumer", () =>
+    Effect.gen(function* () {
+      const unsupported = yield* compile({
+        capabilities: {
+          rest: {
+            settings: { auto_expose_new_tables: true, tls: { enabled: true } },
+          },
+          storage: { settings: { analytics: { enabled: true } } },
+        },
+      } as never).pipe(Effect.exit);
+      expect(failureOf(unsupported)).toBeInstanceOf(InvalidStackConfigError);
+
+      const defaults = yield* compile({});
+      expect(defaults.definition.capabilities.rest.settings).not.toHaveProperty(
+        "auto_expose_new_tables",
+      );
+      expect(defaults.definition.capabilities.rest.settings).not.toHaveProperty("tls");
+      expect(defaults.definition.capabilities.storage.settings).not.toHaveProperty("analytics");
+    }),
+  );
+
   it.live("persists defaults consumed by workload runtimes", () =>
     Effect.gen(function* () {
       const result = yield* compile({});

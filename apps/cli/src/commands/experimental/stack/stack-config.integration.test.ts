@@ -149,6 +149,40 @@ secret = "figma-secret"
     });
   });
 
+  it.effect("accepts hosted-only settings without forwarding them to the local stack", () => {
+    const root = project(`project_id = "stack-config-hosted-only"
+[api]
+auto_expose_new_tables = true
+[api.tls]
+enabled = true
+cert_path = "./server.crt"
+key_path = "./server.key"
+[storage.analytics]
+enabled = true
+max_namespaces = 9
+max_tables = 12
+max_catalogs = 4
+`);
+    return Effect.gen(function* () {
+      const config = yield* load(root);
+      if (config.capabilities?.rest === undefined || !("settings" in config.capabilities.rest))
+        throw new Error("REST settings missing");
+      expect(config.capabilities.rest.settings).toMatchObject({
+        schemas: ["public", "graphql_public"],
+        extra_search_path: ["public", "extensions"],
+        max_rows: 1000,
+      });
+      expect(config.capabilities.rest.settings).not.toHaveProperty("auto_expose_new_tables");
+      expect(config.capabilities.rest.settings).not.toHaveProperty("tls");
+      if (
+        config.capabilities?.storage === undefined ||
+        !("settings" in config.capabilities.storage)
+      )
+        throw new Error("Storage settings missing");
+      expect(config.capabilities.storage.settings).not.toHaveProperty("analytics");
+    });
+  });
+
   it.effect("keeps disabled unsupported providers harmless", () => {
     const root = project(`project_id = "stack-config-disabled-figma"
 [auth.external.figma]
@@ -481,12 +515,12 @@ enabled = false
     });
   });
 
-  it.effect("fails clearly when the project has not been initialized", () => {
+  it.effect("uses default stack settings when no project config exists", () => {
     const root = stackConfigTempRoot.current;
     return Effect.gen(function* () {
-      const exit = yield* loadStackConfig(root).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("supabase init");
+      const config = yield* loadStackConfig(root);
+      expect(config.listeners).toEqual({});
+      expect(config.capabilities?.database).toMatchObject({ settings: { health_timeout: "2m" } });
     }).pipe(Effect.provide(BunServices.layer));
   });
 });

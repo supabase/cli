@@ -184,7 +184,7 @@ const makeFixture = (
           };
     yield* store.initialize(id, {
       format: "supabase-stack-state-v1",
-      identity: { ...identity, stackId: id },
+      identity,
       runtime: fixtureOptions.runtime ?? { kind: "native" },
       desiredLifecycle: "unconfigured",
       ports: [],

@@ -231,6 +231,7 @@ export const makeSupervisor = (
         if (state === undefined)
           return yield* new StackStateInvalidError({ message: "Stack state is missing" });
         const status = yield* statusFor(
+          options.stackId,
           state,
           yield* observedForStatus(),
           yield* Ref.get(active),

@@ -44,6 +44,26 @@ monorepo project roots, and named stacks while keeping identity resolution
 read-only. Project relocation is not supported: a moved project resolves to a
 new identity.
 
+The managed directory supplies the stack ID; `state.json` stores the identity
+tuple and validates its digest against that directory instead of duplicating
+the ID. `control.json` stores the owner session, lease port, and RPC release.
+The control endpoint is derived from the directory ID, lease port, and runtime
+environment. The ownership lock remains separate: it protects acquisition
+before the owner publishes its ready control metadata.
+
+Port assignments describe usable routes and workload bindings. Disabled
+capabilities do not reserve public listener ports, and the Functions inspector
+reserves a private port only when debugging is enabled. Service settings belong
+in the materialized definition only when the local runtime implements them;
+hosted-only database network restrictions, SSL enforcement, vault, REST
+auto-exposure, and Storage Analytics settings are excluded. API TLS is locally
+meaningful but unsupported by the stack gateway, so it is excluded too.
+Analytics' Vector port is assigned by the runtime rather than stored as a
+service setting.
+
+Disabling a capability releases its automatic port assignment; re-enabling it may
+select a new port.
+
 Stack handles are lightweight identity-scoped clients. Creating or opening one
 does not launch a Supervisor. Successful stop drains ingress, removes every
 ephemeral runtime resource, persists stopped state, delivers its response, then
@@ -107,11 +127,13 @@ numbers while the stack is stopped. Focused port coverage runs on macOS,
 Linux, and Windows in CI.
 
 Every managed document records one concrete runtime selection. Native and
-container runtimes never mix. An omitted runtime selects native; when a
-container runtime is selected, an omitted engine defaults to Docker. Callers
-may explicitly select Docker or Podman. There is no probing or auto-detection;
-Podman is supported only on local Linux hosts. Persisted state records the
-resolved exact engine. Capability releases and
+container runtimes never mix. For a new stack, an omitted runtime runs
+`docker --version` and selects Docker when the client is installed, or native
+when it is absent; this checks only the client and does not require a running
+daemon. Existing state is reused without probing. Callers may explicitly select
+native, Docker, or Podman, and an omitted engine for an explicit container
+runtime defaults to Docker. Podman is supported only on local Linux hosts.
+Persisted state records the resolved exact engine. Capability releases and
 workload artifacts are persisted as exact version pins (including their
 concrete native release and container image) rather than ranges or floating
 tags. Services with derived low-memory image profiles inherit those same
@@ -134,6 +156,12 @@ Supervisor. An incompatible owner can always be stopped, after which the caller
 may launch the current Supervisor and start again. The first admitted lifecycle operation runs
 to completion; concurrent lifecycle mutations fail immediately with a conflict
 rather than joining or queueing.
+
+Capability modules own the new stack's defaults. All capabilities are enabled
+by default, including Pooler, with image transformation available through
+Storage's imgproxy workload and Vector included with Analytics. The CLI preserves
+explicit enablement overrides while leaving omitted values to the package;
+the shared CLI configuration's defaults remain unchanged for other commands.
 
 PostgreSQL is the only eager capability by default. Start prepares and launches
 only the eager dependency closure, so the PostgreSQL readiness barrier remains

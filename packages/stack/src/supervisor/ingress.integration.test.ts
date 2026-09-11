@@ -68,7 +68,6 @@ const makeIngressContext = (prefix: string) =>
 
 const persistedIngressState = (
   identity: StackIdentity,
-  stackId: string,
   compiled: {
     readonly definition: PersistedStackState["definition"];
     readonly executionPlan: ExecutionPlan;
@@ -76,12 +75,14 @@ const persistedIngressState = (
   privatePortBase: number,
 ): PersistedStackState => ({
   format: "supabase-stack-state-v1",
-  identity: { ...identity, stackId },
+  identity,
   runtime: { kind: "native" },
   desiredLifecycle: "running",
   definition: compiled.definition,
   ports: [],
-  privatePorts: privateBindingIntentsFor(compiled.executionPlan).map((binding, index) => ({
+  privatePorts: privateBindingIntentsFor(compiled.executionPlan, {
+    definition: compiled.definition,
+  }).map((binding, index) => ({
     ...binding,
     port: privatePortBase + index,
   })),
@@ -108,6 +109,62 @@ const request = (port: number, path = "/rest/v1/items", method = "GET", host = "
   });
 
 describe("Supervisor ingress", () => {
+  it.live("does not allocate a public listener for a disabled pooler workload", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const crypto = yield* Crypto.Crypto;
+        const context = Context.make(FileSystem.FileSystem, fs).pipe(
+          Context.add(Path.Path, path),
+          Context.add(Crypto.Crypto, crypto),
+        );
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-ingress-pooler-" });
+        const stackIdentity = { ...identity, projectRoot: root };
+        const stackId = yield* deriveStackId(stackIdentity);
+        const compiled = yield* compileStack({
+          projectRoot: root,
+          runtime: { kind: "native" },
+          config: {
+            capabilities: { pooler: { enabled: false } },
+            listeners: { pooler: { enabled: true, port: 55_329 } },
+          },
+        });
+        const store = yield* makeStackStateStore({ stateRoot: root });
+        yield* store.initialize(stackId, {
+          format: "supabase-stack-state-v1",
+          identity: stackIdentity,
+          runtime: { kind: "native" },
+          desiredLifecycle: "running",
+          definition: compiled.definition,
+          ports: [],
+          privatePorts: privateBindingIntentsFor(compiled.executionPlan, {
+            definition: compiled.definition,
+          }).map((binding, index) => ({ ...binding, port: 30_000 + index })),
+          secrets: {},
+        });
+        const ingress = yield* makeSupervisorIngress({
+          stackId,
+          stateRoot: root,
+          store,
+          context,
+          bindPrivate,
+        });
+        const state = yield* store.read(stackId).pipe(Effect.map((value) => value!));
+        yield* ingress.acquire({
+          stackId,
+          state,
+          definition: compiled.definition,
+          secrets: {},
+          plan: compiled.executionPlan,
+        });
+        const acquired = yield* store.read(stackId).pipe(Effect.map((value) => value!));
+        expect(acquired.ports.some(({ field }) => field === "pooler")).toBe(false);
+        expect(acquired.ports.some(({ field }) => field === "api")).toBe(true);
+      }),
+    ),
+  );
+
   it.live("closes reservation scopes after repeated failed acquire attempts", () =>
     run(
       Effect.gen(function* () {
@@ -130,12 +187,14 @@ describe("Supervisor ingress", () => {
         });
         yield* store.initialize(stackId, {
           format: "supabase-stack-state-v1",
-          identity: { ...stackIdentity, stackId },
+          identity: stackIdentity,
           runtime: { kind: "native" },
           desiredLifecycle: "running",
           definition: compiled.definition,
           ports: [],
-          privatePorts: privateBindingIntentsFor(compiled.executionPlan).map((binding, index) => ({
+          privatePorts: privateBindingIntentsFor(compiled.executionPlan, {
+            definition: compiled.definition,
+          }).map((binding, index) => ({
             ...binding,
             port: 30_000 + index,
           })),
@@ -235,10 +294,7 @@ describe("Supervisor ingress", () => {
           },
         });
         const store = yield* makeStackStateStore({ stateRoot: root });
-        yield* store.initialize(
-          stackId,
-          persistedIngressState(stackIdentity, stackId, compiled, 30000),
-        );
+        yield* store.initialize(stackId, persistedIngressState(stackIdentity, compiled, 30000));
         const listenerCloseCount = yield* Ref.make(0);
         const bindHost = (address: string, port: number, field: HostListener["field"]) =>
           bindHostListener(address, port, field).pipe(
@@ -363,7 +419,7 @@ describe("Supervisor ingress", () => {
           },
         });
         const store = yield* makeStackStateStore({ stateRoot: root });
-        const persisted = persistedIngressState(stackIdentity, stackId, compiled, 30_000);
+        const persisted = persistedIngressState(stackIdentity, compiled, 30_000);
         yield* store.initialize(stackId, persisted);
         const binds: Array<{ readonly address: string; readonly field: HostListener["field"] }> =
           [];
@@ -446,13 +502,14 @@ describe("Supervisor ingress", () => {
           identity: {
             ...identity,
             projectRoot: root,
-            stackId,
           },
           runtime: { kind: "native" },
           desiredLifecycle: "running",
           definition: compiled.definition,
           ports: [],
-          privatePorts: privateBindingIntentsFor(compiled.executionPlan).map((binding, index) => ({
+          privatePorts: privateBindingIntentsFor(compiled.executionPlan, {
+            definition: compiled.definition,
+          }).map((binding, index) => ({
             ...binding,
             port: 30100 + index,
           })),
@@ -536,7 +593,7 @@ describe("Supervisor ingress", () => {
           },
         });
         const store = yield* makeStackStateStore({ stateRoot: root });
-        const persisted = persistedIngressState(stackIdentity, stackId, compiled, 30200);
+        const persisted = persistedIngressState(stackIdentity, compiled, 30200);
         yield* store.initialize(stackId, persisted);
         const ingress = yield* makeSupervisorIngress({
           stackId,
@@ -620,7 +677,7 @@ describe("Supervisor ingress", () => {
           },
         });
         const store = yield* makeStackStateStore({ stateRoot: root });
-        const persisted = persistedIngressState(stackIdentity, stackId, compiled, 30300);
+        const persisted = persistedIngressState(stackIdentity, compiled, 30300);
         yield* store.initialize(stackId, persisted);
         const activated: string[] = [];
         const ingress = yield* makeSupervisorIngress({

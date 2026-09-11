@@ -32,7 +32,6 @@ import { DesiredStackLifecycleSchema, NetworkPortSchema, PORT_FIELDS } from "../
 export const STACK_STATE_FORMAT = "supabase-stack-state-v1" as const;
 
 const PersistedStackIdentitySchema = Schema.Struct({
-  stackId: Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/)),
   projectRoot: Schema.String,
   branchContext: Schema.String,
   stackName: Schema.String,
@@ -330,11 +329,7 @@ export const PersistedStackStateSchema = stateShape.pipe(
 );
 export type PersistedStackState = Schema.Schema.Type<typeof PersistedStackStateSchema>;
 
-export const toPersistedIdentity = (
-  identity: StackIdentity,
-  stackId: string,
-): PersistedStackIdentity => ({
-  stackId,
+export const toPersistedIdentity = (identity: StackIdentity): PersistedStackIdentity => ({
   projectRoot: identity.projectRoot,
   branchContext: identity.branchContext,
   stackName: identity.stackName,
