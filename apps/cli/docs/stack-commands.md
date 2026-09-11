@@ -180,6 +180,10 @@ The flag is local CLI configuration in `supabase/config.toml` or `supabase/confi
 excluded from hosted project configuration. Routing applies the CLI's working-directory rules,
 including `--workdir` and `SUPABASE_WORKDIR`, and prefers JSON when both files exist.
 
+## Port intents
+
+Host listener assignment for `supabase stack` is documented in [Port intents](./supabase-home.md#port-intents).
+
 ## Service selection and shutdown
 
 `supabase stack restart` reuses an existing stack's saved effective configuration. It stops and

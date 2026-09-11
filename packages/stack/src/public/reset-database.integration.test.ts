@@ -1,6 +1,7 @@
 // oxlint-disable effecttsgo/async-function -- Promise-facade live reset uses createTestStack.
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- docker availability probe for optional container cases.
 import { execFile as execFileCallback, spawnSync } from "node:child_process";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- native storage marker path.
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- native storage marker path.
 import { join } from "node:path";
@@ -24,7 +25,9 @@ const query = async (url: string, statement: string): Promise<ReadonlyArray<obje
       Effect.gen(function* () {
         const client = yield* PgClient.PgClient;
         return yield* client.unsafe(statement);
-      }).pipe(Effect.provide(PgClient.layer({ url: Redacted.make(url), connectTimeout: "10 seconds" }))),
+      }).pipe(
+        Effect.provide(PgClient.layer({ url: Redacted.make(url), connectTimeout: "10 seconds" })),
+      ),
     ),
   );
 
@@ -53,10 +56,7 @@ const volumeWorkloadIds = async (stackId: string): Promise<ReadonlyArray<string>
     .filter((value) => value.length > 0);
 };
 
-const resetAndAssert = async (
-  stack: TestStack,
-  runtime: StackRuntimePreference,
-): Promise<void> => {
+const resetAndAssert = async (stack: TestStack, runtime: StackRuntimePreference): Promise<void> => {
   const before = await stack.status();
   const credentials = await stack.credentials();
   await query(credentials.database.url, `CREATE TABLE ${MARKER_TABLE} (id integer PRIMARY KEY)`);
@@ -65,8 +65,7 @@ const resetAndAssert = async (
     await mkdir(join(stack.stateRoot, stack.id, "data", "storage"), { recursive: true });
     await writeFile(storageMarker, "keep");
   }
-  const volumesBefore =
-    runtime.kind === "container" ? await volumeWorkloadIds(stack.id) : [];
+  const volumesBefore = runtime.kind === "container" ? await volumeWorkloadIds(stack.id) : [];
 
   const after = await stack.resetDatabase();
   expect(after.id).toBe(stack.id);

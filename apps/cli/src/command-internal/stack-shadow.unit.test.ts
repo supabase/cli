@@ -14,6 +14,7 @@ const base = {
   dbPassword: "postgres",
   dbSettings: {},
   rolesSql: "",
+  bootstrapIdentity: "bootstrap-v1",
 };
 
 describe("stackShadowCacheKey", () => {
@@ -51,10 +52,13 @@ describe("stackShadowCacheKey", () => {
     }
   });
 
-  it("changes when roles.sql or db settings change", () => {
+  it("changes when roles.sql, db settings, or bootstrap identity change", () => {
     const withRoles = stackShadowCacheKey({ ...base, rolesSql: "create role x;" });
     expect(stackShadowCacheKey(base)).not.toBe(withRoles);
     expect(stackShadowCacheKey({ ...base, dbSettings: { max_connections: 20 } })).not.toBe(
+      stackShadowCacheKey(base),
+    );
+    expect(stackShadowCacheKey({ ...base, bootstrapIdentity: "bootstrap-v2" })).not.toBe(
       stackShadowCacheKey(base),
     );
   });

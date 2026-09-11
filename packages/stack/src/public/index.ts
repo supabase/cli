@@ -30,6 +30,7 @@ export type {
   PreparedCapability,
   PrepareStackResult,
 } from "./EffectStack.ts";
+export { databaseBootstrapIdentity } from "../model/DatabaseBootstrap.ts";
 export { createEphemeralPostgres, resolveEphemeralPostgresRelease } from "./EphemeralPostgres.ts";
 export type {
   CreateEphemeralPostgresOptions,

@@ -1038,9 +1038,7 @@ export const makeContainerRuntime = (
         }),
       );
 
-    const wipePersistentData = (
-      key: RuntimeWorkloadKey,
-    ): Effect.Effect<void, RuntimeDriverError> =>
+    const wipePersistentData = (key: RuntimeWorkloadKey): Effect.Effect<void, RuntimeDriverError> =>
       registration.withPermit(
         Effect.gen(function* () {
           const entries = yield* withEngine(key, options.engine.listResources(key.stackId));

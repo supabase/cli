@@ -4,6 +4,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Option, Path, Redacted, Schema } from "effect";
 import {
   EphemeralPostgresError,
+  databaseBootstrapIdentity,
   type CreateEphemeralPostgresOptions,
   type EffectEphemeralPostgres,
 } from "@supabase/stack/effect";
@@ -162,6 +163,7 @@ describe("stackAcquireShadowDatabase", () => {
                     dbPassword: "postgres",
                     dbSettings: {},
                     rolesSql: "",
+                    bootstrapIdentity: databaseBootstrapIdentity,
                   }),
                 ),
               );
@@ -328,6 +330,7 @@ describe("stackAcquireShadowDatabase", () => {
             dbPassword: "postgres",
             dbSettings: {},
             rolesSql: "",
+            bootstrapIdentity: databaseBootstrapIdentity,
           }),
         );
         yield* fs.writeFileString(path.join(cacheDir, tarName), "corrupt");
