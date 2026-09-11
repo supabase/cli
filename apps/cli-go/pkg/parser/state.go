@@ -192,18 +192,41 @@ func (s *EscapeState) Next(r rune, data []byte) State {
 type AtomicState struct {
 	prev      State
 	delimiter []byte
+	// pendingEnd tracks a candidate END closer awaiting a trailing
+	// boundary check on the next rune.
+	pendingEnd bool
 }
 
 func (s *AtomicState) Next(r rune, data []byte) State {
+	// A candidate END closes only at a standalone keyword.
+	if s.pendingEnd {
+		if isIdentifierRune(r) {
+			s.pendingEnd = false
+		} else {
+			state := &ReadyState{}
+			return state.Next(r, data)
+		}
+	}
 	// If we are in a quoted state, the current delimiter doesn't count.
 	if curr := s.prev.Next(r, data); curr != nil {
 		s.prev = curr
 	}
 	if _, ok := s.prev.(*ReadyState); ok {
+		if len(data) < len(s.delimiter) {
+			return s
+		}
 		window := data[len(data)-len(s.delimiter):]
 		// Treat delimiter as case insensitive
 		if strings.EqualFold(string(window), string(s.delimiter)) {
-			return &ReadyState{}
+			if !strings.EqualFold(string(s.delimiter), END_ATOMIC) {
+				return &ReadyState{}
+			}
+			if offset := len(data) - len(s.delimiter); offset > 0 {
+				if prev, _ := utf8.DecodeLastRune(data[:offset]); isIdentifierRune(prev) {
+					return s
+				}
+			}
+			s.pendingEnd = true
 		}
 	}
 	return s

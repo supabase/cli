@@ -207,4 +207,29 @@ GRANT EXECUTE ON FUNCTION public.atomic_example() TO authenticated;`,
 		}
 		checkSplit(t, sql)
 	})
+
+	t.Run("ignores end in identifiers", func(t *testing.T) {
+		names := []string{
+			"pending",
+			"append",
+			"legend",
+			"ends",
+			"ending",
+			"end_",
+			"PENDING",
+		}
+		for _, name := range names {
+			t.Run(name, func(t *testing.T) {
+				sql := []string{
+					`CREATE OR REPLACE FUNCTION public.probe_splitter() RETURNS integer
+LANGUAGE SQL
+IMMUTABLE
+BEGIN ATOMIC
+  SELECT 1 AS ` + name + `;
+END;`,
+				}
+				checkSplit(t, sql)
+			})
+		}
+	})
 }
