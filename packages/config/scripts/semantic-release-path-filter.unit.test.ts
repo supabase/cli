@@ -97,6 +97,11 @@ function fakeAnalyzeCommitsContext(commits: Commit[], cwd: string): AnalyzeCommi
 describe("semantic-release-path-filter", () => {
   let repoDir: string;
   let hashConfigOnly: string;
+  let hashConfigModified: string;
+  let hashConfigDeleted: string;
+  let hashRenameIntoConfig: string;
+  let hashRenameOutOfConfig: string;
+  let hashSquash: string;
   let hashCliOnly: string;
   let hashBoth: string;
   let hashPrefixTrap: string;
@@ -117,6 +122,28 @@ describe("semantic-release-path-filter", () => {
       { "packages/config/src/foo.ts": "export const foo = 1;\n" },
       "chore: seed packages/config/src/foo.ts",
     );
+    hashConfigModified = await commitFiles(
+      repoDir,
+      { "packages/config/src/foo.ts": "export const foo = 2;\n" },
+      "chore: modify packages/config/src/foo.ts",
+    );
+    await git(repoDir, ["rm", "packages/config/src/foo.ts"]);
+    await git(repoDir, ["commit", "-m", "chore: delete packages/config/src/foo.ts"]);
+    hashConfigDeleted = (await git(repoDir, ["rev-parse", "HEAD"])).trim();
+
+    await commitFiles(
+      repoDir,
+      { "scratch/renamed.ts": "export const renamed = true;\n" },
+      "chore: seed a file outside packages/config",
+    );
+    await mkdir(join(repoDir, "packages/config/src"), { recursive: true });
+    await git(repoDir, ["mv", "scratch/renamed.ts", "packages/config/src/renamed.ts"]);
+    await git(repoDir, ["commit", "-m", "chore: rename a file into packages/config"]);
+    hashRenameIntoConfig = (await git(repoDir, ["rev-parse", "HEAD"])).trim();
+    await mkdir(join(repoDir, "scratch"), { recursive: true });
+    await git(repoDir, ["mv", "packages/config/src/renamed.ts", "scratch/renamed-again.ts"]);
+    await git(repoDir, ["commit", "-m", "chore: rename a file out of packages/config"]);
+    hashRenameOutOfConfig = (await git(repoDir, ["rev-parse", "HEAD"])).trim();
     hashCliOnly = await commitFiles(
       repoDir,
       { "apps/cli/src/bar.ts": "export const bar = 1;\n" },
@@ -141,6 +168,22 @@ describe("semantic-release-path-filter", () => {
       "chore: seed a non-ASCII path under packages/config",
     );
 
+    await git(repoDir, ["checkout", "-b", "squashed", "-q"]);
+    await commitFiles(
+      repoDir,
+      { "apps/cli/src/squashed.ts": "export const first = 1;\n" },
+      "chore: first commit that will be squashed",
+    );
+    await commitFiles(
+      repoDir,
+      { "packages/config/src/squashed.ts": "export const second = 2;\n" },
+      "chore: second commit that will be squashed",
+    );
+    await git(repoDir, ["checkout", "main", "-q"]);
+    await git(repoDir, ["merge", "--squash", "squashed"]);
+    await git(repoDir, ["commit", "-m", "chore: squash a config change"]);
+    hashSquash = (await git(repoDir, ["rev-parse", "HEAD"])).trim();
+
     await git(repoDir, ["checkout", "-b", "feature", "-q"]);
     await commitFiles(
       repoDir,
@@ -162,15 +205,32 @@ describe("semantic-release-path-filter", () => {
 
   describe("filterCommitsToPackage", () => {
     test("keeps only commits whose diff touches packages/config/**, preserving the input's order", async () => {
-      const shuffledInput = [hashCliOnly, hashBoth, hashPrefixTrap, hashMerge, hashConfigOnly].map(
-        (hash) => ({
-          hash,
-        }),
-      );
+      const shuffledInput = [
+        { hash: hashCliOnly, marker: "cli" },
+        { hash: hashBoth, marker: "both", metadata: { subject: "keep this object intact" } },
+        { hash: hashPrefixTrap, marker: "prefix trap" },
+        { hash: hashMerge, marker: "merge" },
+        { hash: hashConfigOnly, marker: "config" },
+      ];
 
       const result = await filterCommitsToPackage(shuffledInput, repoDir);
 
-      expect(result).toEqual([{ hash: hashBoth }, { hash: hashConfigOnly }]);
+      expect(result).toEqual([shuffledInput[1], shuffledInput[4]]);
+      expect(result[0]).toBe(shuffledInput[1]);
+      expect(result[1]).toBe(shuffledInput[4]);
+    });
+
+    test.each([
+      ["addition", () => hashConfigOnly],
+      ["modification", () => hashConfigModified],
+      ["deletion", () => hashConfigDeleted],
+      ["rename into packages/config", () => hashRenameIntoConfig],
+      ["rename out of packages/config", () => hashRenameOutOfConfig],
+      ["squash commit", () => hashSquash],
+    ])("selects a config %s from its actual diff", async (_scenario, getHash) => {
+      const hash = getHash();
+
+      await expect(filterCommitsToPackage([{ hash }], repoDir)).resolves.toEqual([{ hash }]);
     });
 
     test("excludes a merge commit even though the branch it merged touched packages/config/**", async () => {
@@ -221,6 +281,15 @@ describe("semantic-release-path-filter", () => {
       ).rejects.toThrow(/full lowercase hex object IDs/);
     });
 
+    test.each(["not-an-object-id", "A".repeat(40), "1".repeat(39), "1".repeat(41)])(
+      "rejects malformed object ID %j before invoking git",
+      async (hash) => {
+        await expect(filterCommitsToPackage([{ hash }], repoDir)).rejects.toThrow(
+          /full lowercase hex object IDs/,
+        );
+      },
+    );
+
     test("rejects with a descriptive error when git diff-tree exits non-zero", async () => {
       const notARepo = await mkdtemp(join(tmpdir(), "semantic-release-path-filter-not-a-repo-"));
       try {
@@ -254,6 +323,29 @@ describe("semantic-release-path-filter", () => {
       const result = await analyzeCommits({}, context);
 
       expect(result).toBeNull();
+    });
+
+    test("excludes feat(config) when its actual diff touches only another workspace", async () => {
+      const context = fakeAnalyzeCommitsContext(
+        [fakeCommit(hashCliOnly, "feat(config): title scope does not establish ownership")],
+        repoDir,
+      );
+
+      await expect(analyzeCommits({}, context)).resolves.toBeNull();
+    });
+
+    test("selects a differently scoped title when its actual diff touches packages/config", async () => {
+      const context = fakeAnalyzeCommitsContext(
+        [
+          fakeCommit(
+            hashConfigModified,
+            "fix(cli): paths, rather than title scope, establish ownership",
+          ),
+        ],
+        repoDir,
+      );
+
+      await expect(analyzeCommits({}, context)).resolves.toBe("patch");
     });
 
     test('resolves "patch", not "major", because the breaking-change commit outside packages/config is filtered out', async () => {
