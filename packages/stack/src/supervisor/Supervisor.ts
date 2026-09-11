@@ -72,6 +72,14 @@ import {
 
 import type { ActivationResult } from "../gateway/Gateway.ts";
 
+const RESET_DATABASE_BOUNCE_CAPABILITIES: ReadonlySet<CapabilityName> = new Set([
+  "auth",
+  "storage",
+  "realtime",
+  "pooler",
+  "analytics",
+]);
+
 interface SupervisorLaunchAttempt {
   /** Rolls back only workloads and ingress acquired by this launch. */
   readonly rollback: Effect.Effect<void, StackError>;
@@ -702,13 +710,9 @@ export const makeSupervisor = (
             (error) => new StackStateInvalidError({ message: error.message, cause: error }),
           ),
         );
-        const bounceNames = new Set<string>(
+        const bounceNames = new Set<CapabilityName>(
           status.capabilities.flatMap((capability) =>
-            capability.state === "ready" &&
-            (capability.name === "auth" ||
-              capability.name === "storage" ||
-              capability.name === "realtime" ||
-              capability.name === "pooler")
+            capability.state === "ready" && RESET_DATABASE_BOUNCE_CAPABILITIES.has(capability.name)
               ? [capability.name]
               : [],
           ),

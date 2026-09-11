@@ -19,6 +19,7 @@ import {
 import { ChildProcessSpawner } from "effect/unstable/process";
 import {
   createEphemeralPostgres,
+  databaseBootstrapIdentity,
   resolveEphemeralPostgresRelease,
   type CreateEphemeralPostgresOptions,
   type EffectEphemeralPostgres,
@@ -89,6 +90,7 @@ export interface StackShadowCacheKeyInputs {
   readonly dbPassword: string;
   readonly dbSettings: unknown;
   readonly rolesSql: string;
+  readonly bootstrapIdentity: string;
 }
 
 export const stackShadowCacheKey = (inputs: StackShadowCacheKeyInputs): string => {
@@ -101,6 +103,7 @@ export const stackShadowCacheKey = (inputs: StackShadowCacheKeyInputs): string =
     `jwt_expiry=${inputs.jwtExpiry}`,
     `db_password=${quoted(inputs.dbPassword)}`,
     `db_settings=${JSON.stringify(inputs.dbSettings ?? {})}`,
+    `bootstrap=${quoted(inputs.bootstrapIdentity)}`,
   ].join("\n");
   return scryptSync(
     `${payload}\nroles_sql=\n${inputs.rolesSql}`,
@@ -443,6 +446,7 @@ export const stackAcquireShadowDatabase = <E>(
       dbPassword: input.password,
       dbSettings: canonicalSettings(input.db.settings),
       rolesSql,
+      bootstrapIdentity: databaseBootstrapIdentity,
     });
     const tarName = stackShadowBaselineTarFileName(key);
     const tarPath = path.join(cacheDir, tarName);

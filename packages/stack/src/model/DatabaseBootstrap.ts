@@ -15,13 +15,16 @@ const DATABASE_BOOTSTRAP_ROLES = [
 ] as const;
 type DatabaseBootstrapRole = (typeof DATABASE_BOOTSTRAP_ROLES)[number];
 
+export const JWT_SECRET_SETTING = "app.settings.jwt_secret" as const;
+const JWT_EXP_SETTING = "app.settings.jwt_exp" as const;
+
 type DatabaseBootstrapSetting =
   | {
-      readonly name: "app.settings.jwt_secret";
+      readonly name: typeof JWT_SECRET_SETTING;
       readonly value: Redacted.Redacted<string>;
     }
   | {
-      readonly name: "app.settings.jwt_exp";
+      readonly name: typeof JWT_EXP_SETTING;
       readonly value: number;
     };
 
@@ -74,6 +77,22 @@ const REALTIME_SCHEMA_STATEMENT =
   "CREATE SCHEMA IF NOT EXISTS _realtime;\nALTER SCHEMA _realtime OWNER TO postgres;";
 const ADVISORY_LOCK_STATEMENT = `SELECT pg_advisory_xact_lock(hashtext('supabase_internal.bootstrap'));`;
 
+/** Private database created outside the bootstrap transaction. */
+export const INTERNAL_DATABASE = "_supabase";
+/** Service-owned schemas created in the private database. */
+export const INTERNAL_SCHEMAS = ["_analytics", "_supavisor"] as const;
+
+/** Cache/key material for the managed bootstrap. */
+export const databaseBootstrapIdentity = [
+  ...DATABASE_BOOTSTRAP_ROLES,
+  ADVISORY_LOCK_STATEMENT,
+  REALTIME_SCHEMA_STATEMENT,
+  JWT_SECRET_SETTING,
+  JWT_EXP_SETTING,
+  INTERNAL_DATABASE,
+  ...INTERNAL_SCHEMAS,
+].join("\n");
+
 const statementError = (error: DatabaseBootstrapError, statement: string) =>
   new DatabaseBootstrapError({
     message: error.message,
@@ -106,8 +125,8 @@ export const runDatabaseBootstrap = (
       );
       yield* transaction
         .setDatabaseSettings([
-          { name: "app.settings.jwt_secret", value: options.jwtSecret },
-          { name: "app.settings.jwt_exp", value: options.jwtExpiry },
+          { name: JWT_SECRET_SETTING, value: options.jwtSecret },
+          { name: JWT_EXP_SETTING, value: options.jwtExpiry },
         ])
         .pipe(
           Effect.mapError(

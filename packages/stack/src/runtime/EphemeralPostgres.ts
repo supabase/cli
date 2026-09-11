@@ -49,6 +49,7 @@ import { bootstrapManagedPostgres } from "./PostgresDatabaseSession.ts";
 import { makeProductionRuntimeArtifactPreparer } from "../preparation/RuntimeArtifacts.ts";
 import { resolveContainerEngine, ContainerEngineResolver } from "./ContainerEngineResolver.ts";
 import type { ContainerEngine } from "./ContainerEngine.ts";
+import { encodeRuntimeEnvFile } from "./RuntimeEnvFile.ts";
 
 const DATABASE_WORKLOAD_ID = "database:database";
 const PGDATA_DIR_NAME = "data";
@@ -206,10 +207,11 @@ const writeEnvFile = (
 ): Effect.Effect<string, EphemeralPostgresError, FileSystem.FileSystem> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    const text = Object.entries(values)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([name, value]) => `${name}=${value}\n`)
-      .join("");
+    const text = yield* encodeRuntimeEnvFile(values).pipe(
+      Effect.mapError((cause) =>
+        ephemeralError("Unable to write Postgres environment file", { cause, path: filePath }),
+      ),
+    );
     yield* fs
       .writeFileString(filePath, text)
       .pipe(

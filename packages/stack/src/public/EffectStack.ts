@@ -320,7 +320,11 @@ const logsError = (error: ControlError): StackLogsError =>
 const destroyError = (error: ControlError): DestroyStackError =>
   narrowError(error, DESTROY_STACK_ERROR_TAGS, (message) => new StackDestructionError({ message }));
 const resetDatabaseError = (error: ControlError): ResetDatabaseError =>
-  narrowError(error, RESET_DATABASE_ERROR_TAGS, (message) => new StackStateInvalidError({ message }));
+  narrowError(
+    error,
+    RESET_DATABASE_ERROR_TAGS,
+    (message) => new StackStateInvalidError({ message }),
+  );
 
 /** Internal control-transport seam used by public lifecycle integration tests. */
 export interface HandleDependencies {

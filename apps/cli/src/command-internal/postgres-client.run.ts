@@ -22,6 +22,23 @@ export const parsePostgresClientMajor = (text: string): number | undefined => {
   return Number.isInteger(major) ? major : undefined;
 };
 
+/** `pg_prove` has no Postgres major; any matching `psql` or `pg_dump` on PATH is enough. */
+export const matchingHostPostgresClient = (
+  dumpMajor: number | undefined,
+  psqlMajor: number | undefined,
+  expected: number,
+):
+  | { readonly kind: "match" }
+  | {
+      readonly kind: "mismatch";
+      readonly command: "pg_dump" | "psql";
+      readonly actual: number | undefined;
+    } => {
+  if (dumpMajor === expected || psqlMajor === expected) return { kind: "match" };
+  if (psqlMajor !== undefined) return { kind: "mismatch", command: "psql", actual: psqlMajor };
+  return { kind: "mismatch", command: "pg_dump", actual: dumpMajor };
+};
+
 export class HostPostgresClientError extends Data.TaggedError("HostPostgresClientError")<{
   readonly message: string;
   readonly suggestion?: string;
@@ -98,12 +115,9 @@ export const requireHostPgProve = (
     const psql = yield* hostClientVersion("psql").pipe(Effect.result);
     const dumpMajor = Result.isSuccess(dump) ? parsePostgresClientMajor(dump.success) : undefined;
     const psqlMajor = Result.isSuccess(psql) ? parsePostgresClientMajor(psql.success) : undefined;
-    if (dumpMajor !== undefined && dumpMajor !== expectedMajor)
-      return yield* majorMismatch("pg_dump", dumpMajor, expectedMajor);
-    if (psqlMajor !== undefined && psqlMajor !== expectedMajor)
-      return yield* majorMismatch("psql", psqlMajor, expectedMajor);
-    const major = psqlMajor ?? dumpMajor;
-    if (major !== expectedMajor) return yield* majorMismatch("psql", major, expectedMajor);
+    const matched = matchingHostPostgresClient(dumpMajor, psqlMajor, expectedMajor);
+    if (matched.kind === "match") return;
+    return yield* majorMismatch(matched.command, matched.actual, expectedMajor);
   });
 
 const concatChunks = (chunks: ReadonlyArray<Uint8Array>): Uint8Array => {

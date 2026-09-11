@@ -1526,9 +1526,9 @@ describe("Supervisor composition", () => {
 
         const status = yield* fixture.supervisor.resetDatabase;
         expect(status.lifecycle).toBe("running");
-        expect(status.capabilities.find((capability) => capability.name === "database")?.state).toBe(
-          "ready",
-        );
+        expect(
+          status.capabilities.find((capability) => capability.name === "database")?.state,
+        ).toBe("ready");
         expect(yield* Ref.get(timeline)).toEqual([
           "stop:auth:auth",
           "stop:database:database",
@@ -1541,25 +1541,27 @@ describe("Supervisor composition", () => {
     ),
   );
 
-  it.live("relaunches the database after a wipe failure because stopped workloads were forgotten", () =>
-    run(
-      Effect.gen(function* () {
-        const timeline = yield* Ref.make<ReadonlyArray<string>>([]);
-        const wipeFailFirst = yield* Ref.make(true);
-        const fixture = yield* makeFixture({ timeline, wipeFailFirst });
-        yield* fixture.supervisor.start();
-        yield* Ref.set(timeline, []);
+  it.live(
+    "relaunches the database after a wipe failure because stopped workloads were forgotten",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const timeline = yield* Ref.make<ReadonlyArray<string>>([]);
+          const wipeFailFirst = yield* Ref.make(true);
+          const fixture = yield* makeFixture({ timeline, wipeFailFirst });
+          yield* fixture.supervisor.start();
+          yield* Ref.set(timeline, []);
 
-        const resetExit = yield* fixture.supervisor.resetDatabase.pipe(Effect.exit);
-        expect(Exit.isFailure(resetExit)).toBe(true);
+          const resetExit = yield* fixture.supervisor.resetDatabase.pipe(Effect.exit);
+          expect(Exit.isFailure(resetExit)).toBe(true);
 
-        yield* fixture.supervisor.start();
-        expect(yield* Ref.get(timeline)).toEqual([
-          "stop:database:database",
-          "start:database:database",
-        ]);
-      }),
-    ),
+          yield* fixture.supervisor.start();
+          expect(yield* Ref.get(timeline)).toEqual([
+            "stop:database:database",
+            "start:database:database",
+          ]);
+        }),
+      ),
   );
 
   it.live("refuses reset when the database is not running", () =>

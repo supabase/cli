@@ -70,6 +70,10 @@ The flag is local CLI configuration in `supabase/config.toml` and is excluded fr
 configuration. Routing reads that exact file after applying the CLI's working-directory rules,
 including `--workdir` and `SUPABASE_WORKDIR`; a JSON-only project does not enable the flag.
 
+## Port intents
+
+Host listener assignment for `supabase stack` is documented in [Port intents](./supabase-home.md#port-intents).
+
 ## Service selection and shutdown
 
 `supabase stack start --exclude studio,analytics -x mail` disables those services in the effective

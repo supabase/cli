@@ -3,6 +3,9 @@ import { Context, Duration, Effect, Layer, Predicate, Redacted, Schema, Scope } 
 import { isSqlError, type SqlError } from "effect/unstable/sql/SqlError";
 import {
   DatabaseBootstrapError,
+  INTERNAL_DATABASE,
+  INTERNAL_SCHEMAS,
+  JWT_SECRET_SETTING,
   type DatabaseBootstrapOptions,
   type DatabaseSession,
   type DatabaseSqlValue,
@@ -106,7 +109,7 @@ export const makeDatabaseSessionFromSqlClient = (
         .join(", ");
       const parameters = settings.flatMap((setting) => [
         setting.name,
-        setting.name === "app.settings.jwt_secret" ? Redacted.value(setting.value) : setting.value,
+        setting.name === JWT_SECRET_SETTING ? Redacted.value(setting.value) : setting.value,
       ]);
       return generated(
         `SELECT string_agg(format('ALTER DATABASE postgres SET %I TO %L', name, value), E';\\n') AS statement FROM (VALUES ${values}) AS settings(name, value)`,
@@ -154,9 +157,6 @@ const makePostgresDatabaseSession = (
       return Context.get(services, PgClient.PgClient);
     }),
   );
-
-const INTERNAL_DATABASE = "_supabase";
-const INTERNAL_SCHEMAS = ["_analytics", "_supavisor"] as const;
 
 /**
  * Ensures the private database and service-owned schemas exist before any

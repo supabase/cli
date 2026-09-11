@@ -593,7 +593,9 @@ export const makeNativeRuntime = (
         }),
       );
 
-    const wipePersistentData = (key: RuntimeWorkloadKey): Effect.Effect<void, RuntimeDriverError> =>
+    const wipePersistentData = (
+      key: RuntimeWorkloadKey,
+    ): Effect.Effect<void, RuntimeDriverError> =>
       key.workloadId === "database:database" && options.wipeDatabaseData !== undefined
         ? options.wipeDatabaseData
         : Effect.void;
