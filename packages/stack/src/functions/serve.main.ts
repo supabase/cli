@@ -195,6 +195,7 @@ export function prepareUserRequest(request: Request): Request {
   const url = new URL(request.url);
   const forwardedHost = request.headers.get("x-forwarded-host");
   if (forwardedHost) url.hostname = forwardedHost;
+  // Cloning tees the body, so an unread branch can stall early worker responses.
   const forwarded = new Request(url, request);
   forwarded.headers.delete("sb-api-key");
   EdgeRuntime.applySupabaseTag(request, forwarded);

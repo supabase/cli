@@ -288,6 +288,7 @@ export function prepareUserRequest(req: Request): Request {
   const clonedURL = new URL(req.url);
   const forwardedHost = req.headers.get("x-forwarded-host");
   clonedURL.hostname = forwardedHost ?? clonedURL.hostname;
+  // Cloning tees the body, so an unread branch can stall early worker responses.
   const forwardedReq = new Request(clonedURL, req);
 
   forwardedReq.headers.delete("sb-api-key");

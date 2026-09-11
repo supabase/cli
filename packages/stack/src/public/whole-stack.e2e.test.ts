@@ -461,7 +461,10 @@ const serviceHeaders = (credentials: PromiseStackCredentials): Record<string, st
   apiHeaders(credentials, credentials.api.serviceRoleJwt);
 
 const functionSource = (table: string, marker: string): string => `
-Deno.serve(async () => {
+Deno.serve(async (request) => {
+  if (request.headers.get("x-reject-before-body") === "true") {
+    return new Response("rejected", { status: 400 });
+  }
   console.log("${marker}");
   let publishableKey: unknown;
   try {
@@ -837,6 +840,15 @@ const exerciseWholeStackFunctions = async (scenario: WholeStackScenario): Promis
         rows: expect.arrayContaining([{ id: 1, payload: markers.first }]),
       }),
     );
+
+    const earlyResponse = await fetch(new URL(functionPath, `${api.url.replace(/\/$/u, "")}/`), {
+      method: "POST",
+      headers: { ...apiHeaders(credentials), "x-reject-before-body": "true" },
+      body: new Uint8Array(128 * 1024),
+      signal: AbortSignal.timeout(5_000),
+    });
+    expect(earlyResponse.status).toBe(400);
+    expect(await earlyResponse.text()).toBe("rejected");
 
     await writeFile(
       join(projectRoot, "supabase", "functions", functionSlug, "index.ts"),

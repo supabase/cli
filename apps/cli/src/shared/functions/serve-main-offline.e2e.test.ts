@@ -149,6 +149,21 @@ function containerLogs(container: string): string {
   return `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
 }
 
+async function fetchFunctionWithDiagnostics(
+  url: string,
+  diagnosticContainers: readonly string[],
+  init: RequestInit,
+): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (cause) {
+    const diagnostics = diagnosticContainers
+      .map((container) => `${container} logs:\n${containerLogs(container)}`)
+      .join("\n");
+    throw new Error(`Function request to ${url} failed.\n${diagnostics}`, { cause });
+  }
+}
+
 async function fetchColdFunction(
   url: string,
   diagnosticContainers: readonly string[],
@@ -497,12 +512,16 @@ describe("functions serve runtime template (offline)", () => {
         expect(aliasResponse.headers.get("x-shared-import")).toBe("shared-import-ok");
         expect(nestedResponse.status).toBe(200);
         expect(nestedResponse.headers.get("x-function-slug")).toBe("nested-worker-path");
-        const earlyResponse = await fetch(`${functionsUrl}/custom`, {
-          method: "POST",
-          headers: { "x-reject-before-body": "true" },
-          body: new Uint8Array(128 * 1024),
-          signal: AbortSignal.timeout(5_000),
-        });
+        const earlyResponse = await fetchFunctionWithDiagnostics(
+          `${functionsUrl}/custom`,
+          diagnosticContainers,
+          {
+            method: "POST",
+            headers: { "x-reject-before-body": "true" },
+            body: new Uint8Array(128 * 1024),
+            signal: AbortSignal.timeout(5_000),
+          },
+        );
         expect(earlyResponse.status).toBe(400);
         expect(await earlyResponse.text()).toBe("rejected");
         const runtimeLogs = containerLogs(runtimeContainer);
