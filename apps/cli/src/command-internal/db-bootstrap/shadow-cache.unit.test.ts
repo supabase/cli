@@ -61,6 +61,7 @@ describe("shadowCacheKey", () => {
     expect(shadowBaselineTarFileName(first)).toBe(`shadow-baseline-${first}.tar`);
   });
 
+  // Each variant performs an intentionally expensive scrypt derivation; parallel suite load needs headroom.
   it("changes when ANY baked-in input changes", { timeout: 30_000 }, () => {
     const base = baseKeyInputs();
     const mutations: ReadonlyArray<{

@@ -7,7 +7,7 @@ import { stackStop } from "./stop.handler.ts";
 const config = {
   all: Flag.boolean("all").pipe(
     Flag.withDescription("Stop every readable managed stack."),
-    Flag.withDefault(false),
+    Flag.optional,
   ),
   stack: Flag.string("stack").pipe(
     Flag.withDescription("Stop the stack with this name (defaults to the current project stack)."),

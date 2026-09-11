@@ -1,10 +1,14 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option, Stream } from "effect";
-import { StackDestructionError, StackIdSchema } from "@supabase/stack/effect";
+import { ContainerEngineError, StackDestructionError, StackIdSchema } from "@supabase/stack/effect";
 import type { EffectStack } from "@supabase/stack/effect";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
-import { YesFlag } from "../../../../command-internal/global-flags.ts";
+import { OutputFlag, YesFlag } from "../../../../command-internal/global-flags.ts";
+import {
+  ErrorActionabilityId,
+  actionability,
+} from "../../../../shared/telemetry/error-actionability.ts";
 import {
   mockCommandSettings,
   mockTelemetryStateTracked,
@@ -37,17 +41,20 @@ const flags = (stackId = Option.none<string>(), stack = Option.none<string>()) =
 function setup(options: {
   yes: boolean;
   destroyFailure?: boolean;
+  destroyContainerFailure?: boolean;
   interactive?: boolean;
+  outputInteractive?: boolean;
   promptConfirmResponses?: ReadonlyArray<boolean>;
   outputFormat?: "text" | "json";
   found?: boolean;
 }) {
   const output = mockOutput({
     format: options.outputFormat,
+    interactive: options.outputInteractive,
     promptConfirmResponses: options.promptConfirmResponses,
   });
   const telemetry = mockTelemetryStateTracked();
-  const state = { destroyed: 0 };
+  const state = { destroyed: 0, opened: 0 };
   const stack: EffectStack = {
     id,
     status: () => Effect.die("unused"),
@@ -56,9 +63,11 @@ function setup(options: {
     start: () => Effect.die("unused"),
     stop: () => Effect.die("unused"),
     destroy: () =>
-      options.destroyFailure
-        ? Effect.fail(new StackDestructionError({ message: "destroy failed" }))
-        : Effect.sync(() => void state.destroyed++),
+      options.destroyContainerFailure
+        ? Effect.fail(new ContainerEngineError({ message: "container engine unavailable" }))
+        : options.destroyFailure
+          ? Effect.fail(new StackDestructionError({ message: "destroy failed" }))
+          : Effect.sync(() => void state.destroyed++),
     logs: () => Effect.die("unused"),
     followLogs: () => Stream.empty,
   };
@@ -83,7 +92,11 @@ function setup(options: {
           Effect.succeed(options.found === false ? Option.none() : Option.some(descriptor)),
         createStack: () => Effect.die("unused"),
         inspectStack: () => Effect.succeed({ descriptor, owner: "absent" as const }),
-        openStack: () => Effect.succeed(stack),
+        openStack: () =>
+          Effect.sync(() => {
+            state.opened++;
+            return stack;
+          }),
         discoverStacks: () => Effect.succeed({ stacks: [], errors: [] }),
       }),
       BunServices.layer,
@@ -129,6 +142,30 @@ describe("stack destroy", () => {
     return Effect.gen(function* () {
       const failure = yield* stackDestroy(flags()).pipe(Effect.flip);
       expect(failure.message).toContain("not confirmed");
+      expect(failure.reason).toBe("cancelled");
+      expect(failure[ErrorActionabilityId]).toEqual(actionability.cancelled);
+      expect(fixture.state.destroyed).toBe(0);
+    }).pipe(Effect.provide(fixture.layer));
+  });
+
+  it.live("destroys a stack after interactive confirmation is accepted", () => {
+    const fixture = setup({ yes: false, interactive: true, promptConfirmResponses: [true] });
+    return Effect.gen(function* () {
+      yield* stackDestroy(flags());
+      expect(fixture.state.destroyed).toBe(1);
+    }).pipe(Effect.provide(fixture.layer));
+  });
+
+  it.live("requires --yes when stdout is redirected", () => {
+    const fixture = setup({
+      yes: false,
+      interactive: true,
+      outputInteractive: false,
+      promptConfirmResponses: [true],
+    });
+    return Effect.gen(function* () {
+      const failure = yield* stackDestroy(flags()).pipe(Effect.flip);
+      expect(failure.reason).toBe("confirmation");
       expect(fixture.state.destroyed).toBe(0);
     }).pipe(Effect.provide(fixture.layer));
   });
@@ -140,6 +177,26 @@ describe("stack destroy", () => {
       expect(failure.message).toContain("destroy failed");
       expect(fixture.telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(fixture.layer));
+  });
+
+  it.live("classifies container engine failures with runtime guidance", () => {
+    const fixture = setup({ yes: true, destroyContainerFailure: true });
+    return Effect.gen(function* () {
+      const failure = yield* stackDestroy(flags(Option.some(id))).pipe(Effect.flip);
+      expect(failure.reason).toBe("runtime");
+      expect(failure[ErrorActionabilityId]).toEqual(actionability.dockerNotRunning);
+    }).pipe(Effect.provide(fixture.layer));
+  });
+
+  it.live("rejects the legacy output flag before opening a stack", () => {
+    const fixture = setup({ yes: true });
+    return Effect.gen(function* () {
+      const failure = yield* stackDestroy(flags(Option.some(id))).pipe(Effect.flip);
+      expect(failure.reason).toBe("flags");
+      expect(fixture.state.opened).toBe(0);
+    }).pipe(
+      Effect.provide(Layer.mergeAll(fixture.layer, Layer.succeed(OutputFlag, Option.some("json")))),
+    );
   });
 
   it.live("rejects malformed and conflicting targets without opening a stack", () => {

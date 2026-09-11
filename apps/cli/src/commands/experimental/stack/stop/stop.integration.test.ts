@@ -51,7 +51,7 @@ const status = (id: string): StackStatus => ({
 const flags = (
   overrides: Partial<Parameters<typeof stackStop>[0]> = {},
 ): Parameters<typeof stackStop>[0] => ({
-  all: false,
+  all: Option.none<boolean>(),
   stack: Option.none<string>(),
   stackId: Option.none<string>(),
   ...overrides,
@@ -178,7 +178,7 @@ describe("stack stop", () => {
       },
     });
     return Effect.gen(function* () {
-      yield* stackStop(flags({ all: true }));
+      yield* stackStop(flags({ all: Option.some(true) }));
       expect(setupResult.state.openedIds).toEqual([id, "c".repeat(64)]);
       expect(setupResult.state.stopCalls).toBe(2);
       expect(setupResult.state.destroyCalled).toBe(false);
@@ -217,13 +217,15 @@ describe("stack stop", () => {
       },
     });
     return Effect.gen(function* () {
-      const failure = yield* stackStop(flags({ all: true })).pipe(Effect.flip);
+      const failure = yield* stackStop(flags({ all: Option.some(true) })).pipe(Effect.flip);
       expect(failure.message).toContain("failed 2");
       expect(setupResult.state.openedIds).toEqual([first, second]);
       expect(setupResult.state.destroyCalled).toBe(false);
       expect(failure.detail).toBe(
         `Failed to stop managed stack ${first}: stop failed\nFailed to stop managed stack ${second}: stop failed`,
       );
+      expect(failure.reason).toBe("unknown");
+      expect(failure.suggestion).toContain("--debug");
     }).pipe(Effect.provide(setupResult.layer));
   });
 
@@ -248,15 +250,19 @@ describe("stack stop", () => {
         errors: [
           {
             id: StackIdSchema.make(corrupt),
-            error: new StackStateInvalidError({ message: "corrupt state" }),
+            error: new StackStateInvalidError({
+              message: `Failed to read managed stack ${corrupt}: corrupt state`,
+            }),
           },
         ],
       },
     });
     return Effect.gen(function* () {
-      const failure = yield* stackStop(flags({ all: true })).pipe(Effect.flip);
+      const failure = yield* stackStop(flags({ all: Option.some(true) })).pipe(Effect.flip);
       expect(failure.message).toBe("Stopped 1 managed stack(s); failed 0; skipped 1");
-      expect(failure.detail).toBe(`Skipped managed stack ${corrupt}: corrupt state`);
+      expect(failure.detail).toBe(
+        `Skipped managed stack: Failed to read managed stack ${corrupt}: corrupt state`,
+      );
       expect(setupResult.state.stopCalls).toBe(1);
       expect(setupResult.state.destroyCalled).toBe(false);
       expect(setupResult.out.messages).toEqual(
@@ -287,17 +293,19 @@ describe("stack stop", () => {
         errors: [
           {
             id: StackIdSchema.make(skipped),
-            error: new StackStateInvalidError({ message: "invalid state" }),
+            error: new StackStateInvalidError({
+              message: `Failed to read managed stack ${skipped}: invalid state`,
+            }),
           },
         ],
       },
     });
     return Effect.gen(function* () {
-      yield* stackStop(flags({ all: true })).pipe(withJsonErrorHandling);
+      yield* stackStop(flags({ all: Option.some(true) })).pipe(withJsonErrorHandling);
       expect(setupResult.out.failures).toEqual([
         expect.objectContaining({
           message: "Stopped 0 managed stack(s); failed 1; skipped 1",
-          detail: `Failed to stop managed stack ${failed}: cleanup failed\nSkipped managed stack ${skipped}: invalid state`,
+          detail: `Failed to stop managed stack ${failed}: cleanup failed\nSkipped managed stack: Failed to read managed stack ${skipped}: invalid state`,
         }),
       ]);
       expect(setupResult.state.openedIds).toEqual([failed]);
@@ -311,7 +319,7 @@ describe("stack stop", () => {
       discoveryFailure: new StackStateInvalidError({ message: "registry is unreadable" }),
     });
     return Effect.gen(function* () {
-      const failure = yield* stackStop(flags({ all: true })).pipe(Effect.flip);
+      const failure = yield* stackStop(flags({ all: Option.some(true) })).pipe(Effect.flip);
       expect(failure.message).toContain("registry is unreadable");
       expect(setupResult.state.openedIds).toEqual([]);
       expect(setupResult.state.destroyCalled).toBe(false);
@@ -321,7 +329,7 @@ describe("stack stop", () => {
   it.effect("treats an empty registry as a successful bulk no-op", () => {
     const setupResult = setup({ root: "/tmp/supabase-stack-stop-all-empty" });
     return Effect.gen(function* () {
-      yield* stackStop(flags({ all: true }));
+      yield* stackStop(flags({ all: Option.some(true) }));
       expect(setupResult.state.openedIds).toEqual([]);
       expect(setupResult.state.stopCalls).toBe(0);
       expect(setupResult.state.destroyCalled).toBe(false);
@@ -332,10 +340,57 @@ describe("stack stop", () => {
   it.effect("rejects bulk stop target combinations", () => {
     const setupResult = setup({ root: "/tmp/supabase-stack-stop-conflict" });
     return Effect.gen(function* () {
-      const failure = yield* stackStop(flags({ all: true, stack: Option.some("feature-a") })).pipe(
-        Effect.flip,
-      );
+      const failure = yield* stackStop(
+        flags({ all: Option.some(true), stack: Option.some("feature-a") }),
+      ).pipe(Effect.flip);
       expect(failure.message).toContain("cannot be combined");
+    }).pipe(Effect.provide(setupResult.layer));
+  });
+
+  it.effect("rejects an explicit false --all with a stack target", () => {
+    const setupResult = setup({ root: "/tmp/supabase-stack-stop-explicit-false" });
+    return Effect.gen(function* () {
+      const failure = yield* stackStop(
+        flags({ all: Option.some(false), stack: Option.some("feature-a") }),
+      ).pipe(Effect.flip);
+      expect(failure.message).toContain("cannot be combined");
+      expect(setupResult.state.findInputs).toEqual([]);
+      expect(setupResult.state.openedIds).toEqual([]);
+    }).pipe(Effect.provide(setupResult.layer));
+  });
+
+  it.effect("uses unknown classification when bulk failures disagree", () => {
+    const failed = "6".repeat(64);
+    const skipped = "5".repeat(64);
+    const setupResult = setup({
+      root: "/tmp/supabase-stack-stop-mixed",
+      found: { id: failed },
+      stop: () => Effect.fail(new StackCleanupError({ message: "cleanup failed" })),
+      discovered: {
+        stacks: [
+          {
+            id: StackIdSchema.make(failed),
+            projectRoot: "/tmp/supabase-stack-stop-mixed",
+            name: "failed",
+            branchContext: "ordinary-workspace",
+            runtime: { kind: "native" },
+            desiredLifecycle: "running",
+          },
+        ],
+        errors: [
+          {
+            id: StackIdSchema.make(skipped),
+            error: new StackStateInvalidError({
+              message: `Failed to read managed stack ${skipped}: corrupt state`,
+            }),
+          },
+        ],
+      },
+    });
+    return Effect.gen(function* () {
+      const failure = yield* stackStop(flags({ all: Option.some(true) })).pipe(Effect.flip);
+      expect(failure.reason).toBe("unknown");
+      expect(failure.suggestion).toBeUndefined();
     }).pipe(Effect.provide(setupResult.layer));
   });
 
@@ -596,6 +651,37 @@ describe("stack stop parser", () => {
     return Effect.gen(function* () {
       yield* Command.runWith(command, { version: "0.0.0-test" })(["--stack", "feature-a"]);
       expect(parsed).toEqual(Option.some("feature-a"));
+    }).pipe(
+      Effect.provide(Layer.mergeAll(BunServices.layer, CliOutput.layer(textCliOutputFormatter()))),
+    );
+  });
+
+  it.live("preserves explicit false for --all alongside a target", () => {
+    let parsed: Parameters<typeof stackStop>[0] | undefined;
+    const command = stackStopCommand.pipe(
+      Command.withHandler((flags) => Effect.sync(() => (parsed = flags))),
+    );
+    return Effect.gen(function* () {
+      yield* Command.runWith(command, { version: "0.0.0-test" })([
+        "--all=false",
+        "--stack",
+        "feature-a",
+      ]);
+      expect(parsed?.all).toEqual(Option.some(false));
+      expect(parsed?.stack).toEqual(Option.some("feature-a"));
+    }).pipe(
+      Effect.provide(Layer.mergeAll(BunServices.layer, CliOutput.layer(textCliOutputFormatter()))),
+    );
+  });
+
+  it.live("parses bare --all as true", () => {
+    let parsed: Parameters<typeof stackStop>[0] | undefined;
+    const command = stackStopCommand.pipe(
+      Command.withHandler((flags) => Effect.sync(() => (parsed = flags))),
+    );
+    return Effect.gen(function* () {
+      yield* Command.runWith(command, { version: "0.0.0-test" })(["--all"]);
+      expect(parsed?.all).toEqual(Option.some(true));
     }).pipe(
       Effect.provide(Layer.mergeAll(BunServices.layer, CliOutput.layer(textCliOutputFormatter()))),
     );

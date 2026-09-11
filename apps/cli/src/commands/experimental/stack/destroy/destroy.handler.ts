@@ -26,11 +26,18 @@ const mapTargetError = (error: StackTargetError) =>
 
 const destroyError = (error: unknown): StackCommandDestroyError => {
   const stackError = isStackError(error) ? error : undefined;
-  const reason =
+  const classification =
     stackError === undefined
-      ? "unknown"
+      ? { reason: "unknown" as const }
       : Match.value(stackError).pipe(
-          Match.tag("StackNotFoundError", "InvalidStackIdentityError", () => "flags" as const),
+          Match.tag("StackNotFoundError", "InvalidStackIdentityError", () => ({
+            reason: "flags" as const,
+          })),
+          Match.tag("ContainerEngineError", () => ({
+            reason: "runtime" as const,
+            suggestion:
+              "Check that the selected container engine is installed and its daemon is running, then retry the command.",
+          })),
           Match.tag(
             "StackOwnershipConflictError",
             "StackNotRunningError",
@@ -40,19 +47,19 @@ const destroyError = (error: unknown): StackCommandDestroyError => {
             "StackCleanupError",
             "StackDestructionError",
             "StackUpgradeRequiredError",
-            () => "lifecycle" as const,
+            () => ({ reason: "lifecycle" as const }),
           ),
           Match.tag(
             "InvalidStackConfigError",
             "StackStateFormatUnsupportedError",
             "InvalidProjectRootError",
             "StackStateInvalidError",
-            () => "invalid-config" as const,
+            () => ({ reason: "invalid-config" as const }),
           ),
-          Match.orElse(() => "unknown" as const),
+          Match.orElse(() => ({ reason: "unknown" as const })),
         );
   return new StackCommandDestroyError({
-    reason,
+    ...classification,
     message: stackError?.message ?? String(error),
     cause: error,
   });
@@ -98,7 +105,7 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
     });
     const yes = yield* resolveYes;
     const tty = yield* Tty;
-    if (!yes && (!tty.stdinIsTty || output.format !== "text"))
+    if (!yes && (!tty.stdinIsTty || !output.interactive || output.format !== "text"))
       return yield* new StackCommandDestroyError({
         reason: "confirmation",
         message: "Destroying a stack requires confirmation; rerun with --yes.",
@@ -112,7 +119,7 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
     );
     if (!confirmed)
       return yield* new StackCommandDestroyError({
-        reason: "confirmation",
+        reason: "cancelled",
         message: "Stack destruction was not confirmed.",
       });
     const stack = yield* api

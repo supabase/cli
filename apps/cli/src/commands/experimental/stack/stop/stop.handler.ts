@@ -69,9 +69,9 @@ export const stackStop = Effect.fn("experimental.stack.stop")(function* (flags: 
     const settings = yield* CommandSettings;
     const stackApi = yield* StackApi;
     const outputFlag = yield* Effect.serviceOption(OutputFlag);
-    const stopAll = flags.all;
+    const stopAll = Option.getOrElse(flags.all, () => false);
     yield* rejectStackOutput(outputFlag).pipe(Effect.mapError(mapTargetError));
-    if (stopAll && (Option.isSome(flags.stack) || Option.isSome(flags.stackId)))
+    if (Option.isSome(flags.all) && (Option.isSome(flags.stack) || Option.isSome(flags.stackId)))
       return yield* new StackCommandStopError({
         reason: "flags",
         message: "--all cannot be combined with --stack or --stack-id",
@@ -84,7 +84,7 @@ export const stackStop = Effect.fn("experimental.stack.stop")(function* (flags: 
     if (stopAll) {
       const discovered = yield* stackApi.discoverStacks().pipe(Effect.mapError(stopError));
       for (const issue of discovered.errors)
-        yield* output.warn(`Skipping managed stack ${issue.id}: ${issue.error.message}`);
+        yield* output.warn(`Skipping managed stack: ${issue.error.message}`);
       const stopping = yield* output.task(
         `Stopping ${discovered.stacks.length} managed stack(s)...`,
       );
@@ -108,15 +108,33 @@ export const stackStop = Effect.fn("experimental.stack.stop")(function* (flags: 
             ({ descriptor, error }) =>
               `Failed to stop managed stack ${descriptor.id}: ${error.message}`,
           ),
-          ...discovered.errors.map(
-            ({ id, error }) => `Skipped managed stack ${id}: ${error.message}`,
-          ),
+          ...discovered.errors.map(({ error }) => `Skipped managed stack: ${error.message}`),
         ].join("\n");
         yield* stopping.fail(message);
+        const classifications = [
+          ...failed.map(({ error }) => stopError(error)),
+          ...discovered.errors.map(({ error }) => stopError(error)),
+        ];
+        const firstClassification = classifications[0];
+        const reason =
+          firstClassification !== undefined &&
+          classifications.every(
+            (classification) => classification.reason === firstClassification.reason,
+          )
+            ? firstClassification.reason
+            : "unknown";
+        const suggestion =
+          firstClassification?.suggestion !== undefined &&
+          classifications.every(
+            (classification) => classification.suggestion === firstClassification.suggestion,
+          )
+            ? firstClassification.suggestion
+            : undefined;
         return yield* new StackCommandStopError({
-          reason: "lifecycle",
+          reason,
           message,
           detail,
+          ...(suggestion === undefined ? {} : { suggestion }),
           cause: { failures: failed, discovery: discovered.errors },
         });
       }
