@@ -1,6 +1,6 @@
 import { CAPABILITY_NAMES, type CapabilityName } from "../public/Capability.ts";
 import type { PersistedStackState } from "./StackState.ts";
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import { StackStateInvalidError } from "../public/Errors.ts";
 
 /** A plain object in the persisted, materialized settings document. */
@@ -23,8 +23,7 @@ export const settingValue = (state: PersistedStackState, value: unknown): string
   if (Array.isArray(value)) return value.map((entry) => settingValue(state, entry)).join(",");
   if (isRecord(value) && typeof value.slot === "string" && Object.keys(value).length === 1)
     return secret(state, value.slot);
-  // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- dynamic persisted settings are stringified for workload env values
-  return JSON.stringify(value) ?? "";
+  return Schema.encodeSync(Schema.fromJsonString(Schema.Unknown))(value);
 };
 
 /** Flattens nested materialized settings into environment-style keys. */

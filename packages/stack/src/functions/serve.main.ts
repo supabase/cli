@@ -1,8 +1,8 @@
 // @ts-nocheck
-// oxlint-disable effecttsgo/async-function -- standalone Edge Runtime artifact uses Deno async APIs.
-// oxlint-disable effecttsgo/global-console -- standalone artifact emits its user-facing bootstrap logs.
 declare const Deno: any;
 declare const EdgeRuntime: any;
+
+import { Console, Data, Effect, Schema, Stream } from "effect";
 
 import { STATUS_CODE, STATUS_TEXT, toFileUrl } from "./serve-main-deps.ts";
 import {
@@ -11,6 +11,7 @@ import {
   resolveFunctionConfig,
   type FunctionConfig,
   type FunctionFileSystem,
+  FunctionFileSystemError,
   type FunctionOverrides,
 } from "./serve-main-resolver.ts";
 import * as jose from "jose";
@@ -78,7 +79,7 @@ if (Deno.env.get("SUPABASE_INTERNAL_DEBUG") === "true") {
       Object.fromEntries(Object.entries(config).filter(([key]) => key !== "env")),
     ]),
   );
-  console.log("Functions config:", JSON.stringify(debugConfig, null, 2));
+  Effect.runSync(Console.log("Functions config:", JSON.stringify(debugConfig, null, 2)));
 }
 
 const getResponse = (payload: any, status: number, customHeaders = {}) => {
@@ -130,66 +131,86 @@ let localJwks: any = (() => {
     return null;
   }
 })();
-const isValidAsymmetricJWT = async (jwt: string): Promise<{ code: RequestErrors } | null> => {
-  try {
-    if (!localJwks) localJwks = jose.createRemoteJWKSet(JWKS_ENDPOINT);
-    await jose.jwtVerify(jwt, localJwks);
+class BootstrapOperationError extends Data.TaggedError("BootstrapOperationError")<{
+  readonly cause: unknown;
+}> {}
+const foreign = <A>(operation: () => Promise<A>) =>
+  Effect.tryPromise({
+    try: operation,
+    catch: (cause) => new BootstrapOperationError({ cause }),
+  });
+const isValidAsymmetricJWT = (jwt: string) =>
+  Effect.gen(function* () {
+    if (!localJwks)
+      localJwks = yield* Effect.try({
+        try: () => jose.createRemoteJWKSet(JWKS_ENDPOINT),
+        catch: (cause) => new BootstrapOperationError({ cause }),
+      });
+    yield* foreign(() => jose.jwtVerify(jwt, localJwks));
     return null;
-  } catch {
-    return { code: RequestErrors.InvalidAsymmetricJWT };
-  }
-};
+  }).pipe(Effect.orElseSucceed(() => ({ code: RequestErrors.InvalidAsymmetricJWT })));
 
-export async function verifyHybridJWT(jwtSecret: string, jwksUrl: URL, jwt: string) {
-  try {
-    const algorithm = jose.decodeProtectedHeader(jwt).alg;
+function verifyHybridJWT(jwtSecret: string, jwksUrl: URL, jwt: string) {
+  return Effect.gen(function* () {
+    const algorithm = yield* Effect.try({
+      try: () => jose.decodeProtectedHeader(jwt).alg,
+      catch: (cause) => new BootstrapOperationError({ cause }),
+    });
     if (!algorithm)
       return { code: RequestErrors.InvalidTokenFormat, message: "Invalid JWT format" };
-    if (algorithm === "HS256") {
-      try {
-        await jose.jwtVerify(jwt, new TextEncoder().encode(jwtSecret));
-        return null;
-      } catch {
-        return { code: RequestErrors.InvalidLegacyJWT };
-      }
-    }
-    if (algorithm === "ES256" || algorithm === "RS256") return isValidAsymmetricJWT(jwt);
+    if (algorithm === "HS256")
+      return yield* foreign(() => jose.jwtVerify(jwt, new TextEncoder().encode(jwtSecret))).pipe(
+        Effect.as(null),
+        Effect.orElseSucceed(() => ({ code: RequestErrors.InvalidLegacyJWT })),
+      );
+    if (algorithm === "ES256" || algorithm === "RS256") return yield* isValidAsymmetricJWT(jwt);
     return {
       code: RequestErrors.UnsupportedTokenAlgorithm,
       message: `Unsupported JWT algorithm ${algorithm}`,
     };
-  } catch {
-    return { code: RequestErrors.InvalidTokenFormat, message: "Invalid JWT format" };
-  }
+  }).pipe(
+    Effect.orElseSucceed(() => ({
+      code: RequestErrors.InvalidTokenFormat,
+      message: "Invalid JWT format",
+    })),
+  );
 }
 
 const denoFileSystem: FunctionFileSystem = {
-  lstat: async (path) => {
-    const info = await Deno.lstat(path);
-    return {
-      isDirectory: info.isDirectory,
-      isFile: info.isFile,
-      isSymbolicLink: info.isSymlink,
-    };
-  },
-  realPath: (path) => Deno.realPath(path),
-  readDirectory: async (path) => {
-    const entries: string[] = [];
-    for await (const entry of Deno.readDir(path)) entries.push(entry.name);
-    return entries;
-  },
+  lstat: (path) =>
+    foreign(() => Deno.lstat(path)).pipe(
+      Effect.mapError((cause) => new FunctionFileSystemError({ cause })),
+      Effect.map((info) => ({
+        isDirectory: info.isDirectory,
+        isFile: info.isFile,
+        isSymbolicLink: info.isSymlink,
+      })),
+    ),
+  realPath: (path) =>
+    foreign(() => Deno.realPath(path)).pipe(
+      Effect.mapError((cause) => new FunctionFileSystemError({ cause })),
+    ),
+  readDirectory: (path) =>
+    Stream.fromAsyncIterable(
+      Deno.readDir(path),
+      (cause) => new BootstrapOperationError({ cause }),
+    ).pipe(
+      Stream.map((entry) => entry.name),
+      Stream.runCollect,
+      Effect.mapError((cause) => new FunctionFileSystemError({ cause })),
+    ),
 };
 
-const functionConfig = (slug: string): Promise<FunctionConfig | undefined> =>
+const functionConfig = (slug: string): Effect.Effect<FunctionConfig | undefined> =>
   resolveFunctionConfig({ root: FUNCTIONS_ROOT, slug, overrides: configured, fs: denoFileSystem });
 const workerServicePath = createWorkerServicePathResolver(() =>
   Deno.makeTempDirSync({ prefix: "supabase-worker-" }),
 );
 
-const shouldUsePackageJsonDiscovery = async (config: FunctionConfig): Promise<boolean> => {
-  if (config.importMapPath) return false;
-  return packageJsonContainedFor({ root: FUNCTIONS_ROOT, config, fs: denoFileSystem });
-};
+const shouldUsePackageJsonDiscovery = (config: FunctionConfig): Effect.Effect<boolean> =>
+  config.importMapPath
+    ? Effect.succeed(false)
+    : packageJsonContainedFor({ root: FUNCTIONS_ROOT, config, fs: denoFileSystem });
 
 export function prepareUserRequest(request: Request): Request {
   const url = new URL(request.url);
@@ -203,81 +224,102 @@ export function prepareUserRequest(request: Request): Request {
 }
 
 Deno.serve({
-  handler: async (request: Request) => {
-    const { pathname } = new URL(request.url);
-    if (pathname === "/_internal/health") return getResponse({ message: "ok" }, STATUS_CODE.OK);
-    if (pathname === "/_internal/metric")
-      return Response.json(await EdgeRuntime.getRuntimeMetrics());
-    const functionName = pathname.split("/")[1];
-    if (!functionName) return getResponse("Function not found", STATUS_CODE.NotFound);
-    const config = await functionConfig(functionName);
-    if (!config) return getResponse("Function not found", STATUS_CODE.NotFound);
-    if (request.method !== "OPTIONS" && config.verifyJWT) {
-      const token = getAuthToken(request);
-      if (typeof token !== "string") return getAuthErrorResponse(token);
-      const authFailure = await verifyHybridJWT(JWT_SECRET, JWKS_ENDPOINT, token);
-      if (authFailure) return getAuthErrorResponse(authFailure);
-    }
-    const envVarsObj = {
-      ...Deno.env.toObject(),
-      ...Object.fromEntries(
-        Object.entries(config.env ?? {}).filter(([name]) => !name.startsWith("SUPABASE_")),
-      ),
-      SUPABASE_FUNCTION_SLUG: functionName,
-    };
-    if (SUPABASE_PUBLISHABLE_KEY)
-      envVarsObj.SUPABASE_PUBLISHABLE_KEYS = JSON.stringify({ default: SUPABASE_PUBLISHABLE_KEY });
-    if (SUPABASE_SECRET_KEY)
-      envVarsObj.SUPABASE_SECRET_KEYS = JSON.stringify({ default: SUPABASE_SECRET_KEY });
-    const envVars = Object.entries(envVarsObj).filter(
-      ([name]) => !EXCLUDED_ENVS.includes(name) && !name.startsWith("SUPABASE_INTERNAL_"),
-    );
-    try {
-      const worker = await EdgeRuntime.userWorkers.create({
-        servicePath: workerServicePath(functionName, config),
-        memoryLimitMb: 256,
-        workerTimeoutMs: Number.isFinite(WALLCLOCK_LIMIT_SEC)
-          ? WALLCLOCK_LIMIT_SEC * 1000
-          : 400_000,
-        noModuleCache: true,
-        noNpm: !(await shouldUsePackageJsonDiscovery(config)),
-        importMapPath: config.importMapPath,
-        envVars,
-        forceCreate: true,
-        customModuleRoot: "",
-        cpuTimeSoftLimitMs: 1000,
-        cpuTimeHardLimitMs: 2000,
-        decoratorType: "tc39",
-        maybeEntrypoint: toFileUrl(config.entrypointPath).href,
-        context: { useReadSyncFileAPI: true },
-        staticPatterns: config.staticFiles,
-      });
-      return await worker.fetch(prepareUserRequest(request));
-    } catch (error) {
-      console.error("[functions] worker error", error);
-      for (const [denoError, sbCode] of DENO_SB_ERROR_MAP.entries()) {
-        if (denoError !== undefined && error instanceof denoError)
-          return getResponse(
-            { code: SB_SPECIFIC_ERROR_TEXT[sbCode], message: SB_SPECIFIC_ERROR_REASON[sbCode] },
-            sbCode,
+  handler: (request: Request) =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const { pathname } = new URL(request.url);
+        if (pathname === "/_internal/health") return getResponse({ message: "ok" }, STATUS_CODE.OK);
+        if (pathname === "/_internal/metric")
+          return Response.json(yield* foreign(() => EdgeRuntime.getRuntimeMetrics()));
+        const functionName = pathname.split("/")[1];
+        if (!functionName) return getResponse("Function not found", STATUS_CODE.NotFound);
+        const config = yield* functionConfig(functionName);
+        if (!config) return getResponse("Function not found", STATUS_CODE.NotFound);
+        if (request.method !== "OPTIONS" && config.verifyJWT) {
+          const token = getAuthToken(request);
+          if (typeof token !== "string") return getAuthErrorResponse(token);
+          const authFailure = yield* verifyHybridJWT(JWT_SECRET, JWKS_ENDPOINT, token);
+          if (authFailure) return getAuthErrorResponse(authFailure);
+        }
+        const envVarsObj = {
+          ...Deno.env.toObject(),
+          ...Object.fromEntries(
+            Object.entries(config.env ?? {}).filter(([name]) => !name.startsWith("SUPABASE_")),
+          ),
+          SUPABASE_FUNCTION_SLUG: functionName,
+        };
+        if (SUPABASE_PUBLISHABLE_KEY)
+          envVarsObj.SUPABASE_PUBLISHABLE_KEYS = yield* Schema.encodeEffect(
+            Schema.fromJsonString(Schema.Unknown),
+          )({ default: SUPABASE_PUBLISHABLE_KEY });
+        if (SUPABASE_SECRET_KEY)
+          envVarsObj.SUPABASE_SECRET_KEYS = yield* Schema.encodeEffect(
+            Schema.fromJsonString(Schema.Unknown),
+          )({ default: SUPABASE_SECRET_KEY });
+        const envVars = Object.entries(envVarsObj).filter(
+          ([name]) => !EXCLUDED_ENVS.includes(name) && !name.startsWith("SUPABASE_INTERNAL_"),
+        );
+        const noNpm = !(yield* shouldUsePackageJsonDiscovery(config));
+        return yield* Effect.gen(function* () {
+          const worker = yield* foreign(() =>
+            EdgeRuntime.userWorkers.create({
+              servicePath: workerServicePath(functionName, config),
+              memoryLimitMb: 256,
+              workerTimeoutMs: Number.isFinite(WALLCLOCK_LIMIT_SEC)
+                ? WALLCLOCK_LIMIT_SEC * 1000
+                : 400_000,
+              noModuleCache: true,
+              noNpm,
+              importMapPath: config.importMapPath,
+              envVars,
+              forceCreate: true,
+              customModuleRoot: "",
+              cpuTimeSoftLimitMs: 1000,
+              cpuTimeHardLimitMs: 2000,
+              decoratorType: "tc39",
+              maybeEntrypoint: toFileUrl(config.entrypointPath).href,
+              context: { useReadSyncFileAPI: true },
+              staticPatterns: config.staticFiles,
+            }),
           );
-      }
-      return getResponse(
-        {
-          code: STATUS_TEXT[STATUS_CODE.InternalServerError],
-          message: "Request failed due to an internal server error",
-        },
-        STATUS_CODE.InternalServerError,
-      );
-    }
-  },
+          return yield* foreign(() => worker.fetch(prepareUserRequest(request)));
+        }).pipe(
+          Effect.catch((failure) =>
+            Effect.gen(function* () {
+              const error = failure.cause;
+              yield* Console.error("[functions] worker error", error);
+              for (const [denoError, sbCode] of DENO_SB_ERROR_MAP.entries()) {
+                if (denoError !== undefined && error instanceof denoError)
+                  return getResponse(
+                    {
+                      code: SB_SPECIFIC_ERROR_TEXT[sbCode],
+                      message: SB_SPECIFIC_ERROR_REASON[sbCode],
+                    },
+                    sbCode,
+                  );
+              }
+              return getResponse(
+                {
+                  code: STATUS_TEXT[STATUS_CODE.InternalServerError],
+                  message: "Request failed due to an internal server error",
+                },
+                STATUS_CODE.InternalServerError,
+              );
+            }),
+          ),
+        );
+      }),
+      { signal: request.signal },
+    ),
   onListen: () => {
     const names = Object.keys(configured);
     const examples = names
       .slice(0, 5)
       .map((name) => ` - http://127.0.0.1:${HOST_PORT}/functions/v1/${name}`);
-    console.log(
-      `Serving functions on http://127.0.0.1:${HOST_PORT}/functions/v1/<function-name>${examples.length ? `\n${examples.join("\n")}` : ""}\nUsing ${Deno.version.deno}`,
+    Effect.runSync(
+      Console.log(
+        `Serving functions on http://127.0.0.1:${HOST_PORT}/functions/v1/<function-name>${examples.length ? `\n${examples.join("\n")}` : ""}\nUsing ${Deno.version.deno}`,
+      ),
     );
   },
   onError: () =>

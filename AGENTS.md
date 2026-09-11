@@ -75,8 +75,11 @@ notes in `.repos/effect/MIGRATION.md`. Run `pnpm repos:install` if it is absent.
   Effect constructs; do not silence findings with `oxlint-disable`, casts, file
   exclusions, or weaker lint configuration.
 - A suppression is acceptable only for a demonstrated false positive or an unavoidable
-  foreign-library boundary. Limit it to the specific rule and smallest scope, and
-  explain why a compliant implementation is not possible.
+  foreign-library boundary. Before retaining one, inspect the corresponding Effect API
+  and identify the specific missing capability or behavior that prevents replacement;
+  existing Promise-based code, native API usage, or refactoring effort alone do not
+  justify an exception. Limit it to the specific rule and smallest scope, and explain
+  why a compliant implementation is not possible.
 - Passing lint by bypassing its rules does not complete an Effect migration.
 
 ## Commands, validation, and workflows

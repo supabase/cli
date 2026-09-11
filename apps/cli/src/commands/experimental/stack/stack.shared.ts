@@ -1,11 +1,13 @@
 import { Context, Data, Effect, FileSystem, Layer, Option, Path, Crypto } from "effect";
 import {
   createStack,
+  discoverStacks,
   findStack,
   inspectStack,
   isStackId,
   openStack,
   type StackRuntimePreference,
+  type StackDiscoveryResult,
 } from "@supabase/stack/effect";
 import type { StackId } from "@supabase/stack";
 import { StackNotFoundError } from "@supabase/stack/effect";
@@ -80,6 +82,9 @@ export class StackApi extends Context.Service<
       Effect.Success<ReturnType<typeof inspectStack>>,
       Effect.Error<ReturnType<typeof inspectStack>>
     >;
+    readonly discoverStacks: (
+      ...args: Parameters<typeof discoverStacks>
+    ) => Effect.Effect<StackDiscoveryResult, Effect.Error<ReturnType<typeof discoverStacks>>>;
   }
 >()("supabase/experimental-stack/StackApi") {}
 
@@ -141,6 +146,8 @@ export const stackApiLayer = Layer.effect(
       openStack: (...args: Parameters<typeof openStack>) => provideServices(openStack(...args)),
       inspectStack: (...args: Parameters<typeof inspectStack>) =>
         provideServices(inspectStack(...args)),
+      discoverStacks: (...args: Parameters<typeof discoverStacks>) =>
+        provideServices(discoverStacks(...args)),
     };
   }),
 );

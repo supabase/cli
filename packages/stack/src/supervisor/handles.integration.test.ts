@@ -10,6 +10,7 @@ import {
   Fiber,
   Option,
   Path,
+  Predicate,
   Redacted,
   Result,
   Schema,
@@ -27,6 +28,7 @@ import {
   listStacks,
 } from "../public/EffectStack.ts";
 import type { StackStatus } from "../public/Status.ts";
+import type { CreateStackError } from "../public/Errors.ts";
 import { deriveStackId, resolveStackIdentity } from "../identity/Identity.ts";
 import {
   defaultRuntimeEnvironment,
@@ -71,7 +73,7 @@ const withRuntimeRoot = <A, E, R>(effect: (project: string) => Effect.Effect<A, 
       const path = yield* Path.Path;
       const project = path.join(root, "project");
       yield* fs.makeDirectory(project);
-      const defaults = defaultRuntimeEnvironment();
+      const defaults = yield* defaultRuntimeEnvironment;
       const runtime: StackRuntimeEnvironmentValue = {
         ...defaults,
         stateRoot: path.join(root, "managed", "stacks"),
@@ -122,7 +124,7 @@ const stopOwner = (id: StackId) =>
         stackId: id,
         ownerSessionId: owner.ownerSessionId,
         rpcRelease: owner.rpcRelease,
-      }).stop(),
+      }).stop,
     );
     const remaining = yield* readOwnerMetadata(env.stateRoot, id, env);
     if (remaining === undefined) {
@@ -327,6 +329,26 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
     ),
   );
 
+  it.live("reuses an existing runtime without probing the container resolver", () =>
+    withRuntimeRoot((project) =>
+      Effect.gen(function* () {
+        const created = yield* createStack({
+          projectRoot: project,
+          runtime: { kind: "container", engine: "podman" },
+        });
+        const resolver = {
+          isInstalled: () => Effect.die("resolver must not be called"),
+          resolve: () => Effect.die("resolver must not be called"),
+        };
+        const reopened = yield* createStack({ projectRoot: project }).pipe(
+          Effect.provideService(ContainerEngineResolver, resolver),
+        );
+        expect(reopened.id).toBe(created.id);
+        expect((yield* reopened.status).runtime).toEqual({ kind: "container", engine: "podman" });
+      }),
+    ),
+  );
+
   it.live("prepares through only the explicitly selected Podman engine", () =>
     withRuntimeRoot((project) =>
       Effect.gen(function* () {
@@ -367,7 +389,7 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
         const stack = yield* openStack(created.id).pipe(
           Effect.provideService(ContainerEngineResolver, resolver),
         );
-        expect((yield* stack.status()).runtime).toEqual({ kind: "container", engine: "podman" });
+        expect((yield* stack.status).runtime).toEqual({ kind: "container", engine: "podman" });
       }),
     ),
   );
@@ -413,7 +435,7 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
     withRuntimeRoot((project) =>
       Effect.gen(function* () {
         const stack = yield* createStack({ projectRoot: project });
-        const status = yield* stack.status();
+        const status = yield* stack.status;
         expect(status.lifecycle).toBe("unconfigured");
         expect(status.desiredLifecycle).toBe("unconfigured");
       }),
@@ -592,7 +614,7 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
         }).pipe(Effect.provideService(Scope.Scope, ownerScope));
         const stack = yield* openStack(stackId);
         const destroyFiber = yield* Effect.forkChild(
-          stack.destroy().pipe(Effect.andThen(Deferred.succeed(destroyDone, undefined))),
+          stack.destroy.pipe(Effect.andThen(Deferred.succeed(destroyDone, undefined))),
           { startImmediately: true },
         );
         yield* Deferred.await(destroyStarted);
@@ -616,7 +638,7 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
           { concurrency: 2 },
         );
         expect(second.id).toBe(first.id);
-        expect((yield* second.status()).lifecycle).toBe("unconfigured");
+        expect((yield* second.status).lifecycle).toBe("unconfigured");
       }),
     ),
   );
@@ -653,6 +675,78 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
         yield* createStack({ projectRoot: other });
         const filtered = yield* listStacks({ projectRoot: project });
         expect(filtered.map((entry) => entry.id)).toEqual([first.id]);
+      }),
+    ),
+  );
+
+  it.live("concurrent creates preserve the published state across an advisory read race", () =>
+    withRuntimeRoot((project) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const env = yield* StackRuntimeEnvironment;
+        const identity = yield* resolveStackIdentity({ projectRoot: project });
+        const stackId = yield* deriveStackId(identity);
+        const paths = yield* resolveStackPaths({ stateRoot: env.stateRoot, stackId });
+        const path = yield* Path.Path;
+        const registryLock = path.join(path.resolve(env.stateRoot), ".stack-registry.lock");
+        const writerReady = yield* Deferred.make<void, CreateStackError>();
+        const releaseWriter = yield* Deferred.make<void>();
+        const writerPublished = yield* Deferred.make<void>();
+        const firstFs: FileSystem.FileSystem = {
+          ...fs,
+          rename: (from, to) =>
+            to === paths.stateDocument
+              ? Deferred.succeed(writerReady, undefined).pipe(
+                  Effect.andThen(Deferred.await(releaseWriter)),
+                  Effect.andThen(fs.rename(from, to)),
+                  Effect.tap(() => Deferred.succeed(writerPublished, undefined)),
+                )
+              : fs.rename(from, to),
+        };
+        const secondFs: FileSystem.FileSystem = {
+          ...fs,
+          readFileString: (candidate, encoding) => {
+            if (candidate === registryLock)
+              return Deferred.succeed(releaseWriter, undefined).pipe(
+                Effect.andThen(fs.readFileString(candidate, encoding)),
+              );
+            if (candidate !== paths.stateDocument) return fs.readFileString(candidate, encoding);
+            return fs
+              .readFileString(candidate, encoding)
+              .pipe(
+                Effect.catchTag("PlatformError", (error) =>
+                  Predicate.isTagged(error.reason, "NotFound")
+                    ? Deferred.succeed(releaseWriter, undefined).pipe(
+                        Effect.andThen(Deferred.await(writerPublished)),
+                        Effect.andThen(Effect.fail(error)),
+                      )
+                    : Effect.fail(error),
+                ),
+              );
+          },
+        };
+        const create = (fileSystem: FileSystem.FileSystem) =>
+          createStack({ projectRoot: project }).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+          );
+        const first = yield* Effect.forkChild(
+          create(firstFs).pipe(
+            Effect.catchCause((cause) =>
+              Deferred.failCause(writerReady, cause).pipe(Effect.andThen(Effect.failCause(cause))),
+            ),
+          ),
+          { startImmediately: true },
+        );
+        yield* Deferred.await(writerReady);
+        const second = yield* Effect.forkChild(create(secondFs), { startImmediately: true });
+        const [firstHandle, secondHandle] = yield* Effect.all(
+          [Fiber.join(first), Fiber.join(second)],
+          {
+            concurrency: 2,
+          },
+        );
+        expect(secondHandle.id).toBe(firstHandle.id);
+        expect((yield* secondHandle.status).lifecycle).toBe("unconfigured");
       }),
     ),
   );
@@ -718,7 +812,7 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
         expect(second.code, second.stderr).toBe(0);
         expect(first.id).toBe(second.id);
         const attached = yield* openStack(StackIdSchema.make(first.id));
-        expect((yield* attached.status()).lifecycle).toBe("unconfigured");
+        expect((yield* attached.status).lifecycle).toBe("unconfigured");
       }),
     ),
   );
@@ -729,8 +823,8 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
       withRuntimeRoot((project) =>
         Effect.gen(function* () {
           const stack = yield* createStack({ projectRoot: project });
-          yield* stack.stop();
-          const status = yield* stack.status();
+          yield* stack.stop;
+          const status = yield* stack.status;
           expect(status.lifecycle).toBe("unconfigured");
         }),
       ),
