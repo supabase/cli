@@ -895,7 +895,7 @@ const clusterHandle = (
     runtime: cluster.runtime,
     artifactIdentity: cluster.artifactIdentity,
     url: Redacted.make(databaseUrl(cluster.port, password)),
-    start: () =>
+    start: Effect.suspend(() =>
       cluster.lifecycle.withPermit(
         Effect.gen(function* () {
           if (cluster.running) {
@@ -918,10 +918,12 @@ const clusterHandle = (
           else yield* startContainer(cluster, options, healthTimeout, password);
         }),
       ),
-    stop: () =>
+    ),
+    stop: Effect.suspend(() =>
       cluster.lifecycle.withPermit(
         cluster.runtime.kind === "native" ? stopNative(cluster) : stopContainer(cluster),
       ),
+    ),
     exportPgData: (tarPath) =>
       cluster.lifecycle.withPermit(
         Effect.gen(function* () {

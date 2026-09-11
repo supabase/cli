@@ -170,7 +170,7 @@ describe.sequential("ephemeral Postgres", () => {
           expect(listedWhileRunning.some((stack) => stack.id === first.artifactIdentity)).toBe(
             false,
           );
-          yield* first.stop();
+          yield* first.stop;
           yield* first.exportPgData(tarPath);
           const exists = yield* fs.exists(tarPath);
           expect(exists).toBe(true);
@@ -239,7 +239,7 @@ describe.sequential("ephemeral Postgres", () => {
           yield* query(first.url, "SELECT 1");
           expect(first.runtime.kind).toBe("container");
           expect(first.artifactIdentity.startsWith("container:docker:")).toBe(true);
-          yield* first.stop();
+          yield* first.stop;
           yield* first.exportPgData(tarPath);
           const restored = yield* createEphemeralPostgres({
             runtime,

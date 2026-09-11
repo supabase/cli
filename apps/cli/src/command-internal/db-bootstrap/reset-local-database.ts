@@ -104,7 +104,7 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
   yield* checkDbToml(fs, path, workdir);
 
   if (backend.kind === "stack") {
-    const opened = yield* stackOpenReadyProject();
+    const opened = yield* stackOpenReadyProject;
     if (Option.isNone(opened)) return yield* Effect.fail(notRunning());
     yield* output.raw(`Resetting local database${toLogMessage(input.version)}\n`, "stderr");
     yield* opened.value.stack.resetDatabase.pipe(

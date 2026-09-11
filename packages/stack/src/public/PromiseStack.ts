@@ -244,8 +244,8 @@ export const makePromiseApi = (
           runtime: handle.runtime,
           artifactIdentity: handle.artifactIdentity,
           url: Redacted.value(handle.url),
-          start: () => runInScope(handle.start()),
-          stop: () => runInScope(handle.stop()),
+          start: () => runInScope(handle.start),
+          stop: () => runInScope(handle.stop),
           exportPgData: (tarPath: string) => runInScope(handle.exportPgData(tarPath)),
           destroy: () => run(Scope.close(scope, Exit.void)),
         };

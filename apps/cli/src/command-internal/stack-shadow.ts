@@ -479,7 +479,7 @@ export const stackAcquireShadowDatabase = <E>(
             reason: "filesystem",
           });
         }
-        yield* probe.stop().pipe(Effect.mapError(mapCreateError));
+        yield* probe.stop.pipe(Effect.mapError(mapCreateError));
         yield* writeStackShadowBaselineTar(
           fs,
           path,
@@ -490,7 +490,7 @@ export const stackAcquireShadowDatabase = <E>(
         );
       }),
     );
-    yield* probe.start().pipe(Effect.mapError(mapCreateError));
+    yield* probe.start.pipe(Effect.mapError(mapCreateError));
     if (Result.isFailure(exported)) {
       const output = yield* Output;
       yield* output.raw(
@@ -512,7 +512,7 @@ export const stackAcquireShadowDatabase = <E>(
 
 export const stackReleaseShadowDatabase = (
   handle: StackShadowAcquiredHandle,
-): Effect.Effect<void> => handle.ephemeral.stop().pipe(Effect.ignore);
+): Effect.Effect<void> => handle.ephemeral.stop.pipe(Effect.ignore);
 
 export const stackWithShadowDatabase = <E, A, E2, R2>(
   input: ShadowSetupInput<E>,

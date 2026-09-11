@@ -4,8 +4,13 @@ import {
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../shared/telemetry/error-actionability.ts";
-import type { EffectStack } from "@supabase/stack/effect";
-import type { StackRuntime } from "@supabase/stack/effect";
+import {
+  CAPABILITY_NAMES,
+  excludeStackCapabilities,
+  type EffectStack,
+  type StackConfig,
+  type StackRuntime,
+} from "@supabase/stack/effect";
 import { parseConnectionString } from "./db-config.parse.ts";
 import type { PgConnInput } from "./db-connection.service.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
@@ -13,7 +18,6 @@ import { LocalDbRunningError } from "./db-bootstrap/local-db-running.ts";
 import { currentStackBackend } from "./stack-backend.ts";
 import { StackApi } from "./stack-api.ts";
 import { loadStackConfig } from "../commands/experimental/stack/stack-config.ts";
-import { postgresOnlyStackStartConfig } from "../commands/experimental/stack/start/start.options.ts";
 
 const notRunning = (message = "supabase start is not running.") =>
   new LocalDbRunningError({ message });
@@ -23,6 +27,14 @@ const startFailed = (cause: { readonly message: string }) =>
     message: `failed to start local database: ${cause.message}`,
   });
 
+/** Capabilities `db start` and `stack start --exclude` can leave disabled. */
+export const STACK_START_EXCLUDABLE_CAPABILITIES = CAPABILITY_NAMES.filter(
+  (name) => name !== "database",
+);
+
+const postgresOnlyStackStartConfig = (config: StackConfig): StackConfig =>
+  excludeStackCapabilities(config, STACK_START_EXCLUDABLE_CAPABILITIES);
+
 const databaseReady = (stack: EffectStack) =>
   Effect.gen(function* () {
     const status = yield* stack.status.pipe(Effect.mapError((cause) => notRunning(cause.message)));
@@ -31,20 +43,19 @@ const databaseReady = (stack: EffectStack) =>
     return Option.some({ stack, runtime: status.runtime });
   });
 
-const openProjectStack = () =>
-  Effect.gen(function* () {
-    const api = yield* Effect.serviceOption(StackApi);
-    if (Option.isNone(api)) return Option.none();
-    const cliSettings = yield* CommandSettings;
-    const descriptor = yield* api.value
-      .findStack({ projectRoot: cliSettings.workdir })
-      .pipe(Effect.mapError((cause) => notRunning(cause.message)));
-    if (Option.isNone(descriptor)) return Option.none();
-    const stack = yield* api.value
-      .openStack(descriptor.value.id)
-      .pipe(Effect.mapError((cause) => notRunning(cause.message)));
-    return yield* databaseReady(stack);
-  });
+const openProjectStack = Effect.gen(function* () {
+  const api = yield* Effect.serviceOption(StackApi);
+  if (Option.isNone(api)) return Option.none();
+  const cliSettings = yield* CommandSettings;
+  const descriptor = yield* api.value
+    .findStack({ projectRoot: cliSettings.workdir })
+    .pipe(Effect.mapError((cause) => notRunning(cause.message)));
+  if (Option.isNone(descriptor)) return Option.none();
+  const stack = yield* api.value
+    .openStack(descriptor.value.id)
+    .pipe(Effect.mapError((cause) => notRunning(cause.message)));
+  return yield* databaseReady(stack);
+});
 
 /** Ready project stack, or none when the stack is missing or the database is not ready. */
 export const stackOpenReadyProject = openProjectStack;
@@ -119,7 +130,7 @@ export const stackRejectNativeDockerDiffEngine: Effect.Effect<void, StackNativeE
 
 export const stackLocalDatabaseUrl: Effect.Effect<string, LocalDbRunningError, CommandSettings> =
   Effect.gen(function* () {
-    const opened = yield* openProjectStack();
+    const opened = yield* openProjectStack;
     if (Option.isNone(opened)) return yield* notRunning();
     const credentials = yield* opened.value.stack.credentials.pipe(
       Effect.mapError((cause) => notRunning(cause.message)),

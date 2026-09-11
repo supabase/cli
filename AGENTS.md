@@ -19,7 +19,8 @@ root-owned. Effect lint covers `packages/stack`, all files under
 `apps/cli/src/commands/experimental/stack` and `apps/cli/src/commands/experimental/compute`, the
 shared `apps/cli/src/shared/compute` runtime helpers (excluding embedded starter templates), the
 Compute test fixture helper, and `apps/cli/src/command-internal/experimental-feature.ts`,
-`stack-backend.ts`, and `stack-api.ts`; use the root scripts for it.
+`stack-backend.ts`, `stack-api.ts`, `stack-local-database.ts`, `stack-shadow.ts`, and
+`postgres-client.run.ts`; use the root scripts for it.
 
 ### Config Naming Vocabulary
 
