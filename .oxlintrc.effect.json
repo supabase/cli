@@ -4,5 +4,14 @@
   "options": {
     "denyWarnings": true
   },
-  "ignorePatterns": ["apps/cli/src/shared/compute/stacks/**"]
+  "ignorePatterns": [
+    "**",
+    "!packages/stack/**",
+    "!apps/cli/src/commands/experimental/stack/**",
+    "!apps/cli/src/commands/experimental/compute/**",
+    "!apps/cli/src/shared/compute/**",
+    "apps/cli/src/shared/compute/stacks/**",
+    "!apps/cli/tests/helpers/compute.ts",
+    "!apps/cli/src/command-internal/experimental-feature.ts"
+  ]
 }
