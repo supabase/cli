@@ -27,9 +27,6 @@ import type { PreparedCapability, PrepareStackResult } from "./EffectStack.ts";
 import { InvalidStackConfigError } from "./Errors.ts";
 import { StackRuntimeEnvironment, type StackRuntimeEnvironmentValue } from "../state/Ownership.ts";
 
-// oxlint-disable effecttsgo/async-function -- Promise facade methods must expose Promise/AsyncIterable APIs.
-// oxlint-disable effecttsgo/any-unknown-in-error-context -- Promise callers receive native rejection values.
-
 /** Recursively replaces Effect `Redacted` leaves with their plain value. */
 type Unredacted<T> =
   T extends Redacted.Redacted<infer Value>
@@ -109,11 +106,11 @@ const adaptStream = <A, E>(stream: Stream.Stream<A, E>): AsyncIterable<A> =>
 
 /** Adapts an already-created Effect handle; exported for facade integration tests. */
 export const adaptEffectStack = (effectStack: EffectStack): PromiseStack => {
-  const invoke = <A>(effect: Effect.Effect<A, unknown>): Promise<A> => Effect.runPromise(effect);
+  const invoke = <A>(effect: Effect.Effect<A, Error>): Promise<A> => Effect.runPromise(effect);
   const withConfig = <A>(
     options: { readonly config?: PromiseStackConfig } | undefined,
-    operation: (config?: StackConfig) => Effect.Effect<A, unknown>,
-  ): Effect.Effect<A, unknown> =>
+    operation: (config?: StackConfig) => Effect.Effect<A, Error>,
+  ): Effect.Effect<A, Error> =>
     Effect.gen(function* () {
       const config =
         options?.config === undefined ? undefined : yield* decodePromiseConfig(options.config);
@@ -121,9 +118,9 @@ export const adaptEffectStack = (effectStack: EffectStack): PromiseStack => {
     });
   return {
     id: effectStack.id,
-    status: () => invoke(effectStack.status()),
+    status: () => invoke(effectStack.status),
     credentials: () =>
-      invoke(effectStack.credentials()).then((value) =>
+      invoke(effectStack.credentials).then((value) =>
         Schema.decodeSync(PromiseStackCredentialsSchema)(unredact(value)),
       ),
     prepare: (options) =>
@@ -150,8 +147,8 @@ export const adaptEffectStack = (effectStack: EffectStack): PromiseStack => {
             : effectStack.start(config === undefined ? {} : { config }),
         ),
       ),
-    stop: () => invoke(effectStack.stop()),
-    destroy: () => invoke(effectStack.destroy()),
+    stop: () => invoke(effectStack.stop),
+    destroy: () => invoke(effectStack.destroy),
     logs: (query) => invoke(effectStack.logs(query)),
     followLogs: (query) => adaptStream(effectStack.followLogs(query)),
   };
@@ -165,13 +162,12 @@ export const makePromiseApi = (
     runtimeEnvironment === undefined
       ? platformLayer
       : Layer.mergeAll(platformLayer, Layer.succeed(StackRuntimeEnvironment, runtimeEnvironment));
-  const run = async <A, E>(effect: Effect.Effect<A, E, RuntimeRequirements>): Promise<A> => {
-    return await Effect.runPromise(effect.pipe(Effect.provide(providedLayer)));
-  };
+  const run = <A, E>(effect: Effect.Effect<A, E, RuntimeRequirements>): Promise<A> =>
+    Effect.runPromise(effect.pipe(Effect.provide(providedLayer)));
 
-  const createOrOpen = async (
-    effect: Effect.Effect<EffectStack, unknown, RuntimeRequirements>,
-  ): Promise<PromiseStack> => adaptEffectStack(await run(effect));
+  const createOrOpen = (
+    effect: Effect.Effect<EffectStack, Error, RuntimeRequirements>,
+  ): Promise<PromiseStack> => run(effect).then(adaptEffectStack);
   return {
     createStack: (options) => createOrOpen(createEffectStack(options)),
     openStack: (id) => createOrOpen(openEffectStack(id)),

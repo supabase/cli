@@ -3,7 +3,6 @@ import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, Exit, Fiber, Option, Queue } from "effect";
 import { GatewayActivationError } from "../public/Errors.ts";
 import { connect as connectNet, createServer, type Server, type Socket } from "node:net";
-// oxlint-disable-next-line effecttsgo/node-builtin-import
 import {
   Agent,
   type ClientRequest,
@@ -11,7 +10,7 @@ import {
   request as requestHttp,
   type IncomingMessage,
   type ServerResponse,
-  // oxlint-disable-next-line effecttsgo/node-builtin-import
+  // oxlint-disable-next-line effecttsgo/node-builtin-import -- fixture exercises raw HTTP proxy behavior.
 } from "node:http";
 import {
   GatewayRouteNotFoundError,

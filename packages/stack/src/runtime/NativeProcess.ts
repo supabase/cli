@@ -1,4 +1,4 @@
-import { Data, Duration, Effect, Fiber, Option, Result, Scope, Stream } from "effect";
+import { Data, Duration, Effect, Option, Scope, Stream } from "effect";
 import { fileURLToPath } from "node:url";
 import { ChildProcess } from "effect/unstable/process";
 import type { PlatformError } from "effect/PlatformError";
@@ -116,6 +116,8 @@ export const spawnNativeProcess = (
   import("effect/unstable/process/ChildProcessSpawner").ChildProcessSpawner | Scope.Scope
 > =>
   Effect.gen(function* () {
+    // Shutdown must precede the spawner's finalizer even when the caller closes in parallel.
+    const processScope = yield* Scope.fork(yield* Scope.Scope, "sequential");
     const launcherArgs =
       identity === undefined
         ? launcher.args
@@ -135,8 +137,7 @@ export const spawnNativeProcess = (
         fd3: { type: "input" },
         fd4: { type: "input" },
       },
-    });
-    yield* Stream.run(Stream.succeed(encodeSpec(spec)), handle.getInputFd(4));
+    }).pipe(Scope.provide(processScope));
     const mapError = <A>(
       effect: Effect.Effect<A, PlatformError>,
     ): Effect.Effect<A, NativeProcessError> =>
@@ -163,40 +164,59 @@ export const spawnNativeProcess = (
       },
       catch: (error) => mapProcessError(error, spec),
     });
-    const signalLauncher = (signal: NodeJS.Signals) =>
+    const signalLauncher = (signal: NodeJS.Signals): Effect.Effect<void, NativeProcessError> =>
       Effect.try({
         try: () => {
-          try {
-            globalThis.process.kill(Number(handle.pid), signal);
-          } catch (error) {
-            if (
-              typeof error === "object" &&
-              error !== null &&
-              "code" in error &&
-              error.code === "ESRCH"
-            )
-              return;
-            throw error;
-          }
+          globalThis.process.kill(Number(handle.pid), signal);
         },
         catch: (error) => mapProcessError(error, spec),
-      });
-    const observeExit = mapError(handle.exitCode).pipe(Effect.result);
-    const exitFiber = yield* observeExit.pipe(
-      Effect.tap(
-        () =>
-          // The launcher exits with the workload's code, but its descendants
-          // can keep the detached process group alive. The parent still owns
-          // that exact group, so terminate it after capturing the exit code.
-          cleanupProcessGroup,
-      ),
-      Effect.forkScoped({ startImmediately: true }),
+      }).pipe(
+        Effect.catch((error) => {
+          const cause = error.cause;
+          return typeof cause === "object" &&
+            cause !== null &&
+            "code" in cause &&
+            cause.code === "ESRCH"
+            ? Effect.void
+            : Effect.fail(error);
+        }),
+      );
+    const killProcess = Effect.gen(function* () {
+      const running = yield* handle.isRunning.pipe(
+        Effect.mapError((error) => mapProcessError(error, spec)),
+      );
+      if (!running) return yield* cleanupProcessGroup;
+      // Record the stop in the launcher before it forwards the signal to the workload.
+      const graceful =
+        globalThis.process.platform === "win32"
+          ? handle
+              .kill({ killSignal: spec.gracefulStopSignal ?? "SIGTERM" })
+              .pipe(Effect.mapError((error) => mapProcessError(error, spec)))
+          : signalLauncher(spec.gracefulStopSignal ?? "SIGTERM").pipe(
+              // Signal termination still completes the wait; group cleanup must follow.
+              Effect.andThen(handle.exitCode.pipe(Effect.catch(() => Effect.void))),
+            );
+      const stopped = yield* graceful.pipe(
+        Effect.timeoutOption(spec.gracefulStopTimeout ?? "2 seconds"),
+      );
+      if (Option.isNone(stopped)) {
+        const stillRunning = yield* handle.isRunning.pipe(
+          Effect.mapError((error) => mapProcessError(error, spec)),
+        );
+        if (stillRunning)
+          yield* handle
+            .kill({ killSignal: "SIGKILL" })
+            .pipe(Effect.mapError((error) => mapProcessError(error, spec)));
+      }
+      if (globalThis.process.platform !== "win32") yield* cleanupProcessGroup;
+    });
+    yield* Scope.addFinalizer(
+      processScope,
+      killProcess.pipe(Effect.catch((error) => Effect.logError(error.message))),
     );
-    const exitResult = Fiber.join(exitFiber);
-    const exitCode = exitResult.pipe(
-      Effect.flatMap((result) =>
-        Result.isSuccess(result) ? Effect.succeed(result.success) : Effect.fail(result.failure),
-      ),
+    yield* Stream.run(Stream.succeed(encodeSpec(spec)), handle.getInputFd(4));
+    const exitCode = yield* Effect.cached(
+      mapError(handle.exitCode).pipe(Effect.tap(() => cleanupProcessGroup)),
     );
     return {
       pid: handle.pid,
@@ -204,25 +224,6 @@ export const spawnNativeProcess = (
       stderr: mapStreamError(handle.stderr),
       exitCode,
       isRunning: mapError(handle.isRunning),
-      kill: Effect.gen(function* () {
-        const signal = spec.gracefulStopSignal ?? "SIGTERM";
-        // The launcher records the explicit stop before forwarding it; broadcasting the
-        // signal to the whole group can race that bookkeeping with the exit callback.
-        const gracefulStop =
-          globalThis.process.platform === "win32"
-            ? mapError(handle.kill({ killSignal: signal }))
-            : signalLauncher(signal).pipe(
-                Effect.andThen(observeExit),
-                Effect.andThen(cleanupProcessGroup),
-                Effect.asVoid,
-              );
-        const graceful = yield* gracefulStop.pipe(
-          Effect.timeoutOption(spec.gracefulStopTimeout ?? "2 seconds"),
-        );
-        if (Option.isNone(graceful)) {
-          const running = yield* mapError(handle.isRunning);
-          if (running) yield* mapError(handle.kill({ killSignal: "SIGKILL" }));
-        }
-      }),
+      kill: killProcess,
     } satisfies NativeProcess;
   }).pipe(Effect.mapError((error) => mapProcessError(error, spec)));

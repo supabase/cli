@@ -1,24 +1,37 @@
-// oxlint-disable effecttsgo/async-function -- AsyncDisposable is the public test-resource contract.
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- test resource owns its exact temp directory.
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- test resource builds an isolated root.
-import { dirname, join } from "node:path";
 import { NodeServices } from "@effect/platform-node";
-import { Data } from "effect";
+import { Cause, Data, Effect, Exit, FileSystem, Path } from "effect";
 import { defaultRuntimeEnvironment } from "../supervisor/Launcher.ts";
-import {
-  makePromiseApi,
-  type PromiseStack,
-  type PromiseStackConfig,
-  type PromiseStartStackOptions,
-} from "./PromiseStack.ts";
+import { makePromiseApi, type PromiseStack, type PromiseStackConfig } from "./PromiseStack.ts";
 import type { CreateStackOptions } from "./EffectStack.ts";
 import type { StackRuntimeEnvironmentValue } from "../state/Ownership.ts";
 
 class TestStackReadinessError extends Data.TaggedError("TestStackReadinessError")<{
   readonly message: string;
+  readonly cause?: unknown;
 }> {}
+
+class TestStackOperationError extends Data.TaggedError("TestStackOperationError")<{
+  readonly message: string;
+  readonly cause: unknown;
+}> {}
+
+const call = <A>(operation: () => Promise<A>) =>
+  Effect.tryPromise({
+    try: operation,
+    catch: (cause) =>
+      new TestStackOperationError({
+        message: cause instanceof Error ? cause.message : String(cause),
+        cause,
+      }),
+  });
+
+const run = <A, E>(program: Effect.Effect<A, E>): Promise<A> =>
+  Effect.runPromiseExit(program).then((exit) => {
+    if (Exit.isSuccess(exit)) return exit.value;
+    const error = Cause.squash(exit.cause);
+    throw error instanceof TestStackOperationError ? error.cause : error;
+  });
 export interface CreateTestStackOptions {
   readonly config?: PromiseStackConfig;
   readonly name?: string;
@@ -47,26 +60,36 @@ export interface TestStackOperations {
 
 type TestStackOperationsOverrides = Partial<TestStackOperations>;
 
-const createTestProjectRoot = async (): Promise<string> => {
-  const projectsRoot = join(dirname(defaultRuntimeEnvironment().stateRoot), "test-projects");
-  await mkdir(projectsRoot, { recursive: true });
-  return mkdtemp(join(projectsRoot, "supabase-stack-test-"));
-};
+const createTestProjectRoot = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const projectsRoot = path.join(
+    path.dirname((yield* defaultRuntimeEnvironment).stateRoot),
+    "test-projects",
+  );
+  yield* fs.makeDirectory(projectsRoot, { recursive: true });
+  return yield* fs.makeTempDirectory({ directory: projectsRoot, prefix: "supabase-stack-test-" });
+});
 
 const defaultOperations: TestStackOperations = {
-  createRoot: createTestProjectRoot,
+  createRoot: () => run(createTestProjectRoot.pipe(Effect.provide(NodeServices.layer))),
   createStack: (options, environment) =>
     makePromiseApi(NodeServices.layer, environment).createStack(options),
-  removeRoot: (root) => rm(root, { recursive: true, force: true }),
+  removeRoot: (root) =>
+    run(
+      Effect.flatMap(FileSystem.FileSystem, (fs) =>
+        fs.remove(root, { recursive: true, force: true }),
+      ).pipe(Effect.provide(NodeServices.layer)),
+    ),
 };
 
-// Native slim-services artifacts are immutable and expensive to download. Keep one
-// shared cache for test stacks while each stack's state/data roots remain disposable.
-const testArtifactCacheRoot = join(tmpdir(), "supabase-stack-test-artifacts");
-
-const testRuntimeEnvironment = (): StackRuntimeEnvironmentValue => ({
-  ...defaultRuntimeEnvironment(),
-  artifactCacheRoot: testArtifactCacheRoot,
+// Sharing immutable native artifacts keeps disposable test roots inexpensive.
+const testRuntimeEnvironment = Effect.gen(function* () {
+  const path = yield* Path.Path;
+  return {
+    ...(yield* defaultRuntimeEnvironment),
+    artifactCacheRoot: path.join(tmpdir(), "supabase-stack-test-artifacts"),
+  } satisfies StackRuntimeEnvironmentValue;
 });
 
 const validateStartedStatus = (
@@ -129,122 +152,135 @@ const validateStartedStatus = (
     }
     return undefined;
   };
-  if (ready(initial)) return;
+  if (ready(initial)) return Effect.void;
   const failure = terminalFailure(initial);
-  throw (
+  return Effect.fail(
     failure ??
-    new TestStackReadinessError({
-      message: `Stack did not become ready after start (lifecycle ${initial.lifecycle})`,
-    })
+      new TestStackReadinessError({
+        message: `Stack did not become ready after start (lifecycle ${initial.lifecycle})`,
+      }),
   );
 };
 
 const STARTUP_DIAGNOSTIC_LOG_TAIL = 50;
 
-const withStartupDiagnostics = async (stack: PromiseStack, primary: unknown): Promise<Error> => {
-  const [snapshot, recentLogs] = await Promise.all([
-    stack.status().catch(() => undefined),
-    stack.logs({ tail: STARTUP_DIAGNOSTIC_LOG_TAIL }).catch(() => undefined),
-  ]);
-  const capabilityStates =
-    snapshot === undefined
-      ? "unavailable"
-      : snapshot.capabilities
-          .map(
-            ({ name, state, error }) =>
-              `${name}=${state}${error === undefined ? "" : ` (${error})`}`,
-          )
-          .join(", ");
-  const logs =
-    recentLogs === undefined
-      ? "unavailable"
-      : recentLogs.entries
-          .slice(-STARTUP_DIAGNOSTIC_LOG_TAIL)
-          .map(({ source, stream, message }) => `${source}/${stream}: ${message}`)
-          .join("\n") || "none";
-  const reason = primary instanceof Error ? primary.message : String(primary);
-  return new Error(
-    [
-      reason,
-      `lifecycle=${snapshot?.lifecycle ?? "unavailable"}`,
-      `capabilities=${capabilityStates}`,
-      `recent logs:\n${logs}`,
-    ].join("; "),
-    { cause: primary },
-  );
-};
+const withStartupDiagnostics = (
+  stack: PromiseStack,
+  primary: TestStackOperationError | TestStackReadinessError,
+) =>
+  Effect.gen(function* () {
+    const [snapshot, recentLogs] = yield* Effect.all(
+      [
+        call(() => stack.status()).pipe(Effect.catch(() => Effect.undefined)),
+        call(() => stack.logs({ tail: STARTUP_DIAGNOSTIC_LOG_TAIL })).pipe(
+          Effect.catch(() => Effect.undefined),
+        ),
+      ],
+      { concurrency: 2 },
+    );
+    const capabilityStates =
+      snapshot === undefined
+        ? "unavailable"
+        : snapshot.capabilities
+            .map(
+              ({ name, state, error }) =>
+                `${name}=${state}${error === undefined ? "" : ` (${error})`}`,
+            )
+            .join(", ");
+    const logs =
+      recentLogs === undefined
+        ? "unavailable"
+        : recentLogs.entries
+            .slice(-STARTUP_DIAGNOSTIC_LOG_TAIL)
+            .map(({ source, stream, message }) => `${source}/${stream}: ${message}`)
+            .join("\n") || "none";
+    return new TestStackReadinessError({
+      message: [
+        primary.message,
+        `lifecycle=${snapshot?.lifecycle ?? "unavailable"}`,
+        `capabilities=${capabilityStates}`,
+        `recent logs:\n${logs}`,
+      ].join("; "),
+      cause: primary instanceof TestStackOperationError ? primary.cause : primary,
+    });
+  });
 
-const cleanup = async (
+const cleanup = (
   stack: PromiseStack | undefined,
   root: string,
   operations: TestStackOperations,
-  primary?: unknown,
-) => {
-  let failure = primary;
-  let rootCanBeRemoved = true;
-  if (stack !== undefined) {
-    try {
-      await stack.destroy();
-    } catch (error) {
-      rootCanBeRemoved = false;
-      if (failure === undefined) failure = error;
+  primary?: TestStackOperationError | TestStackReadinessError,
+) =>
+  Effect.gen(function* () {
+    if (stack !== undefined) {
+      const failure = yield* call(() => stack.destroy()).pipe(
+        Effect.match({
+          onSuccess: () => undefined,
+          onFailure: (error) => error,
+        }),
+      );
+      // Failed destruction leaves the root available for recovery of durable state.
+      if (failure !== undefined)
+        return yield* new TestStackReadinessError({
+          message: `${(primary ?? failure).message}; retained test stack root ${root}`,
+          cause: primary ?? failure.cause,
+        });
     }
-  }
-  // Retain the exact root when destroy fails because durable/Docker state may remain recoverable.
-  if (rootCanBeRemoved) {
-    try {
-      await operations.removeRoot(root);
-    } catch (error) {
-      if (failure === undefined) failure = error;
-    }
-  }
-  if (!rootCanBeRemoved) {
-    const reason = failure instanceof Error ? failure.message : String(failure);
-    throw new Error(`${reason}; retained test stack root ${root}`, { cause: failure });
-  }
-  if (failure !== undefined) throw failure;
-};
+    yield* call(() => operations.removeRoot(root)).pipe(
+      Effect.mapError((error) => primary ?? error),
+    );
+    if (primary !== undefined) return yield* primary;
+  });
 
 /** Internal seam used by integration tests; the package testing barrel exports only createTestStack. */
-export const createTestStackWith = async (
+export const createTestStackWith = (
   options: CreateTestStackOptions = {},
   operations: TestStackOperations | TestStackOperationsOverrides = defaultOperations,
-): Promise<TestStack> => {
-  const resolvedOperations: TestStackOperations = { ...defaultOperations, ...operations };
-  const projectRoot = await resolvedOperations.createRoot();
-  let stack: PromiseStack | undefined;
-  try {
-    if (options.setupProject !== undefined) await options.setupProject(projectRoot);
-    const runtimeEnvironment = testRuntimeEnvironment();
-    stack = await resolvedOperations.createStack(
-      {
-        projectRoot,
-        name: options.name,
-        runtime: options.runtime,
-      },
-      runtimeEnvironment,
-    );
-    try {
-      const started = await stack.start(
-        options.config === undefined
-          ? undefined
-          : ({ config: options.config } satisfies PromiseStartStackOptions),
+): Promise<TestStack> =>
+  run(
+    Effect.gen(function* () {
+      const resolvedOperations = { ...defaultOperations, ...operations };
+      const projectRoot = yield* call(() => resolvedOperations.createRoot());
+      let stack: PromiseStack | undefined;
+      return yield* Effect.gen(function* () {
+        if (options.setupProject !== undefined) {
+          const setup = options.setupProject;
+          yield* call(() => setup(projectRoot));
+        }
+        const runtimeEnvironment = yield* testRuntimeEnvironment;
+        const resource = yield* call(() =>
+          resolvedOperations.createStack(
+            {
+              projectRoot,
+              name: options.name,
+              runtime: options.runtime,
+            },
+            runtimeEnvironment,
+          ),
+        );
+        stack = resource;
+        yield* call(() =>
+          resource.start(options.config === undefined ? undefined : { config: options.config }),
+        ).pipe(
+          Effect.flatMap((started) => validateStartedStatus(started, options.config)),
+          Effect.catch((error) =>
+            withStartupDiagnostics(resource, error).pipe(Effect.flatMap(Effect.fail)),
+          ),
+        );
+        return {
+          ...resource,
+          stateRoot: runtimeEnvironment.stateRoot,
+          [Symbol.asyncDispose]: () => run(cleanup(resource, projectRoot, resolvedOperations)),
+        } satisfies TestStack;
+      }).pipe(
+        Effect.catch((error) =>
+          cleanup(stack, projectRoot, resolvedOperations, error).pipe(
+            Effect.andThen(Effect.fail(error)),
+          ),
+        ),
       );
-      validateStartedStatus(started, options.config);
-    } catch (error) {
-      throw await withStartupDiagnostics(stack, error);
-    }
-    const resource = stack;
-    return {
-      ...resource,
-      stateRoot: runtimeEnvironment.stateRoot,
-      [Symbol.asyncDispose]: () => cleanup(resource, projectRoot, resolvedOperations),
-    };
-  } catch (error) {
-    await cleanup(stack, projectRoot, resolvedOperations, error);
-    throw error;
-  }
-};
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 
 /** Creates an isolated managed stack and destroys exactly that identity on disposal. */
 export const createTestStack = (options: CreateTestStackOptions = {}): Promise<TestStack> =>

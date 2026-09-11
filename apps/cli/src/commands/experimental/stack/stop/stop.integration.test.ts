@@ -61,7 +61,7 @@ function setup(opts: {
   root: string;
   format?: "text" | "json" | "stream-json";
   found?: { id: string; name?: string };
-  stop?: () => Effect.Effect<void, ApiStackStopError>;
+  stop?: Effect.Effect<void, ApiStackStopError>;
   openFailure?: OpenStackError;
   findFailure?: StackDiscoveryError;
   discoveryFailure?: StackDiscoveryError;
@@ -84,20 +84,18 @@ function setup(opts: {
   const id = opts.found?.id ?? "a".repeat(64);
   const stack = {
     id: StackIdSchema.make(id),
-    status: () => Effect.succeed(status(id)),
-    credentials: () => Effect.die("unused"),
+    status: Effect.succeed(status(id)),
+    credentials: Effect.die("unused"),
     prepare: () => Effect.die("unused"),
     start: () => Effect.die("unused"),
     stop:
       opts.stop ??
-      (() =>
-        Effect.sync(() => {
-          state.stopCalls += 1;
-        })),
-    destroy: () =>
       Effect.sync(() => {
-        state.destroyCalled = true;
+        state.stopCalls += 1;
       }),
+    destroy: Effect.sync(() => {
+      state.destroyCalled = true;
+    }),
     logs: () => Effect.die("unused"),
     followLogs: () => Stream.empty,
   } satisfies EffectStack;
@@ -193,7 +191,7 @@ describe("stack stop", () => {
     const setupResult = setup({
       root,
       found: { id: first },
-      stop: () => Effect.fail(new StackCleanupError({ message: "stop failed" })),
+      stop: Effect.fail(new StackCleanupError({ message: "stop failed" })),
       discovered: {
         stacks: [
           {
@@ -278,7 +276,7 @@ describe("stack stop", () => {
       root: "/tmp/supabase-stack-stop-json",
       format: "json",
       found: { id: failed },
-      stop: () => Effect.fail(new StackCleanupError({ message: "cleanup failed" })),
+      stop: Effect.fail(new StackCleanupError({ message: "cleanup failed" })),
       discovered: {
         stacks: [
           {
@@ -365,7 +363,7 @@ describe("stack stop", () => {
     const setupResult = setup({
       root: "/tmp/supabase-stack-stop-mixed",
       found: { id: failed },
-      stop: () => Effect.fail(new StackCleanupError({ message: "cleanup failed" })),
+      stop: Effect.fail(new StackCleanupError({ message: "cleanup failed" })),
       discovered: {
         stacks: [
           {
@@ -538,7 +536,7 @@ describe("stack stop", () => {
     const setupResult = setup({
       root,
       found: { id: "b".repeat(64) },
-      stop: () => Effect.fail(new StackStateInvalidError({ message: "stop failed" })),
+      stop: Effect.fail(new StackStateInvalidError({ message: "stop failed" })),
     });
     return Effect.gen(function* () {
       const failure = yield* stackStop(flags()).pipe(Effect.flip);
@@ -554,7 +552,7 @@ describe("stack stop", () => {
     const setupResult = setup({
       root,
       found: { id: "7".repeat(64) },
-      stop: () => Effect.fail(ownershipConflict),
+      stop: Effect.fail(ownershipConflict),
     });
     return Effect.gen(function* () {
       const failure = yield* stackStop(flags()).pipe(Effect.flip);
@@ -614,7 +612,7 @@ describe("stack stop", () => {
     const setupResult = setup({
       root,
       found: { id: "a".repeat(64) },
-      stop: () => Effect.fail(new StackCleanupError({ message: "cleanup failed" })),
+      stop: Effect.fail(new StackCleanupError({ message: "cleanup failed" })),
     });
     return Effect.gen(function* () {
       const failure = yield* stackStop(flags()).pipe(Effect.flip);

@@ -14,7 +14,7 @@ import {
   Stream,
 } from "effect";
 import { ChildProcess } from "effect/unstable/process";
-import { createServer, type Server } from "node:net";
+import { createServer, Socket, type Server } from "node:net";
 import { deriveStackId, type StackIdentity } from "../identity/Identity.ts";
 import { StackOwnershipConflictError, StackStateInvalidError } from "../public/Errors.ts";
 import {
@@ -65,6 +65,40 @@ const closeServer = (server: Server) =>
     );
   });
 
+const observeRejectedPeer = (port: number) =>
+  Effect.callback<void, Error>((resume) => {
+    const socket = new Socket();
+    let connected = false;
+    let settled = false;
+    const finish = (result: Effect.Effect<void, Error>) => {
+      if (settled) return;
+      settled = true;
+      socket.off("connect", onConnect);
+      socket.off("error", onError);
+      socket.off("close", onClose);
+      socket.destroy();
+      resume(result);
+    };
+    const onConnect = () => {
+      connected = true;
+    };
+    const onError = (error: Error) => finish(Effect.fail(error));
+    const onClose = () => {
+      if (connected) finish(Effect.void);
+    };
+    socket.once("connect", onConnect);
+    socket.once("error", onError);
+    socket.once("close", onClose);
+    socket.connect({ host: "127.0.0.1", port });
+    return Effect.sync(() => {
+      settled = true;
+      socket.off("connect", onConnect);
+      socket.off("error", onError);
+      socket.off("close", onClose);
+      socket.destroy();
+    });
+  });
+
 const jsonText = (value: unknown) =>
   Schema.encodeSync(Schema.fromJsonString(Schema.Unknown))(value);
 
@@ -100,10 +134,21 @@ describe("stack ownership", () => {
           return yield* Effect.die("Blocker did not expose a bound port");
         const failed = yield* acquirePortLease(address.port).pipe(Effect.exit);
         expect(Exit.isFailure(failed)).toBe(true);
+        const failure = errorOf(failed);
+        expect(failure).toBeInstanceOf(StackStateInvalidError);
+        expect(failure?.code).toBe("EADDRINUSE");
         yield* closeServer(blocker);
         const lease = yield* acquirePortLease(address.port);
         yield* lease.close;
       }),
+    ),
+  );
+
+  it.live("closes accepted lease peers before lease cleanup completes", () =>
+    withPlatform(
+      Effect.acquireRelease(acquirePortLease(0), (lease) => lease.close).pipe(
+        Effect.flatMap((lease) => observeRejectedPeer(lease.port).pipe(Effect.timeout("1 second"))),
+      ),
     ),
   );
 

@@ -126,7 +126,7 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
       .openStack(StackIdSchema.make(target.id))
       .pipe(Effect.mapError(destroyError));
     const destroying = yield* output.task(`Destroying stack ${target.id}...`);
-    yield* stack.destroy().pipe(
+    yield* stack.destroy.pipe(
       Effect.tapError((error) => destroying.fail(error.message)),
       Effect.tap(() => destroying.clear()),
       Effect.mapError(destroyError),
