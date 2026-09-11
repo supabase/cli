@@ -6,11 +6,13 @@ import {
   resolveYesWithProjectEnv,
 } from "../../../../../command-internal/global-flags.ts";
 import { promptYesNo } from "../../../../../command-internal/prompt-yes-no.ts";
+import { MachineErrorContext } from "../../../../../shared/output/machine-error-context.service.ts";
 import { Output } from "../../../../../shared/output/output.service.ts";
 import { Tty } from "../../../../../shared/runtime/tty.service.ts";
 import { CommandSettings } from "../../../../../config/command-settings.service.ts";
 import { resetLocalDatabase } from "../../../../../command-internal/db-bootstrap/reset-local-database.ts";
-import { bold, red, yellow } from "../../../../../command-internal/colors.ts";
+import { aqua, bold, red, yellow } from "../../../../../command-internal/colors.ts";
+import { DbConnectError } from "../../../../../command-internal/db-connection.errors.ts";
 import { DbConnection } from "../../../../../command-internal/db-connection.service.ts";
 import { getHostname } from "../../../../../command-internal/hostname.ts";
 import {
@@ -18,8 +20,10 @@ import {
   readDbToml,
   resolveDeclarativeDir,
 } from "../../../../../command-internal/db-config.toml-read.ts";
-import { makeDir } from "../../../../../command-internal/make-dir.ts";
-import { applyMigrationFile } from "../../../../../command-internal/migration-apply.ts";
+import {
+  applyMigrationFile,
+  applyRenderedSqlUnits,
+} from "../../../../../command-internal/migration-apply.ts";
 import { ENABLE_LOCAL_WEBHOOKS_SUGGESTION } from "../../../../../command-internal/pg-net-guidance.ts";
 import { readProjectRefFile } from "../../../../../command-internal/temp-paths.ts";
 import { LinkedProjectCache } from "../../../../../telemetry/linked-project-cache.service.ts";
@@ -39,12 +43,17 @@ import {
   formatDebugId,
   saveDebugBundle,
 } from "../../../shared/debug-bundle.ts";
+import { ListPgDeltaSqlFiles } from "../../../shared/pgdelta-files.ts";
 import {
   DeclarativeApplyError,
   DeclarativeCompatibilityError,
+  DeclarativeDiffError,
+  DeclarativeInvalidMigrationStemError,
+  DeclarativeLocalDbNotRunningError,
   DeclarativeMutuallyExclusiveFlagsError,
   DeclarativeNoFilesGeneratedError,
   DeclarativeNonInteractiveError,
+  DeclarativeTransientConfirmationRequiredError,
   readErrorSuggestion,
 } from "../declarative.errors.ts";
 import {
@@ -56,6 +65,7 @@ import {
   resolveStagedDeclarativeDir,
   resolveDeclarativeMigrationName,
   resolveDeclarativeSyncApplyDecision,
+  validateDeclarativeMigrationStem,
 } from "../declarative.flow.ts";
 import { warnFormerDeclarativeDefault } from "../declarative.former-default.ts";
 import { appendExtensionDeclarations } from "../declarative.extension-repair.ts";
@@ -65,6 +75,7 @@ import {
   type DeclarativeSyncResult,
   diffDeclarativeToMigrations,
   generateDeclarativeOutput,
+  planDeclarativeToDatabase,
 } from "../declarative.orchestrate.ts";
 import { DeclarativeSeam } from "../../../shared/pgdelta.seam.service.ts";
 import {
@@ -76,14 +87,11 @@ import type { DbSchemaDeclarativeSyncFlags } from "./sync.command.ts";
 
 const DEFAULT_SYNC_NAME = "declarative_sync";
 
-/** UTC timestamp format `YYYYMMDDHHmmss`. */
-const formatTimestamp = (millis: number): string =>
-  new Date(millis).toISOString().replace(/\D/g, "").slice(0, 14);
-
 export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(function* (
   flags: DbSchemaDeclarativeSyncFlags,
 ) {
   const output = yield* Output;
+  const machineErrorContext = yield* Effect.serviceOption(MachineErrorContext);
   const tty = yield* Tty;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -125,6 +133,49 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
         }),
       );
     }
+    const transient = Option.getOrElse(flags.transient, () => false);
+    if (transient) {
+      if (Option.isSome(flags.apply) && !flags.apply.value) {
+        return yield* Effect.fail(
+          new DeclarativeMutuallyExclusiveFlagsError({
+            message: "--transient cannot be combined with --apply=false",
+          }),
+        );
+      }
+      const conflicts: Array<string> = [];
+      if (Option.isSome(flags.noApply)) conflicts.push("no-apply");
+      if (Option.isSome(flags.file)) conflicts.push("file");
+      if (Option.isSome(flags.name)) conflicts.push("name");
+      if (conflicts.length > 0) {
+        return yield* Effect.fail(
+          new DeclarativeMutuallyExclusiveFlagsError({
+            message: `--transient cannot be combined with ${conflicts
+              .map((flag) => `--${flag}`)
+              .join(", ")}`,
+          }),
+        );
+      }
+    }
+    if (Option.isSome(flags.file)) {
+      const validation = validateDeclarativeMigrationStem(flags.file.value);
+      if (validation !== undefined) {
+        return yield* Effect.fail(
+          new DeclarativeInvalidMigrationStemError({
+            message: `invalid --file value: ${validation}`,
+          }),
+        );
+      }
+    }
+    if (Option.isSome(flags.name)) {
+      const validation = validateDeclarativeMigrationStem(flags.name.value);
+      if (validation !== undefined) {
+        return yield* Effect.fail(
+          new DeclarativeInvalidMigrationStemError({
+            message: `invalid --name value: ${validation}`,
+          }),
+        );
+      }
+    }
 
     // The config value verbatim (already `supabase/`-prefixed when relative) or the relative
     // `supabase/schemas` default; printed verbatim in the bootstrap's written-to line below.
@@ -160,7 +211,7 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
     };
     const ensureLocalPostgresImageCurrent = seam.ensureLocalPostgresImageCurrent();
     yield* warnFormerDeclarativeDefault(fs, path, cliSettings.workdir, toml.pgDelta);
-    const declarativeFilesExist = yield* declarativeDirHasFiles(fs, declarativeDir);
+    const declarativeFilesExist = yield* declarativeDirHasSqlFiles(fs, declarativeDir);
 
     // Warns (rather than masking the apply error) and treats the bundle path as empty when the
     // debug directory cannot be created, so an apply failure still surfaces without claiming a
@@ -172,7 +223,7 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
             output
               .raw(`Warning: failed to save debug artifacts: ${error.message}\n`, "stderr")
               .pipe(Effect.as("")),
-          onSuccess: Effect.succeed,
+          onSuccess: (directory) => Effect.succeed(directory),
         }),
       );
 
@@ -181,6 +232,7 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
       const noFiles = new DeclarativeNonInteractiveError({
         message: "no declarative schema found. Run supabase db schema declarative generate first",
       });
+      if (transient) return yield* Effect.fail(noFiles);
       if (!tty.stdinIsTty && !yes) return yield* Effect.fail(noFiles);
       // `--yes`/`SUPABASE_YES` auto-confirms, but still echoes the `<label> [Y/n] y` stderr line
       // via `promptYesNo` rather than skipping it.
@@ -233,7 +285,7 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
       // A manifest-less directory keeps files the export did not replace, and those
       // files go straight into the plan below — warn before diffing against them.
       yield* warnPreservedUnmanagedDeclarativeFiles(declarativeDirRel, written);
-      if (!(yield* declarativeDirHasFiles(fs, declarativeDir))) {
+      if (!(yield* declarativeDirHasSqlFiles(fs, declarativeDir))) {
         return yield* Effect.fail(
           new DeclarativeNoFilesGeneratedError({
             message: "declarative schema generation did not produce any files",
@@ -245,6 +297,21 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
       // above, never a resolved absolute path.
       yield* output.raw(declarativeSchemaWrittenLine(declarativeDirRel), "stderr");
     }
+
+    const transientSource = transient
+      ? yield* Effect.gen(function* () {
+          if (!(yield* seam.isLocalDatabaseRunning())) {
+            return yield* Effect.fail(
+              new DeclarativeLocalDbNotRunningError({
+                message: `${aqua("supabase start")} is not running.`,
+                suggestion: "Start the local database, then rerun sync --transient.",
+              }),
+            );
+          }
+          yield* ensureLocalPostgresImageCurrent;
+          return localEndpoint({ port: toml.port, password: toml.password }, dnsResolver);
+        })
+      : undefined;
 
     // Step 2: diff migrations state vs declarative; on error, save a debug bundle.
     const stageNextExport = Effect.fnUntraced(function* () {
@@ -325,7 +392,10 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
     });
 
     const planDeclarativeSync = () =>
-      diffDeclarativeToMigrations(run, toml).pipe(
+      (transientSource === undefined
+        ? diffDeclarativeToMigrations(run, toml)
+        : planDeclarativeToDatabase(run, toml, transientSource)
+      ).pipe(
         Effect.tapError((error) =>
           error instanceof DeclarativeCompatibilityError
             ? Effect.void
@@ -339,7 +409,7 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
                   Effect.matchEffect({
                     // Prints nothing when the debug bundle itself fails to save.
                     onFailure: () => Effect.void,
-                    onSuccess: (debugDir) => output.raw(debugBundleMessage(debugDir), "stderr"),
+                    onSuccess: (directory) => output.raw(debugBundleMessage(directory), "stderr"),
                   }),
                 );
               }),
@@ -406,6 +476,9 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
     const initialResult = yield* planWithLoadRecovery();
     if (Option.isNone(initialResult)) return;
     let result: DeclarativeSyncResult = initialResult.value;
+    if (transient && output.format !== "text" && Option.isSome(machineErrorContext)) {
+      yield* machineErrorContext.value.set(transientResult(result, false));
+    }
 
     // Resolve successful manifest-less plans too. Repairs re-enter planning so a
     // second, broader legacy gap (for example cron intents) cannot fall through to
@@ -498,15 +571,110 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
       const replanned = yield* planWithLoadRecovery();
       if (Option.isNone(replanned)) return;
       result = replanned.value;
+      if (transient && output.format !== "text" && Option.isSome(machineErrorContext)) {
+        yield* machineErrorContext.value.set(transientResult(result, false));
+      }
     }
 
     // Step 3: empty diff.
     if (result.diffSQL.trim().length < 2) {
-      yield* output.raw("No schema changes found\n", "stderr");
+      if (transient && output.format !== "text") {
+        yield* output.success("No schema changes found.", transientResult(result, false));
+      } else {
+        yield* output.raw("No schema changes found\n", "stderr");
+      }
       return;
     }
-    yield* output.raw("Generated migration SQL:\n", "stderr");
-    yield* output.raw(`${result.diffSQL}\n`, "stderr");
+    if (transient) {
+      if (output.format === "text") {
+        yield* output.raw("Planned declarative SQL:\n", "stderr");
+        yield* output.raw(`${result.diffSQL}\n`, "stdout");
+      }
+    } else {
+      yield* output.raw("Generated migration SQL:\n", "stderr");
+      yield* output.raw(`${result.diffSQL}\n`, "stderr");
+    }
+
+    const printDropWarnings = () =>
+      result.dropWarnings.length === 0
+        ? Effect.void
+        : Effect.gen(function* () {
+            yield* output.raw(
+              `${yellow(
+                "Found destructive changes in schema diff. Please double check if these are expected:",
+              )}\n`,
+              "stderr",
+            );
+            yield* output.raw(`${yellow(result.dropWarnings.join("\n"))}\n`, "stderr");
+          });
+
+    if (transient) {
+      yield* printDropWarnings();
+      if (!yes) {
+        if (!tty.stdinIsTty || output.format !== "text") {
+          return yield* Effect.fail(
+            new DeclarativeTransientConfirmationRequiredError({
+              message: "transient apply requires confirmation in non-interactive mode",
+              suggestion: "Rerun with --transient --yes to apply the planned SQL.",
+            }),
+          );
+        }
+        const confirmed = yield* output.promptConfirm(
+          "Apply these schema changes directly to the local database?",
+          { defaultValue: true },
+        );
+        if (!confirmed) return;
+      }
+
+      const applyExit = yield* applyRenderedSqlToLocal(
+        { port: toml.port, password: toml.password, dnsResolver },
+        result.files,
+      ).pipe(Effect.exit);
+      if (Exit.isFailure(applyExit)) {
+        const failure = Cause.findFail(applyExit.cause);
+        if (Result.isFailure(failure)) return yield* Effect.failCause(failure.failure);
+        const rawError = failure.success.error;
+        const partialApplySuggestion =
+          "Some nontransactional or earlier units may already have applied. Rerun sync --transient to re-plan before retrying.";
+        const applyError =
+          rawError instanceof DeclarativeApplyError && rawError.connect === true
+            ? rawError
+            : rawError instanceof DbConnectError
+              ? new DeclarativeApplyError({
+                  message: rawError.message,
+                  connect: true,
+                  suggestion: partialApplySuggestion,
+                })
+              : new DeclarativeApplyError({
+                  message: rawError.message,
+                  suggestion: partialApplySuggestion,
+                });
+        yield* output.raw(`${red(`Transient apply failed: ${applyError.message}`)}\n`, "stderr");
+        const migrations = yield* collectMigrationsList(fs, path, migrationsDir);
+        const debugDir = yield* saveApplyDebugBundle({
+          id: `${formatDebugId(yield* Clock.currentTimeMillis)}-transient-apply-error`,
+          sourceRef: result.sourceRef,
+          targetRef: result.targetRef,
+          migrationSql: result.diffSQL,
+          error: applyError.message,
+          migrations,
+        });
+        if (debugDir.length > 0) {
+          yield* output.raw(debugBundleMessage(debugDir), "stderr");
+        }
+        return yield* Effect.fail(applyError);
+      }
+      if (output.format === "text") {
+        yield* output.raw("Schema changes applied successfully.\n", "stderr");
+        yield* output.raw(`${result.diffSQL}\n`, "stdout");
+      } else {
+        yield* output.success(
+          "Schema changes applied successfully.",
+          transientResult(result, true),
+        );
+      }
+      return;
+    }
 
     // Step 4: resolve migration name (prompt in TTY when --name unset).
     const file = Option.getOrElse(flags.file, () => DEFAULT_SYNC_NAME);
@@ -515,42 +683,34 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
     if (explicitName.length === 0 && tty.stdinIsTty && !yes) {
       const input = yield* output.promptText(
         `Enter a name for this migration (press Enter to keep '${migrationName}'): `,
+        { validate: validateDeclarativeMigrationStem },
       );
       if (input.trim().length > 0) migrationName = input.trim();
+    }
+    const migrationNameValidation = validateDeclarativeMigrationStem(migrationName);
+    if (migrationNameValidation !== undefined) {
+      return yield* Effect.fail(
+        new DeclarativeInvalidMigrationStemError({
+          message: `invalid migration name: ${migrationNameValidation}`,
+        }),
+      );
     }
 
     // Step 5: write the timestamped migration file.
     const nowMillis = yield* Clock.currentTimeMillis;
-    let migrationPaths: ReadonlyArray<string>;
-    if (result.files.length > 1) {
-      const written = yield* writePgDeltaMigrations(fs, path, {
-        workdir: cliSettings.workdir,
-        baseMillis: nowMillis,
-        name: migrationName,
-        files: result.files,
-      }).pipe(Effect.mapError((error) => new DeclarativeApplyError({ message: error.message })));
-      migrationPaths = written.map((migration) => migration.path);
-    } else {
-      const timestamp = formatTimestamp(nowMillis);
-      const migrationPath = path.join(migrationsDir, `${timestamp}_${migrationName}.sql`);
-      yield* makeDir(fs, migrationsDir);
-      yield* fs.writeFileString(migrationPath, result.diffSQL);
-      migrationPaths = [migrationPath];
-    }
+    const written = yield* writePgDeltaMigrations(fs, path, {
+      workdir: cliSettings.workdir,
+      baseMillis: nowMillis,
+      name: migrationName,
+      files: result.files,
+    }).pipe(Effect.mapError((error) => new DeclarativeApplyError({ message: error.message })));
+    const migrationPaths = written.map((migration) => migration.path);
     for (const migrationPath of migrationPaths) {
       yield* output.raw(`Created new migration at ${bold(migrationPath)}\n`, "stderr");
     }
 
     // Step 6: drop warnings.
-    if (result.dropWarnings.length > 0) {
-      yield* output.raw(
-        `${yellow(
-          "Found destructive changes in schema diff. Please double check if these are expected:",
-        )}\n`,
-        "stderr",
-      );
-      yield* output.raw(`${yellow(result.dropWarnings.join("\n"))}\n`, "stderr");
-    }
+    yield* printDropWarnings();
 
     // Step 7: apply decision.
     const decision = resolveDeclarativeSyncApplyDecision({
@@ -572,11 +732,21 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
     if (!shouldApply) return;
 
     // Step 8: apply the migration to the local database (native).
-    yield* ensureLocalPostgresImageCurrent;
-    const applyExit = yield* applyMigrationToLocal(
-      { port: toml.port, password: toml.password, dnsResolver },
-      migrationPaths,
-    ).pipe(Effect.exit);
+    let applyAttempted = false;
+    const applyExit = yield* ensureLocalPostgresImageCurrent.pipe(
+      Effect.andThen(
+        Effect.sync(() => {
+          applyAttempted = true;
+        }),
+      ),
+      Effect.andThen(
+        applyMigrationToLocal(
+          { port: toml.port, password: toml.password, dnsResolver },
+          migrationPaths,
+        ),
+      ),
+      Effect.exit,
+    );
 
     if (Exit.isSuccess(applyExit)) {
       yield* output.raw("Migration applied successfully.\n", "stderr");
@@ -592,7 +762,12 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
 
     // Apply failed: print, save a debug bundle, and (in a TTY) offer reset+reapply.
     const applyError = applyFailure.success.error;
-    yield* output.raw(`${red(`Migration failed to apply: ${applyError.message}`)}\n`, "stderr");
+    yield* output.raw(
+      `${red(
+        `${applyAttempted ? "Migration failed to apply" : "Migration apply preflight failed"}: ${applyError.message}`,
+      )}\n`,
+      "stderr",
+    );
     const ts = formatDebugId(yield* Clock.currentTimeMillis);
     const migrations = yield* collectMigrationsList(fs, path, migrationsDir);
     const debugDir = yield* saveApplyDebugBundle({
@@ -604,7 +779,7 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
       migrations,
     });
 
-    if (tty.stdinIsTty && !yes) {
+    if (tty.stdinIsTty && !yes && applyAttempted) {
       const shouldReset = yield* output.promptConfirm(
         "Would you like to reset the local database and reapply all migrations? (local data will be lost)",
         { defaultValue: false },
@@ -672,26 +847,43 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
   );
 });
 
-const declarativeDirHasFiles = Effect.fnUntraced(function* (
+const declarativeDirHasSqlFiles = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
   dir: string,
 ) {
   const exists = yield* fs.exists(dir).pipe(Effect.orElseSucceed(() => false));
   if (!exists) return false;
-  const entries = yield* fs.readDirectory(dir).pipe(Effect.orElseSucceed(() => [] as string[]));
-  return entries.length > 0;
+  return (
+    (yield* ListPgDeltaSqlFiles(fs, dir).pipe(
+      Effect.mapError((error) => new DeclarativeDiffError({ message: error.message })),
+    )).length > 0
+  );
 });
 
-/** Connects once and applies the ordered migration files. */
-const applyMigrationToLocal = (
-  local: { port: number; password: string; dnsResolver: "native" | "https" },
-  migrationPaths: ReadonlyArray<string>,
-) =>
+const transientResult = (
+  result: DeclarativeSyncResult,
+  applied: boolean,
+): Record<string, unknown> => ({
+  changed: result.diffSQL.trim().length >= 2,
+  applied,
+  migration_written: false,
+  history_recorded: false,
+  sql: result.diffSQL,
+  units: result.files.map((file) => ({
+    name: file.name,
+    transaction_mode: file.transactionMode,
+    sql: file.sql,
+  })),
+});
+
+const connectToLocal = (local: {
+  port: number;
+  password: string;
+  dnsResolver: "native" | "https";
+}) =>
   Effect.gen(function* () {
     const dbConnection = yield* DbConnection;
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const session = yield* dbConnection
+    return yield* dbConnection
       .connect(
         {
           // Host resolution order: SUPABASE_SERVICES_HOSTNAME → tcp DOCKER_HOST → 127.0.0.1, not
@@ -709,6 +901,30 @@ const applyMigrationToLocal = (
           (error) => new DeclarativeApplyError({ message: error.message, connect: true }),
         ),
       );
+  });
+
+const applyRenderedSqlToLocal = (
+  local: { port: number; password: string; dnsResolver: "native" | "https" },
+  files: DeclarativeSyncResult["files"],
+) =>
+  Effect.gen(function* () {
+    const session = yield* connectToLocal(local);
+    yield* applyRenderedSqlUnits(
+      session,
+      files,
+      (message) => new DeclarativeApplyError({ message }),
+    );
+  }).pipe(Effect.scoped);
+
+/** Connects once and applies the ordered migration files. */
+const applyMigrationToLocal = (
+  local: { port: number; password: string; dnsResolver: "native" | "https" },
+  migrationPaths: ReadonlyArray<string>,
+) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const session = yield* connectToLocal(local);
     for (const migrationPath of migrationPaths) {
       yield* applyMigrationFile(
         session,

@@ -1,9 +1,10 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { afterAll, beforeAll, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
-import { describe } from "vitest";
 import {
+  formatCliFailure,
+  listMigrationSqlFiles,
   makeTempCliStackProject,
   overrideStackPorts,
   requireCliSuccess,
@@ -30,19 +31,6 @@ create view public.auth_user_emails as
 select id, email
 from auth.users;
 `;
-
-function commandFailure(result: { stdout: string; stderr: string }): string {
-  return `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`;
-}
-
-function migrationFiles(projectDir: string): ReadonlyArray<string> {
-  const migrationsDir = path.join(projectDir, "supabase", "migrations");
-  return existsSync(migrationsDir)
-    ? readdirSync(migrationsDir)
-        .filter((file) => file.endsWith(".sql"))
-        .sort()
-    : [];
-}
 
 describe("db schema declarative sync (e2e)", () => {
   let project: Awaited<ReturnType<typeof makeTempCliStackProject>> | undefined;
@@ -139,9 +127,9 @@ describe("db schema declarative sync (e2e)", () => {
           exitTimeoutMs: SCENARIO_COMMAND_TIMEOUT_MS,
         },
       );
-      expect(sync.exitCode, commandFailure(sync)).toBe(0);
+      expect(sync.exitCode, formatCliFailure(sync)).toBe(0);
 
-      const migrations = migrationFiles(projectDir);
+      const migrations = listMigrationSqlFiles(projectDir);
       expect(migrations.length).toBeGreaterThan(0);
       const sql = migrations
         .map((file) => readFileSync(path.join(projectDir, "supabase", "migrations", file), "utf8"))
@@ -167,7 +155,7 @@ describe("db schema declarative sync (e2e)", () => {
           exitTimeoutMs: SCENARIO_COMMAND_TIMEOUT_MS,
         },
       );
-      expect(converged.exitCode, commandFailure(converged)).toBe(0);
+      expect(converged.exitCode, formatCliFailure(converged)).toBe(0);
       expect(`${converged.stdout}${converged.stderr}`).toContain("No schema changes found");
 
       // Extension-managed objects on the converged tree. The stack teardown after every test
@@ -184,10 +172,10 @@ describe("db schema declarative sync (e2e)", () => {
       // A next-engine plan may span several ordered migration files; read every
       // file a sync added rather than only the last one.
       const syncAndReadSql = async (name: string) => {
-        const before = new Set(migrationFiles(projectDir));
+        const before = new Set(listMigrationSqlFiles(projectDir));
         const result = await runSync(name);
-        expect(result.exitCode, commandFailure(result)).toBe(0);
-        const added = migrationFiles(projectDir).filter((file) => !before.has(file));
+        expect(result.exitCode, formatCliFailure(result)).toBe(0);
+        const added = listMigrationSqlFiles(projectDir).filter((file) => !before.has(file));
         expect(added.length, "sync did not write a migration").toBeGreaterThan(0);
         return {
           result,

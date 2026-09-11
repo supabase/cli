@@ -57,7 +57,8 @@ export const toShadowDbError = (cause: {
 
 /**
  * Real `DeclarativeSeam`: fully native. `ensureLocalDatabaseStarted` shares the same
- * `startLocalDatabase` bring-up `db start` uses.
+ * `startLocalDatabase` bring-up `db start` uses; `isLocalDatabaseRunning` is that inspect
+ * without starting, for `--transient`.
  */
 export const declarativeSeamLayer = Layer.effect(
   DeclarativeSeam,
@@ -71,29 +72,34 @@ export const declarativeSeamLayer = Layer.effect(
     // hand-enumerating every transitive dependency.
     const context = yield* Effect.context<StartLocalDatabaseDeps>();
 
+    const isLocalDatabaseRunning = () =>
+      isLocalDbRunning(
+        spawner,
+        fs,
+        path,
+        cliSettings.workdir,
+        Option.getOrUndefined(cliSettings.projectId),
+      ).pipe(
+        // Satisfies the probe's `LocalDockerEngine` requirement from the captured deps.
+        Effect.provideContext(context),
+        Effect.mapError(
+          (cause) =>
+            new DeclarativeShadowDbError({
+              message: cause.message,
+              ...(cause.daemonDown === true ? { docker: "daemon" as const } : {}),
+              // Same propagation as the start-failure catch below: the inspect error's
+              // Docker-install recovery text must survive the seam, or the normalizer
+              // falls back to its generic debug hint.
+              ...(cause.suggestion !== undefined ? { suggestion: cause.suggestion } : {}),
+            }),
+        ),
+      );
+
     return DeclarativeSeam.of({
+      isLocalDatabaseRunning,
       ensureLocalDatabaseStarted: () =>
         Effect.gen(function* () {
-          const running = yield* isLocalDbRunning(
-            spawner,
-            fs,
-            path,
-            cliSettings.workdir,
-            Option.getOrUndefined(cliSettings.projectId),
-          ).pipe(
-            // Satisfies the probe's `LocalDockerEngine` requirement from the captured deps.
-            Effect.provideContext(context),
-            Effect.mapError(
-              (cause) =>
-                new DeclarativeShadowDbError({
-                  message: cause.message,
-                  ...(cause.daemonDown === true ? { docker: "daemon" as const } : {}),
-                  // The inspect error's Docker-install recovery text must survive the seam, or
-                  // the normalizer falls back to its generic debug hint.
-                  ...(cause.suggestion !== undefined ? { suggestion: cause.suggestion } : {}),
-                }),
-            ),
-          );
+          const running = yield* isLocalDatabaseRunning();
           if (running) return; // already running — the seam never prints anything here.
           yield* startLocalDatabase().pipe(
             Effect.provideContext(context),
@@ -226,10 +232,7 @@ export const declarativeSeamLayer = Layer.effect(
             if (!familyMismatch && actualTag === expectedTag) {
               return;
             }
-            const remediation =
-              familyMismatch && actualTag === expectedTag
-                ? "The tags match but the image family does not (slim vs docker.io). Run supabase stop, then supabase start with the same SUPABASE_USE_SLIM_IMAGES setting before syncing declarative schemas."
-                : "Run supabase stop --all --no-backup, then supabase start before syncing declarative schemas.";
+            const remediation = postgresImageRemediation(actual, expected);
             return yield* Effect.fail(
               new DeclarativeShadowDbError({
                 message: `local Postgres container image is stale: running ${actual} but expected ${expected}. ${remediation}`,
@@ -251,6 +254,33 @@ function dockerImageTag(image: string): string {
   const index = trimmed.lastIndexOf(":");
   if (index < 0 || index === trimmed.length - 1) return "";
   return trimmed.slice(index + 1);
+}
+
+export function resolvePostgresImageMajor(image: string): number | undefined {
+  const match = /^(?:orioledb-)?(\d+)(?:[.-]|$)/i.exec(dockerImageTag(image));
+  if (match === null) return undefined;
+  const major = Number(match[1]);
+  return Number.isSafeInteger(major) && major > 0 ? major : undefined;
+}
+
+function isOrioleDbImage(image: string): boolean {
+  const tag = dockerImageTag(image);
+  return /^orioledb-/i.test(tag) || /-orioledb$/i.test(tag);
+}
+
+export function postgresImageRemediation(actual: string, expected: string): string {
+  const actualMajor = resolvePostgresImageMajor(actual);
+  const expectedMajor = resolvePostgresImageMajor(expected);
+  if (actualMajor !== undefined && expectedMajor !== undefined && actualMajor !== expectedMajor) {
+    return `Postgres major version changed from ${actualMajor} to ${expectedMajor}. Run supabase stop --all --no-backup, then supabase start before syncing declarative schemas. This deletes all local database data.`;
+  }
+  if (isOrioleDbImage(actual) !== isOrioleDbImage(expected)) {
+    return "The Postgres storage engine changed (standard vs OrioleDB). Run supabase stop --all --no-backup, then supabase start before syncing declarative schemas. This deletes all local database data.";
+  }
+  if (isSlimImageRef(expected) !== isSlimImageRef(actual)) {
+    return "The image family changed (slim vs docker.io). Run supabase stop, then supabase start with the same SUPABASE_USE_SLIM_IMAGES setting before syncing declarative schemas.";
+  }
+  return "Run supabase stop, then supabase start before syncing declarative schemas.";
 }
 
 export function isMissingContainerInspectError(stderr: string): boolean {

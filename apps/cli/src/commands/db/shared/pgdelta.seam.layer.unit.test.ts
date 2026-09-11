@@ -2,9 +2,74 @@ import { describe, expect, it } from "vitest";
 
 import {
   isMissingContainerInspectError,
+  postgresImageRemediation,
   resolveContainerInspectImageName,
+  resolvePostgresImageMajor,
   toShadowDbError,
 } from "./pgdelta.seam.layer.ts";
+
+describe("resolvePostgresImageMajor", () => {
+  it("reads standard and OrioleDB Postgres tags", () => {
+    expect(resolvePostgresImageMajor("public.ecr.aws/supabase/postgres:17.6.1.167")).toBe(17);
+    expect(resolvePostgresImageMajor("supabase/postgres:orioledb-15.1.0.55")).toBe(15);
+    expect(resolvePostgresImageMajor("supabase/postgres:16.0.0.1-orioledb")).toBe(16);
+  });
+
+  it("returns undefined when the tag does not expose a numeric major", () => {
+    expect(resolvePostgresImageMajor("supabase/postgres:latest")).toBeUndefined();
+    expect(resolvePostgresImageMajor("registry.example:5000/postgres")).toBeUndefined();
+  });
+});
+
+describe("postgresImageRemediation", () => {
+  it("preserves data for same-major tag drift", () => {
+    const remediation = postgresImageRemediation(
+      "supabase/postgres:17.6.1.166",
+      "public.ecr.aws/supabase/postgres:17.6.1.167",
+    );
+    expect(remediation).toContain("Run supabase stop, then supabase start");
+    expect(remediation).not.toContain("--no-backup");
+  });
+
+  it("preserves data for image-family drift", () => {
+    const remediation = postgresImageRemediation(
+      "supabase/postgres:17.6.1.167",
+      "ghcr.io/supabase/cli/postgres:17.6.1.167",
+    );
+    expect(remediation).toContain("same SUPABASE_USE_SLIM_IMAGES setting");
+    expect(remediation).not.toContain("--no-backup");
+  });
+
+  it("deletes local data for a proven major change", () => {
+    const remediation = postgresImageRemediation(
+      "supabase/postgres:15.8.1.085",
+      "public.ecr.aws/supabase/postgres:17.6.1.167",
+    );
+    expect(remediation).toContain("supabase stop --all --no-backup");
+    expect(remediation).toContain("deletes all local database data");
+  });
+
+  it("deletes local data when the storage engine changes at the same major", () => {
+    for (const [actual, expected] of [
+      ["supabase/postgres:15.8.1.085", "supabase/postgres:orioledb-15.1.0.55"],
+      ["supabase/postgres:16.0.0.1-orioledb", "public.ecr.aws/supabase/postgres:16.0.0.1"],
+    ] as const) {
+      const remediation = postgresImageRemediation(actual, expected);
+      expect(remediation).toContain("standard vs OrioleDB");
+      expect(remediation).toContain("supabase stop --all --no-backup");
+      expect(remediation).not.toContain("same SUPABASE_USE_SLIM_IMAGES");
+    }
+  });
+
+  it("uses the data-preserving remedy when a major is unparseable", () => {
+    const remediation = postgresImageRemediation(
+      "supabase/postgres:latest",
+      "public.ecr.aws/supabase/postgres:17.6.1.167",
+    );
+    expect(remediation).toContain("Run supabase stop, then supabase start");
+    expect(remediation).not.toContain("--no-backup");
+  });
+});
 
 describe("isMissingContainerInspectError", () => {
   it("matches Docker and Podman missing-container stderr", () => {

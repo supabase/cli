@@ -329,15 +329,47 @@ export const pgDeltaNextEngineLayer = Layer.effect(
       planDeclarativeSchema: (input) =>
         Effect.scoped(
           Effect.gen(function* () {
-            const shadow = yield* shadowService.provisionPlan({
+            const shadowInput = {
               context: input.context,
               toml: input.toml,
               ...(input.projectRef !== undefined ? { projectRef: input.projectRef } : {}),
               ...(input.noCache ? { bypassCache: true } : {}),
-            });
-            const migrations = parseConnectionString(shadow.migrationsUrl);
-            const declarative = parseConnectionString(shadow.declarativeUrl);
-            if (migrations === undefined || declarative === undefined) {
+            };
+            const source = input.source;
+            const planContext =
+              source === undefined
+                ? yield* Effect.gen(function* () {
+                    const shadow = yield* shadowService.provisionPlan(shadowInput);
+                    const migrations = parseConnectionString(shadow.migrationsUrl);
+                    if (migrations === undefined) {
+                      return yield* Effect.fail(
+                        new PgDeltaEngineError({
+                          message: "failed to parse pg-delta next shadow database URL",
+                          cause: "invalid password-free shadow output",
+                        }),
+                      );
+                    }
+                    return {
+                      declarativeUrl: shadow.declarativeUrl,
+                      sourcePool: acquirePgPool(migrations, {
+                        isLocal: true,
+                        dnsResolver: "native",
+                      }),
+                      allowSameDatabaseIdentity: shadow.allowSameDatabaseIdentity,
+                      sourceRef: "pg-delta-next:migrations",
+                    };
+                  })
+                : yield* Effect.gen(function* () {
+                    const shadow = yield* shadowService.provisionDeclarative(shadowInput);
+                    return {
+                      declarativeUrl: shadow.declarativeUrl,
+                      sourcePool: acquireDatabase(source, input.context.projectEnv),
+                      allowSameDatabaseIdentity: false,
+                      sourceRef: "pg-delta-next:database",
+                    };
+                  });
+            const declarative = parseConnectionString(planContext.declarativeUrl);
+            if (declarative === undefined) {
               return yield* Effect.fail(
                 new PgDeltaEngineError({
                   message: "failed to parse pg-delta next shadow database URL",
@@ -345,20 +377,20 @@ export const pgDeltaNextEngineLayer = Layer.effect(
                 }),
               );
             }
-            const [migrationsPool, declarativePool] = yield* Effect.all(
+            const [sourcePool, declarativePool] = yield* Effect.all(
               [
-                acquirePgPool(migrations, { isLocal: true, dnsResolver: "native" }),
+                planContext.sourcePool,
                 acquirePgPool(declarative, { isLocal: true, dnsResolver: "native" }),
               ],
               { concurrency: 2 },
             );
             const prep = yield* prepareDeclarativeShadow(declarativePool, input.files);
             const result = yield* adapter.planDeclarativeSchema({
-              targetPool: migrationsPool,
+              targetPool: sourcePool,
               shadowPool: declarativePool,
               files: filesForDeclarativeShadowLoad(input.files, prep.restorePgjwt),
               allowDrops: true,
-              ...(shadow.allowSameDatabaseIdentity ? { allowSameDatabaseIdentity: true } : {}),
+              ...(planContext.allowSameDatabaseIdentity ? { allowSameDatabaseIdentity: true } : {}),
               debug: input.debug,
               schema: input.schema,
               formatOptions: input.formatOptions,
@@ -379,7 +411,7 @@ export const pgDeltaNextEngineLayer = Layer.effect(
             );
             return {
               ...normalizeNextDiff(result, debugDirectory),
-              sourceRef: "pg-delta-next:migrations",
+              sourceRef: planContext.sourceRef,
               targetRef: "pg-delta-next:declarative",
             };
           }),

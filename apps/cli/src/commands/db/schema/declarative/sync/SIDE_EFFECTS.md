@@ -1,9 +1,12 @@
 # `supabase db schema declarative sync`
 
-Diffs local migrations state against declarative schema files and writes the delta
-as a new timestamped migration.
+Diffs declarative schema files against either local migrations state or, with
+`--transient`, the running local database. Durable sync writes timestamped
+migrations; transient sync executes the plan directly without migration files or
+migration-history rows.
 
-Pg-delta runs in-process and uses two scoped shadow databases. Coverage gaps
+Pg-delta runs in-process and uses two scoped shadow databases for durable sync,
+or one declarative shadow when the running database is the transient source. Coverage gaps
 warn; `--strict-coverage` makes
 them fatal, while `PGDELTA_DEBUG` writes diagnostic JSON under
 `supabase/.temp/pgdelta/v2/debug/<id>/`. The engine may emit ordered
@@ -19,7 +22,7 @@ disabling safe compaction.
 | --------------------------------------------------------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `<workdir>/supabase/config.toml`                                            | TOML   | always — pg-delta gate, format options                                                                                                                                                                                                                                                             |
 | `<workdir>/supabase/schemas/**/*.sql` (default declarative dir)             | SQL    | always — must exist (else error)                                                                                                                                                                                                                                                                   |
-| `<workdir>/supabase/migrations/*.sql`                                       | SQL    | applied to the live migrations shadow                                                                                                                                                                                                                                                              |
+| `<workdir>/supabase/migrations/*.sql`                                       | SQL    | durable sync only — applied to the live migrations shadow                                                                                                                                                                                                                                          |
 | `<workdir>/supabase/roles.sql`                                              | SQL    | hashed into the shadow-baseline cache key on every cache-eligible acquire, warm hits included, and applied to a cold shadow's baseline; missing file tolerated (hashed as empty)                                                                                                                   |
 | `<workdir>/supabase/schemas/.pgdelta-export.json`                           | JSON   | export metadata, when present                                                                                                                                                                                                                                                                      |
 | `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar`               | tar    | warm shadow-cache hit (migrations/declarative shadows); every cache-eligible acquire (warm hit and successful cold export) also enumerates and `stat`s every `shadow-baseline-*.tar` for LRU keep-3 + 2-day mtime TTL and may delete other keys (`SUPABASE_HOME` overrides the `~/.supabase` root) |
@@ -29,18 +32,20 @@ disabling safe compaction.
 
 | Path                                                                        | Format | When                                                                                                                                                                                                                                                                                                                                                             |
 | --------------------------------------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/migrations/<timestamp>_<name>[_<segment>].sql`          | SQL    | changes; bundled engine may emit ordered segments                                                                                                                                                                                                                                                                                                                |
+| `<workdir>/supabase/migrations/<timestamp>_<name>[_<segment>].sql`          | SQL    | durable changes only; bundled engine may emit ordered segments. Never written by `--transient`                                                                                                                                                                                                                                                                   |
 | `<workdir>/supabase/schemas/extension.sql`                                  | SQL    | accepted legacy-extension repair                                                                                                                                                                                                                                                                                                                                 |
+| `<workdir>/supabase/.temp/pgdelta/debug/<id>/`                              | dir    | durable apply or image-preflight failure, and transient execution failure; warns and omits the path when the directory cannot be created                                                                                                                                                                                                                         |
 | `<workdir>/supabase/.temp/pgdelta/v2/debug/<id>/*.json`                     | JSON   | bundled engine with `PGDELTA_DEBUG`                                                                                                                                                                                                                                                                                                                              |
 | `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar`               | tar    | cache-enabled COLD shadow provision creates the current key's snapshot — migrations/declarative shadows (`--no-cache` bypasses the snapshot cache entirely — neither read nor written); a warm hit `touch`es its mtime (LRU); every cache-eligible acquire may delete other keys under LRU keep-3 + 2-day mtime TTL — ~90MB (`SUPABASE_HOME` overrides the root) |
 | `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar.<pid>.partial` | tar    | during a cold export — the in-flight temp file, `rename`d into the tar above on success and removed on failure; only a crash/SIGKILL leaves it behind, and later cold exports / warm hits sweep leftovers older than 5 minutes                                                                                                                                   |
 
 ## Subprocesses / Containers
 
-| What                                                                                                                                                                                                           | When                                                              |
-| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| Two natively-provisioned shadows (migrated source + declarative target) via `acquireShadowDatabase` — ephemeral host ports, settings-keyed global baseline cache                                               | always                                                            |
-| `docker`/`podman` container recreate for the local `db` (+ satellite restarts, Kong reload) — the same primitives `db start`/`db reset` use, via `resetLocalDatabase` — only on the failed-apply recovery path | TTY only, apply failed, and the user confirms "reset and reapply" |
+| What                                                                                                                                                                                                           | When                                                                                                                                  |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Natively-provisioned shadows via `acquireShadowDatabase` — migrated source + declarative target for durable sync, declarative target only for `--transient`; ephemeral host ports, settings-keyed cache        | always                                                                                                                                |
+| Direct SQL execution on the running local database, preserving each rendered unit's transaction mode and omitting migration-history/reset SQL                                                                  | `--transient`, after confirmation or `--yes`; the local `db` container must already be running — `--transient` never calls `db start` |
+| `docker`/`podman` container recreate for the local `db` (+ satellite restarts, Kong reload) — the same primitives `db start`/`db reset` use, via `resetLocalDatabase` — only on the failed-apply recovery path | TTY only, apply failed, and the user confirms "reset and reapply"                                                                     |
 
 ## Environment Variables
 
@@ -55,15 +60,17 @@ disabling safe compaction.
 
 ## Exit Codes
 
-| Code | Condition                                                                                           |
-| ---- | --------------------------------------------------------------------------------------------------- |
-| `0`  | success (migration created, applied, or "No schema changes found")                                  |
-| `1`  | pg-delta not enabled                                                                                |
-| `1`  | conflicting `--apply`/`--no-apply` (mutually exclusive)                                             |
-| `1`  | no declarative schema files found                                                                   |
-| `1`  | shadow-database / selected pg-delta engine / diff failure                                           |
-| `1`  | apply failure (when applied) — propagated from the native migration apply (`applyMigrationToLocal`) |
-| `1`  | repairable legacy extension omissions in non-interactive mode                                       |
+| Code | Condition                                                                                                    |
+| ---- | ------------------------------------------------------------------------------------------------------------ |
+| `0`  | success (migration created, applied, or "No schema changes found")                                           |
+| `1`  | pg-delta not enabled                                                                                         |
+| `1`  | conflicting flags, including `--transient` with `--no-apply`, `--file`, `--name`, or `--apply=false`         |
+| `1`  | `--transient` when the local database container is not already running                                       |
+| `1`  | `--transient` without `--yes` when no TTY is available or machine output is selected                         |
+| `1`  | no declarative schema files found                                                                            |
+| `1`  | shadow-database / selected pg-delta engine / diff failure                                                    |
+| `1`  | apply or image-preflight failure — native local apply (`applyMigrationToLocal` or `applyRenderedSqlToLocal`) |
+| `1`  | repairable legacy extension omissions in non-interactive mode                                                |
 
 The pg-delta gate and the mutex check are both raised before any side effects run,
 but the gate wins when both conditions apply simultaneously: the gate check runs
@@ -72,13 +79,22 @@ first, so a closed gate (missing `--experimental`) surfaces before an
 
 ## Output
 
-Text mode only. The generated SQL, the created-migration path, drop-statement
-warnings, and apply status are written to stderr. The no-files bootstrap also
+Durable text mode writes generated SQL, created-migration paths, drop-statement
+warnings, and apply status to stderr. Transient text mode writes the exact
+ordered SQL to stdout before confirmation and again after successful execution;
+diagnostics and warnings stay on stderr. JSON and stream-json transient results
+include `changed`, `applied`, `migration_written`, `history_recorded`,
+flattened `sql`, and ordered `units` with name, transaction mode, and SQL.
+Failures after planning attach the same plan to the structured error envelope.
+The no-files bootstrap also
 prints `Declarative schema written to <dir>` (the relative declarative dir) to
 stderr after generating and writing — on both interactive and `--yes` paths.
 `--no-apply` writes the migration only (never prompts/applies); `--apply` applies
 without prompting; both override the global `--yes`. `--no-apply` and `--apply`
 are mutually exclusive.
+`--transient` is local-only, requires an already-running local database, a text-mode TTY confirmation or `--yes`, and never
+bootstraps a missing declarative tree. Redundant `--apply=true` is accepted but
+does not provide consent. A stopped local database is refused (`supabase start is not running`) rather than auto-started.
 
 A manifest-less CLI tree is refused by two compatibility gates — one when the
 tree fails to load on the bundled engine's shadow, one when the plan drops an
@@ -102,7 +118,9 @@ existing SQL or creates an export manifest.
 
 - Requires `--experimental` or `[experimental.pgdelta] enabled = true`.
 - `--file` sets the migration filename stem (default `declarative_sync`); `--name`
-  overrides it. In a TTY without `--name`/`--yes`, the name is prompted.
+  overrides it. Stems cannot contain either path separator or a case-insensitive
+  `.sql` suffix. In a TTY without `--name`/`--yes`, the name is prompted and
+  invalid input is re-prompted.
 - When no declarative files exist, a TTY offers to generate them (from local) first.
 - The declarative directory is the complete desired state: omitted objects,
   including extensions, are removals. Use `generate --output-dir <staging-dir>`
@@ -118,21 +136,28 @@ existing SQL or creates an export manifest.
   or an export manifest, a WARNING on stderr explains the default move and how
   to keep the existing tree. Read-only probe; never changes behavior or exit
   codes (a non-interactive run still fails with "no declarative schema found").
-- The migration apply is native (connects to the local DB and records migration
-  history). On apply failure a debug bundle is written under
-  `supabase/.temp/pgdelta/debug/` and, in a TTY, a reset-and-reapply is offered
-  (the reset itself is native too — `resetLocalDatabase` — run in-process,
-  sharing this command's own telemetry/linked-project-cache finalizer cycle
-  rather than firing a second one from a child process).
-- **Architecture:** the engine plans and renders in-process from two live
-  shadows.
+- Durable migration apply is native (connects to the local DB and records migration
+  history). On apply or image-preflight failure a debug bundle is written under
+  `supabase/.temp/pgdelta/debug/`. Generated migration files from this invocation
+  are kept. Image-preflight failures use a distinct preflight message. In a TTY, a
+  reset-and-reapply is offered after image preflight succeeds and local apply is
+  attempted, including connection failures before SQL execution (the reset itself is
+  native too — `resetLocalDatabase` — run in-process, sharing this command's own
+  telemetry/linked-project-cache finalizer cycle rather than firing a second one from
+  a child process).
+- A transient execution failure saves the planned SQL, warns that earlier or
+  nontransactional units may have applied, and requires rerunning to re-plan.
+  Reset-and-replay is never offered because no durable migration exists.
+- **Architecture:** the engine plans and renders in-process from two live shadows
+  for durable sync and from the running local database plus one declarative shadow
+  for transient sync.
 - **Stale local-container guard.** Before diffing against the running local `db`
   target, the running container's actual image is inspected and compared
-  against the currently-configured/resolved one. A same-tag family mismatch
-  (slim vs docker.io, e.g. after toggling `SUPABASE_USE_SLIM_IMAGES` without
-  restarting) fails with a suggestion to `supabase stop` then `supabase start`
-  with the same flag. A real version/tag mismatch still suggests
-  `supabase stop --all --no-backup` then `supabase start`.
+  against the currently-configured/resolved one. Same-major tag and slim/docker.io
+  family changes use data-preserving `supabase stop` then `supabase start`. A proven
+  Postgres-major upgrade **or** a standard↔OrioleDB storage-engine change uses
+  `supabase stop --all --no-backup` then `supabase start` and explicitly warns that
+  local data will be deleted.
 
 ### Shadow baseline cache (`SUPABASE_SHADOW_CACHE`, default ON)
 

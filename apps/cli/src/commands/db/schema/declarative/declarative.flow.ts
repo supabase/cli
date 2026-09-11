@@ -45,6 +45,20 @@ export function resolveDeclarativeMigrationName(name: string, file: string): str
   return name.length > 0 ? name : file;
 }
 
+export function validateDeclarativeMigrationStem(stem: string): string | undefined {
+  const candidate = stem.trim();
+  if (candidate.includes("/") || candidate.includes("\\")) {
+    return "migration names must not contain path separators";
+  }
+  if (/\.sql$/i.test(candidate)) {
+    return "migration names must not include the .sql suffix";
+  }
+  if (candidate !== stem) {
+    return "migration names must not have leading or trailing whitespace";
+  }
+  return undefined;
+}
+
 /** Whether sync applies the generated migration, prompts, or skips. */
 export type DeclarativeApplyDecision = "apply" | "skip" | "prompt";
 

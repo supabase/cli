@@ -87,13 +87,12 @@ export const ReadPgDeltaExportManifest = Effect.fnUntraced(function* (
   } satisfies PgDeltaExportManifest;
 });
 
-/** Recursively loads path-safe `.sql` files in stable POSIX-relative order. */
-export const LoadPgDeltaSqlFiles = Effect.fnUntraced(function* (
+/** Lists `.sql` files and maps traversal failures into the pg-delta file domain. */
+export const ListPgDeltaSqlFiles = (
   fs: FileSystem.FileSystem,
-  path: Path.Path,
   directory: string,
-) {
-  const paths = yield* walkSqlFiles(fs, directory, "").pipe(
+): Effect.Effect<ReadonlyArray<string>, PgDeltaFilesError> =>
+  walkSqlFiles(fs, directory, "").pipe(
     Effect.mapError((error) =>
       filesError(
         error.reason.method === "stat"
@@ -102,6 +101,14 @@ export const LoadPgDeltaSqlFiles = Effect.fnUntraced(function* (
       ),
     ),
   );
+
+/** Recursively loads path-safe `.sql` files in stable POSIX-relative order. */
+export const LoadPgDeltaSqlFiles = Effect.fnUntraced(function* (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  directory: string,
+) {
+  const paths = yield* ListPgDeltaSqlFiles(fs, directory);
   const files: Array<PgDeltaSqlFile> = [];
   for (const name of paths) {
     const normalized = path.normalize(name);

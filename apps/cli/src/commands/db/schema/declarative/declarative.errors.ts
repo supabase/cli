@@ -62,6 +62,45 @@ export class DeclarativeInvalidDbUrlError extends Data.TaggedError("DeclarativeI
   }
 }
 
+/** A migration stem would escape the migration directory or duplicate the SQL suffix. */
+export class DeclarativeInvalidMigrationStemError extends Data.TaggedError(
+  "DeclarativeInvalidMigrationStemError",
+)<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidInput;
+  }
+}
+
+/** Transient apply needs explicit consent when no interactive prompt is available. */
+export class DeclarativeTransientConfirmationRequiredError extends Data.TaggedError(
+  "DeclarativeTransientConfirmationRequiredError",
+)<{
+  readonly message: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
+
+/**
+ * `--transient` plans against the already-running local database and must not
+ * `db start` as a side effect (fresh-volume start would migrate, seed, and
+ * record history before the user confirms the planned SQL).
+ */
+export class DeclarativeLocalDbNotRunningError extends Data.TaggedError(
+  "DeclarativeLocalDbNotRunningError",
+)<{
+  readonly message: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.startStack;
+  }
+}
+
 /**
  * `db schema declarative generate` ran but produced no declarative files (sync's post-generate
  * guard); message text is an established output contract.

@@ -67,13 +67,13 @@ const formatImplicitExtensionLoadFailure = (
   });
 
 /**
- * Computes the diff between local migrations state and the declarative schema.
- * The pg-delta engine owns both sides of the plan, planning against its scoped
- * migrations/declarative shadows.
+ * Plans declarative schema against the migrations and declarative shadows, or
+ * against a live source plus one declarative shadow when `source` is set.
  */
-export const diffDeclarativeToMigrations = Effect.fnUntraced(function* (
+const planDeclarative = Effect.fnUntraced(function* (
   run: DeclarativeRunContext,
   toml: DbTomlValues,
+  source?: PgDeltaDatabaseEndpoint,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -103,6 +103,7 @@ export const diffDeclarativeToMigrations = Effect.fnUntraced(function* (
       files,
       noCache: run.noCache,
       toml,
+      ...(source !== undefined ? { source } : {}),
       ...(run.linkedProjectRef !== undefined ? { projectRef: run.linkedProjectRef } : {}),
       ...(manifest !== undefined ? { manifest } : {}),
     })
@@ -135,6 +136,17 @@ export const diffDeclarativeToMigrations = Effect.fnUntraced(function* (
     removals: result.removals ?? { extensions: [], extensionIntents: [] },
   } satisfies DeclarativeSyncResult;
 });
+
+/** Plans from the local migrations state to the declarative schema. */
+export const diffDeclarativeToMigrations = (run: DeclarativeRunContext, toml: DbTomlValues) =>
+  planDeclarative(run, toml);
+
+/** Plans from a live database to the declarative schema without migration history. */
+export const planDeclarativeToDatabase = (
+  run: DeclarativeRunContext,
+  toml: DbTomlValues,
+  source: PgDeltaDatabaseEndpoint,
+) => planDeclarative(run, toml, source);
 
 export const generateDeclarativeOutput = Effect.fnUntraced(function* (
   run: DeclarativeRunContext,
