@@ -1,4 +1,5 @@
 import {
+  Array as Arr,
   Cause,
   Deferred,
   Effect,
@@ -147,288 +148,278 @@ const demuxSocket = (
   completionFibers: FiberSet.FiberSet,
 ): Socket.Socket => {
   const expectedRelease = options.rpcRelease ?? STACK_RPC_RELEASE;
-  type Writer = (
-    chunk: Uint8Array | string | Socket.CloseEvent,
-  ) => Effect.Effect<void, Socket.SocketError>;
-  let connectionWriter: Writer | undefined;
 
-  const runRaw = <A, E, R>(
-    handler: (_: Uint8Array) => Effect.Effect<A, E, R> | void,
-    runOptions?: { readonly onOpen?: Effect.Effect<void> },
-  ): Effect.Effect<void, Socket.SocketError | E, R> =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const writerReady = yield* Deferred.make<Writer>();
-        const underlyingWrite = yield* socket.writer;
-        const decoder = new FrameDecoder();
-        const prefaceReady = yield* Deferred.make<void>();
-        let preface = new Uint8Array(0);
-        let phase: "preface" | "maintenance" | "rpc" = "preface";
-        let closed = false;
+  const reader: Effect.Effect<Socket.Reader, Socket.SocketError, Scope.Scope> = Effect.gen(
+    function* () {
+      const underlying = yield* socket.reader;
+      const writer = yield* socket.writer;
+      const decoder = new FrameDecoder();
+      const prefaceReady = yield* Deferred.make<void>();
+      let preface = new Uint8Array(0);
+      let phase: "preface" | "maintenance" | "rpc" = "preface";
+      let closed = false;
 
-        const markPrefaceReady = Deferred.succeed(prefaceReady, undefined).pipe(Effect.asVoid);
-        const close = Effect.suspend(() => {
-          if (closed) return Effect.void;
-          closed = true;
-          return markPrefaceReady.pipe(
-            Effect.andThen(
-              Deferred.await(writerReady).pipe(
-                Effect.flatMap((write) => write(new Socket.CloseEvent(1000))),
+      const markPrefaceReady = Deferred.succeed(prefaceReady, undefined).pipe(Effect.asVoid);
+      const close = Effect.suspend(() => {
+        if (closed) return Effect.void;
+        closed = true;
+        return markPrefaceReady.pipe(Effect.andThen(writer.write(new Socket.CloseEvent(1000))));
+      });
+
+      const socketWriteError = (message: string) =>
+        new Socket.SocketError({
+          reason: new Socket.SocketWriteError({ cause: new Error(message) }),
+        });
+      const sendJson = (value: JsonValue): Effect.Effect<void, Socket.SocketError> =>
+        encodeFrame(value).pipe(
+          Effect.mapError((error) => socketWriteError(error.message)),
+          Effect.flatMap((frame) => writer.write(frame)),
+        );
+
+      type MaintenanceValidation =
+        | { readonly _tag: "invalid-request" }
+        | { readonly _tag: "stale-session"; readonly request: MaintenanceRequest }
+        | { readonly _tag: "valid"; readonly request: MaintenanceRequest };
+
+      const dispatchMaintenance = (
+        validation: MaintenanceValidation,
+      ): Effect.Effect<void, Socket.SocketError> => {
+        let responseValue: MaintenanceResponse | undefined;
+        let operationName: MaintenanceRequest["op"] | undefined;
+        let completionStarted = false;
+        const startCompletion = (completion: Effect.Effect<void>) =>
+          Effect.uninterruptible(
+            FiberSet.run(completionFibers, completion, { startImmediately: true }).pipe(
+              // Set only after the completion fiber is handed to the owner-scoped
+              // FiberSet; the uninterruptible region keeps fork and witness atomic
+              // with `onExit` below.
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  completionStarted = true;
+                }),
               ),
             ),
           );
+        const dispatch = Effect.gen(function* () {
+          if (validation._tag === "invalid-request") {
+            yield* sendJson(protocolFailure("invalid-request"));
+            yield* close;
+            return;
+          }
+          if (validation._tag === "stale-session") {
+            yield* sendJson(protocolFailure("stale-session"));
+            yield* close;
+            return;
+          }
+          const request = validation.request;
+          operationName = request.op;
+          const operation =
+            request.op === "probe"
+              ? options.maintenanceHandlers.probe
+              : options.maintenanceHandlers.stop;
+          const result = yield* Effect.exit(operation);
+          const response = Exit.isSuccess(result)
+            ? result.value
+            : protocolFailure("operation-failed");
+          responseValue = response;
+          yield* sendJson(response);
+          yield* close;
+          if (request.op === "stop" && options.onShutdownReady !== undefined) {
+            // The connection scope closes as soon as the close frame is sent;
+            // completion belongs to the owner session and must outlive it.
+            yield* startCompletion(options.onShutdownReady);
+          }
+        });
+        return dispatch.pipe(
+          Effect.onExit((exit) => {
+            const response = responseValue;
+            if (response === undefined || operationName !== "stop") return Effect.void;
+            if (Exit.isSuccess(exit)) return Effect.void;
+            const connectionFailure =
+              Cause.hasInterruptsOnly(exit.cause) || isResponseConnectionFailure(exit.cause);
+            if (!connectionFailure || completionStarted || options.onShutdownReady === undefined)
+              return Effect.void;
+            return startCompletion(options.onShutdownReady).pipe(Effect.asVoid);
+          }),
+          Effect.catchReasons("SocketError", {
+            SocketWriteError: () => Effect.void,
+            SocketCloseError: () => Effect.void,
+          }),
+        );
+      };
+
+      const processFrames = (
+        input: Uint8Array,
+        rpcFrames: Array<Uint8Array>,
+      ): Effect.Effect<void, Socket.SocketError> =>
+        Effect.gen(function* () {
+          const result = yield* Effect.exit(
+            decoder.push(
+              input,
+              phase === "rpc" ? RPC_MAX_FRAME_BYTES : MAINTENANCE_MAX_FRAME_BYTES,
+            ),
+          );
+          if (Exit.isFailure(result)) {
+            yield* close;
+            return;
+          }
+          for (const frame of result.value) {
+            if (closed) break;
+            if (phase === "maintenance") {
+              // Probe/validation are bounded by the maintenance admission deadline; a
+              // validated stop owns its own cleanup and may outlive it. The preface deadline
+              // governs only admission until the first frame arrives — dispatch below owns
+              // policy after that.
+              yield* markPrefaceReady;
+              const operation = yield* Effect.exit(
+                decodeFrame(frame).pipe(
+                  Effect.flatMap((decoded) =>
+                    Schema.decodeUnknownEffect(MaintenanceRequestSchema)(decoded, {
+                      onExcessProperty: "error",
+                    }),
+                  ),
+                ),
+              );
+              const validation: MaintenanceValidation = Exit.isFailure(operation)
+                ? { _tag: "invalid-request" }
+                : operation.value.stackId !== options.stackId
+                  ? { _tag: "invalid-request" }
+                  : operation.value.ownerSessionId !== options.ownerSessionId
+                    ? { _tag: "stale-session", request: operation.value }
+                    : { _tag: "valid", request: operation.value };
+              const dispatch = maintenanceSemaphore.withPermit(dispatchMaintenance(validation));
+              if (validation._tag === "valid" && validation.request.op !== "probe") {
+                yield* dispatch;
+              } else {
+                yield* dispatch.pipe(
+                  Effect.timeoutOrElse({
+                    duration: MAINTENANCE_REQUEST_DEADLINE_MS,
+                    orElse: () => sendJson(protocolFailure("timeout")).pipe(Effect.andThen(close)),
+                  }),
+                );
+              }
+            } else {
+              rpcFrames.push(frame.slice(4));
+            }
+          }
         });
 
-        const socketWriteError = (message: string) =>
-          new Socket.SocketError({
-            reason: new Socket.SocketWriteError({ cause: new Error(message) }),
-          });
-        const sendJson = (value: JsonValue): Effect.Effect<void, Socket.SocketError> =>
-          Deferred.await(writerReady).pipe(
-            Effect.flatMap((write) =>
-              encodeFrame(value).pipe(
-                Effect.mapError((error) => socketWriteError(error.message)),
-                Effect.flatMap(write),
-              ),
-            ),
-          );
-
-        type MaintenanceValidation =
-          | { readonly _tag: "invalid-request" }
-          | { readonly _tag: "stale-session"; readonly request: MaintenanceRequest }
-          | { readonly _tag: "valid"; readonly request: MaintenanceRequest };
-
-        const dispatchMaintenance = (
-          validation: MaintenanceValidation,
-        ): Effect.Effect<void, Socket.SocketError> => {
-          let responseValue: MaintenanceResponse | undefined;
-          let operationName: MaintenanceRequest["op"] | undefined;
-          let completionStarted = false;
-          const startCompletion = (completion: Effect.Effect<void>) =>
-            Effect.uninterruptible(
-              FiberSet.run(completionFibers, completion, { startImmediately: true }).pipe(
-                // Set only after the completion fiber is handed to the owner-scoped
-                // FiberSet; the uninterruptible region keeps fork and witness atomic
-                // with `onExit` below.
-                Effect.tap(() =>
-                  Effect.sync(() => {
-                    completionStarted = true;
-                  }),
-                ),
-              ),
-            );
-          const dispatch = Effect.gen(function* () {
-            if (validation._tag === "invalid-request") {
+      const processChunk = (
+        chunk: Uint8Array | string,
+        rpcFrames: Array<Uint8Array>,
+      ): Effect.Effect<void, Socket.SocketError> =>
+        Effect.gen(function* () {
+          if (closed) return;
+          const input = toBytes(chunk);
+          if (phase === "preface") {
+            const combined = new Uint8Array(preface.byteLength + input.byteLength);
+            combined.set(preface);
+            combined.set(input, preface.byteLength);
+            const newline = combined.indexOf(10);
+            if (
+              (newline < 0 && combined.byteLength > CONTROL_PREFACE_MAX_BYTES) ||
+              (newline >= 0 && newline + 1 > CONTROL_PREFACE_MAX_BYTES)
+            ) {
               yield* sendJson(protocolFailure("invalid-request"));
               yield* close;
               return;
             }
-            if (validation._tag === "stale-session") {
+            preface = combined;
+            const decoded = yield* Effect.exit(decodePreface(combined));
+            if (Exit.isFailure(decoded)) {
+              if (preface.includes(10)) {
+                yield* sendJson(protocolFailure());
+                yield* close;
+              }
+              return;
+            }
+            phase = decoded.value.protocol.kind;
+            preface = new Uint8Array(0);
+            if (decoded.value.protocol.stackId !== options.stackId) {
+              yield* sendJson(protocolFailure("invalid-request"));
+              yield* close;
+              return;
+            }
+            if (decoded.value.protocol.ownerSessionId !== options.ownerSessionId) {
               yield* sendJson(protocolFailure("stale-session"));
               yield* close;
               return;
             }
-            const request = validation.request;
-            operationName = request.op;
-            const operation =
-              request.op === "probe"
-                ? options.maintenanceHandlers.probe
-                : options.maintenanceHandlers.stop;
-            const result = yield* Effect.exit(operation);
-            const response = Exit.isSuccess(result)
-              ? result.value
-              : protocolFailure("operation-failed");
-            responseValue = response;
-            yield* sendJson(response);
-            yield* close;
-            if (request.op === "stop" && options.onShutdownReady !== undefined) {
-              // The connection scope closes as soon as the close frame is sent;
-              // completion belongs to the owner session and must outlive it.
-              yield* startCompletion(options.onShutdownReady);
-            }
-          });
-          return dispatch.pipe(
-            Effect.onExit((exit) => {
-              const response = responseValue;
-              if (response === undefined || operationName !== "stop") return Effect.void;
-              if (Exit.isSuccess(exit)) return Effect.void;
-              const connectionFailure =
-                Cause.hasInterruptsOnly(exit.cause) || isResponseConnectionFailure(exit.cause);
-              if (!connectionFailure || completionStarted || options.onShutdownReady === undefined)
-                return Effect.void;
-              return startCompletion(options.onShutdownReady).pipe(Effect.asVoid);
-            }),
-            Effect.catchReasons("SocketError", {
-              SocketWriteError: () => Effect.void,
-              SocketCloseError: () => Effect.void,
-            }),
-          );
-        };
-
-        const processFrames = (input: Uint8Array): Effect.Effect<void, Socket.SocketError | E, R> =>
-          Effect.gen(function* () {
-            const result = yield* Effect.exit(
-              decoder.push(
-                input,
-                phase === "rpc" ? RPC_MAX_FRAME_BYTES : MAINTENANCE_MAX_FRAME_BYTES,
-              ),
-            );
-            if (Exit.isFailure(result)) {
+            if (phase === "rpc" && decoded.value.protocol.release !== expectedRelease) {
+              yield* sendJson({
+                ok: false,
+                error: {
+                  tag: "unsupported-release",
+                  message: releaseMismatch(decoded.value.protocol.release),
+                },
+              });
               yield* close;
               return;
             }
-            for (const frame of result.value) {
-              if (closed) break;
-              if (phase === "maintenance") {
-                // Probe/validation are bounded by the maintenance admission deadline; a
-                // validated stop owns its own cleanup and may outlive it. The preface deadline
-                // governs only admission until the first frame arrives — dispatch below owns
-                // policy after that.
-                yield* markPrefaceReady;
-                const operation = yield* Effect.exit(
-                  decodeFrame(frame).pipe(
-                    Effect.flatMap((decoded) =>
-                      Schema.decodeUnknownEffect(MaintenanceRequestSchema)(decoded, {
-                        onExcessProperty: "error",
-                      }),
-                    ),
-                  ),
-                );
-                const validation: MaintenanceValidation = Exit.isFailure(operation)
-                  ? { _tag: "invalid-request" }
-                  : operation.value.stackId !== options.stackId
-                    ? { _tag: "invalid-request" }
-                    : operation.value.ownerSessionId !== options.ownerSessionId
-                      ? { _tag: "stale-session", request: operation.value }
-                      : { _tag: "valid", request: operation.value };
-                const dispatch = maintenanceSemaphore.withPermit(dispatchMaintenance(validation));
-                if (validation._tag === "valid" && validation.request.op !== "probe") {
-                  yield* dispatch;
-                } else {
-                  yield* dispatch.pipe(
-                    Effect.timeoutOrElse({
-                      duration: MAINTENANCE_REQUEST_DEADLINE_MS,
-                      orElse: () =>
-                        sendJson(protocolFailure("timeout")).pipe(Effect.andThen(close)),
-                    }),
-                  );
-                }
-              } else {
-                const returned = handler(frame.slice(4));
-                if (Effect.isEffect(returned)) yield* returned;
-              }
-            }
-          });
+            if (phase === "rpc") yield* markPrefaceReady;
+            const remainder = combined.slice(decoded.value.consumed);
+            if (remainder.byteLength > 0) yield* processFrames(remainder, rpcFrames);
+            return;
+          }
+          yield* processFrames(input, rpcFrames);
+        });
 
-        const processChunk = (
-          chunk: Uint8Array | string,
-        ): Effect.Effect<void, Socket.SocketError | E, R> =>
-          Effect.gen(function* () {
-            if (closed) return;
-            const input = toBytes(chunk);
-            if (phase === "preface") {
-              const combined = new Uint8Array(preface.byteLength + input.byteLength);
-              combined.set(preface);
-              combined.set(input, preface.byteLength);
-              const newline = combined.indexOf(10);
-              if (
-                (newline < 0 && combined.byteLength > CONTROL_PREFACE_MAX_BYTES) ||
-                (newline >= 0 && newline + 1 > CONTROL_PREFACE_MAX_BYTES)
-              ) {
-                yield* sendJson(protocolFailure("invalid-request"));
-                yield* close;
-                return;
-              }
-              preface = combined;
-              const decoded = yield* Effect.exit(decodePreface(combined));
-              if (Exit.isFailure(decoded)) {
-                if (preface.includes(10)) {
-                  yield* sendJson(protocolFailure());
-                  yield* close;
-                }
-                return;
-              }
-              phase = decoded.value.protocol.kind;
-              preface = new Uint8Array(0);
-              if (decoded.value.protocol.stackId !== options.stackId) {
-                yield* sendJson(protocolFailure("invalid-request"));
-                yield* close;
-                return;
-              }
-              if (decoded.value.protocol.ownerSessionId !== options.ownerSessionId) {
-                yield* sendJson(protocolFailure("stale-session"));
-                yield* close;
-                return;
-              }
-              if (phase === "rpc" && decoded.value.protocol.release !== expectedRelease) {
-                yield* sendJson({
-                  ok: false,
-                  error: {
-                    tag: "unsupported-release",
-                    message: releaseMismatch(decoded.value.protocol.release),
-                  },
-                });
-                yield* close;
-                return;
-              }
-              if (phase === "rpc") yield* markPrefaceReady;
-              const remainder = combined.slice(decoded.value.consumed);
-              if (remainder.byteLength > 0) yield* processFrames(remainder);
-              return;
-            }
-            yield* processFrames(input);
-          });
-
-        const onOpen = Effect.andThen(
-          Effect.sync(() => {
-            connectionWriter = underlyingWrite;
-          }).pipe(
-            Effect.andThen(Deferred.succeed(writerReady, underlyingWrite).pipe(Effect.asVoid)),
-          ),
-          runOptions?.onOpen ?? Effect.void,
-        );
-        const prefaceDeadline = yield* Effect.forkChild(
-          Deferred.await(prefaceReady).pipe(
-            Effect.timeoutOrElse({
-              duration: MAINTENANCE_REQUEST_DEADLINE_MS,
-              orElse: () => sendJson(protocolFailure("timeout")).pipe(Effect.andThen(close)),
-            }),
-          ),
-        );
-        yield* socket.runRaw(processChunk, { onOpen });
-        yield* Fiber.interrupt(prefaceDeadline);
-      }),
-    ).pipe(
-      Effect.catchReasons("SocketError", {
-        SocketReadError: () => Effect.void,
-        SocketCloseError: () => Effect.void,
-      }),
-    );
-
-  return Socket.make({
-    runRaw,
-    writer: Effect.succeed((chunk: Uint8Array | string | Socket.CloseEvent) => {
-      const write = connectionWriter;
-      if (write === undefined) {
-        return Effect.fail(
-          new Socket.SocketError({
-            reason: new Socket.SocketWriteError({ cause: new Error("Control socket is not open") }),
+      // Belongs to the reader scope: the connection outlives this acquisition, and closing
+      // the scope is what retires the deadline.
+      yield* Effect.forkScoped(
+        Deferred.await(prefaceReady).pipe(
+          Effect.timeoutOrElse({
+            duration: MAINTENANCE_REQUEST_DEADLINE_MS,
+            orElse: () => sendJson(protocolFailure("timeout")).pipe(Effect.andThen(close)),
           }),
-        );
-      }
-      return Socket.isCloseEvent(chunk)
-        ? write(chunk)
-        : encodeRawFrame(chunk).pipe(
-            Effect.mapError(
-              (error) =>
-                new Socket.SocketError({
-                  reason: new Socket.SocketWriteError({ cause: new Error(error.message) }),
-                }),
-            ),
-            Effect.flatMap(write),
-          );
-    }),
-  });
+        ),
+      );
+      const pull: Effect.Effect<
+        Arr.NonEmptyReadonlyArray<Uint8Array>,
+        Socket.SocketError
+      > = Effect.gen(function* () {
+        while (true) {
+          const chunks = yield* underlying.pull;
+          const rpcFrames: Array<Uint8Array> = [];
+          for (const chunk of chunks) yield* processChunk(chunk, rpcFrames);
+          if (Arr.isReadonlyArrayNonEmpty(rpcFrames)) return rpcFrames;
+        }
+      }).pipe(
+        // A read failure ends the connection quietly, the same way a close does.
+        Effect.catchReason("SocketError", "SocketReadError", () =>
+          Effect.fail(
+            new Socket.SocketError({ reason: new Socket.SocketCloseError({ code: 1006 }) }),
+          ),
+        ),
+      );
+      return { pull, upgrade: underlying.upgrade };
+    },
+  );
+
+  const writer: Effect.Effect<Socket.Writer, never, Scope.Scope> = Effect.map(
+    socket.writer,
+    (underlying) => {
+      const write = (chunk: Uint8Array | string | Socket.CloseEvent) =>
+        Socket.isCloseEvent(chunk)
+          ? underlying.write(chunk)
+          : encodeRawFrame(chunk).pipe(
+              Effect.mapError(
+                (error) =>
+                  new Socket.SocketError({
+                    reason: new Socket.SocketWriteError({ cause: new Error(error.message) }),
+                  }),
+              ),
+              Effect.flatMap((frame) => underlying.write(frame)),
+            );
+      return {
+        write,
+        writeAll: (chunks: ReadonlyArray<Uint8Array | string>) =>
+          Effect.forEach(chunks, write, { discard: true }),
+      };
+    },
+  );
+
+  return Socket.make({ reader, writer });
 };
 
 const wrappedServer = (
@@ -554,39 +545,41 @@ const makeControlRpcSocket = (
   },
 ): Socket.Socket => {
   let prefaced = false;
-  return Socket.make({
-    runRaw: (handler, options) =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const decoder = new FrameDecoder();
-          yield* socket.runRaw(
-            (chunk) =>
-              decoder.push(toBytes(chunk), RPC_MAX_FRAME_BYTES).pipe(
-                Effect.mapError(
-                  (error) =>
-                    new Socket.SocketError({
-                      reason: new Socket.SocketReadError({ cause: new Error(error.message) }),
-                    }),
-                ),
-                Effect.flatMap((frames) =>
-                  Effect.forEach(frames, (frame) =>
-                    Effect.suspend(() => {
-                      const effect = handler(frame.slice(4));
-                      return Effect.isEffect(effect) ? effect : Effect.void;
-                    }),
-                  ).pipe(Effect.asVoid),
-                ),
+  const reader: Effect.Effect<Socket.Reader, Socket.SocketError, Scope.Scope> = Effect.map(
+    socket.reader,
+    (underlying) => {
+      const decoder = new FrameDecoder();
+      const pull: Effect.Effect<
+        Arr.NonEmptyReadonlyArray<Uint8Array>,
+        Socket.SocketError
+      > = Effect.gen(function* () {
+        while (true) {
+          const chunks = yield* underlying.pull;
+          const rpcFrames: Array<Uint8Array> = [];
+          for (const chunk of chunks) {
+            const frames = yield* decoder.push(toBytes(chunk), RPC_MAX_FRAME_BYTES).pipe(
+              Effect.mapError(
+                (error) =>
+                  new Socket.SocketError({
+                    reason: new Socket.SocketReadError({ cause: new Error(error.message) }),
+                  }),
               ),
-            options,
-          );
-        }),
-      ),
-    writer: Effect.map(
-      socket.writer,
-      (write) => (chunk: Uint8Array | string | Socket.CloseEvent) =>
+            );
+            for (const frame of frames) rpcFrames.push(frame.slice(4));
+          }
+          if (Arr.isReadonlyArrayNonEmpty(rpcFrames)) return rpcFrames;
+        }
+      });
+      return { pull, upgrade: underlying.upgrade };
+    },
+  );
+  const writer: Effect.Effect<Socket.Writer, never, Scope.Scope> = Effect.map(
+    socket.writer,
+    (underlying) => {
+      const write = (chunk: Uint8Array | string | Socket.CloseEvent) =>
         Effect.gen(function* () {
           if (Socket.isCloseEvent(chunk)) {
-            yield* write(chunk);
+            yield* underlying.write(chunk);
             return;
           }
           const encodedFrame = yield* encodeRawFrame(chunk).pipe(
@@ -608,13 +601,19 @@ const makeControlRpcSocket = (
             const combined = new Uint8Array(preface.byteLength + encodedFrame.byteLength);
             combined.set(preface);
             combined.set(encodedFrame, preface.byteLength);
-            yield* write(combined);
+            yield* underlying.write(combined);
             return;
           }
-          yield* write(encodedFrame);
-        }),
-    ),
-  });
+          yield* underlying.write(encodedFrame);
+        });
+      return {
+        write,
+        writeAll: (chunks: ReadonlyArray<Uint8Array | string>) =>
+          Effect.forEach(chunks, write, { discard: true }),
+      };
+    },
+  );
+  return Socket.make({ reader, writer });
 };
 
 export interface ControlClientOptions extends ControlIdentity {
@@ -643,41 +642,35 @@ export const makeControlClient = (
           path: endpointPath(endpoint),
           openTimeout: MAINTENANCE_REQUEST_DEADLINE_MS,
         });
-        const underlyingWrite = yield* socket.writer;
+        const writer = yield* socket.writer;
         const decoder = new FrameDecoder();
         const response = yield* Deferred.make<MaintenanceResponse, never>();
-        const writerReady =
-          yield* Deferred.make<
-            (
-              chunk: Uint8Array | string | Socket.CloseEvent,
-            ) => Effect.Effect<void, Socket.SocketError>
-          >();
-        const read = socket.runRaw(
-          (chunk) =>
-            decoder.push(toBytes(chunk)).pipe(
-              Effect.flatMap((frames) =>
-                Effect.forEach(frames, (frame) =>
-                  Effect.gen(function* () {
-                    const decoded = yield* Effect.exit(decodeFrame(frame));
-                    if (Exit.isFailure(decoded)) return;
-                    const parsed = yield* Effect.exit(
-                      Schema.decodeUnknownEffect(MaintenanceResponseSchema)(decoded.value, {
-                        onExcessProperty: "error",
-                      }),
-                    );
-                    if (Exit.isSuccess(parsed)) yield* Deferred.succeed(response, parsed.value);
-                  }),
-                ).pipe(Effect.asVoid),
-              ),
-            ),
-          {
-            onOpen: Deferred.succeed(writerReady, underlyingWrite).pipe(Effect.asVoid),
-          },
+        const opened = yield* Deferred.make<void>();
+        const read = Effect.scoped(
+          Effect.gen(function* () {
+            const { pull } = yield* socket.reader;
+            yield* Deferred.succeed(opened, undefined);
+            while (true) {
+              const chunks = yield* pull;
+              for (const chunk of chunks) {
+                const frames = yield* decoder.push(toBytes(chunk));
+                for (const frame of frames) {
+                  const decoded = yield* Effect.exit(decodeFrame(frame));
+                  if (Exit.isFailure(decoded)) continue;
+                  const parsed = yield* Effect.exit(
+                    Schema.decodeUnknownEffect(MaintenanceResponseSchema)(decoded.value, {
+                      onExcessProperty: "error",
+                    }),
+                  );
+                  if (Exit.isSuccess(parsed)) yield* Deferred.succeed(response, parsed.value);
+                }
+              }
+            }
+          }),
         );
         const fiber = yield* Effect.forkChild(read);
-        // A connection can fail before NodeSocket runs the onOpen hook; join the reader
-        // alongside writer readiness so failure can't strand this handshake on an unresolved
-        // Deferred.
+        // A connection can fail before the reader opens it; join the reader alongside open
+        // readiness so failure can't strand this handshake on an unresolved Deferred.
         const readerReady = Fiber.join(fiber).pipe(
           Effect.andThen(
             Effect.fail(
@@ -688,9 +681,9 @@ export const makeControlClient = (
             ),
           ),
         );
-        // NodeSocket opens its writer as part of runRaw's onOpen hook.
-        const write = yield* Effect.raceFirst(Deferred.await(writerReady), readerReady);
-        yield* write(
+        // NodeSocket dials the connection when the reader is acquired.
+        yield* Effect.raceFirst(Deferred.await(opened), readerReady);
+        yield* writer.write(
           encodePreface({
             kind: "maintenance",
             release: "maintenance-v1",
@@ -702,7 +695,7 @@ export const makeControlClient = (
           op,
           stackId: options.stackId,
           ownerSessionId: options.ownerSessionId,
-        }).pipe(Effect.flatMap(write));
+        }).pipe(Effect.flatMap((frame) => writer.write(frame)));
         // The server closes a successful connection immediately after flushing its response;
         // check the response witness after the reader exits so the close event can't win
         // that race.
@@ -749,27 +742,32 @@ export const makeControlClient = (
             path: endpointPath(endpoint),
             openTimeout: MAINTENANCE_REQUEST_DEADLINE_MS,
           });
-          const write = yield* socket.writer;
+          const writer = yield* socket.writer;
           const prefaceFailure = yield* Deferred.make<never, Socket.SocketError>();
-          const read = socket.runRaw(() => Effect.void, {
-            onOpen: write(
-              encodePreface({
-                kind: "rpc",
-                release: options.rpcRelease ?? STACK_RPC_RELEASE,
-                stackId: options.stackId,
-                ownerSessionId: options.ownerSessionId,
-              }),
-            ).pipe(
-              Effect.matchEffect({
-                onFailure: (error) => Deferred.fail(prefaceFailure, error).pipe(Effect.asVoid),
-                onSuccess: () => onOpen,
-              }),
-            ),
-          });
+          const read = Effect.scoped(
+            Effect.gen(function* () {
+              const { pull } = yield* socket.reader;
+              yield* writer
+                .write(
+                  encodePreface({
+                    kind: "rpc",
+                    release: options.rpcRelease ?? STACK_RPC_RELEASE,
+                    stackId: options.stackId,
+                    ownerSessionId: options.ownerSessionId,
+                  }),
+                )
+                .pipe(
+                  Effect.matchEffect({
+                    onFailure: (error) => Deferred.fail(prefaceFailure, error).pipe(Effect.asVoid),
+                    onSuccess: () => onOpen,
+                  }),
+                );
+              while (true) yield* pull;
+            }),
+          );
           return yield* Effect.raceFirst(read, Deferred.await(prefaceFailure)).pipe(
-            Effect.catchFilter(
-              Socket.SocketCloseError.filterClean((code) => code === 1000),
-              () => Effect.void,
+            Effect.catchReason("SocketError", "SocketCloseError", (reason, error) =>
+              reason.code === 1000 ? Effect.void : Effect.fail(error),
             ),
           );
         }),
