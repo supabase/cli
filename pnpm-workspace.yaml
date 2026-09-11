@@ -14,7 +14,7 @@ allowBuilds:
 catalog:
   "@effect/platform-bun": "4.0.0-rc.113"
   "@effect/platform-node": "4.0.0-rc.113"
-  "@effect/sql-pg": "4.0.0-rc.113"
+  "@effect/sql-pg": "4.0.0-rc.112"
   "@effect/tsgo": &effect-tsgo-version "0.37.0"
   "@effect/vitest": "4.0.0-rc.113"
   "@supabase/supabase-js": ^2.110.7
@@ -103,7 +103,7 @@ minimumReleaseAgeExclude:
   - "@effect/platform-bun@4.0.0-rc.113"
   - "@effect/platform-node@4.0.0-rc.113"
   - "@effect/platform-node-shared@4.0.0-rc.113"
-  - "@effect/sql-pg@4.0.0-rc.113"
+  - "@effect/sql-pg@4.0.0-rc.112"
   - "@effect/vitest@4.0.0-rc.113"
   - "@supabase/pg-delta@1.0.0-alpha.49"
   - "@supabase/pg-topo@1.0.0-alpha.6"
