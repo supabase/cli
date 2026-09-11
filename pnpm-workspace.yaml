@@ -22,7 +22,7 @@ catalog:
   "@types/bun": "^1.4.0"
   "@types/ws": "8.18.1"
   "typescript": "^7.0.2"
-  "@vitest/coverage-v8": "^4.1.11"
+  "@vitest/coverage-v8": "^5.0.0"
   "effect": "4.0.0-rc.112"
   "knip": "^6.32.2"
   "oxfmt": "^0.65.0"
