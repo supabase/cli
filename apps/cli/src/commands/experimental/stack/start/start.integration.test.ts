@@ -1,15 +1,16 @@
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- filesystem test fixture uses the host adapter at this boundary
-import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- filesystem test fixture uses the host adapter at this boundary
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, Fiber, Layer, Option, Stream } from "effect";
+import { Deferred, Effect, Fiber, Layer, Option, Schema, Stream } from "effect";
 import { CliOutput, Command } from "effect/unstable/cli";
 import {
   ContainerEngineError,
   ContainerPullError,
+  StackConfigSchema,
   StackIdSchema,
   StackRuntimeError,
   StackStateInvalidError,
@@ -33,6 +34,7 @@ import {
   StackApi,
 } from "../stack.shared.ts";
 import { stackStart } from "./start.handler.ts";
+import { compileStack } from "../../../../../../../packages/stack/src/model/Compiler.ts";
 import { StackCommandStartError } from "./start.errors.ts";
 import { stackStartCommand } from "./start.command.ts";
 import { textCliOutputFormatter } from "../../../../shared/output/text-formatter.ts";
@@ -89,7 +91,7 @@ const status = (id: string, runtime: "native" | "container" = "native") =>
 
 function fakeStack(
   id: string,
-  start: (config: unknown) => Effect.Effect<StackStatus, ApiStackStartError>,
+  start: (config?: { readonly config?: unknown }) => Effect.Effect<StackStatus, ApiStackStartError>,
 ) {
   return {
     id: StackIdSchema.make(id),
@@ -104,7 +106,10 @@ function fakeStack(
   } satisfies EffectStack;
 }
 
-const flags = (overrides: Partial<Parameters<typeof stackStart>[0]> = {}) => ({
+const flags = (
+  overrides: Partial<Parameters<typeof stackStart>[0]> = {},
+): Parameters<typeof stackStart>[0] => ({
+  exclude: [],
   stack: Option.none<string>(),
   stackId: Option.none<string>(),
   runtime: "auto" as const,
@@ -145,6 +150,7 @@ function handlerLayer(opts: {
       return Effect.succeed(opts.stack);
     },
     inspectStack: () => Effect.die("inspect not used in handler test"),
+    discoverStacks: () => Effect.succeed({ stacks: [], errors: [] }),
   });
   return {
     out,
@@ -161,6 +167,181 @@ function handlerLayer(opts: {
 }
 
 describe("stack start targeting", () => {
+  for (const exclusion of ["rest", "analytics"] as const) {
+    it.live(`compiles ${exclusion} exclusion and dependent Studio`, () => {
+      const root = project();
+      const configBefore = readFileSync(join(root, "supabase", "config.toml"), "utf8");
+      const stack = fakeStack("c".repeat(64), (input) =>
+        Effect.gen(function* () {
+          const stackConfig = yield* Schema.decodeUnknownEffect(StackConfigSchema)(
+            input?.config,
+          ).pipe(
+            Effect.mapError((error) => new StackStateInvalidError({ message: error.message })),
+          );
+          const compiled = yield* compileStack({
+            projectRoot: root,
+            runtime: { kind: "native" },
+            config: stackConfig,
+          }).pipe(
+            Effect.mapError((error) => new StackStateInvalidError({ message: error.message })),
+            Effect.provide(BunServices.layer),
+          );
+          expect(compiled.definition.capabilities[exclusion].enabled).toBe(false);
+          expect(compiled.definition.capabilities.studio.enabled).toBe(false);
+          expect(compiled.definition.capabilities.auth.enabled).toBe(true);
+          return status("c".repeat(64));
+        }),
+      );
+      const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
+      return Effect.gen(function* () {
+        for (const eager of [false, true])
+          yield* stackStart(flags({ exclude: [exclusion], eager }));
+        expect(readFileSync(join(root, "supabase", "config.toml"), "utf8")).toBe(configBefore);
+      }).pipe(
+        Effect.provide(setup.layer),
+        Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+      );
+    });
+  }
+
+  it.live("applies exclusions to the effective config without changing the project file", () => {
+    const root = project();
+    const configBefore = readFileSync(join(root, "supabase", "config.toml"), "utf8");
+    let startedConfig: unknown;
+    const stack = fakeStack("e".repeat(64), (config) =>
+      Effect.gen(function* () {
+        startedConfig = config;
+        yield* Schema.decodeUnknownEffect(StackConfigSchema)(config?.config, {
+          onExcessProperty: "error",
+        }).pipe(Effect.mapError((error) => new StackStateInvalidError({ message: error.message })));
+        return status("e".repeat(64));
+      }),
+    );
+    const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
+    return Effect.gen(function* () {
+      yield* stackStart(flags({ exclude: ["studio", "analytics"] }));
+      expect(startedConfig).toEqual(
+        expect.objectContaining({
+          config: expect.objectContaining({
+            capabilities: expect.objectContaining({
+              studio: { enabled: false },
+              analytics: { enabled: false },
+            }),
+          }),
+        }),
+      );
+      expect(readFileSync(join(root, "supabase", "config.toml"), "utf8")).toBe(configBefore);
+    }).pipe(
+      Effect.provide(setup.layer),
+      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live(
+    "leaves listener configuration to the compiled runtime when capabilities are excluded",
+    () => {
+      const root = project();
+      writeFileSync(
+        join(root, "supabase", "config.toml"),
+        'project_id = "start-test"\n[api]\nport = 55421\n',
+      );
+      let startedConfig: unknown;
+      const stack = fakeStack("7".repeat(64), (config) =>
+        Effect.sync(() => {
+          startedConfig = config;
+          return status("7".repeat(64));
+        }),
+      );
+      const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
+      return Effect.gen(function* () {
+        yield* stackStart(
+          flags({ exclude: ["rest", "auth", "realtime", "storage", "functions", "analytics"] }),
+        );
+        expect(startedConfig).toEqual(
+          expect.objectContaining({
+            config: expect.objectContaining({
+              listeners: expect.objectContaining({ api: { port: 55421 } }),
+            }),
+          }),
+        );
+      }).pipe(
+        Effect.provide(setup.layer),
+        Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+      );
+    },
+  );
+
+  it.live("preserves the configured API listener on partial gateway exclusion", () => {
+    const root = project();
+    writeFileSync(
+      join(root, "supabase", "config.toml"),
+      'project_id = "start-test"\n[api]\nport = 55421\n',
+    );
+    let startedConfig: unknown;
+    const stack = fakeStack("8".repeat(64), (config) =>
+      Effect.sync(() => {
+        startedConfig = config;
+        return status("8".repeat(64));
+      }),
+    );
+    const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
+    return Effect.gen(function* () {
+      yield* stackStart(flags({ exclude: ["rest"] }));
+      expect(startedConfig).toEqual(
+        expect.objectContaining({
+          config: expect.objectContaining({
+            listeners: expect.objectContaining({ api: { port: 55421 } }),
+          }),
+        }),
+      );
+    }).pipe(
+      Effect.provide(setup.layer),
+      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live("does not rewrite listeners for configured-disabled capabilities", () => {
+    const root = project();
+    writeFileSync(
+      join(root, "supabase", "config.toml"),
+      `project_id = "start-test"
+[api]
+port = 55421
+[auth]
+enabled = false
+[realtime]
+enabled = false
+[storage]
+enabled = false
+[edge_runtime]
+enabled = false
+[analytics]
+enabled = false
+`,
+    );
+    let startedConfig: unknown;
+    const stack = fakeStack("9".repeat(64), (config) =>
+      Effect.sync(() => {
+        startedConfig = config;
+        return status("9".repeat(64));
+      }),
+    );
+    const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
+    return Effect.gen(function* () {
+      yield* stackStart(flags({ exclude: ["rest"] }));
+      expect(startedConfig).toEqual(
+        expect.objectContaining({
+          config: expect.objectContaining({
+            listeners: expect.objectContaining({ api: { port: 55421 } }),
+          }),
+        }),
+      );
+    }).pipe(
+      Effect.provide(setup.layer),
+      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+    );
+  });
+
   it.live("leaves auto runtime selection to the package for a new stack", () => {
     const root = project();
     let createOptions: unknown;
@@ -275,6 +456,7 @@ describe("stack start targeting", () => {
           },
           owner: "running",
         }),
+      discoverStacks: () => Effect.succeed({ stacks: [], errors: [] }),
     });
     return Effect.gen(function* () {
       const resolver = yield* StackTargetResolver;
@@ -312,6 +494,7 @@ describe("stack start targeting", () => {
           runtime: "native",
           preparation: "on-demand",
           eager: true,
+          exclude: ["studio"],
         }),
       );
       expect(createOptions).toEqual({
@@ -320,9 +503,16 @@ describe("stack start targeting", () => {
         runtime: { kind: "native" },
       });
       expect(startConfig).toMatchObject({ config: { preparation: "on-demand" } });
-      expect(startConfig).toMatchObject({
-        config: { capabilities: { rest: { activation: "eager" } } },
-      });
+      expect(startConfig).toEqual(
+        expect.objectContaining({
+          config: expect.objectContaining({
+            capabilities: expect.objectContaining({
+              rest: expect.objectContaining({ activation: "eager" }),
+              studio: { enabled: false },
+            }),
+          }),
+        }),
+      );
       expect(setup.out.stdoutText).toContain("Stack");
       expect(setup.telemetry.flushed).toBe(true);
     }).pipe(
@@ -568,6 +758,7 @@ describe("stack start targeting", () => {
         },
         openStack: () => Effect.die("open should not run"),
         inspectStack: () => Effect.die("inspect should not run"),
+        discoverStacks: () => Effect.succeed({ stacks: [], errors: [] }),
       }),
       BunServices.layer,
     );
@@ -639,6 +830,24 @@ describe("stack start parser", () => {
     );
   });
 
+  it.live("parses repeated, comma-separated, and short exclusion flags", () => {
+    let parsed: ReadonlyArray<string> | undefined;
+    const command = stackStartCommand.pipe(
+      Command.withHandler((flags) => Effect.sync(() => void (parsed = flags.exclude))),
+    );
+    return Effect.gen(function* () {
+      yield* Command.runWith(command, { version: "0.0.0-test" })([
+        "--exclude",
+        "studio,analytics",
+        "-x",
+        "mail",
+      ]);
+      expect(parsed).toEqual(["studio", "analytics", "mail"]);
+    }).pipe(
+      Effect.provide(Layer.mergeAll(BunServices.layer, CliOutput.layer(textCliOutputFormatter()))),
+    );
+  });
+
   it.live("rejects a root legacy output value before resolving the stack target", () => {
     const root = project();
     let resolved = false;
@@ -655,7 +864,9 @@ describe("stack start parser", () => {
         }),
     });
     return Effect.gen(function* () {
-      const failure = yield* stackStart(flags()).pipe(Effect.flip);
+      const failure = yield* stackStart(flags({ exclude: ["bogus"] })).pipe(Effect.flip);
+      expect(failure.message).toContain("--output");
+      expect(failure.message).not.toContain("Unknown stack capabilities");
       expect(failure).toBeInstanceOf(StackCommandStartError);
       if (failure instanceof StackCommandStartError) {
         expect(failure.reason).toBe("flags");
@@ -667,6 +878,43 @@ describe("stack start parser", () => {
       Effect.provide(
         Layer.mergeAll(setup.layer, target, Layer.succeed(OutputFlag, Option.some("json"))),
       ),
+      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live("rejects unknown and database exclusions before resolving the target", () => {
+    const root = project();
+    let resolved = false;
+    const setup = handlerLayer({
+      root,
+      target: { projectRoot: root },
+      stack: fakeStack("b".repeat(64), () => Effect.succeed(status("b".repeat(64)))),
+    });
+    const target = Layer.succeed(StackTargetResolver, {
+      resolve: () =>
+        Effect.sync(() => {
+          resolved = true;
+          return { projectRoot: root };
+        }),
+    });
+    return Effect.gen(function* () {
+      for (const { exclusion, message } of [
+        { exclusion: "", message: 'Unknown stack capabilities in --exclude: ""' },
+        {
+          exclusion: " analytics",
+          message: 'Unknown stack capabilities in --exclude: " analytics"',
+        },
+        { exclusion: "unknown", message: 'Unknown stack capabilities in --exclude: "unknown"' },
+        { exclusion: "database", message: "database capability cannot be excluded" },
+      ]) {
+        const failure = yield* stackStart(flags({ exclude: [exclusion] })).pipe(Effect.flip);
+        expect(failure).toBeInstanceOf(StackCommandStartError);
+        expect(failure.reason).toBe("flags");
+        expect(failure.message).toContain(message);
+      }
+      expect(resolved).toBe(false);
+    }).pipe(
+      Effect.provide(Layer.mergeAll(setup.layer, target)),
       Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
     );
   });

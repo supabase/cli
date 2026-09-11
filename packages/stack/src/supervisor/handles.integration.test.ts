@@ -10,6 +10,7 @@ import {
   Fiber,
   Option,
   Path,
+  Predicate,
   Redacted,
   Result,
   Schema,
@@ -27,6 +28,7 @@ import {
   listStacks,
 } from "../public/EffectStack.ts";
 import type { StackStatus } from "../public/Status.ts";
+import type { CreateStackError } from "../public/Errors.ts";
 import { deriveStackId, resolveStackIdentity } from "../identity/Identity.ts";
 import {
   defaultRuntimeEnvironment,
@@ -323,6 +325,26 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
         expect(
           (yield* findStack({ projectRoot: project })).pipe(Option.getOrUndefined)?.runtime,
         ).toEqual({ kind: "container", engine: "podman" });
+      }),
+    ),
+  );
+
+  it.live("reuses an existing runtime without probing the container resolver", () =>
+    withRuntimeRoot((project) =>
+      Effect.gen(function* () {
+        const created = yield* createStack({
+          projectRoot: project,
+          runtime: { kind: "container", engine: "podman" },
+        });
+        const resolver = {
+          isInstalled: () => Effect.die("resolver must not be called"),
+          resolve: () => Effect.die("resolver must not be called"),
+        };
+        const reopened = yield* createStack({ projectRoot: project }).pipe(
+          Effect.provideService(ContainerEngineResolver, resolver),
+        );
+        expect(reopened.id).toBe(created.id);
+        expect((yield* reopened.status).runtime).toEqual({ kind: "container", engine: "podman" });
       }),
     ),
   );
@@ -657,61 +679,74 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
     ),
   );
 
-  it.live("joins stack creation while the first caller is publishing state", () =>
+  it.live("concurrent creates preserve the published state across an advisory read race", () =>
     withRuntimeRoot((project) =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
-        const publicationStarted = yield* Deferred.make<void>();
-        const publish = yield* Deferred.make<void>();
-        const readerEnteredRegistry = yield* Deferred.make<void>();
-        const writerFileSystem: FileSystem.FileSystem = {
+        const env = yield* StackRuntimeEnvironment;
+        const identity = yield* resolveStackIdentity({ projectRoot: project });
+        const stackId = yield* deriveStackId(identity);
+        const paths = yield* resolveStackPaths({ stateRoot: env.stateRoot, stackId });
+        const path = yield* Path.Path;
+        const registryLock = path.join(path.resolve(env.stateRoot), ".stack-registry.lock");
+        const writerReady = yield* Deferred.make<void, CreateStackError>();
+        const releaseWriter = yield* Deferred.make<void>();
+        const writerPublished = yield* Deferred.make<void>();
+        const firstFs: FileSystem.FileSystem = {
           ...fs,
           rename: (from, to) =>
-            Effect.gen(function* () {
-              if (to.endsWith("/state.json")) {
-                yield* Deferred.succeed(publicationStarted, undefined);
-                yield* Deferred.await(publish);
-              }
-              yield* fs.rename(from, to);
-            }),
+            to === paths.stateDocument
+              ? Deferred.succeed(writerReady, undefined).pipe(
+                  Effect.andThen(Deferred.await(releaseWriter)),
+                  Effect.andThen(fs.rename(from, to)),
+                  Effect.tap(() => Deferred.succeed(writerPublished, undefined)),
+                )
+              : fs.rename(from, to),
         };
-        const readerFileSystem: FileSystem.FileSystem = {
+        const secondFs: FileSystem.FileSystem = {
           ...fs,
-          readFileString: (file, encoding) =>
-            fs
-              .readFileString(file, encoding)
+          readFileString: (candidate, encoding) => {
+            if (candidate === registryLock)
+              return Deferred.succeed(releaseWriter, undefined).pipe(
+                Effect.andThen(fs.readFileString(candidate, encoding)),
+              );
+            if (candidate !== paths.stateDocument) return fs.readFileString(candidate, encoding);
+            return fs
+              .readFileString(candidate, encoding)
               .pipe(
-                Effect.tap(() =>
-                  file.endsWith("/.stack-registry.lock")
-                    ? Deferred.succeed(readerEnteredRegistry, undefined)
-                    : Effect.void,
+                Effect.catchTag("PlatformError", (error) =>
+                  Predicate.isTagged(error.reason, "NotFound")
+                    ? Deferred.succeed(releaseWriter, undefined).pipe(
+                        Effect.andThen(Deferred.await(writerPublished)),
+                        Effect.andThen(Effect.fail(error)),
+                      )
+                    : Effect.fail(error),
                 ),
-              ),
+              );
+          },
         };
-        return yield* Effect.gen(function* () {
-          const first = yield* createStack({
-            projectRoot: project,
-            runtime: { kind: "native" },
-          }).pipe(
-            Effect.provideService(FileSystem.FileSystem, writerFileSystem),
-            Effect.forkChild({ startImmediately: true }),
+        const create = (fileSystem: FileSystem.FileSystem) =>
+          createStack({ projectRoot: project }).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
           );
-          yield* Deferred.await(publicationStarted).pipe(Effect.timeout("10 seconds"));
-          const second = yield* createStack({
-            projectRoot: project,
-            runtime: { kind: "native" },
-          }).pipe(
-            Effect.provideService(FileSystem.FileSystem, readerFileSystem),
-            Effect.forkChild({ startImmediately: true }),
-          );
-          yield* Effect.raceFirst(Fiber.await(second), Deferred.await(readerEnteredRegistry)).pipe(
-            Effect.timeout("10 seconds"),
-          );
-          yield* Deferred.succeed(publish, undefined);
-          const firstHandle = yield* Fiber.join(first);
-          const secondHandle = yield* Fiber.join(second);
-          expect(secondHandle.id).toBe(firstHandle.id);
-        }).pipe(Effect.ensuring(Deferred.succeed(publish, undefined)));
+        const first = yield* Effect.forkChild(
+          create(firstFs).pipe(
+            Effect.catchCause((cause) =>
+              Deferred.failCause(writerReady, cause).pipe(Effect.andThen(Effect.failCause(cause))),
+            ),
+          ),
+          { startImmediately: true },
+        );
+        yield* Deferred.await(writerReady);
+        const second = yield* Effect.forkChild(create(secondFs), { startImmediately: true });
+        const [firstHandle, secondHandle] = yield* Effect.all(
+          [Fiber.join(first), Fiber.join(second)],
+          {
+            concurrency: 2,
+          },
+        );
+        expect(secondHandle.id).toBe(firstHandle.id);
+        expect((yield* secondHandle.status).lifecycle).toBe("unconfigured");
       }),
     ),
   );

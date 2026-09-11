@@ -2,9 +2,18 @@ import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
+import { stringSliceFlag } from "../../../../command-internal/string-slice-flag.ts";
 import { stackStart } from "./start.handler.ts";
+import { STACK_START_EXCLUDABLE_CAPABILITIES } from "./start.options.ts";
+
+const excludeFlag = stringSliceFlag(
+  "exclude",
+  `Capabilities to leave disabled. [${STACK_START_EXCLUDABLE_CAPABILITIES.join(", ")}]`,
+  { alias: "x" },
+);
 
 const config = {
+  exclude: excludeFlag,
   stack: Flag.string("stack").pipe(Flag.withDescription("Name this stack."), Flag.optional),
   stackId: Flag.string("stack-id").pipe(
     Flag.withDescription("Open an existing stack by id."),
@@ -45,6 +54,9 @@ export const stackStartCommand = Command.make("start", config).pipe(
     },
   ]),
   Command.withHandler((flags) =>
-    stackStart(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),
+    stackStart(flags).pipe(
+      withCommandTelemetry({ flags, config, aliases: { x: "exclude" } }),
+      withJsonErrorHandling,
+    ),
   ),
 );

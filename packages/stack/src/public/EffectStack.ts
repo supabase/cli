@@ -7,9 +7,11 @@ import {
   Exit,
   FileSystem,
   Fiber,
+  Match,
   Option,
   Path,
   Predicate,
+  Result,
   Schedule,
   Schema,
   Stream,
@@ -980,6 +982,7 @@ export const createStack = (
     });
     const stackId = yield* deriveStackId(identity);
     const store = yield* makeStackStateStore({ stateRoot: env.stateRoot });
+    // Concurrent initial writes may expose temporary files before state.json is published.
     const persisted = yield* withRegistryLock(
       env.stateRoot,
       store
@@ -1080,10 +1083,43 @@ export const findStack = (
     return state === undefined ? Option.none() : Option.some(descriptor(state, id));
   });
 
-export const listStacks = (
+export interface StackDiscoveryIssue {
+  readonly id: StackId;
+  readonly error: StackDiscoveryError;
+}
+
+/** The managed stack registry with entry-level read errors retained for bulk operations. */
+export interface StackDiscoveryResult {
+  readonly stacks: ReadonlyArray<StackDescriptor>;
+  readonly errors: ReadonlyArray<StackDiscoveryIssue>;
+}
+
+const enrichStackDiscoveryError = (
+  entry: StackId,
+  error: Effect.Error<ReturnType<StackStateStore["read"]>>,
+): StackDiscoveryError => {
+  const message = `Failed to read managed stack ${entry}: ${error.message}`;
+  return Match.value(error).pipe(
+    Match.tag(
+      "InvalidProjectRootError",
+      (value) => new InvalidProjectRootError({ ...value, message, cause: error }),
+    ),
+    Match.tag(
+      "StackStateInvalidError",
+      (value) => new StackStateInvalidError({ ...value, stackId: entry, message, cause: error }),
+    ),
+    Match.tag(
+      "StackStateFormatUnsupportedError",
+      (value) => new StackStateFormatUnsupportedError({ ...value, message, cause: error }),
+    ),
+    Match.exhaustive,
+  );
+};
+
+export const discoverStacks = (
   options: ListStacksOptions = {},
 ): Effect.Effect<
-  ReadonlyArray<StackDescriptor>,
+  StackDiscoveryResult,
   StackDiscoveryError,
   FileSystem.FileSystem | Path.Path | Crypto.Crypto
 > =>
@@ -1104,24 +1140,47 @@ export const listStacks = (
         .exists(env.stateRoot)
         .pipe(Effect.mapError((error) => new StackStateInvalidError({ message: error.message }))))
     )
-      return [];
+      return { stacks: [], errors: [] };
     const entries = yield* fs
       .readDirectory(env.stateRoot)
       .pipe(Effect.mapError((error) => new StackStateInvalidError({ message: error.message })));
-    const result: StackDescriptor[] = [];
+    const stacks: StackDescriptor[] = [];
+    const errors: StackDiscoveryIssue[] = [];
     for (const entry of entries) {
       if (!Schema.is(StackIdSchema)(entry)) continue;
-      const state = yield* store
-        .read(entry)
-        .pipe(Effect.catchIf(isMissingStateRemnantError, () => Effect.void));
+      const result = yield* store.read(entry).pipe(
+        Effect.catchTag("StackStateInvalidError", (error) =>
+          isMissingStateRemnantError(error) ? Effect.void : Effect.fail(error),
+        ),
+        Effect.result,
+      );
+      if (Result.isFailure(result)) {
+        errors.push({ id: entry, error: enrichStackDiscoveryError(entry, result.failure) });
+        continue;
+      }
+      const state = result.success;
       if (
         state !== undefined &&
         (projectRoot === undefined || state.identity.projectRoot === projectRoot)
       )
-        result.push(descriptor(state, entry));
+        stacks.push(descriptor(state, entry));
     }
-    return result;
+    return { stacks, errors };
   });
+
+export const listStacks = (
+  options: ListStacksOptions = {},
+): Effect.Effect<
+  ReadonlyArray<StackDescriptor>,
+  StackDiscoveryError,
+  FileSystem.FileSystem | Path.Path | Crypto.Crypto
+> =>
+  discoverStacks(options).pipe(
+    Effect.flatMap(({ stacks, errors }) => {
+      const firstError = errors[0];
+      return firstError === undefined ? Effect.succeed(stacks) : Effect.fail(firstError.error);
+    }),
+  );
 
 export const inspectStack = (
   id: StackId,
