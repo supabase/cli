@@ -68,6 +68,54 @@ describe("splitAndTrim", () => {
   });
 });
 
+describe("BEGIN ATOMIC bodies", () => {
+  const body = (statement: string): string =>
+    `create or replace function public.probe_splitter() returns integer
+language sql
+immutable
+begin atomic
+  ${statement};
+end`;
+  const split = (statement: string): string[] =>
+    splitAndTrim(`${body(statement)};\nselect 2;`);
+
+  it("keeps a ; inside the body together with the statement", () => {
+    expect(split("select 1")).toEqual([body("select 1"), "select 2"]);
+  });
+
+  it.each(["pending", "pending_change", "append", "legend", "END_"])(
+    "does not close the body at an identifier ending in end: %s",
+    (name) => {
+      expect(split(`select 1 as ${name}`)).toEqual([body(`select 1 as ${name}`), "select 2"]);
+    },
+  );
+
+  it.each(["endpoint", "end_date", "ended_at", "endx"])(
+    "does not close the body at an identifier starting with end: %s",
+    (name) => {
+      const statement = `select ${name} from public.t;\n  select 1`;
+      expect(split(statement)).toEqual([body(statement), "select 2"]);
+    },
+  );
+
+  it("closes on end followed by a newline or a comment", () => {
+    const sql = "begin atomic\n  select 1;\nend\n;\nbegin atomic select 1; end -- done\n;";
+    expect(splitAndTrim(sql)).toEqual([
+      "begin atomic\n  select 1;\nend",
+      "begin atomic select 1; end -- done",
+    ]);
+  });
+
+  it("closes on end at the end of input", () => {
+    const sql = "begin atomic; select 'end'; end";
+    expect(splitAndTrim(sql)).toEqual([sql]);
+  });
+
+  it("still closes a parenthesised group on the closing paren", () => {
+    expect(splitAndTrim("select (1; 2); select 3;")).toEqual(["select (1; 2)", "select 3"]);
+  });
+});
+
 describe("splitSql", () => {
   it("preserves raw statements (no transforms) including the trailing ;-less token", () => {
     expect(splitSql("SELECT 1; SELECT 2")).toEqual(["SELECT 1;", " SELECT 2"]);

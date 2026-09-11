@@ -126,19 +126,40 @@ class EscapeState implements State {
 }
 
 class AtomicState implements State {
+  // A keyword delimiter (END) matched at an identifier boundary; the body only closes once
+  // the next rune shows it is not the start of a longer identifier such as `endpoint`.
+  private closing = false;
   constructor(
     private prev: State,
     private readonly delimiter: string,
   ) {}
   next(rune: string, data: string): State | null {
+    if (this.closing) {
+      this.closing = false;
+      // END confirmed: the rune after it belongs to the ready state.
+      if (!isIdentifierRune(rune)) return new ReadyState().next(rune, data);
+    }
     // A delimiter inside a nested quote/comment doesn't count.
     const curr = this.prev.next(rune, data);
     if (curr !== null) this.prev = curr;
-    if (this.prev instanceof ReadyState) {
-      const window = data.slice(-this.delimiter.length);
-      if (window.toUpperCase() === this.delimiter.toUpperCase()) return new ReadyState();
+    if (this.prev instanceof ReadyState && this.endsWithDelimiter(data)) {
+      // Punctuation delimiters such as `)` close immediately.
+      if (!isIdentifierRune(this.delimiter[0]!)) return new ReadyState();
+      this.closing = true;
     }
     return this;
+  }
+  /**
+   * Whether `data` ends with the delimiter. A keyword delimiter must also start at an
+   * identifier boundary, so a column named `pending` does not close a `BEGIN ATOMIC` body;
+   * `isBeginAtomic` applies the same rule to the opener.
+   */
+  private endsWithDelimiter(data: string): boolean {
+    const offset = data.length - this.delimiter.length;
+    const delimiter = this.delimiter.toUpperCase();
+    if (offset < 0 || data.slice(offset).toUpperCase() !== delimiter) return false;
+    if (offset === 0 || !isIdentifierRune(this.delimiter[0]!)) return true;
+    return !isIdentifierRune(data[offset - 1]!);
   }
 }
 
