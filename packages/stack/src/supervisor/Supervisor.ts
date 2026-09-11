@@ -329,16 +329,10 @@ export const makeSupervisor = (
       plan: ExecutionPlan,
       roots: ReadonlySet<CapabilityName>,
       capability: CapabilityName,
-    ): boolean => {
-      if (
-        !roots.has(capability) &&
-        ![...roots].some((root) => dependencyClosure(plan, [root]).has(capability))
-      )
-        return true;
-      return ![...roots].some(
+    ): boolean =>
+      ![...roots].some(
         (root) => root !== capability && dependencyClosure(plan, [root]).has(capability),
       );
-    };
 
     const appendIdleLog = (message: string): Effect.Effect<void> =>
       options.runtime.logStore
@@ -429,27 +423,37 @@ export const makeSupervisor = (
         if (count !== 0 || (yield* Ref.get(idleTimers)).has(capability)) return;
         const generation = (yield* Ref.get(idleGenerations)).get(capability) ?? 0;
         const token = Symbol();
-        const fiber = yield* Effect.forkIn(
-          Effect.sleep(Duration.seconds(timeout)).pipe(
-            Effect.ensuring(
-              Ref.update(idleTimers, (timers) => {
-                const entry = timers.get(capability);
-                if (entry?.token !== token) return timers;
-                const next = new Map(timers);
-                next.delete(capability);
-                return next;
-              }),
-            ),
-            Effect.andThen(retireIdle(capability, generation)),
-          ),
-          supervisorScope,
-          { startImmediately: true },
+        yield* Effect.uninterruptibleMask(() =>
+          Effect.gen(function* () {
+            const started = yield* Deferred.make<void, never>();
+            const fiber = yield* Effect.forkIn(
+              Deferred.await(started).pipe(
+                Effect.andThen(
+                  Effect.sleep(Duration.seconds(timeout)).pipe(
+                    Effect.ensuring(
+                      Ref.update(idleTimers, (timers) => {
+                        const entry = timers.get(capability);
+                        if (entry?.token !== token) return timers;
+                        const next = new Map(timers);
+                        next.delete(capability);
+                        return next;
+                      }),
+                    ),
+                    Effect.andThen(retireIdle(capability, generation)),
+                  ),
+                ),
+              ),
+              supervisorScope,
+              { startImmediately: true },
+            );
+            yield* Ref.update(idleTimers, (timers) => {
+              const next = new Map(timers);
+              next.set(capability, { token, fiber });
+              return next;
+            });
+            yield* Deferred.succeed(started, undefined);
+          }),
         );
-        yield* Ref.update(idleTimers, (timers) => {
-          const next = new Map(timers);
-          next.set(capability, { token, fiber });
-          return next;
-        });
       });
     }
 
@@ -477,16 +481,21 @@ export const makeSupervisor = (
     }
 
     const cancelIdleTimers: Effect.Effect<void> = Effect.gen(function* () {
-      const timers = yield* Ref.modify(
-        idleTimers,
-        (current) => [Array.from(current.values()), new Map()] as const,
+      const timers = yield* admission.withPermit(
+        Effect.gen(function* () {
+          const timers = yield* Ref.modify(
+            idleTimers,
+            (current) => [Array.from(current.values()), new Map()] as const,
+          );
+          yield* Ref.update(idleGenerations, (current) => {
+            const next = new Map(current);
+            for (const capability of CAPABILITY_NAMES)
+              next.set(capability, (next.get(capability) ?? 0) + 1);
+            return next;
+          });
+          return timers;
+        }),
       );
-      yield* Ref.update(idleGenerations, (current) => {
-        const next = new Map(current);
-        for (const capability of CAPABILITY_NAMES)
-          next.set(capability, (next.get(capability) ?? 0) + 1);
-        return next;
-      });
       yield* Effect.forEach(timers, ({ fiber }) => Fiber.interrupt(fiber), {
         concurrency: "unbounded",
         discard: true,

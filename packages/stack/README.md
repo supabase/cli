@@ -41,10 +41,11 @@ await stack.start({
 });
 ```
 
-Eager capabilities never auto-stop. PostgreSQL, Storage, Functions, Mail, and Analytics do not opt into traffic stopping yet. Studio
-and its `pg-meta` companion are stopped and started together. Dependency protection keeps required
-dependencies available while a capability is running. Stopping preserves listeners and data, and
-the next request wakes the lazy capability and restarts its workloads.
+Eager capabilities never auto-stop. PostgreSQL, Storage, Functions, Mail, and Analytics do not opt
+into traffic stopping yet. Studio and its `pg-meta` companion are stopped and started together.
+Dependency protection keeps required dependencies available while a capability is running.
+Stopping preserves listeners and data, and the next request wakes the lazy capability and restarts
+its workloads.
 
 Native workloads have a two-minute readiness budget to allow cold starts to load shared libraries;
 container workloads retain a 30-second budget, and PostgreSQL uses its configured `health_timeout`.

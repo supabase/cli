@@ -357,11 +357,10 @@ const expectEndpointsRefused = async (endpoints: ReadonlyArray<StackEndpoint>): 
 };
 
 const waitForLogEntry = async (
-  stack: Pick<TestStack, "followLogs" | "logs" | "status">,
-  cursor: StackLogEntry["cursor"],
+  stack: Pick<TestStack, "logs" | "status">,
+  iterator: AsyncIterator<StackLogEntry>,
   predicate: (entry: StackLogEntry) => boolean,
 ): Promise<StackLogEntry> => {
-  const iterator = stack.followLogs({ cursor })[Symbol.asyncIterator]();
   const observation = (async (): Promise<StackLogEntry> => {
     while (true) {
       const next = await iterator.next();
@@ -395,7 +394,6 @@ const waitForLogEntry = async (
     throw new Error(`Idle stop observation failed: ${diagnostics}`, { cause });
   } finally {
     if (timer !== undefined) clearTimeout(timer);
-    await iterator.return?.();
   }
 };
 
@@ -1060,6 +1058,15 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
   await using stack: TestStack = await createTestStack({
     name: `stack-e2e-${identity}`,
     runtime: mode.runtime,
+    config: {
+      capabilities: {
+        rest: { idleTimeoutSeconds: false },
+        auth: { idleTimeoutSeconds: false },
+        realtime: { idleTimeoutSeconds: false },
+        studio: { idleTimeoutSeconds: false },
+        pooler: { idleTimeoutSeconds: false },
+      },
+    },
     setupProject: async (root) => {
       projectRoot = root;
       const directory = join(root, "supabase", "functions", functionSlug);
@@ -1484,9 +1491,10 @@ describe("managed Supabase stack whole-stack E2E", () => {
 
         const restPath = `/rest/v1/${table}?select=id,payload`;
         const beforeLogs = await stack.logs();
+        const logIterator = stack.followLogs({ cursor: beforeLogs.cursor })[Symbol.asyncIterator]();
         const idleStopLog = waitForLogEntry(
           stack,
-          beforeLogs.cursor,
+          logIterator,
           (entry) =>
             entry.source === "supervisor" &&
             entry.stream === "internal" &&
@@ -1506,7 +1514,7 @@ describe("managed Supabase stack whole-stack E2E", () => {
           const observed = await observedIdleStopLog;
           if (!observed.ok) throw observed.cause;
         } finally {
-          await observedIdleStopLog;
+          await logIterator.return?.();
         }
 
         await expectOwnedWorkloads(mode, stack.id, ["database:database"]);

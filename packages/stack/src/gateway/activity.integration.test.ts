@@ -50,8 +50,8 @@ describe("gateway traffic activity", () => {
           finishResponse = () => response.end("done");
         });
         yield* Effect.callback<void, Error>((resume) => {
-          backend.listen(0, "127.0.0.1", () => resume(Effect.void));
           backend.once("error", (error) => resume(Effect.fail(error)));
+          backend.listen(0, "127.0.0.1", () => resume(Effect.void));
           return Effect.sync(() => backend.close());
         });
         yield* Effect.addFinalizer(() =>
@@ -152,8 +152,8 @@ describe("gateway traffic activity", () => {
         const { activity, active, events } = yield* activityFixture;
         const backend = createTcpServer(() => undefined);
         yield* Effect.callback<void, Error>((resume) => {
-          backend.listen(0, "127.0.0.1", () => resume(Effect.void));
           backend.once("error", (error) => resume(Effect.fail(error)));
+          backend.listen(0, "127.0.0.1", () => resume(Effect.void));
           return Effect.sync(() => backend.close());
         });
         yield* Effect.addFinalizer(() =>
@@ -208,8 +208,8 @@ describe("gateway traffic activity", () => {
           ),
         );
         yield* Effect.callback<void, Error>((resume) => {
-          backend.listen(0, "127.0.0.1", () => resume(Effect.void));
           backend.once("error", (error) => resume(Effect.fail(error)));
+          backend.listen(0, "127.0.0.1", () => resume(Effect.void));
           return Effect.sync(() => backend.close());
         });
         yield* Effect.addFinalizer(() =>
@@ -272,8 +272,8 @@ describe("gateway traffic activity", () => {
           else responseToFinish = () => response.end("done");
         });
         yield* Effect.callback<void, Error>((resume) => {
-          backend.listen(0, "127.0.0.1", () => resume(Effect.void));
           backend.once("error", (error) => resume(Effect.fail(error)));
+          backend.listen(0, "127.0.0.1", () => resume(Effect.void));
           return Effect.sync(() => backend.close());
         });
         yield* Effect.addFinalizer(() =>

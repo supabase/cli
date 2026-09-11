@@ -548,9 +548,7 @@ const validateIdleTimeouts = (
     if (
       typeof timeout === "number" &&
       (CAPABILITY_MODULES[name].defaultIdleTimeoutSeconds === undefined ||
-        CAPABILITY_MODULES[name].defaultIdleTimeoutSeconds === false ||
-        !Number.isFinite(timeout) ||
-        timeout <= 0)
+        CAPABILITY_MODULES[name].defaultIdleTimeoutSeconds === false)
     )
       return Effect.fail(
         new InvalidStackConfigError({

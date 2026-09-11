@@ -86,6 +86,7 @@ const makeFixture = (
     readonly logWrittenFor?: string;
     readonly logWrittenAdditional?: Deferred.Deferred<void>;
     readonly logWrittenAdditionalFor?: string;
+    readonly logQueue?: Queue.Queue<string>;
     readonly runtime?: StackRuntime;
     readonly startGate?: Deferred.Deferred<void>;
     readonly startStarted?: Deferred.Deferred<void>;
@@ -450,6 +451,11 @@ const makeFixture = (
             : Ref.update(fixtureOptions.logRecords, (current) => [...current, record.message])
           ).pipe(
             Effect.andThen(
+              fixtureOptions.logQueue === undefined
+                ? Effect.void
+                : Queue.offer(fixtureOptions.logQueue, record.message),
+            ),
+            Effect.andThen(
               fixtureOptions.logWritten === undefined ||
                 (fixtureOptions.logWrittenFor !== undefined &&
                   !record.message.includes(fixtureOptions.logWrittenFor))
@@ -755,6 +761,35 @@ describe("Supervisor composition", () => {
         yield* tracker.track("rest", fixture.supervisor.activate("rest"));
         yield* TestClock.adjust("1 millis");
         yield* Deferred.await(logWritten);
+        expect(
+          (yield* fixture.supervisor.status).capabilities.find(({ name }) => name === "rest")
+            ?.state,
+        ).toBe("dormant");
+      }).pipe(Effect.provide(TestClock.layer())),
+    ),
+  );
+
+  it.live("rearms a zero-rounded idle timeout after its first retirement", () =>
+    run(
+      Effect.gen(function* () {
+        const logs = yield* Queue.unbounded<string>();
+        const fixture = yield* makeFixture({
+          logQueue: logs,
+        });
+        yield* fixture.supervisor.start({
+          config: { capabilities: { rest: { activation: "lazy", idleTimeoutSeconds: 1e-12 } } },
+        });
+        yield* fixture.supervisor.activate("rest");
+        yield* TestClock.adjust("1 millis");
+        expect(yield* Queue.take(logs)).toContain("Stopped rest after inactivity");
+        expect(
+          (yield* fixture.supervisor.status).capabilities.find(({ name }) => name === "rest")
+            ?.state,
+        ).toBe("dormant");
+
+        yield* fixture.supervisor.activate("rest");
+        yield* TestClock.adjust("1 millis");
+        expect(yield* Queue.take(logs)).toContain("Stopped rest after inactivity");
         expect(
           (yield* fixture.supervisor.status).capabilities.find(({ name }) => name === "rest")
             ?.state,
