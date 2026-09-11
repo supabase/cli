@@ -6,7 +6,8 @@
       "entry": [".github/scripts/**/*.ts", "tools/release/*.ts"],
       "ignore": [".repos/**", "apps/cli-go/**"],
       "ignoreBinaries": ["go"],
-      "ignoreDependencies": ["verdaccio"]
+      "ignoreDependencies": ["verdaccio"],
+      "vitest": { "entry": [] }
     },
     "apps/cli": {
       "entry": [
