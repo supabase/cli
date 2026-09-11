@@ -12,6 +12,7 @@ export interface EphemeralPostgresSettings {
 }
 
 export interface CreateEphemeralPostgresOptions {
+  /** Omitted preference uses Docker when installed, otherwise native. */
   readonly runtime?: StackRuntimePreference;
   /** Exact catalog release or major selector such as `"17"`. */
   readonly version?: string;

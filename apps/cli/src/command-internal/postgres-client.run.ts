@@ -120,17 +120,6 @@ export const requireHostPgProve = (
     return yield* majorMismatch(matched.command, matched.actual, expectedMajor);
   });
 
-const concatChunks = (chunks: ReadonlyArray<Uint8Array>): Uint8Array => {
-  const total = chunks.reduce((size, chunk) => size + chunk.length, 0);
-  const bytes = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.length;
-  }
-  return bytes;
-};
-
 /** Stream a host process stdout like `streamPgDump`, teeing stderr when requested. */
 export const streamHostCommand = Effect.fnUntraced(function* <E>(params: {
   readonly command: string;
@@ -176,7 +165,7 @@ export const streamHostCommand = Effect.fnUntraced(function* <E>(params: {
         { concurrency: "unbounded" },
       );
       const exitCode = yield* handle.exitCode.pipe(Effect.map(Number));
-      return { exitCode, stderr: new TextDecoder().decode(concatChunks(stderrChunks)) };
+      return { exitCode, stderr: new TextDecoder().decode(Buffer.concat(stderrChunks)) };
     }),
   );
 });
