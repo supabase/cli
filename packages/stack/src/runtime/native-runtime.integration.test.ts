@@ -12,6 +12,7 @@ import {
   Ref,
   Schedule,
   Schema,
+  Scope,
   Stream,
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
@@ -240,35 +241,54 @@ describe("native runtime", { timeout: 15_000 }, () => {
     ),
   );
 
-  it.live("does not report a diagnostic for an explicit native stop", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const ready = yield* Deferred.make<void>();
-        const native = yield* spawnNativeProcess({
-          executable: process.execPath,
-          args: ["-e", 'process.stdout.write("ready\\n"); setInterval(() => {}, 1000)'],
-        });
-        const stdout = yield* native.stdout.pipe(
-          Stream.decodeText,
-          Stream.splitLines,
-          Stream.runForEach((line) =>
-            line === "ready" ? Deferred.succeed(ready, undefined) : Effect.void,
-          ),
-          Effect.forkChild({ startImmediately: true }),
-        );
-        const stderr = yield* Effect.forkChild(
-          native.stderr.pipe(Stream.decodeText, Stream.runCollect),
-          { startImmediately: true },
-        );
-        yield* Deferred.await(ready).pipe(Effect.timeout("3 seconds"));
-        yield* native.kill;
-        const stderrOutput = yield* Fiber.join(stderr);
-        yield* Fiber.join(stdout);
-        expect(Array.from(stderrOutput).join("")).not.toContain(
-          "Native workload exited due to signal SIGTERM",
-        );
-      }),
-    ),
+  it.live.each([
+    { name: "SIGTERM stops", signal: "SIGTERM", closeScope: false },
+    { name: "SIGINT stops", signal: "SIGINT", closeScope: false },
+    { name: "scope closures", signal: "SIGTERM", closeScope: true },
+  ] as const)(
+    "does not report unexpected exits during concurrent $name",
+    ({ signal, closeScope }) =>
+      withPlatform(
+        Effect.forEach(
+          Array.from({ length: 25 }),
+          () =>
+            Effect.scoped(
+              Effect.gen(function* () {
+                const ready = yield* Deferred.make<void>();
+                const processScope = yield* Effect.acquireRelease(Scope.make("parallel"), (scope) =>
+                  Scope.close(scope, Exit.void),
+                );
+                const native = yield* spawnNativeProcess({
+                  gracefulStopSignal: signal,
+                  executable: process.execPath,
+                  args: ["-e", 'process.stdout.write("ready\\n"); setInterval(() => {}, 1000)'],
+                }).pipe(Effect.provideService(Scope.Scope, processScope));
+                const stdout = yield* native.stdout.pipe(
+                  Stream.decodeText,
+                  Stream.splitLines,
+                  Stream.runForEach((line) =>
+                    line === "ready" ? Deferred.succeed(ready, undefined) : Effect.void,
+                  ),
+                  Effect.forkChild({ startImmediately: true }),
+                );
+                const stderr = yield* Effect.forkChild(
+                  native.stderr.pipe(Stream.decodeText, Stream.runCollect),
+                  { startImmediately: true },
+                );
+                yield* Deferred.await(ready).pipe(Effect.timeout("10 seconds"));
+                yield* closeScope ? Scope.close(processScope, Exit.void) : native.kill;
+                const stderrOutput = yield* Fiber.join(stderr);
+                yield* Fiber.join(stdout);
+                expect(Array.from(stderrOutput).join("")).not.toContain(
+                  "Native workload exited due to signal",
+                );
+                expect(yield* native.isRunning).toBe(false);
+              }),
+            ),
+          { concurrency: 4, discard: true },
+        ),
+      ),
+    { timeout: 60_000 },
   );
 
   it.live("keeps a ready workload after the losing exit observer is interrupted", () =>
@@ -1073,7 +1093,12 @@ describe("native runtime", { timeout: 15_000 }, () => {
     ),
   );
 
-  it.live("terminates descendants after a native workload exits normally", () =>
+  it.live.each([
+    { name: "normal workload exit", mode: "exit" },
+    { name: "a graceful stop", mode: "graceful" },
+    { name: "a forced stop", mode: "forced" },
+    { name: "a scope closing an unresponsive workload", mode: "scope" },
+  ] as const)("terminates descendants after $name", ({ mode }) =>
     withPlatform(
       Effect.gen(function* () {
         let launcherPid: number | undefined;
@@ -1092,22 +1117,27 @@ describe("native runtime", { timeout: 15_000 }, () => {
         `;
           const targetCode = `
           const { spawn } = require("node:child_process");
+          ${mode === "forced" || mode === "scope" ? 'process.on("SIGTERM", () => {});' : ""}
           const child = spawn(process.execPath, ["-e", ${encodeJson(descendantCode)}], {
             stdio: ["ignore", "pipe", "inherit"]
           });
           child.stdout.on("data", (chunk) => {
             process.stdout.write(chunk);
-            if (chunk.toString().includes("DESC_READY ")) {
+            if (${String(mode === "exit")} && chunk.toString().includes("DESC_READY ")) {
               process.stdout.write("DIRECT_EXITING\\n");
               process.exit(0);
             }
           });
           child.on("error", () => process.exit(1));
         `;
+          const processScope = yield* Effect.acquireRelease(Scope.make("parallel"), (scope) =>
+            Scope.close(scope, Exit.void),
+          );
           const native = yield* spawnNativeProcess({
             executable: process.execPath,
             args: ["-e", targetCode],
-          });
+            gracefulStopTimeout: "100 millis",
+          }).pipe(Effect.provideService(Scope.Scope, processScope));
           launcherPid = Number(native.pid);
           const output = yield* native.stdout.pipe(
             Stream.decodeText,
@@ -1131,16 +1161,20 @@ describe("native runtime", { timeout: 15_000 }, () => {
             .runRaw(() => Effect.void, { onOpen: Deferred.succeed(opened, undefined) })
             .pipe(Effect.exit, Effect.forkChild({ startImmediately: true }));
           yield* Deferred.await(opened).pipe(Effect.timeout("5 seconds"));
-          yield* Deferred.await(workloadExited).pipe(Effect.timeout("5 seconds"));
-          expect(yield* native.exitCode).toBe(0);
+          if (mode === "exit") {
+            yield* Deferred.await(workloadExited).pipe(Effect.timeout("5 seconds"));
+            expect(yield* native.exitCode).toBe(0);
+          } else {
+            yield* mode === "scope" ? Scope.close(processScope, Exit.void) : native.kill;
+            expect(yield* native.isRunning).toBe(false);
+          }
           yield* Fiber.join(closed).pipe(
             Effect.timeoutOrElse({
               duration: "5 seconds",
               orElse: () =>
                 Effect.fail(
                   new ProcessTreeTestError({
-                    message:
-                      "native launcher left descendant listener alive after normal workload exit",
+                    message: `native launcher left descendant listener alive after ${mode}`,
                   }),
                 ),
             }),

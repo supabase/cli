@@ -657,6 +657,65 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
     ),
   );
 
+  it.live("joins stack creation while the first caller is publishing state", () =>
+    withRuntimeRoot((project) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const publicationStarted = yield* Deferred.make<void>();
+        const publish = yield* Deferred.make<void>();
+        const readerEnteredRegistry = yield* Deferred.make<void>();
+        const writerFileSystem: FileSystem.FileSystem = {
+          ...fs,
+          rename: (from, to) =>
+            Effect.gen(function* () {
+              if (to.endsWith("/state.json")) {
+                yield* Deferred.succeed(publicationStarted, undefined);
+                yield* Deferred.await(publish);
+              }
+              yield* fs.rename(from, to);
+            }),
+        };
+        const readerFileSystem: FileSystem.FileSystem = {
+          ...fs,
+          readFileString: (file, encoding) =>
+            fs
+              .readFileString(file, encoding)
+              .pipe(
+                Effect.tap(() =>
+                  file.endsWith("/.stack-registry.lock")
+                    ? Deferred.succeed(readerEnteredRegistry, undefined)
+                    : Effect.void,
+                ),
+              ),
+        };
+        return yield* Effect.gen(function* () {
+          const first = yield* createStack({
+            projectRoot: project,
+            runtime: { kind: "native" },
+          }).pipe(
+            Effect.provideService(FileSystem.FileSystem, writerFileSystem),
+            Effect.forkChild({ startImmediately: true }),
+          );
+          yield* Deferred.await(publicationStarted).pipe(Effect.timeout("10 seconds"));
+          const second = yield* createStack({
+            projectRoot: project,
+            runtime: { kind: "native" },
+          }).pipe(
+            Effect.provideService(FileSystem.FileSystem, readerFileSystem),
+            Effect.forkChild({ startImmediately: true }),
+          );
+          yield* Effect.raceFirst(Fiber.await(second), Deferred.await(readerEnteredRegistry)).pipe(
+            Effect.timeout("10 seconds"),
+          );
+          yield* Deferred.succeed(publish, undefined);
+          const firstHandle = yield* Fiber.join(first);
+          const secondHandle = yield* Fiber.join(second);
+          expect(secondHandle.id).toBe(firstHandle.id);
+        }).pipe(Effect.ensuring(Deferred.succeed(publish, undefined)));
+      }),
+    ),
+  );
+
   it.live("concurrent caller processes share one stack identity after exit", () =>
     withRuntimeRoot((project) =>
       Effect.gen(function* () {

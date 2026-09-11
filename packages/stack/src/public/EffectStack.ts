@@ -27,6 +27,7 @@ import { toPersistedIdentity } from "../state/StackState.ts";
 import {
   isMissingStateRemnantError,
   makeStackStateStore,
+  withRegistryLock,
   type StackStateStore,
 } from "../state/StackStateStore.ts";
 import { resolveStackPaths } from "../state/Paths.ts";
@@ -979,15 +980,18 @@ export const createStack = (
     });
     const stackId = yield* deriveStackId(identity);
     const store = yield* makeStackStateStore({ stateRoot: env.stateRoot });
-    const persisted = yield* store
-      .read(stackId)
-      .pipe(
-        Effect.catch((error) =>
-          isMissingStateRemnantError(error)
-            ? Effect.map(Effect.void, () => undefined)
-            : Effect.fail(error),
+    const persisted = yield* withRegistryLock(
+      env.stateRoot,
+      store
+        .read(stackId)
+        .pipe(
+          Effect.catch((error) =>
+            isMissingStateRemnantError(error)
+              ? Effect.map(Effect.void, () => undefined)
+              : Effect.fail(error),
+          ),
         ),
-      );
+    );
     const resolverOption = yield* Effect.serviceOption(ContainerEngineResolver).pipe(
       Effect.map(Option.getOrUndefined),
     );
