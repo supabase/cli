@@ -105,9 +105,8 @@ const makeFixture = (
     readonly workloadStopFailFirst?: Ref.Ref<boolean>;
     readonly workloadStopGate?: Deferred.Deferred<void>;
     readonly workloadStopStarted?: Deferred.Deferred<void>;
-    readonly workloadStopFinished?: Deferred.Deferred<void>;
-    readonly workloadStopFinishedFor?: string;
     readonly workloadRemoveFailFirst?: Ref.Ref<boolean>;
+    readonly workloadRemoveDieFirst?: Ref.Ref<boolean>;
     readonly stopFailFirst?: Ref.Ref<boolean>;
     readonly destroyGate?: Deferred.Deferred<void>;
     readonly destroyStarted?: Deferred.Deferred<void>;
@@ -294,12 +293,6 @@ const makeFixture = (
           yield* Ref.update(resources, (current) =>
             current.filter((entry) => entry.workloadId !== key.workloadId),
           );
-          if (
-            fixtureOptions.workloadStopFinished !== undefined &&
-            (fixtureOptions.workloadStopFinishedFor === undefined ||
-              fixtureOptions.workloadStopFinishedFor === key.workloadId)
-          )
-            yield* Deferred.succeed(fixtureOptions.workloadStopFinished, undefined);
         }),
       remove: (key) =>
         Effect.gen(function* () {
@@ -312,6 +305,13 @@ const makeFixture = (
                 stackId: key.stackId,
                 workloadId: key.workloadId,
               });
+            }
+          }
+          if (fixtureOptions.workloadRemoveDieFirst !== undefined) {
+            const fail = yield* Ref.get(fixtureOptions.workloadRemoveDieFirst);
+            if (fail) {
+              yield* Ref.set(fixtureOptions.workloadRemoveDieFirst, false);
+              return yield* Effect.die("injected workload remove defect");
             }
           }
           yield* Ref.update(resources, (current) =>
@@ -952,11 +952,7 @@ describe("Supervisor composition", () => {
             ),
             { startImmediately: true },
           );
-          const completed = yield* Effect.race(
-            Deferred.await(authCompleted).pipe(Effect.as(true)),
-            TestClock.adjust("100 millis").pipe(Effect.as(false)),
-          );
-          expect(completed).toBe(true);
+          yield* Deferred.await(authCompleted);
           yield* Deferred.succeed(stopGate, undefined);
           yield* Fiber.join(authRequest);
         });
@@ -1000,11 +996,7 @@ describe("Supervisor composition", () => {
         yield* tracker.track("rest", fixture.supervisor.activate("rest"));
         yield* TestClock.adjust("1 second");
         yield* Deferred.await(workloadStopStarted);
-        const logged = yield* Effect.race(
-          Deferred.await(logWritten).pipe(Effect.as(true)),
-          TestClock.adjust("100 millis").pipe(Effect.as(false)),
-        );
-        expect(logged).toBe(true);
+        yield* Deferred.await(logWritten);
         const messages = yield* Ref.get(logRecords);
         expect(messages).toEqual(
           expect.arrayContaining([
@@ -1013,6 +1005,67 @@ describe("Supervisor composition", () => {
           ]),
         );
         expect((yield* fixture.supervisor.status).lifecycle).toBe("stopping");
+      }).pipe(Effect.provide(TestClock.layer())),
+    ),
+  );
+
+  it.live("fences the session after an idle cleanup defect", () =>
+    run(
+      Effect.gen(function* () {
+        const activity = yield* Ref.make<GatewayActivity | undefined>(undefined);
+        const logRecords = yield* Ref.make<ReadonlyArray<string>>([]);
+        const logWritten = yield* Deferred.make<void>();
+        const workloadRemoveDieFirst = yield* Ref.make(true);
+        const fixture = yield* makeFixture({
+          logRecords,
+          logWritten,
+          workloadRemoveDieFirst,
+          ingress: {
+            acquire: () =>
+              Effect.succeed({
+                assignments: {},
+                privateAssignments: [],
+                hostListeners: [],
+                fresh: false,
+                ownershipToken: Symbol(),
+              }),
+            open: (_input, _reservation, _activate, tracker) =>
+              tracker === undefined ? Effect.void : Ref.set(activity, tracker),
+            close: Effect.void,
+          },
+        });
+        yield* fixture.supervisor.start({
+          config: { capabilities: { rest: { activation: "lazy", idleTimeoutSeconds: 1 } } },
+        });
+        const tracker = yield* Ref.get(activity);
+        if (tracker === undefined) return yield* Effect.die("gateway activity was not installed");
+        yield* tracker.track("rest", fixture.supervisor.activate("rest"));
+        yield* TestClock.adjust("1 second");
+        yield* Deferred.await(logWritten);
+
+        const messages = yield* Ref.get(logRecords);
+        expect(messages).toEqual(
+          expect.arrayContaining([
+            expect.stringContaining("Failed to stop rest after inactivity"),
+            expect.stringContaining("injected workload remove defect"),
+          ]),
+        );
+        expect((yield* fixture.supervisor.status).lifecycle).toBe("stopping");
+        const activation = yield* fixture.supervisor.activate("rest").pipe(Effect.exit);
+        expect(errorOf(activation)).toBeInstanceOf(StackLifecycleConflictError);
+
+        expect((yield* fixture.supervisor.maintenanceHandlers.stop).ok).toBe(true);
+        yield* fixture.supervisor.start({
+          config: { capabilities: { rest: { activation: "lazy", idleTimeoutSeconds: 1 } } },
+        });
+        const restartedTracker = yield* Ref.get(activity);
+        if (restartedTracker === undefined)
+          return yield* Effect.die("restarted gateway activity was not installed");
+        yield* restartedTracker.track("rest", fixture.supervisor.activate("rest"));
+        expect(
+          (yield* fixture.supervisor.status).capabilities.find(({ name }) => name === "rest")
+            ?.state,
+        ).toBe("ready");
       }).pipe(Effect.provide(TestClock.layer())),
     ),
   );

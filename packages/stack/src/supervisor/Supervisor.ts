@@ -393,14 +393,16 @@ export const makeSupervisor = (
             .stopCapabilities(new Set([capability]))
             .pipe(Effect.mapError(mapCleanupError), Effect.exit);
           if (Exit.isFailure(stopped)) {
-            if (Cause.hasInterrupts(stopped.cause) || Cause.hasDies(stopped.cause))
-              return yield* Effect.failCause(stopped.cause);
             yield* admission.withPermit(
               Ref.set(cleanupProven, false).pipe(Effect.andThen(Ref.set(phase, "stopping"))),
             );
-            yield* appendIdleLog(
+            const logged = yield* appendIdleLog(
               `Failed to stop ${capability} after inactivity: ${Cause.pretty(stopped.cause)}`,
-            );
+            ).pipe(Effect.exit);
+            if (Exit.isFailure(logged))
+              return yield* Effect.failCause(Cause.combine(stopped.cause, logged.cause));
+            if (Cause.hasInterrupts(stopped.cause) || Cause.hasDies(stopped.cause))
+              return yield* Effect.failCause(stopped.cause);
             return;
           }
 
