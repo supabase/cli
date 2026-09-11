@@ -38,7 +38,12 @@ import {
   type ComputeRuntime,
   type ComputeSize,
 } from "../../../../shared/compute/compute-runtimes.ts";
+import { classifyComputeDir } from "../../../../shared/compute/compute-classify.ts";
 import { COMPUTE_STACKS } from "../../../../shared/compute/compute-stacks.ts";
+import {
+  parseComputeTemplate,
+  stageComputeTemplate,
+} from "../../../../shared/compute/compute-template.ts";
 import {
   MissingComputeNameError,
   ComputeDirectoryExistsError,
@@ -60,6 +65,13 @@ import { ComputeNewWorkdirError } from "./new.errors.ts";
  * written, so a cancelled prompt leaves nothing behind for this compute at all.
  * `--instances` is recorded rather than resolved: it has no prompt, and it only
  * reaches `config.toml` when it differs from the default.
+ *
+ * `--template` is cloned into a temporary directory on the same terms, and is then
+ * the compute's entire contents — the runtime's starter files are what a compute
+ * with no code yet needs, so a template replaces them rather than layering over
+ * them. The clone happens before the dials are resolved, because an omitted
+ * `--runtime` is defaulted from the template's own marker files rather than from
+ * the catalog.
  */
 
 /** `values`, with `defaultValue` first, so a prompt pre-selects what it shows first. */
@@ -118,10 +130,20 @@ const resolveName = Effect.fnUntraced(function* (options: {
   });
 });
 
+/**
+ * The runtime to scaffold and record.
+ *
+ * `inferred` is what a staged `--template`'s own marker files point at, and it
+ * displaces the catalog default: a template that ships a `Dockerfile` is asking to
+ * be built from it, and recording `deno` for it would deploy a base image that
+ * never reads the file. It is a default, not an answer — `--runtime` still wins,
+ * and an interactive run is still asked, with the inference pre-selected.
+ */
 const resolveRuntime = Effect.fnUntraced(function* (options: {
   readonly explicit: Option.Option<ComputeRuntime>;
   /** Whether there is a terminal to ask on — see `canPromptFor`. */
   readonly canPrompt: boolean;
+  readonly inferred: ComputeRuntime | undefined;
 }) {
   // `--runtime` is a choice flag, so the parser has already rejected anything
   // outside the catalog by the time it gets here.
@@ -129,20 +151,22 @@ const resolveRuntime = Effect.fnUntraced(function* (options: {
     return options.explicit.value;
   }
 
+  const fallback = options.inferred ?? DEFAULT_COMPUTE_RUNTIME;
+
   if (options.canPrompt) {
     const output = yield* Output;
     const selected = yield* output.promptSelect(
       "Which runtime should this compute use?",
-      defaultFirst([...COMPUTE_RUNTIMES], DEFAULT_COMPUTE_RUNTIME).map((runtime) => ({
+      defaultFirst([...COMPUTE_RUNTIMES], fallback).map((runtime) => ({
         value: runtime,
         label: runtime,
         hint: COMPUTE_RUNTIME_DESCRIPTIONS[runtime],
       })),
     );
-    return parseComputeRuntime(selected) ?? DEFAULT_COMPUTE_RUNTIME;
+    return parseComputeRuntime(selected) ?? fallback;
   }
 
-  return DEFAULT_COMPUTE_RUNTIME;
+  return fallback;
 });
 
 const resolveSize = Effect.fnUntraced(function* (options: {
@@ -247,6 +271,13 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
 
     const project = yield* loadComputeProjectForEntryWrite();
 
+    // Parsed before anything is asked: `--template` is a command-line value, so a
+    // slug or URL this command can't clone is the user's to fix now, not after
+    // three prompts.
+    const template = Option.isSome(flags.template)
+      ? yield* parseComputeTemplate(flags.template.value)
+      : undefined;
+
     // Decided once, before the first prompt rather than beside the last, since
     // the name is now asked for too — every prompt below shares the answer.
     const machineOutput = yield* computeMachineOutputRequested();
@@ -267,16 +298,16 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
       });
     }
 
-    // Validated before the dials are asked for, not just before the write: nothing
+    // Validated before the dials are asked for, and before the clone below: nothing
     // about the destination depends on the runtime, size or exposure, so a run that
     // is going to be refused for its destination is refused without asking three
-    // questions first.
+    // questions or paying for a fetch first.
     //
-    // This is the directory the starter files land in, so a value naming the project
-    // root, `supabase/`, or anywhere outside the project must never reach the write
-    // below. `--source` resolves against the
-    // directory the user typed it in, the way a shell would: `--source generated`
-    // from `apps/web` means `apps/web/generated`.
+    // This is the directory the template and the starter files land in, so a value
+    // naming the project root, `supabase/`, or anywhere outside the project must
+    // never reach the write below. `--source` resolves against the directory the
+    // user typed it in, the way a shell would: `--source generated` from `apps/web`
+    // means `apps/web/generated`.
     const destination = Option.isSome(flags.source)
       ? yield* resolveComputeSource({
           projectRoot: project.projectRoot,
@@ -309,9 +340,30 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
       });
     }
 
+    // Fetched before the dials are resolved, because the runtime default is read
+    // out of the template's own marker files, and before the destination exists,
+    // so a template that can't be fetched — a bad ref, no network, no git —
+    // leaves nothing behind, the same as a cancelled prompt. The refusals above
+    // come first so a knowably doomed run never pays for a clone.
+    const staged =
+      template === undefined
+        ? undefined
+        : yield* Effect.gen(function* () {
+            const fetching = yield* output.task(`Fetching template ${template.display}...`);
+            const root = yield* stageComputeTemplate(template).pipe(
+              Effect.tapError(() => fetching.fail()),
+            );
+            yield* fetching.clear();
+            return root;
+          });
+
     // Resolved before anything is written, so cancelling any prompt leaves nothing
     // behind. With nowhere to ask, the defaults stand — only the name has no fallback.
-    const runtime = yield* resolveRuntime({ explicit: flags.runtime, canPrompt });
+    const runtime = yield* resolveRuntime({
+      explicit: flags.runtime,
+      canPrompt,
+      inferred: staged === undefined ? undefined : (yield* classifyComputeDir(staged)).runtime,
+    });
     const size = yield* resolveSize({ explicit: flags.size, canPrompt });
     const exposure = yield* resolveExposure({ explicit: flags.exposure, canPrompt });
     const instances = recordedInstances(flags.instances);
@@ -343,8 +395,17 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
     // can fail for a reason the plan above could have caught.
     yield* fs.makeDirectory(destination, { recursive: true });
 
-    for (const [filename, contents] of Object.entries(COMPUTE_STACKS[runtime])) {
-      yield* fs.writeFileString(path.join(destination, filename), contents);
+    // A template is the whole compute, not an overlay on the runtime's starter
+    // files. Writing both would leave behind whichever starter the template
+    // happened not to name — and the catalog runtimes load a fixed entry file, so
+    // a surviving `index.mjs` is served *instead of* the entry the template
+    // actually wrote, with nothing reporting it.
+    if (staged === undefined) {
+      for (const [filename, contents] of Object.entries(COMPUTE_STACKS[runtime])) {
+        yield* fs.writeFileString(path.join(destination, filename), contents);
+      }
+    } else {
+      yield* fs.copy(staged, destination, { overwrite: true });
     }
 
     yield* commitComputeEntry(configWrite);
@@ -369,6 +430,7 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
       instances: instances ?? DEFAULT_COMPUTE_INSTANCES,
       source: sourceDisplay,
       config_path: project.configPath,
+      ...(template === undefined ? {} : { template: template.display }),
     };
 
     // `-o` asks for a machine-readable stdout, so nothing human may be written
@@ -391,6 +453,9 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
     yield* output.raw(
       renderComputeDetails([
         ["Runtime", runtime],
+        ...(template === undefined
+          ? []
+          : [["Template", template.display] satisfies [string, string]]),
         ["Size", `${size} (${vcpuForSize(size)} vCPU)`],
         ["Access", exposure],
         // `declared`, the way `compute status` labels the same number: nothing
@@ -402,5 +467,7 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
     // "start your app" line: the shell prints trailers once at the end of the
     // run, so the next step is the last thing on screen.
     yield* emitSuccessTrailer(`Deploy it with ${aqua(`supabase compute push ${name}`)}.\n`);
-  }).pipe(Effect.ensuring(telemetryState.flush));
+    // Scoped because `--template` stages its clone in a temporary directory that
+    // has to outlive the copy into the destination and no longer.
+  }).pipe(Effect.scoped, Effect.ensuring(telemetryState.flush));
 });

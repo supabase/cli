@@ -2,10 +2,15 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Option, FileSystem, Path, Predicate, Schema } from "effect";
 import { makeComputeProject, setupCompute } from "../../../../../tests/helpers/compute.ts";
+import { makeGitRepo } from "../../../../../tests/helpers/git-repo.ts";
 import {
   ComputeAlreadyConfiguredError,
   ComputeConfigWriteUnsafeError,
 } from "../../../../shared/compute/compute-config.ts";
+import {
+  ComputeTemplateFetchError,
+  InvalidComputeTemplateError,
+} from "../../../../shared/compute/compute-template.ts";
 import {
   InvalidComputeNameError,
   InvalidComputeSourceError,
@@ -32,6 +37,7 @@ function flags(overrides: Partial<ComputeNewFlags> = {}): ComputeNewFlags {
     exposure: Option.none(),
     instances: Option.none(),
     source: Option.none(),
+    template: Option.none(),
     ...overrides,
   };
 }
@@ -916,6 +922,7 @@ describe("compute new", () => {
           exposure: Option.none(),
           instances: Option.none(),
           source: Option.none(),
+          template: Option.none(),
         });
 
         expect(yield* repo.config).toContain(`runtime = "deno"`);
@@ -978,4 +985,261 @@ describe("compute new", () => {
         }).pipe(Effect.provide(layer));
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
+
+  describe("--template", () => {
+    it.live("bootstraps the directory from a git repository, replacing the runtime's files", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fs = yield* FileSystem.FileSystem;
+        const repo = yield* project();
+        const template = yield* makeGitRepo({
+          "index.mjs": "export default { fetch: () => new Response('from the template') };\n",
+          "lib/db.mjs": "export const query = () => [];\n",
+          "README.md": "# api\n",
+        });
+        const { layer, out } = setupCompute({ workdir: repo.dir });
+
+        return yield* Effect.gen(function* () {
+          yield* computeNew(
+            flags({ runtime: Option.some("node"), template: Option.some(template) }),
+          );
+
+          const computeDir = path.join(repo.dir, "supabase", "compute", "api");
+          expect(yield* fs.readFileString(path.join(computeDir, "index.mjs"))).toContain(
+            "from the template",
+          );
+          expect(yield* fs.exists(path.join(computeDir, "lib", "db.mjs"))).toBe(true);
+          expect(yield* fs.exists(path.join(computeDir, "README.md"))).toBe(true);
+          // A template is a starting point, not a checkout.
+          expect(yield* fs.exists(path.join(computeDir, ".git"))).toBe(false);
+
+          expect(yield* repo.config).toContain('runtime = "node"');
+          expect(out.stdoutText).toContain("Template");
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+
+    // A starter the template never names would otherwise survive, and `main.ts` is
+    // the entry the deno catalog runtime loads — so the compute would serve the
+    // greeting scaffold instead of the template's own code.
+    it.live("writes none of the runtime's starter files alongside a template", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fs = yield* FileSystem.FileSystem;
+        const repo = yield* project();
+        const template = yield* makeGitRepo({
+          "deno.json": '{ "imports": {} }\n',
+          "src/app.ts": "export default {};\n",
+        });
+        const { layer } = setupCompute({ workdir: repo.dir, format: "json" });
+
+        return yield* Effect.gen(function* () {
+          yield* computeNew(
+            flags({ runtime: Option.some("deno"), template: Option.some(template) }),
+          );
+
+          const computeDir = path.join(repo.dir, "supabase", "compute", "api");
+          expect(yield* fs.readDirectory(computeDir)).toEqual(
+            expect.arrayContaining(["deno.json", "src"]),
+          );
+          expect(yield* fs.exists(path.join(computeDir, "main.ts"))).toBe(false);
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+
+    // The same hazard one runtime over: a node template naming its entry anything
+    // other than index.mjs used to be shadowed by the starter's index.mjs.
+    it.live("leaves no starter entry file to shadow a node template's own", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fs = yield* FileSystem.FileSystem;
+        const repo = yield* project();
+        const template = yield* makeGitRepo({
+          "package.json": '{ "type": "module", "main": "src/server.js" }\n',
+          "src/server.js": "export default {};\n",
+        });
+        const { layer } = setupCompute({ workdir: repo.dir, format: "json" });
+
+        return yield* Effect.gen(function* () {
+          yield* computeNew(flags({ template: Option.some(template) }));
+
+          const computeDir = path.join(repo.dir, "supabase", "compute", "api");
+          expect(yield* repo.config).toContain('runtime = "node"');
+          expect(yield* fs.exists(path.join(computeDir, "src", "server.js"))).toBe(true);
+          expect(yield* fs.exists(path.join(computeDir, "index.mjs"))).toBe(false);
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+
+    // Recording the catalog default here would deploy a base image that never
+    // reads the Dockerfile the template shipped.
+    it.live("defaults the runtime to what the template's marker files point at", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fs = yield* FileSystem.FileSystem;
+        const repo = yield* project();
+        const template = yield* makeGitRepo({
+          Dockerfile: "FROM node:22-slim\n",
+          "server.js": 'console.log("hi");\n',
+        });
+        const { layer } = setupCompute({ workdir: repo.dir, format: "json" });
+
+        return yield* Effect.gen(function* () {
+          yield* computeNew(flags({ template: Option.some(template) }));
+
+          expect(yield* repo.config).toContain('runtime = "dockerfile"');
+          // The deno starter never lands: it was never the resolved runtime.
+          expect(
+            yield* fs.exists(path.join(repo.dir, "supabase", "compute", "api", "main.ts")),
+          ).toBe(false);
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+
+    it.live("pre-selects the inferred runtime at the prompt", () =>
+      Effect.gen(function* () {
+        const repo = yield* project();
+        const template = yield* makeGitRepo({ "package.json": "{}\n" });
+        const { layer, out } = setupCompute({
+          workdir: repo.dir,
+          // The mock picks the first option, which is what a pre-selected default is.
+          promptSelectResponses: [],
+        });
+
+        return yield* Effect.gen(function* () {
+          yield* computeNew(flags({ template: Option.some(template) }));
+
+          expect(out.promptSelectCalls[0]?.options[0]).toMatchObject({ value: "node" });
+          expect(yield* repo.config).toContain('runtime = "node"');
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+
+    it.live("lets --runtime override what the template looks like", () =>
+      Effect.gen(function* () {
+        const repo = yield* project();
+        const template = yield* makeGitRepo({ Dockerfile: "FROM node:22-slim\n" });
+        const { layer } = setupCompute({ workdir: repo.dir, format: "json" });
+
+        return yield* Effect.gen(function* () {
+          yield* computeNew(
+            flags({ runtime: Option.some("node"), template: Option.some(template) }),
+          );
+
+          expect(yield* repo.config).toContain('runtime = "node"');
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+
+    // A knowably doomed run should not pay for a clone.
+    it.live("refuses an occupied destination before fetching anything", () =>
+      Effect.gen(function* () {
+        const repo = yield* project({ "supabase/compute/api/leftover.txt": "old" });
+        const { layer, out } = setupCompute({ workdir: repo.dir, format: "json" });
+
+        return yield* Effect.gen(function* () {
+          const error = yield* computeNew(
+            flags({ template: Option.some("owner/does-not-exist-at-all") }),
+          ).pipe(Effect.flip);
+
+          expect(error).toBeInstanceOf(ComputeDirectoryExistsError);
+          expect(out.progressEvents).toEqual([]);
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+
+    // The flag says where the code comes from; the runtime still says how the
+    // platform builds and runs it.
+    it.live("leaves the runtime, size and exposure the command resolved alone", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fs = yield* FileSystem.FileSystem;
+        const repo = yield* project();
+        const template = yield* makeGitRepo({ Dockerfile: "FROM scratch\n" });
+        const { layer } = setupCompute({ workdir: repo.dir, format: "json" });
+
+        return yield* Effect.gen(function* () {
+          yield* computeNew(
+            flags({
+              runtime: Option.some("dockerfile"),
+              size: Option.some("4gb"),
+              exposure: Option.some("private"),
+              template: Option.some(template),
+            }),
+          );
+
+          expect(
+            yield* fs.readFileString(
+              path.join(repo.dir, "supabase", "compute", "api", "Dockerfile"),
+            ),
+          ).toBe("FROM scratch\n");
+          expect(yield* repo.config).toContain('runtime = "dockerfile"');
+          expect(yield* repo.config).toContain('size = "4gb"');
+          expect(yield* repo.config).toContain('exposure = "private"');
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+
+    it.live("scaffolds a template into a --source directory", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fs = yield* FileSystem.FileSystem;
+        const repo = yield* project();
+        const template = yield* makeGitRepo({ "index.ts": "export default {};\n" });
+        const { layer } = setupCompute({ workdir: repo.dir, format: "json" });
+
+        return yield* Effect.gen(function* () {
+          yield* computeNew(
+            flags({ source: Option.some("packages/api"), template: Option.some(template) }),
+          );
+
+          expect(yield* fs.exists(path.join(repo.dir, "packages", "api", "index.ts"))).toBe(true);
+          expect(yield* repo.config).toContain('source = "packages/api"');
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+
+    it.live("refuses an unusable --template before asking anything", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fs = yield* FileSystem.FileSystem;
+        const repo = yield* project();
+        const { layer, out } = setupCompute({
+          workdir: repo.dir,
+          promptSelectResponses: ["node", "2gb"],
+        });
+
+        return yield* Effect.gen(function* () {
+          const error = yield* computeNew(flags({ template: Option.some("not-a-repo") })).pipe(
+            Effect.flip,
+          );
+
+          expect(error).toBeInstanceOf(InvalidComputeTemplateError);
+          expect(out.promptSelectCalls).toEqual([]);
+          expect(yield* fs.exists(path.join(repo.dir, "supabase", "compute"))).toBe(false);
+          expect(yield* repo.config).toBe(CONFIG_WITH_COMMENTS);
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+
+    it.live("leaves nothing behind when the fetch fails", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fs = yield* FileSystem.FileSystem;
+        const repo = yield* project();
+        const template = yield* makeGitRepo({ "index.mjs": "export default {};\n" });
+        const { layer } = setupCompute({ workdir: repo.dir, format: "json" });
+
+        return yield* Effect.gen(function* () {
+          const error = yield* computeNew(
+            flags({ template: Option.some(`${template}#no-such-ref`) }),
+          ).pipe(Effect.flip);
+
+          expect(error).toBeInstanceOf(ComputeTemplateFetchError);
+          expect(yield* fs.exists(path.join(repo.dir, "supabase", "compute"))).toBe(false);
+          expect(yield* repo.config).toBe(CONFIG_WITH_COMMENTS);
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+  });
 });
