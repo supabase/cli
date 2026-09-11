@@ -23,8 +23,7 @@ function hasObjectMembers(ast: SchemaAST.AST): boolean {
 
 /**
  * True when every member of `original` was secret-shaped and got stripped from `transformed`,
- * leaving it empty — as opposed to an `Objects` node that was already empty in the source schema,
- * which must pass through as a permissive leaf rather than being treated as secret-shaped.
+ * leaving it empty.
  */
 function isAllSecretCollapsedContainer(
   original: SchemaAST.AST,
