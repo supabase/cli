@@ -34,6 +34,7 @@ disabling safe compaction.
 | --------------------------------------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `<workdir>/supabase/migrations/<timestamp>_<name>[_<segment>].sql`          | SQL    | durable changes only; bundled engine may emit ordered segments. Never written by `--transient`                                                                                                                                                                                                                                                                   |
 | `<workdir>/supabase/schemas/extension.sql`                                  | SQL    | accepted legacy-extension repair                                                                                                                                                                                                                                                                                                                                 |
+| `<workdir>/supabase/.temp/pgdelta/debug/<id>/`                              | dir    | durable apply or image-preflight failure, and transient execution failure; warns and omits the path when the directory cannot be created                                                                                                                                                                                                                         |
 | `<workdir>/supabase/.temp/pgdelta/v2/debug/<id>/*.json`                     | JSON   | bundled engine with `PGDELTA_DEBUG`                                                                                                                                                                                                                                                                                                                              |
 | `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar`               | tar    | cache-enabled COLD shadow provision creates the current key's snapshot — migrations/declarative shadows (`--no-cache` bypasses the snapshot cache entirely — neither read nor written); a warm hit `touch`es its mtime (LRU); every cache-eligible acquire may delete other keys under LRU keep-3 + 2-day mtime TTL — ~90MB (`SUPABASE_HOME` overrides the root) |
 | `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar.<pid>.partial` | tar    | during a cold export — the in-flight temp file, `rename`d into the tar above on success and removed on failure; only a crash/SIGKILL leaves it behind, and later cold exports / warm hits sweep leftovers older than 5 minutes                                                                                                                                   |
@@ -59,17 +60,17 @@ disabling safe compaction.
 
 ## Exit Codes
 
-| Code | Condition                                                                                            |
-| ---- | ---------------------------------------------------------------------------------------------------- |
-| `0`  | success (migration created, applied, or "No schema changes found")                                   |
-| `1`  | pg-delta not enabled                                                                                 |
-| `1`  | conflicting flags, including `--transient` with `--no-apply`, `--file`, `--name`, or `--apply=false` |
-| `1`  | `--transient` when the local database container is not already running                               |
-| `1`  | `--transient` without `--yes` when no TTY is available or machine output is selected                 |
-| `1`  | no declarative schema files found                                                                    |
-| `1`  | shadow-database / selected pg-delta engine / diff failure                                            |
-| `1`  | apply failure (when applied) — propagated from the native migration apply (`applyMigrationToLocal`)  |
-| `1`  | repairable legacy extension omissions in non-interactive mode                                        |
+| Code | Condition                                                                                                    |
+| ---- | ------------------------------------------------------------------------------------------------------------ |
+| `0`  | success (migration created, applied, or "No schema changes found")                                           |
+| `1`  | pg-delta not enabled                                                                                         |
+| `1`  | conflicting flags, including `--transient` with `--no-apply`, `--file`, `--name`, or `--apply=false`         |
+| `1`  | `--transient` when the local database container is not already running                                       |
+| `1`  | `--transient` without `--yes` when no TTY is available or machine output is selected                         |
+| `1`  | no declarative schema files found                                                                            |
+| `1`  | shadow-database / selected pg-delta engine / diff failure                                                    |
+| `1`  | apply or image-preflight failure — native local apply (`applyMigrationToLocal` or `applyRenderedSqlToLocal`) |
+| `1`  | repairable legacy extension omissions in non-interactive mode                                                |
 
 The pg-delta gate and the mutex check are both raised before any side effects run,
 but the gate wins when both conditions apply simultaneously: the gate check runs

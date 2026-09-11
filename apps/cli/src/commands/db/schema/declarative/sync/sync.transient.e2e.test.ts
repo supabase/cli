@@ -1,9 +1,11 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
 import {
+  formatCliFailure,
+  listMigrationSqlFiles,
   makeTempCliStackProject,
   overrideStackPorts,
   requireCliSuccess,
@@ -30,19 +32,6 @@ create view public.transient_probe_states as
 select id, state
 from public.transient_probe;
 `;
-
-function commandFailure(result: { stdout: string; stderr: string }): string {
-  return `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`;
-}
-
-function migrationFiles(projectDir: string): ReadonlyArray<string> {
-  const migrationsDir = path.join(projectDir, "supabase", "migrations");
-  return existsSync(migrationsDir)
-    ? readdirSync(migrationsDir)
-        .filter((file) => file.endsWith(".sql"))
-        .sort()
-    : [];
-}
 
 function dbPort(config: string): number {
   const match = /^\[db\]$[\s\S]*?^port = (\d+)$/mu.exec(config);
@@ -147,7 +136,7 @@ describe("db schema declarative sync --transient (e2e)", () => {
         throw new Error("transient declarative sync project was not initialized");
       }
 
-      const filesBefore = migrationFiles(projectDir);
+      const filesBefore = listMigrationSqlFiles(projectDir);
       const historyBefore = await migrationHistory(port);
       const apply = await runSupabase(
         ["db", "schema", "declarative", "sync", "--transient", "--yes", "--experimental"],
@@ -156,9 +145,9 @@ describe("db schema declarative sync --transient (e2e)", () => {
           exitTimeoutMs: SCENARIO_COMMAND_TIMEOUT_MS,
         },
       );
-      expect(apply.exitCode, commandFailure(apply)).toBe(0);
+      expect(apply.exitCode, formatCliFailure(apply)).toBe(0);
       expect(apply.stdout.match(/transient_probe/gu)?.length ?? 0).toBeGreaterThanOrEqual(2);
-      expect(migrationFiles(projectDir)).toEqual(filesBefore);
+      expect(listMigrationSqlFiles(projectDir)).toEqual(filesBefore);
       expect(await migrationHistory(port)).toEqual(historyBefore);
 
       const converged = await runSupabase(
@@ -168,9 +157,9 @@ describe("db schema declarative sync --transient (e2e)", () => {
           exitTimeoutMs: SCENARIO_COMMAND_TIMEOUT_MS,
         },
       );
-      expect(converged.exitCode, commandFailure(converged)).toBe(0);
+      expect(converged.exitCode, formatCliFailure(converged)).toBe(0);
       expect(`${converged.stdout}${converged.stderr}`).toContain("No schema changes found");
-      expect(migrationFiles(projectDir)).toEqual(filesBefore);
+      expect(listMigrationSqlFiles(projectDir)).toEqual(filesBefore);
       expect(await migrationHistory(port)).toEqual(historyBefore);
     },
   );

@@ -67,9 +67,8 @@ const formatImplicitExtensionLoadFailure = (
   });
 
 /**
- * Computes the diff between local migrations state and the declarative schema.
- * The pg-delta engine owns both sides of the plan, planning against its scoped
- * migrations/declarative shadows.
+ * Plans declarative schema against the migrations and declarative shadows, or
+ * against a live source plus one declarative shadow when `source` is set.
  */
 const planDeclarative = Effect.fnUntraced(function* (
   run: DeclarativeRunContext,

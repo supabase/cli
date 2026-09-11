@@ -1846,7 +1846,7 @@ describe("db schema declarative sync integration", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("debug-bundle failure retains generated files", () => {
+  it.effect("debug-bundle failure warns and still reports the apply error", () => {
     seedDeclarative(tmp.current);
     writeFileSync(join(tmp.current, "supabase", ".temp"), "blocks debug directory");
     const s = setup(tmp.current, {
@@ -1857,7 +1857,9 @@ describe("db schema declarative sync integration", () => {
       const exit = yield* dbSchemaDeclarativeSync(flags({ apply: Option.some(true) })).pipe(
         Effect.exit,
       );
-      expect(Exit.isFailure(exit)).toBe(true);
+      expect(failError(exit)).toMatchObject({ _tag: "DeclarativeApplyError" });
+      expect(stripAnsi(s.out.stderrText)).toContain("Warning: failed to save debug artifacts");
+      expect(stripAnsi(s.out.stderrText)).toContain("Migration failed to apply");
       expect(migrationEntries(tmp.current)).toHaveLength(1);
     }).pipe(Effect.provide(s.layer));
   });

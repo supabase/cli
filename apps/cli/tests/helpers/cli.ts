@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
@@ -578,6 +578,22 @@ export async function runSupabase(
   return { ...result, exitCode: killedByUntil ? 0 : result.exitCode };
 }
 
+export function formatCliFailure(result: {
+  readonly stdout: string;
+  readonly stderr: string;
+}): string {
+  return `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`;
+}
+
+export function listMigrationSqlFiles(projectDir: string): ReadonlyArray<string> {
+  const migrationsDir = path.join(projectDir, "supabase", "migrations");
+  return existsSync(migrationsDir)
+    ? readdirSync(migrationsDir)
+        .filter((file) => file.endsWith(".sql"))
+        .sort()
+    : [];
+}
+
 export function requireCliSuccess(
   result: {
     readonly exitCode: number;
@@ -592,8 +608,6 @@ export function requireCliSuccess(
       result.timedOutAfterMs === undefined
         ? `exit ${result.exitCode}`
         : `exit ${result.exitCode}; harness SIGKILLed it after ${result.timedOutAfterMs}ms without exit`;
-    throw new Error(
-      `${command} failed (${reason})\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
-    );
+    throw new Error(`${command} failed (${reason})\n${formatCliFailure(result)}`);
   }
 }

@@ -451,7 +451,7 @@ const execMigrationStatements = (
         ),
       );
 
-    // Pg-delta nontransactional units still share one session and its cleanup.
+    // Nontransactional units stay on one session; sequentialFailureCleanup is optional.
     if (transactionMode === "none") {
       return yield* executeSequentially(options.sequentialFailureCleanup);
     }
