@@ -450,14 +450,19 @@ const nativeFunctionsDirectory = (
   return bootstrapPath.slice(0, bootstrapPath.lastIndexOf("/")) || bootstrapPath;
 };
 
+const functionsInspectorRequested = (state: Pick<PersistedStackState, "definition">): boolean => {
+  const inspectorSettings = state.definition?.capabilities.functions.settings.inspector;
+  return (
+    isRecord(inspectorSettings) || state.definition?.listeners.functionsInspector.enabled === true
+  );
+};
+
 const functionsInspectorArgs = (
   state: PersistedStackState,
   runtime: WorkloadRuntimeKind,
 ): ReadonlyArray<string> => {
   const configuredMode = valueAt(state, "functions", "inspector.mode");
-  const inspectorSettings = state.definition?.capabilities.functions.settings.inspector;
-  const inspectorRequested =
-    isRecord(inspectorSettings) || state.definition?.listeners.functionsInspector.enabled === true;
+  const inspectorRequested = functionsInspectorRequested(state);
   const mode =
     configuredMode === "run" || configuredMode === "brk" || configuredMode === "wait"
       ? configuredMode
@@ -493,6 +498,7 @@ const nativeProcessFor = (
     .map((arg) =>
       arg.startsWith("app/") || arg.startsWith("share/") ? artifactPath(artifactRoot, arg) : arg,
     );
+
   const nativeArgs = nativeArgsFor(workload, args, inputs);
   return {
     executable:
@@ -539,7 +545,6 @@ const withRestSettings = (
   state: PersistedStackState,
   runtime: WorkloadRuntimeKind,
   port: number,
-  workload: PlannedWorkload,
   inputs: WorkloadRuntimeInputs = {},
 ): Record<string, string> =>
   compactEnvironment({
@@ -695,7 +700,6 @@ const withAuthSettings = (
   state: PersistedStackState,
   runtime: WorkloadRuntimeKind,
   port: number,
-  workload: PlannedWorkload,
   inputs: WorkloadRuntimeInputs = {},
 ): Record<string, string> =>
   compactEnvironment({
@@ -844,7 +848,6 @@ const withStorageSettings = (
   state: PersistedStackState,
   runtime: WorkloadRuntimeKind,
   port: number,
-  workload: PlannedWorkload,
   inputs: WorkloadRuntimeInputs = {},
 ): Record<string, string> => {
   const fileSizeLimit = parseFileSize(valueAt(state, "storage", "file_size_limit"));
@@ -928,7 +931,6 @@ const analyticsEnv = (
   state: PersistedStackState,
   runtime: WorkloadRuntimeKind,
   port: number,
-  workload: PlannedWorkload,
   inputs: WorkloadRuntimeInputs = {},
 ): Record<string, string> => {
   const backend = valueAt(state, "analytics", "backend");
@@ -972,7 +974,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
   "database:database": {
     bindings: { primary: { containerPort: 5432 } },
     args: (state, _workload, port) => databaseArgs(state, port, "native"),
-    env: (state, workload, port, runtime = "native", inputs = {}) =>
+    env: (state, _workload, _port, runtime = "native", inputs = {}) =>
       compactEnvironment({
         PGDATA:
           runtime === "container"
@@ -989,16 +991,16 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
   "rest:rest": {
     bindings: { primary: { containerPort: 3000 }, admin: { containerPort: 3001 } },
     args: () => [],
-    env: (state, workload, port, runtime = "native", inputs = {}) =>
-      withRestSettings(state, runtime, port, workload, inputs),
+    env: (state, _workload, port, runtime = "native", inputs = {}) =>
+      withRestSettings(state, runtime, port, inputs),
     containerArgs: () => [],
     readiness: { protocol: "http", path: "/" },
   },
   "auth:auth": {
     bindings: { primary: { containerPort: 9999 } },
     args: () => [],
-    env: (state, workload, port, runtime = "native", inputs = {}) =>
-      withAuthSettings(state, runtime, port, workload, inputs),
+    env: (state, _workload, port, runtime = "native", inputs = {}) =>
+      withAuthSettings(state, runtime, port, inputs),
     containerArgs: () => [],
     containerStartupProcesses: () => [{ entrypoint: "/usr/local/bin/auth", command: ["migrate"] }],
     readiness: { protocol: "http", path: "/health" },
@@ -1006,7 +1008,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
   "realtime:realtime": {
     bindings: { primary: { containerPort: 4000 } },
     args: () => [],
-    env: (state, workload, port, runtime = "native", inputs = {}) =>
+    env: (state, _workload, port, runtime = "native", inputs = {}) =>
       compactEnvironment({
         ...capabilityEnv(state, "realtime", "REALTIME"),
         PORT: String(port),
@@ -1039,8 +1041,8 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
   "storage:storage": {
     bindings: { primary: { containerPort: 5000 } },
     args: () => [],
-    env: (state, workload, port, runtime = "native", inputs = {}) =>
-      withStorageSettings(state, runtime, port, workload, inputs),
+    env: (state, _workload, port, runtime = "native", inputs = {}) =>
+      withStorageSettings(state, runtime, port, inputs),
     containerArgs: () => [],
     containerStartupProcesses: () => [{ entrypoint: "/slim-runtime/bin/prepare", command: [] }],
     readiness: { protocol: "http", path: "/status" },
@@ -1048,7 +1050,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
   "storage:imgproxy": {
     bindings: { primary: { containerPort: 5001 } },
     args: () => [],
-    env: (state, workload, port, runtime = "native") => ({
+    env: (_state, _workload, port, runtime = "native") => ({
       IMGPROXY_BIND: `${runtime === "container" ? "0.0.0.0" : "127.0.0.1"}:${port}`,
       IMGPROXY_LOCAL_FILESYSTEM_ROOT: "/",
     }),
@@ -1065,7 +1067,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
       `--policy=${valueAt(state, "functions", "edge_runtime.policy")}`,
       ...functionsInspectorArgs(state, runtime),
     ],
-    env: (state, workload, port, runtime = "native", inputs = {}) => ({
+    env: (state, _workload, port, runtime = "native", inputs = {}) => ({
       ...edgeRuntimeJwtEnvironment(state, inputs),
       EDGE_RUNTIME_PORT: String(port),
       FUNCTIONS_CONTAINER_ROOT,
@@ -1093,7 +1095,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
   "studio:studio": {
     bindings: { primary: { containerPort: 3000 } },
     args: () => [],
-    env: (state, workload, port, runtime = "native", inputs = {}) =>
+    env: (state, _workload, port, runtime = "native", inputs = {}) =>
       compactEnvironment({
         ...capabilityEnv(state, "studio", "STUDIO"),
         PORT: String(port),
@@ -1135,7 +1137,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
   "studio:pgmeta": {
     bindings: { primary: { containerPort: 8080 } },
     args: () => [],
-    env: (state, workload, port, runtime = "native") => ({
+    env: (state, _workload, port, runtime = "native") => ({
       ...capabilityEnv(state, "studio", "PG_META"),
       PG_META_PORT: String(port),
       PG_META_DB_HOST: dbHost(runtime),
@@ -1154,7 +1156,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
       pop3: { containerPort: 1110 },
     },
     args: () => [],
-    env: (state, workload, port, runtime = "native") => ({
+    env: (state, _workload, _port, runtime = "native") => ({
       ...capabilityEnv(state, "mail", "MAIL"),
       MP_UI_BIND_ADDR: `${runtime === "container" ? "0.0.0.0" : "127.0.0.1"}:${workloadPort(state, "mail:mail", "ui", runtime, 8025)}`,
       MP_SMTP_BIND_ADDR: `${runtime === "container" ? "0.0.0.0" : "127.0.0.1"}:${workloadPort(state, "mail:mail", "smtp", runtime, 1025)}`,
@@ -1167,8 +1169,8 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
   "analytics:analytics": {
     bindings: { primary: { containerPort: 4000 } },
     args: () => ["start"],
-    env: (state, workload, port, runtime = "native", inputs = {}) =>
-      analyticsEnv(state, runtime, port, workload, inputs),
+    env: (state, _workload, port, runtime = "native", inputs = {}) =>
+      analyticsEnv(state, runtime, port, inputs),
     // The slim container entrypoint performs Logflare migrations before start.
     containerArgs: () => [],
     containerMounts: (state, _workload, inputs = {}) => {
@@ -1189,7 +1191,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
   "analytics:vector": {
     bindings: { primary: { containerPort: 9001 } },
     args: (_state, _workload, _port) => ["--config", "share/doc/vector/config/vector.yaml"],
-    env: (state, workload, port, runtime = "native") => ({
+    env: (state, _workload, port, runtime = "native") => ({
       ...capabilityEnv(state, "analytics", "VECTOR"),
       VECTOR_API_ADDRESS: `${runtime === "container" ? "0.0.0.0" : "127.0.0.1"}:${port}`,
       VECTOR_API_PORT: String(port),
@@ -1218,7 +1220,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
   "pooler:pooler": {
     bindings: { primary: { containerPort: 6543 }, admin: { containerPort: 4000 } },
     args: () => ["start"],
-    env: (state, workload, port, runtime = "native", _inputs = {}) => {
+    env: (state, _workload, _port, runtime = "native") => {
       const adminPort =
         runtime === "container" ? 4000 : privatePortFor(state, "pooler:pooler", "admin");
       const primaryPort = privatePortFor(state, "pooler:pooler", "primary");
@@ -1285,11 +1287,8 @@ const selectedBindings = (
   state: Pick<PersistedStackState, "definition">,
   bindings: WorkloadBindings,
 ): ReadonlyArray<readonly [WorkloadBindingName, WorkloadBinding]> => {
-  const inspectorSettings = state.definition?.capabilities.functions.settings.inspector;
-  const inspectorRequested =
-    isRecord(inspectorSettings) || state.definition?.listeners.functionsInspector.enabled === true;
   return declaredBindings(bindings).filter(
-    ([binding]) => binding !== "inspector" || inspectorRequested,
+    ([binding]) => binding !== "inspector" || functionsInspectorRequested(state),
   );
 };
 

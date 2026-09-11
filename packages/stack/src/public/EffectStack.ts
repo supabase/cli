@@ -536,23 +536,20 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
           Option.isNone(state) ? Effect.fail(stackNotFound()) : destroyAndAwaitOwner,
         ),
       );
-    const status = () => {
+    const status = (): Effect.Effect<StackStatus, StackStatusError> => {
       const rpcStatus = invoke((rpc) => rpc.status(undefined), statusError);
       return rpcStatus.pipe(
         Effect.catchTag("StackOwnershipConflictError", (ownershipError) =>
           options.readOfflineState.pipe(
             Effect.mapError(statusError),
-            Effect.flatMap((state) =>
-              Option.isNone(state)
-                ? Effect.fail(stackNotFound())
-                : isStoppedState(state.value)
-                  ? statusFor(id, state.value, [], new Set<CapabilityName>(), "stopped").pipe(
-                      Effect.mapError(statusError),
-                    )
-                  : Effect.fail(
-                      new StackOwnershipConflictError({ message: "No Supervisor owns this stack" }),
-                    ),
-            ),
+            Effect.flatMap((state): Effect.Effect<StackStatus, StackStatusError> => {
+              if (Option.isNone(state)) return Effect.fail(stackNotFound());
+              if (isStoppedState(state.value))
+                return statusFor(id, state.value, [], new Set<CapabilityName>(), "stopped");
+              return Effect.fail(
+                new StackOwnershipConflictError({ message: "No Supervisor owns this stack" }),
+              );
+            }),
             Effect.catchTag("StackOwnershipConflictError", () => Effect.fail(ownershipError)),
           ),
         ),
@@ -720,11 +717,7 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
     } satisfies EffectStack;
   });
 
-const stateInitial = (
-  identity: StackIdentity,
-  stackId: StackId,
-  runtime: StackRuntime,
-): PersistedStackState => ({
+const stateInitial = (identity: StackIdentity, runtime: StackRuntime): PersistedStackState => ({
   format: "supabase-stack-state-v1",
   identity: toPersistedIdentity(identity),
   runtime,
@@ -1005,10 +998,7 @@ export const createStack = (
         : options.runtime?.kind === "native"
           ? { kind: "native" }
           : (persisted?.runtime ?? (yield* selectDefaultRuntime(resolverOption)));
-    const current = yield* store.initialize(
-      stackId,
-      stateInitial(identity, stackId, requestedRuntime),
-    );
+    const current = yield* store.initialize(stackId, stateInitial(identity, requestedRuntime));
     const runtimeMismatch =
       options.runtime !== undefined &&
       (current.runtime.kind !== requestedRuntime.kind ||

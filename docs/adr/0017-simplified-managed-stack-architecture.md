@@ -55,8 +55,11 @@ Port assignments describe usable routes and workload bindings. Disabled
 capabilities do not reserve public listener ports, and the Functions inspector
 reserves a private port only when debugging is enabled. Service settings belong
 in the materialized definition only when the local runtime implements them;
-hosted-only database network restrictions, SSL enforcement, and vault settings
-are excluded.
+hosted-only database network restrictions, SSL enforcement, vault, REST
+auto-exposure, and Storage Analytics settings are excluded. API TLS is locally
+meaningful but unsupported by the stack gateway, so it is excluded too.
+Analytics' Vector port is assigned by the runtime rather than stored as a
+service setting.
 
 Disabling a capability releases its automatic port assignment; re-enabling it may
 select a new port.
