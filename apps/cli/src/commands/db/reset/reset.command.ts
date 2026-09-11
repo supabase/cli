@@ -9,40 +9,40 @@ import { dbResetRuntimeLayer } from "./reset.layers.ts";
 const noSqlPaths: ReadonlyArray<string> = [];
 
 const config = {
-  dbUrl: Flag.string("db-url").pipe(
+  dbUrl: Flag.String("db-url").pipe(
     Flag.withDescription(
       "Resets the database specified by the connection string (must be percent-encoded).",
     ),
     Flag.optional,
   ),
-  linked: Flag.boolean("linked").pipe(
+  linked: Flag.Boolean("linked").pipe(
     Flag.withDescription("Resets the linked project with local migrations."),
     Flag.withDefault(false),
   ),
-  local: Flag.boolean("local").pipe(
+  local: Flag.Boolean("local").pipe(
     Flag.withDescription("Resets the local database with local migrations."),
     Flag.withDefault(false),
   ),
-  projectRef: Flag.string("project-ref").pipe(
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
-  noSeed: Flag.boolean("no-seed").pipe(
+  noSeed: Flag.Boolean("no-seed").pipe(
     Flag.withDescription("Skip running the seed script after reset."),
     Flag.withDefault(false),
   ),
-  sqlPaths: Flag.string("sql-paths").pipe(
+  sqlPaths: Flag.String("sql-paths").pipe(
     Flag.atLeast(0),
     Flag.withDescription(
       "Override [db.seed].sql_paths for this reset. May be repeated; each value accepts a SQL file path or glob pattern relative to the supabase directory and force-enables seeding.",
     ),
     Flag.withDefault(noSqlPaths),
   ),
-  version: Flag.string("version").pipe(
+  version: Flag.String("version").pipe(
     Flag.withDescription("Reset up to the specified version."),
     Flag.optional,
   ),
-  last: Flag.integer("last").pipe(
+  last: Flag.Int("last").pipe(
     Flag.withDescription("Reset up to the last n migration versions."),
     Flag.optional,
   ),

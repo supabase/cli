@@ -7,14 +7,14 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { domainsCreate } from "./create.handler.ts";
 
 const config = {
-  projectRef: Flag.string("project-ref").pipe(
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
-  customHostname: Flag.string("custom-hostname").pipe(
+  customHostname: Flag.String("custom-hostname").pipe(
     Flag.withDescription("The custom hostname to use for your Supabase project."),
   ),
-  includeRawOutput: Flag.boolean("include-raw-output").pipe(
+  includeRawOutput: Flag.Boolean("include-raw-output").pipe(
     Flag.withDescription("(Deprecated) use -o json instead."),
     Flag.withDefault(false),
   ),

@@ -2,32 +2,23 @@ import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
-import { stringSliceFlag } from "../../../../command-internal/string-slice-flag.ts";
 import { stackStart } from "./start.handler.ts";
-import { STACK_START_EXCLUDABLE_CAPABILITIES } from "./start.options.ts";
-
-const excludeFlag = stringSliceFlag(
-  "exclude",
-  `Capabilities to leave disabled. [${STACK_START_EXCLUDABLE_CAPABILITIES.join(", ")}]`,
-  { alias: "x" },
-);
 
 const config = {
-  exclude: excludeFlag,
-  stack: Flag.string("stack").pipe(Flag.withDescription("Name this stack."), Flag.optional),
-  stackId: Flag.string("stack-id").pipe(
+  stack: Flag.String("stack").pipe(Flag.withDescription("Name this stack."), Flag.optional),
+  stackId: Flag.String("stack-id").pipe(
     Flag.withDescription("Open an existing stack by id."),
     Flag.optional,
   ),
-  runtime: Flag.choice("runtime", ["auto", "docker", "native"] as const).pipe(
+  runtime: Flag.Literals("runtime", ["auto", "docker", "native"] as const).pipe(
     Flag.withDescription("Runtime to use for a new stack."),
     Flag.withDefault("auto" as const),
   ),
-  preparation: Flag.choice("preparation", ["background", "on-demand"] as const).pipe(
+  preparation: Flag.Literals("preparation", ["background", "on-demand"] as const).pipe(
     Flag.withDescription("Artifact preparation policy."),
     Flag.withDefault("background" as const),
   ),
-  eager: Flag.boolean("eager").pipe(
+  eager: Flag.Boolean("eager").pipe(
     Flag.withDescription("Activate all enabled capabilities before returning."),
     Flag.withDefault(false),
   ),
@@ -37,10 +28,8 @@ export type StackStartFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const stackStartCommand = Command.make("start", config).pipe(
   Command.withDescription(
-    "Create or resume a managed local Supabase stack using supabase/config.toml when present. " +
-      "Without a config file, default settings are used and no file is created. " +
-      "For a new stack, auto selects Docker when its client is installed and native otherwise; a stopped daemon still selects Docker. " +
-      "Explicit runtime choices are honored. Values support explicit env(NAME) references and automatic SUPABASE_* overrides.",
+    "Create or resume a managed local Supabase stack from supabase/config.toml. " +
+      "Values support explicit env(NAME) references and automatic SUPABASE_* overrides.",
   ),
   Command.withShortDescription("Start a managed local stack"),
   Command.withExamples([
@@ -54,9 +43,6 @@ export const stackStartCommand = Command.make("start", config).pipe(
     },
   ]),
   Command.withHandler((flags) =>
-    stackStart(flags).pipe(
-      withCommandTelemetry({ flags, config, aliases: { x: "exclude" } }),
-      withJsonErrorHandling,
-    ),
+    stackStart(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),
   ),
 );

@@ -363,7 +363,7 @@ describe("build guards fail loudly", () => {
     const root = Command.make("supabase").pipe(
       Command.withSubcommands([
         Command.make("db").pipe(
-          Command.withSubcommands([Command.make("query", { output: Flag.string("output") })]),
+          Command.withSubcommands([Command.make("query", { output: Flag.String("output") })]),
         ),
       ]),
       Command.withGlobalFlags([ExperimentalFlag]),

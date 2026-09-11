@@ -8,37 +8,37 @@ import { dbPull } from "./pull.handler.ts";
 import { dbPullRuntimeLayer } from "./pull.layers.ts";
 
 const config = {
-  name: Argument.string("migration name").pipe(
+  name: Argument.String("migration name").pipe(
     Argument.withDescription("Optional name for the migration file."),
     Argument.optional,
   ),
   // `--declarative` and the deprecated `--use-pg-delta` both select declarative
   // export and are mutually exclusive with `--diff-engine`. Optional so the
   // mutex tracks whether the flag was passed.
-  declarative: Flag.boolean("declarative").pipe(
+  declarative: Flag.Boolean("declarative").pipe(
     Flag.withDescription(
       "Replace the declarative schema tree from the selected database instead of creating a migration; migration history is not updated.",
     ),
     Flag.optional,
   ),
-  usePgDelta: Flag.boolean("use-pg-delta").pipe(
+  usePgDelta: Flag.Boolean("use-pg-delta").pipe(
     Flag.withDescription("Use pg-delta to pull declarative schema."),
     // Hidden: Effect V4 has no `Flag.withDeprecated`; the handler prints
     // cobra's deprecation line.
     Flag.withHidden,
     Flag.optional,
   ),
-  diffEngine: Flag.choice("diff-engine", ["migra", "pg-delta"] as const).pipe(
+  diffEngine: Flag.Literals("diff-engine", ["migra", "pg-delta"] as const).pipe(
     Flag.withDescription("Diff engine to use for migration-style db pull."),
     Flag.optional,
   ),
-  strictCoverage: Flag.boolean("strict-coverage").pipe(
+  strictCoverage: Flag.Boolean("strict-coverage").pipe(
     Flag.withDescription(
       "Fail when bundled pg-delta finds schema objects it cannot manage instead of leaving them unmanaged.",
     ),
     Flag.withDefault(false),
   ),
-  schema: Flag.string("schema").pipe(
+  schema: Flag.String("schema").pipe(
     Flag.withAlias("s"),
     Flag.withDescription("Comma separated list of schema to include."),
     Flag.atLeast(0),
@@ -47,26 +47,26 @@ const config = {
       (err) => (err instanceof Error ? err.message : String(err)),
     ),
   ),
-  dbUrl: Flag.string("db-url").pipe(
+  dbUrl: Flag.String("db-url").pipe(
     Flag.withDescription(
       "Pulls from the database specified by the connection string (must be percent-encoded).",
     ),
     Flag.optional,
   ),
-  linked: Flag.boolean("linked").pipe(
+  linked: Flag.Boolean("linked").pipe(
     Flag.withDescription("Pulls from the linked project."),
     Flag.optional,
   ),
-  local: Flag.boolean("local").pipe(
+  local: Flag.Boolean("local").pipe(
     Flag.withDescription("Pulls from the local database."),
     Flag.optional,
   ),
   // TS-only override of the linked project ref — see push.command.ts.
-  projectRef: Flag.string("project-ref").pipe(
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
-  password: Flag.string("password").pipe(
+  password: Flag.String("password").pipe(
     Flag.withAlias("p"),
     Flag.withDescription("Password to your remote Postgres database."),
     Flag.optional,

@@ -16,9 +16,9 @@ import {
 import { storageMv } from "./mv.handler.ts";
 
 const config = {
-  src: Argument.string("src").pipe(Argument.withDescription("Source path to move from.")),
-  dst: Argument.string("dst").pipe(Argument.withDescription("Destination path to move to.")),
-  recursive: Flag.boolean("recursive").pipe(
+  src: Argument.String("src").pipe(Argument.withDescription("Source path to move from.")),
+  dst: Argument.String("dst").pipe(Argument.withDescription("Destination path to move to.")),
+  recursive: Flag.Boolean("recursive").pipe(
     Flag.withAlias("r"),
     Flag.withDescription("Recursively move a directory."),
     Flag.withDefault(false),

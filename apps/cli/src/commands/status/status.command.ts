@@ -31,7 +31,7 @@ export const statusExcludeFlag = stringSliceFlag(
 const config = {
   overrideName: statusOverrideNameFlag,
   exclude: statusExcludeFlag,
-  ignoreHealthCheck: Flag.boolean("ignore-health-check").pipe(
+  ignoreHealthCheck: Flag.Boolean("ignore-health-check").pipe(
     Flag.withDescription("Ignore unhealthy services and exit 0"),
     Flag.withHidden,
     Flag.withDefault(false),

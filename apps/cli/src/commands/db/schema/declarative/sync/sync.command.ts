@@ -10,7 +10,7 @@ import { dbSchemaDeclarativeSync } from "./sync.handler.ts";
 import { dbSchemaDeclarativeSyncRuntimeLayer } from "./sync.layers.ts";
 
 const config = {
-  schema: Flag.string("schema").pipe(
+  schema: Flag.String("schema").pipe(
     Flag.withAlias("s"),
     Flag.withDescription("Comma separated list of schema to include."),
     Flag.atLeast(0),
@@ -21,22 +21,22 @@ const config = {
       (err) => (err instanceof Error ? err.message : String(err)),
     ),
   ),
-  file: Flag.string("file").pipe(
+  file: Flag.String("file").pipe(
     Flag.withAlias("f"),
     Flag.withDescription("Saves schema diff to a new migration file."),
     Flag.optional,
   ),
-  name: Flag.string("name").pipe(
+  name: Flag.String("name").pipe(
     Flag.withDescription("Name for the generated migration file."),
     Flag.optional,
   ),
   // Mutually exclusive with `--no-apply`, keyed off presence not value, so model with `Option`
   // so `--apply=false --no-apply` still trips the conflict.
-  apply: Flag.boolean("apply").pipe(
+  apply: Flag.Boolean("apply").pipe(
     Flag.withDescription("Apply the generated migration to the local database without prompting."),
     Flag.optional,
   ),
-  noApply: Flag.boolean("no-apply").pipe(
+  noApply: Flag.Boolean("no-apply").pipe(
     Flag.withDescription(
       "Generate the migration file without prompting or applying it to the local database.",
     ),

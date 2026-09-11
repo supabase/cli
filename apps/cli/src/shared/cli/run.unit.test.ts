@@ -308,7 +308,7 @@ describe("classifyParseErrorConsoleOutput", () => {
     ).toBe("drop");
   });
 
-  it("flushes the help dump to stderr for an invalid Flag.choice value", () => {
+  it("flushes the help dump to stderr for an invalid Flag.Literals value", () => {
     const cause = Cause.fail(
       new CliError.ShowHelp({
         commandPath: ["supabase", "sso", "add"],

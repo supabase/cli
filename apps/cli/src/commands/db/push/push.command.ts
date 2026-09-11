@@ -7,39 +7,39 @@ import { dbPush } from "./push.handler.ts";
 import { dbPushRuntimeLayer } from "./push.layers.ts";
 
 const config = {
-  includeAll: Flag.boolean("include-all").pipe(
+  includeAll: Flag.Boolean("include-all").pipe(
     Flag.withDescription("Include all migrations not found on remote history table."),
     Flag.withDefault(false),
   ),
-  includeRoles: Flag.boolean("include-roles").pipe(
+  includeRoles: Flag.Boolean("include-roles").pipe(
     Flag.withDescription("Include custom roles from supabase/roles.sql."),
     Flag.withDefault(false),
   ),
-  includeSeed: Flag.boolean("include-seed").pipe(
+  includeSeed: Flag.Boolean("include-seed").pipe(
     Flag.withDescription("Include seed data from your config."),
     Flag.withDefault(false),
   ),
-  skipVault: Flag.boolean("skip-vault").pipe(
+  skipVault: Flag.Boolean("skip-vault").pipe(
     Flag.withDescription("Skip updating vault secrets from config.toml."),
     Flag.withDefault(false),
   ),
-  dryRun: Flag.boolean("dry-run").pipe(
+  dryRun: Flag.Boolean("dry-run").pipe(
     Flag.withDescription(
       "Print the migrations that would be applied, but don't actually apply them.",
     ),
     Flag.withDefault(false),
   ),
-  dbUrl: Flag.string("db-url").pipe(
+  dbUrl: Flag.String("db-url").pipe(
     Flag.withDescription(
       "Pushes to the database specified by the connection string (must be percent-encoded).",
     ),
     Flag.optional,
   ),
-  linked: Flag.boolean("linked").pipe(
+  linked: Flag.Boolean("linked").pipe(
     Flag.withDescription("Pushes to the linked project."),
     Flag.withDefault(false),
   ),
-  local: Flag.boolean("local").pipe(
+  local: Flag.Boolean("local").pipe(
     Flag.withDescription("Pushes to the local database."),
     Flag.withDefault(false),
   ),
@@ -48,11 +48,11 @@ const config = {
   // container ids or the pg-delta project id (see `db-config.types.ts`'s
   // `linkedProjectRef` doc) — and is rejected outright on a non-linked target rather
   // than silently ignored (see the handler's guard).
-  projectRef: Flag.string("project-ref").pipe(
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
-  password: Flag.string("password").pipe(
+  password: Flag.String("password").pipe(
     Flag.withAlias("p"),
     Flag.withDescription("Password to your remote Postgres database."),
     Flag.optional,

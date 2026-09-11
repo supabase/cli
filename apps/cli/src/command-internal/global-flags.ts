@@ -27,30 +27,30 @@ export const GLOBAL_OUTPUT_FORMATS = [
   "csv",
 ] as const;
 
-export const OutputFlag = GlobalFlag.setting("output")({
-  flag: Flag.choice("output", GLOBAL_OUTPUT_FORMATS).pipe(
+export const OutputFlag = GlobalFlag.Setting("output")({
+  flag: Flag.Literals("output", GLOBAL_OUTPUT_FORMATS).pipe(
     Flag.withAlias("o"),
     Flag.withDescription("output format of status variables"),
     Flag.optional,
   ),
 });
 
-export const ProfileFlag = GlobalFlag.setting("profile")({
-  flag: Flag.string("profile").pipe(
+export const ProfileFlag = GlobalFlag.Setting("profile")({
+  flag: Flag.String("profile").pipe(
     Flag.withDescription("use a specific profile for connecting to Supabase API"),
     Flag.withDefault("supabase"),
   ),
 });
 
-export const DebugFlag = GlobalFlag.setting("debug")({
-  flag: Flag.boolean("debug").pipe(
+export const DebugFlag = GlobalFlag.Setting("debug")({
+  flag: Flag.Boolean("debug").pipe(
     Flag.withDescription("output debug logs to stderr"),
     Flag.withDefault(false),
   ),
 });
 
-export const WorkdirFlag = GlobalFlag.setting("workdir")({
-  flag: Flag.string("workdir").pipe(
+export const WorkdirFlag = GlobalFlag.Setting("workdir")({
+  flag: Flag.String("workdir").pipe(
     Flag.withDescription(
       "path to the directory containing your supabase/ folder; used exactly as given, with no ancestor directory search (defaults to searching upward from the current directory)",
     ),
@@ -58,43 +58,43 @@ export const WorkdirFlag = GlobalFlag.setting("workdir")({
   ),
 });
 
-export const ExperimentalFlag = GlobalFlag.setting("experimental")({
-  flag: Flag.boolean("experimental").pipe(
+export const ExperimentalFlag = GlobalFlag.Setting("experimental")({
+  flag: Flag.Boolean("experimental").pipe(
     Flag.withDescription("enable experimental features"),
     Flag.withDefault(false),
   ),
 });
 
-export const NetworkIdFlag = GlobalFlag.setting("network-id")({
-  flag: Flag.string("network-id").pipe(
+export const NetworkIdFlag = GlobalFlag.Setting("network-id")({
+  flag: Flag.String("network-id").pipe(
     Flag.withDescription("use the specified docker network instead of a generated one"),
     Flag.optional,
   ),
 });
 
-export const YesFlag = GlobalFlag.setting("yes")({
-  flag: Flag.boolean("yes").pipe(
+export const YesFlag = GlobalFlag.Setting("yes")({
+  flag: Flag.Boolean("yes").pipe(
     Flag.withDescription("answer yes to all prompts"),
     Flag.withDefault(false),
   ),
 });
 
-export const DnsResolverFlag = GlobalFlag.setting("dns-resolver")({
-  flag: Flag.choice("dns-resolver", ["native", "https"] as const).pipe(
+export const DnsResolverFlag = GlobalFlag.Setting("dns-resolver")({
+  flag: Flag.Literals("dns-resolver", ["native", "https"] as const).pipe(
     Flag.withDescription("lookup domain names using the specified resolver"),
     Flag.withDefault("native" as const),
   ),
 });
 
-export const CreateTicketFlag = GlobalFlag.setting("create-ticket")({
-  flag: Flag.boolean("create-ticket").pipe(
+export const CreateTicketFlag = GlobalFlag.Setting("create-ticket")({
+  flag: Flag.Boolean("create-ticket").pipe(
     Flag.withDescription("create a support ticket for any CLI error"),
     Flag.withDefault(false),
   ),
 });
 
-export const AgentFlag = GlobalFlag.setting("agent")({
-  flag: Flag.choice("agent", ["auto", "yes", "no"] as const).pipe(
+export const AgentFlag = GlobalFlag.Setting("agent")({
+  flag: Flag.Literals("agent", ["auto", "yes", "no"] as const).pipe(
     Flag.withDescription("Override agent detection: yes, no, or auto (default auto)"),
     Flag.withDefault("auto" as const),
   ),

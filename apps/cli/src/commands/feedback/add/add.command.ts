@@ -11,13 +11,13 @@ import { FEEDBACK_OUTPUT_FORMATS } from "../feedback-output.ts";
 import { feedbackAdd } from "./add.handler.ts";
 
 const config = {
-  message: Argument.string("message").pipe(
+  message: Argument.String("message").pipe(
     Argument.withDescription(
       "Freeform feedback. Bare words are joined with spaces. 1000 character limit.",
     ),
     Argument.variadic(),
   ),
-  projectRef: Flag.string("project-ref").pipe(
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription(
       "Project ref to attribute the feedback to (defaults to SUPABASE_PROJECT_ID, then the linked project).",
     ),

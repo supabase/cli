@@ -3,7 +3,7 @@ import type * as CliCommand from "effect/unstable/cli/Command";
 import { dbBranchCreate } from "./create.handler.ts";
 
 const config = {
-  branchName: Argument.string("branch name").pipe(
+  branchName: Argument.String("branch name").pipe(
     Argument.withDescription("Name for the new branch."),
   ),
 } as const;

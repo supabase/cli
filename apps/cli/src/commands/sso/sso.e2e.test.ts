@@ -72,7 +72,7 @@ describe("supabase sso", () => {
 
   // Usage-silencing is set before required-flag validation, so a missing
   // `--type` prints a single clean stderr line with no usage block — but
-  // `Flag.choice` validation runs during parsing, before that point, so an
+  // `Flag.Literals` validation runs during parsing, before that point, so an
   // invalid `--type` value still shows a usage block.
   test(
     "add without --type: stdout stays clean, stderr is a single Go-parity line (no usage block)",

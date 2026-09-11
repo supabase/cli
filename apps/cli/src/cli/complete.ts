@@ -456,8 +456,8 @@ function hasUnconsumedFlagTerminator(
 
 /**
  * Flags whose real validation rejects a leading `-`/`+`, unlike this tree's plain signed
- * `Flag.integer`/`Flag.string` declarations — checked before `primitiveTag` dispatch since
- * `storage cp --jobs` is declared as `Flag.string`. Key = `<matched command path>:<flag name>`.
+ * `Flag.Int`/`Flag.String` declarations — checked before `primitiveTag` dispatch since
+ * `storage cp --jobs` is declared as `Flag.String`. Key = `<matched command path>:<flag name>`.
  */
 const COMPLETION_UINT_FLAGS: ReadonlySet<string> = new Set([
   "functions deploy:jobs",
@@ -468,7 +468,7 @@ const COMPLETION_UINT_FLAGS: ReadonlySet<string> = new Set([
 
 /**
  * Flags validated against Go duration syntax (see `isValidGoDuration`) rather than this
- * tree's plain `Flag.string` declarations.
+ * tree's plain `Flag.String` declarations.
  */
 const COMPLETION_DURATION_FLAGS: ReadonlySet<string> = new Set([
   "gen types:query-timeout",

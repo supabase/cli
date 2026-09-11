@@ -12,7 +12,7 @@ import { seedBuckets } from "./buckets.handler.ts";
 
 const config = {
   // TS-only flag; see push.command.ts (db push) for the same pattern.
-  projectRef: Flag.string("project-ref").pipe(
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),

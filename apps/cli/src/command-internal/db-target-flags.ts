@@ -42,11 +42,11 @@ export const VALUE_CONSUMING_LONG_FLAGS = new Set([
   "password",
   // inspect report flag
   "output-dir",
-  // storage cp command flags (Flag.string / Flag.integer)
+  // storage cp command flags (Flag.String / Flag.Int)
   "cache-control",
   "content-type",
   "jobs",
-  // global flags (Flag.string / Flag.choice)
+  // global flags (Flag.String / Flag.Literals)
   "output",
   "output-format",
   "profile",

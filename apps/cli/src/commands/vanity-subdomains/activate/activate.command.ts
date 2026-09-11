@@ -13,14 +13,14 @@ import {
 import { vanitySubdomainsActivate } from "./activate.handler.ts";
 
 const config = {
-  projectRef: Flag.string("project-ref").pipe(
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
   // Optional at parse time so the --experimental gate, login check, and project-ref
   // resolution all run first; required-ness is enforced in the handler after ref
   // resolution.
-  desiredSubdomain: Flag.string("desired-subdomain").pipe(
+  desiredSubdomain: Flag.String("desired-subdomain").pipe(
     Flag.withDescription("The desired vanity subdomain to use for your Supabase project."),
     Flag.optional,
   ),

@@ -26,44 +26,44 @@ export const ssoUpdateRemoveDomainsFlag = stringSliceFlag(
 );
 
 const config = {
-  projectRef: Flag.string("project-ref").pipe(
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
   domains: ssoUpdateDomainsFlag,
   addDomains: ssoUpdateAddDomainsFlag,
   removeDomains: ssoUpdateRemoveDomainsFlag,
-  metadataFile: Flag.string("metadata-file").pipe(
+  metadataFile: Flag.String("metadata-file").pipe(
     Flag.withDescription(
       "File containing a SAML 2.0 Metadata XML document describing the identity provider.",
     ),
     Flag.optional,
   ),
-  metadataUrl: Flag.string("metadata-url").pipe(
+  metadataUrl: Flag.String("metadata-url").pipe(
     Flag.withDescription(
       "URL pointing to a SAML 2.0 Metadata XML document describing the identity provider.",
     ),
     Flag.optional,
   ),
-  skipUrlValidation: Flag.boolean("skip-url-validation").pipe(
+  skipUrlValidation: Flag.Boolean("skip-url-validation").pipe(
     Flag.withDescription(
       "Skip local validation of the SAML 2.0 Metadata URL (HTTPS requirement, live GET probe, and UTF-8 body decode). Use in air-gapped CI where the IDP is not reachable from the build agent.",
     ),
     Flag.withDefault(false),
   ),
-  attributeMappingFile: Flag.string("attribute-mapping-file").pipe(
+  attributeMappingFile: Flag.String("attribute-mapping-file").pipe(
     Flag.withDescription(
       "File containing a JSON mapping between SAML attributes to custom JWT claims.",
     ),
     Flag.optional,
   ),
-  nameIdFormat: Flag.choice("name-id-format", SSO_NAME_ID_FORMATS).pipe(
+  nameIdFormat: Flag.Literals("name-id-format", SSO_NAME_ID_FORMATS).pipe(
     Flag.withDescription(
       "URI reference representing the classification of string-based identifier information.",
     ),
     Flag.optional,
   ),
-  providerId: Argument.string("provider-id").pipe(
+  providerId: Argument.String("provider-id").pipe(
     Argument.withDescription("The ID of the SSO identity provider to update."),
   ),
 };

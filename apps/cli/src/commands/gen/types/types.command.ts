@@ -10,27 +10,27 @@ const LANG_VALUES = ["typescript", "go", "swift", "python"] as const;
 const SWIFT_ACCESS_CONTROL_VALUES = ["internal", "public"] as const;
 
 const config = {
-  local: Flag.boolean("local").pipe(
+  local: Flag.Boolean("local").pipe(
     Flag.withDescription("Generate types from the local dev database."),
     Flag.withDefault(false),
   ),
-  linked: Flag.boolean("linked").pipe(
+  linked: Flag.Boolean("linked").pipe(
     Flag.withDescription("Generate types from the linked project."),
     Flag.withDefault(false),
   ),
-  dbUrl: Flag.string("db-url").pipe(
+  dbUrl: Flag.String("db-url").pipe(
     Flag.withDescription("Generate types from a database url."),
     Flag.optional,
   ),
-  projectId: Flag.string("project-id").pipe(
+  projectId: Flag.String("project-id").pipe(
     Flag.withDescription("Generate types from a project ID."),
     Flag.optional,
   ),
-  lang: Flag.choice("lang", LANG_VALUES).pipe(
+  lang: Flag.Literals("lang", LANG_VALUES).pipe(
     Flag.withDescription("Output language of the generated types. (default typescript)"),
     Flag.withDefault("typescript"),
   ),
-  schema: Flag.string("schema").pipe(
+  schema: Flag.String("schema").pipe(
     Flag.withAlias("s"),
     Flag.withDescription("Comma separated list of schema to include."),
     Flag.atLeast(0),
@@ -39,15 +39,15 @@ const config = {
       (err) => (err instanceof Error ? err.message : String(err)),
     ),
   ),
-  swiftAccessControl: Flag.choice("swift-access-control", SWIFT_ACCESS_CONTROL_VALUES).pipe(
+  swiftAccessControl: Flag.Literals("swift-access-control", SWIFT_ACCESS_CONTROL_VALUES).pipe(
     Flag.withDescription("Access control for Swift generated types. (default internal)"),
     Flag.withDefault("internal"),
   ),
-  postgrestV9Compat: Flag.boolean("postgrest-v9-compat").pipe(
+  postgrestV9Compat: Flag.Boolean("postgrest-v9-compat").pipe(
     Flag.withDescription("Generate types compatible with PostgREST v9 and below."),
     Flag.withDefault(false),
   ),
-  queryTimeout: Flag.string("query-timeout").pipe(
+  queryTimeout: Flag.String("query-timeout").pipe(
     Flag.withDescription("Maximum timeout allowed for the database query. (default 15s)"),
     Flag.withDefault("15s"),
   ),
@@ -55,7 +55,7 @@ const config = {
 
 const commandConfig = {
   ...config,
-  language: Argument.string("language").pipe(Argument.optional, Param.withHidden),
+  language: Argument.String("language").pipe(Argument.optional, Param.withHidden),
 } as const;
 
 export type GenTypesFlags = CliCommand.Command.Config.Infer<typeof config>;

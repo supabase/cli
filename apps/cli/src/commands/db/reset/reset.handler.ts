@@ -93,7 +93,7 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
         }),
       );
     }
-    // `--last` is an unsigned flag, so a negative value should be rejected; `Flag.integer` here
+    // `--last` is an unsigned flag, so a negative value should be rejected; `Flag.Int` here
     // accepts it, so reject it explicitly rather than silently resetting the full history.
     if (Option.isSome(flags.last) && flags.last.value < 0) {
       return yield* Effect.fail(
