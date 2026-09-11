@@ -54,7 +54,7 @@ export interface FlagDescriptor {
   readonly description: string | undefined;
   readonly isVariadic: boolean;
   readonly isBoolean: boolean;
-  /** `Param.Single`'s underlying `Primitive<A>._tag` (`"Boolean"`, `"Choice"`, `"Integer"`, ...). */
+  /** `Param.Single`'s underlying `Primitive<A>._tag` (`"Boolean"`, `"Choice"`, `"Int"`, ...). */
   readonly primitiveTag: string;
   /** The valid value set for a `primitiveTag === "Choice"` flag; `undefined` for every other tag. */
   readonly choiceKeys: ReadonlyArray<string> | undefined;
@@ -685,9 +685,9 @@ function isValidFlagValue(
         return outputFlagChoiceKeys(matchedPath).includes(value);
       }
       return flag.choiceKeys !== undefined && flag.choiceKeys.includes(value);
-    case "Integer":
+    case "Int":
       return isValidBase0Int64(value);
-    case "Float":
+    case "Finite":
       return value.trim().length > 0 && !Number.isNaN(Number(value));
     default:
       return true;
