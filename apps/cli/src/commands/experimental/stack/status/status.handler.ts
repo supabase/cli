@@ -19,6 +19,7 @@ import {
 import { loadStackConfig } from "../stack-config.ts";
 import type { StackStatusFlags } from "./status.command.ts";
 import { StackCommandStatusError } from "./status.errors.ts";
+import { encodeStackEnv, stackEnvOverrides, stackEnvValues } from "./status.env.ts";
 
 const mapTargetError = (error: StackTargetError) =>
   new StackCommandStatusError({
@@ -167,17 +168,50 @@ export const stackStatus = Effect.fn("experimental.stack.status")(function* (
     const output = yield* Output;
     const settings = yield* CommandSettings;
     const outputFlag = yield* Effect.serviceOption(OutputFlag);
-    yield* rejectStackOutput(outputFlag).pipe(Effect.mapError(mapTargetError));
+    yield* rejectStackOutput(outputFlag).pipe(
+      Effect.mapError((error) =>
+        Option.isSome(outputFlag) && Option.getOrUndefined(outputFlag.value) === "env"
+          ? new StackCommandStatusError({
+              reason: "flags",
+              message: error.message,
+              suggestion:
+                "Use --env to export connection variables; add --output-format json for a variable map.",
+              cause: error,
+            })
+          : mapTargetError(error),
+      ),
+    );
     yield* validateStackTarget({
       stack: Option.getOrUndefined(flags.stack),
       stackId: Option.getOrUndefined(flags.stackId),
     }).pipe(Effect.mapError(mapTargetError));
+    if (!flags.env && flags.overrideName.length > 0)
+      return yield* new StackCommandStatusError({
+        reason: "flags",
+        message: "--override-name requires --env.",
+      });
+    const envNames = yield* stackEnvOverrides(flags.overrideName);
     const target = yield* findDescriptor(
       settings.workdir,
       Option.getOrUndefined(flags.stack),
       Option.getOrUndefined(flags.stackId),
     );
     const api = yield* StackApi;
+    if (flags.env) {
+      const stack = yield* catchStackError(api.openStack(target.id));
+      const status = yield* catchStackError(stack.status());
+      if (status.lifecycle !== "running")
+        return yield* new StackCommandStatusError({
+          reason: "runtime",
+          message: "The stack must be running to export connection variables.",
+          suggestion: "Run supabase stack start first.",
+        });
+      const credentials = yield* catchStackError(stack.credentials());
+      const values = stackEnvValues(status, credentials, envNames);
+      if (output.format === "text") yield* output.raw(yield* encodeStackEnv(values));
+      else yield* output.success("", values);
+      return target.inspection;
+    }
     const loaded = yield* loadStackConfig(target.projectRoot).pipe(
       Effect.map((config) => ({ config, warning: undefined })),
       Effect.catchTag("StackConfigError", () =>

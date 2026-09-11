@@ -1,5 +1,6 @@
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
+import { stringSliceFlag } from "../../../../command-internal/string-slice-flag.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { stackStatus } from "./status.handler.ts";
@@ -9,6 +10,14 @@ const config = {
   stackId: Flag.string("stack-id").pipe(
     Flag.withDescription("Inspect an existing stack by id."),
     Flag.optional,
+  ),
+  env: Flag.boolean("env").pipe(
+    Flag.withDescription("Export connection URLs and credentials as environment variables."),
+    Flag.withDefault(false),
+  ),
+  overrideName: stringSliceFlag(
+    "override-name",
+    "Rename an exported variable: API_URL=NEXT_PUBLIC_SUPABASE_URL (requires --env).",
   ),
 } as const;
 
@@ -25,6 +34,10 @@ export const stackStatusCommand = Command.make("status", config).pipe(
     {
       command: "supabase stack status --stack feature-a",
       description: "Show a named stack",
+    },
+    {
+      command: "supabase stack status --env --output-format text > .env.local",
+      description: "Export connection variables as dotenv",
     },
   ]),
   Command.withHandler((flags) =>

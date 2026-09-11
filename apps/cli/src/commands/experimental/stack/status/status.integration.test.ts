@@ -5,13 +5,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { parse as parseDotenv } from "dotenv";
+import { Cause, Effect, Exit, Layer, Option, Redacted, Stream } from "effect";
 import { CliOutput, Command } from "effect/unstable/cli";
 import {
   InvalidStackConfigError,
   StackNotFoundError,
+  StackNotRunningError,
   StackIdSchema,
   StackStateFormatUnsupportedError,
+  type EffectStack,
   type StackInspection,
   type StackStatus,
 } from "@supabase/stack/effect";
@@ -20,7 +23,7 @@ import {
   mockCommandSettings,
   mockTelemetryStateTracked,
 } from "../../../../../tests/helpers/command-mocks.ts";
-import { OutputFlag } from "../../../../command-internal/global-flags.ts";
+import { GLOBAL_OUTPUT_FORMATS, OutputFlag } from "../../../../command-internal/global-flags.ts";
 import {
   actionability,
   ErrorActionabilityId,
@@ -46,6 +49,8 @@ const capabilityNames = [
 const flags = (stack = Option.none<string>(), stackId = Option.none<string>()) => ({
   stack,
   stackId,
+  env: false,
+  overrideName: [] as string[],
 });
 
 const makeStatus = (
@@ -76,8 +81,11 @@ const runStatus = (options: {
   readonly flags?: ReturnType<typeof flags>;
   readonly compareFailure?: "typed" | "defect";
   readonly missingTarget?: boolean;
-  readonly legacyOutput?: boolean;
-  readonly outputFormat?: "text" | "json";
+  readonly legacyOutput?: (typeof GLOBAL_OUTPUT_FORMATS)[number];
+  readonly outputFormat?: "text" | "json" | "stream-json";
+  readonly credentialFailure?: boolean;
+  readonly storageCredentials?: boolean;
+  readonly authDisabled?: boolean;
 }) => {
   const root = mkdtempSync(join(tmpdir(), "supabase-stack-status-"));
   const projectRoot = join(root, "project");
@@ -113,7 +121,48 @@ const runStatus = (options: {
       findInputs.push(input);
       return Effect.succeed(options.missingTarget ? Option.none() : Option.some(descriptor));
     },
-    openStack: () => Effect.die("open must not run"),
+    openStack: (openId) =>
+      Effect.succeed({
+        id: openId,
+        status: () => Effect.succeed(options.status ?? makeStatus(id)),
+        credentials: () =>
+          options.credentialFailure === true
+            ? Effect.fail(
+                new StackNotRunningError({ stackId: id, message: "Stack is not running" }),
+              )
+            : Effect.succeed({
+                database: {
+                  url: Redacted.make("postgresql://postgres:p%40ss@127.0.0.1:54322/postgres"),
+                  password: Redacted.make("p@ss"),
+                },
+                ...(options.authDisabled === true
+                  ? {}
+                  : {
+                      api: {
+                        anonJwt: "anon-token",
+                        serviceRoleJwt: Redacted.make("service-role-token"),
+                        publishableKey: "sb_publishable_test",
+                        secretKey: Redacted.make("sb_secret_test"),
+                      },
+                    }),
+                ...(options.storageCredentials === true
+                  ? {
+                      storage: {
+                        endpoint: "http://127.0.0.1:54321/storage/v1/s3",
+                        region: "local",
+                        accessKeyId: "storage-access",
+                        secretAccessKey: Redacted.make("storage-secret"),
+                      },
+                    }
+                  : {}),
+              }),
+        prepare: () => Effect.die("unused"),
+        start: () => Effect.die("unused"),
+        stop: () => Effect.die("unused"),
+        destroy: () => Effect.die("unused"),
+        logs: () => Effect.die("unused"),
+        followLogs: () => Stream.empty,
+      } satisfies EffectStack),
     inspectStack: (_stackId, inspectOptions) => {
       inspectInputs.push(inspectOptions);
       if (options.missingTarget === true)
@@ -130,7 +179,9 @@ const runStatus = (options: {
     telemetry.layer,
     api,
     mockCommandSettings({ workdir: root }),
-    ...(options.legacyOutput === true ? [Layer.succeed(OutputFlag, Option.some("json"))] : []),
+    ...(options.legacyOutput === undefined
+      ? []
+      : [Layer.succeed(OutputFlag, Option.some(options.legacyOutput))]),
     BunServices.layer,
   );
   const effect = stackStatus(options.flags ?? flags()).pipe(
@@ -188,9 +239,9 @@ describe("stack status", () => {
     );
   });
 
-  it.effect("reuses the explicit id inspection when config is missing", () => {
+  it.effect("reuses the explicit id inspection when config is invalid", () => {
     const run = runStatus({
-      config: "missing",
+      config: "invalid",
       flags: flags(Option.none(), Option.some(id)),
       status: makeStatus(id),
     });
@@ -199,6 +250,25 @@ describe("stack status", () => {
         Effect.sync(() => {
           expect(run.inspectInputs).toHaveLength(1);
           expect(run.inspectInputs[0]).toBeUndefined();
+        }),
+      ),
+    );
+  });
+
+  it.effect("compares an absent config.toml against default settings like stack start", () => {
+    const run = runStatus({
+      config: "missing",
+      flags: flags(Option.none(), Option.some(id)),
+      status: makeStatus(id),
+      drift: { status: "unchanged", paths: [] },
+    });
+    return run.effect.pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(run.inspectInputs).toHaveLength(2);
+          expect(run.inspectInputs[1]).toEqual({ config: expect.any(Object) });
+          expect(run.out.stdoutText).toContain("Config drift: unchanged");
+          expect(run.out.stdoutText).not.toContain("Config warning");
         }),
       ),
     );
@@ -234,9 +304,9 @@ describe("stack status", () => {
     );
   });
 
-  it.effect("emits the structured unavailable inspection for missing config", () => {
+  it.effect("emits the structured unavailable inspection for invalid config", () => {
     const run = runStatus({
-      config: "missing",
+      config: "invalid",
       flags: flags(Option.none(), Option.some(id)),
       outputFormat: "json",
     });
@@ -258,7 +328,7 @@ describe("stack status", () => {
             desired_lifecycle: "running",
             config_drift: {
               status: "unavailable",
-              message: expect.any(String),
+              message: "Project configuration could not be loaded; fix it before checking drift.",
             },
           });
         }),
@@ -280,18 +350,16 @@ describe("stack status", () => {
     );
   });
 
-  it.effect("reports unavailable drift for missing or invalid config and keeps inspection", () => {
-    const missing = runStatus({ config: "missing", status: makeStatus(id) });
+  it.effect("reports unavailable drift for invalid config and keeps inspection", () => {
     const invalid = runStatus({ config: "invalid", status: makeStatus(id) });
     const invalidJson = runStatus({
       config: "invalid",
       status: makeStatus(id),
       outputFormat: "json",
     });
-    return Effect.all([missing.effect, invalid.effect, invalidJson.effect]).pipe(
+    return Effect.all([invalid.effect, invalidJson.effect]).pipe(
       Effect.tap(() =>
         Effect.sync(() => {
-          expect(missing.out.stdoutText).toContain("Config drift: unavailable");
           expect(invalid.out.stdoutText).toContain("Config drift: unavailable");
           expect(invalid.out.stdoutText).not.toContain("FAKE_STATUS_SECRET");
           const success = invalidJson.out.messages.find((message) => message.type === "success");
@@ -359,13 +427,26 @@ describe("stack status", () => {
 
   it.effect("rejects invalid flags and legacy output before discovery", () => {
     const invalid = runStatus({ flags: flags(Option.some("feature-a"), Option.some(id)) });
-    const legacy = runStatus({ legacyOutput: true });
+    const legacy = runStatus({ legacyOutput: "json" });
     return Effect.gen(function* () {
       expect(Exit.isFailure(yield* invalid.effect.pipe(Effect.exit))).toBe(true);
       expect(Exit.isFailure(yield* legacy.effect.pipe(Effect.exit))).toBe(true);
       expect(invalid.findInputs).toHaveLength(0);
       expect(legacy.findInputs).toHaveLength(0);
     });
+  });
+
+  it.effect("rejects the legacy -o env form with a pointer to --env", () => {
+    const run = runStatus({ legacyOutput: "env" });
+    return run.effect.pipe(
+      Effect.flip,
+      Effect.tap((error) =>
+        Effect.sync(() => {
+          expect(error.suggestion).toContain("--env");
+          expect(run.findInputs).toHaveLength(0);
+        }),
+      ),
+    );
   });
 
   it.effect("does not retry discovery failures", () => {
@@ -421,5 +502,180 @@ describe("stack status", () => {
     }).pipe(
       Effect.provide(Layer.mergeAll(BunServices.layer, CliOutput.layer(textCliOutputFormatter()))),
     );
+  });
+
+  it.live("parses env selection and repeated CSV variable overrides", () => {
+    let input: { env: boolean; overrideName: ReadonlyArray<string> } | undefined;
+    const command = stackStatusCommand.pipe(
+      Command.withHandler((parsedFlags) =>
+        Effect.sync(() => {
+          input = { env: parsedFlags.env, overrideName: parsedFlags.overrideName };
+        }),
+      ),
+    );
+    return Effect.gen(function* () {
+      yield* Command.runWith(command, { version: "0.0.0-test" })([
+        "--env",
+        "--override-name",
+        "API_URL=APP_URL,ANON_KEY=APP_KEY",
+        "--override-name",
+        "DB_URL=DATABASE_URL",
+      ]);
+      expect(input?.env).toBe(true);
+      expect(input?.overrideName).toEqual([
+        "API_URL=APP_URL",
+        "ANON_KEY=APP_KEY",
+        "DB_URL=DATABASE_URL",
+      ]);
+    }).pipe(
+      Effect.provide(Layer.mergeAll(BunServices.layer, CliOutput.layer(textCliOutputFormatter()))),
+    );
+  });
+
+  it.effect("exports the running stack credentials as dotenv with renamed variables", () => {
+    const run = runStatus({
+      config: "invalid",
+      flags: { ...flags(), env: true, overrideName: ["API_URL=NEXT_PUBLIC_SUPABASE_URL"] },
+    });
+    return run.effect.pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(parseDotenv(run.out.stdoutText)).toEqual({
+            NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:54321",
+            DB_URL: "postgresql://postgres:p%40ss@127.0.0.1:54322/postgres",
+            ANON_KEY: "anon-token",
+            SERVICE_ROLE_KEY: "service-role-token",
+            PUBLISHABLE_KEY: "sb_publishable_test",
+            SECRET_KEY: "sb_secret_test",
+          });
+          expect(run.inspectInputs).toHaveLength(0);
+        }),
+      ),
+    );
+  });
+
+  for (const outputFormat of ["json", "stream-json"] as const) {
+    it.effect(`exports a variable map in ${outputFormat}`, () => {
+      const run = runStatus({ flags: { ...flags(), env: true }, outputFormat });
+      return run.effect.pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            const success = run.out.messages.find((message) => message.type === "success");
+            expect(success?.data).toMatchObject({
+              API_URL: "http://127.0.0.1:54321",
+              SECRET_KEY: "sb_secret_test",
+            });
+            expect(run.out.stdoutText).toBe("");
+          }),
+        ),
+      );
+    });
+  }
+
+  it.effect("exports optional service URLs and storage credentials only when available", () => {
+    const status: StackStatus = {
+      ...makeStatus(id),
+      endpoints: {
+        studio: {
+          protocol: "http",
+          address: "127.0.0.1",
+          port: 54323,
+          url: "http://127.0.0.1:54323",
+        },
+        mailUi: {
+          protocol: "http",
+          address: "127.0.0.1",
+          port: 54324,
+          url: "http://127.0.0.1:54324",
+        },
+      },
+    };
+    const run = runStatus({ flags: { ...flags(), env: true }, status, storageCredentials: true });
+    return run.effect.pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const values = parseDotenv(run.out.stdoutText);
+          expect(values.API_URL).toBeUndefined();
+          expect(values).toMatchObject({
+            STUDIO_URL: "http://127.0.0.1:54323",
+            INBUCKET_URL: "http://127.0.0.1:54324",
+            S3_PROTOCOL_ACCESS_KEY_SECRET: "storage-secret",
+            S3_PROTOCOL_REGION: "local",
+          });
+        }),
+      ),
+    );
+  });
+
+  it.effect("exports a database-only stack without inventing API credentials", () => {
+    const run = runStatus({
+      flags: { ...flags(), env: true },
+      status: { ...makeStatus(id), endpoints: {} },
+      authDisabled: true,
+    });
+    return run.effect.pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(parseDotenv(run.out.stdoutText)).toEqual({
+            DB_URL: "postgresql://postgres:p%40ss@127.0.0.1:54322/postgres",
+          });
+        }),
+      ),
+    );
+  });
+
+  it.effect("keeps ordinary status independent of credentials and free of secrets", () => {
+    const run = runStatus({ status: makeStatus(id), credentialFailure: true });
+    return run.effect.pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(run.out.stdoutText).toContain("Lifecycle: running");
+          expect(run.out.stdoutText).not.toContain("sb_secret_test");
+        }),
+      ),
+    );
+  });
+
+  it.effect("rejects invalid or colliding variable renames before discovery", () => {
+    const cases: ReadonlyArray<Partial<ReturnType<typeof flags>>> = [
+      { overrideName: ["API_URL=APP_URL"] },
+      { env: true, overrideName: ["UNKNOWN=APP_URL"] },
+      { env: true, overrideName: ["API_URL=NOT-VALID"] },
+      { env: true, overrideName: ["API_URL=DB_URL"] },
+      { env: true, overrideName: ["API_URL"] },
+      { env: true, overrideName: ["API_URL=A=B"] },
+    ];
+    return Effect.forEach(cases, (overrides) => {
+      const run = runStatus({ flags: { ...flags(), ...overrides } });
+      return run.effect.pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            expect(Exit.isFailure(exit)).toBe(true);
+            expect(run.findInputs).toHaveLength(0);
+            expect(run.out.stdoutText).toBe("");
+          }),
+        ),
+      );
+    });
+  });
+
+  it.effect("exports no partial secrets when the stack is stopped or credentials fail", () => {
+    const stopped = runStatus({
+      flags: { ...flags(), env: true },
+      status: { ...makeStatus(id), lifecycle: "stopped" },
+    });
+    const failedCredentials = runStatus({
+      flags: { ...flags(), env: true },
+      credentialFailure: true,
+    });
+    return Effect.gen(function* () {
+      const stoppedExit = yield* stopped.effect.pipe(Effect.exit);
+      expect(Exit.isFailure(stoppedExit)).toBe(true);
+      expect(stopped.out.stdoutText).toBe("");
+      const failedExit = yield* failedCredentials.effect.pipe(Effect.exit);
+      expect(Exit.isFailure(failedExit)).toBe(true);
+      expect(failedCredentials.out.stdoutText).toBe("");
+    });
   });
 });
