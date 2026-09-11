@@ -283,4 +283,78 @@ describe("stackAcquireShadowDatabase", () => {
       ),
     );
   });
+
+  it.live("warns and cold-provisions when a cached baseline restore fails", () => {
+    const restores: Array<string | undefined> = [];
+    const out = mockOutput();
+    const layer = Layer.succeed(StackEphemeralPostgres, {
+      create: (options) => {
+        restores.push(options.restoreFrom);
+        if (options.restoreFrom !== undefined)
+          return Effect.fail(
+            new EphemeralPostgresError({
+              message: "restore failed",
+              reason: "restore-mismatch",
+            }),
+          );
+        return Effect.succeed({
+          host: "127.0.0.1",
+          port: 59999,
+          version: "17.6.1",
+          runtime: { kind: "native" as const },
+          artifactIdentity: "native:17.6.1",
+          url: Redacted.make("postgresql://postgres:postgres@127.0.0.1:59999/postgres"),
+          start: () => Effect.void,
+          stop: () => Effect.void,
+          exportPgData: () => Effect.void,
+        });
+      },
+      resolveRelease: () => Effect.succeed({ version: "17.6.1", image: "postgres:17.6.1" }),
+    });
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.makeTempDirectoryScoped();
+        const cacheDir = path.join(home, "cache", "shadow-baseline");
+        yield* fs.makeDirectory(cacheDir, { recursive: true });
+        const tarName = stackShadowBaselineTarFileName(
+          stackShadowCacheKey({
+            artifactIdentity: "native:17.6.1",
+            majorVersion: 17,
+            runtimeKind: "native",
+            jwtSecret: "super-secret-jwt-token-with-at-least-32-characters-long",
+            jwtExpiry: 3600,
+            dbPassword: "postgres",
+            dbSettings: {},
+            rolesSql: "",
+          }),
+        );
+        yield* fs.writeFileString(path.join(cacheDir, tarName), "corrupt");
+        return yield* withShadowCacheHome(
+          home,
+          "1",
+          Effect.gen(function* () {
+            const handle = yield* stackAcquireShadowDatabase(input(fs, path));
+            expect(handle.baselinePresent).toBe(false);
+            expect(restores).toHaveLength(2);
+            expect(restores[0]?.endsWith(tarName)).toBe(true);
+            expect(restores[1]).toBeUndefined();
+            expect(out.stderrText).toContain("Warning: shadow baseline not cached: restore failed");
+          }),
+        );
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          BunServices.layer,
+          out.layer,
+          db,
+          mockCommandSettings({ workdir: tmp.current }),
+          stackBackendLayer("stack"),
+          layer,
+        ),
+      ),
+    );
+  });
 });

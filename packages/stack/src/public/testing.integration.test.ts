@@ -115,6 +115,13 @@ const fakeStack = (events: Array<string>, options: FakeStackOptions = {}): Promi
       events.push("destroy");
       if (failStart) throw new Error("destroy failed");
     },
+    resetDatabase: async () =>
+      status(
+        reachesReadiness ? "running" : "stopped",
+        includeApi,
+        functionsState,
+        failedCapability,
+      ),
     logs: async () => ({ entries: [], cursor: { opaque: "v1_0" }, running: false }),
     followLogs: () => stream([]),
   };

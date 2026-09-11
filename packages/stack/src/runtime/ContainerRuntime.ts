@@ -1038,11 +1038,29 @@ export const makeContainerRuntime = (
         }),
       );
 
+    const wipePersistentData = (
+      key: RuntimeWorkloadKey,
+    ): Effect.Effect<void, RuntimeDriverError> =>
+      registration.withPermit(
+        Effect.gen(function* () {
+          const entries = yield* withEngine(key, options.engine.listResources(key.stackId));
+          const volumes = entries.filter(
+            (entry) =>
+              entry.kind === "volume" &&
+              entry.labels.role === "volume" &&
+              entry.labels.workloadId === key.workloadId,
+          );
+          for (const volume of volumes)
+            yield* withEngine(key, options.engine.removeVolume(volume.id));
+        }),
+      );
+
     return {
       observe,
       start,
       stop,
       remove,
       cleanup,
+      wipePersistentData,
     } satisfies RuntimeDriver;
   });

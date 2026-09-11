@@ -98,6 +98,7 @@ function setup(opts: {
       Effect.sync(() => {
         state.destroyCalled = true;
       }),
+    resetDatabase: () => Effect.die("unused"),
     logs: () => Effect.die("unused"),
     followLogs: () => Stream.empty,
   } satisfies EffectStack;

@@ -41,15 +41,24 @@ For temporary selection, set `SUPABASE_EXPERIMENTAL_STACK=1` to select the new b
 precedence over `experimental.stack`; an unset or empty value falls back to the file setting.
 Other values are rejected. The override is applied before reading the project configuration.
 
-When the flag is on, `db` and `migration` commands use the project stack for `--local` and
-provision throwaway shadow Postgres through `@supabase/stack` (`EphemeralPostgres`). Linked
-and `--db-url` targets stay on the Management API. The stack backend requires the in-process
+When the flag is on, the `db` and `migration` family uses the project stack for `--local` and
+provisions throwaway shadow Postgres through `@supabase/stack` (`EphemeralPostgres`). Linked
+and `--db-url` targets stay on the Management API. Compose names (`supabase_db_*`,
+`supabase_network_*`, `db:5432`) are not used. The stack backend requires the in-process
 pg-delta engine; `--use-migra`, `--use-pgadmin`, `--use-pg-schema`, and `--diff-engine migra`
 are rejected. The flag does not switch functions or storage command families, and does not
 change top-level `status`.
 
-`db reset` and declarative `--apply`/`--reset` still use the legacy Docker volume recreate
-path; stack data-dir wipe is a later follow-up.
+`db start` brings up a postgres-only project stack. If a full stack already exists, it starts
+the database without persisting `--exclude`. `--from-backup` is not supported on the stack
+path. `db reset --local` and declarative `--apply` wipe Postgres through `resetDatabase` and
+then migrate or seed on stack credentials.
+
+`db dump --local`, `db test` / `test db`, and `migration squash` use host `pg_dump` / `pg_prove`
+only when the stack engine is native. Those PATH clients must match the stack Postgres major;
+otherwise install matching client tools or start with `--runtime docker`. The Docker/Podman
+engine keeps the one-shot tool container and targets published stack credentials, never
+`PGHOST=db`.
 
 ## Data and configuration
 

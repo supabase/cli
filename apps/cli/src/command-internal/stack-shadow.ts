@@ -6,7 +6,6 @@ import {
   Context,
   Crypto,
   Effect,
-  Exit,
   FileSystem,
   Layer,
   Option,
@@ -229,7 +228,7 @@ const applyRoles = (
         [input.path.join(input.workdir, "supabase", "roles.sql")],
         (message) => new ShadowDbError({ message, reason: "database" }),
       ).pipe(
-        Effect.catchTag("DbConnectError"), (cause) =>
+        Effect.catchTag("DbConnectError", (cause) =>
           Effect.fail(new ShadowDbError({ message: cause.message, reason: "connect" })),
         ),
       );
@@ -452,22 +451,27 @@ export const stackAcquireShadowDatabase = <E>(
     yield* sweepCache(fs, path, cacheDir, tarName);
 
     if (cached) {
-      const restored = yield* apis
-        .create(createOptions(input, runtime, tarPath, opts.port))
-        .pipe(Effect.exit);
-      if (Exit.isSuccess(restored)) {
+      const restored = yield* Effect.result(
+        apis.create(createOptions(input, runtime, tarPath, opts.port)),
+      );
+      if (Result.isSuccess(restored)) {
         yield* touchShadowBaselineTar(fs, tarPath);
         return {
-          url: Redacted.value(restored.value.url),
-          host: restored.value.host,
-          port: restored.value.port,
-          artifactIdentity: restored.value.artifactIdentity,
-          runtime: restored.value.runtime,
+          url: Redacted.value(restored.success.url),
+          host: restored.success.host,
+          port: restored.success.port,
+          artifactIdentity: restored.success.artifactIdentity,
+          runtime: restored.success.runtime,
           baselinePresent: true,
           snapshotKey: key,
-          ephemeral: restored.value,
+          ephemeral: restored.success,
         };
       }
+      const output = yield* Output;
+      yield* output.raw(
+        `Warning: shadow baseline not cached: ${restored.failure.message}\n`,
+        "stderr",
+      );
     }
 
     const probe = yield* startEmpty();
@@ -579,7 +583,7 @@ export const stackMigrateShadow = (
         pending,
         (message) => new ShadowDbError({ message, reason: "database" }),
       ).pipe(
-        Effect.catchTag("DbConnectError"), (cause) =>
+        Effect.catchTag("DbConnectError", (cause) =>
           Effect.fail(new ShadowDbError({ message: cause.message, reason: "connect" })),
         ),
       );

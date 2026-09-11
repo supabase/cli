@@ -594,32 +594,46 @@ const startNative = (
   password: string,
 ): Effect.Effect<void, EphemeralPostgresError, ChildProcessSpawnerService | Scope.Scope> =>
   Effect.gen(function* () {
-    if (cluster.executable === undefined)
+    const executable = cluster.executable;
+    if (executable === undefined)
       return yield* ephemeralError("Native Postgres executable is unavailable");
-    const processScope = yield* Scope.make("sequential");
-    const process = yield* spawnNativeProcess(
-      {
-        executable: cluster.executable,
-        args: postgresArgs(cluster.port, cluster.runtime, options.postgresSettings),
-        env: postgresEnv({
-          port: cluster.port,
-          dataPath: cluster.dataPath,
-          password,
-        }),
-        cwd: cluster.root,
-        gracefulStopSignal: "SIGINT",
-        gracefulStopTimeout: "15 seconds",
-      },
-      defaultNativeProcessLauncher(),
-      { stackId: cluster.identity, workloadId: DATABASE_WORKLOAD_ID },
-    ).pipe(
-      Effect.provideService(Scope.Scope, processScope),
-      Effect.mapError((cause) => ephemeralError("Unable to start native Postgres", { cause })),
+    const parentScope = yield* Scope.Scope;
+    const processScope = yield* Scope.fork(parentScope, "parallel");
+    yield* Effect.uninterruptibleMask((restore) =>
+      restore(
+        spawnNativeProcess(
+          {
+            executable,
+            args: postgresArgs(cluster.port, cluster.runtime, options.postgresSettings),
+            env: postgresEnv({
+              port: cluster.port,
+              dataPath: cluster.dataPath,
+              password,
+            }),
+            cwd: cluster.root,
+            gracefulStopSignal: "SIGINT",
+            gracefulStopTimeout: "15 seconds",
+          },
+          defaultNativeProcessLauncher(),
+          { stackId: cluster.identity, workloadId: DATABASE_WORKLOAD_ID },
+        ).pipe(Scope.provide(processScope)),
+      ).pipe(
+        Effect.mapError((cause) => ephemeralError("Unable to start native Postgres", { cause })),
+        Effect.tap((process) =>
+          Effect.sync(() => {
+            if (cluster.resources.kind === "native") {
+              cluster.resources.process = process;
+              cluster.resources.processScope = processScope;
+            }
+          }),
+        ),
+        Effect.onExit((exit) =>
+          Exit.isSuccess(exit)
+            ? Effect.void
+            : Scope.close(processScope, Exit.void).pipe(Effect.asVoid),
+        ),
+      ),
     );
-    if (cluster.resources.kind === "native") {
-      cluster.resources.process = process;
-      cluster.resources.processScope = processScope;
-    }
     yield* Effect.gen(function* () {
       yield* waitForPostgres(cluster.port, healthTimeout);
       if (!cluster.bootstrapped) {

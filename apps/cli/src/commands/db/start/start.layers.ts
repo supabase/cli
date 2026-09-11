@@ -8,6 +8,7 @@ import { dbConnectionLayer } from "../../../command-internal/db-connection.layer
 import { debugLoggerLayer } from "../../../command-internal/debug-logger.layer.ts";
 import { dockerRunLayer } from "../../../command-internal/docker-run.layer.ts";
 import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts";
+import { stackApiLayer } from "../../experimental/stack/stack.shared.ts";
 
 /**
  * Runtime layer for `supabase db start`, matching `supabase start`'s own composition.
@@ -28,4 +29,5 @@ export const dbStartRuntimeLayer = Layer.mergeAll(
   dockerRunLayer,
   dbConnectionLayer,
   httpClient,
+  stackApiLayer,
 );

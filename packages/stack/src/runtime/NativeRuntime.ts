@@ -48,6 +48,8 @@ export interface NativeRuntimeOptions {
     process?: NativeProcess,
   ) => Effect.Effect<void, RuntimeDriverError>;
   readonly logStore?: LogStore;
+  /** Wipes native PGDATA after the database workload has been stopped and removed. */
+  readonly wipeDatabaseData?: Effect.Effect<void, RuntimeDriverError>;
 }
 
 /** One-shot startup processes followed by the long-lived workload process. */
@@ -591,11 +593,17 @@ export const makeNativeRuntime = (
         }),
       );
 
+    const wipePersistentData = (key: RuntimeWorkloadKey): Effect.Effect<void, RuntimeDriverError> =>
+      key.workloadId === "database:database" && options.wipeDatabaseData !== undefined
+        ? options.wipeDatabaseData
+        : Effect.void;
+
     return {
       observe,
       start,
       stop,
       remove,
       cleanup: cleanupRuntime,
+      wipePersistentData,
     } satisfies RuntimeDriver;
   });

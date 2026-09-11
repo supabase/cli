@@ -101,6 +101,7 @@ function fakeStack(
     start,
     stop: () => Effect.void,
     destroy: () => Effect.die("destroy not used in start test"),
+    resetDatabase: () => Effect.die("resetDatabase not used in start test"),
     logs: () => Effect.die("logs not used in start test"),
     followLogs: () => Stream.empty,
   } satisfies EffectStack;

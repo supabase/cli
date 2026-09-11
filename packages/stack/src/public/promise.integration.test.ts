@@ -69,6 +69,7 @@ const effectStack = (): EffectStack =>
     start: () => Effect.succeed(status),
     stop: () => Effect.void,
     destroy: () => Effect.void,
+    resetDatabase: () => Effect.succeed(status),
     logs: () => Effect.succeed({ entries: [], cursor: { opaque: "v1_0" }, running: false }),
     followLogs: () => Stream.empty,
   }) satisfies EffectStack;

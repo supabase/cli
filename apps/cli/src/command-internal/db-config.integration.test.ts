@@ -218,6 +218,7 @@ describe("dbConfigResolver (local + db-url)", () => {
       start: unused,
       stop: unused,
       destroy: unused,
+      resetDatabase: unused,
       logs: unused,
       followLogs: () => Stream.empty,
     };

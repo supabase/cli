@@ -73,6 +73,7 @@ export interface PromiseStack {
   readonly start: (options?: PromiseStartStackOptions) => Promise<StackStatus>;
   readonly stop: () => Promise<void>;
   readonly destroy: () => Promise<void>;
+  readonly resetDatabase: () => Promise<StackStatus>;
   readonly logs: (query?: LogQuery) => Promise<StackLogBatch>;
   readonly followLogs: (query?: LogQuery) => AsyncIterable<StackLogEntry>;
 }
@@ -193,6 +194,7 @@ export const adaptEffectStack = (effectStack: EffectStack): PromiseStack => {
       ),
     stop: () => invoke(effectStack.stop()),
     destroy: () => invoke(effectStack.destroy()),
+    resetDatabase: () => invoke(effectStack.resetDatabase()),
     logs: (query) => invoke(effectStack.logs(query)),
     followLogs: (query) => adaptStream(effectStack.followLogs(query)),
   };

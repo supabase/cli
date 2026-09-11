@@ -83,6 +83,7 @@ import {
   type StackStopError,
   type StackLogsError,
   type DestroyStackError,
+  type ResetDatabaseError,
   type StackError,
   type StackErrorTag,
   isStackError,
@@ -94,6 +95,7 @@ import {
   STACK_STOP_ERROR_TAGS,
   STACK_LOGS_ERROR_TAGS,
   DESTROY_STACK_ERROR_TAGS,
+  RESET_DATABASE_ERROR_TAGS,
 } from "./Errors.ts";
 import {
   ownerLockExists,
@@ -191,6 +193,8 @@ export interface EffectStack {
   readonly stop: () => Effect.Effect<void, StackStopError>;
   // oxlint-disable-next-line effecttsgo/lazy-effect
   readonly destroy: () => Effect.Effect<void, DestroyStackError>;
+  // oxlint-disable-next-line effecttsgo/lazy-effect
+  readonly resetDatabase: () => Effect.Effect<StackStatus, ResetDatabaseError>;
   // oxlint-disable-next-line effecttsgo/lazy-effect
   readonly logs: (query?: LogQuery) => Effect.Effect<StackLogBatch, StackLogsError>;
   // oxlint-disable-next-line effecttsgo/lazy-effect
@@ -315,6 +319,8 @@ const logsError = (error: ControlError): StackLogsError =>
   narrowError(error, STACK_LOGS_ERROR_TAGS, (message) => new StackStateInvalidError({ message }));
 const destroyError = (error: ControlError): DestroyStackError =>
   narrowError(error, DESTROY_STACK_ERROR_TAGS, (message) => new StackDestructionError({ message }));
+const resetDatabaseError = (error: ControlError): ResetDatabaseError =>
+  narrowError(error, RESET_DATABASE_ERROR_TAGS, (message) => new StackStateInvalidError({ message }));
 
 /** Internal control-transport seam used by public lifecycle integration tests. */
 export interface HandleDependencies {
@@ -604,6 +610,28 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
         ),
       );
     };
+    const resetDatabase = (): Effect.Effect<StackStatus, ResetDatabaseError> =>
+      invoke((rpc) => rpc.resetDatabase(undefined), resetDatabaseError).pipe(
+        Effect.catchTag("StackOwnershipConflictError", (ownershipError) => {
+          const offline: Effect.Effect<never, ResetDatabaseError> = options.readOfflineState.pipe(
+            Effect.mapError(resetDatabaseError),
+            Effect.flatMap((state): Effect.Effect<never, ResetDatabaseError> =>
+              Option.isNone(state)
+                ? Effect.fail(stackNotFound())
+                : isStoppedState(state.value)
+                  ? Effect.fail(
+                      new StackNotRunningError({
+                        stackId: id,
+                        message: "Stack is not running",
+                      }),
+                    )
+                  : Effect.fail(ownershipError),
+            ),
+            Effect.catchTag("StackOwnershipConflictError", () => Effect.fail(ownershipError)),
+          );
+          return offline;
+        }),
+      );
     const logsStateError = (error: StackError): StackLogsError =>
       isNarrowError(error, STACK_LOGS_ERROR_TAGS)
         ? error
@@ -690,6 +718,7 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
       start,
       stop,
       destroy,
+      resetDatabase,
       logs,
       followLogs: (query) =>
         Stream.paginate({ cursor: query?.cursor, first: true }, ({ cursor, first }) => {
