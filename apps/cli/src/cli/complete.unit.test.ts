@@ -1267,7 +1267,7 @@ describe("tryComplete", () => {
     expect(stderrWrites).toHaveLength(1);
     expect(stderrWrites[0]).toContain("SUPABASE_EXPERIMENTAL_STACK must be 0 or 1 when set");
     expect(stderrWrites[0]).toContain(
-      "Suggestion: Set SUPABASE_EXPERIMENTAL_STACK=0 to use legacy start/stop, or use `supabase stack`.",
+      "Suggestion: Set SUPABASE_EXPERIMENTAL_STACK=0 to use legacy start/stop/status, or use `supabase stack`.",
     );
     expect(exits).toEqual([1]);
   });

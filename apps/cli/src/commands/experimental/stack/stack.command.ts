@@ -31,6 +31,6 @@ export const stackCommand = Command.make("stack").pipe(
     "Manage an experimental, unstable local Supabase stack with the new backend. This command is excluded from the CLI compatibility promise.",
   ),
   Command.withShortDescription("Manage experimental local stacks"),
-  Command.withSubcommands([stackStartCommand, stackStopCommand, stackStatusCommand]),
+  Command.withSubcommands([stackStartCommand, stackStatusCommand, stackStopCommand]),
   Command.provide(stackRuntimeLayer),
 );

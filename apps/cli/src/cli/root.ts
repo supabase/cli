@@ -11,6 +11,7 @@ import { encryptionCommand } from "../commands/encryption/encryption.command.ts"
 import { stackRuntimeLayer, stackCommand } from "../commands/experimental/stack/stack.command.ts";
 import { stackStartCommand } from "../commands/experimental/stack/start/start.command.ts";
 import { stackStopCommand } from "../commands/experimental/stack/stop/stop.command.ts";
+import { stackStatusCommand } from "../commands/experimental/stack/status/status.command.ts";
 import type { StackBackend } from "../commands/experimental/stack/stack-backend.ts";
 import { computeCommand } from "../commands/experimental/compute/compute.command.ts";
 import { feedbackCommand } from "../commands/feedback/feedback.command.ts";
@@ -76,6 +77,10 @@ export const stackStopAliasCommand = stackStopCommand.pipe(
   Command.provide(commandRuntimeLayer(["stop"])),
   Command.provide(stackRuntimeLayer),
 );
+const stackStatusAliasCommand = stackStatusCommand.pipe(
+  Command.provide(commandRuntimeLayer(["status"])),
+  Command.provide(stackRuntimeLayer),
+);
 
 export const rootCommandForFeatures = (
   options: {
@@ -119,7 +124,7 @@ export const rootCommandForFeatures = (
       ssoCommand,
       stackCommand,
       options.stackBackend === "stack" ? stackStartAliasCommand : startCommand,
-      statusCommand,
+      options.stackBackend === "stack" ? stackStatusAliasCommand : statusCommand,
       options.stackBackend === "stack" ? stackStopAliasCommand : stopCommand,
       storageCommand,
       telemetryCommand,
