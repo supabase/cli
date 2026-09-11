@@ -16,15 +16,18 @@ import {
   type StackStatus,
 } from "@supabase/stack/effect";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
-import { mockLegacyCliSettings } from "../../../../../tests/helpers/legacy-mocks.ts";
-import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
+import {
+  mockCommandSettings,
+  mockTelemetryStateTracked,
+} from "../../../../../tests/helpers/command-mocks.ts";
+import { OutputFlag } from "../../../../command-internal/global-flags.ts";
 import {
   actionability,
   ErrorActionabilityId,
 } from "../../../../shared/telemetry/error-actionability.ts";
-import { LegacyExperimentalStackApi } from "../stack.shared.ts";
-import { legacyExperimentalStackStatus } from "./status.handler.ts";
-import { legacyExperimentalStackStatusCommand } from "./status.command.ts";
+import { StackApi } from "../stack.shared.ts";
+import { stackStatus } from "./status.handler.ts";
+import { stackStatusCommand } from "./status.command.ts";
 import { textCliOutputFormatter } from "../../../../shared/output/text-formatter.ts";
 
 const id = StackIdSchema.make("a".repeat(64));
@@ -101,9 +104,10 @@ const runStatus = (options: {
     ...(options.drift === undefined ? {} : { configDrift: options.drift }),
   };
   const out = mockOutput({ format: options.outputFormat ?? "text" });
+  const telemetry = mockTelemetryStateTracked();
   const findInputs: unknown[] = [];
   const inspectInputs: unknown[] = [];
-  const api = Layer.succeed(LegacyExperimentalStackApi, {
+  const api = Layer.succeed(StackApi, {
     createStack: () => Effect.die("create must not run"),
     findStack: (input) => {
       findInputs.push(input);
@@ -123,21 +127,20 @@ const runStatus = (options: {
   });
   const layer = Layer.mergeAll(
     out.layer,
+    telemetry.layer,
     api,
-    mockLegacyCliSettings({ workdir: root }),
-    ...(options.legacyOutput === true
-      ? [Layer.succeed(LegacyOutputFlag, Option.some("json"))]
-      : []),
+    mockCommandSettings({ workdir: root }),
+    ...(options.legacyOutput === true ? [Layer.succeed(OutputFlag, Option.some("json"))] : []),
     BunServices.layer,
   );
-  const effect = legacyExperimentalStackStatus(options.flags ?? flags()).pipe(
+  const effect = stackStatus(options.flags ?? flags()).pipe(
     Effect.provide(layer),
     Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
   );
   return { effect, out, findInputs, inspectInputs, projectRoot, root };
 };
 
-describe("experimental stack status", () => {
+describe("stack status", () => {
   it.effect(
     "reports configured identity, dormant readiness, endpoint, drift, and target config",
     () => {
@@ -311,7 +314,7 @@ describe("experimental stack status", () => {
       Effect.flip,
       Effect.tap((error) =>
         Effect.sync(() => {
-          expect(error.suggestion).toBe("Run supabase experimental stack start first.");
+          expect(error.suggestion).toBe("Run supabase stack start first.");
           expect(run.inspectInputs).toEqual([]);
         }),
       ),
@@ -367,19 +370,21 @@ describe("experimental stack status", () => {
 
   it.effect("does not retry discovery failures", () => {
     const run = runStatus({});
-    const discovery = Layer.succeed(LegacyExperimentalStackApi, {
+    const telemetry = mockTelemetryStateTracked();
+    const discovery = Layer.succeed(StackApi, {
       createStack: () => Effect.die("create must not run"),
       findStack: () =>
         Effect.fail(new StackStateFormatUnsupportedError({ message: "discovery failed" })),
       openStack: () => Effect.die("open must not run"),
       inspectStack: () => Effect.die("inspect must not run"),
     });
-    const effect = legacyExperimentalStackStatus(flags()).pipe(
+    const effect = stackStatus(flags()).pipe(
       Effect.provide(
         Layer.mergeAll(
           run.out.layer,
+          telemetry.layer,
           discovery,
-          mockLegacyCliSettings({ workdir: run.projectRoot }),
+          mockCommandSettings({ workdir: run.projectRoot }),
           BunServices.layer,
         ),
       ),
@@ -403,7 +408,7 @@ describe("experimental stack status", () => {
 
   it.live("parses stack name and stack id through the command", () => {
     let parsed: { stack: Option.Option<string>; stackId: Option.Option<string> } | undefined;
-    const command = legacyExperimentalStackStatusCommand.pipe(
+    const command = stackStatusCommand.pipe(
       Command.withHandler((parsedFlags) =>
         Effect.sync(() => {
           parsed = { stack: parsedFlags.stack, stackId: parsedFlags.stackId };

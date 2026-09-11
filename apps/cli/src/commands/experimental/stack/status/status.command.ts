@@ -1,8 +1,8 @@
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
-import { withLegacyCommandInstrumentation } from "../../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyExperimentalStackStatus } from "./status.handler.ts";
+import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
+import { stackStatus } from "./status.handler.ts";
 
 const config = {
   stack: Flag.string("stack").pipe(Flag.withDescription("Inspect a named stack."), Flag.optional),
@@ -12,15 +12,22 @@ const config = {
   ),
 } as const;
 
-export type LegacyExperimentalStackStatusFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type StackStatusFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyExperimentalStackStatusCommand = Command.make("status", config).pipe(
+export const stackStatusCommand = Command.make("status", config).pipe(
   Command.withDescription("Show the state of a managed local Supabase stack."),
   Command.withShortDescription("Show stack status"),
+  Command.withExamples([
+    {
+      command: "supabase stack status",
+      description: "Show the current project stack",
+    },
+    {
+      command: "supabase stack status --stack feature-a",
+      description: "Show a named stack",
+    },
+  ]),
   Command.withHandler((flags) =>
-    legacyExperimentalStackStatus(flags).pipe(
-      withLegacyCommandInstrumentation({ flags, config }),
-      withJsonErrorHandling,
-    ),
+    stackStatus(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),
   ),
 );

@@ -1,35 +1,39 @@
 import { Effect, Match, Option } from "effect";
 import {
   isStackError,
-  isStackId,
   type StackError,
   type StackInspection,
   type StackStatus,
 } from "@supabase/stack/effect";
 import { Output } from "../../../../shared/output/output.service.ts";
-import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
-import { LegacyCliSettings } from "../../../../config/legacy-cli-settings.service.ts";
-import { LegacyExperimentalStackApi } from "../stack.shared.ts";
-import { legacyLoadStackConfig } from "../stack-config.ts";
-import type { LegacyExperimentalStackStatusFlags } from "./status.command.ts";
-import { LegacyExperimentalStackStatusError } from "./status.errors.ts";
+import { OutputFlag } from "../../../../command-internal/global-flags.ts";
+import { CommandSettings } from "../../../../config/command-settings.service.ts";
+import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
+import {
+  StackApi,
+  StackTargetError,
+  rejectStackOutput,
+  validateStackId,
+  validateStackTarget,
+} from "../stack.shared.ts";
+import { loadStackConfig } from "../stack-config.ts";
+import type { StackStatusFlags } from "./status.command.ts";
+import { StackCommandStatusError } from "./status.errors.ts";
 
-const validateFlags = (flags: LegacyExperimentalStackStatusFlags) =>
-  Option.isSome(flags.stack) && Option.isSome(flags.stackId)
-    ? Effect.fail(
-        new LegacyExperimentalStackStatusError({
-          reason: "flags",
-          message: "--stack and --stack-id cannot be used together",
-        }),
-      )
-    : Effect.void;
+const mapTargetError = (error: StackTargetError) =>
+  new StackCommandStatusError({
+    reason: error.reason,
+    message: error.message,
+    ...(error.suggestion === undefined ? {} : { suggestion: error.suggestion }),
+    cause: error,
+  });
 
 const classifyStackError = (error: StackError) =>
   Match.value(error).pipe(
     Match.tag("StackNotFoundError", () => ({
       reason: "not-found" as const,
       suggestion:
-        "Choose an existing --stack-id, or run supabase experimental stack start without --stack-id to create one.",
+        "Choose an existing --stack-id, or run supabase stack start without --stack-id to create one.",
     })),
     Match.tag(
       "InvalidStackIdentityError",
@@ -51,7 +55,7 @@ const classifyStackError = (error: StackError) =>
 
 const mapStackError = (error: StackError) => {
   const classification = classifyStackError(error);
-  return new LegacyExperimentalStackStatusError({
+  return new StackCommandStatusError({
     ...classification,
     message: error.message,
     cause: error,
@@ -132,17 +136,13 @@ const render = (inspection: StackInspection, configWarning?: string): string => 
 
 const findDescriptor = (projectRoot: string, name: string | undefined, id: string | undefined) =>
   Effect.gen(function* () {
-    const api = yield* LegacyExperimentalStackApi;
+    const api = yield* StackApi;
     if (id !== undefined) {
-      if (!isStackId(id))
-        return yield* new LegacyExperimentalStackStatusError({
-          reason: "flags",
-          message: "--stack-id must be a lowercase SHA-256 stack id",
-        });
-      const inspection = yield* catchStackError(api.inspectStack(id));
+      const validId = yield* validateStackId(id).pipe(Effect.mapError(mapTargetError));
+      const inspection = yield* catchStackError(api.inspectStack(validId));
       return {
         descriptor: inspection.descriptor,
-        id,
+        id: validId,
         projectRoot: inspection.descriptor.projectRoot,
         inspection,
       };
@@ -151,35 +151,36 @@ const findDescriptor = (projectRoot: string, name: string | undefined, id: strin
       api.findStack({ projectRoot, ...(name === undefined ? {} : { name }) }),
     );
     if (Option.isNone(found))
-      return yield* new LegacyExperimentalStackStatusError({
+      return yield* new StackCommandStatusError({
         reason: "not-found",
         message: "No managed stack exists for the selected project.",
-        suggestion: "Run supabase experimental stack start first.",
+        suggestion: "Run supabase stack start first.",
       });
     return { descriptor: found.value, id: found.value.id, projectRoot: found.value.projectRoot };
   });
 
-export const legacyExperimentalStackStatus = Effect.fn("legacy.experimental.stack.status")(
-  function* (flags: LegacyExperimentalStackStatusFlags) {
+export const stackStatus = Effect.fn("experimental.stack.status")(function* (
+  flags: StackStatusFlags,
+) {
+  const telemetryState = yield* TelemetryState;
+  const body = Effect.gen(function* () {
     const output = yield* Output;
-    const settings = yield* LegacyCliSettings;
-    const legacyOutput = yield* Effect.serviceOption(LegacyOutputFlag);
-    if (Option.isSome(legacyOutput) && Option.isSome(legacyOutput.value))
-      return yield* new LegacyExperimentalStackStatusError({
-        reason: "flags",
-        message: "The legacy -o/--output flag is not supported here; use --output-format json.",
-        suggestion: "Use --output-format json or --output-format text.",
-      });
-    yield* validateFlags(flags);
+    const settings = yield* CommandSettings;
+    const outputFlag = yield* Effect.serviceOption(OutputFlag);
+    yield* rejectStackOutput(outputFlag).pipe(Effect.mapError(mapTargetError));
+    yield* validateStackTarget({
+      stack: Option.getOrUndefined(flags.stack),
+      stackId: Option.getOrUndefined(flags.stackId),
+    }).pipe(Effect.mapError(mapTargetError));
     const target = yield* findDescriptor(
       settings.workdir,
       Option.getOrUndefined(flags.stack),
       Option.getOrUndefined(flags.stackId),
     );
-    const api = yield* LegacyExperimentalStackApi;
-    const loaded = yield* legacyLoadStackConfig(target.projectRoot).pipe(
+    const api = yield* StackApi;
+    const loaded = yield* loadStackConfig(target.projectRoot).pipe(
       Effect.map((config) => ({ config, warning: undefined })),
-      Effect.catchTag("LegacyStackConfigError", () =>
+      Effect.catchTag("StackConfigError", () =>
         Effect.succeed({ config: undefined, warning: configUnavailableWarning }),
       ),
     );
@@ -206,5 +207,6 @@ export const legacyExperimentalStackStatus = Effect.fn("legacy.experimental.stac
     if (output.format === "text") yield* output.raw(render(inspection, inspectionWarning));
     else yield* output.success("", payload(inspection, inspectionWarning));
     return inspection;
-  },
-);
+  });
+  return yield* body.pipe(Effect.ensuring(telemetryState.flush));
+});

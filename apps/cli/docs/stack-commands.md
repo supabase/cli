@@ -4,10 +4,11 @@
 command interface may change, and it is excluded from the CLI compatibility promise. It is
 available regardless of the project's backend setting and supports both Docker and native runtimes.
 
-| Command                | Purpose                                |
-| ---------------------- | -------------------------------------- |
-| `supabase stack start` | Create or resume the project's stack.  |
-| `supabase stack stop`  | Stop a stack while retaining its data. |
+| Command                 | Purpose                                |
+| ----------------------- | -------------------------------------- |
+| `supabase stack start`  | Create or resume the project's stack.  |
+| `supabase stack status` | Show identity, readiness, and drift.   |
+| `supabase stack stop`   | Stop a stack while retaining its data. |
 
 Use each command's `--help` for its available targeting and runtime options.
 

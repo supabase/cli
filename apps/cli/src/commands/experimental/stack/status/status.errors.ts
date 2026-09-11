@@ -5,9 +5,7 @@ import {
   ErrorActionabilityId,
 } from "../../../../shared/telemetry/error-actionability.ts";
 
-export class LegacyExperimentalStackStatusError extends Data.TaggedError(
-  "LegacyExperimentalStackStatusError",
-)<{
+export class StackCommandStatusError extends Data.TaggedError("ExperimentalStackStatusError")<{
   readonly message: string;
   readonly reason: "flags" | "not-found" | "invalid-config" | "runtime";
   readonly suggestion?: string;

@@ -6,7 +6,7 @@ import { debugLoggerLayer } from "../../../command-internal/debug-logger.layer.t
 import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts";
 import { stackStartCommand as stackStartCommandBase } from "./start/start.command.ts";
 import { stackStopCommand as stackStopCommandBase } from "./stop/stop.command.ts";
-import { legacyExperimentalStackStatusCommand as stackStatusCommandBase } from "./status/status.command.ts";
+import { stackStatusCommand as stackStatusCommandBase } from "./status/status.command.ts";
 import { stackApiLayer, stackTargetResolverLayer } from "./stack.shared.ts";
 
 export const stackRuntimeLayer = Layer.mergeAll(
