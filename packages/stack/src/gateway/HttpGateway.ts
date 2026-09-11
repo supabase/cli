@@ -1,12 +1,11 @@
 import { Cause, Data, Effect, Exit, FiberSet, Option, Queue, Scope } from "effect";
-// oxlint-disable-next-line effecttsgo/node-builtin-import
 import {
   createServer,
   request as proxyRequest,
   type IncomingMessage,
   type Server,
   type ServerResponse,
-  // oxlint-disable-next-line effecttsgo/node-builtin-import
+  // oxlint-disable-next-line effecttsgo/node-builtin-import -- transparent upgrade proxying needs raw handshake bytes; Effect upgrades terminate WebSockets.
 } from "node:http";
 import { Socket } from "node:net";
 import type { Duplex } from "node:stream";

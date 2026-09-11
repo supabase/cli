@@ -1,7 +1,6 @@
-import { Duration, Effect, Option, Schedule } from "effect";
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- Node callback boundary owns cancellation.
-import { request as httpRequest, type IncomingMessage } from "node:http";
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- Node callback boundary owns cancellation.
+import { Duration, Effect, Option, Schedule, Stream } from "effect";
+import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
+import { HttpClient } from "effect/unstable/http";
 import { Socket } from "node:net";
 import { RuntimeDriverError } from "./RuntimeDriver.ts";
 import { StackPreparationError } from "../public/Errors.ts";
@@ -82,63 +81,25 @@ const decodeDuration = (
   return Effect.succeed(decoded.value);
 };
 
-const httpAttempt = (target: ReadinessTarget): Effect.Effect<void, RuntimeDriverError> =>
-  Effect.callback<void, RuntimeDriverError>((resume) => {
-    let settled = false;
-    let request: ReturnType<typeof httpRequest> | undefined;
-    let response: IncomingMessage | undefined;
-    const cleanup = () => {
-      request?.off("error", onError);
-      if (response !== undefined) {
-        response.off("error", onError);
-        response.off("aborted", onAborted);
-        response.off("end", onEnd);
-      }
-    };
-    const finish = (effect: Effect.Effect<void, RuntimeDriverError>) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      resume(effect);
-    };
-    const onError = (cause: Error) =>
-      finish(Effect.fail(runtimeError(target, "Readiness HTTP request failed", cause)));
-    const onAborted = () =>
-      finish(Effect.fail(runtimeError(target, "Readiness HTTP response aborted")));
-    const onEnd = () => {
-      if (response === undefined) return;
-      if ((response.statusCode ?? 500) >= 200 && (response.statusCode ?? 500) < 300)
-        finish(Effect.void);
-      else finish(Effect.fail(runtimeError(target, "Readiness HTTP status was not successful")));
-    };
-    request = httpRequest(
-      {
-        host: target.host,
-        port: target.port,
-        path: target.path ?? "/",
-        method: "GET",
-        headers: target.headers,
-      },
-      (incoming) => {
-        response = incoming;
-        incoming.once("error", onError);
-        incoming.once("aborted", onAborted);
-        incoming.once("end", onEnd);
-        incoming.resume();
-      },
-    );
-    request.once("error", onError);
-    request.end();
-    return Effect.sync(() => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      response?.once("error", () => undefined);
-      response?.destroy();
-      request?.once("error", () => undefined);
-      request?.destroy();
-    });
-  });
+const httpAttempt = (target: ReadinessTarget) => {
+  const host =
+    target.host.includes(":") && !target.host.startsWith("[") ? `[${target.host}]` : target.host;
+  const url = `http://${host}:${target.port}${target.path ?? "/"}`;
+  return Effect.gen(function* () {
+    const client = yield* HttpClient.HttpClient;
+    const response = yield* client.get(url, { headers: target.headers });
+    yield* response.stream.pipe(Stream.runDrain);
+    if (response.status < 200 || response.status >= 300)
+      return yield* runtimeError(target, "Readiness HTTP status was not successful");
+  }).pipe(
+    Effect.mapError((cause) =>
+      cause instanceof RuntimeDriverError
+        ? cause
+        : runtimeError(target, "Readiness HTTP request failed", cause),
+    ),
+    Effect.provide(NodeHttpClient.layerNodeHttp),
+  );
+};
 
 const tcpAttempt = (target: ReadinessTarget): Effect.Effect<void, RuntimeDriverError> =>
   Effect.callback<void, RuntimeDriverError>((resume) => {

@@ -1,21 +1,35 @@
+// oxlint-disable effecttsgo/async-function -- await using scenarios verify the native Promise and AsyncDisposable contracts.
 // This E2E exercises the public Promise facade and real host APIs.
-// oxlint-disable effecttsgo/async-function -- user-facing Promise facade scenario.
-// oxlint-disable effecttsgo/new-promise -- WebSocket event handoff uses the platform Promise API.
-// oxlint-disable effecttsgo/global-fetch -- user-shaped HTTP requests use global fetch.
-// oxlint-disable effecttsgo/global-timers -- timeout guards belong to the host protocol fixtures.
-// oxlint-disable effecttsgo/crypto-random-uuid -- test identities use host randomness.
-// oxlint-disable effecttsgo/global-date -- query windows use host timestamps.
-// oxlint-disable effecttsgo/node-builtin-import -- E2E setup writes a real project with host fs/path APIs.
 import { PgClient } from "@effect/sql-pg";
-import { Data, Effect, Redacted, Schedule, type Duration } from "effect";
-import { execFile as execFileCallback } from "node:child_process";
-import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import {
+  Cause,
+  Clock,
+  Config,
+  Crypto,
+  Data,
+  DateTime,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  ManagedRuntime,
+  Option,
+  Path,
+  Predicate,
+  Redacted,
+  Schedule,
+  Stream,
+  type Duration,
+} from "effect";
+import { NodeServices } from "@effect/platform-node";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
+
 import { connect as connectTcp } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { promisify } from "node:util";
+
 import { WebSocket } from "ws";
-import { describe, expect, test } from "vitest";
+import { afterAll, describe, expect, test } from "vitest";
 import { createStack, listStacks, type PromiseStack } from "../index.ts";
 import { defaultRuntimeEnvironment } from "../supervisor/Launcher.ts";
 import { createTestStack, type TestStack } from "../testing.ts";
@@ -25,10 +39,69 @@ import type { PromiseStackCredentials } from "./Credentials.ts";
 import type { StackLogEntry } from "./Logs.ts";
 import type { PromiseStackConfig } from "./PromiseStack.ts";
 import type { StackEndpoint, StackStatus } from "./Status.ts";
-
-const E2E_TIMEOUT_MS = 15 * 60_000;
-const REQUEST_TIMEOUT_MS = 60_000;
-const execFile = promisify(execFileCallback);
+const E2E_TIMEOUT_MS = 15 * 60000;
+const REQUEST_TIMEOUT_MS = 60000;
+const hostRuntime = ManagedRuntime.make(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer));
+afterAll(() => hostRuntime.dispose());
+const { join } = hostRuntime.runSync(Path.Path);
+const runNode = <A, E>(
+  program: Effect.Effect<
+    A,
+    E,
+    FileSystem.FileSystem | Path.Path | Crypto.Crypto | ChildProcessSpawner.ChildProcessSpawner
+  >,
+) => hostRuntime.runPromise(program);
+const execFile = (command: string, args: ReadonlyArray<string>, _options: { encoding: "utf8" }) =>
+  runNode(
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const child = yield* spawner.spawn(ChildProcess.make(command, args));
+      const [stdout, stderr, code] = yield* Effect.all(
+        [
+          child.stdout.pipe(
+            Stream.decodeText(),
+            Stream.runCollect,
+            Effect.map((chunks) => chunks.join("")),
+          ),
+          child.stderr.pipe(
+            Stream.decodeText(),
+            Stream.runCollect,
+            Effect.map((chunks) => chunks.join("")),
+          ),
+          child.exitCode,
+        ],
+        { concurrency: 3 },
+      );
+      if (code !== 0)
+        return yield* new E2ERequestError({ message: `${command} exited ${code}: ${stderr}` });
+      return { stdout };
+    }).pipe(Effect.scoped),
+  );
+const withFs = <A, E>(operation: (fs: FileSystem.FileSystem) => Effect.Effect<A, E>) =>
+  runNode(Effect.flatMap(FileSystem.FileSystem, operation));
+const access = (path: string) => withFs((fs) => fs.access(path));
+const mkdir = (path: string, options?: { recursive?: boolean }) =>
+  withFs((fs) => fs.makeDirectory(path, options));
+const readText = (path: string) => withFs((fs) => fs.readFileString(path));
+const readdir = (path: string) => withFs((fs) => fs.readDirectory(path));
+const writeFile = (path: string, data: string) => withFs((fs) => fs.writeFileString(path, data));
+const rm = (path: string, options: { recursive: boolean; force: boolean }) =>
+  withFs((fs) => fs.remove(path, options));
+const mkdtemp = (prefix: string) =>
+  runNode(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      return yield* fs.makeTempDirectory({
+        directory: path.dirname(prefix),
+        prefix: path.basename(prefix),
+      });
+    }),
+  );
+const randomId = () =>
+  hostRuntime.runSync(Effect.flatMap(Crypto.Crypto, (crypto) => crypto.randomUUIDv4));
+const queryTimestamp = (offset: number) =>
+  DateTime.formatIso(DateTime.makeUnsafe(hostRuntime.runSync(Clock.currentTimeMillis) + offset));
 const ANALYTICS_QUERY_RETRY_SCHEDULE = Schedule.spaced("1 second").pipe(
   Schedule.upTo({ duration: "3 minutes" }),
 );
@@ -36,7 +109,7 @@ const MAILPIT_DELIVERY_RETRY_SCHEDULE = Schedule.spaced("250 millis").pipe(
   Schedule.upTo({ duration: "30 seconds" }),
 );
 // Studio's first lazy request can start four workloads sequentially (4 × 30s).
-const LAZY_STUDIO_ACTIVATION_TIMEOUT_MS = 180_000;
+const LAZY_STUDIO_ACTIVATION_TIMEOUT_MS = 180000;
 // Pooler is activated by the first TCP connection and may take longer than the normal
 // query deadline while its migration and tenant bootstrap processes run.
 const LAZY_POOLER_ACTIVATION_TIMEOUT = "30 seconds";
@@ -44,8 +117,9 @@ const ALL_RUNTIME_CASES = [
   { name: "native", runtime: { kind: "native" as const } },
   { name: "Docker", runtime: { kind: "container" as const, engine: "docker" as const } },
 ] as const;
-// oxlint-disable-next-line effecttsgo/process-env -- selects the CI runtime matrix before an Effect program exists.
-const SELECTED_RUNTIME = process.env["SUPABASE_STACK_E2E_RUNTIME"];
+const SELECTED_RUNTIME = Option.getOrUndefined(
+  Effect.runSync(Config.option(Config.string("SUPABASE_STACK_E2E_RUNTIME"))),
+);
 if (
   SELECTED_RUNTIME !== undefined &&
   SELECTED_RUNTIME !== "native" &&
@@ -96,7 +170,6 @@ const ALL_EAGER_WORKLOAD_IDS = [
   "studio:pgmeta",
   "studio:studio",
 ] as const;
-
 const dockerOwnedResourceCount = async (
   stackId: string,
   kind: "containers" | "networks" | "volumes",
@@ -114,7 +187,6 @@ const dockerOwnedResourceCount = async (
   const result = await execFile("docker", args, { encoding: "utf8" });
   return result.stdout.trim().length === 0 ? 0 : result.stdout.trim().split("\n").length;
 };
-
 const dockerOwnedWorkloadIds = async (stackId: string): Promise<ReadonlyArray<string>> => {
   const listed = await execFile(
     "docker",
@@ -140,7 +212,6 @@ const dockerOwnedWorkloadIds = async (stackId: string): Promise<ReadonlyArray<st
     ),
   ].sort();
 };
-
 /** Native launchers carry the exact stack/workload marker in their command line. */
 const nativeWorkloadIds = async (stackId: string): Promise<ReadonlyArray<string>> => {
   const result = await execFile("ps", ["-axo", "pid=,command="], { encoding: "utf8" });
@@ -155,13 +226,11 @@ const nativeWorkloadIds = async (stackId: string): Promise<ReadonlyArray<string>
     ),
   ].sort();
 };
-
 const ownedWorkloadIds = async (
   mode: (typeof RUNTIME_CASES)[number],
   stackId: string,
 ): Promise<ReadonlyArray<string>> =>
   mode.runtime.kind === "container" ? dockerOwnedWorkloadIds(stackId) : nativeWorkloadIds(stackId);
-
 const expectOwnedWorkloads = async (
   mode: (typeof RUNTIME_CASES)[number],
   stackId: string,
@@ -169,7 +238,6 @@ const expectOwnedWorkloads = async (
 ): Promise<void> => {
   expect(await ownedWorkloadIds(mode, stackId)).toEqual([...expected].sort());
 };
-
 const supervisorPids = async (stackId: string): Promise<ReadonlyArray<number>> => {
   const result = await execFile("ps", ["-axo", "pid=,command="], { encoding: "utf8" });
   return result.stdout.split("\n").flatMap((line) => {
@@ -183,7 +251,6 @@ const supervisorPids = async (stackId: string): Promise<ReadonlyArray<number>> =
       : [];
   });
 };
-
 const supervisorPid = async (stackId: string): Promise<number> => {
   const matches = await supervisorPids(stackId);
   if (matches.length !== 1)
@@ -192,15 +259,13 @@ const supervisorPid = async (stackId: string): Promise<number> => {
   if (pid === undefined) throw new Error(`Supervisor process for ${stackId} has no PID`);
   return pid;
 };
-
 const nativeDatabaseSharedMemoryId = async (lockPath: string): Promise<number> => {
-  const lines = (await readFile(lockPath, "utf8")).split("\n");
+  const lines = (await readText(lockPath)).split("\n");
   const sharedMemoryId = Number(lines[6]?.trim().split(/\s+/u)[1]);
   if (!Number.isSafeInteger(sharedMemoryId) || sharedMemoryId < 0)
     throw new Error("Native database lock did not contain a valid shared-memory ID");
   return sharedMemoryId;
 };
-
 const nativeDatabaseSharedMemoryExists = async (
   sharedMemoryId: number,
 ): Promise<boolean | undefined> => {
@@ -211,12 +276,15 @@ const nativeDatabaseSharedMemoryExists = async (
       .split("\n")
       .some((line) => line.trim().split(/\s+/u)[1] === String(sharedMemoryId));
   } catch (cause) {
-    if (typeof cause === "object" && cause !== null && "code" in cause && cause.code === "ENOENT")
+    if (
+      Predicate.isTagged(cause, "PlatformError") &&
+      "reason" in cause &&
+      Predicate.isTagged(cause.reason, "NotFound")
+    )
       return undefined;
     throw cause;
   }
 };
-
 const waitForProcessExit = (pid: number): Promise<void> => {
   const exited = Effect.try({
     try: () => {
@@ -246,33 +314,26 @@ const waitForProcessExit = (pid: number): Promise<void> => {
     }),
   );
 };
-
 type JsonObject = Record<string, unknown>;
-
 class E2ERequestError extends Data.TaggedError("E2ERequestError")<{
   readonly message: string;
   readonly cause?: unknown;
 }> {}
-
 const isJsonObject = (value: unknown): value is JsonObject =>
   typeof value === "object" && value !== null && !Array.isArray(value);
-
 const websocketDataText = (data: WebSocket.RawData): string => {
   if (typeof data === "string") return data;
   if (Buffer.isBuffer(data)) return data.toString("utf8");
   if (data instanceof ArrayBuffer) return Buffer.from(data).toString("utf8");
   return Buffer.concat(data).toString("utf8");
 };
-
 const endpoint = (status: StackStatus, name: keyof StackStatus["endpoints"]): StackEndpoint => {
   const value = status.endpoints[name];
   if (value === undefined) throw new Error(`Expected ${name} listener in stack status`);
   return value;
 };
-
 const capabilityState = (status: StackStatus, name: string): string | undefined =>
   status.capabilities.find((capability) => capability.name === name)?.state;
-
 const expectDefaultLazyState = (status: StackStatus): void => {
   expect(status.lifecycle).toBe("running");
   expect(capabilityState(status, "database")).toBe("ready");
@@ -288,7 +349,6 @@ const expectDefaultLazyState = (status: StackStatus): void => {
     expect(capabilityState(status, name), `${name} should remain dormant`).toBe("dormant");
   }
 };
-
 /** Wait for one capability transition while subscribing before sending traffic. */
 const activate = async <A>(
   stack: TestStack,
@@ -311,41 +371,69 @@ const activate = async <A>(
   await Effect.runPromise(waitUntilReady);
   return result;
 };
-
-const request = async (base: string, path: string, init: RequestInit = {}): Promise<Response> => {
+const request = (base: string, path: string, init: RequestInit = {}): Promise<Response> => {
   const url = new URL(path, `${base.replace(/\/$/u, "")}/`);
-  const method = init.method ?? "GET";
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      ...init,
-      signal: init.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  const program = Effect.gen(function* () {
+    const webRequest = new Request(url.href, init);
+    let outgoing = HttpClientRequest.fromWeb(webRequest);
+    if (webRequest.body !== null) {
+      const bytes = yield* Effect.tryPromise({
+        try: () => webRequest.arrayBuffer(),
+        catch: (cause) => new E2ERequestError({ message: "Unable to read request body", cause }),
+      });
+      outgoing = HttpClientRequest.bodyUint8Array(
+        outgoing,
+        new Uint8Array(bytes),
+        webRequest.headers.get("content-type") ?? undefined,
+      );
+    }
+    const response = yield* HttpClient.execute(outgoing);
+    const body = yield* response.arrayBuffer;
+    if (response.status < 200 || response.status >= 300)
+      return yield* new E2ERequestError({
+        message: `${init.method ?? "GET"} ${url} returned ${response.status}: ${new TextDecoder().decode(body)}`,
+      });
+    return new Response(response.status === 204 || response.status === 205 ? null : body, {
+      status: response.status,
+      headers: response.headers,
     });
-  } catch (cause) {
-    const reason = cause instanceof Error ? cause.message : String(cause);
-    throw new Error(`${method} ${url} failed: ${reason}`, { cause });
-  }
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`${method} ${url} returned ${response.status}: ${body}`);
-  }
-  return response;
+  });
+  return hostRuntime
+    .runPromiseExit(
+      init.signal == null ? program.pipe(Effect.timeout(REQUEST_TIMEOUT_MS)) : program,
+      { signal: init.signal ?? undefined },
+    )
+    .then((exit) => {
+      if (Exit.isSuccess(exit)) return exit.value;
+      const cause: unknown =
+        Cause.hasInterruptsOnly(exit.cause) && init.signal?.aborted
+          ? init.signal.reason
+          : Cause.squash(exit.cause);
+      if (cause instanceof E2ERequestError) throw cause;
+      const reason = cause instanceof Error ? cause.message : String(cause);
+      throw new E2ERequestError({
+        message: `${init.method ?? "GET"} ${url} failed: ${reason}`,
+        cause,
+      });
+    });
 };
 
 const connect = (endpoint: StackEndpoint): Promise<void> =>
-  new Promise((resolve, reject) => {
-    const socket = connectTcp(endpoint.port, endpoint.address);
-    const fail = (cause: unknown) => {
-      socket.destroy();
-      reject(cause instanceof Error ? cause : new Error(String(cause)));
-    };
-    socket.once("connect", () => {
-      socket.destroy();
-      resolve();
-    });
-    socket.once("error", fail);
-    socket.setTimeout(2_000, () => fail(new Error("TCP connection timed out")));
-  });
+  Effect.runPromise(
+    Effect.callback<void, E2ERequestError>((resume) => {
+      const socket = connectTcp(endpoint.port, endpoint.address);
+      const onConnect = () => resume(Effect.void);
+      const onError = (cause: Error) =>
+        resume(Effect.fail(new E2ERequestError({ message: cause.message, cause })));
+      socket.once("connect", onConnect);
+      socket.once("error", onError);
+      return Effect.sync(() => {
+        socket.off("connect", onConnect);
+        socket.off("error", onError);
+        socket.destroy();
+      });
+    }).pipe(Effect.timeout("2 seconds")),
+  );
 
 const expectEndpointsRefused = async (endpoints: ReadonlyArray<StackEndpoint>): Promise<void> => {
   for (const listener of endpoints) {
@@ -355,7 +443,6 @@ const expectEndpointsRefused = async (endpoints: ReadonlyArray<StackEndpoint>): 
     ).rejects.toThrow();
   }
 };
-
 const expectRuntimeInputsAbsent = async (
   stack: Pick<TestStack, "stateRoot" | "id">,
 ): Promise<void> => {
@@ -366,11 +453,17 @@ const expectRuntimeInputsAbsent = async (
     try {
       expect(await readdir(path), `${path} should be empty after cleanup`).toHaveLength(0);
     } catch (cause) {
-      if (!(cause instanceof Error && "code" in cause && cause.code === "ENOENT")) throw cause;
+      if (
+        !(
+          Predicate.isTagged(cause, "PlatformError") &&
+          "reason" in cause &&
+          Predicate.isTagged(cause.reason, "NotFound")
+        )
+      )
+        throw cause;
     }
   }
 };
-
 const throwCapabilityDiagnostics = async (
   stack: TestStack,
   capabilityName: string,
@@ -406,20 +499,19 @@ const throwCapabilityDiagnostics = async (
     { cause },
   );
 };
-
 const jsonValue = async (response: Response): Promise<unknown> => response.json();
-
 const jsonObject = async (response: Response): Promise<JsonObject> => {
   const value = await jsonValue(response);
   if (!isJsonObject(value)) throw new Error("Expected a JSON object response");
   return Object.fromEntries(Object.entries(value));
 };
-
 const databaseQuery = async (
   url: string,
   statement: string,
   parameters: ReadonlyArray<unknown> = [],
-  options: Readonly<{ readonly connectTimeout?: Duration.Input }> = {},
+  options: Readonly<{
+    readonly connectTimeout?: Duration.Input;
+  }> = {},
 ): Promise<ReadonlyArray<object>> => {
   try {
     return await Effect.runPromise(
@@ -448,7 +540,6 @@ const databaseQuery = async (
     throw new Error(`databaseQuery failed for ${target}: ${statement}`, { cause });
   }
 };
-
 const apiHeaders = (
   credentials: PromiseStackCredentials,
   token: string = credentials.api.anonJwt,
@@ -456,10 +547,8 @@ const apiHeaders = (
   apikey: credentials.api.publishableKey,
   Authorization: `Bearer ${token}`,
 });
-
 const serviceHeaders = (credentials: PromiseStackCredentials): Record<string, string> =>
   apiHeaders(credentials, credentials.api.serviceRoleJwt);
-
 const functionSource = (table: string, marker: string): string => `
 Deno.serve(async () => {
   console.log("${marker}");
@@ -494,56 +583,63 @@ Deno.serve(async () => {
   });
 });
 `;
-
 const waitForSocket = (
   socket: WebSocket,
   predicate: (value: JsonObject) => boolean,
 ): Promise<JsonObject> =>
-  new Promise((resolve, reject) => {
-    let settled = false;
-    const cleanup = () => {
-      clearTimeout(timeout);
-      socket.removeListener("message", onMessage);
-      socket.removeListener("error", onError);
-      socket.removeListener("close", onClose);
-    };
-    const finish = (error: Error | undefined, value?: JsonObject) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      if (error === undefined) resolve(value ?? {});
-      else reject(error);
-    };
-    const timeout = setTimeout(
-      () => finish(new Error("Timed out waiting for Realtime message")),
-      REQUEST_TIMEOUT_MS,
-    );
-    const onMessage = (data: WebSocket.RawData) => {
-      try {
-        const value: unknown = JSON.parse(websocketDataText(data));
-        if (!isJsonObject(value)) return;
-        if (!predicate(value)) return;
-        finish(undefined, Object.fromEntries(Object.entries(value)));
-      } catch {
-        // Ignore protocol frames that are not JSON objects.
-      }
-    };
-    const onError = () => finish(new Error("Realtime WebSocket failed while waiting"));
-    const onClose = () => finish(new Error("Realtime WebSocket closed while waiting"));
-    socket.on("message", onMessage);
-    socket.on("error", onError);
-    socket.on("close", onClose);
-  });
+  Effect.runPromise(
+    Effect.callback<JsonObject, E2ERequestError>((resume) => {
+      const onMessage = (data: WebSocket.RawData) => {
+        try {
+          const value: unknown = JSON.parse(websocketDataText(data));
+          if (isJsonObject(value) && predicate(value))
+            resume(Effect.succeed(Object.fromEntries(Object.entries(value))));
+        } catch {
+          // Realtime can send non-JSON protocol frames.
+        }
+      };
+      const onError = () =>
+        resume(
+          Effect.fail(new E2ERequestError({ message: "Realtime WebSocket failed while waiting" })),
+        );
+      const onClose = () =>
+        resume(
+          Effect.fail(new E2ERequestError({ message: "Realtime WebSocket closed while waiting" })),
+        );
+      socket.on("message", onMessage);
+      socket.on("error", onError);
+      socket.on("close", onClose);
+      return Effect.sync(() => {
+        socket.off("message", onMessage);
+        socket.off("error", onError);
+        socket.off("close", onClose);
+      });
+    }).pipe(Effect.timeout(REQUEST_TIMEOUT_MS)),
+  );
 
 const openSocket = (url: string): Promise<WebSocket> =>
-  new Promise((resolve, reject) => {
-    const socket = new WebSocket(url, {
-      handshakeTimeout: REQUEST_TIMEOUT_MS,
-      perMessageDeflate: false,
-    });
-    socket.once("open", () => resolve(socket));
-    socket.once("error", (cause) => reject(cause));
-  });
+  Effect.runPromise(
+    Effect.callback<WebSocket, E2ERequestError>((resume) => {
+      const socket = new WebSocket(url, {
+        handshakeTimeout: REQUEST_TIMEOUT_MS,
+        perMessageDeflate: false,
+      });
+      let opened = false;
+      const onOpen = () => {
+        opened = true;
+        resume(Effect.succeed(socket));
+      };
+      const onError = (cause: Error) =>
+        resume(Effect.fail(new E2ERequestError({ message: cause.message, cause })));
+      socket.once("open", onOpen);
+      socket.once("error", onError);
+      return Effect.sync(() => {
+        socket.off("open", onOpen);
+        socket.off("error", onError);
+        if (!opened) socket.terminate();
+      });
+    }),
+  );
 
 const makeRealtimeUrl = (api: StackEndpoint, apikey: string): string => {
   const url = new URL(api.url);
@@ -552,14 +648,12 @@ const makeRealtimeUrl = (api: StackEndpoint, apikey: string): string => {
   url.search = new URLSearchParams({ apikey, vsn: "1.0.0" }).toString();
   return url.toString();
 };
-
 const onePixelPng = Uint8Array.from(
   atob(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
   ),
   (character) => character.charCodeAt(0),
 );
-
 const optionalWorkloadConfig = (
   functionSlug: string,
   analyticsApiKey: string,
@@ -571,7 +665,6 @@ const optionalWorkloadConfig = (
   },
   listeners: { smtp: { enabled: true } },
 });
-
 const allEagerConfig = (analyticsApiKey: string): PromiseStackConfig => ({
   capabilities: {
     rest: { activation: "eager" },
@@ -592,7 +685,6 @@ const allEagerConfig = (analyticsApiKey: string): PromiseStackConfig => ({
   },
   listeners: { smtp: { enabled: true } },
 });
-
 const queryAnalyticsMarker = async (
   api: StackEndpoint,
   analyticsApiKey: string,
@@ -600,8 +692,8 @@ const queryAnalyticsMarker = async (
 ): Promise<number> => {
   const query = new URLSearchParams({
     project: "default",
-    iso_timestamp_start: new Date(Date.now() - 3_600_000).toISOString(),
-    iso_timestamp_end: new Date(Date.now() + 3_600_000).toISOString(),
+    iso_timestamp_start: queryTimestamp(-3_600_000),
+    iso_timestamp_end: queryTimestamp(3_600_000),
     sql:
       "select count(*) as c from postgres_logs where regexp_contains(event_message, '" +
       marker +
@@ -627,10 +719,12 @@ const queryAnalyticsMarker = async (
   });
   return Effect.runPromise(Effect.retry(attempt, { schedule: ANALYTICS_QUERY_RETRY_SCHEDULE }));
 };
-
 type RuntimeCase = (typeof RUNTIME_CASES)[number];
-type WholeStackMarkers = Readonly<{ first: string; second: string; live: string }>;
-
+type WholeStackMarkers = Readonly<{
+  first: string;
+  second: string;
+  live: string;
+}>;
 type WholeStackScenario = Readonly<{
   mode: RuntimeCase;
   stack: TestStack;
@@ -648,7 +742,6 @@ type WholeStackScenario = Readonly<{
   studio: StackEndpoint;
   mailUi: StackEndpoint;
 }>;
-
 const arrangeWholeStackDatabase = async (scenario: WholeStackScenario): Promise<void> => {
   const { credentials, markers, table } = scenario;
   await databaseQuery(
@@ -670,7 +763,6 @@ const arrangeWholeStackDatabase = async (scenario: WholeStackScenario): Promise<
   );
   expect(directRows).toEqual([{ id: 1, payload: markers.first }]);
 };
-
 const verifyWholeStackDatabaseLogs = async (stack: TestStack): Promise<void> => {
   expect((await stack.logs({ capabilities: ["database"], tail: 1 })).entries).not.toHaveLength(0);
   const logIterator = stack
@@ -684,10 +776,12 @@ const verifyWholeStackDatabaseLogs = async (stack: TestStack): Promise<void> => 
     await logIterator.return?.();
   }
 };
-
 const exerciseWholeStackRestAndAuth = async (
   scenario: WholeStackScenario,
-): Promise<{ readonly restPath: string; readonly accessToken: string }> => {
+): Promise<{
+  readonly restPath: string;
+  readonly accessToken: string;
+}> => {
   const { api, credentials, email, identity, password, markers, stack, table } = scenario;
   const restPath = `/rest/v1/${table}?select=id,payload&order=id`;
   const restRows = await activate(stack, "rest", async () =>
@@ -698,7 +792,6 @@ const exerciseWholeStackRestAndAuth = async (
     ),
   );
   expect(restRows).toEqual(expect.arrayContaining([{ id: 1, payload: markers.first }]));
-
   const signup = await activate(stack, "auth", async () =>
     jsonObject(
       await request(api.url, "/auth/v1/signup", {
@@ -711,7 +804,6 @@ const exerciseWholeStackRestAndAuth = async (
   const accessToken = signup.access_token;
   if (typeof accessToken !== "string")
     throw new Error("Auth signup did not return an access token");
-
   const authenticatedInsert = await jsonValue(
     await request(api.url, `/rest/v1/${table}`, {
       method: "POST",
@@ -728,7 +820,6 @@ const exerciseWholeStackRestAndAuth = async (
   );
   return { restPath, accessToken };
 };
-
 const exerciseWholeStackRealtime = async (
   scenario: WholeStackScenario,
   accessToken: string,
@@ -799,7 +890,6 @@ const exerciseWholeStackRealtime = async (
     await Promise.allSettled(socketWaiters);
   }
 };
-
 const exerciseWholeStackStorage = async (scenario: WholeStackScenario): Promise<void> => {
   const { api, bucket, credentials, stack } = scenario;
   await activate(stack, "storage", async () => {
@@ -819,7 +909,6 @@ const exerciseWholeStackStorage = async (scenario: WholeStackScenario): Promise<
     expect((await downloaded.arrayBuffer()).byteLength).toBeGreaterThan(0);
   });
 };
-
 const exerciseWholeStackFunctions = async (scenario: WholeStackScenario): Promise<void> => {
   const { api, credentials, functionSlug, markers, projectRoot, stack, table } = scenario;
   const functionPath = `/functions/v1/${functionSlug}`;
@@ -837,7 +926,6 @@ const exerciseWholeStackFunctions = async (scenario: WholeStackScenario): Promis
         rows: expect.arrayContaining([{ id: 1, payload: markers.first }]),
       }),
     );
-
     await writeFile(
       join(projectRoot, "supabase", "functions", functionSlug, "index.ts"),
       functionSource(table, markers.second),
@@ -852,7 +940,6 @@ const exerciseWholeStackFunctions = async (scenario: WholeStackScenario): Promis
         rows: expect.arrayContaining([{ id: 1, payload: markers.first }]),
       }),
     );
-
     const beforeLiveLogs = await stack.logs({ capabilities: ["functions"] });
     const liveIterator = stack
       .followLogs({ capabilities: ["functions"], cursor: beforeLiveLogs.cursor })
@@ -887,7 +974,6 @@ const exerciseWholeStackFunctions = async (scenario: WholeStackScenario): Promis
     await throwCapabilityDiagnostics(stack, "functions", "Functions flow", cause);
   }
 };
-
 const exerciseWholeStackAuxiliary = async (scenario: WholeStackScenario): Promise<URL> => {
   const { api, credentials, mailUi, pooler, stack, studio } = scenario;
   await activate(stack, "mail", async () => {
@@ -917,7 +1003,6 @@ const exerciseWholeStackAuxiliary = async (scenario: WholeStackScenario): Promis
   expect(poolerRows).toEqual([{ answer: 42 }]);
   return poolerUrl;
 };
-
 const assertWholeStackReady = async (
   scenario: WholeStackScenario,
   status: StackStatus,
@@ -932,7 +1017,6 @@ const assertWholeStackReady = async (
   }
   await expectOwnedWorkloads(scenario.mode, scenario.stack.id, BASE_WORKLOAD_IDS);
 };
-
 const reactivateWholeStackCapabilities = async (
   scenario: WholeStackScenario,
   restPath: string,
@@ -974,7 +1058,6 @@ const reactivateWholeStackCapabilities = async (
     });
   });
 };
-
 const restartWholeStackFromPersistedData = async (
   scenario: WholeStackScenario,
   endpointSnapshot: Readonly<Record<string, number | undefined>>,
@@ -999,9 +1082,8 @@ const restartWholeStackFromPersistedData = async (
   ).toEqual([{ payload: markers.first }]);
   await reactivateWholeStackCapabilities(scenario, restPath, functionPath, poolerUrl);
 };
-
 const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Promise<void> => {
-  const identity = crypto.randomUUID().replaceAll("-", "").slice(0, 20).toLowerCase();
+  const identity = randomId().replaceAll("-", "").slice(0, 20).toLowerCase();
   const table = `stack_e2e_${identity}`;
   const bucket = `stack-e2e-${identity}`;
   const functionSlug = `cross_service_${identity}`;
@@ -1013,7 +1095,6 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
     live: `live-${identity}`,
   };
   let projectRoot = "";
-
   await using stack: TestStack = await createTestStack({
     name: `stack-e2e-${identity}`,
     runtime: mode.runtime,
@@ -1024,13 +1105,11 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
       await writeFile(join(directory, "index.ts"), functionSource(table, markers.first));
     },
   });
-
   const initialRunning = await stack.status();
   expect(initialRunning.runtime).toEqual(mode.runtime);
   expect(projectRoot.length).toBeGreaterThan(0);
   expectDefaultLazyState(initialRunning);
   await expectOwnedWorkloads(mode, stack.id, ["database:database"]);
-
   // Preparation is an explicit cache-only operation. It runs after the helper's
   // initial session is stopped, so the test proves it creates no owner, listener,
   // or workload.
@@ -1061,10 +1140,8 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
   const initialEndpoints = Object.values(initial.endpoints).filter(
     (value): value is StackEndpoint => value !== undefined,
   );
-
   // The warmed capability remains lazy: only its artifact is cached, not its
   // workload. The first request below still performs the normal activation.
-
   const scenario: WholeStackScenario = {
     mode,
     stack,
@@ -1085,20 +1162,16 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
   await arrangeWholeStackDatabase(scenario);
   await verifyWholeStackDatabaseLogs(stack);
   const { restPath, accessToken } = await exerciseWholeStackRestAndAuth(scenario);
-
   await exerciseWholeStackRealtime(scenario, accessToken);
   await exerciseWholeStackStorage(scenario);
-
   // Functions are request-time discovered and call REST through SUPABASE_URL.
   const functionPath = `/functions/v1/${functionSlug}`;
   await exerciseWholeStackFunctions(scenario);
   const poolerUrl = await exerciseWholeStackAuxiliary(scenario);
-
   const ready = await stack.status();
   await assertWholeStackReady(scenario, ready);
   const idempotentStart = await stack.start();
   await assertWholeStackReady(scenario, idempotentStart);
-
   const endpointSnapshot = Object.fromEntries(
     Object.entries(ready.endpoints).map(([name, value]) => [name, value?.port]),
   );
@@ -1111,7 +1184,6 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
     mode.runtime.kind === "container"
       ? await dockerOwnedResourceCount(initial.id, "volumes")
       : undefined;
-
   try {
     await stack.stop();
   } catch (cause) {
@@ -1152,7 +1224,6 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
     expect(await dockerOwnedResourceCount(initial.id, "networks")).toBe(0);
     expect(await dockerOwnedResourceCount(initial.id, "volumes")).toBe(volumesBeforeStop);
   }
-
   await restartWholeStackFromPersistedData(
     scenario,
     endpointSnapshot,
@@ -1160,7 +1231,6 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
     functionPath,
     poolerUrl,
   );
-
   await stack.stop();
   await restartWholeStackFromPersistedData(
     scenario,
@@ -1169,10 +1239,8 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
     functionPath,
     poolerUrl,
   );
-
   const final = await stack.status();
   await assertWholeStackReady(scenario, final);
-
   await stack.stop();
   await expectOwnedWorkloads(mode, stack.id, []);
   const reconfigured = await stack.start({
@@ -1190,20 +1258,19 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
   expect(endpoint(reconfigured, "api").port).not.toBe(api.port);
   expect(reconfigured.endpoints.studio).toBeUndefined();
 };
-
 describe("managed Supabase stack whole-stack E2E", () => {
   test.skipIf(SELECTED_RUNTIME === "container")(
     "recovers the native database after abrupt Supervisor termination",
     { timeout: E2E_TIMEOUT_MS },
     async () => {
       await using stack: TestStack = await createTestStack({
-        name: `stack-crash-recovery-${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`,
+        name: `stack-crash-recovery-${randomId().replaceAll("-", "").slice(0, 16)}`,
         runtime: { kind: "native" },
       });
       const before = await stack.status();
       const database = endpoint(before, "database");
       const lockPath = join(stack.stateRoot, stack.id, "data", "database", "postmaster.pid");
-      const databasePid = Number((await readFile(lockPath, "utf8")).split("\n", 1)[0]);
+      const databasePid = Number((await readText(lockPath)).split("\n", 1)[0]);
       if (!Number.isSafeInteger(databasePid) || databasePid <= 0)
         throw new Error("Native database lock did not contain a valid PID");
       const sharedMemoryId = await nativeDatabaseSharedMemoryId(lockPath);
@@ -1215,7 +1282,6 @@ describe("managed Supabase stack whole-stack E2E", () => {
         expect(await nativeDatabaseSharedMemoryExists(sharedMemoryId)).toBe(false);
       await expect(connect(database)).rejects.toThrow();
       await expect(access(lockPath)).rejects.toThrow();
-
       const recovered = await stack.start();
       expectDefaultLazyState(recovered);
       expect(
@@ -1223,7 +1289,6 @@ describe("managed Supabase stack whole-stack E2E", () => {
       ).toEqual([{ value: 1 }]);
     },
   );
-
   for (const mode of RUNTIME_CASES) {
     for (const databaseVersion of NON_DEFAULT_DATABASE_RELEASES) {
       const major = databaseVersion.split(".")[0];
@@ -1232,7 +1297,7 @@ describe("managed Supabase stack whole-stack E2E", () => {
         { timeout: E2E_TIMEOUT_MS },
         async () => {
           await using stack: TestStack = await createTestStack({
-            name: `stack-postgres-${major}-${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`,
+            name: `stack-postgres-${major}-${randomId().replaceAll("-", "").slice(0, 16)}`,
             runtime: mode.runtime,
             config: { capabilities: { database: { version: major } } },
           });
@@ -1244,12 +1309,11 @@ describe("managed Supabase stack whole-stack E2E", () => {
         },
       );
     }
-
     test(
       `coordinates concurrent isolated stacks in ${mode.name} mode`,
       { timeout: E2E_TIMEOUT_MS },
       async () => {
-        const identity = crypto.randomUUID().replaceAll("-", "").slice(0, 16);
+        const identity = randomId().replaceAll("-", "").slice(0, 16);
         const creations = await Promise.allSettled([
           createTestStack({
             name: `stack-concurrent-a-${identity}`,
@@ -1278,14 +1342,12 @@ describe("managed Supabase stack whole-stack E2E", () => {
         const secondStack = secondResult.value;
         await using first: TestStack = firstStack;
         await using second: TestStack = secondStack;
-
         const [firstStatus, secondStatus] = await Promise.all([first.status(), second.status()]);
         expect(firstStatus.lifecycle).toBe("running");
         expect(secondStatus.lifecycle).toBe("running");
         const firstApi = endpoint(firstStatus, "api");
         const secondApi = endpoint(secondStatus, "api");
         expect(firstApi.port).not.toBe(secondApi.port);
-
         const [firstCredentials, secondCredentials] = await Promise.all([
           first.credentials(),
           second.credentials(),
@@ -1330,12 +1392,11 @@ describe("managed Supabase stack whole-stack E2E", () => {
         expect(secondRows).toEqual([{ payload: secondMarker }]);
       },
     );
-
     test(
       `coordinates with an ordinary package stack in ${mode.name} mode`,
       { timeout: E2E_TIMEOUT_MS },
       async () => {
-        const identity = crypto.randomUUID().replaceAll("-", "").slice(0, 16);
+        const identity = randomId().replaceAll("-", "").slice(0, 16);
         const ordinaryRoot = await mkdtemp(join(tmpdir(), "supabase-stack-cli-consumer-"));
         let ordinary: PromiseStack | undefined;
         let helper: TestStack | undefined;
@@ -1351,14 +1412,14 @@ describe("managed Supabase stack whole-stack E2E", () => {
             name: `stack-helper-consumer-${identity}`,
             runtime: mode.runtime,
           });
-
           const ordinaryStatus = await ordinary.status();
           const helperStatus = await helper.status();
           expect(ordinaryStatus.lifecycle).toBe("running");
           expect(helperStatus.lifecycle).toBe("running");
-          expect(helper.stateRoot).toBe(defaultRuntimeEnvironment().stateRoot);
+          expect(helper.stateRoot).toBe(
+            (await Effect.runPromise(defaultRuntimeEnvironment)).stateRoot,
+          );
           expect(endpoint(ordinaryStatus, "api").port).not.toBe(endpoint(helperStatus, "api").port);
-
           const scoped = await listStacks({ projectRoot: ordinaryRoot });
           expect(scoped.map(({ id }) => id)).toContain(ordinary.id);
           expect(scoped.map(({ id }) => id)).not.toContain(helper.id);
@@ -1367,7 +1428,6 @@ describe("managed Supabase stack whole-stack E2E", () => {
         } catch (error) {
           primary = error;
         }
-
         const [helperResult, ordinaryResult] = await Promise.allSettled([
           helper === undefined ? Promise.resolve() : helper[Symbol.asyncDispose](),
           ordinary === undefined ? Promise.resolve() : ordinary.destroy(),
@@ -1389,18 +1449,16 @@ describe("managed Supabase stack whole-stack E2E", () => {
         if (cleanupFailure !== undefined) throw cleanupFailure;
       },
     );
-
     test(`supports the complete user flow in ${mode.name} mode`, { timeout: E2E_TIMEOUT_MS }, () =>
       runWholeStackScenario(mode),
     );
-
     test(
       `starts every capability eagerly in ${mode.name} mode`,
       { timeout: E2E_TIMEOUT_MS },
       async () => {
-        const analyticsApiKey = `analytics-key-${crypto.randomUUID()}`;
+        const analyticsApiKey = `analytics-key-${randomId()}`;
         await using stack: TestStack = await createTestStack({
-          name: `stack-eager-${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`,
+          name: `stack-eager-${randomId().replaceAll("-", "").slice(0, 16)}`,
           runtime: mode.runtime,
           config: allEagerConfig(analyticsApiKey),
           setupProject: async (root) => {
@@ -1414,12 +1472,10 @@ describe("managed Supabase stack whole-stack E2E", () => {
           status.capabilities.map(({ name, state, activation }) => ({ name, state, activation })),
         ).toEqual(CAPABILITY_NAMES.map((name) => ({ name, state: "ready", activation: "eager" })));
         await expectOwnedWorkloads(mode, stack.id, ALL_EAGER_WORKLOAD_IDS);
-
         const credentials = await stack.credentials();
         expect(await databaseQuery(credentials.database.url, "SELECT 1 AS value")).toEqual([
           { value: 1 },
         ]);
-
         await stack.stop();
         const stopped = await stack.status();
         expect(stopped.lifecycle).toBe("stopped");
@@ -1427,12 +1483,11 @@ describe("managed Supabase stack whole-stack E2E", () => {
         await expectOwnedWorkloads(mode, stack.id, []);
       },
     );
-
     test(
       `supports optional image and vector workloads in ${mode.name} mode`,
       { timeout: E2E_TIMEOUT_MS },
       async () => {
-        const identity = crypto.randomUUID().replaceAll("-", "").slice(0, 20).toLowerCase();
+        const identity = randomId().replaceAll("-", "").slice(0, 20).toLowerCase();
         const bucket = `stack-optional-${identity}`;
         const functionSlug = `optional_${identity}`;
         const analyticsApiKey = `analytics-key-${identity}`;
@@ -1443,7 +1498,9 @@ describe("managed Supabase stack whole-stack E2E", () => {
           runtime: mode.runtime,
           config: optionalWorkloadConfig(functionSlug, analyticsApiKey),
           setupProject: async (root) => {
-            await mkdir(join(root, "supabase", "functions", functionSlug), { recursive: true });
+            await mkdir(join(root, "supabase", "functions", functionSlug), {
+              recursive: true,
+            });
             await writeFile(
               join(root, "supabase", "functions", functionSlug, "index.ts"),
               "Deno.serve(() => new Response('ok'))",
@@ -1529,7 +1586,6 @@ describe("managed Supabase stack whole-stack E2E", () => {
       },
     );
   }
-
   for (const mode of RUNTIME_CASES) {
     test(
       `releases owned resources across repeated stop/start cycles in ${mode.name} mode`,
@@ -1538,12 +1594,16 @@ describe("managed Supabase stack whole-stack E2E", () => {
         let stackId: string | undefined;
         let projectRoot = "";
         const snapshots: Array<
-          Readonly<{ containers: number; networks: number; volumes: number }>
+          Readonly<{
+            containers: number;
+            networks: number;
+            volumes: number;
+          }>
         > = [];
         let endpointSnapshot: ReadonlyArray<StackEndpoint> = [];
         {
           await using stack: TestStack = await createTestStack({
-            name: `stack-resource-audit-${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`,
+            name: `stack-resource-audit-${randomId().replaceAll("-", "").slice(0, 16)}`,
             runtime: mode.runtime,
             setupProject: async (root) => {
               projectRoot = root;

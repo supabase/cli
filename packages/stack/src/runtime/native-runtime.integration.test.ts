@@ -1,4 +1,3 @@
-// oxlint-disable effecttsgo/prefer-schema-over-json -- raw child-process fixture payloads are protocol JSON, not product serialization.
 import { NodeServices, NodeSocket } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
@@ -12,11 +11,10 @@ import {
   Path,
   Ref,
   Schedule,
+  Schema,
   Stream,
 } from "effect";
-import { ChildProcess } from "effect/unstable/process";
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- raw process-tree cleanup fixture.
-import { spawnSync } from "node:child_process";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { fileURLToPath } from "node:url";
 import { LogStoreError, makeLogStore, type LogStore } from "../supervisor/LogStore.ts";
 import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
@@ -33,6 +31,8 @@ import {
 } from "./NativeProcess.ts";
 
 const stackId = StackIdSchema.make("d".repeat(64));
+const encodeJson = (value: unknown): string =>
+  Schema.encodeSync(Schema.fromJsonString(Schema.Unknown))(value);
 
 class ProcessTreeTestError extends Data.TaggedError("ProcessTreeTestError")<{
   readonly message: string;
@@ -535,7 +535,7 @@ describe("native runtime", { timeout: 15_000 }, () => {
           command: process.execPath,
           args: [
             "-e",
-            `process.env.PGPASSWORD="host-secret"; const { runNativeLauncher } = await import(${JSON.stringify(launcherPath)}); runNativeLauncher()`,
+            `process.env.PGPASSWORD="host-secret"; const { runNativeLauncher } = await import(${encodeJson(launcherPath)}); runNativeLauncher()`,
           ],
         };
         const runtime = yield* makeNativeRuntime({
@@ -830,7 +830,7 @@ describe("native runtime", { timeout: 15_000 }, () => {
             if (typeof address === "object" && address !== null) {
               process.stdout.write(\`TARGET_READY \${address.port}\\n\`);
             }
-            const child = spawn(process.execPath, ["-e", ${JSON.stringify(descendantCode)}], {
+            const child = spawn(process.execPath, ["-e", ${encodeJson(descendantCode)}], {
               stdio: ["ignore", "pipe", "inherit"]
             });
             child.stdout.on("data", (chunk) => {
@@ -840,13 +840,13 @@ describe("native runtime", { timeout: 15_000 }, () => {
         `;
         const ownerCode = `
           const { spawn } = require("node:child_process");
-          const launcherProcess = spawn(${JSON.stringify(targetLauncher.command)}, ${JSON.stringify(targetLauncher.args)}, {
+          const launcherProcess = spawn(${encodeJson(targetLauncher.command)}, ${encodeJson(targetLauncher.args)}, {
             detached: true,
             stdio: ["ignore", "inherit", "inherit", "pipe", "pipe"]
           });
           launcherProcess.stdio[4].end(JSON.stringify({
-            executable: ${JSON.stringify(runtimeCommand)},
-            args: ["-e", ${JSON.stringify(targetCode)}]
+            executable: ${encodeJson(runtimeCommand)},
+            args: ["-e", ${encodeJson(targetCode)}]
           }));
           setInterval(() => {}, 1000);
         `;
@@ -963,7 +963,7 @@ describe("native runtime", { timeout: 15_000 }, () => {
         if (typeof address === "object" && address !== null) {
           process.stdout.write("TARGET_READY " + address.port + "\\n");
         }
-        const child = spawn(process.execPath, ["-e", ${JSON.stringify(descendantCode)}], {
+            const child = spawn(process.execPath, ["-e", ${JSON.stringify(descendantCode)}], {
           stdio: ["ignore", "pipe", "inherit"]
         });
         child.stdout.on("data", (chunk) => {
@@ -984,13 +984,13 @@ describe("native runtime", { timeout: 15_000 }, () => {
       const launcherArgs = defaultNativeProcessLauncher().args;
       const ownerCode = `
         const { spawn } = require("node:child_process");
-        const launcherProcess = spawn(${JSON.stringify(process.execPath)}, ${JSON.stringify(launcherArgs)}, {
+          const launcherProcess = spawn(${encodeJson(process.execPath)}, ${encodeJson(launcherArgs)}, {
           detached: true,
           stdio: ["ignore", "inherit", "inherit", "pipe", "pipe"]
         });
-        launcherProcess.stdio[4].end(JSON.stringify({
-          executable: ${JSON.stringify(process.execPath)},
-          args: ["-e", ${JSON.stringify(options.targetCode)}],
+          launcherProcess.stdio[4].end(JSON.stringify({
+            executable: ${encodeJson(process.execPath)},
+            args: ["-e", ${encodeJson(options.targetCode)}],
           gracefulStopSignal: "SIGINT",
           gracefulStopTimeoutMs: ${String(options.gracefulStopTimeoutMs)}
         }));
@@ -1092,7 +1092,7 @@ describe("native runtime", { timeout: 15_000 }, () => {
         `;
           const targetCode = `
           const { spawn } = require("node:child_process");
-          const child = spawn(process.execPath, ["-e", ${JSON.stringify(descendantCode)}], {
+          const child = spawn(process.execPath, ["-e", ${encodeJson(descendantCode)}], {
             stdio: ["ignore", "pipe", "inherit"]
           });
           child.stdout.on("data", (chunk) => {
@@ -1148,9 +1148,18 @@ describe("native runtime", { timeout: 15_000 }, () => {
           yield* Fiber.interrupt(output);
         }).pipe(
           Effect.ensuring(
-            Effect.sync(() => {
-              if (launcherPid !== undefined && process.platform !== "win32")
-                spawnSync("kill", ["-KILL", `-${launcherPid}`], { stdio: "ignore" });
+            Effect.gen(function* () {
+              if (launcherPid !== undefined && process.platform !== "win32") {
+                const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+                yield* spawner
+                  .exitCode(
+                    ChildProcess.make("kill", ["-KILL", `-${launcherPid}`], {
+                      stdout: "ignore",
+                      stderr: "ignore",
+                    }),
+                  )
+                  .pipe(Effect.ignore);
+              }
             }),
           ),
         );

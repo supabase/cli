@@ -71,7 +71,7 @@ const withRuntimeRoot = <A, E, R>(effect: (project: string) => Effect.Effect<A, 
       const path = yield* Path.Path;
       const project = path.join(root, "project");
       yield* fs.makeDirectory(project);
-      const defaults = defaultRuntimeEnvironment();
+      const defaults = yield* defaultRuntimeEnvironment;
       const runtime: StackRuntimeEnvironmentValue = {
         ...defaults,
         stateRoot: path.join(root, "managed", "stacks"),
@@ -122,7 +122,7 @@ const stopOwner = (id: StackId) =>
         stackId: id,
         ownerSessionId: owner.ownerSessionId,
         rpcRelease: owner.rpcRelease,
-      }).stop(),
+      }).stop,
     );
     const remaining = yield* readOwnerMetadata(env.stateRoot, id, env);
     if (remaining === undefined) {
@@ -367,7 +367,7 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
         const stack = yield* openStack(created.id).pipe(
           Effect.provideService(ContainerEngineResolver, resolver),
         );
-        expect((yield* stack.status()).runtime).toEqual({ kind: "container", engine: "podman" });
+        expect((yield* stack.status).runtime).toEqual({ kind: "container", engine: "podman" });
       }),
     ),
   );
@@ -413,7 +413,7 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
     withRuntimeRoot((project) =>
       Effect.gen(function* () {
         const stack = yield* createStack({ projectRoot: project });
-        const status = yield* stack.status();
+        const status = yield* stack.status;
         expect(status.lifecycle).toBe("unconfigured");
         expect(status.desiredLifecycle).toBe("unconfigured");
       }),
@@ -592,7 +592,7 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
         }).pipe(Effect.provideService(Scope.Scope, ownerScope));
         const stack = yield* openStack(stackId);
         const destroyFiber = yield* Effect.forkChild(
-          stack.destroy().pipe(Effect.andThen(Deferred.succeed(destroyDone, undefined))),
+          stack.destroy.pipe(Effect.andThen(Deferred.succeed(destroyDone, undefined))),
           { startImmediately: true },
         );
         yield* Deferred.await(destroyStarted);
@@ -616,7 +616,7 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
           { concurrency: 2 },
         );
         expect(second.id).toBe(first.id);
-        expect((yield* second.status()).lifecycle).toBe("unconfigured");
+        expect((yield* second.status).lifecycle).toBe("unconfigured");
       }),
     ),
   );
@@ -718,7 +718,7 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
         expect(second.code, second.stderr).toBe(0);
         expect(first.id).toBe(second.id);
         const attached = yield* openStack(StackIdSchema.make(first.id));
-        expect((yield* attached.status()).lifecycle).toBe("unconfigured");
+        expect((yield* attached.status).lifecycle).toBe("unconfigured");
       }),
     ),
   );
@@ -729,8 +729,8 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
       withRuntimeRoot((project) =>
         Effect.gen(function* () {
           const stack = yield* createStack({ projectRoot: project });
-          yield* stack.stop();
-          const status = yield* stack.status();
+          yield* stack.stop;
+          const status = yield* stack.status;
           expect(status.lifecycle).toBe("unconfigured");
         }),
       ),

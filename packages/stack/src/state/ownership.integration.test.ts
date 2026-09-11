@@ -14,7 +14,7 @@ import {
   Stream,
 } from "effect";
 import { ChildProcess } from "effect/unstable/process";
-import { createServer, type Server } from "node:net";
+import { createServer, Socket, type Server } from "node:net";
 import { deriveStackId, type StackIdentity } from "../identity/Identity.ts";
 import { StackOwnershipConflictError, StackStateInvalidError } from "../public/Errors.ts";
 import {
@@ -65,6 +65,29 @@ const closeServer = (server: Server) =>
     );
   });
 
+const observeRejectedPeer = (port: number) =>
+  Effect.callback<void, Error>((resume) => {
+    const socket = new Socket();
+    let connected = false;
+    const onConnect = () => {
+      connected = true;
+    };
+    const onError = (error: Error) => resume(Effect.fail(error));
+    const onClose = () => {
+      if (connected) resume(Effect.void);
+    };
+    socket.once("connect", onConnect);
+    socket.once("error", onError);
+    socket.once("close", onClose);
+    socket.connect({ host: "127.0.0.1", port });
+    return Effect.sync(() => {
+      socket.off("connect", onConnect);
+      socket.off("error", onError);
+      socket.off("close", onClose);
+      socket.destroy();
+    });
+  });
+
 const jsonText = (value: unknown) =>
   Schema.encodeSync(Schema.fromJsonString(Schema.Unknown))(value);
 
@@ -104,6 +127,14 @@ describe("stack ownership", () => {
         const lease = yield* acquirePortLease(address.port);
         yield* lease.close;
       }),
+    ),
+  );
+
+  it.live("closes accepted lease peers before lease cleanup completes", () =>
+    withPlatform(
+      Effect.acquireRelease(acquirePortLease(0), (lease) => lease.close).pipe(
+        Effect.flatMap((lease) => observeRejectedPeer(lease.port).pipe(Effect.timeout("1 second"))),
+      ),
     ),
   );
 
