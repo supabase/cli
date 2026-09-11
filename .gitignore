@@ -5,7 +5,9 @@ coverage/
 .env
 .env.*
 !.env.example
-.claude/
+.claude/*
+# The compute-runtime skill is shared; everything else under .claude/ is local.
+!.claude/skills/
 .agents/.repos/effect-v3
 .repos/slim-services/
 .worktrees/
