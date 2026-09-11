@@ -8,6 +8,7 @@ import { identityStitchLayer } from "./identity-stitch.ts";
 import { debugLoggerLayer } from "./debug-logger.layer.ts";
 import { telemetryStateLayer } from "../telemetry/telemetry-state.layer.ts";
 import { commandRuntimeLayer } from "../shared/runtime/command-runtime.layer.ts";
+import { stackApiLayer } from "../commands/experimental/stack/stack.shared.ts";
 
 /**
  * Runtime layer shared by `supabase test db` and its hidden alias `supabase
@@ -45,5 +46,7 @@ export const testDbRuntimeLayer = (commandPath: ReadonlyArray<string>) =>
     // above, so the lazy linked stack shares a single stitch attempt.
     identityStitchLayer,
     telemetryStateLayer,
+    // Exposed so native-engine prove can read `runtime.kind` and pick PATH pg_prove.
+    stackApiLayer,
     commandRuntimeLayer(commandPath),
   );

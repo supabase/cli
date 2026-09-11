@@ -341,6 +341,12 @@ export const DESTROY_STACK_ERROR_TAGS = [
 ] as const satisfies ReadonlyArray<StackErrorTag>;
 export type DestroyStackError = ErrorByTag<(typeof DESTROY_STACK_ERROR_TAGS)[number]>;
 
+export const RESET_DATABASE_ERROR_TAGS = [
+  "StackNotFoundError",
+  ...STACK_START_ERROR_TAGS,
+] as const satisfies ReadonlyArray<StackErrorTag>;
+export type ResetDatabaseError = ErrorByTag<(typeof RESET_DATABASE_ERROR_TAGS)[number]>;
+
 export const EPHEMERAL_POSTGRES_ERROR_TAGS = [
   "EphemeralPostgresError",
   "StackVersionUnsupportedError",

@@ -42,7 +42,7 @@ import {
   encodePreface,
   MaintenanceProtocolError,
 } from "./MaintenanceProtocol.ts";
-import type { StackRpcError, StackRpcHandlers } from "./StackRpc.ts";
+import { STACK_RPC_RELEASE, type StackRpcError, type StackRpcHandlers } from "./StackRpc.ts";
 
 interface ServerOverrides {
   readonly rpcHandlers?: Partial<StackRpcHandlers>;
@@ -147,6 +147,7 @@ const withServer = <A, E, R>(
           }),
         start: () => Effect.succeed(status),
         destroy: () => Effect.void,
+        resetDatabase: () => Effect.succeed(status),
         logs: () => Effect.succeed({ entries: [], cursor: { opaque: "v1_0" }, running: false }),
       };
       const defaultMaintenanceHandlers: MaintenanceHandlers = {
@@ -155,7 +156,7 @@ const withServer = <A, E, R>(
           op: "probe",
           stackId,
           ownerSessionId,
-          rpcRelease: "stack-rpc-v1@0.1.0",
+          rpcRelease: STACK_RPC_RELEASE,
         }),
         stop: Effect.succeed({ ok: true, op: "stop" }),
       };
@@ -456,7 +457,7 @@ describe("control transport", () => {
         Effect.gen(function* () {
           const preface = encodePreface({
             kind: "rpc",
-            release: "stack-rpc-v1@0.1.0",
+            release: STACK_RPC_RELEASE,
             stackId,
             ownerSessionId,
           });
@@ -503,7 +504,7 @@ describe("control transport", () => {
         Effect.gen(function* () {
           const preface = encodePreface({
             kind: "rpc",
-            release: "stack-rpc-v1@0.1.0",
+            release: STACK_RPC_RELEASE,
             stackId,
             ownerSessionId,
           });
@@ -613,7 +614,7 @@ describe("control transport", () => {
         const ownerSessionId = "session";
         const preface = encodePreface({
           kind: "rpc",
-          release: "stack-rpc-v1@0.1.0",
+          release: STACK_RPC_RELEASE,
           stackId,
           ownerSessionId,
         });
@@ -630,7 +631,7 @@ describe("control transport", () => {
       Effect.gen(function* () {
         const preface = encodePreface({
           kind: "rpc",
-          release: "stack-rpc-v1@0.1.0",
+          release: STACK_RPC_RELEASE,
           stackId: "b".repeat(64),
           ownerSessionId,
         });
@@ -647,7 +648,7 @@ describe("control transport", () => {
       Effect.gen(function* () {
         const preface = encodePreface({
           kind: "rpc",
-          release: "stack-rpc-v1@0.1.0",
+          release: STACK_RPC_RELEASE,
           stackId,
           ownerSessionId: "stale-session",
         });
@@ -670,6 +671,28 @@ describe("control transport", () => {
         const invalid = concatBytes(new Uint8Array([0, 0, 0, 1]), new Uint8Array([0xff]));
         const response = yield* sendRawAndReadFrame(endpoint, concatBytes(preface, invalid));
         expect(response).toMatchObject({ ok: false, error: { tag: "unsupported-release" } });
+      }),
+    ),
+  );
+
+  it.live("rejects an older stack RPC release with an upgrade error", () =>
+    withServer(({ endpoint, stackId, ownerSessionId }) =>
+      Effect.gen(function* () {
+        const preface = encodePreface({
+          kind: "rpc",
+          release: "stack-rpc-v1@0.1.0",
+          stackId,
+          ownerSessionId,
+        });
+        const invalid = concatBytes(new Uint8Array([0, 0, 0, 1]), new Uint8Array([0xff]));
+        const response = yield* sendRawAndReadFrame(endpoint, concatBytes(preface, invalid));
+        expect(response).toMatchObject({
+          ok: false,
+          error: {
+            tag: "unsupported-release",
+            message: `Incompatible Stack RPC release; expected ${STACK_RPC_RELEASE}, received stack-rpc-v1@0.1.0`,
+          },
+        });
       }),
     ),
   );

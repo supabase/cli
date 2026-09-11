@@ -45,6 +45,7 @@ const stack: EffectStack = {
   start: unused,
   stop: unused,
   destroy: unused,
+  resetDatabase: unused,
   logs: unused,
   followLogs: () => Stream.empty,
 };

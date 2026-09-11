@@ -112,10 +112,11 @@ Each capability may opt into eager activation in `StackConfig`; omitted settings
 non-PostgreSQL capability lazy. Prepared artifacts are not automatically pruned. `followLogs(...)`
 provides filterable live entries through a stateless client-polled cursor.
 
-Database reset is intentionally outside the current API. Applying migrations, declarative schemas,
-and seeds remains the caller's responsibility. The runtime bootstrap only reconciles the `_realtime`
-schema owner, closed database role passwords, and JWT settings in one transaction; the slim database
-artifact owns its initialization and migrations.
+`resetDatabase()` wipes Postgres data only: identity, ports, secrets, logs, and storage volumes
+stay. The database is started and bootstrapped before return. Applying migrations, declarative
+schemas, and seeds remains the caller's responsibility. The runtime bootstrap only reconciles the
+`_realtime` schema owner, closed database role passwords, and JWT settings in one transaction; the
+slim database artifact owns its initialization and migrations.
 
 `createEphemeralPostgres` is a scoped, Supervisor-free Postgres cluster for schema tooling. It uses
 the same catalog artifact and bootstrap as a stack database, is not registered in `listStacks` /

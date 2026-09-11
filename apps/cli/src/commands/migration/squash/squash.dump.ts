@@ -3,7 +3,7 @@ import { Effect } from "effect";
 import type { PgConnInput } from "../../../command-internal/db-connection.service.ts";
 import { buildSchemaDumpEnv, type DumpOptions } from "../../../command-internal/pg-dump.env.ts";
 import { dumpSchemaScript } from "../../../command-internal/pg-dump.scripts.ts";
-import { streamPgDump } from "../../../command-internal/pg-dump.run.ts";
+import { streamPgDumpWithClient, type PgDumpClient } from "../../../command-internal/pg-dump.run.ts";
 import { MigrationSquashDumpError } from "./squash.errors.ts";
 
 /**
@@ -25,6 +25,8 @@ export interface SquashDumpParams<E> {
   readonly onStdout: (chunk: Uint8Array) => Effect.Effect<void, E>;
   /** Loaded project `supabase/.env` map — forwarded to {@link streamPgDump}'s own `SUPABASE_NETWORK_ID` fallback. */
   readonly projectEnvValues?: Readonly<Record<string, string>>;
+  /** Native-engine shadows dump with PATH `pg_dump`; container shadows keep the tool container. */
+  readonly client?: PgDumpClient;
 }
 
 /**
@@ -40,12 +42,13 @@ export const squashDumpSchema = Effect.fnUntraced(function* <E>(params: SquashDu
     excludeTable: [],
     columnInsert: false,
   };
-  const result = yield* streamPgDump({
+  const result = yield* streamPgDumpWithClient({
     image: params.image,
     script: dumpSchemaScript,
     env: buildSchemaDumpEnv(params.conn, opt),
     onStdout: params.onStdout,
     projectEnvValues: params.projectEnvValues,
+    client: params.client ?? { kind: "container" },
   });
   if (result.exitCode !== 0) {
     return yield* Effect.fail(
@@ -80,6 +83,7 @@ export const squashDumpSchemaToString = Effect.fnUntraced(function* (params: {
   readonly conn: PgConnInput;
   readonly schema: ReadonlyArray<string>;
   readonly projectEnvValues?: Readonly<Record<string, string>>;
+  readonly client?: PgDumpClient;
 }) {
   const chunks: Array<Uint8Array> = [];
   yield* squashDumpSchema({
@@ -88,6 +92,7 @@ export const squashDumpSchemaToString = Effect.fnUntraced(function* (params: {
     schema: params.schema,
     onStdout: (chunk) => Effect.sync(() => chunks.push(chunk)),
     projectEnvValues: params.projectEnvValues,
+    client: params.client,
   });
   return new TextDecoder().decode(concatChunks(chunks));
 });

@@ -17,7 +17,7 @@ import {
   isIPv6ConnectivityError,
 } from "../../../command-internal/connect-errors.ts";
 import { bold, yellow } from "../../../command-internal/colors.ts";
-import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
+import { DnsResolverFlag, NetworkIdFlag } from "../../../command-internal/global-flags.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { Tty } from "../../../shared/runtime/tty.service.ts";
 import { cobraMutuallyExclusiveErrorMessage } from "../../../shared/cli/cobra-flag-groups.ts";
@@ -35,7 +35,14 @@ import {
   buildSchemaDumpEnv,
   expandScript,
 } from "../../../command-internal/pg-dump.env.ts";
-import { streamPgDump } from "../../../command-internal/pg-dump.run.ts";
+import { streamPgDumpWithClient } from "../../../command-internal/pg-dump.run.ts";
+import {
+  dumpConnForHostClient,
+  rewriteDumpHostForToolContainer,
+} from "../../../command-internal/postgres-client.run.ts";
+import { currentStackBackend } from "../../experimental/stack/stack-backend.ts";
+import { stackRequireProjectRuntime } from "../../../command-internal/stack-local-database.ts";
+import { viperEnvStringWithProjectFallback } from "../../../command-internal/viper-env.ts";
 import { runWithPoolerFallback } from "../shared/pooler-fallback.ts";
 import {
   dumpDataScript,
@@ -71,6 +78,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const dnsResolver = yield* DnsResolverFlag;
+  const networkIdFlag = yield* NetworkIdFlag;
   const tty = yield* Tty;
   const runtimeInfo = yield* RuntimeInfo;
 
@@ -183,6 +191,35 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
     // silently printing a script.
     const tomlValues = yield* readDbToml(fs, path, cliSettings.workdir, linkedRef);
 
+    const backend = yield* currentStackBackend;
+    const stackRuntime =
+      backend.kind === "stack" && isLocal ? yield* stackRequireProjectRuntime : undefined;
+    const useHostClient = stackRuntime?.kind === "native";
+    const networkId = Option.getOrUndefined(networkIdFlag);
+    const envNetworkId = viperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", projectEnv);
+    const dumpUsesHostNetwork =
+      backend.kind === "stack"
+        ? networkId === undefined || networkId.length === 0
+        : (networkId === undefined || networkId.length === 0) && envNetworkId.length === 0;
+    const dumpConn = useHostClient
+      ? dumpConnForHostClient(conn)
+      : backend.kind === "stack" && isLocal
+        ? {
+            ...conn,
+            host: rewriteDumpHostForToolContainer(conn.host, {
+              platform: runtimeInfo.platform,
+              usesHostNetwork: dumpUsesHostNetwork,
+            }),
+          }
+        : conn;
+    const dumpClient = useHostClient
+      ? {
+          kind: "host" as const,
+          command: roleOnly ? ("pg_dumpall" as const) : ("pg_dump" as const),
+          expectedMajor: tomlValues.majorVersion,
+        }
+      : { kind: "container" as const };
+
     // 4. Pick the mode-specific script + env. --schema/-s and --exclude/-x arrive here
     //    already CSV-parsed by `parseSchemaFlags`.
     const opt = {
@@ -206,7 +243,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
             script: dumpSchemaScript,
             buildEnv: buildSchemaDumpEnv,
           } as const);
-    const modeEnv = mode.buildEnv(conn, opt);
+    const modeEnv = mode.buildEnv(dumpConn, opt);
 
     // Keys off `path.length > 0`, not flag presence: `--file ""` means stdout, no
     // file opened.
@@ -278,13 +315,14 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
                     const file = yield* fs
                       .open(resolvedFile.value, { flag: "a" })
                       .pipe(Effect.mapError(toOpenFileError));
-                    return yield* streamPgDump({
+                    return yield* streamPgDumpWithClient({
                       image,
                       script: mode.script,
                       env,
                       onStdout: (chunk) =>
                         file.writeAll(chunk).pipe(Effect.mapError(toOpenFileError)),
                       projectEnvValues: projectEnv,
+                      client: dumpClient,
                     });
                   }),
                 ),
@@ -293,7 +331,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
         : // stdout: write each chunk straight to stdout (binary-safe, no decode).
           // On a pooler retry the partial first-attempt bytes are left on
           // stdout (a pipe can't be rewound); streaming matches that.
-          streamPgDump({
+          streamPgDumpWithClient({
             image,
             script: mode.script,
             env,
@@ -307,6 +345,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
                   })
               : (chunk) => output.rawBytes(chunk),
             projectEnvValues: projectEnv,
+            client: dumpClient,
           });
 
     // 7b. IPv6 → IPv4-pooler retry, shared with `db pull`: a linked dump can reach the

@@ -69,13 +69,14 @@ leaving schema policy in the CLI.
 
 - Native and Docker/Podman shadows share one API and the same slim baseline as `stack start`.
 - Schema commands can target a running project stack through `credentials()` when the flag is on.
+- `resetDatabase` wipes Postgres without destroying the stack identity, so `db reset --local` and declarative `--apply` stay on the stack backend.
 - Legacy Docker behavior is unchanged when the flag is off.
 
 ### Negative
 
-- `db reset` / declarative `--apply`/`--reset` still need a later stack data-wipe API.
 - Cache tars cannot be shared across native and container runtimes.
 - Migra/pgAdmin remain unavailable on stack backends.
+- Native-engine dump, test, and squash require matching PostgreSQL client tools on PATH.
 
 ## Alternatives Considered
 

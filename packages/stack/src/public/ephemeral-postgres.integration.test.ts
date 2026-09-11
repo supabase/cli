@@ -1,7 +1,20 @@
 import { NodeServices } from "@effect/platform-node";
 import { PgClient } from "@effect/sql-pg";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Redacted } from "effect";
+import {
+  Cause,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Redacted,
+  Ref,
+  Stream,
+} from "effect";
 import { ChildProcess } from "effect/unstable/process";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- docker availability probe for optional container cases.
 import { spawnSync } from "node:child_process";
@@ -12,6 +25,7 @@ import { EphemeralPostgresError } from "./Errors.ts";
 import { createEphemeralPostgres } from "./EphemeralPostgres.ts";
 import { listStacks } from "./EffectStack.ts";
 import { defaultRuntimeEnvironment, StackRuntimeEnvironment } from "../supervisor/Launcher.ts";
+import { checkHostPort } from "../supervisor/HostListener.ts";
 import type { StackRuntimePreference } from "./Runtime.ts";
 
 const NATIVE_TIMEOUT_MS = 180_000;
@@ -77,7 +91,79 @@ const writeForeignMarkerTar = (tarPath: string, marker: unknown) =>
     }),
   );
 
+const postmasterPort = (contents: string): number | undefined => {
+  const port = Number(contents.split("\n")[3]?.trim());
+  return Number.isFinite(port) && port > 0 ? port : undefined;
+};
+
 describe("ephemeral Postgres", () => {
+  it.live(
+    "does not leave postgres listening after an interrupted native start",
+    () =>
+      withIsolatedRoot(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const env = yield* StackRuntimeEnvironment;
+          const ephemeralRoot = path.join(path.dirname(env.stateRoot), "ephemeral-postgres");
+          yield* fs.makeDirectory(ephemeralRoot, { recursive: true });
+          const spawned = yield* Deferred.make<number>();
+          const scan = (): Effect.Effect<void> =>
+            Effect.gen(function* () {
+              const identities = yield* fs
+                .readDirectory(ephemeralRoot)
+                .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>));
+              for (const identity of identities) {
+                const pidPath = path.join(ephemeralRoot, identity, "data", "postmaster.pid");
+                if (!(yield* fs.exists(pidPath).pipe(Effect.orElseSucceed(() => false)))) continue;
+                const contents = yield* fs.readFileString(pidPath).pipe(Effect.orElseSucceed(() => ""));
+                const port = postmasterPort(contents);
+                if (port !== undefined) {
+                  yield* Deferred.succeed(spawned, port).pipe(Effect.asVoid);
+                  return;
+                }
+              }
+            }).pipe(Effect.asVoid);
+          const watchers = yield* Ref.make(new Set<string>());
+          const watchDir = (
+            dir: string,
+            onEvent: Effect.Effect<void>,
+          ): Effect.Effect<void> =>
+            Effect.gen(function* () {
+              const known = yield* Ref.get(watchers);
+              if (known.has(dir)) return;
+              yield* Ref.update(watchers, (current) => new Set([...current, dir]));
+              yield* Effect.forkChild(
+                Stream.runForEach(fs.watch(dir), () => onEvent).pipe(Effect.ignore),
+              );
+            }).pipe(Effect.asVoid);
+          const onEvent: Effect.Effect<void> = Effect.suspend(() =>
+            Effect.gen(function* () {
+              yield* scan();
+              const identities = yield* fs
+                .readDirectory(ephemeralRoot)
+                .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>));
+              for (const identity of identities) {
+                const identityDir = path.join(ephemeralRoot, identity);
+                yield* watchDir(identityDir, onEvent);
+                const dataDir = path.join(identityDir, "data");
+                if (yield* fs.exists(dataDir).pipe(Effect.orElseSucceed(() => false)))
+                  yield* watchDir(dataDir, onEvent);
+              }
+            }).pipe(Effect.asVoid),
+          );
+          yield* watchDir(ephemeralRoot, onEvent);
+          const fiber = yield* Effect.forkChild(
+            createEphemeralPostgres({ runtime: { kind: "native" }, ...secrets }),
+          );
+          const port = yield* Deferred.await(spawned);
+          yield* Fiber.interrupt(fiber);
+          yield* checkHostPort("127.0.0.1", port, "database");
+        }),
+      ).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    NATIVE_TIMEOUT_MS,
+  );
+
   it.live("refuses a snapshot produced by a different runtime before starting Postgres", () =>
     withIsolatedRoot(
       Effect.gen(function* () {

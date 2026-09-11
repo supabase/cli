@@ -43,9 +43,12 @@ import { DbConnection, type PgConnInput } from "../../../command-internal/db-con
 import { resolveDbTargetFlags } from "../../../command-internal/db-target-flags.ts";
 import { DebugLogger } from "../../../command-internal/debug-logger.service.ts";
 import { errorMessage, relativizeErrorMessage } from "../../../command-internal/error-message.ts";
-import { viperEnvStringWithProjectFallback } from "../../../command-internal/viper-env.ts";
 import { currentStackBackend } from "../../experimental/stack/stack-backend.ts";
 import { stackWithShadowDatabase } from "../../../command-internal/stack-shadow.ts";
+import {
+  dumpConnForHostClient,
+  rewriteDumpHostForToolContainer,
+} from "../../../command-internal/postgres-client.run.ts";
 import { applyMigrations, MigrationApplyError } from "../../../command-internal/migration-apply.ts";
 import {
   INSERT_MIGRATION_VERSION,
@@ -128,26 +131,31 @@ const squashMigrations = Effect.fnUntraced(function* (
           const runtimeInfo = yield* RuntimeInfo;
           const networkIdFlag = yield* NetworkIdFlag;
           const networkId = Option.getOrUndefined(networkIdFlag);
-          const envNetworkId = viperEnvStringWithProjectFallback(
-            "SUPABASE_NETWORK_ID",
-            localInputs.context.projectEnvValues ?? {},
-          );
-          const dumpUsesHostNetwork =
-            (networkId === undefined || networkId.length === 0) && envNetworkId.length === 0;
-          const dumpConn: PgConnInput = {
-            ...stackConn,
-            host:
-              (handle.host === "127.0.0.1" || handle.host === "localhost") &&
-              (runtimeInfo.platform !== "linux" || !dumpUsesHostNetwork)
-                ? "host.docker.internal"
-                : handle.host,
-          };
+          const dumpUsesHostNetwork = networkId === undefined || networkId.length === 0;
+          const nativeShadow = handle.runtime.kind === "native";
+          const dumpClient = nativeShadow
+            ? {
+                kind: "host" as const,
+                command: "pg_dump" as const,
+                expectedMajor: toml.majorVersion,
+              }
+            : { kind: "container" as const };
+          const dumpConn: PgConnInput = nativeShadow
+            ? dumpConnForHostClient(stackConn)
+            : {
+                ...stackConn,
+                host: rewriteDumpHostForToolContainer(handle.host, {
+                  platform: runtimeInfo.platform,
+                  usesHostNetwork: dumpUsesHostNetwork,
+                }),
+              };
           const session = yield* connectShadowDatabase(stackConn);
           const before = yield* squashDumpSchemaToString({
             image,
             conn: dumpConn,
             schema: ["auth", "storage"],
             projectEnvValues: localInputs.context.projectEnvValues,
+            client: dumpClient,
           });
           yield* applyMigrations(
             session,
@@ -161,6 +169,7 @@ const squashMigrations = Effect.fnUntraced(function* (
             conn: dumpConn,
             schema: ["auth", "storage"],
             projectEnvValues: localInputs.context.projectEnvValues,
+            client: dumpClient,
           });
           const targetPath = migrations[migrations.length - 1]!;
           const targetRel = path.relative(workdir, targetPath);
@@ -179,6 +188,7 @@ const squashMigrations = Effect.fnUntraced(function* (
                 conn: dumpConn,
                 schema: [],
                 projectEnvValues: localInputs.context.projectEnvValues,
+                client: dumpClient,
                 onStdout: (chunk) =>
                   file.writeAll(chunk).pipe(
                     Effect.mapError(

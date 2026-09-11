@@ -10,6 +10,8 @@ import { Output } from "../../../../../shared/output/output.service.ts";
 import { Tty } from "../../../../../shared/runtime/tty.service.ts";
 import { CommandSettings } from "../../../../../config/command-settings.service.ts";
 import { resetLocalDatabase } from "../../../../../command-internal/db-bootstrap/reset-local-database.ts";
+import { stackLocalDatabaseConn } from "../../../../../command-internal/stack-local-database.ts";
+import { currentStackBackend } from "../../../../experimental/stack/stack-backend.ts";
 import { bold, red, yellow } from "../../../../../command-internal/colors.ts";
 import { DbConnection } from "../../../../../command-internal/db-connection.service.ts";
 import { getHostname } from "../../../../../command-internal/hostname.ts";
@@ -304,7 +306,7 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
           ),
         );
       }
-      const generated =         const generated = yield* generateDeclarativeOutput(
+      const generated = yield* generateDeclarativeOutput(
           { ...run, declarativeDir: stagedDir },
           yield* resolveLocalTargetEndpoint(
             { port: toml.port, password: toml.password },
@@ -576,8 +578,26 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
 
     // Step 8: apply the migration to the local database (native).
     yield* ensureLocalPostgresImageCurrent;
+    const backend = yield* currentStackBackend;
+    const applyTarget =
+      backend.kind === "stack"
+        ? yield* stackLocalDatabaseConn.pipe(
+            Effect.mapError(
+              (error) => new DeclarativeApplyError({ message: error.message, connect: true }),
+            ),
+          )
+        : {
+            host: getHostname(),
+            port: toml.port,
+            password: toml.password,
+          };
     const applyExit = yield* applyMigrationToLocal(
-      { port: toml.port, password: toml.password, dnsResolver },
+      {
+        host: applyTarget.host,
+        port: applyTarget.port,
+        password: applyTarget.password,
+        dnsResolver,
+      },
       migrationPaths,
     ).pipe(Effect.exit);
 
@@ -687,7 +707,7 @@ const declarativeDirHasFiles = Effect.fnUntraced(function* (
 
 /** Connects once and applies the ordered migration files. */
 const applyMigrationToLocal = (
-  local: { port: number; password: string; dnsResolver: "native" | "https" },
+  local: { host: string; port: number; password: string; dnsResolver: "native" | "https" },
   migrationPaths: ReadonlyArray<string>,
 ) =>
   Effect.gen(function* () {
@@ -697,9 +717,7 @@ const applyMigrationToLocal = (
     const session = yield* dbConnection
       .connect(
         {
-          // Host resolution order: SUPABASE_SERVICES_HOSTNAME → tcp DOCKER_HOST → 127.0.0.1, not
-          // a hardcoded loopback.
-          host: getHostname(),
+          host: local.host,
           port: local.port,
           user: "postgres",
           password: local.password,
