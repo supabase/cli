@@ -356,6 +356,47 @@ const expectEndpointsRefused = async (endpoints: ReadonlyArray<StackEndpoint>): 
   }
 };
 
+const waitForLogEntry = async (
+  stack: Pick<TestStack, "logs" | "status">,
+  iterator: AsyncIterator<StackLogEntry>,
+  predicate: (entry: StackLogEntry) => boolean,
+): Promise<StackLogEntry> => {
+  const observation = (async (): Promise<StackLogEntry> => {
+    while (true) {
+      const next = await iterator.next();
+      if (next.done) throw new Error("Stack log stream ended before idle stop");
+      if (predicate(next.value)) return next.value;
+    }
+  })();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      observation,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("Timed out waiting for idle stop log")),
+          REQUEST_TIMEOUT_MS,
+        );
+      }),
+    ]);
+  } catch (cause) {
+    let diagnostics = "unavailable";
+    try {
+      const [status, logs] = await Promise.all([stack.status(), stack.logs({ tail: 20 })]);
+      const rest = status.capabilities.find(({ name }) => name === "rest");
+      const recent = logs.entries
+        .map((entry) => `${entry.source}/${entry.stream}: ${entry.message}`)
+        .join("\n");
+      diagnostics = `lifecycle=${status.lifecycle}; rest=${rest?.state ?? "unavailable"}; recent logs:\n${recent}`;
+    } catch {
+      // Preserve the stream failure when diagnostics are unavailable.
+    }
+    throw new Error(`Idle stop observation failed: ${diagnostics}`, { cause });
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+};
+
 const expectRuntimeInputsAbsent = async (
   stack: Pick<TestStack, "stateRoot" | "id">,
 ): Promise<void> => {
@@ -1017,6 +1058,15 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
   await using stack: TestStack = await createTestStack({
     name: `stack-e2e-${identity}`,
     runtime: mode.runtime,
+    config: {
+      capabilities: {
+        rest: { idleTimeoutSeconds: false },
+        auth: { idleTimeoutSeconds: false },
+        realtime: { idleTimeoutSeconds: false },
+        studio: { idleTimeoutSeconds: false },
+        pooler: { idleTimeoutSeconds: false },
+      },
+    },
     setupProject: async (root) => {
       projectRoot = root;
       const directory = join(root, "supabase", "functions", functionSlug);
@@ -1387,6 +1437,109 @@ describe("managed Supabase stack whole-stack E2E", () => {
         }
         if (primary !== undefined) throw primary;
         if (cleanupFailure !== undefined) throw cleanupFailure;
+      },
+    );
+
+    test(
+      `stops and wakes idle REST in ${mode.name} mode`,
+      { timeout: E2E_TIMEOUT_MS },
+      async () => {
+        const identity = crypto.randomUUID().replaceAll("-", "").slice(0, 16).toLowerCase();
+        const table = `idle_${identity}`;
+        const marker = `idle-${identity}`;
+        await using stack: TestStack = await createTestStack({
+          name: `stack-idle-rest-${identity}`,
+          runtime: mode.runtime,
+          config: {
+            capabilities: {
+              database: {},
+              rest: { activation: "lazy", idleTimeoutSeconds: 5 },
+              // API gateway credentials are materialized by auth even while its workload stays lazy.
+              auth: {},
+              realtime: { enabled: false },
+              storage: { enabled: false },
+              functions: { enabled: false },
+              studio: { enabled: false },
+              mail: { enabled: false },
+              analytics: { enabled: false },
+              pooler: { enabled: false },
+            },
+          },
+        });
+        const initial = await stack.status();
+        expect(initial.lifecycle).toBe("running");
+        const api = endpoint(initial, "api");
+        const initialSupervisorPid = await supervisorPid(stack.id);
+        await expectOwnedWorkloads(mode, stack.id, ["database:database"]);
+
+        const credentials = await stack.credentials();
+        await databaseQuery(
+          credentials.database.url,
+          `CREATE TABLE public."${table}" (id integer PRIMARY KEY, payload text NOT NULL)`,
+        );
+        await databaseQuery(
+          credentials.database.url,
+          `GRANT SELECT ON public."${table}" TO anon, authenticated, service_role`,
+        );
+        expect(
+          await databaseQuery(
+            credentials.database.url,
+            `INSERT INTO public."${table}" (id, payload) VALUES (1, $1) RETURNING id, payload`,
+            [marker],
+          ),
+        ).toEqual([{ id: 1, payload: marker }]);
+
+        const restPath = `/rest/v1/${table}?select=id,payload`;
+        const beforeLogs = await stack.logs();
+        const logIterator = stack.followLogs({ cursor: beforeLogs.cursor })[Symbol.asyncIterator]();
+        const idleStopLog = waitForLogEntry(
+          stack,
+          logIterator,
+          (entry) =>
+            entry.source === "supervisor" &&
+            entry.stream === "internal" &&
+            entry.message === "Stopped rest after inactivity",
+        );
+        const observedIdleStopLog = idleStopLog.then(
+          (entry) => ({ ok: true as const, entry }),
+          (cause: unknown) => ({ ok: false as const, cause }),
+        );
+        try {
+          const firstRows = await jsonValue(
+            await request(api.url, restPath, {
+              headers: { ...apiHeaders(credentials), Accept: "application/json" },
+            }),
+          );
+          expect(firstRows).toEqual([{ id: 1, payload: marker }]);
+          const observed = await observedIdleStopLog;
+          if (!observed.ok) throw observed.cause;
+        } finally {
+          await logIterator.return?.();
+        }
+
+        await expectOwnedWorkloads(mode, stack.id, ["database:database"]);
+        const stoppedRest = await stack.status();
+        expect(capabilityState(stoppedRest, "rest")).toBe("dormant");
+        expect(endpoint(stoppedRest, "api").port).toBe(api.port);
+        expect(await supervisorPid(stack.id)).toBe(initialSupervisorPid);
+        expect(
+          await databaseQuery(
+            credentials.database.url,
+            `SELECT payload FROM public."${table}" WHERE id = 1`,
+          ),
+        ).toEqual([{ payload: marker }]);
+
+        const secondRows = await jsonValue(
+          await request(api.url, restPath, {
+            headers: { ...apiHeaders(credentials), Accept: "application/json" },
+          }),
+        );
+        expect(secondRows).toEqual([{ id: 1, payload: marker }]);
+        await expectOwnedWorkloads(mode, stack.id, ["database:database", "rest:rest"]);
+        const restartedRest = await stack.status();
+        expect(capabilityState(restartedRest, "rest")).toBe("ready");
+        expect(endpoint(restartedRest, "api").port).toBe(api.port);
+        expect(await supervisorPid(stack.id)).toBe(initialSupervisorPid);
       },
     );
 

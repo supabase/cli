@@ -49,6 +49,8 @@ export interface CapabilityModule<Settings> {
   readonly defaultSettings: Settings;
   readonly defaultEnabled: boolean;
   readonly defaultActivation: ActivationMode;
+  /** Default traffic idle timeout; false means this capability is not auto-stopped. */
+  readonly defaultIdleTimeoutSeconds?: number | false;
   readonly dependencies: ReadonlyArray<CapabilityName>;
   readonly defaultVersion: string;
   /** Release selectors are the only source of workload versions and artifacts. */

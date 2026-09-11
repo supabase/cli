@@ -14,6 +14,7 @@ import {
   Ref,
   Scope,
 } from "effect";
+import * as TestClock from "effect/testing/TestClock";
 import { Headers } from "effect/unstable/http";
 import { Rpc } from "effect/unstable/rpc";
 import { RequestId } from "effect/unstable/rpc/RpcMessage";
@@ -46,6 +47,7 @@ import { resolveStackPaths } from "../state/Paths.ts";
 import { StackRpcGroup, type StackRpcError } from "../control/StackRpc.ts";
 import { makeSupervisor, type Supervisor, type SupervisorRuntime } from "./Supervisor.ts";
 import type { SupervisorIngress } from "./Ingress.ts";
+import type { GatewayActivity } from "../gateway/ActivityTracker.ts";
 
 const identity = {
   projectRoot: "/tmp/supabase-supervisor",
@@ -79,6 +81,12 @@ const makeFixture = (
   fixtureOptions: {
     readonly ingress?: SupervisorIngress;
     readonly timeline?: Ref.Ref<ReadonlyArray<string>>;
+    readonly logRecords?: Ref.Ref<ReadonlyArray<string>>;
+    readonly logWritten?: Deferred.Deferred<void>;
+    readonly logWrittenFor?: string;
+    readonly logWrittenAdditional?: Deferred.Deferred<void>;
+    readonly logWrittenAdditionalFor?: string;
+    readonly logQueue?: Queue.Queue<string>;
     readonly runtime?: StackRuntime;
     readonly startGate?: Deferred.Deferred<void>;
     readonly startStarted?: Deferred.Deferred<void>;
@@ -95,6 +103,10 @@ const makeFixture = (
     readonly stopGate?: Deferred.Deferred<void>;
     readonly stopStarted?: Deferred.Deferred<void>;
     readonly workloadStopFailFirst?: Ref.Ref<boolean>;
+    readonly workloadStopGate?: Deferred.Deferred<void>;
+    readonly workloadStopStarted?: Deferred.Deferred<void>;
+    readonly workloadStopFinished?: Deferred.Deferred<void>;
+    readonly workloadStopFinishedFor?: string;
     readonly workloadRemoveFailFirst?: Ref.Ref<boolean>;
     readonly stopFailFirst?: Ref.Ref<boolean>;
     readonly destroyGate?: Deferred.Deferred<void>;
@@ -259,6 +271,10 @@ const makeFixture = (
         }),
       stop: (key) =>
         Effect.gen(function* () {
+          if (fixtureOptions.workloadStopStarted !== undefined)
+            yield* Deferred.succeed(fixtureOptions.workloadStopStarted, undefined);
+          if (fixtureOptions.workloadStopGate !== undefined)
+            yield* Deferred.await(fixtureOptions.workloadStopGate);
           if (fixtureOptions.workloadStopFailFirst !== undefined) {
             const fail = yield* Ref.get(fixtureOptions.workloadStopFailFirst);
             if (fail) {
@@ -278,6 +294,12 @@ const makeFixture = (
           yield* Ref.update(resources, (current) =>
             current.filter((entry) => entry.workloadId !== key.workloadId),
           );
+          if (
+            fixtureOptions.workloadStopFinished !== undefined &&
+            (fixtureOptions.workloadStopFinishedFor === undefined ||
+              fixtureOptions.workloadStopFinishedFor === key.workloadId)
+          )
+            yield* Deferred.succeed(fixtureOptions.workloadStopFinished, undefined);
         }),
       remove: (key) =>
         Effect.gen(function* () {
@@ -423,7 +445,39 @@ const makeFixture = (
       },
       logStore: {
         path: "memory://logs",
-        append: () => Effect.succeed(entry),
+        append: (record) =>
+          (fixtureOptions.logRecords === undefined
+            ? Effect.void
+            : Ref.update(fixtureOptions.logRecords, (current) => [...current, record.message])
+          ).pipe(
+            Effect.andThen(
+              fixtureOptions.logQueue === undefined
+                ? Effect.void
+                : Queue.offer(fixtureOptions.logQueue, record.message),
+            ),
+            Effect.andThen(
+              fixtureOptions.logWritten === undefined ||
+                (fixtureOptions.logWrittenFor !== undefined &&
+                  !record.message.includes(fixtureOptions.logWrittenFor))
+                ? Effect.void
+                : Deferred.succeed(fixtureOptions.logWritten, undefined),
+            ),
+            Effect.andThen(
+              fixtureOptions.logWrittenAdditional === undefined ||
+                (fixtureOptions.logWrittenAdditionalFor !== undefined &&
+                  !record.message.includes(fixtureOptions.logWrittenAdditionalFor))
+                ? Effect.void
+                : Deferred.succeed(fixtureOptions.logWrittenAdditional, undefined),
+            ),
+            Effect.andThen(
+              Effect.succeed({
+                ...entry,
+                source: record.source,
+                stream: record.stream,
+                message: record.message,
+              }),
+            ),
+          ),
         read: (options) =>
           options?.cursor?.opaque === "not-a-cursor"
             ? Effect.fail(new InvalidLogCursorError({ message: "Log cursor is invalid" }))
@@ -543,6 +597,509 @@ describe("Supervisor composition", () => {
         expect(status.capabilities.find(({ name }) => name === "rest")?.state).toBe("ready");
         expect(yield* Ref.get(fixture.calls)).toContain("start:database:database");
       }),
+    ),
+  );
+
+  it.live("retires lazy traffic after its lease ends and reactivates on demand", () =>
+    run(
+      Effect.gen(function* () {
+        const activity = yield* Ref.make<GatewayActivity | undefined>(undefined);
+        const timeline = yield* Ref.make<ReadonlyArray<string>>([]);
+        const activationStarted = yield* Deferred.make<void>();
+        const logWritten = yield* Deferred.make<void>();
+        const fixture = yield* makeFixture({
+          timeline,
+          activationStarted,
+          logWritten,
+          logWrittenFor: "Stopped rest after inactivity",
+          ingress: {
+            acquire: () =>
+              Effect.succeed({
+                assignments: {},
+                privateAssignments: [],
+                hostListeners: [],
+                fresh: false,
+                ownershipToken: Symbol(),
+              }),
+            open: (_input, _reservation, _activate, tracker) =>
+              tracker === undefined ? Effect.void : Ref.set(activity, tracker),
+            close: Effect.void,
+          },
+        });
+        yield* fixture.supervisor.start({
+          config: { capabilities: { rest: { activation: "lazy", idleTimeoutSeconds: 1 } } },
+        });
+        const tracker = yield* Ref.get(activity);
+        if (tracker === undefined) return yield* Effect.die("gateway activity was not installed");
+        const release = yield* Deferred.make<void>();
+        const request = yield* Effect.forkChild(
+          tracker.track(
+            "rest",
+            fixture.supervisor.activate("rest").pipe(Effect.andThen(Deferred.await(release))),
+          ),
+        );
+        yield* Deferred.await(activationStarted);
+        yield* TestClock.adjust("1 second");
+        expect(
+          (yield* fixture.supervisor.status).capabilities.find(({ name }) => name === "rest")
+            ?.state,
+        ).toBe("ready");
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(request);
+        yield* TestClock.adjust("1 second");
+        yield* Deferred.await(logWritten);
+        expect(
+          (yield* fixture.supervisor.status).capabilities.find(({ name }) => name === "rest")
+            ?.state,
+        ).toBe("dormant");
+        expect(yield* Ref.get(timeline)).toContain("stop:rest:rest");
+        yield* fixture.supervisor.activate("rest");
+        expect(
+          (yield* fixture.supervisor.status).capabilities.find(({ name }) => name === "rest")
+            ?.state,
+        ).toBe("ready");
+      }).pipe(Effect.provide(TestClock.layer())),
+    ),
+  );
+
+  it.live("keeps a lazy dependency pinned until its dependent retires", () =>
+    run(
+      Effect.gen(function* () {
+        const activity = yield* Ref.make<GatewayActivity | undefined>(undefined);
+        const timeline = yield* Ref.make<ReadonlyArray<string>>([]);
+        const activationStarted = yield* Deferred.make<void>();
+        const logWritten = yield* Deferred.make<void>();
+        const restLogWritten = yield* Deferred.make<void>();
+        const fixture = yield* makeFixture({
+          timeline,
+          activationStarted,
+          logWritten,
+          logWrittenFor: "Stopped studio after inactivity",
+          logWrittenAdditional: restLogWritten,
+          logWrittenAdditionalFor: "Stopped rest after inactivity",
+          ingress: {
+            acquire: () =>
+              Effect.succeed({
+                assignments: {},
+                privateAssignments: [],
+                hostListeners: [],
+                fresh: false,
+                ownershipToken: Symbol(),
+              }),
+            open: (_input, _reservation, _activate, tracker) =>
+              tracker === undefined ? Effect.void : Ref.set(activity, tracker),
+            close: Effect.void,
+          },
+        });
+        yield* fixture.supervisor.start({
+          config: {
+            capabilities: {
+              rest: { activation: "lazy", idleTimeoutSeconds: 1 },
+              studio: { activation: "lazy", idleTimeoutSeconds: 1 },
+            },
+          },
+        });
+        const tracker = yield* Ref.get(activity);
+        if (tracker === undefined) return yield* Effect.die("gateway activity was not installed");
+        const release = yield* Deferred.make<void>();
+        const request = yield* Effect.forkChild(
+          tracker.track(
+            "studio",
+            fixture.supervisor.activate("studio").pipe(Effect.andThen(Deferred.await(release))),
+          ),
+        );
+        yield* Deferred.await(activationStarted);
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(request);
+        yield* TestClock.adjust("1 second");
+        yield* Deferred.await(logWritten);
+        const afterStudio = yield* fixture.supervisor.status;
+        expect(afterStudio.capabilities.find(({ name }) => name === "studio")?.state).toBe(
+          "dormant",
+        );
+        expect(afterStudio.capabilities.find(({ name }) => name === "rest")?.state).toBe("ready");
+        yield* TestClock.adjust("1 second");
+        yield* Deferred.await(restLogWritten);
+        expect(
+          (yield* fixture.supervisor.status).capabilities.find(({ name }) => name === "rest")
+            ?.state,
+        ).toBe("dormant");
+        expect(yield* Ref.get(timeline)).toEqual(
+          expect.arrayContaining(["stop:studio:pgmeta", "stop:rest:rest"]),
+        );
+      }).pipe(Effect.provide(TestClock.layer())),
+    ),
+  );
+
+  it.live("accepts very small idle timeout values", () =>
+    run(
+      Effect.gen(function* () {
+        const activity = yield* Ref.make<GatewayActivity | undefined>(undefined);
+        const logWritten = yield* Deferred.make<void>();
+        const fixture = yield* makeFixture({
+          logWritten,
+          logWrittenFor: "Stopped rest after inactivity",
+          ingress: {
+            acquire: () =>
+              Effect.succeed({
+                assignments: {},
+                privateAssignments: [],
+                hostListeners: [],
+                fresh: false,
+                ownershipToken: Symbol(),
+              }),
+            open: (_input, _reservation, _activate, tracker) =>
+              tracker === undefined ? Effect.void : Ref.set(activity, tracker),
+            close: Effect.void,
+          },
+        });
+        yield* fixture.supervisor.start({
+          config: { capabilities: { rest: { activation: "lazy", idleTimeoutSeconds: 1e-7 } } },
+        });
+        const tracker = yield* Ref.get(activity);
+        if (tracker === undefined) return yield* Effect.die("gateway activity was not installed");
+        yield* tracker.track("rest", fixture.supervisor.activate("rest"));
+        yield* TestClock.adjust("1 millis");
+        yield* Deferred.await(logWritten);
+        expect(
+          (yield* fixture.supervisor.status).capabilities.find(({ name }) => name === "rest")
+            ?.state,
+        ).toBe("dormant");
+      }).pipe(Effect.provide(TestClock.layer())),
+    ),
+  );
+
+  it.live("rearms a zero-rounded idle timeout after its first retirement", () =>
+    run(
+      Effect.gen(function* () {
+        const logs = yield* Queue.unbounded<string>();
+        const fixture = yield* makeFixture({
+          logQueue: logs,
+        });
+        yield* fixture.supervisor.start({
+          config: { capabilities: { rest: { activation: "lazy", idleTimeoutSeconds: 1e-12 } } },
+        });
+        yield* fixture.supervisor.activate("rest");
+        yield* TestClock.adjust("1 millis");
+        expect(yield* Queue.take(logs)).toContain("Stopped rest after inactivity");
+        expect(
+          (yield* fixture.supervisor.status).capabilities.find(({ name }) => name === "rest")
+            ?.state,
+        ).toBe("dormant");
+
+        yield* fixture.supervisor.activate("rest");
+        yield* TestClock.adjust("1 millis");
+        expect(yield* Queue.take(logs)).toContain("Stopped rest after inactivity");
+        expect(
+          (yield* fixture.supervisor.status).capabilities.find(({ name }) => name === "rest")
+            ?.state,
+        ).toBe("dormant");
+      }).pipe(Effect.provide(TestClock.layer())),
+    ),
+  );
+
+  it.live("resets the idle deadline when a second request arrives", () =>
+    run(
+      Effect.gen(function* () {
+        const activity = yield* Ref.make<GatewayActivity | undefined>(undefined);
+        const activationStarted = yield* Deferred.make<void>();
+        const logWritten = yield* Deferred.make<void>();
+        const fixture = yield* makeFixture({
+          activationStarted,
+          logWritten,
+          logWrittenFor: "Stopped rest after inactivity",
+          ingress: {
+            acquire: () =>
+              Effect.succeed({
+                assignments: {},
+                privateAssignments: [],
+                hostListeners: [],
+                fresh: false,
+                ownershipToken: Symbol(),
+              }),
+            open: (_input, _reservation, _activate, tracker) =>
+              tracker === undefined ? Effect.void : Ref.set(activity, tracker),
+            close: Effect.void,
+          },
+        });
+        yield* fixture.supervisor.start({
+          config: { capabilities: { rest: { activation: "lazy", idleTimeoutSeconds: 1 } } },
+        });
+        const tracker = yield* Ref.get(activity);
+        if (tracker === undefined) return yield* Effect.die("gateway activity was not installed");
+        const first = yield* Effect.forkChild(
+          tracker.track("rest", fixture.supervisor.activate("rest")),
+        );
+        yield* Deferred.await(activationStarted);
+        yield* Fiber.join(first);
+        yield* TestClock.adjust("500 millis");
+        yield* tracker.track("rest", Effect.void);
+        yield* TestClock.adjust("500 millis");
+        expect(
+          (yield* fixture.supervisor.status).capabilities.find(({ name }) => name === "rest")
+            ?.state,
+        ).toBe("ready");
+        yield* TestClock.adjust("1 second");
+        yield* Deferred.await(logWritten);
+        expect(
+          (yield* fixture.supervisor.status).capabilities.find(({ name }) => name === "rest")
+            ?.state,
+        ).toBe("dormant");
+      }).pipe(Effect.provide(TestClock.layer())),
+    ),
+  );
+
+  it.live("queues traffic arriving during idle cleanup for a fresh activation", () =>
+    run(
+      Effect.gen(function* () {
+        const activity = yield* Ref.make<GatewayActivity | undefined>(undefined);
+        const activationCalls = yield* Ref.make(0);
+        const stopStarted = yield* Deferred.make<void>();
+        const stopGate = yield* Deferred.make<void>();
+        const fixture = yield* makeFixture({
+          activationCalls,
+          workloadStopStarted: stopStarted,
+          workloadStopGate: stopGate,
+          ingress: {
+            acquire: () =>
+              Effect.succeed({
+                assignments: {},
+                privateAssignments: [],
+                hostListeners: [],
+                fresh: false,
+                ownershipToken: Symbol(),
+              }),
+            open: (_input, _reservation, _activate, tracker) =>
+              tracker === undefined ? Effect.void : Ref.set(activity, tracker),
+            close: Effect.void,
+          },
+        });
+        yield* fixture.supervisor.start({
+          config: { capabilities: { rest: { activation: "lazy", idleTimeoutSeconds: 1 } } },
+        });
+        const tracker = yield* Ref.get(activity);
+        if (tracker === undefined) return yield* Effect.die("gateway activity was not installed");
+        yield* tracker.track("rest", fixture.supervisor.activate("rest"));
+        yield* TestClock.adjust("1 second");
+        yield* Deferred.await(stopStarted);
+
+        const requestStarted = yield* Deferred.make<void>();
+        const request = yield* Effect.forkChild(
+          Deferred.succeed(requestStarted, undefined).pipe(
+            Effect.andThen(tracker.track("rest", fixture.supervisor.activate("rest"))),
+          ),
+        );
+        yield* Deferred.await(requestStarted);
+        expect(yield* Ref.get(activationCalls)).toBe(1);
+
+        yield* Deferred.succeed(stopGate, undefined);
+        yield* Fiber.join(request);
+        expect(yield* Ref.get(activationCalls)).toBe(2);
+        expect(
+          (yield* fixture.supervisor.status).capabilities.find(({ name }) => name === "rest")
+            ?.state,
+        ).toBe("ready");
+      }).pipe(Effect.provide(TestClock.layer())),
+    ),
+  );
+
+  it.live("keeps unrelated ready traffic flowing during idle cleanup", () =>
+    run(
+      Effect.gen(function* () {
+        const activity = yield* Ref.make<GatewayActivity | undefined>(undefined);
+        const stopStarted = yield* Deferred.make<void>();
+        const stopGate = yield* Deferred.make<void>();
+        const authCompleted = yield* Deferred.make<void>();
+        const fixture = yield* makeFixture({
+          workloadStopStarted: stopStarted,
+          workloadStopGate: stopGate,
+          ingress: {
+            acquire: () =>
+              Effect.succeed({
+                assignments: {},
+                privateAssignments: [],
+                hostListeners: [],
+                fresh: false,
+                ownershipToken: Symbol(),
+              }),
+            open: (_input, _reservation, _activate, tracker) =>
+              tracker === undefined ? Effect.void : Ref.set(activity, tracker),
+            close: Effect.void,
+          },
+        });
+        const body = Effect.gen(function* () {
+          yield* fixture.supervisor.start({
+            config: {
+              capabilities: {
+                rest: { activation: "lazy", idleTimeoutSeconds: 1 },
+                auth: { activation: "eager" },
+              },
+            },
+          });
+          const tracker = yield* Ref.get(activity);
+          if (tracker === undefined) return yield* Effect.die("gateway activity was not installed");
+          yield* tracker.track("auth", fixture.supervisor.activate("auth"));
+          yield* tracker.track("rest", fixture.supervisor.activate("rest"));
+          yield* TestClock.adjust("1 second");
+          yield* Deferred.await(stopStarted);
+
+          const authRequest = yield* Effect.forkChild(
+            tracker.track(
+              "auth",
+              fixture.supervisor
+                .activate("auth")
+                .pipe(Effect.andThen(Deferred.succeed(authCompleted, undefined))),
+            ),
+            { startImmediately: true },
+          );
+          const completed = yield* Effect.race(
+            Deferred.await(authCompleted).pipe(Effect.as(true)),
+            TestClock.adjust("100 millis").pipe(Effect.as(false)),
+          );
+          expect(completed).toBe(true);
+          yield* Deferred.succeed(stopGate, undefined);
+          yield* Fiber.join(authRequest);
+        });
+        yield* body.pipe(Effect.ensuring(Deferred.succeed(stopGate, undefined)));
+      }).pipe(Effect.provide(TestClock.layer())),
+    ),
+  );
+
+  it.live("records the original cause when idle cleanup fails", () =>
+    run(
+      Effect.gen(function* () {
+        const activity = yield* Ref.make<GatewayActivity | undefined>(undefined);
+        const logRecords = yield* Ref.make<ReadonlyArray<string>>([]);
+        const logWritten = yield* Deferred.make<void>();
+        const workloadStopFailFirst = yield* Ref.make(true);
+        const workloadStopStarted = yield* Deferred.make<void>();
+        const fixture = yield* makeFixture({
+          logRecords,
+          logWritten,
+          workloadStopFailFirst,
+          workloadStopStarted,
+          ingress: {
+            acquire: () =>
+              Effect.succeed({
+                assignments: {},
+                privateAssignments: [],
+                hostListeners: [],
+                fresh: false,
+                ownershipToken: Symbol(),
+              }),
+            open: (_input, _reservation, _activate, tracker) =>
+              tracker === undefined ? Effect.void : Ref.set(activity, tracker),
+            close: Effect.void,
+          },
+        });
+        yield* fixture.supervisor.start({
+          config: { capabilities: { rest: { activation: "lazy", idleTimeoutSeconds: 1 } } },
+        });
+        const tracker = yield* Ref.get(activity);
+        if (tracker === undefined) return yield* Effect.die("gateway activity was not installed");
+        yield* tracker.track("rest", fixture.supervisor.activate("rest"));
+        yield* TestClock.adjust("1 second");
+        yield* Deferred.await(workloadStopStarted);
+        const logged = yield* Effect.race(
+          Deferred.await(logWritten).pipe(Effect.as(true)),
+          TestClock.adjust("100 millis").pipe(Effect.as(false)),
+        );
+        expect(logged).toBe(true);
+        const messages = yield* Ref.get(logRecords);
+        expect(messages).toEqual(
+          expect.arrayContaining([
+            expect.stringContaining("Failed to stop rest after inactivity"),
+            expect.stringContaining("injected workload stop failure"),
+          ]),
+        );
+        expect((yield* fixture.supervisor.status).lifecycle).toBe("stopping");
+      }).pipe(Effect.provide(TestClock.layer())),
+    ),
+  );
+
+  it.live("cancels idle timers when a stack session stops", () =>
+    run(
+      Effect.gen(function* () {
+        const activity = yield* Ref.make<GatewayActivity | undefined>(undefined);
+        const fixture = yield* makeFixture({
+          ingress: {
+            acquire: () =>
+              Effect.succeed({
+                assignments: {},
+                privateAssignments: [],
+                hostListeners: [],
+                fresh: false,
+                ownershipToken: Symbol(),
+              }),
+            open: (_input, _reservation, _activate, tracker) =>
+              tracker === undefined ? Effect.void : Ref.set(activity, tracker),
+            close: Effect.void,
+          },
+        });
+        yield* fixture.supervisor.start({
+          config: { capabilities: { rest: { activation: "lazy", idleTimeoutSeconds: 1 } } },
+        });
+        const firstTracker = yield* Ref.get(activity);
+        if (firstTracker === undefined)
+          return yield* Effect.die("first gateway activity was not installed");
+        yield* firstTracker.track("rest", fixture.supervisor.activate("rest"));
+        yield* fixture.supervisor.maintenanceHandlers.stop;
+
+        yield* fixture.supervisor.start({
+          config: { capabilities: { rest: { activation: "lazy", idleTimeoutSeconds: 10 } } },
+        });
+        const secondTracker = yield* Ref.get(activity);
+        if (secondTracker === undefined)
+          return yield* Effect.die("second gateway activity was not installed");
+        yield* secondTracker.track("rest", fixture.supervisor.activate("rest"));
+        yield* TestClock.adjust("1 second");
+        expect(
+          (yield* fixture.supervisor.status).capabilities.find(({ name }) => name === "rest")
+            ?.state,
+        ).toBe("ready");
+      }).pipe(Effect.provide(TestClock.layer())),
+    ),
+  );
+
+  it.live("restores idle deadlines after a rejected running start", () =>
+    run(
+      Effect.gen(function* () {
+        const activity = yield* Ref.make<GatewayActivity | undefined>(undefined);
+        const logWritten = yield* Deferred.make<void>();
+        const fixture = yield* makeFixture({
+          logWritten,
+          logWrittenFor: "Stopped rest after inactivity",
+          ingress: {
+            acquire: () =>
+              Effect.succeed({
+                assignments: {},
+                privateAssignments: [],
+                hostListeners: [],
+                fresh: false,
+                ownershipToken: Symbol(),
+              }),
+            open: (_input, _reservation, _activate, tracker) =>
+              tracker === undefined ? Effect.void : Ref.set(activity, tracker),
+            close: Effect.void,
+          },
+        });
+        yield* fixture.supervisor.start({
+          config: { capabilities: { rest: { activation: "lazy", idleTimeoutSeconds: 1 } } },
+        });
+        const tracker = yield* Ref.get(activity);
+        if (tracker === undefined) return yield* Effect.die("gateway activity was not installed");
+        yield* tracker.track("rest", fixture.supervisor.activate("rest"));
+        const rejected = yield* fixture.supervisor
+          .start({ config: { capabilities: { rest: { settings: { schemas: ["private"] } } } } })
+          .pipe(Effect.exit);
+        expect(errorOf(rejected)).toBeInstanceOf(StackMustBeStoppedError);
+        yield* TestClock.adjust("1 second");
+        yield* Deferred.await(logWritten);
+        expect(
+          (yield* fixture.supervisor.status).capabilities.find(({ name }) => name === "rest")
+            ?.state,
+        ).toBe("dormant");
+      }).pipe(Effect.provide(TestClock.layer())),
     ),
   );
 

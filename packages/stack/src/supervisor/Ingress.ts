@@ -8,6 +8,7 @@ import type {
   HttpGatewayListenerOptions,
   StackGateway,
 } from "../gateway/Gateway.ts";
+import type { GatewayActivity } from "../gateway/ActivityTracker.ts";
 import {
   GatewayActivationError,
   PortUnavailableError,
@@ -58,6 +59,7 @@ export interface SupervisorIngress {
     activate: (
       capability: import("../public/Capability.ts").CapabilityName,
     ) => Effect.Effect<ActivationResult, GatewayActivationError | StackError>,
+    activity?: GatewayActivity,
   ) => Effect.Effect<void, GatewayActivationError | StackError>;
   /** Close gateway, accepted sockets, and exact listeners; safe to call repeatedly. */
   readonly close: Effect.Effect<void, StackError>;
@@ -261,6 +263,7 @@ export const makeSupervisorIngress = (
       activate: (
         capability: import("../public/Capability.ts").CapabilityName,
       ) => Effect.Effect<ActivationResult, GatewayActivationError | StackError>,
+      activity?: GatewayActivity,
     ): Effect.Effect<void, GatewayActivationError | StackError> =>
       lock.withPermit(
         Effect.gen(function* () {
@@ -404,6 +407,7 @@ export const makeSupervisorIngress = (
                       : new GatewayActivationError({ message: error.message, cause: error }),
                   ),
                 ),
+              activity,
             }).pipe(Effect.provideService(Scope.Scope, entry.scope)),
           );
           if (Exit.isFailure(gatewayResult)) {
