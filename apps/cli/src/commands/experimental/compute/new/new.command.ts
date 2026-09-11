@@ -23,7 +23,7 @@ const config = {
   ),
   runtime: Flag.choice("runtime", COMPUTE_RUNTIMES).pipe(
     Flag.withDescription(
-      "Runtime to scaffold and record in supabase/config.toml. Prompted when omitted.",
+      "Runtime to scaffold and record in supabase/config.toml. Prompted when omitted, defaulting to what --template looks like when one is given.",
     ),
     Flag.optional,
   ),
@@ -54,6 +54,12 @@ const config = {
   source: Flag.string("source").pipe(
     Flag.withDescription(
       "Scaffold the compute here instead of the default compute directory, recorded as `source` in supabase/config.toml.",
+    ),
+    Flag.optional,
+  ),
+  template: Flag.string("template").pipe(
+    Flag.withDescription(
+      "Bootstrap the compute from a git repository instead of the runtime's starter files: a GitHub owner/repo slug, optionally with a subdirectory and a #ref, or any repository URL git can clone. The repository becomes the compute's entire contents in place of those starter files, and its marker files pick the runtime when --runtime is omitted.",
     ),
     Flag.optional,
   ),
@@ -99,6 +105,14 @@ export const computeNewCommand = Command.make("new", config).pipe(
     {
       command: "supabase compute new api --source packages/api",
       description: "Scaffold the compute outside the compute directory",
+    },
+    {
+      command: "supabase compute new api --template my-org/my-templates/compute/api",
+      description: "Bootstrap from a subdirectory of a GitHub repository",
+    },
+    {
+      command: "supabase compute new api --template https://gitlab.com/my-org/api.git#v2",
+      description: "Bootstrap from any git repository, at a branch, tag or commit",
     },
   ]),
   Command.withHandler((flags) =>

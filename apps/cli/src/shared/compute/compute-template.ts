@@ -83,7 +83,7 @@ const CLONEABLE_URL = /^(?:[a-z][a-z0-9+.-]*:\/\/|[^\s/\\:@]+@[^\s/\\:]+:|\/|[A-
 
 const TEMPLATE_SUGGESTION =
   "Pass --template as a GitHub owner/repo slug, optionally with a subdirectory and a #ref " +
-  "(supabase/templates/compute/api#main), or as any repository URL git can clone.";
+  "(my-org/my-templates/compute/api#main), or as any repository URL git can clone.";
 
 const FETCH_SUGGESTION =
   "Check that git is installed, that the repository and ref exist, and that you can " +
