@@ -72,9 +72,7 @@ describe("cliProjectContextLayer", () => {
         expect(cliProjectContext.paths.value.projectRoot).toBe(projectRoot);
       }
       expect(Option.isSome(cliProjectContext.projectEnv)).toBe(true);
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(Effect.promise(() => rm(tempDir, { recursive: true, force: true }))));
   });
 
   it.live("returns empty context when no supabase project is found", () => {
@@ -87,8 +85,6 @@ describe("cliProjectContextLayer", () => {
 
       expect(Option.isNone(cliProjectContext.paths)).toBe(true);
       expect(Option.isNone(cliProjectContext.projectEnv)).toBe(true);
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(Effect.promise(() => rm(tempDir, { recursive: true, force: true }))));
   });
 });

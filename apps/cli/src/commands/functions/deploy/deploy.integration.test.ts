@@ -161,9 +161,7 @@ describe("functions deploy", () => {
       expect(telemetry.flushed).toBe(true);
     }).pipe(
       Effect.provide(layer),
-      Effect.ensuring(
-        Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-      ),
+      Effect.ensuring(Effect.promise(() => rm(tempRoot.current, { recursive: true, force: true }))),
     );
   });
 
@@ -226,9 +224,7 @@ describe("functions deploy", () => {
       );
     }).pipe(
       Effect.provide(layer),
-      Effect.ensuring(
-        Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-      ),
+      Effect.ensuring(Effect.promise(() => rm(tempRoot.current, { recursive: true, force: true }))),
     );
   });
 
@@ -294,9 +290,7 @@ describe("functions deploy", () => {
       expect(deployRequest?.url).toContain("/projects/qrstuvwxyzabcdefghij/functions/deploy");
     }).pipe(
       Effect.provide(layer),
-      Effect.ensuring(
-        Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-      ),
+      Effect.ensuring(Effect.promise(() => rm(tempRoot.current, { recursive: true, force: true }))),
     );
   });
 
@@ -364,9 +358,7 @@ describe("functions deploy", () => {
       );
     }).pipe(
       Effect.provide(layer),
-      Effect.ensuring(
-        Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-      ),
+      Effect.ensuring(Effect.promise(() => rm(tempRoot.current, { recursive: true, force: true }))),
     );
   });
 
@@ -425,9 +417,7 @@ describe("functions deploy", () => {
       expect(api.requests[0]?.urlParams).toContain("slug=configured");
     }).pipe(
       Effect.provide(layer),
-      Effect.ensuring(
-        Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-      ),
+      Effect.ensuring(Effect.promise(() => rm(tempRoot.current, { recursive: true, force: true }))),
     );
   });
 
@@ -521,9 +511,7 @@ describe("functions deploy", () => {
       expect(multiparts).toHaveLength(0);
     }).pipe(
       Effect.provide(layer),
-      Effect.ensuring(
-        Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-      ),
+      Effect.ensuring(Effect.promise(() => rm(tempRoot.current, { recursive: true, force: true }))),
     );
   });
 
@@ -609,9 +597,7 @@ describe("functions deploy", () => {
       );
     }).pipe(
       Effect.provide(layer),
-      Effect.ensuring(
-        Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-      ),
+      Effect.ensuring(Effect.promise(() => rm(tempRoot.current, { recursive: true, force: true }))),
     );
   });
 
@@ -689,9 +675,7 @@ describe("functions deploy", () => {
       expect(api.requests.some((request) => request.method === "DELETE")).toBe(true);
     }).pipe(
       Effect.provide(layer),
-      Effect.ensuring(
-        Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-      ),
+      Effect.ensuring(Effect.promise(() => rm(tempRoot.current, { recursive: true, force: true }))),
     );
   });
 
@@ -792,7 +776,7 @@ describe("functions deploy", () => {
       }).pipe(
         Effect.provide(layer),
         Effect.ensuring(
-          Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
+          Effect.promise(() => rm(tempRoot.current, { recursive: true, force: true })),
         ),
       );
     });
@@ -821,7 +805,7 @@ describe("functions deploy", () => {
       }).pipe(
         Effect.provide(layer),
         Effect.ensuring(
-          Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
+          Effect.promise(() => rm(tempRoot.current, { recursive: true, force: true })),
         ),
       );
     });
@@ -853,7 +837,7 @@ describe("functions deploy", () => {
       }).pipe(
         Effect.provide(layer),
         Effect.ensuring(
-          Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
+          Effect.promise(() => rm(tempRoot.current, { recursive: true, force: true })),
         ),
       );
     });
@@ -1000,7 +984,7 @@ describe("functions deploy", () => {
       }).pipe(
         Effect.provide(layer),
         Effect.ensuring(
-          Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
+          Effect.promise(() => rm(tempRoot.current, { recursive: true, force: true })),
         ),
       );
     });
@@ -1058,7 +1042,7 @@ describe("functions deploy", () => {
       }).pipe(
         Effect.provide(layer),
         Effect.ensuring(
-          Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
+          Effect.promise(() => rm(tempRoot.current, { recursive: true, force: true })),
         ),
       );
     });
@@ -1124,7 +1108,7 @@ describe("functions deploy", () => {
       }).pipe(
         Effect.provide(layer),
         Effect.ensuring(
-          Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
+          Effect.promise(() => rm(tempRoot.current, { recursive: true, force: true })),
         ),
       );
     });
@@ -1193,7 +1177,7 @@ describe("functions deploy", () => {
       }).pipe(
         Effect.provide(layer),
         Effect.ensuring(
-          Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
+          Effect.promise(() => rm(tempRoot.current, { recursive: true, force: true })),
         ),
       );
     });
@@ -1215,7 +1199,7 @@ describe("functions deploy", () => {
       }).pipe(
         Effect.provide(layer),
         Effect.ensuring(
-          Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
+          Effect.promise(() => rm(tempRoot.current, { recursive: true, force: true })),
         ),
       );
     });
@@ -1252,7 +1236,7 @@ describe("functions deploy", () => {
         }).pipe(
           Effect.provide(layer),
           Effect.ensuring(
-            Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
+            Effect.promise(() => rm(tempRoot.current, { recursive: true, force: true })),
           ),
         );
       },
@@ -1295,7 +1279,7 @@ describe("functions deploy", () => {
         }).pipe(
           Effect.provide(layer),
           Effect.ensuring(
-            Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
+            Effect.promise(() => rm(tempRoot.current, { recursive: true, force: true })),
           ),
         );
       },
@@ -1333,7 +1317,7 @@ describe("functions deploy", () => {
         }).pipe(
           Effect.provide(layer),
           Effect.ensuring(
-            Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
+            Effect.promise(() => rm(tempRoot.current, { recursive: true, force: true })),
           ),
         );
       },
@@ -1368,7 +1352,7 @@ describe("functions deploy", () => {
       }).pipe(
         Effect.provide(layer),
         Effect.ensuring(
-          Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
+          Effect.promise(() => rm(tempRoot.current, { recursive: true, force: true })),
         ),
       );
     });
@@ -1437,7 +1421,7 @@ describe("functions deploy", () => {
         }).pipe(
           Effect.provide(layer),
           Effect.ensuring(
-            Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
+            Effect.promise(() => rm(tempRoot.current, { recursive: true, force: true })),
           ),
           Effect.ensuring(
             Effect.sync(() => {
@@ -1490,7 +1474,7 @@ describe("functions deploy", () => {
         }).pipe(
           Effect.provide(layer),
           Effect.ensuring(
-            Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
+            Effect.promise(() => rm(tempRoot.current, { recursive: true, force: true })),
           ),
           Effect.ensuring(
             Effect.sync(() => {
@@ -1551,7 +1535,7 @@ describe("functions deploy", () => {
         }).pipe(
           Effect.provide(layer),
           Effect.ensuring(
-            Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
+            Effect.promise(() => rm(tempRoot.current, { recursive: true, force: true })),
           ),
           Effect.ensuring(
             Effect.sync(() => {
@@ -1620,7 +1604,7 @@ describe("functions deploy", () => {
         }).pipe(
           Effect.provide(layer),
           Effect.ensuring(
-            Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
+            Effect.promise(() => rm(tempRoot.current, { recursive: true, force: true })),
           ),
         );
       },
@@ -1665,7 +1649,7 @@ describe("functions deploy", () => {
         }).pipe(
           Effect.provide(layer),
           Effect.ensuring(
-            Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
+            Effect.promise(() => rm(tempRoot.current, { recursive: true, force: true })),
           ),
         );
       },
@@ -1742,7 +1726,7 @@ describe("functions deploy", () => {
       }).pipe(
         Effect.provide(layer),
         Effect.ensuring(
-          Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
+          Effect.promise(() => rm(tempRoot.current, { recursive: true, force: true })),
         ),
       );
     },
@@ -1816,7 +1800,7 @@ describe("functions deploy", () => {
       }).pipe(
         Effect.provide(layer),
         Effect.ensuring(
-          Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
+          Effect.promise(() => rm(tempRoot.current, { recursive: true, force: true })),
         ),
       );
     });
