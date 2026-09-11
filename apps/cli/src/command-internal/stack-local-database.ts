@@ -155,11 +155,13 @@ export const stackEnsurePostgresOnlyStarted: Effect.Effect<
   const existing = yield* api.value
     .findStack({ projectRoot: cliSettings.workdir })
     .pipe(Effect.mapError(startFailed));
-  if (Option.isNone(existing)) {
+  if (Option.isNone(existing) || existing.value.desiredLifecycle === "unconfigured") {
     const config = yield* loadStackConfig(cliSettings.workdir).pipe(Effect.mapError(startFailed));
-    const stack = yield* api.value
-      .createStack({ projectRoot: cliSettings.workdir })
-      .pipe(Effect.mapError(startFailed));
+    const stack = Option.isNone(existing)
+      ? yield* api.value
+          .createStack({ projectRoot: cliSettings.workdir })
+          .pipe(Effect.mapError(startFailed))
+      : yield* api.value.openStack(existing.value.id).pipe(Effect.mapError(startFailed));
     yield* stack
       .start({ config: postgresOnlyStackStartConfig(config) })
       .pipe(Effect.mapError(startFailed));
