@@ -228,7 +228,8 @@ export const runNativeLauncher = (): void => {
         return;
       }
       ownerPipe.destroy();
-      if (signal !== null) writeSync(2, `Native workload exited due to signal ${signal}\n`);
+      if (!gracefulForwarded && signal !== null)
+        writeSync(2, `Native workload exited due to signal ${signal}\n`);
       process.exit(code ?? 1);
     });
   }

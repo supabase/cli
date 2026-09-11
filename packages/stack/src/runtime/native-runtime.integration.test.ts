@@ -189,7 +189,7 @@ describe("native runtime", { timeout: 15_000 }, () => {
                 executable: process.execPath,
                 args: [
                   "-e",
-                  `const fs=require("node:fs"); fs.watch(${JSON.stringify(root)}, (_event,name) => { if (name === "trigger") process.exit(1) }); process.stdout.write("watch-ready\\n")`,
+                  `const fs=require("node:fs"); fs.watch(${JSON.stringify(root)}, () => { if (fs.existsSync(${JSON.stringify(triggerPath)})) process.exit(1) }); process.stdout.write("watch-ready\\n")`,
                 ],
               },
             }),
@@ -234,6 +234,37 @@ describe("native runtime", { timeout: 15_000 }, () => {
         const stderr = yield* native.stderr.pipe(Stream.decodeText, Stream.runCollect);
         expect(yield* native.exitCode).toBe(1);
         expect(Array.from(stderr).join("")).toContain(
+          "Native workload exited due to signal SIGTERM",
+        );
+      }),
+    ),
+  );
+
+  it.live("does not report a diagnostic for an explicit native stop", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const ready = yield* Deferred.make<void>();
+        const native = yield* spawnNativeProcess({
+          executable: process.execPath,
+          args: ["-e", 'process.stdout.write("ready\\n"); setInterval(() => {}, 1000)'],
+        });
+        const stdout = yield* native.stdout.pipe(
+          Stream.decodeText,
+          Stream.splitLines,
+          Stream.runForEach((line) =>
+            line === "ready" ? Deferred.succeed(ready, undefined) : Effect.void,
+          ),
+          Effect.forkChild({ startImmediately: true }),
+        );
+        const stderr = yield* Effect.forkChild(
+          native.stderr.pipe(Stream.decodeText, Stream.runCollect),
+          { startImmediately: true },
+        );
+        yield* Deferred.await(ready).pipe(Effect.timeout("3 seconds"));
+        yield* native.kill;
+        const stderrOutput = yield* Fiber.join(stderr);
+        yield* Fiber.join(stdout);
+        expect(Array.from(stderrOutput).join("")).not.toContain(
           "Native workload exited due to signal SIGTERM",
         );
       }),
