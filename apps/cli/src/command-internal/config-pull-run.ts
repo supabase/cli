@@ -12,10 +12,10 @@ import {
   decodeCliConfigDocumentForValidationEffect,
   writeCliConfigDocumentText,
   type ConfigEdit,
-  type ConfigEditRefusalReason,
   type DecodeCliConfigDocumentForValidationEffectOptions,
 } from "@supabase/config/internal";
 import type { ConfigChange } from "@supabase/config";
+import { configEditRefusalPhrase, configEditRefusalRemediation } from "./config-edit-refusal.ts";
 import { operationDefinitions } from "@supabase/api/effect";
 import { Effect, FileSystem, Result, Schema, SchemaIssue } from "effect";
 
@@ -170,51 +170,6 @@ function configPullLabelCollisionMessage(
     return `[remotes.${conflictingBlock}] already tracks project ${conflictingProjectId}. Drop --remote-label to write there, or rename that block first.`;
   }
   return `--remote-label "${label}" already tracks project ${conflictingProjectId}; pass a different --remote-label, or drop the flag to reuse the block that already tracks this project.`;
-}
-
-/**
- * Human-readable phrase for a `ConfigEditRefusal.reason` — the raw enum
- * token (`duplicate_table_header`, ...) never appears in the constructed
- * `ConfigPullUnsupportedLayoutError` message, only prose.
- */
-function configPullRefusalPhrase(reason: ConfigEditRefusalReason): string {
-  switch (reason) {
-    case "duplicate_table_header":
-      return "a duplicate table header";
-    case "array_of_tables_on_path":
-      return "an array of tables on this path";
-    case "inline_table_on_path":
-      return "an inline table on this path";
-    case "env_reference_target":
-      return "an existing env() reference at this path";
-    case "verification_mismatch":
-      return "a verification mismatch after editing";
-    case "parse_error":
-      return "a parse error";
-  }
-}
-
-/**
- * One remediation sentence per `ConfigEditRefusal.reason` — `env_reference_target`
- * stays generic (the planner already skips every `env()`-declared change
- * before it ever reaches `applyConfigEdits`, so this reason should not occur
- * in practice); `verification_mismatch`/`parse_error` both mean the editor
- * itself misjudged the document, not something the user can fix by hand.
- */
-function configPullRefusalRemediation(reason: ConfigEditRefusalReason): string {
-  switch (reason) {
-    case "duplicate_table_header":
-      return "Merge the duplicate table headers into one, then rerun.";
-    case "inline_table_on_path":
-      return "Rewrite it as a standard [table] section, then rerun.";
-    case "array_of_tables_on_path":
-      return "config pull does not support writing through an array of tables ([[...]]); restructure it by hand, then rerun.";
-    case "env_reference_target":
-      return "Replace the env(...) reference with a literal value, then rerun.";
-    case "verification_mismatch":
-    case "parse_error":
-      return "This is a CLI bug; nothing was written. Please report it.";
-  }
 }
 
 /**
@@ -777,7 +732,7 @@ export const applyConfigPullRun = Effect.fnUntraced(function* (input: {
     const { reason, path, detail } = editOutcome.refusal;
     const location = path.length === 0 ? "" : ` at ${configRenderPath(path)}`;
     return yield* new ConfigPullUnsupportedLayoutError({
-      message: `cannot write ${context.configPath}: ${configPullRefusalPhrase(reason)}${location} — ${detail}. ${configPullRefusalRemediation(reason)}`,
+      message: `cannot write ${context.configPath}: ${configEditRefusalPhrase(reason)}${location} — ${detail}. ${configEditRefusalRemediation(reason, "config pull")}`,
     });
   }
   yield* writeCliConfigDocumentText(configFilePath, editOutcome.text).pipe(

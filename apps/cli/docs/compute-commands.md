@@ -3,8 +3,8 @@
 The experimental Compute command family runs application containers alongside a
 project; it is separate from the database instance size. Its commands and local
 configuration may change incompatibly while experimental. The family is opt in. Enable it with
-`SUPABASE_EXPERIMENTAL_COMPUTE=1` or by setting `compute = true` under
-`[experimental]` in `supabase/config.toml`.
+`supabase experiments enable compute`, which records the setting in the project's config, or
+with `SUPABASE_EXPERIMENTAL_COMPUTE=1` for one process.
 
 The environment variable accepts `1` to enable and `0` to disable. When it is
 unset or empty, the config file is used; any other non-empty value reports an
@@ -14,10 +14,22 @@ Unrelated commands do not resolve the Compute flag. Unreadable or malformed
 configuration leaves Compute disabled. An environment opt-in applies only to
 that process; use the project setting to share the opt-in with teammates and CI.
 
+```sh
+supabase experiments enable compute
+```
+
+which writes into the project's existing `[experimental]` table:
+
 ```toml
 [experimental]
 compute = true
 ```
+
+Editing the file by hand works too, as long as the key joins the `[experimental]` table the
+file already has. A second `[experimental]` header is invalid TOML, and an unparseable config
+leaves Compute disabled without reporting why — `experiments enable` merges into the existing
+table and refuses a document it cannot edit safely. `supabase experiments disable compute`
+reverses it.
 
 For `supabase/config.json`, use the equivalent JSON object:
 

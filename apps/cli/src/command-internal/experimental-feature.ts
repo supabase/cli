@@ -4,6 +4,7 @@ import {
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../shared/telemetry/error-actionability.ts";
+import { experimentEnvName, type ExperimentName } from "./experiment-registry.ts";
 
 export class ExperimentalFeatureFlagError extends Data.TaggedError("ExperimentalFeatureFlagError")<{
   readonly envName: string;
@@ -16,11 +17,11 @@ export class ExperimentalFeatureFlagError extends Data.TaggedError("Experimental
 
 /** Resolves one experimental boolean from its environment override and config fallback. */
 export const resolveExperimentalFeature = <E, R>(input: {
-  readonly feature: string;
+  readonly feature: ExperimentName;
   readonly configValue: Effect.Effect<boolean | undefined, E, R>;
   readonly env: Readonly<Record<string, string | undefined>>;
 }): Effect.Effect<boolean, E | ExperimentalFeatureFlagError, R> => {
-  const envName = `SUPABASE_EXPERIMENTAL_${input.feature.toUpperCase()}`;
+  const envName = experimentEnvName(input.feature);
   const override = input.env[envName];
   if (override === undefined || override === "") {
     return input.configValue.pipe(Effect.map((value) => value === true));

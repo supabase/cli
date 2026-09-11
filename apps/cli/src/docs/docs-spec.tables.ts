@@ -30,6 +30,7 @@ export const DOCS_TAGS: Readonly<Record<string, ReadonlyArray<string>>> = {
   "supabase-db": ["local-dev"],
   "supabase-domains": ["management-api"],
   "supabase-encryption": ["management-api"],
+  "supabase-experiments": ["local-dev"],
   "supabase-feedback": ["other-commands"],
   "supabase-functions": ["management-api"],
   "supabase-gen": ["local-dev"],
