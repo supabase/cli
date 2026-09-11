@@ -209,7 +209,7 @@ export const stackStatus = Effect.fn("experimental.stack.status")(function* (
       const credentials = yield* catchStackError(stack.credentials());
       const values = stackEnvValues(status, credentials, envNames);
       if (output.format === "text") yield* output.raw(yield* encodeStackEnv(values));
-      else yield* output.success("", values);
+      else yield* output.result(values);
       return target.inspection;
     }
     const loaded = yield* loadStackConfig(target.projectRoot).pipe(

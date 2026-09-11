@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { parse as parseDotenv } from "dotenv";
-import { Cause, Effect, Exit, Layer, Option, Redacted, Stream } from "effect";
+import { Cause, Effect, Exit, Layer, Option, Redacted, Schema, Stream } from "effect";
 import { CliOutput, Command } from "effect/unstable/cli";
 import {
   InvalidStackConfigError,
@@ -554,23 +554,40 @@ describe("stack status", () => {
     );
   });
 
-  for (const outputFormat of ["json", "stream-json"] as const) {
-    it.effect(`exports a variable map in ${outputFormat}`, () => {
-      const run = runStatus({ flags: { ...flags(), env: true }, outputFormat });
-      return run.effect.pipe(
-        Effect.tap(() =>
-          Effect.sync(() => {
-            const success = run.out.messages.find((message) => message.type === "success");
-            expect(success?.data).toMatchObject({
-              API_URL: "http://127.0.0.1:54321",
-              SECRET_KEY: "sb_secret_test",
-            });
-            expect(run.out.stdoutText).toBe("");
-          }),
-        ),
-      );
+  const exportedVariables = {
+    API_URL: "http://127.0.0.1:54321",
+    DB_URL: "postgresql://postgres:p%40ss@127.0.0.1:54322/postgres",
+    ANON_KEY: "anon-token",
+    SERVICE_ROLE_KEY: "service-role-token",
+    PUBLISHABLE_KEY: "sb_publishable_test",
+    SECRET_KEY: "sb_secret_test",
+  };
+  const VariableMapJson = Schema.fromJsonString(Schema.Record(Schema.String, Schema.String));
+
+  it.effect("exports a bare variable map in json", () => {
+    const run = runStatus({ flags: { ...flags(), env: true }, outputFormat: "json" });
+    return Effect.gen(function* () {
+      yield* run.effect;
+      const variables = yield* Schema.decodeEffect(VariableMapJson)(run.out.stdoutText.trim());
+      expect(variables).toEqual(exportedVariables);
+      expect(run.out.messages).toEqual([]);
     });
-  }
+  });
+
+  it.effect("exports a variable map as a stream-json result event", () => {
+    const run = runStatus({ flags: { ...flags(), env: true }, outputFormat: "stream-json" });
+    return run.effect.pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const results = run.out.events.flatMap((event) =>
+            event.type === "result" ? [event.data] : [],
+          );
+          expect(results).toEqual([exportedVariables]);
+          expect(run.out.stdoutText).toBe("");
+        }),
+      ),
+    );
+  });
 
   it.effect("exports optional service URLs and storage credentials only when available", () => {
     const status: StackStatus = {
