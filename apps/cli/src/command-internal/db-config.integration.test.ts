@@ -27,9 +27,8 @@ import { dbConfigLayer, dbConfigResolverLayer } from "./db-config.layer.ts";
 import { DbConfigResolver } from "./db-config.service.ts";
 import type { DbConfigFlags } from "./db-config.types.ts";
 import { DbConnection, type DbSession, type PgConnInput } from "./db-connection.service.ts";
-import { stackBackendLayer } from "../commands/experimental/stack/stack-backend.ts";
-import { StackApi } from "../commands/experimental/stack/stack.shared.ts";
-
+import { stackBackendLayer } from "./stack-backend.ts";
+import { StackApi } from "./stack-api.ts";
 // `--local` / `--db-url` never touch the Management API stack, so the resolver
 // builds with simple ambient stubs. The `--linked` sub-flow (login-role,
 // pooler, unban, backoff) requires the real management runtime with a mocked

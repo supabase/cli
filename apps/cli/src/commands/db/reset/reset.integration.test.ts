@@ -42,8 +42,8 @@ import {
 } from "../../../command-internal/global-flags.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
 import { dockerRunLayer } from "../../../command-internal/docker-run.layer.ts";
-import { stackBackendLayer } from "../../experimental/stack/stack-backend.ts";
-import { StackApi } from "../../experimental/stack/stack.shared.ts";
+import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
+import { StackApi } from "../../../command-internal/stack-api.ts";
 import { CAPABILITY_NAMES, StackIdSchema, type EffectStack } from "@supabase/stack/effect";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";

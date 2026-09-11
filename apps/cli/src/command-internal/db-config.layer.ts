@@ -38,8 +38,8 @@ import type { DbConfigFlags } from "./db-config.types.ts";
 import { DebugLogger } from "./debug-logger.service.ts";
 import { getHostname } from "./hostname.ts";
 import { mapHttpError } from "./http-errors.ts";
-import { currentStackBackend } from "../commands/experimental/stack/stack-backend.ts";
-import { StackApi, stackApiLayer } from "../commands/experimental/stack/stack.shared.ts";
+import { currentStackBackend } from "./stack-backend.ts";
+import { StackApi, stackApiLayer } from "./stack-api.ts";
 import { stackLocalDatabaseConn } from "./stack-local-database.ts";
 
 const DIRECT_PORT = 5432;

@@ -1,14 +1,11 @@
 import { Context, Data, Effect, FileSystem, Layer, Option, Path } from "effect";
-import {
-  readExperimentalFeatureConfig,
-  resolveExperimentalFeature,
-} from "../../../command-internal/experimental-feature.ts";
-import { extractCommandPath, hasRootVersionFlag } from "../../../shared/cli/run.ts";
+import { extractCommandPath, hasRootVersionFlag } from "../shared/cli/run.ts";
+import { readExperimentalFeatureConfig, resolveExperimentalFeature } from "./experimental-feature.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
-} from "../../../shared/telemetry/error-actionability.ts";
+} from "../shared/telemetry/error-actionability.ts";
 
 export type StackBackend = "legacy" | "stack";
 

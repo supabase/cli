@@ -21,7 +21,7 @@ import {
   TestDbRunError,
 } from "./test-db.errors.ts";
 import { buildPgProveArgs } from "./test-db.pg-prove-args.ts";
-import { currentStackBackend } from "../commands/experimental/stack/stack-backend.ts";
+import { currentStackBackend } from "./stack-backend.ts";
 import { stackRequireProjectRuntime } from "./stack-local-database.ts";
 import {
   rewriteDumpHostForToolContainer,

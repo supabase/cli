@@ -8,7 +8,7 @@ import { promptYesNo } from "../../../../command-internal/prompt-yes-no.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { resetLocalDatabase } from "../../../../command-internal/db-bootstrap/reset-local-database.ts";
 import { PROJECT_REF_PATTERN } from "../../../../config/project-ref.service.ts";
-import { currentStackBackend } from "../../../experimental/stack/stack-backend.ts";
+import { currentStackBackend } from "../../../../command-internal/stack-backend.ts";
 import { DbConfigResolver } from "../../../../command-internal/db-config.service.ts";
 import { loadProjectEnv } from "../../../../command-internal/db-config.toml-read.ts";
 import {

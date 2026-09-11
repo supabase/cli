@@ -16,7 +16,7 @@ import {
 } from "../../tests/helpers/command-mocks.ts";
 import { SHADOW_CACHE_ENV } from "./db-bootstrap/shadow-cache.ts";
 import { DbConnection } from "./db-connection.service.ts";
-import { stackBackendLayer } from "../commands/experimental/stack/stack-backend.ts";
+import { stackBackendLayer } from "./stack-backend.ts";
 import {
   StackEphemeralPostgres,
   stackAcquireShadowDatabase,

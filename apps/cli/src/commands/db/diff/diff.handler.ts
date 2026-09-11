@@ -28,8 +28,8 @@ import { toPostgresURL } from "../../../command-internal/postgres-url.ts";
 import { schemaToCsvField } from "../../../command-internal/schema-flags.ts";
 import { findDropStatements } from "../../../command-internal/sql-split.ts";
 import { buildLocalDbContainerInputs } from "../../../command-internal/db-bootstrap/local-container-inputs.ts";
-import { currentStackBackend } from "../../experimental/stack/stack-backend.ts";
-import { StackApi } from "../../experimental/stack/stack.shared.ts";
+import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
+import { StackApi } from "../../../command-internal/stack-api.ts";
 import {
   stackLocalDatabaseConn,
   stackRejectNativeDockerDiffEngine,

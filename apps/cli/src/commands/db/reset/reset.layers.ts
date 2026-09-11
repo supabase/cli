@@ -15,8 +15,7 @@ import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
 import { identityStitchLayer } from "../../../command-internal/identity-stitch.ts";
 import { linkedProjectCacheLayer } from "../../../telemetry/linked-project-cache.layer.ts";
 import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts";
-import { stackApiLayer } from "../../experimental/stack/stack.shared.ts";
-
+import { stackApiLayer } from "../../../command-internal/stack-api.ts";
 /**
  * Runtime layer for `supabase db reset`: the Postgres connection, the db-config resolver,
  * project-ref resolution, and the linked-project cache, all over the lazy management-API factory
