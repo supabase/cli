@@ -92,7 +92,10 @@ projects in a monorepo, and named stacks therefore receive separate managed stat
 resolution is read-only; moving a project creates a new identity.
 
 `createTestStack` gives each test stack a unique temporary project root and identity while sharing
-the managed state root used by ordinary package callers. Automatic ports therefore
+the managed state root used by ordinary package callers. It uses the same runtime selection as
+`createStack`: an installed Docker client selects Docker even when its daemon is stopped. Pass
+`runtime: { kind: "native" }` or an explicit container runtime for reproducible test environments.
+Automatic ports therefore
 coordinate across all default callers. Helper project roots and identities remain isolated; a
 temporary test stack is excluded from listings scoped to another project root but appears in an
 unfiltered package `listStacks()` result. A failed destroy retains the affected project root and
