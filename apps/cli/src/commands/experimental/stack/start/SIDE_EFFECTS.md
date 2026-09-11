@@ -58,9 +58,10 @@ activated before the command returns.
 `--exclude` accepts repeated or comma-separated capability names (`rest`, `auth`, `realtime`,
 `storage`, `functions`, `studio`, `mail`, `analytics`, and `pooler`) and disables those services
 in the effective start configuration. The database cannot be excluded. Exclusions are applied in
-memory and persisted with the stack state; the project configuration file is unchanged. If all
-API gateway capabilities are disabled, the API listener is disabled as well. Eager activation never
-re-enables an excluded capability.
+memory and persisted with the stack state; the project configuration file is unchanged. A capability
+and its dependents are disabled together, so excluding `rest` or `analytics` also disables `studio`.
+Listeners are derived by the runtime from enabled capability routes; route-less listeners are therefore omitted.
+Eager activation never re-enables an excluded capability.
 
 The command owns only the start request. Once the package reports readiness,
 the detached stack owner remains alive after the CLI process exits. If the CLI

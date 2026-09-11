@@ -25,7 +25,8 @@ returning. That process is package-owned and is not managed directly by the CLI.
 Text mode reports the selected stack and stopped outcome. Structured modes include the selected
 stack id and stopped outcome. If no current stack exists, the command succeeds with an explicit
 no-stack result. Bulk mode attempts all readable stacks, warns for unreadable entries, and reports
-stopped, failed, and skipped counts. It exits nonzero when an entry is skipped or a stop fails.
+stopped, failed, and skipped counts with per-stack details. It exits nonzero when an entry is skipped
+or a stop fails.
 Registry-root enumeration failures remain fatal. Exit status is `0` for a successful stop or no
 current stack, `1` for a missing named stack or any typed stop failure, and `130` if the command is
 interrupted before the stop completes. Standard command instrumentation records command

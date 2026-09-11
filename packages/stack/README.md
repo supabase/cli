@@ -24,6 +24,10 @@ capability is lazy. Starting the stack therefore launches only
 PostgreSQL by default; capabilities configured as eager join its startup dependency closure.
 The remaining lazy capabilities activate through the stack's listeners on demand for the current
 running session.
+The Effect API's `excludeStackCapabilities` helper disables requested optional capabilities and
+their dependents in an in-memory config. Excluding `rest` or `analytics` also disables `studio`,
+while the database remains required. The project config is unchanged, and runtime listeners are
+created only for enabled capability routes.
 Native workloads have a two-minute readiness budget to allow cold starts to load shared libraries;
 container workloads retain a 30-second budget, and PostgreSQL uses its configured `health_timeout`.
 Each readiness probe returns immediately when its endpoint becomes healthy.

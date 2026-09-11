@@ -6,6 +6,7 @@ import { canonicalize, compileStack, rebuildExecutionPlan, sameDefinition } from
 import { resolveThirdPartyIssuer } from "./capabilities/auth-third-party.ts";
 import { DEFAULT_DATABASE_HEALTH_TIMEOUT } from "./capabilities/database.ts";
 import { catalogEntryFor } from "./WorkloadCatalog.ts";
+import { excludeStackCapabilities } from "./Exclusions.ts";
 
 const layer = NodeServices.layer;
 const compile = (
@@ -21,6 +22,41 @@ const failureOf = <E>(exit: Exit.Exit<unknown, E>): E | undefined =>
   Exit.isFailure(exit) ? Option.getOrUndefined(Cause.findErrorOption(exit.cause)) : undefined;
 
 describe("closed capability compiler", () => {
+  it.live("compiles every optional exclusion and closes Studio dependents", () =>
+    Effect.gen(function* () {
+      for (const name of [
+        "rest",
+        "auth",
+        "realtime",
+        "storage",
+        "functions",
+        "studio",
+        "mail",
+        "analytics",
+        "pooler",
+      ] as const) {
+        const config = { capabilities: { rest: { settings: { max_rows: 42 } } } };
+        const excluded = excludeStackCapabilities(config, [name]);
+        expect(config.capabilities?.rest).toEqual({ settings: { max_rows: 42 } });
+        const result = yield* compile(excluded);
+        expect(result.definition.capabilities[name].enabled).toBe(false);
+        if (name !== "rest") expect(result.definition.capabilities.rest.settings.max_rows).toBe(42);
+        if (name === "rest" || name === "analytics")
+          expect(result.definition.capabilities.studio.enabled).toBe(false);
+      }
+      const combined = excludeStackCapabilities({}, ["rest", "analytics"]);
+      const result = yield* compile(combined);
+      expect(result.definition.capabilities.studio.enabled).toBe(false);
+      expect(result.definition.capabilities.rest.enabled).toBe(false);
+      expect(result.definition.capabilities.analytics.enabled).toBe(false);
+      expect(result.definition.capabilities.auth.enabled).toBe(true);
+      expect(excludeStackCapabilities({}, [])).toEqual({});
+      const studioExcluded = yield* compile(excludeStackCapabilities({}, ["studio"]));
+      expect(studioExcluded.definition.capabilities.rest.enabled).toBe(true);
+      expect(studioExcluded.definition.capabilities.analytics.enabled).toBe(true);
+    }),
+  );
+
   it.live("accepts named storage byte limit formats during compilation", () =>
     Effect.gen(function* () {
       for (const input of ["50MiB", "1.5KB", "2 GiB"]) {

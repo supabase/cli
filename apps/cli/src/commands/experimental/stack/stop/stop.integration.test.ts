@@ -20,7 +20,7 @@ import type {
   StackStatus,
   StackStopError as ApiStackStopError,
 } from "@supabase/stack/effect";
-import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockProcessControl } from "../../../../../tests/helpers/mocks.ts";
 import {
   mockCommandSettings,
   mockTelemetryStateTracked,
@@ -35,6 +35,7 @@ import { textCliOutputFormatter } from "../../../../shared/output/text-formatter
 import { stackStop } from "./stop.handler.ts";
 import { StackCommandStopError } from "./stop.errors.ts";
 import { stackStopCommand } from "./stop.command.ts";
+import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 
 const status = (id: string): StackStatus => ({
   id: StackIdSchema.make(id),
@@ -58,6 +59,7 @@ const flags = (
 
 function setup(opts: {
   root: string;
+  format?: "text" | "json" | "stream-json";
   found?: { id: string; name?: string };
   stop?: () => Effect.Effect<void, ApiStackStopError>;
   openFailure?: OpenStackError;
@@ -71,7 +73,7 @@ function setup(opts: {
     }>;
   };
 }) {
-  const out = mockOutput();
+  const out = mockOutput({ format: opts.format });
   const telemetry = mockTelemetryStateTracked();
   const state = {
     findInputs: [] as Array<{ projectRoot: string; name?: string }>,
@@ -111,6 +113,7 @@ function setup(opts: {
     : undefined;
   const layer = Layer.mergeAll(
     out.layer,
+    mockProcessControl().layer,
     telemetry.layer,
     mockCommandSettings({ workdir: opts.root }),
     Layer.succeed(StackApi, {
@@ -215,9 +218,12 @@ describe("stack stop", () => {
     });
     return Effect.gen(function* () {
       const failure = yield* stackStop(flags({ all: true })).pipe(Effect.flip);
-      expect(failure.message).toContain("failed to stop 2");
+      expect(failure.message).toContain("failed 2");
       expect(setupResult.state.openedIds).toEqual([first, second]);
       expect(setupResult.state.destroyCalled).toBe(false);
+      expect(failure.detail).toBe(
+        `Failed to stop managed stack ${first}: stop failed\nFailed to stop managed stack ${second}: stop failed`,
+      );
     }).pipe(Effect.provide(setupResult.layer));
   });
 
@@ -249,12 +255,53 @@ describe("stack stop", () => {
     });
     return Effect.gen(function* () {
       const failure = yield* stackStop(flags({ all: true })).pipe(Effect.flip);
-      expect(failure.message).toContain("skipped 1");
+      expect(failure.message).toBe("Stopped 1 managed stack(s); failed 0; skipped 1");
+      expect(failure.detail).toBe(`Skipped managed stack ${corrupt}: corrupt state`);
       expect(setupResult.state.stopCalls).toBe(1);
       expect(setupResult.state.destroyCalled).toBe(false);
       expect(setupResult.out.messages).toEqual(
         expect.arrayContaining([expect.objectContaining({ type: "warn" })]),
       );
+    }).pipe(Effect.provide(setupResult.layer));
+  });
+
+  it.effect("preserves bulk failure details through JSON error handling", () => {
+    const failed = "2".repeat(64);
+    const skipped = "3".repeat(64);
+    const setupResult = setup({
+      root: "/tmp/supabase-stack-stop-json",
+      format: "json",
+      found: { id: failed },
+      stop: () => Effect.fail(new StackCleanupError({ message: "cleanup failed" })),
+      discovered: {
+        stacks: [
+          {
+            id: StackIdSchema.make(failed),
+            projectRoot: "/tmp/supabase-stack-stop-json",
+            name: "failed",
+            branchContext: "ordinary-workspace",
+            runtime: { kind: "native" },
+            desiredLifecycle: "running",
+          },
+        ],
+        errors: [
+          {
+            id: StackIdSchema.make(skipped),
+            error: new StackStateInvalidError({ message: "invalid state" }),
+          },
+        ],
+      },
+    });
+    return Effect.gen(function* () {
+      yield* stackStop(flags({ all: true })).pipe(withJsonErrorHandling);
+      expect(setupResult.out.failures).toEqual([
+        expect.objectContaining({
+          message: "Stopped 0 managed stack(s); failed 1; skipped 1",
+          detail: `Failed to stop managed stack ${failed}: cleanup failed\nSkipped managed stack ${skipped}: invalid state`,
+        }),
+      ]);
+      expect(setupResult.state.openedIds).toEqual([failed]);
+      expect(setupResult.state.destroyCalled).toBe(false);
     }).pipe(Effect.provide(setupResult.layer));
   });
 

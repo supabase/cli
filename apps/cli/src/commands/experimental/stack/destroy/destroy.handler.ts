@@ -20,7 +20,7 @@ const mapTargetError = (error: StackTargetError) =>
   new StackCommandDestroyError({
     reason: error.reason,
     message: error.message,
-    suggestion: error.suggestion,
+    ...(error.suggestion === undefined ? {} : { suggestion: error.suggestion }),
     cause: error,
   });
 

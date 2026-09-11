@@ -102,14 +102,21 @@ export const stackStop = Effect.fn("experimental.stack.stop")(function* (flags: 
         Result.isFailure(result) ? [{ descriptor, error: result.failure }] : [],
       );
       if (failed.length > 0 || discovered.errors.length > 0) {
-        const message = `Stopped ${discovered.stacks.length - failed.length} managed stack(s); failed to stop ${failed.length} and skipped ${discovered.errors.length}: ${[
-          ...failed.map(({ descriptor, error }) => `${descriptor.id}: ${error.message}`),
-          ...discovered.errors.map(({ id, error }) => `${id}: ${error.message}`),
-        ].join("; ")}`;
+        const message = `Stopped ${discovered.stacks.length - failed.length} managed stack(s); failed ${failed.length}; skipped ${discovered.errors.length}`;
+        const detail = [
+          ...failed.map(
+            ({ descriptor, error }) =>
+              `Failed to stop managed stack ${descriptor.id}: ${error.message}`,
+          ),
+          ...discovered.errors.map(
+            ({ id, error }) => `Skipped managed stack ${id}: ${error.message}`,
+          ),
+        ].join("\n");
         yield* stopping.fail(message);
         return yield* new StackCommandStopError({
           reason: "lifecycle",
           message,
+          detail,
           cause: { failures: failed, discovery: discovered.errors },
         });
       }

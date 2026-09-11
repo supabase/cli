@@ -1,7 +1,7 @@
 import { Effect, Match, Option } from "effect";
 import {
+  excludeStackCapabilities,
   isStackError,
-  type StackConfig,
   type StackStatus,
   type StackRuntimePreference,
 } from "@supabase/stack/effect";
@@ -79,47 +79,9 @@ const validateExclusions = (exclusions: ReadonlyArray<string>) => {
         suggestion: "Remove database from --exclude.",
       }),
     );
-  return Effect.void;
-};
-
-const applyExclusions = (config: StackConfig, exclusions: ReadonlyArray<string>): StackConfig => {
-  if (exclusions.length === 0) return config;
-  const excluded = new Set(exclusions);
-  const capabilities = config.capabilities;
-  const gatewayCapabilities = [
-    "rest",
-    "auth",
-    "realtime",
-    "storage",
-    "functions",
-    "analytics",
-  ] as const;
-  const apiGatewayDisabled = gatewayCapabilities.every(
-    (name) => excluded.has(name) || capabilities?.[name]?.enabled === false,
+  return Effect.succeed(
+    STACK_START_EXCLUDABLE_CAPABILITIES.filter((name) => exclusions.includes(name)),
   );
-  return {
-    ...config,
-    capabilities: {
-      ...capabilities,
-      ...(excluded.has("rest") ? { rest: { enabled: false as const } } : {}),
-      ...(excluded.has("auth") ? { auth: { enabled: false as const } } : {}),
-      ...(excluded.has("realtime") ? { realtime: { enabled: false as const } } : {}),
-      ...(excluded.has("storage") ? { storage: { enabled: false as const } } : {}),
-      ...(excluded.has("functions") ? { functions: { enabled: false as const } } : {}),
-      ...(excluded.has("studio") ? { studio: { enabled: false as const } } : {}),
-      ...(excluded.has("mail") ? { mail: { enabled: false as const } } : {}),
-      ...(excluded.has("analytics") ? { analytics: { enabled: false as const } } : {}),
-      ...(excluded.has("pooler") ? { pooler: { enabled: false as const } } : {}),
-    },
-    ...(apiGatewayDisabled
-      ? {
-          listeners: {
-            ...config.listeners,
-            api: { enabled: false as const },
-          },
-        }
-      : {}),
-  };
 };
 
 const mapTargetError = (error: StackTargetError) =>
@@ -138,8 +100,8 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     const resolver = yield* StackTargetResolver;
     const stackApi = yield* StackApi;
     const outputFlag = yield* Effect.serviceOption(OutputFlag);
-    yield* validateExclusions(flags.exclude);
     yield* rejectStackOutput(outputFlag).pipe(Effect.mapError(mapTargetError));
+    const exclusions = yield* validateExclusions(flags.exclude);
     yield* validateStackTarget({
       stack: Option.getOrUndefined(flags.stack),
       stackId: Option.getOrUndefined(flags.stackId),
@@ -163,7 +125,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
           }),
       ),
     );
-    const configuredStart = applyExclusions(config, flags.exclude);
+    const configuredStart = excludeStackCapabilities(config, exclusions);
     const startConfig = flags.eager
       ? {
           ...configuredStart,

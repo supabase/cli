@@ -8,6 +8,7 @@ import {
 export class StackCommandStopError extends Data.TaggedError("ExperimentalStackStopError")<{
   readonly reason: "flags" | "invalid-config" | "lifecycle" | "unknown";
   readonly message: string;
+  readonly detail?: string;
   readonly suggestion?: string;
   readonly cause?: unknown;
 }> {

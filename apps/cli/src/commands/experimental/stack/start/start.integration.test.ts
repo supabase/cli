@@ -34,6 +34,7 @@ import {
   StackApi,
 } from "../stack.shared.ts";
 import { stackStart } from "./start.handler.ts";
+import { compileStack } from "../../../../../../../packages/stack/src/model/Compiler.ts";
 import { StackCommandStartError } from "./start.errors.ts";
 import { stackStartCommand } from "./start.command.ts";
 import { textCliOutputFormatter } from "../../../../shared/output/text-formatter.ts";
@@ -166,6 +167,43 @@ function handlerLayer(opts: {
 }
 
 describe("stack start targeting", () => {
+  for (const exclusion of ["rest", "analytics"] as const) {
+    it.live(`compiles ${exclusion} exclusion and dependent Studio`, () => {
+      const root = project();
+      const configBefore = readFileSync(join(root, "supabase", "config.toml"), "utf8");
+      const stack = fakeStack("c".repeat(64), (input) =>
+        Effect.gen(function* () {
+          const stackConfig = yield* Schema.decodeUnknownEffect(StackConfigSchema)(
+            input?.config,
+          ).pipe(
+            Effect.mapError((error) => new StackStateInvalidError({ message: error.message })),
+          );
+          const compiled = yield* compileStack({
+            projectRoot: root,
+            runtime: { kind: "native" },
+            config: stackConfig,
+          }).pipe(
+            Effect.mapError((error) => new StackStateInvalidError({ message: error.message })),
+            Effect.provide(BunServices.layer),
+          );
+          expect(compiled.definition.capabilities[exclusion].enabled).toBe(false);
+          expect(compiled.definition.capabilities.studio.enabled).toBe(false);
+          expect(compiled.definition.capabilities.auth.enabled).toBe(true);
+          return status("c".repeat(64));
+        }),
+      );
+      const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
+      return Effect.gen(function* () {
+        for (const eager of [false, true])
+          yield* stackStart(flags({ exclude: [exclusion], eager }));
+        expect(readFileSync(join(root, "supabase", "config.toml"), "utf8")).toBe(configBefore);
+      }).pipe(
+        Effect.provide(setup.layer),
+        Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+      );
+    });
+  }
+
   it.live("applies exclusions to the effective config without changing the project file", () => {
     const root = project();
     const configBefore = readFileSync(join(root, "supabase", "config.toml"), "utf8");
@@ -199,36 +237,39 @@ describe("stack start targeting", () => {
     );
   });
 
-  it.live("disables the API listener when all gateway capabilities are excluded", () => {
-    const root = project();
-    writeFileSync(
-      join(root, "supabase", "config.toml"),
-      'project_id = "start-test"\n[api]\nport = 55421\n',
-    );
-    let startedConfig: unknown;
-    const stack = fakeStack("7".repeat(64), (config) =>
-      Effect.sync(() => {
-        startedConfig = config;
-        return status("7".repeat(64));
-      }),
-    );
-    const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
-    return Effect.gen(function* () {
-      yield* stackStart(
-        flags({ exclude: ["rest", "auth", "realtime", "storage", "functions", "analytics"] }),
+  it.live(
+    "leaves listener configuration to the compiled runtime when capabilities are excluded",
+    () => {
+      const root = project();
+      writeFileSync(
+        join(root, "supabase", "config.toml"),
+        'project_id = "start-test"\n[api]\nport = 55421\n',
       );
-      expect(startedConfig).toEqual(
-        expect.objectContaining({
-          config: expect.objectContaining({
-            listeners: expect.objectContaining({ api: { enabled: false } }),
-          }),
+      let startedConfig: unknown;
+      const stack = fakeStack("7".repeat(64), (config) =>
+        Effect.sync(() => {
+          startedConfig = config;
+          return status("7".repeat(64));
         }),
       );
-    }).pipe(
-      Effect.provide(setup.layer),
-      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
-    );
-  });
+      const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
+      return Effect.gen(function* () {
+        yield* stackStart(
+          flags({ exclude: ["rest", "auth", "realtime", "storage", "functions", "analytics"] }),
+        );
+        expect(startedConfig).toEqual(
+          expect.objectContaining({
+            config: expect.objectContaining({
+              listeners: expect.objectContaining({ api: { port: 55421 } }),
+            }),
+          }),
+        );
+      }).pipe(
+        Effect.provide(setup.layer),
+        Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+      );
+    },
+  );
 
   it.live("preserves the configured API listener on partial gateway exclusion", () => {
     const root = project();
@@ -259,7 +300,7 @@ describe("stack start targeting", () => {
     );
   });
 
-  it.live("counts configured-disabled gateway capabilities toward API listener disablement", () => {
+  it.live("does not rewrite listeners for configured-disabled capabilities", () => {
     const root = project();
     writeFileSync(
       join(root, "supabase", "config.toml"),
@@ -291,7 +332,7 @@ enabled = false
       expect(startedConfig).toEqual(
         expect.objectContaining({
           config: expect.objectContaining({
-            listeners: expect.objectContaining({ api: { enabled: false } }),
+            listeners: expect.objectContaining({ api: { port: 55421 } }),
           }),
         }),
       );
@@ -829,7 +870,9 @@ describe("stack start parser", () => {
         }),
     });
     return Effect.gen(function* () {
-      const failure = yield* stackStart(flags()).pipe(Effect.flip);
+      const failure = yield* stackStart(flags({ exclude: ["bogus"] })).pipe(Effect.flip);
+      expect(failure.message).toContain("--output");
+      expect(failure.message).not.toContain("Unknown stack capabilities");
       expect(failure).toBeInstanceOf(StackCommandStartError);
       if (failure instanceof StackCommandStartError) {
         expect(failure.reason).toBe("flags");

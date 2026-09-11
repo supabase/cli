@@ -56,13 +56,14 @@ including `--workdir` and `SUPABASE_WORKDIR`; a JSON-only project does not enabl
 
 `supabase stack start --exclude studio,analytics -x mail` disables those services in the effective
 start configuration without changing the project file. Valid names are `rest`, `auth`, `realtime`,
-`storage`, `functions`, `studio`, `mail`, `analytics`, and `pooler`; the database is required. The
-effective configuration is retained in stack state, so starting without `--exclude` restores the
-project's configured services.
+`storage`, `functions`, `studio`, `mail`, `analytics`, and `pooler`; the database is required.
+Excluding `rest` or `analytics` also disables Studio. The effective configuration is
+retained in stack state, so starting without `--exclude` restores the project's configured services.
 
 `supabase stack stop --all` stops every readable managed stack while preserving data. It continues
-after unreadable entries or individual stop failures, reports warnings and counts, and exits
-nonzero when anything was skipped or failed. Registry-root enumeration errors remain fatal.
+after unreadable entries or individual stop failures, reports a bounded stopped/failed/skipped
+summary with per-stack details, and exits nonzero when anything was skipped or failed. Registry-root
+enumeration errors remain fatal.
 
 `supabase stack destroy --stack feature-a` permanently removes exactly that stack and its data after
 confirmation. Use `--yes` for unattended execution. There is no bulk destroy option.
