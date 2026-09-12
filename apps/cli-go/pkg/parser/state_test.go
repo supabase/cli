@@ -219,6 +219,43 @@ SELECT 1;`,
 		}
 	})
 
+	t.Run("ignores end inside inner statements", func(t *testing.T) {
+		for _, expr := range []string{
+			"CASE WHEN true THEN 1 ELSE 0 END",
+			"case when true then 1 end",
+			"CASE WHEN true THEN 1 END AS ended",
+			"CASE WHEN CASE WHEN true THEN true END THEN 1 END",
+			"(CASE WHEN (true) THEN 1 END)",
+			"coalesce(CASE WHEN length('a') > 0 THEN 1 END, 0)",
+			"CASE(1)WHEN 1 THEN 1 END",
+			"1 AS case",
+			"1 case",
+			"1 AS end",
+			"1 end",
+			"'end'",
+		} {
+			t.Run(expr, func(t *testing.T) {
+				body := `CREATE FUNCTION f() RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT ` + expr + `; SELECT 1; END;`
+				checkSplit(t, []string{body, ` SELECT 2;`})
+			})
+		}
+	})
+
+	t.Run("closes at end preceded only by comments", func(t *testing.T) {
+		for _, comment := range []string{"-- note END\n", "/* note; */ ", "\n/* a /* b; */ */ -- c\n"} {
+			t.Run(comment, func(t *testing.T) {
+				body := `CREATE FUNCTION f() RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT 1; ` + comment + `END;`
+				checkSplit(t, []string{body, ` SELECT 2;`})
+			})
+		}
+	})
+
+	t.Run("ignores non-ASCII begin atomic lookalikes", func(t *testing.T) {
+		// atomıc (dotless ı) case-folds to ATOMIC in some Unicode mappings but is a plain
+		// identifier in SQL.
+		checkSplit(t, []string{"BEGIN atomıc;", " SELECT 'end';", " SELECT 2;"})
+	})
+
 	t.Run("does not treat schema-qualified atomic function names as begin atomic", func(t *testing.T) {
 		sql := []string{`CREATE OR REPLACE FUNCTION public.atomic_example()
 RETURNS INTEGER

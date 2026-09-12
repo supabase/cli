@@ -87,6 +87,41 @@ describe("splitAndTrim", () => {
       expect(splitAndTrim(`${body}; SELECT 2;`)).toEqual([body, "SELECT 2"]);
     },
   );
+
+  it.each([
+    "CASE WHEN true THEN 1 ELSE 0 END",
+    "case when true then 1 end",
+    "CASE WHEN true THEN 1 END AS ended",
+    "CASE WHEN CASE WHEN true THEN true END THEN 1 END",
+    "(CASE WHEN (true) THEN 1 END)",
+    "coalesce(CASE WHEN length('a') > 0 THEN 1 END, 0)",
+    "CASE(1)WHEN 1 THEN 1 END",
+    "1 AS case",
+    "1 case",
+    "1 AS end",
+    "1 end",
+    "'end'",
+  ])("does not close a BEGIN ATOMIC body at an END inside %s", (expression) => {
+    const body = `CREATE FUNCTION f() RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT ${expression}; SELECT 1; END`;
+    expect(splitAndTrim(`${body}; SELECT 2;`)).toEqual([body, "SELECT 2"]);
+  });
+
+  it.each(["-- note END\n", "/* note; */ ", "\n/* a /* b; */ */ -- c\n"])(
+    "closes a BEGIN ATOMIC body at an END preceded only by comments (%s)",
+    (comment) => {
+      const body = `CREATE FUNCTION f() RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT 1; ${comment}END`;
+      expect(splitAndTrim(`${body}; SELECT 2;`)).toEqual([body, "SELECT 2"]);
+    },
+  );
+
+  it("does not treat a BEGIN keyword followed by a non-ASCII identifier as BEGIN ATOMIC", () => {
+    // `atomıc` (dotless ı) uppercases to `ATOMIC` in JS but is a plain identifier in SQL.
+    expect(splitAndTrim("BEGIN atomıc; SELECT 'end'; SELECT 2;")).toEqual([
+      "BEGIN atomıc",
+      "SELECT 'end'",
+      "SELECT 2",
+    ]);
+  });
 });
 
 describe("splitSql", () => {

@@ -26,6 +26,9 @@ type ReadyState struct{}
 func (s *ReadyState) Next(r rune, data []byte) State {
 	switch r {
 	case '$':
+		// $ continues an identifier (pending$$foo$ is one name, not a dollar quote). Only the
+		// preceding rune is checked, so a digit counts too (1$$), unlike PostgreSQL's
+		// number-then-dollar-quote lexing; valid SQL never juxtaposes the two.
 		offset := len(data) - utf8.RuneLen(r)
 		if hasIdentifierRuneBefore(data, offset) {
 			return s
@@ -45,36 +48,28 @@ func (s *ReadyState) Next(r rune, data []byte) State {
 		// Emit token
 		return nil
 	case '(':
-		return &AtomicState{prev: s, delimiter: []byte{')'}}
+		return &AtomicState{prev: s, delimiter: []byte{')'}, statementStart: len(data)}
 	case 'c':
 		fallthrough
 	case 'C':
 		if isBeginAtomic(data) {
-			return &AtomicState{prev: s, delimiter: []byte(END_ATOMIC)}
+			return &AtomicState{prev: s, delimiter: []byte(END_ATOMIC), statementStart: len(data)}
 		}
 	}
 	return s
 }
 
 func isBeginAtomic(data []byte) bool {
-	offset := len(data) - len(BEGIN_ATOMIC)
-	if offset < 0 || !strings.EqualFold(string(data[offset:]), BEGIN_ATOMIC) {
+	if !endsWithKeyword(data, BEGIN_ATOMIC) {
 		return false
 	}
-	if hasIdentifierRuneBefore(data, offset) {
-		return false
-	}
-	prefix := bytes.TrimRightFunc(data[:offset], unicode.IsSpace)
-	offset = len(prefix) - len("BEGIN")
-	if offset < 0 || !strings.EqualFold(string(prefix[offset:]), "BEGIN") {
-		return false
-	}
-	if offset == 0 {
-		return true
-	}
-	return !hasIdentifierRuneBefore(prefix, offset)
+	prefix := bytes.TrimRightFunc(data[:len(data)-len(BEGIN_ATOMIC)], unicode.IsSpace)
+	return endsWithKeyword(prefix, "BEGIN")
 }
 
+// PostgreSQL's lexer treats every byte at or above 0x80 as an identifier/dollar-tag
+// character (ident_cont/dolq_cont are [A-Za-z\200-\377_0-9$] in scan.l), whatever its
+// Unicode category.
 func isIdentifierRune(r rune) bool {
 	return r >= utf8.RuneSelf || unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '$'
 }
@@ -85,6 +80,65 @@ func hasIdentifierRuneBefore(data []byte, offset int) bool {
 	}
 	r, _ := utf8.DecodeLastRune(data[:offset])
 	return isIdentifierRune(r)
+}
+
+// Whether data ends with keyword (an uppercase ASCII word) at an identifier boundary.
+// EqualFold over a window sized in bytes is ASCII-effective here: any non-ASCII rune in the
+// window misaligns it, matching PostgreSQL's keyword matching.
+func endsWithKeyword(data []byte, keyword string) bool {
+	offset := len(data) - len(keyword)
+	if offset < 0 || !strings.EqualFold(string(data[offset:]), keyword) {
+		return false
+	}
+	return !hasIdentifierRuneBefore(data, offset)
+}
+
+// The whitespace class of PostgreSQL's lexer (space in scan.l).
+func isSqlWhitespace(b byte) bool {
+	switch b {
+	case ' ', '\t', '\n', '\r', '\f', '\v':
+		return true
+	}
+	return false
+}
+
+// Whether text contains only whitespace and complete line/block comments — i.e. no
+// statement content. Callers only pass prefixes the FSM scanned at body level, so a comment
+// in text is practically always terminated; an unterminated one counts as comment text.
+func isCommentsAndWhitespace(text []byte) bool {
+	for i := 0; i < len(text); {
+		switch {
+		case isSqlWhitespace(text[i]):
+			i++
+		case bytes.HasPrefix(text[i:], []byte("--")):
+			newline := bytes.IndexByte(text[i+2:], '\n')
+			if newline == -1 {
+				return true
+			}
+			i += 2 + newline + 1
+		case bytes.HasPrefix(text[i:], []byte("/*")):
+			depth := 1
+			i += 2
+			for i < len(text) && depth > 0 {
+				switch {
+				case bytes.HasPrefix(text[i:], []byte("/*")):
+					depth++
+					i += 2
+				case bytes.HasPrefix(text[i:], []byte("*/")):
+					depth--
+					i += 2
+				default:
+					i++
+				}
+			}
+			if depth > 0 {
+				return true
+			}
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // Opened a line comment
@@ -197,39 +251,51 @@ func (s *EscapeState) Next(r rune, data []byte) State {
 
 // Opened BEGIN ATOMIC function body
 type AtomicState struct {
-	prev       State
-	delimiter  []byte
+	prev      State
+	delimiter []byte
+	// END just matched at the end of data; confirmed once a non-identifier rune follows.
 	pendingEnd bool
+	// Offset where the current inner statement starts (after ATOMIC or a body-level ';').
+	statementStart int
+	// Memo: the current inner statement already has content, so no END in it can close.
+	statementHasContent bool
 }
 
 func (s *AtomicState) Next(r rune, data []byte) State {
-	if s.pendingEnd {
-		s.pendingEnd = false
-		if !isIdentifierRune(r) {
-			return (&ReadyState{}).Next(r, data)
+	pendingEnd := s.pendingEnd
+	s.pendingEnd = false
+	if pendingEnd && !isIdentifierRune(r) {
+		return (&ReadyState{}).Next(r, data)
+	}
+	// If we are in a quoted state, the current delimiter doesn't count.
+	curr := s.prev.Next(r, data)
+	if curr == nil {
+		// A body-level ';': the next inner statement starts after it.
+		s.statementStart = len(data)
+		s.statementHasContent = false
+		return s
+	}
+	s.prev = curr
+	if _, ok := s.prev.(*ReadyState); !ok {
+		return s
+	}
+	if string(s.delimiter) != END_ATOMIC {
+		if bytes.HasSuffix(data, s.delimiter) {
+			return &ReadyState{}
 		}
 		return s
 	}
-	// If we are in a quoted state, the current delimiter doesn't count.
-	if curr := s.prev.Next(r, data); curr != nil {
-		s.prev = curr
-	}
-	if _, ok := s.prev.(*ReadyState); ok && s.endsWithDelimiter(data) {
-		if string(s.delimiter) != END_ATOMIC {
-			return &ReadyState{}
+	// PostgreSQL's grammar requires every inner statement to end with ';', so the body's
+	// closing END is always the first token of a statement. An END after other statement
+	// content is expression text (a CASE arm, a column label) and must not close the body.
+	// Known limitation: BlockState closes a /*/ comment early (PostgreSQL lexes /*/ as a
+	// comment opener), so a ';' inside such a comment can shift the statement start.
+	if !s.statementHasContent && endsWithKeyword(data, END_ATOMIC) {
+		if isCommentsAndWhitespace(data[s.statementStart : len(data)-len(END_ATOMIC)]) {
+			s.pendingEnd = true
+		} else {
+			s.statementHasContent = true
 		}
-		s.pendingEnd = true
 	}
 	return s
-}
-
-func (s *AtomicState) endsWithDelimiter(data []byte) bool {
-	offset := len(data) - len(s.delimiter)
-	if offset < 0 || !strings.EqualFold(string(data[offset:]), string(s.delimiter)) {
-		return false
-	}
-	if offset == 0 || string(s.delimiter) != END_ATOMIC {
-		return true
-	}
-	return !hasIdentifierRuneBefore(data, offset)
 }
