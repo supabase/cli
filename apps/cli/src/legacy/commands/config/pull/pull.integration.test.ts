@@ -380,6 +380,7 @@ interface SetupOpts {
   readonly projectId?: Option.Option<string>;
   readonly yes?: boolean;
   readonly stdinIsTty?: boolean;
+  readonly pipedAnswers?: ReadonlyArray<string>;
   readonly confirm?: ReadonlyArray<boolean>;
   readonly gitDirty?: boolean;
   readonly gitSpawnFails?: boolean;
@@ -461,7 +462,10 @@ function setup(opts: SetupOpts = {}) {
       tty: mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
       goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
     }),
-    mockStdin(opts.stdinIsTty ?? false),
+    mockStdin(
+      opts.stdinIsTty ?? false,
+      opts.pipedAnswers ? `${opts.pipedAnswers.join("\n")}\n` : undefined,
+    ),
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
     // Listed after `buildLegacyTestRuntime` so it overrides the real spawner
     // BunServices.layer provides (last-wins).
@@ -673,6 +677,40 @@ describe("legacy config pull integration", () => {
         `Apply 1 change(s) to ${join("supabase", "config.toml")}?`,
       );
       expect(out.stdoutText).toContain("not written (declined)");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("honors a piped 'n' decline on non-TTY stdin (no update)", () => {
+    const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
+    const { layer, out } = setup({
+      toml: before,
+      stdinIsTty: false,
+      pipedAnswers: ["n"],
+    });
+    return Effect.gen(function* () {
+      yield* legacyConfigPull(noFlags);
+      expect(readFileSync(configPath(), "utf8")).toBe(before);
+      expect(out.stderrText).toContain(
+        `Apply 1 change(s) to ${join("supabase", "config.toml")}? [Y/n] n\n`,
+      );
+      expect(out.stdoutText).toContain("not written (declined)");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("honors a piped 'y' confirmation on non-TTY stdin", () => {
+    const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
+    const { layer, out } = setup({
+      toml: before,
+      stdinIsTty: false,
+      pipedAnswers: ["y"],
+    });
+    return Effect.gen(function* () {
+      yield* legacyConfigPull(noFlags);
+      expect(readFileSync(configPath(), "utf8")).not.toBe(before);
+      expect(out.stderrText).toContain(
+        `Apply 1 change(s) to ${join("supabase", "config.toml")}? [Y/n] y\n`,
+      );
+      expect(out.stdoutText).toContain("1 change written.");
     }).pipe(Effect.provide(layer));
   });
 

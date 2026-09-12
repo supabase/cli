@@ -1,10 +1,11 @@
-import { Option } from "effect";
+import { Layer, Option } from "effect";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { Command, Flag } from "effect/unstable/cli";
 
 import { PROJECT_REF_PATTERN } from "../../../config/legacy-project-ref.service.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { LEGACY_GLOBAL_OUTPUT_FORMATS } from "../../../../shared/legacy/global-flags.ts";
+import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
 import { legacyManagementApiRuntimeLayer } from "../../../shared/legacy-management-api-runtime.layer.ts";
 import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyConfigPull } from "./pull.handler.ts";
@@ -83,5 +84,5 @@ export const legacyConfigPullCommand = Command.make("pull", config).pipe(
     },
   ]),
   Command.withHandler(legacyConfigPullHandler),
-  Command.provide(legacyManagementApiRuntimeLayer(["config", "pull"])),
+  Command.provide(Layer.mergeAll(legacyManagementApiRuntimeLayer(["config", "pull"]), stdinLayer)),
 );
