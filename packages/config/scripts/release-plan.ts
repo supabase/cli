@@ -30,7 +30,7 @@ interface ConfigPackageJson {
   readonly private?: boolean;
 }
 
-export interface ReleaseDuePlan {
+interface ReleaseDuePlan {
   readonly due: true;
   readonly version: string;
   readonly bumpType: string;
@@ -38,7 +38,7 @@ export interface ReleaseDuePlan {
   readonly isPrivate: boolean;
 }
 
-export interface NoReleasePlan {
+interface NoReleasePlan {
   readonly due: false;
 }
 

@@ -14,7 +14,7 @@ export type LiveProject = LiveCliProjectEnvironment["project"];
 type RunOptions = NonNullable<Parameters<typeof runSupabase>[1]>;
 type RunResult = Awaited<ReturnType<typeof runSupabase>>;
 
-export interface LiveWorkspace {
+interface LiveWorkspace {
   readonly path: string;
 }
 

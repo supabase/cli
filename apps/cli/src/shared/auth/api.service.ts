@@ -9,7 +9,7 @@ export type LoginSessionResponse = {
   nonce: string;
 };
 
-export type ProfileResponse = {
+type ProfileResponse = {
   gotrue_id: string;
   primary_email: string;
   username: string;

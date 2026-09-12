@@ -266,7 +266,7 @@ listen: 0.0.0.0:${PORT}
 
   // Sync versions across all packages
   console.log(`Syncing versions to ${version}...`);
-  await $`pnpm exec bun apps/cli/scripts/sync-versions.ts --version ${version}`.cwd(root).quiet();
+  await $`bun ../../scripts/sync-versions.ts --version ${version}`.cwd(import.meta.dir).quiet();
 
   console.log("Starting local npm registry...");
   await using registry = await startVerdaccio(configPath, PORT);

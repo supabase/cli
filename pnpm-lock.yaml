@@ -492,9 +492,6 @@ importers:
       effect:
         specifier: 'catalog:'
         version: 4.0.0-rc.112
-      undici:
-        specifier: ^8.10.0
-        version: 8.10.1
     devDependencies:
       '@tsconfig/bun':
         specifier: 'catalog:'
