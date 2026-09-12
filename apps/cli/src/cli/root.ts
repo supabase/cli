@@ -13,6 +13,7 @@ import { stackStartCommand } from "../commands/experimental/stack/start/start.co
 import { stackStopCommand } from "../commands/experimental/stack/stop/stop.command.ts";
 import type { StackBackend } from "../commands/experimental/stack/stack-backend.ts";
 import { computeCommand } from "../commands/experimental/compute/compute.command.ts";
+import { experimentsCommand } from "../commands/experiments/experiments.command.ts";
 import { feedbackCommand } from "../commands/feedback/feedback.command.ts";
 import { functionsCommand } from "../commands/functions/functions.command.ts";
 import { genCommand } from "../commands/gen/gen.command.ts";
@@ -95,6 +96,7 @@ export const rootCommandForFeatures = (
       dbCommand,
       domainsCommand,
       encryptionCommand,
+      experimentsCommand,
       feedbackCommand,
       functionsCommand,
       genCommand,
