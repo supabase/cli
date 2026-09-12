@@ -5,7 +5,7 @@
   // `go` comes from mise.
   "ignoreBinaries": ["go"],
   // Spawned through a node_modules/.bin path in tools/release/local-registry.ts and
-  // apps/cli/tests/helpers/npm-registry.ts, which knip cannot trace.
+  // bunx in apps/cli/tests/helpers/npm-registry.ts, which knip cannot trace.
   "ignoreDependencies": ["verdaccio"],
   "ignoreWorkspaces": ["apps/cli-go"],
   "workspaces": {
