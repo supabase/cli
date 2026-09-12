@@ -122,6 +122,44 @@ describe("splitAndTrim", () => {
       "SELECT 2",
     ]);
   });
+
+  it("closes a BEGIN ATOMIC body at an END confirmed by a newline", () => {
+    const body = "CREATE FUNCTION f() RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT 1; END";
+    expect(splitAndTrim(`${body}\n; SELECT 2;`)).toEqual([body, "SELECT 2"]);
+  });
+
+  it("keeps a BEGIN ATOMIC body whose END sits at EOF", () => {
+    expect(splitAndTrim("begin atomic; select 'end'; end")).toEqual([
+      "begin atomic; select 'end'; end",
+    ]);
+  });
+
+  it("closes a BEGIN ATOMIC body at an END right after a positional parameter's ;", () => {
+    const body = "CREATE FUNCTION f(int) RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT $1;END";
+    expect(splitAndTrim(`${body}; SELECT 2;`)).toEqual([body, "SELECT 2"]);
+  });
+
+  it.each(["\u00A0", "\uFEFF", "\u0085"])(
+    "does not treat BEGIN %s ATOMIC as the keyword pair",
+    (gap) => {
+      // Only PostgreSQL's own whitespace separates the keywords; these are identifier runes.
+      const sql = `BEGIN ${gap} ATOMIC; SELECT 1; end; SELECT 2;`;
+      expect(splitAndTrim(sql)).toEqual([`BEGIN ${gap} ATOMIC`, "SELECT 1", "end", "SELECT 2"]);
+    },
+  );
+
+  it("closes a nested BEGIN ATOMIC body inside parentheses", () => {
+    expect(splitAndTrim("DO (BEGIN ATOMIC SELECT 1; END; ); SELECT 2;")).toEqual([
+      "DO (BEGIN ATOMIC SELECT 1; END; )",
+      "SELECT 2",
+    ]);
+  });
+
+  it("does not close a BEGIN ATOMIC body at an END after an overlapping block comment", () => {
+    const body =
+      "CREATE FUNCTION f() RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT 1; /* a /*/ b */ SELECT 2 END; SELECT 3; END";
+    expect(splitAndTrim(`${body}; SELECT 4;`)).toEqual([body, "SELECT 4"]);
+  });
 });
 
 describe("splitSql", () => {

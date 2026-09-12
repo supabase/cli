@@ -251,9 +251,29 @@ SELECT 1;`,
 	})
 
 	t.Run("ignores non-ASCII begin atomic lookalikes", func(t *testing.T) {
-		// atomıc (dotless ı) case-folds to ATOMIC in some Unicode mappings but is a plain
-		// identifier in SQL.
+		// atomıc (dotless ı) case-folds to ATOMIC but is a plain identifier in SQL.
 		checkSplit(t, []string{"BEGIN atomıc;", " SELECT 'end';", " SELECT 2;"})
+	})
+
+	t.Run("closes atomic body at end right after a positional parameter", func(t *testing.T) {
+		checkSplit(t, []string{"CREATE FUNCTION f(int) RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT $1;END;", " SELECT 2;"})
+	})
+
+	t.Run("requires sql whitespace between begin and atomic", func(t *testing.T) {
+		for _, gap := range []string{"\u00A0", "\uFEFF", "\u0085"} {
+			t.Run(gap, func(t *testing.T) {
+				checkSplit(t, []string{"BEGIN " + gap + " ATOMIC;", " SELECT 1;", " end;", " SELECT 2;"})
+			})
+		}
+	})
+
+	t.Run("closes nested atomic body inside parentheses", func(t *testing.T) {
+		checkSplit(t, []string{"DO (BEGIN ATOMIC SELECT 1; END; );", " SELECT 2;"})
+	})
+
+	t.Run("ignores end after overlapping block comment", func(t *testing.T) {
+		body := `CREATE FUNCTION f() RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT 1; /* a /*/ b */ SELECT 2 END; SELECT 3; END;`
+		checkSplit(t, []string{body, ` SELECT 4;`})
 	})
 
 	t.Run("does not treat schema-qualified atomic function names as begin atomic", func(t *testing.T) {
