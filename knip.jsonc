@@ -2,24 +2,8 @@
   "$schema": "./node_modules/knip/schema.json",
   // Required in the event that git submodules are present. Do not remove this, despite knip warnings.
   "ignore": [".repos/**"],
-  // Binaries the machine provides rather than npm. `go` comes from mise.
-  "ignoreBinaries": [
-    "go",
-    // apps/cli/tests/smoke-test-macos.ts
-    "brew",
-    // apps/cli/tests/smoke-test-windows.ts
-    "cygpath",
-    // apps/cli/src/commands/seed/buckets/buckets.integration.test.ts
-    "mkfifo",
-    // apps/cli/scripts/build.ts
-    "nfpm",
-    // apps/cli/scripts/build.ts
-    "rcodesign",
-    // apps/cli/tests/smoke-test-windows.ts
-    "scoop",
-    // The CLI under test in apps/cli/tests/smoke-test-{macos,windows}.ts.
-    "supabase",
-  ],
+  // `go` comes from mise.
+  "ignoreBinaries": ["go"],
   // Spawned through a node_modules/.bin path in tools/release/local-registry.ts and
   // apps/cli/tests/helpers/npm-registry.ts, which knip cannot trace.
   "ignoreDependencies": ["verdaccio"],
@@ -45,6 +29,23 @@
         "src/shared/feedback/database.types.ts",
         // Starter templates read as text by compute-stacks.macro.ts, never imported.
         "src/shared/compute/stacks/**",
+      ],
+      // Binaries the machine provides rather than npm.
+      "ignoreBinaries": [
+        // apps/cli/tests/smoke-test-macos.ts
+        "brew",
+        // apps/cli/tests/smoke-test-windows.ts
+        "cygpath",
+        // apps/cli/src/commands/seed/buckets/buckets.integration.test.ts
+        "mkfifo",
+        // apps/cli/scripts/build.ts
+        "nfpm",
+        // apps/cli/scripts/build.ts
+        "rcodesign",
+        // apps/cli/tests/smoke-test-windows.ts
+        "scoop",
+        // The CLI under test in apps/cli/tests/smoke-test-{macos,windows}.ts.
+        "supabase",
       ],
       // TODO(CLI-2424): spawned through a node_modules/.bin path in scripts/publish-docs-spec.ts.
       "ignoreDependencies": ["prettier"],
