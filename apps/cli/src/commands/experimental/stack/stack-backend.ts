@@ -17,7 +17,7 @@ export class StackRoutingError extends Data.TaggedError("StackRoutingError")<{
   readonly cause?: unknown;
 }> {
   get suggestion(): string {
-    return "Set SUPABASE_EXPERIMENTAL_STACK=0 to use legacy start/stop, or use `supabase stack`.";
+    return "Set SUPABASE_EXPERIMENTAL_STACK=0 to use legacy start/stop/status, or use `supabase stack`.";
   }
 
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -92,7 +92,7 @@ export const resolveStackBackend = (input: {
     // The explicit namespace is always backed by the stack runtime and does
     // not need a project config or environment lookup to select it.
     if (command === "stack") return "stack";
-    if (command !== "start" && command !== "stop") return "legacy";
+    if (command !== "start" && command !== "stop" && command !== "status") return "legacy";
 
     const configValue = Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

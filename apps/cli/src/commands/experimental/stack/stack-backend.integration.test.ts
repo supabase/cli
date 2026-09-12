@@ -34,7 +34,7 @@ describe("resolveStackBackend", () => {
     }),
   );
 
-  it.effect("selects the configured backend for top-level start and stop", () => {
+  it.effect("selects the configured backend for top-level start, stop, and status", () => {
     const root = project(`project_id = "stack-routing-test"
 [api]
 port = 55421
@@ -50,7 +50,7 @@ stack = true
     return Effect.gen(function* () {
       expect(yield* resolve({ args: ["start"], cwd: join(root, "nested"), env: {} })).toBe("stack");
       expect(yield* resolve({ args: ["stop"], cwd: root, env: {} })).toBe("stack");
-      expect(yield* resolve({ args: ["status"], cwd: root, env: {} })).toBe("legacy");
+      expect(yield* resolve({ args: ["status"], cwd: root, env: {} })).toBe("stack");
     }).pipe(Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))));
   });
 
@@ -215,14 +215,14 @@ stack = true
     expect(completionFlags("stack", "start")).not.toContain("--ignore-health-check");
   });
 
-  it("keeps status and stack on their existing command trees", () => {
+  it("routes status like start and stop, and keeps stack on its own command tree", () => {
     for (const backend of ["legacy", "stack"] as const) {
       const stackCommands = respondToComplete(rootCommandForFeatures({ stackBackend: backend }), [
         "__complete",
         "stack",
         "",
       ])?.candidates.map(({ name }) => name);
-      expect(stackCommands).toEqual(["destroy", "start", "stop"]);
+      expect(stackCommands).toEqual(["destroy", "start", "status", "stop"]);
 
       expect(completionFlags(backend, "status")).toContain("--override-name");
     }

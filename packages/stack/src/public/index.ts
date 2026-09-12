@@ -19,6 +19,7 @@ export {
 } from "./EffectStack.ts";
 export type {
   EffectStack,
+  InspectStackOptions,
   StartStackOptions,
   PrepareStackOptions,
   CreateStackOptions,

@@ -1,5 +1,6 @@
-// Starts and stops a native stack through the compiled CLI binary, then uses the package's
-// public Promise API to inspect and destroy that stack.
+// Starts a native stack through the compiled CLI binary, checks its status and connection-variable
+// export, stops it, checks status again, then uses the package's public Promise API to inspect and
+// destroy that stack.
 // oxlint-disable-next-line effecttsgo/process-env -- package runtime composition is scoped below.
 
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- compiled CLI fixture requires host process/filesystem APIs
@@ -9,6 +10,7 @@ import { execFile as execFileCallback } from "node:child_process";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- compiled CLI fixture requires host process/filesystem APIs
 import path from "node:path";
 import { promisify } from "node:util";
+import { parse as parseDotenv } from "dotenv";
 import { afterEach, describe, expect, test } from "vitest";
 import { makeTempHome, runSupabase } from "../../../../../tests/helpers/cli.ts";
 
@@ -172,6 +174,34 @@ describe("stack start (compiled e2e)", () => {
       const databasePath = path.join(homeDir.dir, "managed", "stacks", idText, "data", "database");
       await access(path.join(databasePath, "PG_VERSION"));
 
+      const status = await runSupabase(["stack", "status", "--stack-id", idText], {
+        cwd: projectRoot,
+        home: homeDir.dir,
+        exitTimeoutMs: CLEANUP_TIMEOUT_MS,
+      });
+      expect(status.exitCode, `stdout:\n${status.stdout}\nstderr:\n${status.stderr}`).toBe(0);
+      expect(status.stdout).toContain(`(${idText})`);
+      expect(status.stdout).toContain("Owner: running");
+      expect(status.stdout).toContain("Lifecycle: running");
+      expect(status.stdout).toContain("Readiness: ready");
+      expect(status.stdout).toMatch(/Config drift: (changed|unchanged)/u);
+
+      const env = await runSupabase(
+        ["stack", "status", "--env", "--stack-id", idText, "--output-format", "json"],
+        { cwd: projectRoot, home: homeDir.dir, exitTimeoutMs: CLEANUP_TIMEOUT_MS },
+      );
+      expect(env.exitCode, `stdout:\n${env.stdout}\nstderr:\n${env.stderr}`).toBe(0);
+      const variables = JSON.parse(env.stdout) as Record<string, string>;
+      expect(Object.keys(variables)).toEqual(["DB_URL"]);
+      expect(variables.DB_URL).toMatch(/^postgresql:\/\/postgres:.+@.+:\d+\/postgres$/u);
+
+      const dotenv = await runSupabase(
+        ["stack", "status", "--env", "--stack-id", idText, "--output-format", "text"],
+        { cwd: projectRoot, home: homeDir.dir, exitTimeoutMs: CLEANUP_TIMEOUT_MS },
+      );
+      expect(dotenv.exitCode, `stdout:\n${dotenv.stdout}\nstderr:\n${dotenv.stderr}`).toBe(0);
+      expect(parseDotenv(dotenv.stdout)).toEqual(variables);
+
       await rm(path.join(projectRoot, "supabase", "config.toml"));
       const stop = await runSupabase(["stack", "stop", "--stack-id", idText], {
         cwd: projectRoot,
@@ -186,6 +216,28 @@ describe("stack start (compiled e2e)", () => {
       expect(observed.runtime).toEqual({ kind: "native" });
       expect(observed.lifecycle).toBe("stopped");
       expect(observed.database).toBe("stopped");
+
+      const stoppedStatus = await runSupabase(["stack", "status", "--stack-id", idText], {
+        cwd: projectRoot,
+        home: homeDir.dir,
+        exitTimeoutMs: CLEANUP_TIMEOUT_MS,
+      });
+      expect(
+        stoppedStatus.exitCode,
+        `stdout:\n${stoppedStatus.stdout}\nstderr:\n${stoppedStatus.stderr}`,
+      ).toBe(0);
+      expect(stoppedStatus.stdout).toContain("Owner: absent");
+      expect(stoppedStatus.stdout).toContain("Lifecycle: unavailable");
+      expect(stoppedStatus.stdout).toContain("Readiness: unknown");
+
+      const stoppedEnv = await runSupabase(["stack", "status", "--env", "--stack-id", idText], {
+        cwd: projectRoot,
+        home: homeDir.dir,
+        exitTimeoutMs: CLEANUP_TIMEOUT_MS,
+      });
+      expect(stoppedEnv.exitCode).not.toBe(0);
+      expect(stoppedEnv.stdout).not.toContain("DB_URL");
+      expect(stoppedEnv.stderr).toContain("must be running");
 
       await access(path.join(databasePath, "PG_VERSION"));
 
