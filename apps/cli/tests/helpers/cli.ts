@@ -6,6 +6,7 @@ import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { Data, Effect } from "effect";
 import {
   noteStackCliProjectHome,
   registerTempHome,
@@ -64,13 +65,18 @@ function assertBuildArtifactsExist(binaryPath: string): void {
   }
 }
 
-type RunResult = {
+export type RunResult = {
   stdout: string;
   stderr: string;
   exitCode: number;
   /** Set when the harness exit bound fired and SIGKILLed the process group. */
   timedOutAfterMs?: number;
 };
+
+/** The CLI closed its stdin before the harness finished writing to it. */
+export class CliStdinWriteError extends Data.TaggedError("CliStdinWriteError")<{
+  readonly reason: Error;
+}> {}
 
 const DEFAULT_EXIT_TIMEOUT_MS = 60_000;
 const DEFAULT_STACK_CLEANUP_TIMEOUT_MS = 120_000;
@@ -84,6 +90,10 @@ interface SpawnedSupabase {
   readonly kill: (signal?: NodeJS.Signals) => void;
   readonly waitForOutput: (pattern: RegExp, timeoutMs?: number, startAt?: number) => Promise<void>;
   readonly waitForExit: (timeoutMs?: number) => Promise<RunResult>;
+  /** Effect-native exit path; `waitForExit` is the Promise facade over this. */
+  readonly exitEffect: (timeoutMs?: number) => Effect.Effect<RunResult>;
+  /** The deferred stdin write failure, if the CLI closed stdin early. */
+  readonly stdinFailure: (result: RunResult) => Error | undefined;
 }
 
 export function makeTempHome() {
@@ -421,20 +431,22 @@ export function spawnSupabase(
       { cause: stdinError },
     );
 
-  const waitForExit = async (
+  // The single exit path. `waitForExit` is the Promise facade over it, so both callers
+  // share one implementation of the exit bound, the process-group kill and home disposal.
+  const exitEffect = (
     timeoutMs = options?.exitTimeoutMs ?? DEFAULT_EXIT_TIMEOUT_MS,
-  ): Promise<RunResult> => {
-    if (closeResult) {
-      cleanupProcessGroupOnClose();
-      disposeOwnHome();
-      if (stdinError !== undefined) {
-        throw stdinFailure(closeResult);
+  ): Effect.Effect<RunResult> =>
+    Effect.callback<RunResult>((resume) => {
+      if (closeResult) {
+        cleanupProcessGroupOnClose();
+        disposeOwnHome();
+        resume(Effect.succeed(closeResult));
+        return Effect.void;
       }
-      return closeResult;
-    }
 
-    let timedOut = false;
-    const result = await new Promise<RunResult>((resolve) => {
+      let settled = false;
+      let timedOut = false;
+
       const timeout = setTimeout(() => {
         timedOut = true;
         killProcessGroup(proc.pid!, "SIGKILL");
@@ -445,20 +457,32 @@ export function spawnSupabase(
       timeout.unref();
 
       const onClose = (result: RunResult) => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timeout);
         closeWaiters.delete(onClose);
         cleanupProcessGroupOnClose();
-        resolve(result);
+        disposeOwnHome();
+        resume(Effect.succeed(timedOut ? { ...result, timedOutAfterMs: timeoutMs } : result));
       };
 
       closeWaiters.add(onClose);
+
+      return Effect.sync(() => {
+        settled = true;
+        clearTimeout(timeout);
+        closeWaiters.delete(onClose);
+      });
     });
 
-    disposeOwnHome();
+  const waitForExit = async (
+    timeoutMs = options?.exitTimeoutMs ?? DEFAULT_EXIT_TIMEOUT_MS,
+  ): Promise<RunResult> => {
+    const result = await Effect.runPromise(exitEffect(timeoutMs));
     if (stdinError !== undefined) {
-      throw stdinFailure(timedOut ? { ...result, timedOutAfterMs: timeoutMs } : result);
+      throw stdinFailure(result);
     }
-    return timedOut ? { ...result, timedOutAfterMs: timeoutMs } : result;
+    return result;
   };
 
   return {
@@ -539,6 +563,8 @@ export function spawnSupabase(
       });
     },
     waitForExit,
+    exitEffect,
+    stdinFailure: (result) => (stdinError === undefined ? undefined : stdinFailure(result)),
   };
 }
 
@@ -577,6 +603,37 @@ export async function runSupabase(
   const result = await spawned.waitForExit();
   return { ...result, exitCode: killedByUntil ? 0 : result.exitCode };
 }
+
+/**
+ * Effect-native CLI run. The spawned process group is owned by the calling scope, so an
+ * interrupted test kills the child instead of orphaning it. `runSupabase` is the Promise
+ * facade over the same exit path.
+ */
+export const runSupabaseEffect = (
+  args: string[],
+  options?: Parameters<typeof spawnSupabase>[1],
+): Effect.Effect<RunResult, CliStdinWriteError> =>
+  Effect.acquireRelease(
+    Effect.sync(() => spawnSupabase(args, options)),
+    (spawned) =>
+      Effect.sync(() => {
+        try {
+          spawned.kill("SIGKILL");
+        } catch {}
+      }),
+  ).pipe(
+    Effect.flatMap((spawned) =>
+      spawned.exitEffect().pipe(
+        Effect.flatMap((result) => {
+          const failure = spawned.stdinFailure(result);
+          return failure === undefined
+            ? Effect.succeed(result)
+            : Effect.fail(new CliStdinWriteError({ reason: failure }));
+        }),
+      ),
+    ),
+    Effect.scoped,
+  );
 
 export function requireCliSuccess(
   result: {
