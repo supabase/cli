@@ -15,26 +15,35 @@ interface State {
 const BEGIN_ATOMIC = "ATOMIC";
 const END_ATOMIC = "END";
 
-// `\p{Nd}` (decimal digits only), not `\p{N}` (all Unicode numbers): `\p{N}` would wrongly
-// accept `No`/`Nl` runes like superscript-2 (`²`) as a valid identifier/dollar-tag character.
-const isIdentifierRune = (rune: string): boolean => /[\p{L}\p{Nd}_$]/u.test(rune);
+const isIdentifierRune = (rune: string): boolean => {
+  const codePoint = rune.codePointAt(0);
+  return codePoint !== undefined && (codePoint >= 0x80 || /[A-Za-z0-9_$]/u.test(rune));
+};
+
+const hasIdentifierRuneBefore = (data: string, offset: number): boolean => {
+  const rune = Array.from(data.slice(Math.max(0, offset - 2), offset)).at(-1);
+  return rune !== undefined && isIdentifierRune(rune);
+};
 
 function isBeginAtomic(data: string): boolean {
   let offset = data.length - BEGIN_ATOMIC.length;
   if (offset < 0 || data.slice(offset).toUpperCase() !== BEGIN_ATOMIC) return false;
-  if (offset > 0 && isIdentifierRune(data[offset - 1]!)) return false;
+  if (hasIdentifierRuneBefore(data, offset)) return false;
   const prefix = data.slice(0, offset).replace(/\s+$/u, "");
   offset = prefix.length - "BEGIN".length;
   if (offset < 0 || prefix.slice(offset).toUpperCase() !== "BEGIN") return false;
   if (offset === 0) return true;
-  return !isIdentifierRune(prefix[offset - 1]!);
+  return !hasIdentifierRuneBefore(prefix, offset);
 }
 
 class ReadyState implements State {
   next(rune: string, data: string): State | null {
     switch (rune) {
-      case "$":
-        return new TagState(data.length - rune.length);
+      case "$": {
+        const offset = data.length - rune.length;
+        if (hasIdentifierRuneBefore(data, offset)) return this;
+        return new TagState(offset);
+      }
       case "'":
       case '"':
         return new QuoteState(rune);
@@ -112,9 +121,7 @@ class TagState implements State {
   constructor(private readonly offset: number) {}
   next(rune: string, data: string): State | null {
     if (rune === "$") return new DollarState(data.slice(this.offset));
-    // Valid dollar-tag characters — see `isIdentifierRune`'s comment on why `\p{Nd}`,
-    // not `\p{N}`.
-    if (/[\p{L}\p{Nd}_]/u.test(rune)) return this;
+    if (isIdentifierRune(rune)) return this;
     return new ReadyState().next(rune, data);
   }
 }
@@ -126,19 +133,33 @@ class EscapeState implements State {
 }
 
 class AtomicState implements State {
+  private pendingEnd = false;
   constructor(
     private prev: State,
     private readonly delimiter: string,
   ) {}
   next(rune: string, data: string): State | null {
+    if (this.pendingEnd) {
+      this.pendingEnd = false;
+      if (!isIdentifierRune(rune)) return new ReadyState().next(rune, data);
+      return this;
+    }
     // A delimiter inside a nested quote/comment doesn't count.
     const curr = this.prev.next(rune, data);
     if (curr !== null) this.prev = curr;
-    if (this.prev instanceof ReadyState) {
-      const window = data.slice(-this.delimiter.length);
-      if (window.toUpperCase() === this.delimiter.toUpperCase()) return new ReadyState();
+    if (this.prev instanceof ReadyState && this.endsWithDelimiter(data)) {
+      if (this.delimiter !== END_ATOMIC) return new ReadyState();
+      this.pendingEnd = true;
     }
     return this;
+  }
+
+  private endsWithDelimiter(data: string): boolean {
+    const offset = data.length - this.delimiter.length;
+    if (offset < 0 || data.slice(offset).toUpperCase() !== this.delimiter.toUpperCase())
+      return false;
+    if (offset === 0 || this.delimiter !== END_ATOMIC) return true;
+    return !hasIdentifierRuneBefore(data, offset);
   }
 }
 

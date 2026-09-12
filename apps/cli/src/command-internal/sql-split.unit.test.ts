@@ -32,11 +32,9 @@ describe("splitAndTrim", () => {
     ]);
   });
 
-  it("treats a non-decimal Unicode digit as an invalid dollar-tag character, like Go's unicode.IsDigit", () => {
-    // "a²" (U+00B2, category No) is not a valid dollar-tag character, so the tag falls back
-    // and the embedded `;` becomes a real boundary.
-    const sql = "CREATE FUNCTION f() AS $a²$foo; bar$a²$ LANGUAGE sql;";
-    expect(splitAndTrim(sql)).toEqual(["CREATE FUNCTION f() AS $a²$foo", "bar$a²$ LANGUAGE sql"]);
+  it.each(["a²", "a😀", "á"])("respects non-ASCII dollar tag $%s$", (tag) => {
+    const statement = `CREATE FUNCTION f() AS $${tag}$foo; END; bar$${tag}$ LANGUAGE sql`;
+    expect(splitAndTrim(`${statement}; SELECT 2;`)).toEqual([statement, "SELECT 2"]);
   });
 
   it("respects named dollar tags", () => {
@@ -66,6 +64,29 @@ describe("splitAndTrim", () => {
       "SELECT 3",
     ]);
   });
+
+  it.each([
+    "pending",
+    "pending_change",
+    "append",
+    "legend",
+    "𐐀end",
+    "😀end",
+    "́end",
+    "²end",
+    "pending$$foo$",
+  ])("does not close a BEGIN ATOMIC body inside %s", (identifier) => {
+    const body = `CREATE FUNCTION f() RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT 1 AS ${identifier}; END`;
+    expect(splitAndTrim(`${body}; SELECT 2;`)).toEqual([body, "SELECT 2"]);
+  });
+
+  it.each(["endpoint", "end_date", "ended_at", "end𐐀", "end😀", "end́", "end²", "end$$foo$"])(
+    "does not close a BEGIN ATOMIC body at the start of %s",
+    (identifier) => {
+      const body = `CREATE FUNCTION f() RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT ${identifier}; SELECT 1; END`;
+      expect(splitAndTrim(`${body}; SELECT 2;`)).toEqual([body, "SELECT 2"]);
+    },
+  );
 });
 
 describe("splitSql", () => {

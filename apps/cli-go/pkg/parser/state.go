@@ -27,6 +27,9 @@ func (s *ReadyState) Next(r rune, data []byte) State {
 	switch r {
 	case '$':
 		offset := len(data) - utf8.RuneLen(r)
+		if hasIdentifierRuneBefore(data, offset) {
+			return s
+		}
 		return &TagState{offset: offset}
 	case '\'':
 		fallthrough
@@ -58,11 +61,8 @@ func isBeginAtomic(data []byte) bool {
 	if offset < 0 || !strings.EqualFold(string(data[offset:]), BEGIN_ATOMIC) {
 		return false
 	}
-	if offset > 0 {
-		r, _ := utf8.DecodeLastRune(data[:offset])
-		if isIdentifierRune(r) {
-			return false
-		}
+	if hasIdentifierRuneBefore(data, offset) {
+		return false
 	}
 	prefix := bytes.TrimRightFunc(data[:offset], unicode.IsSpace)
 	offset = len(prefix) - len("BEGIN")
@@ -72,12 +72,19 @@ func isBeginAtomic(data []byte) bool {
 	if offset == 0 {
 		return true
 	}
-	r, _ := utf8.DecodeLastRune(prefix[:offset])
-	return !isIdentifierRune(r)
+	return !hasIdentifierRuneBefore(prefix, offset)
 }
 
 func isIdentifierRune(r rune) bool {
-	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '$'
+	return r >= utf8.RuneSelf || unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '$'
+}
+
+func hasIdentifierRuneBefore(data []byte, offset int) bool {
+	if offset <= 0 {
+		return false
+	}
+	r, _ := utf8.DecodeLastRune(data[:offset])
+	return isIdentifierRune(r)
 }
 
 // Opened a line comment
@@ -173,7 +180,7 @@ func (s *TagState) Next(r rune, data []byte) State {
 		return &dollar
 	}
 	// Valid tag: https://www.postgresql.org/docs/current/sql-syntax-lexical.html
-	if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' {
+	if isIdentifierRune(r) {
 		return s
 	}
 	// Break out of tag state
@@ -190,21 +197,39 @@ func (s *EscapeState) Next(r rune, data []byte) State {
 
 // Opened BEGIN ATOMIC function body
 type AtomicState struct {
-	prev      State
-	delimiter []byte
+	prev       State
+	delimiter  []byte
+	pendingEnd bool
 }
 
 func (s *AtomicState) Next(r rune, data []byte) State {
+	if s.pendingEnd {
+		s.pendingEnd = false
+		if !isIdentifierRune(r) {
+			return (&ReadyState{}).Next(r, data)
+		}
+		return s
+	}
 	// If we are in a quoted state, the current delimiter doesn't count.
 	if curr := s.prev.Next(r, data); curr != nil {
 		s.prev = curr
 	}
-	if _, ok := s.prev.(*ReadyState); ok {
-		window := data[len(data)-len(s.delimiter):]
-		// Treat delimiter as case insensitive
-		if strings.EqualFold(string(window), string(s.delimiter)) {
+	if _, ok := s.prev.(*ReadyState); ok && s.endsWithDelimiter(data) {
+		if string(s.delimiter) != END_ATOMIC {
 			return &ReadyState{}
 		}
+		s.pendingEnd = true
 	}
 	return s
+}
+
+func (s *AtomicState) endsWithDelimiter(data []byte) bool {
+	offset := len(data) - len(s.delimiter)
+	if offset < 0 || !strings.EqualFold(string(data[offset:]), string(s.delimiter)) {
+		return false
+	}
+	if offset == 0 || string(s.delimiter) != END_ATOMIC {
+		return true
+	}
+	return !hasIdentifierRuneBefore(data, offset)
 }

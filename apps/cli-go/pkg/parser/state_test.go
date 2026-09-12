@@ -77,6 +77,14 @@ func TestDollarQuote(t *testing.T) {
 		checkSplit(t, sql)
 	})
 
+	t.Run("non-ASCII named tag", func(t *testing.T) {
+		for _, tag := range []string{"a²", "a😀", "á"} {
+			t.Run(tag, func(t *testing.T) {
+				checkSplit(t, []string{"$" + tag + "$ any ; END; string$" + tag + "$;", " SELECT 2;"})
+			})
+		}
+	})
+
 	t.Run("anonymous tag", func(t *testing.T) {
 		sql := []string{"$$\"Dane's horse\"$$"}
 		checkSplit(t, sql)
@@ -189,6 +197,24 @@ $$;`,
 SELECT 1;`,
 				}
 				checkSplit(t, sql)
+			})
+		}
+	})
+
+	t.Run("ignores end inside identifiers", func(t *testing.T) {
+		for _, name := range []string{"pending", "pending_change", "append", "legend", "𐐀end", "😀end", "́end", "²end", "pending$$foo$"} {
+			t.Run(name, func(t *testing.T) {
+				body := `CREATE FUNCTION f() RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT 1 AS ` + name + `; END;`
+				checkSplit(t, []string{body, ` SELECT 2;`})
+			})
+		}
+	})
+
+	t.Run("ignores identifiers starting with end", func(t *testing.T) {
+		for _, name := range []string{"endpoint", "end_date", "ended_at", "end𐐀", "end😀", "end́", "end²", "end$$foo$"} {
+			t.Run(name, func(t *testing.T) {
+				body := `CREATE FUNCTION f() RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT ` + name + `; SELECT 1; END;`
+				checkSplit(t, []string{body, ` SELECT 2;`})
 			})
 		}
 	})
