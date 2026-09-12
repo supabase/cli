@@ -54,7 +54,6 @@ export default defineConfig({
       {
         resolve: workspacePackageResolve,
         ssr: { resolve: workspacePackageSsrResolve },
-        plugins: [dockerfileTextPlugin()],
         test: {
           name: "unit",
           include: ["**/*.unit.test.ts"],
@@ -64,7 +63,6 @@ export default defineConfig({
       {
         resolve: workspacePackageResolve,
         ssr: { resolve: workspacePackageSsrResolve },
-        plugins: [dockerfileTextPlugin()],
         test: {
           name: "integration",
           include: ["**/*.integration.test.ts"],
@@ -73,7 +71,6 @@ export default defineConfig({
       {
         resolve: workspacePackageResolve,
         ssr: { resolve: workspacePackageSsrResolve },
-        plugins: [dockerfileTextPlugin()],
         test: {
           name: "e2e",
           include: ["**/*.e2e.test.ts"],
@@ -87,7 +84,6 @@ export default defineConfig({
       {
         resolve: workspacePackageResolve,
         ssr: { resolve: workspacePackageSsrResolve },
-        plugins: [dockerfileTextPlugin()],
         test: {
           // Live tests run against one provisioned project on the configured
           // platform. They are never part of the default unit/integration/e2e

@@ -1976,6 +1976,8 @@ describe("Effect stack lifecycle handoff", () => {
                 tempRoot: env.tempRoot,
                 platform: env.platform,
               });
+              // set the root to `packages/stack` root
+              const cwd = path.resolve(import.meta.dirname, "../..");
               const child = yield* ChildProcess.make(
                 process.execPath,
                 [
@@ -2001,7 +2003,7 @@ describe("Effect stack lifecycle handoff", () => {
                 `,
                 ],
                 {
-                  cwd: process.cwd(),
+                  cwd,
                   env: {
                     OWNERSHIP_MODULE: new URL("../state/Ownership.ts", import.meta.url).href,
                     OWNERSHIP_STACK_ID: id,

@@ -49,6 +49,9 @@ enabled = false
 enabled = false
 `;
 
+// set the root to `apps/cli` root
+const cwd = path.resolve(import.meta.dirname, "../../../../..");
+
 // oxlint-disable-next-line effecttsgo/async-function -- subprocess inspection is a foreign Promise boundary
 async function inspectStackState(home: string, stackId: string) {
   const script = `
@@ -66,7 +69,7 @@ async function inspectStackState(home: string, stackId: string) {
     }));
   `;
   const result = await execFile("bun", ["--bun", "-e", script, stackId], {
-    cwd: process.cwd(),
+    cwd,
     env: {
       ...process.env,
       SUPABASE_HOME: home,
@@ -94,7 +97,7 @@ async function destroyStack(home: string, stackId: string) {
     await stack.destroy();
   `;
   await execFile("bun", ["--bun", "-e", script, stackId], {
-    cwd: process.cwd(),
+    cwd,
     env: {
       ...process.env,
       SUPABASE_HOME: home,
