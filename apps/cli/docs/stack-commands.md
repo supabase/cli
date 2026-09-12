@@ -29,7 +29,9 @@ explicit export reveals credentials. Ordinary status remains free of secrets. `-
 accepts repeated or comma-separated `EXPORTED_VARIABLE=NAME` entries, requires `--env`, and rejects
 unknown variables, invalid names, and collisions. API credentials are omitted when Auth is disabled.
 
-The legacy `supabase status -o env` form is rejected on the stack backend; use `--env` instead.
+The stack backend rejects every explicit legacy `-o/--output` value: `env`, `pretty`, `json`,
+`toml`, `yaml`, `table`, and `csv`. `--output-format text`, `json`, or `stream-json` replace them.
+`-o env` becomes `--env`.
 
 ## Selecting the top-level commands
 

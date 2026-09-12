@@ -415,11 +415,27 @@ describe("stack status", () => {
 
   it.effect("falls back only for typed comparison errors and preserves defects", () => {
     const typed = runStatus({ compareFailure: "typed", status: makeStatus(id) });
+    const typedJson = runStatus({
+      compareFailure: "typed",
+      status: makeStatus(id),
+      outputFormat: "json",
+    });
     const defect = runStatus({ compareFailure: "defect", status: makeStatus(id) });
     return Effect.gen(function* () {
       yield* typed.effect;
       expect(typed.inspectInputs).toHaveLength(2);
       expect(typed.out.stdoutText).toContain("Config drift: unavailable");
+      expect(typed.out.stdoutText).toContain(
+        "Config warning: Project configuration could not be compared: candidate config is invalid",
+      );
+      yield* typedJson.effect;
+      const success = typedJson.out.messages.find((message) => message.type === "success");
+      expect(success?.data).toMatchObject({
+        config_drift: {
+          status: "unavailable",
+          message: "Project configuration could not be compared: candidate config is invalid",
+        },
+      });
       const exit = yield* defect.effect.pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(defect.inspectInputs).toHaveLength(1);
@@ -663,6 +679,7 @@ describe("stack status", () => {
       { env: true, overrideName: ["API_URL=DB_URL"] },
       { env: true, overrideName: ["API_URL"] },
       { env: true, overrideName: ["API_URL=A=B"] },
+      { env: true, overrideName: ["API_URL=A", "API_URL=B"] },
     ];
     return Effect.forEach(cases, (overrides) => {
       const run = runStatus({ flags: { ...flags(), ...overrides } });
@@ -689,8 +706,9 @@ describe("stack status", () => {
       credentialFailure: true,
     });
     return Effect.gen(function* () {
-      const stoppedExit = yield* stopped.effect.pipe(Effect.exit);
-      expect(Exit.isFailure(stoppedExit)).toBe(true);
+      const stoppedError = yield* stopped.effect.pipe(Effect.flip);
+      expect(stoppedError.reason).toBe("lifecycle");
+      expect(stoppedError[ErrorActionabilityId]).toEqual(actionability.startStack);
       expect(stopped.out.stdoutText).toBe("");
       const failedExit = yield* failedCredentials.effect.pipe(Effect.exit);
       expect(Exit.isFailure(failedExit)).toBe(true);

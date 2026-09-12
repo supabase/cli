@@ -20,6 +20,7 @@ const variableNames = [
 export const stackEnvOverrides = (entries: ReadonlyArray<string>) =>
   Effect.gen(function* () {
     const names = new Map(variableNames.map((name) => [String(name), String(name)]));
+    const sources = new Set<string>();
     for (const entry of entries) {
       const [source, target, extra] = entry.split("=");
       if (
@@ -34,6 +35,12 @@ export const stackEnvOverrides = (entries: ReadonlyArray<string>) =>
           message:
             "--override-name must be EXPORTED_VARIABLE=VALID_ENV_NAME; for example API_URL=NEXT_PUBLIC_SUPABASE_URL.",
         });
+      if (sources.has(source))
+        return yield* new StackCommandStatusError({
+          reason: "flags",
+          message: `--override-name lists ${source} more than once.`,
+        });
+      sources.add(source);
       names.set(source, target);
     }
     if (new Set(names.values()).size !== names.size)
@@ -76,16 +83,23 @@ export const stackEnvValues = (
   );
 };
 
-/** Dotenv quoting preserves URLs and keys verbatim, including literal backslashes. */
+const dotenvQuote = (value: string): string | undefined => {
+  if (!value.includes("'")) return "'";
+  if (!value.includes('"') && !value.includes("\\")) return '"';
+  if (!value.includes("`")) return "`";
+  return undefined;
+};
+
+/** dotenv only expands `\n`/`\r` escapes inside double quotes, so a value with a backslash skips double quotes to keep its escape sequences literal. */
 export const encodeStackEnv = (values: Readonly<Record<string, string>>) =>
   Effect.forEach(
     Object.entries(values).sort(([left], [right]) => left.localeCompare(right)),
     ([name, value]) => {
-      const quote = ["'", "`"].find((candidate) => !value.includes(candidate));
+      const quote = dotenvQuote(value);
       if (quote === undefined || value.includes("\r"))
         return Effect.fail(
           new StackCommandStatusError({
-            reason: "runtime",
+            reason: "output",
             message:
               "A credential cannot be represented losslessly as dotenv. Use --env --output-format json.",
           }),

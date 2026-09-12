@@ -48,6 +48,10 @@ const classifyStackError = (error: StackError) =>
       "InvalidJwtSigningMaterialError",
       () => ({ reason: "invalid-config" as const }),
     ),
+    Match.tag("StackNotRunningError", "StackLifecycleConflictError", () => ({
+      reason: "lifecycle" as const,
+      suggestion: "Run supabase stack start first.",
+    })),
     Match.orElse(() => ({
       reason: "runtime" as const,
       suggestion: "Retry the command and use --debug if the stack state remains unavailable.",
@@ -78,6 +82,9 @@ const readiness = (status: StackStatus | undefined): string => {
 
 const configUnavailableWarning =
   "Project configuration could not be loaded; fix it before checking drift.";
+
+const configComparisonWarning = (detail: string) =>
+  `Project configuration could not be compared: ${detail}`;
 
 const payload = (inspection: StackInspection, configWarning?: string) => ({
   identity: {
@@ -202,7 +209,7 @@ export const stackStatus = Effect.fn("experimental.stack.status")(function* (
       const status = yield* catchStackError(stack.status);
       if (status.lifecycle !== "running")
         return yield* new StackCommandStatusError({
-          reason: "runtime",
+          reason: "lifecycle",
           message: "The stack must be running to export connection variables.",
           suggestion: "Run supabase stack start first.",
         });
@@ -210,7 +217,7 @@ export const stackStatus = Effect.fn("experimental.stack.status")(function* (
       const values = stackEnvValues(status, credentials, envNames);
       if (output.format === "text") yield* output.raw(yield* encodeStackEnv(values));
       else yield* output.result(values);
-      return target.inspection;
+      return;
     }
     const loaded = yield* loadStackConfig(target.projectRoot).pipe(
       Effect.map((config) => ({ config, warning: undefined })),
@@ -226,10 +233,16 @@ export const stackStatus = Effect.fn("experimental.stack.status")(function* (
         : yield* api.inspectStack(target.id, { config: loaded.config }).pipe(
             Effect.map(comparedInspection),
             Effect.catchTags({
-              InvalidStackConfigError: () =>
-                Effect.succeed({ inspection: undefined, warning: configUnavailableWarning }),
-              StackVersionUnsupportedError: () =>
-                Effect.succeed({ inspection: undefined, warning: configUnavailableWarning }),
+              InvalidStackConfigError: (error) =>
+                Effect.succeed({
+                  inspection: undefined,
+                  warning: configComparisonWarning(error.message),
+                }),
+              StackVersionUnsupportedError: (error) =>
+                Effect.succeed({
+                  inspection: undefined,
+                  warning: configComparisonWarning(error.message),
+                }),
             }),
             catchStackError,
           );
@@ -240,7 +253,6 @@ export const stackStatus = Effect.fn("experimental.stack.status")(function* (
     const inspectionWarning = loaded.warning ?? comparison.warning;
     if (output.format === "text") yield* output.raw(render(inspection, inspectionWarning));
     else yield* output.success("", payload(inspection, inspectionWarning));
-    return inspection;
   });
   return yield* body.pipe(Effect.ensuring(telemetryState.flush));
 });
