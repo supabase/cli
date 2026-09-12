@@ -98,9 +98,7 @@ describe("cliProjectLocalServiceVersionsLayer", () => {
           storage: "1.40.0",
         });
       }
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(Effect.promise(() => rm(tempDir, { recursive: true, force: true }))));
   });
 
   it.live("returns none when no local override file exists", () => {
@@ -119,8 +117,6 @@ describe("cliProjectLocalServiceVersionsLayer", () => {
 
       const loaded = yield* localVersions.load;
       expect(Option.isNone(loaded)).toBe(true);
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(Effect.promise(() => rm(tempDir, { recursive: true, force: true }))));
   });
 });

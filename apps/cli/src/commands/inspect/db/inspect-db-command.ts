@@ -10,22 +10,22 @@ import type { InspectConnectionFlags } from "./inspect-query.ts";
  * verbatim across all 25 commands so flag names and descriptions live in one place.
  */
 export const INSPECT_DB_FLAGS = {
-  dbUrl: Flag.string("db-url").pipe(
+  dbUrl: Flag.String("db-url").pipe(
     Flag.withDescription(
       "Inspect the database specified by the connection string (must be percent-encoded).",
     ),
     Flag.optional,
   ),
-  linked: Flag.boolean("linked").pipe(
+  linked: Flag.Boolean("linked").pipe(
     Flag.withDescription("Inspect the linked project."),
     Flag.withDefault(false),
   ),
-  local: Flag.boolean("local").pipe(
+  local: Flag.Boolean("local").pipe(
     Flag.withDescription("Inspect the local database."),
     Flag.withDefault(false),
   ),
   // TS-only override of the linked project ref — see push.command.ts (db push).
-  projectRef: Flag.string("project-ref").pipe(
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),

@@ -58,7 +58,7 @@ describe("cliSettingsLayer", () => {
           },
         }),
       ),
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+      Effect.ensuring(Effect.promise(() => rm(tempDir, { recursive: true, force: true }))),
     );
   });
 
@@ -109,9 +109,7 @@ describe("cliSettingsLayer", () => {
         if (Option.isSome(cliProjectContext.paths)) {
           expect(cliProjectContext.paths.value.projectRoot).toBe(packageRoot);
         }
-      }).pipe(
-        Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-      );
+      }).pipe(Effect.ensuring(Effect.promise(() => rm(tempDir, { recursive: true, force: true }))));
     },
   );
 
@@ -153,9 +151,7 @@ describe("cliSettingsLayer", () => {
       if (Option.isSome(cliSettings.accessToken)) {
         expect(Redacted.value(cliSettings.accessToken.value)).toBe("sbp_ambient");
       }
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(Effect.promise(() => rm(tempDir, { recursive: true, force: true }))));
   });
 
   it.live("has no PostHog key when nothing is injected or overridden", () => {
@@ -166,7 +162,7 @@ describe("cliSettingsLayer", () => {
       expect(Option.isNone(cliSettings.telemetryPosthogKey)).toBe(true);
     }).pipe(
       Effect.provide(buildLayer({ cwd: tempDir })),
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+      Effect.ensuring(Effect.promise(() => rm(tempDir, { recursive: true, force: true }))),
     );
   });
 
@@ -185,7 +181,7 @@ describe("cliSettingsLayer", () => {
           },
         }),
       ),
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+      Effect.ensuring(Effect.promise(() => rm(tempDir, { recursive: true, force: true }))),
     );
   });
 
@@ -198,7 +194,7 @@ describe("cliSettingsLayer", () => {
       expect(cliSettings.supabaseHome).toBe(supabaseHome);
     }).pipe(
       Effect.provide(buildLayer({ cwd: tempDir, env: { SUPABASE_HOME: `  ${supabaseHome}  ` } })),
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+      Effect.ensuring(Effect.promise(() => rm(tempDir, { recursive: true, force: true }))),
     );
   });
 
@@ -214,7 +210,7 @@ describe("cliSettingsLayer", () => {
           expect(cliSettings.supabaseHome).toBe(join(homeDir, ".supabase"));
         }).pipe(
           Effect.provide(buildLayer({ cwd: tempDir, homeDir, env: { SUPABASE_HOME: value } })),
-          Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+          Effect.ensuring(Effect.promise(() => rm(tempDir, { recursive: true, force: true }))),
         );
       },
     );
@@ -237,7 +233,7 @@ describe("cliSettingsLayer", () => {
           },
         }),
       ),
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+      Effect.ensuring(Effect.promise(() => rm(tempDir, { recursive: true, force: true }))),
     );
   });
 });

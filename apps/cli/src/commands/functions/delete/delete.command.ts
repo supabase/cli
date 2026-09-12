@@ -7,10 +7,10 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { functionsDelete } from "./delete.handler.ts";
 
 const config = {
-  functionName: Argument.string("Function name").pipe(
+  functionName: Argument.String("Function name").pipe(
     Argument.withDescription("Name of the Function to delete."),
   ),
-  projectRef: Flag.string("project-ref").pipe(
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),

@@ -63,7 +63,7 @@ interface CommandTelemetryOptions<Flags extends Record<string, unknown> = never>
   // passed through regardless of this list.
   readonly safeFlags?: ReadonlyArray<string>;
   // A command's flag config record (the object passed to `Command.make`). Any
-  // `Flag.choice`/`Flag.choiceWithValue` flag in it is treated as telemetry-safe automatically, so
+  // `Flag.Literals`/`Flag.ChoiceWithValue` flag in it is treated as telemetry-safe automatically, so
   // enum flags don't need hand-listing in `safeFlags`. The three global choice flags (`--output`,
   // `--dns-resolver`, `--agent`) are covered separately via `GLOBAL_CHOICE_FLAG_NAMES` below.
   readonly config?: Record<string, Param.Any>;
@@ -209,9 +209,9 @@ function normalizeFlagValue(value: unknown): unknown {
   return normalizeFlagValue(value.value);
 }
 
-// Every `Flag.choice`/`Flag.choiceWithValue` flag is treated as telemetry-safe automatically —
+// Every `Flag.Literals`/`Flag.ChoiceWithValue` flag is treated as telemetry-safe automatically —
 // checks the unwrapped `Single`'s primitive `_tag`. Restricted to `kind === Param.flagKind` so a
-// same-named `Argument.choice` positional can never be mistaken for a `--flag`.
+// same-named `Argument.Literals` positional can never be mistaken for a `--flag`.
 function getChoiceFlagNames(config: Record<string, Param.Any> | undefined): ReadonlySet<string> {
   const names = new Set<string>();
   if (config === undefined) return names;
@@ -246,8 +246,8 @@ const GLOBAL_SHORT_ALIASES: Readonly<Record<string, string>> = (() => {
 })();
 
 /**
- * CLI-name set for every global/persistent flag that is itself a `Flag.choice`/
- * `Flag.choiceWithValue` (today `output`, `dns-resolver`, `agent`), derived from `GLOBAL_FLAGS`
+ * CLI-name set for every global/persistent flag that is itself a `Flag.Literals`/
+ * `Flag.ChoiceWithValue` (today `output`, `dns-resolver`, `agent`), derived from `GLOBAL_FLAGS`
  * the same way `GLOBAL_SHORT_ALIASES` is. Applied only to the global-fallback path in
  * `buildFlagsMap` (`!isFromHandler`): a command that registers its own differently-typed local
  * flag under the same CLI name (e.g. `db diff`'s local string `--output`) must pass that flag in

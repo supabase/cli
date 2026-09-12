@@ -13,8 +13,8 @@ import { testNew } from "./new.handler.ts";
 const TEMPLATE_VALUES = ["pgtap"] as const;
 
 const config = {
-  name: Argument.string("name").pipe(Argument.withDescription("Name of the test file to create.")),
-  template: Flag.choice("template", TEMPLATE_VALUES).pipe(
+  name: Argument.String("name").pipe(Argument.withDescription("Name of the test file to create.")),
+  template: Flag.Literals("template", TEMPLATE_VALUES).pipe(
     Flag.withAlias("t"),
     Flag.withDescription("Template framework to generate."),
     Flag.optional,

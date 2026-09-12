@@ -15,31 +15,31 @@ import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts
 import { computeNew } from "./new.handler.ts";
 
 const config = {
-  name: Argument.string("name").pipe(
+  name: Argument.String("name").pipe(
     Argument.withDescription(
       "Compute name. Doubles as its directory, and its hostname. Prompted when omitted.",
     ),
     Argument.optional,
   ),
-  runtime: Flag.choice("runtime", COMPUTE_RUNTIMES).pipe(
+  runtime: Flag.Literals("runtime", COMPUTE_RUNTIMES).pipe(
     Flag.withDescription(
       "Runtime to scaffold and record in supabase/config.toml. Prompted when omitted.",
     ),
     Flag.optional,
   ),
-  size: Flag.choice("size", COMPUTE_SIZES).pipe(
+  size: Flag.Literals("size", COMPUTE_SIZES).pipe(
     Flag.withDescription(
       "Instance size to record in supabase/config.toml. Each size implies its own vCPU count, so there is no separate --cpu. Prompted when omitted.",
     ),
     Flag.optional,
   ),
-  exposure: Flag.choice("exposure", COMPUTE_EXPOSURES).pipe(
+  exposure: Flag.Literals("exposure", COMPUTE_EXPOSURES).pipe(
     Flag.withDescription(
       "Whether the compute is reachable from the internet, recorded as `exposure` in supabase/config.toml. Prompted when omitted.",
     ),
     Flag.optional,
   ),
-  instances: Flag.integer("instances").pipe(
+  instances: Flag.Int("instances").pipe(
     // Bounded at the parser, the same way `push --instances` and the config
     // schema's own `instances` are.
     Flag.filter(
@@ -51,7 +51,7 @@ const config = {
     ),
     Flag.optional,
   ),
-  source: Flag.string("source").pipe(
+  source: Flag.String("source").pipe(
     Flag.withDescription(
       "Scaffold the compute here instead of the default compute directory, recorded as `source` in supabase/config.toml.",
     ),

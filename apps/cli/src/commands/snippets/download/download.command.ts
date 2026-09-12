@@ -7,10 +7,10 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { snippetsDownload } from "./download.handler.ts";
 
 const config = {
-  snippetId: Argument.string("snippet-id").pipe(
+  snippetId: Argument.String("snippet-id").pipe(
     Argument.withDescription("ID of the SQL snippet to download."),
   ),
-  projectRef: Flag.string("project-ref").pipe(
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),

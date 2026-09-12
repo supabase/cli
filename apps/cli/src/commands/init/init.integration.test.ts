@@ -120,9 +120,7 @@ describe("init", () => {
       );
       expect(content).toContain("major_version = 17");
       expect(out.stdoutText).toBe("Finished supabase init.\n");
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(Effect.promise(() => rm(tempDir, { recursive: true, force: true }))));
   });
 
   it.live("requires --experimental when --use-orioledb is set, with cobra's exact wording", () => {
@@ -149,9 +147,7 @@ describe("init", () => {
         `required flag(s) "experimental" not set\n`,
         "Try rerunning the command with --debug to troubleshoot the error.\n",
       ]);
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(Effect.promise(() => rm(tempDir, { recursive: true, force: true }))));
   });
 
   it.live("fails with Go's exact error when config.toml already exists", () => {
@@ -185,9 +181,7 @@ describe("init", () => {
         "failed to create config file: open supabase/config.toml: file exists\n",
         "Run supabase init --force to overwrite existing config file.\n",
       ]);
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(Effect.promise(() => rm(tempDir, { recursive: true, force: true }))));
   });
 
   it.live("renders the Windows form of the already-exists error on win32", () => {
@@ -221,9 +215,7 @@ describe("init", () => {
         "failed to create config file: open supabase\\config.toml: The file exists.\n",
         "Run supabase init --force to overwrite existing config file.\n",
       ]);
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(Effect.promise(() => rm(tempDir, { recursive: true, force: true }))));
   });
 
   it.live("supports the hidden IDE flags natively", () => {
@@ -254,9 +246,7 @@ describe("init", () => {
       ).toContain('<component name="DenoSettings">');
       expect(out.stdoutText).toContain("Generated VS Code settings in .vscode/settings.json.");
       expect(out.stdoutText).toContain("Generated IntelliJ settings in .idea/deno.xml.");
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(Effect.promise(() => rm(tempDir, { recursive: true, force: true }))));
   });
 
   it.live("respects the legacy --workdir global flag", () => {
@@ -279,9 +269,7 @@ describe("init", () => {
         readFile(join(workdir, "supabase", "config.toml"), "utf8"),
       );
       expect(content).toContain("major_version = 17");
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(Effect.promise(() => rm(tempDir, { recursive: true, force: true }))));
   });
 
   const BASE_INIT_FLAGS = {
@@ -306,9 +294,7 @@ describe("init", () => {
       expect(
         yield* Effect.tryPromise(() => readFile(join(tempDir, ".vscode", "settings.json"), "utf8")),
       ).toContain('"deno.enablePaths"');
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(Effect.promise(() => rm(tempDir, { recursive: true, force: true }))));
   });
 
   it.live("init -i with SUPABASE_YES=1 auto-accepts the VS Code prompt like --yes", () => {
@@ -333,7 +319,7 @@ describe("init", () => {
           else process.env["SUPABASE_YES"] = prev;
         }),
       ),
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+      Effect.ensuring(Effect.promise(() => rm(tempDir, { recursive: true, force: true }))),
     );
   });
 
@@ -349,8 +335,6 @@ describe("init", () => {
       expect(
         yield* Effect.tryPromise(() => readFile(join(tempDir, ".vscode", "settings.json"), "utf8")),
       ).toContain('"deno.enablePaths"');
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(Effect.promise(() => rm(tempDir, { recursive: true, force: true }))));
   });
 });

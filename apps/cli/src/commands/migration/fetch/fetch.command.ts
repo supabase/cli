@@ -7,22 +7,22 @@ import { migrationDbRuntimeLayer } from "../migration.layers.ts";
 import { migrationFetch } from "./fetch.handler.ts";
 
 const config = {
-  dbUrl: Flag.string("db-url").pipe(
+  dbUrl: Flag.String("db-url").pipe(
     Flag.withDescription(
       "Fetches migrations from the database specified by the connection string (must be percent-encoded).",
     ),
     Flag.optional,
   ),
-  linked: Flag.boolean("linked").pipe(
+  linked: Flag.Boolean("linked").pipe(
     Flag.withDescription("Fetches migration history from the linked project."),
     Flag.withDefault(true),
   ),
-  local: Flag.boolean("local").pipe(
+  local: Flag.Boolean("local").pipe(
     Flag.withDescription("Fetches migration history from the local database."),
     Flag.withDefault(false),
   ),
   // TS-only override of the linked project ref — see push.command.ts (db push).
-  projectRef: Flag.string("project-ref").pipe(
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),

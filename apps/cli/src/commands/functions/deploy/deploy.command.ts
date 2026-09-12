@@ -9,31 +9,31 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { functionsDeploy } from "./deploy.handler.ts";
 
 const config = {
-  functionNames: Argument.string("Function name").pipe(
+  functionNames: Argument.String("Function name").pipe(
     Argument.withDescription("Names of Functions to deploy. Deploys all if omitted."),
     Argument.variadic(),
   ),
-  projectRef: Flag.string("project-ref").pipe(
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
-  noVerifyJwt: Flag.boolean("no-verify-jwt").pipe(
+  noVerifyJwt: Flag.Boolean("no-verify-jwt").pipe(
     Flag.withDescription("Disable JWT verification for the Function."),
     Flag.withDefault(false),
   ),
-  useApi: Flag.boolean("use-api").pipe(
+  useApi: Flag.Boolean("use-api").pipe(
     Flag.withDescription("Bundle functions server-side without using Docker."),
     Flag.withDefault(false),
   ),
-  importMap: Flag.string("import-map").pipe(
+  importMap: Flag.String("import-map").pipe(
     Flag.withDescription("Path to import map file."),
     Flag.optional,
   ),
-  prune: Flag.boolean("prune").pipe(
+  prune: Flag.Boolean("prune").pipe(
     Flag.withDescription("Delete Functions that exist in Supabase project but not locally."),
     Flag.withDefault(false),
   ),
-  jobs: Flag.integer("jobs").pipe(
+  jobs: Flag.Int("jobs").pipe(
     Flag.withAlias("j"),
     Flag.filter(
       (jobs) => jobs >= 0,
@@ -42,12 +42,12 @@ const config = {
     Flag.withDescription("Maximum number of parallel jobs."),
     Flag.optional,
   ),
-  useDocker: Flag.boolean("use-docker").pipe(
+  useDocker: Flag.Boolean("use-docker").pipe(
     Flag.withDescription("Use Docker to bundle functions locally."),
     Flag.withDefault(true),
     Flag.withHidden,
   ),
-  legacyBundle: Flag.boolean("legacy-bundle").pipe(
+  legacyBundle: Flag.Boolean("legacy-bundle").pipe(
     Flag.withDescription("Use legacy bundling."),
     Flag.withDefault(false),
     Flag.withHidden,

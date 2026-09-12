@@ -6,8 +6,8 @@ import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts
 import { computeStatus } from "./status.handler.ts";
 
 const config = {
-  name: Argument.string("name").pipe(Argument.withDescription("Compute to inspect.")),
-  projectRef: Flag.string("project-ref").pipe(
+  name: Argument.String("name").pipe(Argument.withDescription("Compute to inspect.")),
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),

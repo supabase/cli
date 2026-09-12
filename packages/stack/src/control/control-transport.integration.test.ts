@@ -229,26 +229,28 @@ const sendRawSequenceAndReadFrame = (
     const socket = yield* NodeSocket.makeNet({
       path: endpoint.kind === "unix" ? endpoint.path : endpoint.name,
     });
-    const write = yield* socket.writer;
+    const writer = yield* socket.writer;
     const decoder = new FrameDecoder();
     const response = yield* Deferred.make<Uint8Array>();
-    const read = socket
-      .runRaw((chunk) =>
-        decoder.push(typeof chunk === "string" ? new TextEncoder().encode(chunk) : chunk).pipe(
-          Effect.flatMap((frames) =>
-            Effect.forEach(frames, (frame) =>
-              Deferred.succeed(response, frame).pipe(Effect.asVoid),
-            ),
-          ),
-          Effect.asVoid,
-        ),
-      )
-      .pipe(Effect.catchTag("SocketError", () => Effect.void));
+    const read = Effect.scoped(
+      Effect.gen(function* () {
+        const { pull } = yield* socket.reader;
+        while (true) {
+          const received = yield* pull;
+          for (const chunk of received) {
+            const frames = yield* decoder.push(
+              typeof chunk === "string" ? new TextEncoder().encode(chunk) : chunk,
+            );
+            for (const frame of frames) yield* Deferred.succeed(response, frame);
+          }
+        }
+      }),
+    ).pipe(Effect.catchTag("SocketError", () => Effect.void));
     const fiber = yield* Effect.forkChild(read);
     for (const chunk of chunks) {
-      yield* write(chunk).pipe(
-        Effect.mapError((error) => new MaintenanceProtocolError({ message: error.message })),
-      );
+      yield* writer
+        .write(chunk)
+        .pipe(Effect.mapError((error) => new MaintenanceProtocolError({ message: error.message })));
     }
     const frame = yield* Deferred.await(response).pipe(
       Effect.timeoutOrElse({

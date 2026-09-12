@@ -7,11 +7,11 @@ import { bootstrapRuntimeLayer } from "./bootstrap.layers.ts";
 import { bootstrap } from "./bootstrap.handler.ts";
 
 const config = {
-  template: Argument.string("template").pipe(
+  template: Argument.String("template").pipe(
     Argument.withDescription("Name of the starter template to bootstrap from."),
     Argument.optional,
   ),
-  password: Flag.string("password").pipe(
+  password: Flag.String("password").pipe(
     Flag.withDescription("Password to your remote Postgres database."),
     Flag.withAlias("p"),
     Flag.optional,

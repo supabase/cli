@@ -8,7 +8,7 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { projectsDelete } from "./delete.handler.ts";
 
 const config = {
-  ref: Argument.string("ref").pipe(
+  ref: Argument.String("ref").pipe(
     Argument.withDescription("Project ref to delete."),
     Argument.optional,
   ),

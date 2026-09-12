@@ -11,7 +11,7 @@ const TEST_TOKEN = "sbp_" + "a".repeat(40);
 
 describe("config pull CLI surface", () => {
   test("plain `config pull` parses — no boolean flag is accidentally required", async () => {
-    // A Flag.boolean without Flag.withDefault(false) is a required flag, so a missing default
+    // A Flag.Boolean without Flag.withDefault(false) is a required flag, so a missing default
     // on --dry-run/--force would fail plain `supabase config pull`. Integration tests hand the
     // handler pre-built flags and never exercise the parser, so this needs pinning at the
     // subprocess boundary.

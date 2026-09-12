@@ -77,9 +77,7 @@ describe("cliProjectHomeLayer", () => {
       expect(cliProjectHome.projectLocalVersionsPath).toBe(
         join(packageRoot, ".supabase", "local-versions.json"),
       );
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(Effect.promise(() => rm(tempDir, { recursive: true, force: true }))));
   });
 
   it.live("falls back to the nearest linked project root when no project config exists", () => {
@@ -103,9 +101,7 @@ describe("cliProjectHomeLayer", () => {
       expect(cliProjectHome.projectRoot).toBe(projectRoot);
       expect(cliProjectHome.projectHomeDir).toBe(join(projectRoot, ".supabase"));
       expect(cliProjectHome.supabaseDir).toBe(join(projectRoot, "supabase"));
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(Effect.promise(() => rm(tempDir, { recursive: true, force: true }))));
   });
 
   it.live("does not let a bare ancestor .supabase directory capture a nested checkout", () => {
@@ -125,9 +121,7 @@ describe("cliProjectHomeLayer", () => {
       expect(cliProjectHome.projectRoot).toBe(cwd);
       expect(cliProjectHome.projectHomeDir).toBe(join(cwd, ".supabase"));
       expect(cliProjectHome.projectLinkPath).toBe(join(cwd, ".supabase", "project.json"));
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(Effect.promise(() => rm(tempDir, { recursive: true, force: true }))));
   });
 
   it.live("creates the repo-local .supabase directory lazily", () => {
@@ -148,9 +142,7 @@ describe("cliProjectHomeLayer", () => {
       expect(yield* Effect.tryPromise(() => readFile(cliProjectHome.projectLinkPath, "utf8"))).toBe(
         "{}\n",
       );
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(Effect.promise(() => rm(tempDir, { recursive: true, force: true }))));
   });
 
   it.live(
@@ -186,9 +178,7 @@ describe("cliProjectHomeLayer", () => {
             );
           }
         }
-      }).pipe(
-        Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-      );
+      }).pipe(Effect.ensuring(Effect.promise(() => rm(tempDir, { recursive: true, force: true }))));
     },
   );
 
@@ -226,9 +216,7 @@ describe("cliProjectHomeLayer", () => {
             );
           }
         }
-      }).pipe(
-        Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-      );
+      }).pipe(Effect.ensuring(Effect.promise(() => rm(tempDir, { recursive: true, force: true }))));
     },
   );
 });

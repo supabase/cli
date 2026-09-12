@@ -114,9 +114,7 @@ describe("projectLinkStateLayer", () => {
       expect(rawFile).toContain('"active_branch":');
       const raw = JSON.parse(rawFile) as typeof SAMPLE_STATE;
       expect(raw).toEqual(SAMPLE_STATE);
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(Effect.promise(() => rm(tempDir, { recursive: true, force: true }))));
   });
 
   it.live("clears repo-local link state", () => {
@@ -147,9 +145,7 @@ describe("projectLinkStateLayer", () => {
         Effect.flip,
         Effect.asVoid,
       );
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(Effect.promise(() => rm(tempDir, { recursive: true, force: true }))));
   });
 
   it.live("fails with a tagged error when repo-local link state is malformed", () => {
@@ -183,9 +179,7 @@ describe("projectLinkStateLayer", () => {
           });
         }
       }
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(Effect.promise(() => rm(tempDir, { recursive: true, force: true }))));
   });
 
   it.live("getActiveBranch returns none when not linked", () => {
@@ -203,9 +197,7 @@ describe("projectLinkStateLayer", () => {
 
       const activeBranch = yield* linkState.getActiveBranch;
       expect(Option.isNone(activeBranch)).toBe(true);
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(Effect.promise(() => rm(tempDir, { recursive: true, force: true }))));
   });
 
   it.live("getActiveBranch returns the persisted active_branch", () => {
@@ -232,9 +224,7 @@ describe("projectLinkStateLayer", () => {
           is_default: true,
         });
       }
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(Effect.promise(() => rm(tempDir, { recursive: true, force: true }))));
   });
 
   it.live(
@@ -265,9 +255,7 @@ describe("projectLinkStateLayer", () => {
           expect(loaded.value.versions).toEqual(SAMPLE_STATE.versions);
           expect(loaded.value.fetchedAt).toBe(SAMPLE_STATE.fetchedAt);
         }
-      }).pipe(
-        Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-      );
+      }).pipe(Effect.ensuring(Effect.promise(() => rm(tempDir, { recursive: true, force: true }))));
     },
   );
 
@@ -300,8 +288,6 @@ describe("projectLinkStateLayer", () => {
           });
         }
       }
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(Effect.promise(() => rm(tempDir, { recursive: true, force: true }))));
   });
 });

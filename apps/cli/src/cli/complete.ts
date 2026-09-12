@@ -54,7 +54,7 @@ export interface FlagDescriptor {
   readonly description: string | undefined;
   readonly isVariadic: boolean;
   readonly isBoolean: boolean;
-  /** `Param.Single`'s underlying `Primitive<A>._tag` (`"Boolean"`, `"Choice"`, `"Integer"`, ...). */
+  /** `Param.Single`'s underlying `Primitive<A>._tag` (`"Boolean"`, `"Choice"`, `"Int"`, ...). */
   readonly primitiveTag: string;
   /** The valid value set for a `primitiveTag === "Choice"` flag; `undefined` for every other tag. */
   readonly choiceKeys: ReadonlyArray<string> | undefined;
@@ -456,8 +456,8 @@ function hasUnconsumedFlagTerminator(
 
 /**
  * Flags whose real validation rejects a leading `-`/`+`, unlike this tree's plain signed
- * `Flag.integer`/`Flag.string` declarations — checked before `primitiveTag` dispatch since
- * `storage cp --jobs` is declared as `Flag.string`. Key = `<matched command path>:<flag name>`.
+ * `Flag.Int`/`Flag.String` declarations — checked before `primitiveTag` dispatch since
+ * `storage cp --jobs` is declared as `Flag.String`. Key = `<matched command path>:<flag name>`.
  */
 const COMPLETION_UINT_FLAGS: ReadonlySet<string> = new Set([
   "functions deploy:jobs",
@@ -468,7 +468,7 @@ const COMPLETION_UINT_FLAGS: ReadonlySet<string> = new Set([
 
 /**
  * Flags validated against Go duration syntax (see `isValidGoDuration`) rather than this
- * tree's plain `Flag.string` declarations.
+ * tree's plain `Flag.String` declarations.
  */
 const COMPLETION_DURATION_FLAGS: ReadonlySet<string> = new Set([
   "gen types:query-timeout",
@@ -685,9 +685,9 @@ function isValidFlagValue(
         return outputFlagChoiceKeys(matchedPath).includes(value);
       }
       return flag.choiceKeys !== undefined && flag.choiceKeys.includes(value);
-    case "Integer":
+    case "Int":
       return isValidBase0Int64(value);
-    case "Float":
+    case "Finite":
       return value.trim().length > 0 && !Number.isNaN(Number(value));
     default:
       return true;

@@ -24,16 +24,16 @@ export const networkRestrictionsUpdateDbAllowCidrFlag = stringSliceFlag(
 );
 
 const config = {
-  projectRef: Flag.string("project-ref").pipe(
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
   dbAllowCidr: networkRestrictionsUpdateDbAllowCidrFlag,
-  bypassCidrChecks: Flag.boolean("bypass-cidr-checks").pipe(
+  bypassCidrChecks: Flag.Boolean("bypass-cidr-checks").pipe(
     Flag.withDescription("Bypass some of the CIDR validation checks."),
     Flag.withDefault(false),
   ),
-  append: Flag.boolean("append").pipe(
+  append: Flag.Boolean("append").pipe(
     Flag.withDescription("Append to existing restrictions instead of replacing them."),
     Flag.withDefault(false),
   ),

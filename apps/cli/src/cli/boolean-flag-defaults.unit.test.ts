@@ -9,7 +9,7 @@ import { unwrapParam } from "../command-internal/param-introspection.ts";
 import { rootCommandForFeatures } from "./root.ts";
 
 /**
- * `Flag.boolean(name)` alone builds a required param, so omitting it fails the whole command
+ * `Flag.Boolean(name)` alone builds a required param, so omitting it fails the whole command
  * with a missing-flag error before the handler runs — every boolean flag must pair with
  * `Flag.withDefault(false)` or `Flag.optional`. No other test catches this: handler integration
  * tests build their flags record directly, bypassing the parser, and the type checker can't see
@@ -17,11 +17,11 @@ import { rootCommandForFeatures } from "./root.ts";
  */
 
 /**
- * Uses `Primitive.getTypeName(Primitive.boolean)` rather than the literal `"boolean"`, so a
+ * Uses `Primitive.getTypeName(Primitive.Boolean)` rather than the literal `"boolean"`, so a
  * rename upstream breaks loudly instead of silently matching nothing and passing every command.
  * Avoids `primitiveType._tag` to keep this guard off effect's runtime representation.
  */
-const BOOLEAN_TYPE_NAME = Primitive.getTypeName(Primitive.boolean);
+const BOOLEAN_TYPE_NAME = Primitive.getTypeName(Primitive.Boolean);
 
 function booleanFlagsRequiringAValue(command: Command.Command.Any): ReadonlyArray<string> {
   const internals = commandInternals(command);

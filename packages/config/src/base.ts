@@ -80,7 +80,7 @@ export const CliConfigSchema = Schema.Struct({
 });
 
 export function toCliConfigJsonSchema() {
-  const document = Schema.toJsonSchemaDocument(CliConfigSchema);
+  const document = Schema.toJsonSchemaDocument(CliConfigSchema, { onExcessProperty: "error" });
   return {
     $schema: "https://json-schema.org/draft/2020-12/schema",
     ...document.schema,

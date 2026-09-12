@@ -10,10 +10,10 @@ import { FEEDBACK_OUTPUT_FORMATS } from "../feedback-output.ts";
 import { feedbackDelete } from "./delete.handler.ts";
 
 const config = {
-  token: Argument.string("token").pipe(
+  token: Argument.String("token").pipe(
     Argument.withDescription("Deletion token (UUID) printed when the feedback was submitted."),
   ),
-  projectRef: Flag.string("project-ref").pipe(
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project the feedback was submitted with."),
     Flag.optional,
   ),

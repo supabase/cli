@@ -256,7 +256,7 @@ export function stringSliceFlag(
 ) {
   const alias = options?.alias;
   const pflagName = alias === undefined ? `--${name}` : `-${alias}, --${name}`;
-  const base = Flag.string(name).pipe(Flag.withDescription(description), Flag.atLeast(0));
+  const base = Flag.String(name).pipe(Flag.withDescription(description), Flag.atLeast(0));
   return (alias === undefined ? base : base.pipe(Flag.withAlias(alias))).pipe(
     Flag.mapTryCatch(
       (rawValues) => parseStringSliceFlag(rawValues),

@@ -78,7 +78,7 @@ describe("normalizeCliError", () => {
     });
   });
 
-  test("InvalidValue collapses the doubled 'Expected: Expected' prefix (e.g. a bad GlobalFlag.setting value)", () => {
+  test("InvalidValue collapses the doubled 'Expected: Expected' prefix (e.g. a bad GlobalFlag.Setting value)", () => {
     const error = new CliError.InvalidValue({
       option: "output-format",
       value: "bogus",

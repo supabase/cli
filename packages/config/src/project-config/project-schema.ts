@@ -23,8 +23,7 @@ function hasObjectMembers(ast: SchemaAST.AST): boolean {
 
 /**
  * True when every member of `original` was secret-shaped and got stripped from `transformed`,
- * leaving it empty — as opposed to an `Objects` node that was already empty in the source schema,
- * which must pass through as a permissive leaf rather than being treated as secret-shaped.
+ * leaving it empty.
  */
 function isAllSecretCollapsedContainer(
   original: SchemaAST.AST,
@@ -83,7 +82,7 @@ function toDeepOptionalHostedAst(ast: SchemaAST.AST): SchemaAST.AST {
   if (SchemaAST.isUnion(ast)) {
     return new SchemaAST.Union(
       ast.types.map(toDeepOptionalHostedAst),
-      ast.mode,
+      ast.options,
       ast.annotations,
       ast.checks,
       ast.encoding,
@@ -133,9 +132,7 @@ export const ProjectConfigSchema: StandardSchemaV1<
 
 /** JSON Schema (draft 2020-12) rendering of {@link ProjectConfigSchema}. */
 export function toProjectConfigJsonSchema() {
-  const document = Schema.toJsonSchemaDocument(ProjectConfigSchema, {
-    additionalProperties: true,
-  });
+  const document = Schema.toJsonSchemaDocument(ProjectConfigSchema);
   return {
     $schema: "https://json-schema.org/draft/2020-12/schema",
     ...document.schema,

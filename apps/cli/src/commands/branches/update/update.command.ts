@@ -15,30 +15,30 @@ const BRANCH_STATUSES = [
 ] as const;
 
 const config = {
-  branchId: Argument.string("name").pipe(
+  branchId: Argument.String("name").pipe(
     Argument.withDescription("Branch name or ID to update."),
     Argument.optional,
   ),
-  projectRef: Flag.string("project-ref").pipe(
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
-  name: Flag.string("name").pipe(Flag.withDescription("Rename the preview branch."), Flag.optional),
-  gitBranch: Flag.string("git-branch").pipe(
+  name: Flag.String("name").pipe(Flag.withDescription("Rename the preview branch."), Flag.optional),
+  gitBranch: Flag.String("git-branch").pipe(
     Flag.withDescription("Change the associated git branch."),
     Flag.optional,
   ),
   // Optional so the handler can distinguish "explicit false" (demote to
   // ephemeral) from "absent".
-  persistent: Flag.boolean("persistent").pipe(
+  persistent: Flag.Boolean("persistent").pipe(
     Flag.withDescription("Switch between ephemeral and persistent branch."),
     Flag.optional,
   ),
-  status: Flag.choice("status", BRANCH_STATUSES).pipe(
+  status: Flag.Literals("status", BRANCH_STATUSES).pipe(
     Flag.withDescription("Override the current branch status."),
     Flag.optional,
   ),
-  notifyUrl: Flag.string("notify-url").pipe(
+  notifyUrl: Flag.String("notify-url").pipe(
     Flag.withDescription("URL to notify when branch is active healthy."),
     Flag.optional,
   ),

@@ -226,9 +226,7 @@ describe("ProjectConfigSchema secret-strip exhaustiveness", () => {
     const emptyObjectPaths: string[] = [];
     collectEmptyObjectPaths(ProjectConfigSchema.ast, [], new Set(), emptyObjectPaths);
 
-    expect(emptyObjectPaths.toSorted()).toEqual(
-      ["storage.analytics.buckets.*", "storage.vector.buckets.*"].toSorted(),
-    );
+    expect(emptyObjectPaths).toEqual([]);
   });
 });
 
@@ -251,7 +249,7 @@ describe("ProjectConfigSchema derivation AST-walk exhaustiveness", () => {
   // `Suspend` unhandled; this walks the actual derived AST and fails loudly if a node kind outside
   // that set appears, instead of silently falling through to the leaf case.
   const HANDLED_CONTAINER_TAGS = new Set(["Objects", "Arrays", "Union"]);
-  const HANDLED_LEAF_TAGS = new Set(["String", "Number", "Boolean", "Literal"]);
+  const HANDLED_LEAF_TAGS = new Set(["String", "Number", "Boolean", "Literal", "ObjectKeyword"]);
 
   function walk(ast: SchemaAST.AST, seen: Set<SchemaAST.AST>): void {
     if (seen.has(ast)) {

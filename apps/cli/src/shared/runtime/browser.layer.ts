@@ -19,7 +19,7 @@ const makeBrowser = Effect.gen(function* () {
           command = "open";
           args = [url];
         } else if (runtimeInfo.platform === "win32") {
-          const systemRoot = yield* Config.string("SYSTEMROOT").pipe(
+          const systemRoot = yield* Config.String("SYSTEMROOT").pipe(
             Config.withDefault("C:\\Windows"),
           );
           command = `${systemRoot}\\System32\\rundll32.exe`;

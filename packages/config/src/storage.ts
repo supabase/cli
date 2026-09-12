@@ -139,7 +139,7 @@ export const storage = Schema.Struct({
     }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultMaxCatalogs))),
     buckets: Schema.Record(
       Schema.String,
-      Schema.Struct({}).pipe(
+      Schema.ObjectKeyword.pipe(
         Schema.withDecodingDefault(Effect.succeed({ ...defaultAnalyticsBuckets })),
       ),
     )
@@ -171,7 +171,7 @@ export const storage = Schema.Struct({
     }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultMaxIndexes))),
     buckets: Schema.Record(
       Schema.String,
-      Schema.Struct({}).pipe(
+      Schema.ObjectKeyword.pipe(
         Schema.withDecodingDefault(Effect.succeed({ ...defaultVectorBuckets })),
       ),
     )

@@ -758,8 +758,9 @@ const SHADOW_CACHE_KEY_PATTERN = /^[0-9a-f]{16}$/u;
  */
 const describeShadowArchiveProblem = (problem: PgDataArchiveProblem): string =>
   Match.valueTags(problem, {
-    "missing-entries": (missing) => `snapshot has no ${missing.entries.join(" or ")} entry`,
-    "wrong-key": (wrongKey) => {
+    "missing-entries": (missing: Extract<PgDataArchiveProblem, { _tag: "missing-entries" }>) =>
+      `snapshot has no ${missing.entries.join(" or ")} entry`,
+    "wrong-key": (wrongKey: Extract<PgDataArchiveProblem, { _tag: "wrong-key" }>) => {
       const found =
         wrongKey.found !== undefined && SHADOW_CACHE_KEY_PATTERN.test(wrongKey.found)
           ? `key ${wrongKey.found}`

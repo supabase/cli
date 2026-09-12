@@ -1,6 +1,6 @@
 import { BunFileSystem, BunPath } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, FileSystem, Layer, Option, Path, PlatformError } from "effect";
+import { ByteSize, Effect, Exit, FileSystem, Layer, Option, Path, PlatformError } from "effect";
 
 import { compareUtf8Bytes, globPattern, resolveUnderWorkdir, walkSqlFiles } from "./glob.ts";
 
@@ -88,7 +88,7 @@ function fakeFileInfo(type: FileSystem.File.Type): FileSystem.File.Info {
     uid: Option.none(),
     gid: Option.none(),
     rdev: Option.none(),
-    size: 0n as FileSystem.Size,
+    size: ByteSize.bytes(0),
     blksize: Option.none(),
     blocks: Option.none(),
   };

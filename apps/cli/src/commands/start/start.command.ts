@@ -27,11 +27,11 @@ export const startExcludeFlag = stringSliceFlag(
 
 const config = {
   exclude: startExcludeFlag,
-  ignoreHealthCheck: Flag.boolean("ignore-health-check").pipe(
+  ignoreHealthCheck: Flag.Boolean("ignore-health-check").pipe(
     Flag.withDescription("Ignore unhealthy services and exit 0"),
     Flag.withDefault(false),
   ),
-  preview: Flag.boolean("preview").pipe(
+  preview: Flag.Boolean("preview").pipe(
     Flag.withDescription("Connect to feature preview branch"),
     Flag.withDefault(false),
     Flag.withHidden,

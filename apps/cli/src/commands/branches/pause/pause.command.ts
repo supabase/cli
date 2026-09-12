@@ -7,11 +7,11 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { branchesPause } from "./pause.handler.ts";
 
 const config = {
-  name: Argument.string("name").pipe(
+  name: Argument.String("name").pipe(
     Argument.withDescription("Branch name or ID to pause."),
     Argument.optional,
   ),
-  projectRef: Flag.string("project-ref").pipe(
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
