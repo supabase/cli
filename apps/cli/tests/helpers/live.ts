@@ -2,17 +2,24 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { Predicate } from "effect";
+import { Effect, Predicate } from "effect";
 import pg from "pg";
 import { expect, inject, test as vitestTest } from "vitest";
 
-import { makeTempHome, requireCliSuccess, runSupabase } from "./cli.ts";
+import {
+  type CliStdinWriteError,
+  makeTempHome,
+  requireCliSuccess,
+  runSupabase,
+  runSupabaseEffect,
+} from "./cli.ts";
 import { LIVE_EXIT_TIMEOUT_MS } from "./live-env.ts";
 import type { LiveCliProjectEnvironment } from "./live-project.ts";
 
 export type LiveProject = LiveCliProjectEnvironment["project"];
 type RunOptions = NonNullable<Parameters<typeof runSupabase>[1]>;
 type RunResult = Awaited<ReturnType<typeof runSupabase>>;
+type RunEffectOptions = Parameters<typeof runSupabaseEffect>[1];
 
 export interface LiveWorkspace {
   readonly path: string;
@@ -29,6 +36,10 @@ export interface LiveFixtures {
   readonly workspace: LiveWorkspace;
   readonly home: ReturnType<typeof makeTempHome>;
   readonly cli: (args: string[], options?: RunOptions) => Promise<RunResult>;
+  readonly cliEffect: (
+    args: string[],
+    options?: RunEffectOptions,
+  ) => Effect.Effect<RunResult, CliStdinWriteError>;
   readonly invoke: (
     slug: string,
     options?: { readonly anonKey?: string; readonly payload?: unknown },
@@ -71,6 +82,21 @@ const base = vitestTest.extend<LiveFixtures>({
   cli: async ({ workspace, home }, use) => {
     await use((args, options) =>
       runSupabase(args, {
+        ...options,
+        cwd: options?.cwd ?? workspace.path,
+        home: home.dir,
+        exitTimeoutMs: options?.exitTimeoutMs ?? LIVE_EXIT_TIMEOUT_MS,
+        env: {
+          SUPABASE_PROFILE: inject("liveProfilePath"),
+          ...options?.env,
+        },
+      }),
+    );
+  },
+
+  cliEffect: async ({ workspace, home }, use) => {
+    await use((args, options) =>
+      runSupabaseEffect(args, {
         ...options,
         cwd: options?.cwd ?? workspace.path,
         home: home.dir,

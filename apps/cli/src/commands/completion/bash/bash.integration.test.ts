@@ -57,7 +57,7 @@ describe("completion bash", () => {
           "--no-descriptions",
         ]);
         expect(out.stdoutText).toContain("__completeNoDesc");
-      }).pipe(Effect.provide(layer)) as Effect.Effect<void>;
+      }).pipe(Effect.provide(layer));
     },
   );
 
@@ -76,7 +76,7 @@ describe("completion bash", () => {
         yield* Command.runWith(testRoot(), { version: "0.0.0-test" })(["bash"]);
         const event = analytics.captured.find((entry) => entry.event === EventCommandExecuted);
         expect(event).toBeDefined();
-      }).pipe(Effect.provide(layer)) as Effect.Effect<void>;
+      }).pipe(Effect.provide(layer));
     },
   );
 });

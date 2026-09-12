@@ -1,9 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Option } from "effect";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
@@ -111,8 +107,9 @@ describe("backups restore integration", () => {
         projectRef: Option.none(),
         timestamp: Option.none(),
       });
-      expect(out.stdoutText).toContain('"message": "Started PITR restore"');
-      expect(out.stdoutText).toContain(`"project_ref": "${VALID_REF}"`);
+      expect(out.stdoutText).toBe(
+        `{\n  "message": "Started PITR restore",\n  "project_ref": "${VALID_REF}"\n}\n`,
+      );
     }).pipe(Effect.provide(layer));
   });
 
@@ -151,9 +148,9 @@ describe("backups restore integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
-        expect(errorJson).toContain("BackupRestoreUnexpectedStatusError");
-        expect(errorJson).toContain("unexpected restore backup status 503");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("BackupRestoreUnexpectedStatusError");
+        expect(causeText).toContain("unexpected restore backup status 503");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -166,19 +163,18 @@ describe("backups restore integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
-        expect(errorJson).toContain("BackupRestoreNetworkError");
-        expect(errorJson).toContain("failed to restore backup");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("BackupRestoreNetworkError");
+        expect(causeText).toContain("failed to restore backup");
       }
     }).pipe(Effect.provide(layer));
   });
 
   it.live("fails with ProjectRefNotLinkedError non-interactively when no ref source", () => {
-    const localTempRoot = mkdtempSync(join(tmpdir(), "supabase-backups-restore-int-noref-"));
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({});
     const cliSettings = mockCommandSettings({
-      workdir: localTempRoot,
+      workdir: tempRoot.current,
       projectId: Option.none(),
     });
     const layer = buildTestRuntime({ out, api, cliSettings });
@@ -191,15 +187,12 @@ describe("backups restore integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("ProjectRefNotLinkedError");
+        expect(Cause.pretty(exit.cause)).toContain("ProjectRefNotLinkedError");
       }
-    }).pipe(
-      Effect.ensuring(Effect.sync(() => rmSync(localTempRoot, { recursive: true, force: true }))),
-    );
+    });
   });
 
   it.live("prompts via TTY when no ref source matches and stdin is a TTY", () => {
-    const localTempRoot = mkdtempSync(join(tmpdir(), "supabase-backups-restore-int-prompt-"));
     const out = mockOutput({
       format: "text",
       promptSelectResponses: [VALID_REF],
@@ -239,7 +232,7 @@ describe("backups restore integration", () => {
       },
     });
     const cliSettings = mockCommandSettings({
-      workdir: localTempRoot,
+      workdir: tempRoot.current,
       projectId: Option.none(),
     });
     const layer = buildTestRuntime({
@@ -255,9 +248,7 @@ describe("backups restore integration", () => {
       );
       expect(out.promptSelectCalls).toHaveLength(1);
       expect(out.stderrText).toContain(`Started PITR restore: ${VALID_REF}\n`);
-    }).pipe(
-      Effect.ensuring(Effect.sync(() => rmSync(localTempRoot, { recursive: true, force: true }))),
-    );
+    });
   });
 
   it.live("accepts --timestamp short alias -t in the same way (no separate parse path)", () => {

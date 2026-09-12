@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer } from "effect";
+import { Cause, Effect, Exit, Layer } from "effect";
 import { CliOutput, Command } from "effect/unstable/cli";
 
 import { normalizeCause } from "../../shared/output/normalize-error.ts";
@@ -65,7 +65,7 @@ describe("network-bans experimental gate (Go PersistentPreRunE parity)", () => {
         const exit = yield* Effect.exit(Command.runWith(testRoot, { version: "0.0.0-test" })(args));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("ExperimentalRequiredError");
+          expect(Cause.pretty(exit.cause)).toContain("ExperimentalRequiredError");
         }
         expect(api.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
@@ -79,7 +79,7 @@ describe("network-bans experimental gate (Go PersistentPreRunE parity)", () => {
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const causeText = JSON.stringify(exit.cause);
+          const causeText = Cause.pretty(exit.cause);
           expect(causeText).not.toContain("ExperimentalRequiredError");
           expect(causeText).toContain("AccessTokenRequiredError");
         }
@@ -104,7 +104,7 @@ describe("network-bans experimental gate (Go PersistentPreRunE parity)", () => {
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).not.toContain("ExperimentalRequiredError");
+          expect(Cause.pretty(exit.cause)).not.toContain("ExperimentalRequiredError");
           expect(normalizeCause(exit.cause).message).toBe(
             'invalid argument "\\"1.2.3.4" for "--db-unban-ip" flag: parse error on line 1, column 9: extraneous or missing " in quoted-field',
           );

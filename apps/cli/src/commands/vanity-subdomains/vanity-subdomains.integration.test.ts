@@ -4,7 +4,7 @@ import type {
   V1GetVanitySubdomainConfigOutput,
 } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Option } from "effect";
 
 import { mockAnalytics, mockOutput } from "../../../tests/helpers/mocks.ts";
 import {
@@ -264,9 +264,9 @@ describe("vanity-subdomains get", () => {
       const exit = yield* Effect.exit(vanitySubdomainsGet({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
-        expect(errorJson).toContain("VanitySubdomainsGetUnexpectedStatusError");
-        expect(errorJson).toContain("unexpected vanity subdomain status 503");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("VanitySubdomainsGetUnexpectedStatusError");
+        expect(causeText).toContain("unexpected vanity subdomain status 503");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -281,9 +281,9 @@ describe("vanity-subdomains get", () => {
       const exit = yield* Effect.exit(vanitySubdomainsGet({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
-        expect(errorJson).toContain("VanitySubdomainsGetNetworkError");
-        expect(errorJson).toContain("failed to get vanity subdomain");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("VanitySubdomainsGetNetworkError");
+        expect(causeText).toContain("failed to get vanity subdomain");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -414,9 +414,9 @@ describe("vanity-subdomains check-availability", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
-        expect(errorJson).toContain("VanitySubdomainsCheckNetworkError");
-        expect(errorJson).toContain("failed to check vanity subdomain");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("VanitySubdomainsCheckNetworkError");
+        expect(causeText).toContain("failed to check vanity subdomain");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -585,9 +585,9 @@ describe("vanity-subdomains activate", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
-        expect(errorJson).toContain("VanitySubdomainsActivateNetworkError");
-        expect(errorJson).toContain("failed activate vanity subdomain");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("VanitySubdomainsActivateNetworkError");
+        expect(causeText).toContain("failed activate vanity subdomain");
       }
       expect(analytics.captured).toHaveLength(0);
     }).pipe(Effect.provide(layer));
@@ -673,9 +673,9 @@ describe("vanity-subdomains delete", () => {
       const exit = yield* Effect.exit(vanitySubdomainsDelete({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
-        expect(errorJson).toContain("VanitySubdomainsDeleteUnexpectedStatusError");
-        expect(errorJson).toContain("unexpected delete vanity subdomain status 503");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("VanitySubdomainsDeleteUnexpectedStatusError");
+        expect(causeText).toContain("unexpected delete vanity subdomain status 503");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -690,9 +690,9 @@ describe("vanity-subdomains delete", () => {
       const exit = yield* Effect.exit(vanitySubdomainsDelete({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
-        expect(errorJson).toContain("VanitySubdomainsDeleteNetworkError");
-        expect(errorJson).toContain("failed to delete vanity subdomain");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("VanitySubdomainsDeleteNetworkError");
+        expect(causeText).toContain("failed to delete vanity subdomain");
       }
     }).pipe(Effect.provide(layer));
   });

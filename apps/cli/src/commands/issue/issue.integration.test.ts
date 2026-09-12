@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
+import { processEnvLayer } from "../../../tests/helpers/mocks.ts";
 import { buildIssueUrl } from "../../shared/issue/issue-url.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import type { OutputFormat } from "../../shared/output/types.ts";
@@ -14,32 +15,6 @@ type IssueOutputMessage = {
   readonly message: string;
   readonly data?: Record<string, unknown>;
 };
-
-function issueProcessEnvLayer(values: Readonly<Record<string, string | undefined>> = {}) {
-  return Layer.effectDiscard(
-    Effect.acquireRelease(
-      Effect.sync(() => {
-        const snapshot = { ...process.env };
-        for (const key of Object.keys(process.env)) {
-          delete process.env[key];
-        }
-        for (const [key, value] of Object.entries(values)) {
-          if (value !== undefined) process.env[key] = value;
-        }
-        return snapshot;
-      }),
-      (snapshot) =>
-        Effect.sync(() => {
-          for (const key of Object.keys(process.env)) {
-            delete process.env[key];
-          }
-          for (const [key, value] of Object.entries(snapshot)) {
-            if (value !== undefined) process.env[key] = value;
-          }
-        }),
-    ),
-  );
-}
 
 function issueMockOutput(opts: { readonly format?: OutputFormat } = {}) {
   const messages: IssueOutputMessage[] = [];
@@ -157,7 +132,7 @@ function issueSetup(
     browser.layer,
     runtimeInfo,
     telemetryRuntime,
-    issueProcessEnvLayer(opts.env ?? {}),
+    processEnvLayer(opts.env ?? {}),
   );
   return { layer, out, browser };
 }

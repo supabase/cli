@@ -1,6 +1,6 @@
 import { type V1GetASnippetOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Option } from "effect";
 
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -70,6 +70,14 @@ function setup(opts: SetupOpts = {}) {
   return { layer, out, api, telemetry, cache };
 }
 
+function stringLeaves(value: unknown): Array<string> {
+  if (typeof value === "string") return [value];
+  if (value !== null && typeof value === "object") {
+    return Object.values(value).flatMap(stringLeaves);
+  }
+  return [];
+}
+
 describe("snippets download integration", () => {
   it.live("prints raw SQL with a trailing newline in text mode", () => {
     const { layer, out } = setup();
@@ -136,9 +144,9 @@ describe("snippets download integration", () => {
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const dump = JSON.stringify(exit.cause);
-          expect(dump).toContain("SnippetsInvalidIdError");
-          expect(dump).toContain("invalid snippet ID: invalid UUID length: 10");
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("SnippetsInvalidIdError");
+          expect(causeText).toContain("invalid snippet ID: invalid UUID length: 10");
         }
         expect(api.requests).toHaveLength(0);
         expect(telemetry.flushed).toBe(true);
@@ -155,8 +163,8 @@ describe("snippets download integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
-        expect(dump).toContain("invalid snippet ID: invalid UUID length: 42");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("invalid snippet ID: invalid UUID length: 42");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -169,10 +177,14 @@ describe("snippets download integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
-        expect(dump).toContain("invalid snippet ID: invalid UUID format");
-        // The offending value must not be embedded in the error message.
-        expect(dump).not.toContain(WRONG_FORMAT_ID);
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("invalid snippet ID: invalid UUID format");
+        // The offending value must not be embedded anywhere in the failure. The rendered
+        // cause covers the message; `message` is a non-enumerable own prop, so the value
+        // scan below covers payload fields only. Keep both assertions.
+        expect(causeText).not.toContain(WRONG_FORMAT_ID);
+        const failure = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
+        expect(stringLeaves(failure).some((leaf) => leaf.includes(WRONG_FORMAT_ID))).toBe(false);
       }
     }).pipe(Effect.provide(layer));
   });
@@ -219,9 +231,9 @@ describe("snippets download integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
-        expect(dump).toContain("SnippetsDownloadUnexpectedStatusError");
-        expect(dump).toContain("unexpected download snippet status 503");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("SnippetsDownloadUnexpectedStatusError");
+        expect(causeText).toContain("unexpected download snippet status 503");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -234,9 +246,9 @@ describe("snippets download integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
-        expect(dump).toContain("SnippetsDownloadNetworkError");
-        expect(dump).toContain("failed to download snippet");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("SnippetsDownloadNetworkError");
+        expect(causeText).toContain("failed to download snippet");
       }
     }).pipe(Effect.provide(layer));
   });

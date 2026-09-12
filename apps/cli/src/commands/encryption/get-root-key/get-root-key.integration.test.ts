@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Option } from "effect";
 
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -92,9 +92,9 @@ describe("encryption get-root-key integration", () => {
       const exit = yield* Effect.exit(encryptionGetRootKey(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("EncryptionNetworkError");
-        expect(json).toContain("failed to retrieve pgsodium config");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("EncryptionNetworkError");
+        expect(causeText).toContain("failed to retrieve pgsodium config");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -105,9 +105,9 @@ describe("encryption get-root-key integration", () => {
       const exit = yield* Effect.exit(encryptionGetRootKey(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("EncryptionUnexpectedStatusError");
-        expect(json).toContain("unexpected get pgsodium config status 503");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("EncryptionUnexpectedStatusError");
+        expect(causeText).toContain("unexpected get pgsodium config status 503");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -127,7 +127,7 @@ describe("encryption get-root-key integration", () => {
       const exit = yield* Effect.exit(encryptionGetRootKey(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("ProjectRefNotLinkedError");
+        expect(Cause.pretty(exit.cause)).toContain("ProjectRefNotLinkedError");
       }
     }).pipe(Effect.provide(layer));
   });

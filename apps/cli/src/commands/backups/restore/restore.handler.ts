@@ -5,6 +5,7 @@ import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
+import { encodeGoJson } from "../../../command-internal/go-output.encoders.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import {
   BackupRestoreNetworkError,
@@ -47,9 +48,7 @@ export const backupsRestore = Effect.fn("backups.restore")(function* (flags: Bac
     // --output is ignored for restore except `json`, a TS-only structured payload; every other
     // value (including unset) writes the text line to stderr.
     if (goFmt === "json") {
-      yield* output.raw(
-        JSON.stringify({ message: "Started PITR restore", project_ref: ref }, null, 2) + "\n",
-      );
+      yield* output.raw(encodeGoJson({ message: "Started PITR restore", project_ref: ref }));
       return;
     }
 

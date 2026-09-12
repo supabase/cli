@@ -1,6 +1,6 @@
 import { type V1ListAllSnippetsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Option } from "effect";
 
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -191,9 +191,9 @@ describe("snippets list integration", () => {
       const exit = yield* Effect.exit(snippetsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
-        expect(dump).toContain("SnippetsTomlEncodeError");
-        expect(dump).toContain(
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("SnippetsTomlEncodeError");
+        expect(causeText).toContain(
           "failed to output toml: toml: cannot encode a map with non-string key type",
         );
       }
@@ -241,9 +241,9 @@ describe("snippets list integration", () => {
         const exit = yield* Effect.exit(snippetsList({ projectRef: Option.none() }));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const dump = JSON.stringify(exit.cause);
-          expect(dump).toContain("SnippetsEnvNotSupportedError");
-          expect(dump).toContain("--output env flag is not supported");
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("SnippetsEnvNotSupportedError");
+          expect(causeText).toContain("--output env flag is not supported");
         }
         expect(api.requests).toHaveLength(0);
         expect(telemetry.flushed).toBe(true);
@@ -294,9 +294,9 @@ describe("snippets list integration", () => {
       const exit = yield* Effect.exit(snippetsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
-        expect(dump).toContain("SnippetsListUnexpectedStatusError");
-        expect(dump).toContain("unexpected list snippets status 503");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("SnippetsListUnexpectedStatusError");
+        expect(causeText).toContain("unexpected list snippets status 503");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -307,9 +307,9 @@ describe("snippets list integration", () => {
       const exit = yield* Effect.exit(snippetsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
-        expect(dump).toContain("SnippetsListNetworkError");
-        expect(dump).toContain("failed to list snippets");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("SnippetsListNetworkError");
+        expect(causeText).toContain("failed to list snippets");
       }
     }).pipe(Effect.provide(layer));
   });

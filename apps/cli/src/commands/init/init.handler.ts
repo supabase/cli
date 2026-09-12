@@ -1,5 +1,4 @@
-import { resolve } from "node:path";
-import { Effect, Option } from "effect";
+import { Effect, Option, Path } from "effect";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import { initProject } from "../../shared/init/project-init.ts";
 import { Output } from "../../shared/output/output.service.ts";
@@ -9,20 +8,19 @@ import type { InitFlags } from "./init.command.ts";
 
 export const init = Effect.fn("init")(function* (flags: InitFlags) {
   const output = yield* Output;
+  const path = yield* Path.Path;
   const runtimeInfo = yield* RuntimeInfo;
   const experimental = yield* ExperimentalFlag;
   const workdir = yield* WorkdirFlag;
 
   if (flags.useOrioledb && !experimental) {
-    return yield* Effect.fail(
-      new InitExperimentalRequiredError({
-        message: `required flag(s) "experimental" not set`,
-      }),
-    );
+    return yield* new InitExperimentalRequiredError({
+      message: `required flag(s) "experimental" not set`,
+    });
   }
 
   const result = yield* initProject({
-    cwd: Option.isSome(workdir) ? resolve(runtimeInfo.cwd, workdir.value) : runtimeInfo.cwd,
+    cwd: Option.isSome(workdir) ? path.resolve(runtimeInfo.cwd, workdir.value) : runtimeInfo.cwd,
     force: flags.force,
     useOrioledb: flags.useOrioledb,
     interactive: flags.interactive,
@@ -41,12 +39,10 @@ export const init = Effect.fn("init")(function* (flags: InitFlags) {
       runtimeInfo.platform === "win32"
         ? "failed to create config file: open supabase\\config.toml: The file exists."
         : "failed to create config file: open supabase/config.toml: file exists";
-    return yield* Effect.fail(
-      new InitConfigExistsError({
-        message,
-        suggestion: "Run supabase init --force to overwrite existing config file.",
-      }),
-    );
+    return yield* new InitConfigExistsError({
+      message,
+      suggestion: "Run supabase init --force to overwrite existing config file.",
+    });
   }
 
   yield* output.raw("Finished supabase init.\n");

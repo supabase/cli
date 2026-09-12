@@ -1,4 +1,5 @@
 import { expect } from "vitest";
+import { Effect, Schema } from "effect";
 import { test } from "../../../../tests/helpers/live.ts";
 
 const LIVE_TIMEOUT_MS = 60_000;
@@ -8,9 +9,13 @@ const LIVE_TIMEOUT_MS = 60_000;
 test(
   "lists organizations for the authenticated token",
   { timeout: LIVE_TIMEOUT_MS },
-  async ({ cli }) => {
-    const { exitCode, stdout, stderr } = await cli(["orgs", "list", "--output", "json"]);
-    expect(exitCode, stderr).toBe(0);
-    expect(JSON.parse(stdout), stderr).not.toHaveLength(0);
-  },
+  ({ cliEffect }) =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const { exitCode, stdout, stderr } = yield* cliEffect(["orgs", "list", "--output", "json"]);
+        expect(exitCode, stderr).toBe(0);
+        const orgs = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(stdout);
+        expect(orgs, stderr).not.toHaveLength(0);
+      }),
+    ),
 );

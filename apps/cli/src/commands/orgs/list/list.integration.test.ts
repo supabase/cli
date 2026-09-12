@@ -1,6 +1,6 @@
 import type { V1ListAllOrganizationsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Option } from "effect";
 
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -150,9 +150,9 @@ describe("orgs list integration", () => {
       const exit = yield* Effect.exit(orgsList({}));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("OrgsEnvNotSupportedError");
-        expect(json).toContain("--output env flag is not supported");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("OrgsEnvNotSupportedError");
+        expect(causeText).toContain("--output env flag is not supported");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -194,9 +194,9 @@ describe("orgs list integration", () => {
       const exit = yield* Effect.exit(orgsList({}));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("OrgsListUnexpectedStatusError");
-        expect(json).toContain("unexpected list organizations status 503");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("OrgsListUnexpectedStatusError");
+        expect(causeText).toContain("unexpected list organizations status 503");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -207,9 +207,9 @@ describe("orgs list integration", () => {
       const exit = yield* Effect.exit(orgsList({}));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("OrgsListNetworkError");
-        expect(json).toContain("failed to list organizations");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("OrgsListNetworkError");
+        expect(causeText).toContain("failed to list organizations");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -222,8 +222,8 @@ describe("orgs list integration", () => {
       const exit = yield* Effect.exit(orgsList({}));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("OrgsListNetworkError");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("OrgsListNetworkError");
       }
     }).pipe(Effect.provide(layer));
   });

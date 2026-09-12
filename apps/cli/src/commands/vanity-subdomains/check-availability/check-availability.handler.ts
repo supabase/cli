@@ -49,11 +49,9 @@ export const vanitySubdomainsCheckAvailability = Effect.fn("vanity-subdomains.ch
         // linked-project cache still fire on this failure. Only absence is checked, not
         // emptiness, so an explicit `--desired-subdomain ""` passes through to the API.
         if (Option.isNone(flags.desiredSubdomain)) {
-          return yield* Effect.fail(
-            new DesiredSubdomainRequiredError({
-              message: `required flag(s) "desired-subdomain" not set`,
-            }),
-          );
+          return yield* new DesiredSubdomainRequiredError({
+            message: `required flag(s) "desired-subdomain" not set`,
+          });
         }
         const desiredSubdomain = flags.desiredSubdomain.value;
         const checking =
@@ -82,14 +80,12 @@ export const vanitySubdomainsCheckAvailability = Effect.fn("vanity-subdomains.ch
                     response: gateResponse(cause),
                     trackAnalytics: false,
                   });
-                  return yield* Effect.fail(
-                    new VanitySubdomainsCheckUnexpectedStatusError({
-                      status: mapped.status,
-                      body: mapped.body,
-                      message: mapped.message,
-                      upgradeSuggested,
-                    }),
-                  );
+                  return yield* new VanitySubdomainsCheckUnexpectedStatusError({
+                    status: mapped.status,
+                    body: mapped.body,
+                    message: mapped.message,
+                    upgradeSuggested,
+                  });
                 }
                 return yield* Effect.fail(mapped);
               }),
