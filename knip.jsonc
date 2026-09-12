@@ -1,6 +1,7 @@
 {
   "$schema": "./node_modules/knip/schema.json",
-  "ignoreWorkspaces": ["apps/cli-go"],
+  // Required in the event that git submodules are present. Do not remove this, despite knip warnings.
+  "ignore": [".repos/**"],
   // Binaries the machine provides rather than npm. `go` comes from mise.
   "ignoreBinaries": [
     "go",
@@ -22,6 +23,7 @@
   // Spawned through a node_modules/.bin path in tools/release/local-registry.ts and
   // apps/cli/tests/helpers/npm-registry.ts, which knip cannot trace.
   "ignoreDependencies": ["verdaccio"],
+  "ignoreWorkspaces": ["apps/cli-go"],
   "workspaces": {
     "apps/cli": {
       "entry": [
