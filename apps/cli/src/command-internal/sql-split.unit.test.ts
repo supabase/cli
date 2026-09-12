@@ -32,11 +32,9 @@ describe("splitAndTrim", () => {
     ]);
   });
 
-  it("treats a non-decimal Unicode digit as an invalid dollar-tag character, like Go's unicode.IsDigit", () => {
-    // "a²" (U+00B2, category No) is not a valid dollar-tag character, so the tag falls back
-    // and the embedded `;` becomes a real boundary.
-    const sql = "CREATE FUNCTION f() AS $a²$foo; bar$a²$ LANGUAGE sql;";
-    expect(splitAndTrim(sql)).toEqual(["CREATE FUNCTION f() AS $a²$foo", "bar$a²$ LANGUAGE sql"]);
+  it.each(["a²", "a😀", "á"])("respects non-ASCII dollar tag $%s$", (tag) => {
+    const statement = `CREATE FUNCTION f() AS $${tag}$foo; END; bar$${tag}$ LANGUAGE sql`;
+    expect(splitAndTrim(`${statement}; SELECT 2;`)).toEqual([statement, "SELECT 2"]);
   });
 
   it("respects named dollar tags", () => {
@@ -65,6 +63,102 @@ describe("splitAndTrim", () => {
       "CREATE FUNCTION f() RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT 1; SELECT 2; END",
       "SELECT 3",
     ]);
+  });
+
+  it.each([
+    "pending",
+    "pending_change",
+    "append",
+    "legend",
+    "𐐀end",
+    "😀end",
+    "́end",
+    "²end",
+    "pending$$foo$",
+  ])("does not close a BEGIN ATOMIC body inside %s", (identifier) => {
+    const body = `CREATE FUNCTION f() RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT 1 AS ${identifier}; END`;
+    expect(splitAndTrim(`${body}; SELECT 2;`)).toEqual([body, "SELECT 2"]);
+  });
+
+  it.each(["endpoint", "end_date", "ended_at", "end𐐀", "end😀", "end́", "end²", "end$$foo$"])(
+    "does not close a BEGIN ATOMIC body at the start of %s",
+    (identifier) => {
+      const body = `CREATE FUNCTION f() RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT ${identifier}; SELECT 1; END`;
+      expect(splitAndTrim(`${body}; SELECT 2;`)).toEqual([body, "SELECT 2"]);
+    },
+  );
+
+  it.each([
+    "CASE WHEN true THEN 1 ELSE 0 END",
+    "case when true then 1 end",
+    "CASE WHEN true THEN 1 END AS ended",
+    "CASE WHEN CASE WHEN true THEN true END THEN 1 END",
+    "(CASE WHEN (true) THEN 1 END)",
+    "coalesce(CASE WHEN length('a') > 0 THEN 1 END, 0)",
+    "CASE(1)WHEN 1 THEN 1 END",
+    "1 AS case",
+    "1 case",
+    "1 AS end",
+    "1 end",
+    "'end'",
+  ])("does not close a BEGIN ATOMIC body at an END inside %s", (expression) => {
+    const body = `CREATE FUNCTION f() RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT ${expression}; SELECT 1; END`;
+    expect(splitAndTrim(`${body}; SELECT 2;`)).toEqual([body, "SELECT 2"]);
+  });
+
+  it.each(["-- note END\n", "/* note; */ ", "\n/* a /* b; */ */ -- c\n"])(
+    "closes a BEGIN ATOMIC body at an END preceded only by comments (%s)",
+    (comment) => {
+      const body = `CREATE FUNCTION f() RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT 1; ${comment}END`;
+      expect(splitAndTrim(`${body}; SELECT 2;`)).toEqual([body, "SELECT 2"]);
+    },
+  );
+
+  it("does not treat a BEGIN keyword followed by a non-ASCII identifier as BEGIN ATOMIC", () => {
+    // `atomıc` (dotless ı) uppercases to `ATOMIC` in JS but is a plain identifier in SQL.
+    expect(splitAndTrim("BEGIN atomıc; SELECT 'end'; SELECT 2;")).toEqual([
+      "BEGIN atomıc",
+      "SELECT 'end'",
+      "SELECT 2",
+    ]);
+  });
+
+  it("closes a BEGIN ATOMIC body at an END confirmed by a newline", () => {
+    const body = "CREATE FUNCTION f() RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT 1; END";
+    expect(splitAndTrim(`${body}\n; SELECT 2;`)).toEqual([body, "SELECT 2"]);
+  });
+
+  it("keeps a BEGIN ATOMIC body whose END sits at EOF", () => {
+    expect(splitAndTrim("begin atomic; select 'end'; end")).toEqual([
+      "begin atomic; select 'end'; end",
+    ]);
+  });
+
+  it("closes a BEGIN ATOMIC body at an END right after a positional parameter's ;", () => {
+    const body = "CREATE FUNCTION f(int) RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT $1;END";
+    expect(splitAndTrim(`${body}; SELECT 2;`)).toEqual([body, "SELECT 2"]);
+  });
+
+  it.each(["\u00A0", "\uFEFF", "\u0085"])(
+    "does not treat BEGIN %s ATOMIC as the keyword pair",
+    (gap) => {
+      // Only PostgreSQL's own whitespace separates the keywords; these are identifier runes.
+      const sql = `BEGIN ${gap} ATOMIC; SELECT 1; end; SELECT 2;`;
+      expect(splitAndTrim(sql)).toEqual([`BEGIN ${gap} ATOMIC`, "SELECT 1", "end", "SELECT 2"]);
+    },
+  );
+
+  it("closes a nested BEGIN ATOMIC body inside parentheses", () => {
+    expect(splitAndTrim("DO (BEGIN ATOMIC SELECT 1; END; ); SELECT 2;")).toEqual([
+      "DO (BEGIN ATOMIC SELECT 1; END; )",
+      "SELECT 2",
+    ]);
+  });
+
+  it("does not close a BEGIN ATOMIC body at an END after an overlapping block comment", () => {
+    const body =
+      "CREATE FUNCTION f() RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT 1; /* a /*/ b */ SELECT 2 END; SELECT 3; END";
+    expect(splitAndTrim(`${body}; SELECT 4;`)).toEqual([body, "SELECT 4"]);
   });
 });
 
