@@ -4,11 +4,12 @@
 command interface may change, and it is excluded from the CLI compatibility promise. It is
 available regardless of the project's backend setting and supports both Docker and native runtimes.
 
-| Command                 | Purpose                                                                           |
-| ----------------------- | --------------------------------------------------------------------------------- |
-| `supabase stack start`  | Create or resume the project's stack.                                             |
-| `supabase stack status` | Show identity, readiness, and drift, or export connection variables with `--env`. |
-| `supabase stack stop`   | Stop a stack while retaining its data.                                            |
+| Command                  | Purpose                                                                           |
+| ------------------------ | --------------------------------------------------------------------------------- |
+| `supabase stack start`   | Create or resume the project's stack.                                             |
+| `supabase stack status`  | Show identity, readiness, and drift, or export connection variables with `--env`. |
+| `supabase stack stop`    | Stop a stack while retaining its data.                                            |
+| `supabase stack destroy` | Permanently delete one stack and its data.                                        |
 
 Use each command's `--help` for its available targeting and runtime options.
 
@@ -69,3 +70,19 @@ and seed configuration are separate from importing legacy database data.
 The flag is local CLI configuration in `supabase/config.toml` and is excluded from hosted project
 configuration. Routing reads that exact file after applying the CLI's working-directory rules,
 including `--workdir` and `SUPABASE_WORKDIR`; a JSON-only project does not enable the flag.
+
+## Service selection and shutdown
+
+`supabase stack start --exclude studio,analytics -x mail` disables those services in the effective
+start configuration without changing the project file. Valid names are `rest`, `auth`, `realtime`,
+`storage`, `functions`, `studio`, `mail`, `analytics`, and `pooler`; the database is required.
+Excluding `rest` or `analytics` also disables Studio. The effective configuration is
+retained in stack state, so starting without `--exclude` restores the project's configured services.
+
+`supabase stack stop --all` stops every readable managed stack while preserving data. It continues
+after unreadable entries or individual stop failures, reports a bounded stopped/failed/skipped
+summary with per-stack details, and exits nonzero when anything was skipped or failed. Registry-root
+enumeration errors remain fatal.
+
+`supabase stack destroy --stack feature-a` permanently removes exactly that stack and its data after
+confirmation. Use `--yes` for unattended execution. There is no bulk destroy option.

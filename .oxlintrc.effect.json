@@ -4,5 +4,15 @@
   "options": {
     "denyWarnings": true
   },
-  "ignorePatterns": ["apps/cli/src/shared/compute/stacks/**"]
+  "ignorePatterns": [
+    "**",
+    "!packages/stack/**",
+    "!apps/cli/src/commands/experimental/stack/**",
+    "!apps/cli/src/commands/experimental/compute/**",
+    "!apps/cli/src/shared/compute/**",
+    // Last match wins, so this stays after the entry above.
+    "apps/cli/src/shared/compute/stacks/**",
+    "!apps/cli/tests/helpers/compute.ts",
+    "!apps/cli/src/command-internal/experimental-feature.ts"
+  ]
 }

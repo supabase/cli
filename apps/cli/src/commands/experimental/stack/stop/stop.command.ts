@@ -5,6 +5,10 @@ import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts
 import { stackStop } from "./stop.handler.ts";
 
 const config = {
+  all: Flag.boolean("all").pipe(
+    Flag.withDescription("Stop every readable managed stack."),
+    Flag.optional,
+  ),
   stack: Flag.string("stack").pipe(
     Flag.withDescription("Stop the stack with this name (defaults to the current project stack)."),
     Flag.optional,

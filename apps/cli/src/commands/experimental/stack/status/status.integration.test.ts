@@ -117,6 +117,7 @@ const runStatus = (options: {
   const inspectInputs: unknown[] = [];
   const api = Layer.succeed(StackApi, {
     createStack: () => Effect.die("create must not run"),
+    discoverStacks: () => Effect.succeed({ stacks: [], errors: [] }),
     findStack: (input) => {
       findInputs.push(input);
       return Effect.succeed(options.missingTarget ? Option.none() : Option.some(descriptor));
@@ -124,8 +125,8 @@ const runStatus = (options: {
     openStack: (openId) =>
       Effect.succeed({
         id: openId,
-        status: () => Effect.succeed(options.status ?? makeStatus(id)),
-        credentials: () =>
+        status: Effect.succeed(options.status ?? makeStatus(id)),
+        credentials:
           options.credentialFailure === true
             ? Effect.fail(
                 new StackNotRunningError({ stackId: id, message: "Stack is not running" }),
@@ -158,8 +159,8 @@ const runStatus = (options: {
               }),
         prepare: () => Effect.die("unused"),
         start: () => Effect.die("unused"),
-        stop: () => Effect.die("unused"),
-        destroy: () => Effect.die("unused"),
+        stop: Effect.die("unused"),
+        destroy: Effect.die("unused"),
         logs: () => Effect.die("unused"),
         followLogs: () => Stream.empty,
       } satisfies EffectStack),
@@ -454,6 +455,7 @@ describe("stack status", () => {
     const telemetry = mockTelemetryStateTracked();
     const discovery = Layer.succeed(StackApi, {
       createStack: () => Effect.die("create must not run"),
+      discoverStacks: () => Effect.succeed({ stacks: [], errors: [] }),
       findStack: () =>
         Effect.fail(new StackStateFormatUnsupportedError({ message: "discovery failed" })),
       openStack: () => Effect.die("open must not run"),

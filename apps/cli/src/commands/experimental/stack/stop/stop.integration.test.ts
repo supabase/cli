@@ -16,10 +16,11 @@ import type {
   EffectStack,
   OpenStackError,
   StackDiscoveryError,
+  StackDescriptor,
   StackStatus,
   StackStopError as ApiStackStopError,
 } from "@supabase/stack/effect";
-import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockProcessControl } from "../../../../../tests/helpers/mocks.ts";
 import {
   mockCommandSettings,
   mockTelemetryStateTracked,
@@ -34,6 +35,7 @@ import { textCliOutputFormatter } from "../../../../shared/output/text-formatter
 import { stackStop } from "./stop.handler.ts";
 import { StackCommandStopError } from "./stop.errors.ts";
 import { stackStopCommand } from "./stop.command.ts";
+import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 
 const status = (id: string): StackStatus => ({
   id: StackIdSchema.make(id),
@@ -46,7 +48,10 @@ const status = (id: string): StackStatus => ({
   artifacts: [],
 });
 
-const flags = (overrides: Partial<Parameters<typeof stackStop>[0]> = {}) => ({
+const flags = (
+  overrides: Partial<Parameters<typeof stackStop>[0]> = {},
+): Parameters<typeof stackStop>[0] => ({
+  all: Option.none<boolean>(),
   stack: Option.none<string>(),
   stackId: Option.none<string>(),
   ...overrides,
@@ -54,12 +59,21 @@ const flags = (overrides: Partial<Parameters<typeof stackStop>[0]> = {}) => ({
 
 function setup(opts: {
   root: string;
+  format?: "text" | "json" | "stream-json";
   found?: { id: string; name?: string };
-  stop?: () => Effect.Effect<void, ApiStackStopError>;
+  stop?: Effect.Effect<void, ApiStackStopError>;
   openFailure?: OpenStackError;
   findFailure?: StackDiscoveryError;
+  discoveryFailure?: StackDiscoveryError;
+  discovered?: {
+    readonly stacks: ReadonlyArray<StackDescriptor>;
+    readonly errors: ReadonlyArray<{
+      readonly id: StackDescriptor["id"];
+      readonly error: StackDiscoveryError;
+    }>;
+  };
 }) {
-  const out = mockOutput();
+  const out = mockOutput({ format: opts.format });
   const telemetry = mockTelemetryStateTracked();
   const state = {
     findInputs: [] as Array<{ projectRoot: string; name?: string }>,
@@ -70,20 +84,18 @@ function setup(opts: {
   const id = opts.found?.id ?? "a".repeat(64);
   const stack = {
     id: StackIdSchema.make(id),
-    status: () => Effect.succeed(status(id)),
-    credentials: () => Effect.die("unused"),
+    status: Effect.succeed(status(id)),
+    credentials: Effect.die("unused"),
     prepare: () => Effect.die("unused"),
     start: () => Effect.die("unused"),
     stop:
       opts.stop ??
-      (() =>
-        Effect.sync(() => {
-          state.stopCalls += 1;
-        })),
-    destroy: () =>
       Effect.sync(() => {
-        state.destroyCalled = true;
+        state.stopCalls += 1;
       }),
+    destroy: Effect.sync(() => {
+      state.destroyCalled = true;
+    }),
     logs: () => Effect.die("unused"),
     followLogs: () => Stream.empty,
   } satisfies EffectStack;
@@ -99,6 +111,7 @@ function setup(opts: {
     : undefined;
   const layer = Layer.mergeAll(
     out.layer,
+    mockProcessControl().layer,
     telemetry.layer,
     mockCommandSettings({ workdir: opts.root }),
     Layer.succeed(StackApi, {
@@ -120,6 +133,13 @@ function setup(opts: {
         });
       },
       inspectStack: () => Effect.die("must not inspect"),
+      discoverStacks: () =>
+        opts.discoveryFailure === undefined
+          ? Effect.succeed({
+              stacks: opts.discovered?.stacks ?? [],
+              errors: opts.discovered?.errors ?? [],
+            })
+          : Effect.fail(opts.discoveryFailure),
     }),
     BunServices.layer,
   );
@@ -127,6 +147,251 @@ function setup(opts: {
 }
 
 describe("stack stop", () => {
+  it.effect("stops every discovered stack when --all is selected", () => {
+    const root = "/tmp/supabase-stack-stop-all";
+    const id = "b".repeat(64);
+    const setupResult = setup({
+      root,
+      found: { id, name: "feature-a" },
+      discovered: {
+        stacks: [
+          {
+            id: StackIdSchema.make(id),
+            projectRoot: root,
+            name: "feature-a",
+            branchContext: "ordinary-workspace",
+            runtime: { kind: "native" },
+            desiredLifecycle: "running",
+          },
+          {
+            id: StackIdSchema.make("c".repeat(64)),
+            projectRoot: root,
+            name: "feature-b",
+            branchContext: "ordinary-workspace",
+            runtime: { kind: "native" },
+            desiredLifecycle: "running",
+          },
+        ],
+        errors: [],
+      },
+    });
+    return Effect.gen(function* () {
+      yield* stackStop(flags({ all: Option.some(true) }));
+      expect(setupResult.state.openedIds).toEqual([id, "c".repeat(64)]);
+      expect(setupResult.state.stopCalls).toBe(2);
+      expect(setupResult.state.destroyCalled).toBe(false);
+      expect(setupResult.out.stdoutText).toContain("Stopped 2");
+    }).pipe(Effect.provide(setupResult.layer));
+  });
+
+  it.effect("continues attempting every stack after a stop failure", () => {
+    const root = "/tmp/supabase-stack-stop-all-failure";
+    const first = "d".repeat(64);
+    const second = "e".repeat(64);
+    const setupResult = setup({
+      root,
+      found: { id: first },
+      stop: Effect.fail(new StackCleanupError({ message: "stop failed" })),
+      discovered: {
+        stacks: [
+          {
+            id: StackIdSchema.make(first),
+            projectRoot: root,
+            name: "first",
+            branchContext: "ordinary-workspace",
+            runtime: { kind: "native" },
+            desiredLifecycle: "running",
+          },
+          {
+            id: StackIdSchema.make(second),
+            projectRoot: root,
+            name: "second",
+            branchContext: "ordinary-workspace",
+            runtime: { kind: "native" },
+            desiredLifecycle: "running",
+          },
+        ],
+        errors: [],
+      },
+    });
+    return Effect.gen(function* () {
+      const failure = yield* stackStop(flags({ all: Option.some(true) })).pipe(Effect.flip);
+      expect(failure.message).toContain("failed 2");
+      expect(setupResult.state.openedIds).toEqual([first, second]);
+      expect(setupResult.state.destroyCalled).toBe(false);
+      expect(failure.detail).toBe(
+        `Failed to stop managed stack ${first}: stop failed\nFailed to stop managed stack ${second}: stop failed`,
+      );
+      expect(failure.reason).toBe("unknown");
+      expect(failure.suggestion).toContain("--debug");
+    }).pipe(Effect.provide(setupResult.layer));
+  });
+
+  it.effect("reports corrupt discovery entries while stopping healthy stacks", () => {
+    const root = "/tmp/supabase-stack-stop-all-corrupt";
+    const healthy = "f".repeat(64);
+    const corrupt = "1".repeat(64);
+    const setupResult = setup({
+      root,
+      found: { id: healthy },
+      discovered: {
+        stacks: [
+          {
+            id: StackIdSchema.make(healthy),
+            projectRoot: root,
+            name: "healthy",
+            branchContext: "ordinary-workspace",
+            runtime: { kind: "native" },
+            desiredLifecycle: "running",
+          },
+        ],
+        errors: [
+          {
+            id: StackIdSchema.make(corrupt),
+            error: new StackStateInvalidError({
+              message: `Failed to read managed stack ${corrupt}: corrupt state`,
+            }),
+          },
+        ],
+      },
+    });
+    return Effect.gen(function* () {
+      const failure = yield* stackStop(flags({ all: Option.some(true) })).pipe(Effect.flip);
+      expect(failure.message).toBe("Stopped 1 managed stack(s); failed 0; skipped 1");
+      expect(failure.detail).toBe(
+        `Skipped managed stack: Failed to read managed stack ${corrupt}: corrupt state`,
+      );
+      expect(setupResult.state.stopCalls).toBe(1);
+      expect(setupResult.state.destroyCalled).toBe(false);
+      expect(setupResult.out.messages).toEqual(
+        expect.arrayContaining([expect.objectContaining({ type: "warn" })]),
+      );
+    }).pipe(Effect.provide(setupResult.layer));
+  });
+
+  it.effect("preserves bulk failure details through JSON error handling", () => {
+    const failed = "2".repeat(64);
+    const skipped = "3".repeat(64);
+    const setupResult = setup({
+      root: "/tmp/supabase-stack-stop-json",
+      format: "json",
+      found: { id: failed },
+      stop: Effect.fail(new StackCleanupError({ message: "cleanup failed" })),
+      discovered: {
+        stacks: [
+          {
+            id: StackIdSchema.make(failed),
+            projectRoot: "/tmp/supabase-stack-stop-json",
+            name: "failed",
+            branchContext: "ordinary-workspace",
+            runtime: { kind: "native" },
+            desiredLifecycle: "running",
+          },
+        ],
+        errors: [
+          {
+            id: StackIdSchema.make(skipped),
+            error: new StackStateInvalidError({
+              message: `Failed to read managed stack ${skipped}: invalid state`,
+            }),
+          },
+        ],
+      },
+    });
+    return Effect.gen(function* () {
+      yield* stackStop(flags({ all: Option.some(true) })).pipe(withJsonErrorHandling);
+      expect(setupResult.out.failures).toEqual([
+        expect.objectContaining({
+          message: "Stopped 0 managed stack(s); failed 1; skipped 1",
+          detail: `Failed to stop managed stack ${failed}: cleanup failed\nSkipped managed stack: Failed to read managed stack ${skipped}: invalid state`,
+        }),
+      ]);
+      expect(setupResult.state.openedIds).toEqual([failed]);
+      expect(setupResult.state.destroyCalled).toBe(false);
+    }).pipe(Effect.provide(setupResult.layer));
+  });
+
+  it.effect("fails before opening any stack when registry discovery fails", () => {
+    const setupResult = setup({
+      root: "/tmp/supabase-stack-stop-all-discovery-failure",
+      discoveryFailure: new StackStateInvalidError({ message: "registry is unreadable" }),
+    });
+    return Effect.gen(function* () {
+      const failure = yield* stackStop(flags({ all: Option.some(true) })).pipe(Effect.flip);
+      expect(failure.message).toContain("registry is unreadable");
+      expect(setupResult.state.openedIds).toEqual([]);
+      expect(setupResult.state.destroyCalled).toBe(false);
+    }).pipe(Effect.provide(setupResult.layer));
+  });
+
+  it.effect("treats an empty registry as a successful bulk no-op", () => {
+    const setupResult = setup({ root: "/tmp/supabase-stack-stop-all-empty" });
+    return Effect.gen(function* () {
+      yield* stackStop(flags({ all: Option.some(true) }));
+      expect(setupResult.state.openedIds).toEqual([]);
+      expect(setupResult.state.stopCalls).toBe(0);
+      expect(setupResult.state.destroyCalled).toBe(false);
+      expect(setupResult.out.stdoutText).toContain("Stopped 0 managed stack(s).");
+    }).pipe(Effect.provide(setupResult.layer));
+  });
+
+  it.effect("rejects bulk stop target combinations", () => {
+    const setupResult = setup({ root: "/tmp/supabase-stack-stop-conflict" });
+    return Effect.gen(function* () {
+      const failure = yield* stackStop(
+        flags({ all: Option.some(true), stack: Option.some("feature-a") }),
+      ).pipe(Effect.flip);
+      expect(failure.message).toContain("cannot be combined");
+    }).pipe(Effect.provide(setupResult.layer));
+  });
+
+  it.effect("rejects an explicit false --all with a stack target", () => {
+    const setupResult = setup({ root: "/tmp/supabase-stack-stop-explicit-false" });
+    return Effect.gen(function* () {
+      const failure = yield* stackStop(
+        flags({ all: Option.some(false), stack: Option.some("feature-a") }),
+      ).pipe(Effect.flip);
+      expect(failure.message).toContain("cannot be combined");
+      expect(setupResult.state.findInputs).toEqual([]);
+      expect(setupResult.state.openedIds).toEqual([]);
+    }).pipe(Effect.provide(setupResult.layer));
+  });
+
+  it.effect("uses unknown classification when bulk failures disagree", () => {
+    const failed = "6".repeat(64);
+    const skipped = "5".repeat(64);
+    const setupResult = setup({
+      root: "/tmp/supabase-stack-stop-mixed",
+      found: { id: failed },
+      stop: Effect.fail(new StackCleanupError({ message: "cleanup failed" })),
+      discovered: {
+        stacks: [
+          {
+            id: StackIdSchema.make(failed),
+            projectRoot: "/tmp/supabase-stack-stop-mixed",
+            name: "failed",
+            branchContext: "ordinary-workspace",
+            runtime: { kind: "native" },
+            desiredLifecycle: "running",
+          },
+        ],
+        errors: [
+          {
+            id: StackIdSchema.make(skipped),
+            error: new StackStateInvalidError({
+              message: `Failed to read managed stack ${skipped}: corrupt state`,
+            }),
+          },
+        ],
+      },
+    });
+    return Effect.gen(function* () {
+      const failure = yield* stackStop(flags({ all: Option.some(true) })).pipe(Effect.flip);
+      expect(failure.reason).toBe("unknown");
+      expect(failure.suggestion).toBeUndefined();
+    }).pipe(Effect.provide(setupResult.layer));
+  });
+
   it.effect("stops a named stack without calling destroy", () => {
     const root = "/tmp/supabase-stack-stop";
     const setupResult = setup({
@@ -271,7 +536,7 @@ describe("stack stop", () => {
     const setupResult = setup({
       root,
       found: { id: "b".repeat(64) },
-      stop: () => Effect.fail(new StackStateInvalidError({ message: "stop failed" })),
+      stop: Effect.fail(new StackStateInvalidError({ message: "stop failed" })),
     });
     return Effect.gen(function* () {
       const failure = yield* stackStop(flags()).pipe(Effect.flip);
@@ -287,7 +552,7 @@ describe("stack stop", () => {
     const setupResult = setup({
       root,
       found: { id: "7".repeat(64) },
-      stop: () => Effect.fail(ownershipConflict),
+      stop: Effect.fail(ownershipConflict),
     });
     return Effect.gen(function* () {
       const failure = yield* stackStop(flags()).pipe(Effect.flip);
@@ -347,7 +612,7 @@ describe("stack stop", () => {
     const setupResult = setup({
       root,
       found: { id: "a".repeat(64) },
-      stop: () => Effect.fail(new StackCleanupError({ message: "cleanup failed" })),
+      stop: Effect.fail(new StackCleanupError({ message: "cleanup failed" })),
     });
     return Effect.gen(function* () {
       const failure = yield* stackStop(flags()).pipe(Effect.flip);
@@ -384,6 +649,37 @@ describe("stack stop parser", () => {
     return Effect.gen(function* () {
       yield* Command.runWith(command, { version: "0.0.0-test" })(["--stack", "feature-a"]);
       expect(parsed).toEqual(Option.some("feature-a"));
+    }).pipe(
+      Effect.provide(Layer.mergeAll(BunServices.layer, CliOutput.layer(textCliOutputFormatter()))),
+    );
+  });
+
+  it.live("preserves explicit false for --all alongside a target", () => {
+    let parsed: Parameters<typeof stackStop>[0] | undefined;
+    const command = stackStopCommand.pipe(
+      Command.withHandler((flags) => Effect.sync(() => (parsed = flags))),
+    );
+    return Effect.gen(function* () {
+      yield* Command.runWith(command, { version: "0.0.0-test" })([
+        "--all=false",
+        "--stack",
+        "feature-a",
+      ]);
+      expect(parsed?.all).toEqual(Option.some(false));
+      expect(parsed?.stack).toEqual(Option.some("feature-a"));
+    }).pipe(
+      Effect.provide(Layer.mergeAll(BunServices.layer, CliOutput.layer(textCliOutputFormatter()))),
+    );
+  });
+
+  it.live("parses bare --all as true", () => {
+    let parsed: Parameters<typeof stackStop>[0] | undefined;
+    const command = stackStopCommand.pipe(
+      Command.withHandler((flags) => Effect.sync(() => (parsed = flags))),
+    );
+    return Effect.gen(function* () {
+      yield* Command.runWith(command, { version: "0.0.0-test" })(["--all"]);
+      expect(parsed?.all).toEqual(Option.some(true));
     }).pipe(
       Effect.provide(Layer.mergeAll(BunServices.layer, CliOutput.layer(textCliOutputFormatter()))),
     );

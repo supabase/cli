@@ -149,7 +149,7 @@ describe("durable lifecycle controller", () => {
         const fixture = yield* makeFixture();
         const first = yield* fixture.controller.start({ config: { capabilities: { rest: {} } } });
         fixture.state.calls.length = 0;
-        const second = yield* fixture.controller.stop();
+        const second = yield* fixture.controller.stop;
         expect(second.desiredLifecycle).toBe("stopped");
         fixture.state.calls.length = 0;
         const third = yield* fixture.controller.start();
@@ -275,7 +275,7 @@ describe("durable lifecycle controller", () => {
         yield* fixture.controller.start({ config: original });
         const running = yield* fixture.controller.start({ config: changed }).pipe(Effect.exit);
         expect(errorOf(running)).toBeInstanceOf(StackMustBeStoppedError);
-        yield* fixture.controller.stop();
+        yield* fixture.controller.stop;
         const restarted = yield* fixture.controller.start({ config: changed });
         expect(restarted.desiredLifecycle).toBe("running");
         expect(restarted.secrets).toMatchObject({
@@ -306,14 +306,14 @@ describe("durable lifecycle controller", () => {
         const fixture = yield* makeFixture();
         yield* fixture.controller.start();
         fixture.state.calls.length = 0;
-        const first = yield* fixture.controller.stop();
+        const first = yield* fixture.controller.stop;
         expect(first).toMatchObject({
           desiredLifecycle: "stopped",
           definition: { preparation: "background" },
         });
         expect(fixture.state.calls).toEqual(["cleanup:running"]);
         fixture.state.calls.length = 0;
-        const second = yield* fixture.controller.stop();
+        const second = yield* fixture.controller.stop;
         expect(second).toEqual(first);
         expect(fixture.state.calls).toEqual(["cleanup:running"]);
       }),
@@ -327,12 +327,12 @@ describe("durable lifecycle controller", () => {
         yield* fixture.controller.start();
         fixture.state.calls.length = 0;
         fixture.state.failCleanupOnce = true;
-        const first = yield* fixture.controller.stop().pipe(Effect.exit);
+        const first = yield* fixture.controller.stop.pipe(Effect.exit);
         expect(errorOf(first)).toBeInstanceOf(StackCleanupError);
         const stopped = yield* fixture.store.read(fixture.id);
         expect(stopped?.desiredLifecycle).toBe("stopped");
         fixture.state.calls.length = 0;
-        const second = yield* fixture.controller.stop();
+        const second = yield* fixture.controller.stop;
         expect(second.desiredLifecycle).toBe("stopped");
         expect(fixture.state.calls).toEqual(["cleanup:running"]);
       }),
@@ -344,7 +344,7 @@ describe("durable lifecycle controller", () => {
       Effect.gen(function* () {
         const fixture = yield* makeFixture();
         const first = yield* fixture.controller.start();
-        yield* fixture.controller.stop();
+        yield* fixture.controller.stop;
         fixture.state.calls.length = 0;
         fixture.state.failPreflight = true;
         const exit = yield* fixture.controller
@@ -368,7 +368,7 @@ describe("durable lifecycle controller", () => {
         yield* fs.makeDirectory(`${fixture.root}/${fixture.id}/runtime`, { recursive: true });
         yield* fixture.controller.start();
         fixture.state.calls.length = 0;
-        yield* fixture.controller.destroy();
+        yield* fixture.controller.destroy;
         expect(fixture.state.calls).toEqual(["destroy-data:running"]);
         expect(yield* fixture.store.read(fixture.id)).toBeUndefined();
         expect(yield* fs.exists(`${fixture.root}/${fixture.id}`)).toBe(false);
@@ -393,14 +393,14 @@ describe("durable lifecycle controller", () => {
         yield* fixture.controller.start();
         fixture.state.calls.length = 0;
         fixture.state.failDestroyData = true;
-        const exit = yield* fixture.controller.destroy().pipe(Effect.exit);
+        const exit = yield* fixture.controller.destroy.pipe(Effect.exit);
         expect(errorOf(exit)).toBeInstanceOf(StackCleanupError);
         expect(yield* fixture.store.read(fixture.id)).toMatchObject({
           desiredLifecycle: "destroying",
         });
         expect(fixture.state.calls).toEqual(["destroy-data:running"]);
         fixture.state.failDestroyData = false;
-        yield* fixture.controller.destroy();
+        yield* fixture.controller.destroy;
         expect(yield* fixture.store.read(fixture.id)).toBeUndefined();
       }),
     ),
@@ -410,7 +410,7 @@ describe("durable lifecycle controller", () => {
     run(
       Effect.gen(function* () {
         const fixture = yield* makeFixture();
-        yield* fixture.controller.destroy();
+        yield* fixture.controller.destroy;
         expect(fixture.state.calls).toEqual(["destroy-data:invalid"]);
         expect(yield* fixture.store.read(fixture.id)).toBeUndefined();
       }),
@@ -422,10 +422,10 @@ describe("durable lifecycle controller", () => {
       Effect.gen(function* () {
         const fixture = yield* makeFixture();
         fixture.state.failDestroyDataOnce = true;
-        const first = yield* fixture.controller.destroy().pipe(Effect.exit);
+        const first = yield* fixture.controller.destroy.pipe(Effect.exit);
         expect(errorOf(first)).toBeInstanceOf(StackCleanupError);
         expect((yield* fixture.store.read(fixture.id))?.desiredLifecycle).toBe("destroying");
-        yield* fixture.controller.destroy();
+        yield* fixture.controller.destroy;
         expect(yield* fixture.store.read(fixture.id)).toBeUndefined();
       }),
     ),

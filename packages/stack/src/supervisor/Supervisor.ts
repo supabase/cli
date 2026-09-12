@@ -680,9 +680,10 @@ export const makeSupervisor = (
       Effect.gen(function* () {
         const previous = yield* Ref.get(phase);
         yield* Ref.set(phase, "stopping");
-        const result = yield* controller
-          .stop()
-          .pipe(Effect.provideContext(options.context), Effect.exit);
+        const result = yield* controller.stop.pipe(
+          Effect.provideContext(options.context),
+          Effect.exit,
+        );
         if (Exit.isFailure(result)) {
           const state = yield* read().pipe(Effect.orElseSucceed(() => undefined));
           if (state?.desiredLifecycle === "stopped") {
@@ -729,9 +730,10 @@ export const makeSupervisor = (
     const destroyOperation = Effect.gen(function* () {
       const previous = yield* Ref.get(phase);
       yield* Ref.set(phase, "destroying");
-      const result = yield* controller
-        .destroy()
-        .pipe(Effect.provideContext(options.context), Effect.exit);
+      const result = yield* controller.destroy.pipe(
+        Effect.provideContext(options.context),
+        Effect.exit,
+      );
       if (Exit.isFailure(result)) {
         yield* restorePhase(previous);
         return yield* Effect.failCause(result.cause);

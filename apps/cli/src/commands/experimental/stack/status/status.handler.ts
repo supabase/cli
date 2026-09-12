@@ -199,14 +199,14 @@ export const stackStatus = Effect.fn("experimental.stack.status")(function* (
     const api = yield* StackApi;
     if (flags.env) {
       const stack = yield* catchStackError(api.openStack(target.id));
-      const status = yield* catchStackError(stack.status());
+      const status = yield* catchStackError(stack.status);
       if (status.lifecycle !== "running")
         return yield* new StackCommandStatusError({
           reason: "runtime",
           message: "The stack must be running to export connection variables.",
           suggestion: "Run supabase stack start first.",
         });
-      const credentials = yield* catchStackError(stack.credentials());
+      const credentials = yield* catchStackError(stack.credentials);
       const values = stackEnvValues(status, credentials, envNames);
       if (output.format === "text") yield* output.raw(yield* encodeStackEnv(values));
       else yield* output.result(values);

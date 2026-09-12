@@ -3,7 +3,11 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Option, Path, Redacted } from "effect";
 import { makePromiseApi } from "./PromiseStack.ts";
 import { createStack, inspectStack } from "./EffectStack.ts";
-import { defaultRuntimeEnvironment, StackRuntimeEnvironment } from "../supervisor/Launcher.ts";
+import {
+  defaultRuntimeEnvironment,
+  StackRuntimeEnvironment,
+  type StackRuntimeEnvironmentValue,
+} from "../supervisor/Launcher.ts";
 import { compileStack } from "../model/Compiler.ts";
 import { makeStackStateStore } from "../state/StackStateStore.ts";
 import type { StackConfig } from "./Config.ts";
@@ -20,11 +24,12 @@ const withRuntimeRoot = <A, E, R>(effect: (project: string) => Effect.Effect<A, 
       );
       const project = path.join(root, "project");
       yield* fs.makeDirectory(project);
-      const runtime = {
-        ...defaultRuntimeEnvironment(),
+      const defaults = yield* defaultRuntimeEnvironment;
+      const runtime: StackRuntimeEnvironmentValue = {
+        ...defaults,
         stateRoot: path.join(root, "managed", "stacks"),
         tempRoot: "/tmp",
-        platform: "posix" as const,
+        platform: "posix",
       };
       return yield* effect(project).pipe(Effect.provideService(StackRuntimeEnvironment, runtime));
     }),
