@@ -18,6 +18,11 @@ export interface PgDeltaNextPlanShadows extends PgDeltaNextMigrationsShadow {
   readonly allowSameDatabaseIdentity: boolean;
 }
 
+/** The isolated desired-state database used for declarative planning. */
+export interface PgDeltaNextDeclarativeShadow {
+  readonly declarativeUrl: string;
+}
+
 export interface PgDeltaNextShadowInput {
   readonly context: PgDeltaContext;
   readonly toml: DbTomlValues;
@@ -37,6 +42,13 @@ interface PgDeltaNextShadowShape {
   readonly provisionMigrations: (
     opts: PgDeltaNextShadowInput,
   ) => Effect.Effect<PgDeltaNextMigrationsShadow, DeclarativeShadowDbError, Scope.Scope>;
+  /**
+   * Provisions only the desired-state shadow needed when planning against a live database. The
+   * container is removed when the current Effect scope closes.
+   */
+  readonly provisionDeclarative: (
+    opts: PgDeltaNextShadowInput,
+  ) => Effect.Effect<PgDeltaNextDeclarativeShadow, DeclarativeShadowDbError, Scope.Scope>;
   /**
    * Provisions the independent migrated and declarative shadows needed by a declarative plan.
    * Concurrency is strategy-driven (see `pgdelta-next-shadow.plan.ts`). Both shadows are

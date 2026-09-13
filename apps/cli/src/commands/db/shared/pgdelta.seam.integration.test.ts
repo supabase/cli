@@ -82,6 +82,7 @@ function setup(
     readonly failCreate?: boolean;
     readonly dbInspectFailsWith?: string;
     readonly dbInspectImage?: string;
+    readonly dbNotRunning?: boolean;
   } = {},
 ) {
   const out = mockOutput();
@@ -89,6 +90,7 @@ function setup(
     failCreate: opts.failCreate,
     dbInspectFailsWith: opts.dbInspectFailsWith,
     dbInspectImage: opts.dbInspectImage,
+    dbNotRunning: opts.dbNotRunning,
   });
   const dbConnection = fakeShadowDbConnection();
   const docker = fakeShadowSetupDocker();
@@ -172,6 +174,36 @@ describe("declarativeSeamLayer.ensureLocalDatabaseStarted", () => {
   );
 });
 
+describe("declarativeSeamLayer.isLocalDatabaseRunning", () => {
+  it.effect("is false when the local Postgres container is missing", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pgdelta-seam-"));
+    const { layer } = setup(dir, { dbNotRunning: true });
+    return Effect.gen(function* () {
+      const seam = yield* DeclarativeSeam;
+      expect(yield* seam.isLocalDatabaseRunning()).toBe(false);
+      rmSync(dir, { recursive: true, force: true });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("carries daemon inspect failures as a shadow-db error", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pgdelta-seam-"));
+    const { layer } = setup(dir, {
+      dbInspectFailsWith:
+        "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?",
+    });
+    return Effect.gen(function* () {
+      const seam = yield* DeclarativeSeam;
+      const exit = yield* seam.isLocalDatabaseRunning().pipe(Effect.exit);
+      const error = failError(exit);
+      expect(error).toBeInstanceOf(DeclarativeShadowDbError);
+      const shadowError = error as DeclarativeShadowDbError;
+      expect(shadowError.docker).toBe("daemon");
+      expect(shadowError.suggestion).toBe(SUGGEST_DOCKER_INSTALL);
+      rmSync(dir, { recursive: true, force: true });
+    }).pipe(Effect.provide(layer));
+  });
+});
+
 describe("declarativeSeamLayer.ensureLocalPostgresImageCurrent", () => {
   beforeEach(() => {
     vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", undefined);
@@ -203,6 +235,54 @@ describe("declarativeSeamLayer.ensureLocalPostgresImageCurrent", () => {
       }).pipe(Effect.provide(layer));
     },
   );
+
+  it.effect("recommends a data-preserving restart for same-major tag drift", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pgdelta-seam-"));
+    const { layer } = setup(dir, { dbInspectImage: "supabase/postgres:17.6.1.166" });
+    return Effect.gen(function* () {
+      const seam = yield* DeclarativeSeam;
+      const exit = yield* seam.ensureLocalPostgresImageCurrent().pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      const error = failError(exit);
+      expect(error).toBeInstanceOf(DeclarativeShadowDbError);
+      const message = (error as DeclarativeShadowDbError).message;
+      expect(message).toContain("Run supabase stop, then supabase start");
+      expect(message).not.toContain("--no-backup");
+      rmSync(dir, { recursive: true, force: true });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("warns that a major-version restart deletes local database data", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pgdelta-seam-"));
+    const { layer } = setup(dir, { dbInspectImage: "supabase/postgres:15.8.1.085" });
+    return Effect.gen(function* () {
+      const seam = yield* DeclarativeSeam;
+      const exit = yield* seam.ensureLocalPostgresImageCurrent().pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      const error = failError(exit);
+      expect(error).toBeInstanceOf(DeclarativeShadowDbError);
+      const message = (error as DeclarativeShadowDbError).message;
+      expect(message).toContain("supabase stop --all --no-backup");
+      expect(message).toContain("deletes all local database data");
+      rmSync(dir, { recursive: true, force: true });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("warns that a same-major OrioleDB swap deletes local database data", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pgdelta-seam-"));
+    const { layer } = setup(dir, { dbInspectImage: "supabase/postgres:orioledb-17.6.1.167" });
+    return Effect.gen(function* () {
+      const seam = yield* DeclarativeSeam;
+      const exit = yield* seam.ensureLocalPostgresImageCurrent().pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      const error = failError(exit);
+      expect(error).toBeInstanceOf(DeclarativeShadowDbError);
+      const message = (error as DeclarativeShadowDbError).message;
+      expect(message).toContain("standard vs OrioleDB");
+      expect(message).toContain("supabase stop --all --no-backup");
+      rmSync(dir, { recursive: true, force: true });
+    }).pipe(Effect.provide(layer));
+  });
 
   it.effect("bails out when inspect succeeds but the image name is unparseable", () => {
     vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");

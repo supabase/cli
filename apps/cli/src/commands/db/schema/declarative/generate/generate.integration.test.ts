@@ -124,6 +124,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       Effect.sync(() => {
         ensureStartedCalls += 1;
       }),
+    isLocalDatabaseRunning: () => Effect.die("isLocalDatabaseRunning not used in generate tests"),
     ensureLocalPostgresImageCurrent: () =>
       Effect.sync(() => {
         localPostgresImageChecks.push(true);

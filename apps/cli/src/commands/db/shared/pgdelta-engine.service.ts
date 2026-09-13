@@ -147,6 +147,8 @@ export interface PgDeltaDeclarativeExportResult {
 }
 
 export interface PgDeltaDeclarativePlanInput extends PgDeltaCommonInput {
+  /** Live database to plan against instead of the migrations shadow. */
+  readonly source?: PgDeltaDatabaseEndpoint;
   readonly files: ReadonlyArray<PgDeltaSqlFile>;
   readonly manifest?: PgDeltaExportManifest;
   readonly noCache: boolean;

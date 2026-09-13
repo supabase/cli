@@ -16,9 +16,9 @@ import {
   createMigrationTable,
   sortMigrationPathsByVersion,
 } from "./migration-history.ts";
-import { parseMigrationContent } from "./migration-file.ts";
+import { type MigrationTransactionMode, parseMigrationContent } from "./migration-file.ts";
 import { sqlFilesGlob } from "./sql-files-glob.ts";
-import { splitSqlTokens } from "./sql-split.ts";
+import { splitAndTrim, splitSqlTokens } from "./sql-split.ts";
 
 /**
  * A migration file failed to apply. Used by `migration up`/`down`'s migrate-and-seed step; the
@@ -382,6 +382,185 @@ const formattedExecBatchDbError = (error: unknown): DbExecError | undefined => {
   return dbError instanceof DbExecError ? dbError : undefined;
 };
 
+interface MigrationHistoryRecord {
+  readonly version: string;
+  readonly name: string;
+}
+
+interface ExecMigrationStatementsOptions {
+  readonly history?: MigrationHistoryRecord;
+  readonly sequentialFailureCleanup?: string;
+}
+
+const execMigrationStatements = (
+  session: DbSession,
+  statements: ReadonlyArray<string>,
+  transactionMode: MigrationTransactionMode,
+  options: ExecMigrationStatementsOptions = {},
+): Effect.Effect<void, Error | DbConnectError> =>
+  Effect.gen(function* () {
+    const restoreRole = session.restoreRoleSql;
+
+    const executeSequentially = (cleanup?: string) =>
+      Effect.gen(function* () {
+        for (const [index, statement] of statements.entries()) {
+          yield* session
+            .exec(statement)
+            .pipe(Effect.mapError((cause) => formatExecBatchError(cause, index, statement)));
+          if (restoreRole !== undefined && revertsToLoginRole(statement)) {
+            yield* session
+              .exec(restoreRole)
+              .pipe(Effect.mapError((cause) => formatExecBatchError(cause, index, restoreRole)));
+          }
+        }
+        if (
+          restoreRole !== undefined &&
+          !(statements.length > 0 && revertsToLoginRole(statements[statements.length - 1]!))
+        ) {
+          yield* session
+            .exec(restoreRole)
+            .pipe(
+              Effect.mapError((cause) =>
+                formatExecBatchError(cause, statements.length, restoreRole),
+              ),
+            );
+        }
+        if (options.history !== undefined) {
+          yield* session
+            .query(INSERT_MIGRATION_VERSION, [
+              options.history.version,
+              options.history.name,
+              statements,
+            ])
+            .pipe(
+              Effect.mapError((cause) =>
+                formatExecBatchError(cause, statements.length, INSERT_MIGRATION_VERSION),
+              ),
+            );
+        }
+      }).pipe(
+        Effect.tapError(() =>
+          Effect.gen(function* () {
+            if (cleanup !== undefined) {
+              yield* session.exec(cleanup).pipe(Effect.ignore);
+            }
+            if (restoreRole !== undefined) {
+              yield* session.exec(restoreRole).pipe(Effect.ignore);
+            }
+          }),
+        ),
+      );
+
+    // Nontransactional units stay on one session; sequentialFailureCleanup is optional.
+    if (transactionMode === "none") {
+      return yield* executeSequentially(options.sequentialFailureCleanup);
+    }
+
+    // Authored transaction boundaries cannot be nested inside a CLI-owned batch.
+    if (statements.some(hasTransactionControl)) {
+      return yield* executeSequentially("ROLLBACK");
+    }
+
+    let pending: Array<string> = [];
+    // Error positions stay global when incompatible statements split the batches.
+    let executed = 0;
+
+    const flushBatch = (final: boolean) =>
+      Effect.gen(function* () {
+        const recordVersion = final && options.history !== undefined;
+        const trailingRestore = final ? restoreRole : undefined;
+        if (pending.length === 0 && !recordVersion && trailingRestore === undefined) return;
+        const batchStatements = pending;
+        const operations: Array<DbBatchStatement> = [];
+        // Injected role restores must not shift user-facing statement numbers.
+        const injectedBefore: Array<number> = [];
+        let injected = 0;
+        let lastOpIsInjectedRestore = false;
+        for (const sql of batchStatements) {
+          operations.push({ sql });
+          injectedBefore.push(injected);
+          lastOpIsInjectedRestore = false;
+          if (restoreRole !== undefined && revertsToLoginRole(sql)) {
+            injected += 1;
+            operations.push({ sql: restoreRole });
+            injectedBefore.push(injected);
+            lastOpIsInjectedRestore = true;
+          }
+        }
+        if (trailingRestore !== undefined && !lastOpIsInjectedRestore) {
+          operations.push({ sql: trailingRestore });
+          injectedBefore.push(injected);
+          injected += 1;
+        }
+        if (recordVersion) {
+          operations.push({
+            sql: INSERT_MIGRATION_VERSION,
+            params: [options.history.version, options.history.name, statements],
+          });
+          injectedBefore.push(injected);
+        }
+        const base = executed;
+        yield* session.execBatch(operations).pipe(
+          Effect.mapError((cause) => {
+            // A connection failure happened before there was a statement to attribute.
+            if (cause instanceof DbConnectError) return cause;
+            const raw = cause.statementIndex ?? 0;
+            const globalIndex = base + raw - (injectedBefore[raw] ?? injected);
+            return formatExecBatchError(
+              cause,
+              globalIndex,
+              operations[raw]?.sql ?? statements[globalIndex] ?? INSERT_MIGRATION_VERSION,
+            );
+          }),
+        );
+        pending = [];
+        executed += batchStatements.length;
+      });
+
+    for (const statement of statements) {
+      if (isPipelineIncompatible(statement)) {
+        // Commit pending work before running a statement forbidden in a batch.
+        yield* flushBatch(false);
+        const index = executed;
+        yield* session
+          .exec(statement)
+          .pipe(Effect.mapError((cause) => formatExecBatchError(cause, index, statement)));
+        executed += 1;
+      } else {
+        pending.push(statement);
+      }
+    }
+    yield* flushBatch(true);
+  });
+
+export interface RenderedSqlUnit {
+  readonly name: string;
+  readonly sql: string;
+  readonly transactionMode: MigrationTransactionMode;
+}
+
+/**
+ * Applies in-memory rendered SQL units in order without migration-history or
+ * per-unit connection-reset writes.
+ */
+export const applyRenderedSqlUnits = <E>(
+  session: DbSession,
+  units: ReadonlyArray<RenderedSqlUnit>,
+  mapError: (message: string, dbError?: DbExecError) => E,
+): Effect.Effect<void, E | DbConnectError> =>
+  Effect.forEach(
+    units,
+    (unit) =>
+      execMigrationStatements(session, splitAndTrim(unit.sql), unit.transactionMode).pipe(
+        Effect.mapError((error) =>
+          error instanceof DbConnectError
+            ? error
+            : mapError(errorMessage(error), formattedExecBatchDbError(error)),
+        ),
+      ),
+    { discard: true },
+  );
+
 /**
  * Runs a single migration/seed file's statements, plus the optional history insert.
  *
@@ -435,152 +614,20 @@ const execMigrationBatch = <E>(
 
     // Every failure from here on is an execution failure, tagged "exec" (vs. the "read" failures
     // above) — only execution failures get a suggestion attached; callers rely on this tag.
-    yield* Effect.gen(function* () {
-      const { statements, transactionMode } = parseMigrationContent(content);
-      const filename = path.basename(migrationPath);
-      const matches = MIGRATE_FILE_PATTERN.exec(filename);
-      const version = forceNoVersion ? "" : (matches?.[1] ?? "");
-      const name = matches?.[2] ?? "";
-
-      const restoreRole = session.restoreRoleSql;
-
-      const executeSequentially = (cleanup: string) =>
-        Effect.gen(function* () {
-          for (const [index, statement] of statements.entries()) {
-            yield* session
-              .exec(statement)
-              .pipe(Effect.mapError((cause) => formatExecBatchError(cause, index, statement)));
-            if (restoreRole !== undefined && revertsToLoginRole(statement)) {
-              yield* session
-                .exec(restoreRole)
-                .pipe(Effect.mapError((cause) => formatExecBatchError(cause, index, restoreRole)));
-            }
-          }
-          if (
-            restoreRole !== undefined &&
-            !(statements.length > 0 && revertsToLoginRole(statements[statements.length - 1]!))
-          ) {
-            yield* session
-              .exec(restoreRole)
-              .pipe(
-                Effect.mapError((cause) =>
-                  formatExecBatchError(cause, statements.length, restoreRole),
-                ),
-              );
-          }
-          if (version.length > 0) {
-            yield* session
-              .query(INSERT_MIGRATION_VERSION, [version, name, statements])
-              .pipe(
-                Effect.mapError((cause) =>
-                  formatExecBatchError(cause, statements.length, INSERT_MIGRATION_VERSION),
-                ),
-              );
-          }
-        }).pipe(
-          Effect.tapError(() =>
-            Effect.gen(function* () {
-              yield* session.exec(cleanup).pipe(Effect.ignore);
-              // Sequential statements ran outside a CLI transaction, so a failed
-              // file's `RESET ROLE` survives the cleanup; restore best-effort.
-              if (restoreRole !== undefined) {
-                yield* session.exec(restoreRole).pipe(Effect.ignore);
-              }
-            }),
-          ),
-        );
-
-      // Session settings must remain active for the nontransactional action, so no transaction
-      // boundary is added around this branch.
-      if (transactionMode === "none") {
-        return yield* executeSequentially("RESET ALL");
-      }
-
-      // A file with authored transaction boundaries owns those semantics; execute statements
-      // exactly as written and only record history after they all succeed.
-      if (statements.some(hasTransactionControl)) {
-        return yield* executeSequentially("ROLLBACK");
-      }
-
-      // The global statement index of the next statement to run, so error context stays accurate
-      // across flushed batches and standalone statements.
-      let pending: Array<string> = [];
-      let executed = 0;
-
-      const flushBatch = (final: boolean) =>
-        Effect.gen(function* () {
-          const recordVersion = final && version.length > 0;
-          const trailingRestore = final ? restoreRole : undefined;
-          if (pending.length === 0 && !recordVersion && trailingRestore === undefined) return;
-          const batchStatements = pending;
-          const operations: Array<DbBatchStatement> = [];
-          // Injected role restores don't count toward `At statement: N`; track how
-          // many precede each op so failures keep the file's own numbering (a
-          // mid-file restore inherits its host statement's index; the trailing
-          // restore and the history insert report the file's statement count).
-          const injectedBefore: Array<number> = [];
-          let injected = 0;
-          let lastOpIsInjectedRestore = false;
-          for (const sql of batchStatements) {
-            operations.push({ sql });
-            injectedBefore.push(injected);
-            lastOpIsInjectedRestore = false;
-            if (restoreRole !== undefined && revertsToLoginRole(sql)) {
-              injected += 1;
-              operations.push({ sql: restoreRole });
-              injectedBefore.push(injected);
-              lastOpIsInjectedRestore = true;
-            }
-          }
-          if (trailingRestore !== undefined && !lastOpIsInjectedRestore) {
-            operations.push({ sql: trailingRestore });
-            injectedBefore.push(injected);
-            injected += 1;
-          }
-          if (recordVersion) {
-            operations.push({
-              sql: INSERT_MIGRATION_VERSION,
-              params: [version, name, statements],
-            });
-            injectedBefore.push(injected);
-          }
-          const base = executed;
-          yield* session.execBatch(operations).pipe(
-            Effect.mapError((cause) => {
-              // The batch's connection failed, either on checkout or before any of
-              // it reached the wire: there is no failing statement to name, so the
-              // connect error is surfaced verbatim instead of `At statement: N`.
-              if (cause instanceof DbConnectError) return cause;
-              // `statementIndex` is set by every batch failure the driver raises; a
-              // session that omits it can only have failed before the first statement.
-              const raw = cause.statementIndex ?? 0;
-              const globalIndex = base + raw - (injectedBefore[raw] ?? injected);
-              return formatExecBatchError(
-                cause,
-                globalIndex,
-                operations[raw]?.sql ?? statements[globalIndex] ?? INSERT_MIGRATION_VERSION,
-              );
-            }),
-          );
-          pending = [];
-          executed += batchStatements.length;
-        });
-
-      for (const statement of statements) {
-        if (isPipelineIncompatible(statement)) {
-          // Flush the open batch, then run the incompatible statement on its own (no
-          // surrounding transaction) so PostgreSQL accepts it.
-          yield* flushBatch(false);
-          const index = executed;
-          yield* session
-            .exec(statement)
-            .pipe(Effect.mapError((cause) => formatExecBatchError(cause, index, statement)));
-          executed += 1;
-        } else {
-          pending.push(statement);
-        }
-      }
-      yield* flushBatch(true);
+    const { statements, transactionMode } = parseMigrationContent(content);
+    const filename = path.basename(migrationPath);
+    const matches = MIGRATE_FILE_PATTERN.exec(filename);
+    const version = forceNoVersion ? "" : (matches?.[1] ?? "");
+    const history =
+      version.length === 0
+        ? undefined
+        : {
+            version,
+            name: matches?.[2] ?? "",
+          };
+    yield* execMigrationStatements(session, statements, transactionMode, {
+      history,
+      sequentialFailureCleanup: "RESET ALL",
     }).pipe(
       Effect.mapError((error) =>
         // A batch connection failure is not an execution failure: it keeps its own

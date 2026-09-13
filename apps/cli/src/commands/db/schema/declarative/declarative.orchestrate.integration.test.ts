@@ -9,11 +9,14 @@ import type { DbTomlValues } from "../../../../command-internal/db-config.toml-r
 import {
   PgDeltaEngine,
   type PgDeltaDeclarativePlanInput,
+  PgDeltaEngineError,
 } from "../../shared/pgdelta-engine.service.ts";
+import { DeclarativeCompatibilityError } from "./declarative.errors.ts";
 import {
   type DeclarativeRunContext,
   diffDeclarativeToMigrations,
   generateDeclarativeOutput,
+  planDeclarativeToDatabase,
 } from "./declarative.orchestrate.ts";
 
 const ctx = (cwd: string, declarativeDir: string): DeclarativeRunContext => ({
@@ -213,6 +216,115 @@ describe("diffDeclarativeToMigrations", () => {
         }),
       ),
       Effect.provide(Layer.mergeAll(stubEngine(calls), BunServices.layer)),
+    );
+  });
+});
+
+describe("planDeclarativeToDatabase", () => {
+  it.effect("forwards the database source through the shared planning path", () => {
+    const dir = mkdtempSync(join(tmpdir(), "decl-orch-"));
+    const declDir = join(dir, "supabase", "database");
+    mkdirSync(declDir, { recursive: true });
+    writeFileSync(join(declDir, "public.sql"), "drop table public.accounts;");
+    const calls: PgDeltaDeclarativePlanInput[] = [];
+    const engine = Layer.succeed(
+      PgDeltaEngine,
+      PgDeltaEngine.of({
+        diffExplicit: () => Effect.die("diffExplicit not used"),
+        diffDatabase: () => Effect.die("diffDatabase not used"),
+        exportDeclarativeSchema: () => Effect.die("exportDeclarativeSchema not used"),
+        planDeclarativeSchema: (input) => {
+          calls.push(input);
+          return Effect.succeed({
+            changes: true,
+            sql: "drop table public.accounts;",
+            files: [],
+            sourceRef: "pg-delta-next:database",
+            targetRef: "pg-delta-next:declarative",
+          });
+        },
+      }),
+    );
+    const source = {
+      kind: "database" as const,
+      ref: "postgresql://postgres:secret@localhost/postgres",
+      connectOptions: { isLocal: true, dnsResolver: "native" as const },
+    };
+
+    return planDeclarativeToDatabase(ctx(dir, declDir), toml, source).pipe(
+      Effect.tap((result) =>
+        Effect.sync(() => {
+          expect(calls).toHaveLength(1);
+          expect(calls[0]?.source).toBe(source);
+          expect(calls[0]?.files).toEqual([
+            { name: "public.sql", sql: "drop table public.accounts;" },
+          ]);
+          expect(result).toMatchObject({
+            diffSQL: "drop table public.accounts;",
+            sourceRef: "pg-delta-next:database",
+            targetRef: "pg-delta-next:declarative",
+            manifestPresent: false,
+            removals: { extensions: [], extensionIntents: [] },
+          });
+          expect(result.sourceRef).not.toContain("secret");
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+      Effect.provide(Layer.mergeAll(engine, BunServices.layer)),
+    );
+  });
+
+  it.effect("maps declarative load failures through the shared compatibility gate", () => {
+    const dir = mkdtempSync(join(tmpdir(), "decl-orch-"));
+    const declDir = join(dir, "supabase", "database");
+    mkdirSync(declDir, { recursive: true });
+    writeFileSync(join(declDir, "members.sql"), "select extensions.uuid_generate_v4();");
+    const engine = Layer.succeed(
+      PgDeltaEngine,
+      PgDeltaEngine.of({
+        diffExplicit: () => Effect.die("diffExplicit not used"),
+        diffDatabase: () => Effect.die("diffDatabase not used"),
+        exportDeclarativeSchema: () => Effect.die("exportDeclarativeSchema not used"),
+        planDeclarativeSchema: () =>
+          Effect.fail(
+            new PgDeltaEngineError({
+              message: "declarative load did not converge",
+              cause: "load failed",
+              diagnostics: [
+                {
+                  code: "max_rounds_exceeded",
+                  severity: "error",
+                  message: "members.sql: function extensions.uuid_generate_v4() does not exist",
+                },
+              ],
+            }),
+          ),
+      }),
+    );
+    const source = {
+      kind: "database" as const,
+      ref: "postgresql://postgres@localhost/postgres",
+      connectOptions: { isLocal: true, dnsResolver: "native" as const },
+    };
+
+    return planDeclarativeToDatabase(ctx(dir, declDir), toml, source).pipe(
+      Effect.flip,
+      Effect.tap((error) =>
+        Effect.sync(() => {
+          expect(error).toBeInstanceOf(DeclarativeCompatibilityError);
+          if (error instanceof DeclarativeCompatibilityError) {
+            expect(error.loadFindings).toEqual([
+              expect.objectContaining({
+                extension: "uuid-ossp",
+                file: "members.sql",
+                line: 1,
+              }),
+            ]);
+          }
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+      Effect.provide(Layer.mergeAll(engine, BunServices.layer)),
     );
   });
 });

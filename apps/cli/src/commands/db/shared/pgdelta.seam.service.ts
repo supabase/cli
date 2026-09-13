@@ -11,6 +11,11 @@ interface DeclarativeSeamShape {
    */
   readonly ensureLocalDatabaseStarted: () => Effect.Effect<void, DeclarativeShadowDbError>;
   /**
+   * Whether the local Postgres container exists. Inspect/daemon failures are
+   * {@link DeclarativeShadowDbError}; a missing container is `false`, not a start.
+   */
+  readonly isLocalDatabaseRunning: () => Effect.Effect<boolean, DeclarativeShadowDbError>;
+  /**
    * Checks the running local Postgres container image tag against the currently
    * resolved Postgres image. A missing container is accepted: catalog cache keys
    * self-invalidate on setup inputs, and local-apply paths will start/connect later.

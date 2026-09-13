@@ -42,6 +42,12 @@ const config = {
     ),
     Flag.optional,
   ),
+  transient: Flag.boolean("transient").pipe(
+    Flag.withDescription(
+      "Apply declarative schema changes directly to the already-running local database without writing migration files or migration history. Does not start a stopped local database.",
+    ),
+    Flag.optional,
+  ),
 } as const;
 
 // `--no-cache` is a shared flag on the `declarative` group (read from the parent),
@@ -53,9 +59,9 @@ export type DbSchemaDeclarativeSyncFlags = CliCommand.Command.Config.Infer<typeo
 
 export const dbSchemaDeclarativeSyncCommand = Command.make("sync", config).pipe(
   Command.withDescription(
-    "Compares the supabase/migrations baseline with the complete declarative schema tree and writes the difference as migration files. When a legacy export omits known implicit extensions, interactive sync can add declarations and re-plan before writing. Use --no-apply for non-interactive generation without changing the local database; --apply or global --yes applies locally and updates local migration history.",
+    "Compares the local database or supabase/migrations baseline with the complete declarative schema tree. By default it writes migration files; --transient applies directly to the already-running local database without writing migrations or history and requires confirmation or --yes. When a legacy export omits known implicit extensions, interactive sync can add declarations and re-plan before applying or writing.",
   ),
-  Command.withShortDescription("Generate a new migration from declarative schema"),
+  Command.withShortDescription("Plan and apply declarative schema changes"),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       // `--no-cache` is shared on the parent group; read the resolved value there.
@@ -75,6 +81,7 @@ export const dbSchemaDeclarativeSyncCommand = Command.make("sync", config).pipe(
             name: merged.name,
             apply: merged.apply,
             "no-apply": merged.noApply,
+            transient: merged.transient,
           },
           // Telemetry reports changed flags by canonical name, so map the shorthands: `sync
           // -s public -f out.sql` must log `schema`/`file`.

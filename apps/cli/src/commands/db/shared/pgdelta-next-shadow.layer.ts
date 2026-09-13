@@ -43,6 +43,7 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 
 import {
   PgDeltaNextShadow,
+  type PgDeltaNextDeclarativeShadow,
   type PgDeltaNextMigrationsShadow,
   type PgDeltaNextPlanShadows,
   type PgDeltaNextShadowInput,
@@ -254,7 +255,7 @@ export const pgDeltaNextShadowLayer = Layer.effect(
         } satisfies ProvisionedMigrationsShadow;
       }).pipe(Effect.provide(runtime), Effect.mapError(nextShadowError));
 
-    const provisionDeclarative = (
+    const provisionDeclarativeShadow = (
       input: NativeShadowInput,
       opts: ShadowCacheOpts,
       outputService: typeof Output.Service = output,
@@ -287,6 +288,18 @@ export const pgDeltaNextShadowLayer = Layer.effect(
           const input = buildNativeInput(opts, built, port);
           return yield* provisionMigrations(input, cacheOpts(opts, "config"));
         }).pipe(Effect.mapError(nextShadowError)),
+      provisionDeclarative: (opts) =>
+        Effect.gen(function* () {
+          const port = yield* nextPort();
+          const built = yield* buildNativeBase(opts);
+          const input = buildNativeInput(opts, built, port);
+          return yield* provisionDeclarativeShadow(input, cacheOpts(opts, "disabled"));
+        }).pipe(
+          Effect.map(
+            ({ declarativeUrl }) => ({ declarativeUrl }) satisfies PgDeltaNextDeclarativeShadow,
+          ),
+          Effect.mapError(nextShadowError),
+        ),
       provisionPlan: (opts) =>
         Effect.gen(function* () {
           const migrationsPort = yield* nextPort();
@@ -318,7 +331,7 @@ export const pgDeltaNextShadowLayer = Layer.effect(
             strategy,
             provisionMigrations: (onBaselineSeam) =>
               provisionMigrations(migrationsInput, migrationsOpts, onBaselineSeam),
-            provisionDeclarative: provisionDeclarative(
+            provisionDeclarative: provisionDeclarativeShadow(
               declarativeInput,
               declarativeOpts,
               buffered === undefined ? output : buffered.output,
