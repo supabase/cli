@@ -1,6 +1,7 @@
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Effect, FileSystem, Option, Path, Predicate } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type { ChildProcessSpawner as ChildProcessSpawnerType } from "effect/unstable/process/ChildProcessSpawner";
+import { resolveEphemeralPostgresRelease } from "@supabase/stack/effect";
 
 import { cobraMutuallyExclusiveErrorMessage } from "../../../shared/cli/cobra-flag-groups.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
@@ -42,9 +43,11 @@ import type { ResolvedDbConfig } from "../../../command-internal/db-config.types
 import { DbConnection, type PgConnInput } from "../../../command-internal/db-connection.service.ts";
 import { resolveDbTargetFlags } from "../../../command-internal/db-target-flags.ts";
 import { DebugLogger } from "../../../command-internal/debug-logger.service.ts";
+import { DockerRunError } from "../../../command-internal/docker-run.errors.ts";
 import { errorMessage, relativizeErrorMessage } from "../../../command-internal/error-message.ts";
 import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
 import { stackWithShadowDatabase } from "../../../command-internal/stack-shadow.ts";
+import { parsePostgresServerMajor } from "../../../command-internal/stack-local-database.ts";
 import {
   dumpConnForHostClient,
   rewriteDumpHostForToolContainer,
@@ -74,6 +77,7 @@ import { SQUASH_SEPARATOR_COMMENT, squashLineByLineDiff } from "./squash.diff.ts
 import { squashDumpSchema, squashDumpSchemaToString } from "./squash.dump.ts";
 import {
   MigrationSquashBaselineError,
+  MigrationSquashDumpError,
   MigrationSquashMissingVersionError,
   MigrationSquashWriteError,
 } from "./squash.errors.ts";
@@ -118,6 +122,7 @@ const squashMigrations = Effect.fnUntraced(function* (
   const image = localInputs.bootstrapConfig.postgresImage;
 
   if (stackBackend) {
+    const runtimeInfo = yield* RuntimeInfo;
     return yield* stackWithShadowDatabase(shadowInput, (handle) =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -128,16 +133,22 @@ const squashMigrations = Effect.fnUntraced(function* (
             password: toml.password,
             database: "postgres",
           };
-          const runtimeInfo = yield* RuntimeInfo;
           const networkIdFlag = yield* NetworkIdFlag;
           const networkId = Option.getOrUndefined(networkIdFlag);
           const dumpUsesHostNetwork = networkId === undefined || networkId.length === 0;
-          const nativeShadow = handle.runtime.kind === "native";
+          const nativeShadow =
+            handle.runtime.kind === "native" && runtimeInfo.platform !== "win32";
+          const expectedMajor =
+            parsePostgresServerMajor(handle.ephemeral.version) ?? toml.majorVersion;
+          const release = yield* resolveEphemeralPostgresRelease(handle.ephemeral.version).pipe(
+            Effect.orElseSucceed(() => undefined),
+          );
+          const image = release?.image ?? localInputs.bootstrapConfig.postgresImage;
           const dumpClient = nativeShadow
             ? {
                 kind: "host" as const,
                 command: "pg_dump" as const,
-                expectedMajor: toml.majorVersion,
+                expectedMajor,
               }
             : { kind: "container" as const };
           const dumpConn: PgConnInput = nativeShadow
@@ -211,6 +222,21 @@ const squashMigrations = Effect.fnUntraced(function* (
             }),
           );
         }),
+      ).pipe(
+        Effect.catchIf(
+          (error): error is DockerRunError =>
+            Predicate.isTagged(error, "DockerRunError") &&
+            handle.runtime.kind === "native" &&
+            runtimeInfo.platform === "win32",
+          (error) =>
+            Effect.fail(
+              new MigrationSquashDumpError({
+                message: error.message,
+                suggestion:
+                  "Install Docker Desktop (or Git Bash) to squash a native stack on Windows.",
+              }),
+            ),
+        ),
       ),
     );
   }

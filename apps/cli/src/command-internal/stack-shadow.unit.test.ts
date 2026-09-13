@@ -5,6 +5,20 @@ import {
   isStackShadowBaselinePartial,
 } from "./stack-shadow.ts";
 
+const overlay = {
+  webhooksEnabled: false,
+  apiGrantsKept: true,
+  vault: [] as const,
+  jwks: "",
+  storageTargetMigration: "",
+  authEnabled: false,
+  storageEnabled: false,
+  realtimeEnabled: false,
+  authArtifact: "",
+  storageArtifact: "",
+  realtimeArtifact: "",
+};
+
 const base = {
   artifactIdentity: "native:17.6.1",
   majorVersion: 17,
@@ -15,6 +29,7 @@ const base = {
   dbSettings: {},
   rolesSql: "",
   bootstrapIdentity: "bootstrap-v1",
+  ...overlay,
 };
 
 describe("stackShadowCacheKey", () => {
@@ -60,6 +75,49 @@ describe("stackShadowCacheKey", () => {
     );
     expect(stackShadowCacheKey({ ...base, bootstrapIdentity: "bootstrap-v2" })).not.toBe(
       stackShadowCacheKey(base),
+    );
+  });
+
+  it("changes when overlay or schema-init membership changes", () => {
+    expect(stackShadowCacheKey({ ...base, webhooksEnabled: true })).not.toBe(
+      stackShadowCacheKey(base),
+    );
+    expect(stackShadowCacheKey({ ...base, apiGrantsKept: false })).not.toBe(
+      stackShadowCacheKey(base),
+    );
+    expect(
+      stackShadowCacheKey({
+        ...base,
+        vault: [{ name: "a", value: "secret", resolved: true }],
+      }),
+    ).not.toBe(stackShadowCacheKey(base));
+    expect(stackShadowCacheKey({ ...base, authEnabled: true })).not.toBe(stackShadowCacheKey(base));
+    expect(
+      stackShadowCacheKey({
+        ...base,
+        realtimeEnabled: true,
+        jwks: '{"keys":[]}',
+      }),
+    ).not.toBe(stackShadowCacheKey({ ...base, realtimeEnabled: true, jwks: "{}" }));
+    expect(
+      stackShadowCacheKey({
+        ...base,
+        storageEnabled: true,
+        storageTargetMigration: "20240101000000",
+      }),
+    ).not.toBe(stackShadowCacheKey({ ...base, storageEnabled: true }));
+    expect(
+      stackShadowCacheKey({
+        ...base,
+        authEnabled: true,
+        authArtifact: "v2.196.0:ghcr.io/supabase/cli/auth:v2.196.0",
+      }),
+    ).not.toBe(
+      stackShadowCacheKey({
+        ...base,
+        authEnabled: true,
+        authArtifact: "v2.197.0:ghcr.io/supabase/cli/auth:v2.197.0",
+      }),
     );
   });
 });

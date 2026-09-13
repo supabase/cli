@@ -1,4 +1,5 @@
 import { Data, Effect, FileSystem, Option, Path, Redacted } from "effect";
+import { Output } from "../shared/output/output.service.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -18,6 +19,8 @@ import { LocalDbRunningError } from "./db-bootstrap/local-db-running.ts";
 import { currentStackBackend } from "./stack-backend.ts";
 import { StackApi } from "./stack-api.ts";
 import { loadStackConfig } from "../commands/experimental/stack/stack-config.ts";
+import { readDbToml } from "./db-config.toml-read.ts";
+import { StackCatalogSetup } from "./stack-catalog-setup.ts";
 
 const notRunning = (message = "supabase start is not running.") =>
   new LocalDbRunningError({ message });
@@ -110,6 +113,34 @@ export const stackRequireProjectRuntime: Effect.Effect<
   return descriptor.value.runtime;
 });
 
+/** Server major from `status().versions.database` (`17.6.1` → 17). */
+export const parsePostgresServerMajor = (version: string): number | undefined => {
+  const major = Number.parseInt(version.split(".")[0] ?? "", 10);
+  return Number.isInteger(major) ? major : undefined;
+};
+
+/** Running stack Postgres major, or undefined when status is missing. */
+export const stackProjectDatabaseMajor: Effect.Effect<
+  number | undefined,
+  never,
+  CommandSettings
+> = Effect.gen(function* () {
+  const api = yield* Effect.serviceOption(StackApi);
+  if (Option.isNone(api)) return undefined;
+  const cliSettings = yield* CommandSettings;
+  const descriptor = yield* api.value
+    .findStack({ projectRoot: cliSettings.workdir })
+    .pipe(Effect.orElseSucceed(() => Option.none()));
+  if (Option.isNone(descriptor)) return undefined;
+  const stack = yield* api.value
+    .openStack(descriptor.value.id)
+    .pipe(Effect.orElseSucceed(() => undefined));
+  if (stack === undefined) return undefined;
+  const status = yield* stack.status.pipe(Effect.orElseSucceed(() => undefined));
+  if (status === undefined || typeof status.versions.database !== "string") return undefined;
+  return parsePostgresServerMajor(status.versions.database);
+});
+
 const STACK_NATIVE_ENGINE_MESSAGE =
   "The stack backend only supports the pg-delta engine. Do not pass --use-migra, --use-pgadmin, --use-pg-schema, or --diff-engine migra.";
 
@@ -158,16 +189,42 @@ export const stackLocalDatabaseConn: Effect.Effect<
 export const stackEnsurePostgresOnlyStarted: Effect.Effect<
   "already-running" | "started",
   LocalDbRunningError,
-  CommandSettings | FileSystem.FileSystem | Path.Path
+  CommandSettings | FileSystem.FileSystem | Path.Path | Output
 > = Effect.gen(function* () {
   const api = yield* Effect.serviceOption(StackApi);
   if (Option.isNone(api)) return yield* startFailed({ message: "stack API is unavailable" });
   const cliSettings = yield* CommandSettings;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const config = yield* loadStackConfig(cliSettings.workdir).pipe(Effect.mapError(startFailed));
+  const applyCatalog = (stack: EffectStack) =>
+    Effect.gen(function* () {
+      const catalog = yield* Effect.serviceOption(StackCatalogSetup);
+      if (Option.isNone(catalog))
+        return yield* startFailed({ message: "stack catalog setup is unavailable" });
+      const toml = yield* readDbToml(fs, path, cliSettings.workdir).pipe(Effect.mapError(startFailed));
+      yield* catalog.value
+        .apply({
+          target: {
+            kind: "live",
+            stack,
+            projectRoot: cliSettings.workdir,
+            config,
+          },
+          overlay: {
+            webhooks: "config",
+            webhooksEnabled: toml.webhooksEnabled,
+            apiAutoExposeNewTables: toml.baseline.apiAutoExposeNewTables,
+            vault: toml.vault,
+            workdir: cliSettings.workdir,
+          },
+        })
+        .pipe(Effect.mapError(startFailed));
+    });
   const existing = yield* api.value
     .findStack({ projectRoot: cliSettings.workdir })
     .pipe(Effect.mapError(startFailed));
   if (Option.isNone(existing) || existing.value.desiredLifecycle === "unconfigured") {
-    const config = yield* loadStackConfig(cliSettings.workdir).pipe(Effect.mapError(startFailed));
     const stack = Option.isNone(existing)
       ? yield* api.value
           .createStack({ projectRoot: cliSettings.workdir })
@@ -176,12 +233,17 @@ export const stackEnsurePostgresOnlyStarted: Effect.Effect<
     yield* stack
       .start({ config: postgresOnlyStackStartConfig(config) })
       .pipe(Effect.mapError(startFailed));
+    yield* applyCatalog(stack);
     return "started";
   }
   const stack = yield* api.value.openStack(existing.value.id).pipe(Effect.mapError(startFailed));
   const status = yield* stack.status.pipe(Effect.mapError(startFailed));
   const database = status.capabilities.find((capability) => capability.name === "database");
-  if (status.lifecycle === "running" && database?.state === "ready") return "already-running";
+  if (status.lifecycle === "running" && database?.state === "ready") {
+    yield* applyCatalog(stack);
+    return "already-running";
+  }
   yield* stack.start().pipe(Effect.mapError(startFailed));
+  yield* applyCatalog(stack);
   return "started";
 });

@@ -1,4 +1,4 @@
-import { Effect, Match, Option } from "effect";
+import { Effect, FileSystem, Match, Option, Path } from "effect";
 import {
   excludeStackCapabilities,
   isStackError,
@@ -9,6 +9,8 @@ import { Output } from "../../../../shared/output/output.service.ts";
 import { OutputFlag } from "../../../../command-internal/global-flags.ts";
 import { CommandSettings } from "../../../../config/command-settings.service.ts";
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
+import { readDbToml } from "../../../../command-internal/db-config.toml-read.ts";
+import { StackCatalogSetup } from "../../../../command-internal/stack-catalog-setup.ts";
 import {
   StackApi,
   StackTargetError,
@@ -180,9 +182,55 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     const starting = yield* output.task("Starting local Supabase stack...");
     const status = yield* stack.start({ config: startConfig }).pipe(
       Effect.tapError((error) => starting.fail(error.message)),
-      Effect.tap(() => starting.succeed("Stack is ready.")),
       Effect.mapError(stackStartError),
     );
+    const catalog = yield* Effect.serviceOption(StackCatalogSetup);
+    if (Option.isNone(catalog))
+      return yield* new StackCommandStartError({
+        reason: "unknown",
+        message: "stack catalog setup is unavailable",
+      });
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const toml = yield* readDbToml(fs, path, target.projectRoot).pipe(
+      Effect.mapError(
+        (error) =>
+          new StackCommandStartError({
+            reason: "invalid-config",
+            message: error.message,
+            cause: error,
+          }),
+      ),
+    );
+    yield* catalog.value
+      .apply({
+        target: {
+          kind: "live",
+          stack,
+          projectRoot: target.projectRoot,
+          config,
+        },
+        overlay: {
+          webhooks: "config",
+          webhooksEnabled: toml.webhooksEnabled,
+          apiAutoExposeNewTables: toml.baseline.apiAutoExposeNewTables,
+          vault: toml.vault,
+          workdir: target.projectRoot,
+        },
+      })
+      .pipe(
+        Effect.tapError((error) => starting.fail(error.message)),
+        Effect.mapError((error) =>
+          isStackError(error.cause)
+            ? stackStartError(error.cause)
+            : new StackCommandStartError({
+                reason: "unknown",
+                message: error.message,
+                cause: error,
+              }),
+        ),
+      );
+    yield* starting.succeed("Stack is ready.");
     if (output.format === "text") {
       yield* output.raw(renderStatus(status));
     } else {

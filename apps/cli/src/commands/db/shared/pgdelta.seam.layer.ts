@@ -82,9 +82,7 @@ export const declarativeSeamLayer = Layer.effect(
           if (backend.kind === "stack") {
             return yield* stackEnsurePostgresOnlyStarted.pipe(
               Effect.asVoid,
-              Effect.provideService(CommandSettings, cliSettings),
-              Effect.provideService(FileSystem.FileSystem, fs),
-              Effect.provideService(Path.Path, path),
+              Effect.provideContext(context),
               Effect.provideService(StackApi, stackApi),
               Effect.mapError(
                 (cause) =>

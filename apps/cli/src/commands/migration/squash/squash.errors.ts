@@ -28,6 +28,7 @@ export class MigrationSquashMissingVersionError extends Data.TaggedError(
  */
 export class MigrationSquashDumpError extends Data.TaggedError("MigrationSquashDumpError")<{
   readonly message: string;
+  readonly suggestion?: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.dbConnection;

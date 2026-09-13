@@ -124,6 +124,10 @@ const nameFor = (key: RuntimeWorkloadKey, role: ContainerResourceRole): string =
     ? `supabase-${key.stackId.slice(0, 16)}-network`
     : `supabase-${key.stackId.slice(0, 16)}-${key.workloadId.replace(/[^A-Za-z0-9_.-]/g, "-")}-${role}`;
 
+/** Distinct from {@link nameFor}(..., "workload") so one-shots cannot collide with an eager main container. */
+export const schemaInitContainerName = (key: RuntimeWorkloadKey): string =>
+  `supabase-${key.stackId.slice(0, 16)}-${key.workloadId.replace(/[^A-Za-z0-9_.-]/g, "-")}-schema-init`;
+
 const networkLabelsFor = (
   key: RuntimeWorkloadKey,
   ownerSessionId: string,
@@ -221,6 +225,103 @@ const toContainerEngineError = (
     message: error instanceof Error ? error.message : String(error),
     cause: error,
   });
+
+const withEngine = <A>(
+  engine: ContainerEngine,
+  key: Pick<RuntimeWorkloadKey, "stackId" | "workloadId">,
+  effect: Effect.Effect<A, ContainerEngineFailure>,
+): Effect.Effect<A, RuntimeDriverError> =>
+  effect.pipe(
+    Effect.mapError((error) => toDriverError(key, toContainerEngineError(engine.kind, error))),
+  );
+
+/** Runs one service-owned one-shot container: create, start, wait for exit 0, remove. */
+export const runContainerStartupProcess = (input: {
+  readonly engine: ContainerEngine;
+  readonly key: RuntimeWorkloadKey;
+  readonly specification: ContainerContainerSpec;
+  readonly timeout: Duration.Input;
+  readonly logStore?: LogStore;
+  readonly capability?: PlannedWorkload["capability"];
+  readonly runtimeScope?: Scope.Scope;
+}): Effect.Effect<void, RuntimeDriverError> => {
+  let logFiber: Fiber.Fiber<void, RuntimeDriverError> | undefined;
+  const acquire = withEngine(input.engine, input.key, input.engine.createContainer(input.specification));
+  const use = (container: ContainerResource): Effect.Effect<void, RuntimeDriverError> =>
+    Effect.gen(function* () {
+      yield* withEngine(input.engine, input.key, input.engine.startContainer(container.id));
+      const logStore = input.logStore;
+      const runtimeScope = input.runtimeScope;
+      const capability = input.capability;
+      if (logStore !== undefined && runtimeScope !== undefined && capability !== undefined) {
+        const consume = input.engine.streamLogs(container.id, { tail: "all" }).pipe(
+          Stream.runForEach((line) =>
+            logStore
+              .append({
+                source: capability,
+                stream: line.stream,
+                message: line.message,
+              })
+              .pipe(Effect.asVoid),
+          ),
+          Effect.mapError((error) =>
+            toDriverError(input.key, toContainerEngineError(input.engine.kind, error)),
+          ),
+        );
+        logFiber = yield* Effect.forkIn(consume, runtimeScope);
+      }
+      const exitCode = yield* withEngine(
+        input.engine,
+        input.key,
+        input.engine.waitContainer(container.id),
+      );
+      const logs = logFiber === undefined ? Exit.succeed(undefined) : yield* Fiber.await(logFiber);
+      const logFailure =
+        Exit.isFailure(logs) && !Cause.hasInterruptsOnly(logs.cause) ? logs.cause : undefined;
+      const exitFailure =
+        exitCode === 0
+          ? undefined
+          : toDriverError(
+              input.key,
+              new Error(
+                `Container startup process exited with code ${String(exitCode)} for ${input.key.workloadId}`,
+              ),
+            );
+      if (exitFailure !== undefined) {
+        const exitCause = Cause.fail(exitFailure);
+        return yield* logFailure !== undefined
+          ? Effect.failCause(Cause.combine(exitCause, logFailure))
+          : Effect.failCause(exitCause);
+      }
+      if (logFailure !== undefined) return yield* Effect.failCause(logFailure);
+    });
+  const release = (
+    container: ContainerResource,
+    useExit: Exit.Exit<void, RuntimeDriverError>,
+  ): Effect.Effect<void, RuntimeDriverError> =>
+    Effect.gen(function* () {
+      if (logFiber !== undefined) yield* Fiber.interrupt(logFiber);
+      const removed = yield* Effect.exit(
+        withEngine(input.engine, input.key, input.engine.removeContainer(container.id)),
+      );
+      if (Exit.isFailure(removed))
+        return yield* Effect.failCause(
+          Exit.isFailure(useExit) ? Cause.combine(useExit.cause, removed.cause) : removed.cause,
+        );
+    });
+  return Effect.acquireUseRelease(acquire, use, release).pipe(
+    Effect.timeoutOrElse({
+      duration: input.timeout,
+      orElse: () =>
+        Effect.fail(
+          toDriverError(
+            input.key,
+            new Error(`Container startup process timed out for ${input.key.workloadId}`),
+          ),
+        ),
+    }),
+  );
+};
 
 const containerArtifact = (workload: PlannedWorkload): ContainerArtifact | undefined =>
   workload.selected.kind === "container" ? workload.selected : undefined;
@@ -445,94 +546,37 @@ export const makeContainerRuntime = (
       }>,
     ): Effect.Effect<void, RuntimeDriverError> => {
       const labels = startupLabelsFor(key, options.ownerSessionId);
-      const specification: ContainerContainerSpec = {
-        // Reuse the main name so crash-orphaned init containers are exact collisions to clean up.
-        name: nameFor(key, "workload"),
-        image: context.artifact.image,
-        labels,
-        network: context.network.id,
-        mounts: context.resolution.mounts ?? [],
-        volumeMounts:
-          context.volumeRequest === undefined ? [] : [volumeMountFor(key, context.volumeRequest)],
-        publications: [],
-        role: "workload",
-        entrypoint: startupProcess.entrypoint,
-        command: startupProcess.command,
-        ...(context.resolution.envFile === undefined
+      return runContainerStartupProcess({
+        engine: options.engine,
+        key,
+        timeout: startupProcessTimeout,
+        specification: {
+          // Reuse the main name so crash-orphaned init containers are exact collisions to clean up.
+          name: nameFor(key, "workload"),
+          image: context.artifact.image,
+          labels,
+          network: context.network.id,
+          mounts: context.resolution.mounts ?? [],
+          volumeMounts:
+            context.volumeRequest === undefined
+              ? []
+              : [volumeMountFor(key, context.volumeRequest)],
+          publications: [],
+          role: "workload",
+          entrypoint: startupProcess.entrypoint,
+          command: startupProcess.command,
+          ...(context.resolution.envFile === undefined
+            ? {}
+            : { envFile: context.resolution.envFile }),
+        },
+        ...(options.logStore === undefined
           ? {}
-          : { envFile: context.resolution.envFile }),
-      };
-      let logFiber: Fiber.Fiber<void, RuntimeDriverError> | undefined;
-      const acquire = withEngine(key, options.engine.createContainer(specification));
-      const logStore = options.logStore;
-      const use = (container: ContainerResource): Effect.Effect<void, RuntimeDriverError> =>
-        Effect.gen(function* () {
-          yield* withEngine(key, options.engine.startContainer(container.id));
-          if (logStore !== undefined) {
-            const consume = options.engine.streamLogs(container.id, { tail: "all" }).pipe(
-              Stream.runForEach((line) =>
-                logStore
-                  .append({
-                    source: workload.capability,
-                    stream: line.stream,
-                    message: line.message,
-                  })
-                  .pipe(Effect.asVoid),
-              ),
-              Effect.mapError((error) =>
-                toDriverError(key, toContainerEngineError(options.engine.kind, error)),
-              ),
-            );
-            logFiber = yield* Effect.forkIn(consume, runtimeScope);
-          }
-          const exitCode = yield* withEngine(key, options.engine.waitContainer(container.id));
-          const logs =
-            logFiber === undefined ? Exit.succeed(undefined) : yield* Fiber.await(logFiber);
-          const logFailure =
-            Exit.isFailure(logs) && !Cause.hasInterruptsOnly(logs.cause) ? logs.cause : undefined;
-          const exitFailure =
-            exitCode === 0
-              ? undefined
-              : toDriverError(
-                  key,
-                  new Error(
-                    `Container startup process exited with code ${String(exitCode)} for ${key.workloadId}`,
-                  ),
-                );
-          if (exitFailure !== undefined) {
-            const exitCause = Cause.fail(exitFailure);
-            return yield* logFailure !== undefined
-              ? Effect.failCause(Cause.combine(exitCause, logFailure))
-              : Effect.failCause(exitCause);
-          }
-          if (logFailure !== undefined) return yield* Effect.failCause(logFailure);
-        });
-      const release = (
-        container: ContainerResource,
-        useExit: Exit.Exit<void, RuntimeDriverError>,
-      ): Effect.Effect<void, RuntimeDriverError> =>
-        Effect.gen(function* () {
-          if (logFiber !== undefined) yield* Fiber.interrupt(logFiber);
-          const removed = yield* Effect.exit(
-            withEngine(key, options.engine.removeContainer(container.id)),
-          );
-          if (Exit.isFailure(removed))
-            return yield* Effect.failCause(
-              Exit.isFailure(useExit) ? Cause.combine(useExit.cause, removed.cause) : removed.cause,
-            );
-        });
-      return Effect.acquireUseRelease(acquire, use, release).pipe(
-        Effect.timeoutOrElse({
-          duration: startupProcessTimeout,
-          orElse: () =>
-            Effect.fail(
-              toDriverError(
-                key,
-                new Error(`Container startup process timed out for ${key.workloadId}`),
-              ),
-            ),
-        }),
-      );
+          : {
+              logStore: options.logStore,
+              capability: workload.capability,
+              runtimeScope,
+            }),
+      });
     };
 
     const start = (

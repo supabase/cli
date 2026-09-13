@@ -36,6 +36,10 @@ import { dbStart } from "./start.handler.ts";
 import type { DbStartFlags } from "./start.command.ts";
 import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
 import { StackApi } from "../../../command-internal/stack-api.ts";
+import {
+  noopStackCatalogSetupLayer,
+  StackCatalogSetup,
+} from "../../../command-internal/stack-catalog-setup.ts";
 import { CAPABILITY_NAMES, StackIdSchema, type EffectStack } from "@supabase/stack/effect";
 
 const DEFAULT_FLAGS: DbStartFlags = { fromBackup: Option.none() };
@@ -339,6 +343,7 @@ function setup(opts: SetupOpts = {}) {
     Layer.succeed(CliArgs, { args: ["db", "start"] }),
     Layer.succeed(ExperimentalFlag, opts.experimental ?? false),
     Layer.succeed(DebugFlag, opts.debug ?? false),
+    noopStackCatalogSetupLayer,
   );
   return {
     layer,
@@ -1614,7 +1619,9 @@ describe("db start stack backend", () => {
     const stack = mockStackApi({});
     return Effect.gen(function* () {
       yield* dbStart(DEFAULT_FLAGS).pipe(
-        Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"), stack.api)),
+        Effect.provide(
+          Layer.mergeAll(layer, stackBackendLayer("stack"), stack.api, noopStackCatalogSetupLayer),
+        ),
       );
       expect(stack.startConfigs).toHaveLength(1);
       expect(stack.startConfigs[0]).toMatchObject({
@@ -1630,7 +1637,9 @@ describe("db start stack backend", () => {
     const stack = mockStackApi({ existing: true });
     return Effect.gen(function* () {
       yield* dbStart(DEFAULT_FLAGS).pipe(
-        Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"), stack.api)),
+        Effect.provide(
+          Layer.mergeAll(layer, stackBackendLayer("stack"), stack.api, noopStackCatalogSetupLayer),
+        ),
       );
       expect(stack.startConfigs).toEqual([undefined]);
     });
@@ -1641,7 +1650,9 @@ describe("db start stack backend", () => {
     const stack = mockStackApi({ existing: true, unconfigured: true });
     return Effect.gen(function* () {
       yield* dbStart(DEFAULT_FLAGS).pipe(
-        Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"), stack.api)),
+        Effect.provide(
+          Layer.mergeAll(layer, stackBackendLayer("stack"), stack.api, noopStackCatalogSetupLayer),
+        ),
       );
       expect(stack.startConfigs).toHaveLength(1);
       expect(stack.startConfigs[0]).toMatchObject({
@@ -1655,12 +1666,22 @@ describe("db start stack backend", () => {
   it.live("reports an already-running stack database without starting", () => {
     const { layer, out } = setup();
     const stack = mockStackApi({ existing: true, databaseReady: true });
+    const applied: Array<string> = [];
+    const catalog = Layer.succeed(StackCatalogSetup, {
+      apply: (input) =>
+        Effect.sync(() => {
+          applied.push(input.target.kind);
+        }),
+    });
     return Effect.gen(function* () {
       yield* dbStart(DEFAULT_FLAGS).pipe(
-        Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"), stack.api)),
+        Effect.provide(
+          Layer.mergeAll(layer, stackBackendLayer("stack"), stack.api, catalog),
+        ),
       );
       expect(out.stderrText).toContain("Postgres database is already running.");
       expect(stack.startConfigs).toEqual([]);
+      expect(applied).toEqual(["live"]);
     });
   });
 
@@ -1669,7 +1690,9 @@ describe("db start stack backend", () => {
     const stack = mockStackApi({});
     return Effect.gen(function* () {
       const exit = yield* dbStart(flags("backup.sql")).pipe(
-        Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"), stack.api)),
+        Effect.provide(
+          Layer.mergeAll(layer, stackBackendLayer("stack"), stack.api, noopStackCatalogSetupLayer),
+        ),
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);

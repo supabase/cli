@@ -73,6 +73,7 @@ import {
   GatewayActivationError,
   InvalidLogCursorError,
   EphemeralPostgresError,
+  RequiresActivatedProcessError,
   type CreateStackError,
   type OpenStackError,
   type StackDiscoveryError,
@@ -231,6 +232,8 @@ const stackErrorFactories = {
   ContainerEngineError: (message: string) => new ContainerEngineError({ message }),
   StackDestructionError: (message: string) => new StackDestructionError({ message }),
   EphemeralPostgresError: (message: string) => new EphemeralPostgresError({ message }),
+  RequiresActivatedProcessError: (message: string) =>
+    new RequiresActivatedProcessError({ message, capability: "unknown" }),
 } satisfies Record<StackErrorTag, (message: string) => StackError>;
 
 const isOwnerUnreachable = (error: unknown): boolean =>

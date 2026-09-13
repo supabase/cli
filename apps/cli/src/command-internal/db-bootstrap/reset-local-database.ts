@@ -40,6 +40,8 @@ import { isLocalDbRunning } from "./local-db-running.ts";
 import { recreateLocalDatabase } from "./recreate-local-database.ts";
 import { currentStackBackend } from "../stack-backend.ts";
 import { stackLocalDatabaseConn, stackOpenReadyProject } from "../stack-local-database.ts";
+import { loadStackConfig } from "../../commands/experimental/stack/stack-config.ts";
+import { StackCatalogSetup } from "../stack-catalog-setup.ts";
 
 /** The local database container is not running. */
 class ResetLocalDbNotRunningError extends Data.TaggedError("ResetLocalDbNotRunningError")<{
@@ -111,8 +113,31 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
       Effect.catchTag("StackNotRunningError", () => Effect.fail(notRunning())),
       Effect.mapError((cause) => resetFailed(`failed to reset local database: ${cause.message}`)),
     );
-    const dbConn = yield* DbConnection;
+    const catalog = yield* Effect.serviceOption(StackCatalogSetup);
+    if (Option.isNone(catalog))
+      return yield* resetFailed("stack catalog setup is unavailable");
+    const stackConfig = yield* loadStackConfig(workdir).pipe(
+      Effect.mapError((cause) => resetFailed(cause.message)),
+    );
     const toml = yield* readDbToml(fs, path, workdir);
+    yield* catalog.value
+      .apply({
+        target: {
+          kind: "live",
+          stack: opened.value.stack,
+          projectRoot: workdir,
+          config: stackConfig,
+        },
+        overlay: {
+          webhooks: "config",
+          webhooksEnabled: toml.webhooksEnabled,
+          apiAutoExposeNewTables: toml.baseline.apiAutoExposeNewTables,
+          vault: toml.vault,
+          workdir,
+        },
+      })
+      .pipe(Effect.mapError((cause) => resetFailed(cause.message)));
+    const dbConn = yield* DbConnection;
     const conn = yield* stackLocalDatabaseConn.pipe(
       Effect.mapError((cause) => new ResetLocalDbNotRunningError({ message: cause.message })),
     );

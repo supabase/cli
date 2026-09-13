@@ -50,11 +50,8 @@ import {
 } from "./pgdelta-next-shadow.service.ts";
 import { DeclarativeShadowDbError } from "./pgdelta.errors.ts";
 import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
-import {
-  stackAcquireShadowDatabase,
-  stackMigrateShadow,
-  stackReleaseShadowDatabase,
-} from "../../../command-internal/stack-shadow.ts";
+import { stackAcquireShadowDatabase, stackMigrateShadow } from "../../../command-internal/stack-shadow.ts";
+import { stackCatalogSetupLayer } from "../../../command-internal/stack-catalog-setup.ts";
 
 const allocateFreeHostPort = Effect.callback<Option.Option<number>>((resume) => {
   const server = Net.createServer();
@@ -146,8 +143,8 @@ export const pgDeltaNextShadowLayer = Layer.effect(
     const crypto = yield* Crypto.Crypto;
     const cliSettings = yield* CommandSettings;
 
-    const runtimeWith = (outputService: typeof Output.Service) =>
-      Layer.mergeAll(
+    const runtimeWith = (outputService: typeof Output.Service) => {
+      const deps = Layer.mergeAll(
         Layer.succeed(FileSystem.FileSystem, fs),
         Layer.succeed(Path.Path, path),
         Layer.succeed(DebugFlag, debugFlag),
@@ -163,6 +160,8 @@ export const pgDeltaNextShadowLayer = Layer.effect(
         Layer.succeed(CommandSettings, cliSettings),
         Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
       );
+      return Layer.mergeAll(deps, stackCatalogSetupLayer.pipe(Layer.provide(deps)));
+    };
     const runtime = runtimeWith(output);
 
     const nextPort = (excluded?: number) =>
@@ -287,13 +286,11 @@ export const pgDeltaNextShadowLayer = Layer.effect(
       }).pipe(Effect.provide(runtimeWith(outputService)), Effect.mapError(nextShadowError));
 
     const stackAcquire = (input: NativeShadowInput, opts: ShadowCacheOpts) =>
-      Effect.acquireRelease(
-        stackAcquireShadowDatabase(input.base, {
-          ...(opts.bypassCache === true ? { bypassCache: true } : {}),
-          port: input.base.shadowPort,
-        }),
-        (handle) => stackReleaseShadowDatabase(handle),
-      );
+      stackAcquireShadowDatabase(input.base, {
+        ...(opts.bypassCache === true ? { bypassCache: true } : {}),
+        port: input.base.shadowPort,
+        ...(opts.webhooks === undefined ? {} : { webhooks: opts.webhooks }),
+      });
 
     const stackProvisionMigrations = (input: NativeShadowInput, opts: ShadowCacheOpts) =>
       Effect.gen(function* () {

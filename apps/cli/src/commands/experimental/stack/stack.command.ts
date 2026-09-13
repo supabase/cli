@@ -4,6 +4,8 @@ import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.lay
 import { commandSettingsLayer } from "../../../config/command-settings.layer.ts";
 import { debugLoggerLayer } from "../../../command-internal/debug-logger.layer.ts";
 import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts";
+import { dbConnectionLayer } from "../../../command-internal/db-connection.layer.ts";
+import { stackCatalogSetupLayer } from "../../../command-internal/stack-catalog-setup.ts";
 import { stackStartCommand as stackStartCommandBase } from "./start/start.command.ts";
 import { stackStopCommand as stackStopCommandBase } from "./stop/stop.command.ts";
 import { stackDestroyCommand as stackDestroyCommandBase } from "./destroy/destroy.command.ts";
@@ -12,6 +14,8 @@ import { stackApiLayer, stackTargetResolverLayer } from "./stack.shared.ts";
 export const stackRuntimeLayer = Layer.mergeAll(
   stackTargetResolverLayer,
   stackApiLayer,
+  dbConnectionLayer,
+  stackCatalogSetupLayer,
   commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer)),
   telemetryStateLayer,
 );
