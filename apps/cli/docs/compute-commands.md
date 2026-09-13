@@ -40,6 +40,13 @@ When enabled, the CLI exposes:
 
 Compute source directories live under `supabase/compute/<name>/`.
 
+`compute new --template` bootstraps the source directory from a git repository
+instead of the runtime's starter files — a GitHub `owner/repo` slug (optionally
+with a subdirectory and a `#ref`), or any repository URL `git` can clone. The
+repository becomes the compute's entire contents; no starter files are written
+alongside it. When `--runtime` is omitted, the template's own marker files pick
+the runtime.
+
 `compute new` edits TOML configuration. It refuses projects whose authoritative
 configuration is JSON before prompting or writing, so it cannot save deployment
 settings into an ignored file. To deploy a source directory without a Compute

@@ -64,6 +64,8 @@ ComputeRoutingError
 ComputeSourceEscapingLinkError
 ComputeSourceMissingError
 ComputeStacksValidationError
+ComputeTemplateContentError
+ComputeTemplateFetchError
 ComputeUnavailableError
 ComputeUploadFailedError
 ConfigDiffBranchNotFoundError
@@ -289,6 +291,7 @@ InspectReportWriteError
 InvalidAccessTokenError
 InvalidComputeNameError
 InvalidComputeSourceError
+InvalidComputeTemplateError
 InvalidFunctionDeploySlugError
 InvalidFunctionDownloadResponseError
 InvalidFunctionSlugError

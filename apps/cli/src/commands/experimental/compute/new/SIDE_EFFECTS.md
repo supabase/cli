@@ -21,6 +21,7 @@ and the command handler does not run. See the [Compute command guide](../../../.
 | `<destination>/`                         | dir        | always, to refuse a destination that is not empty                                                                                                             |
 | `<SUPABASE_HOME or ~/.supabase>/profile` | plain text | when neither `--profile` nor `SUPABASE_PROFILE` is set — names the profile, defaulting to `supabase`                                                          |
 | `<SUPABASE_PROFILE>` (YAML)              | YAML       | when `SUPABASE_PROFILE` is a filesystem path rather than a built-in name; a read failure aborts the command                                                   |
+| `<temp>/supabase-compute-template-*/`    | varies     | when `--template` is given — the clone is read back to locate the template tree and copy out of it                                                            |
 
 ## Files Written
 
@@ -29,6 +30,7 @@ and the command handler does not run. See the [Compute command guide](../../../.
 | `<workdir>/supabase/config.toml`                | TOML   | on success — appends `[compute.<name>]` with `runtime`, `size` and `exposure` always, `instances` only when it differs from the default of 1, and `source` only when `--source` was passed, preserving surrounding formatting |
 | `<workdir>/supabase/compute/<name>/*`           | varies | on success, unless `--source` names another directory                                                                                                                                                                         |
 | `<workdir>/<source>/*`                          | varies | on success, when `--source` is given                                                                                                                                                                                          |
+| `<temp>/supabase-compute-template-*/`           | varies | when `--template` is given — a depth-1 clone, removed when the command ends                                                                                                                                                   |
 | `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON   | whenever the handler runs — flushed on success and on failure                                                                                                                                                                 |
 
 Compute resources are recorded in `config.toml` only. The project config loader prefers
@@ -70,8 +72,57 @@ Writes to `config.toml` are append-only. A compute already recorded under
 and before anything reaches disk — because editing an entry the user owns is
 not this command's job.
 
+`--template` bootstraps the destination from a git repository instead of the
+runtime's starter files. It accepts a GitHub `<owner>/<repo>` slug, with
+optional trailing subdirectory and `#<ref>`; a github.com URL, including the
+`/tree/<ref>/<subdir>` form a browser produces; or any other repository URL
+`git` can clone, with an optional `#<ref>`. A subdirectory is only read out of a
+GitHub slug or URL, where the repository boundary is part of the syntax; every
+other URL is cloned in full. A value naming a ref twice, starting with a hyphen,
+or resolving to neither a slug nor a cloneable URL is refused before any prompt
+runs.
+
+Fetching is `git clone --depth 1` into a temporary directory, or
+`git init` + `git fetch --depth 1` + `git checkout FETCH_HEAD` when a ref is
+given — fetching the ref by name is what makes a commit SHA work as well as a
+branch or tag. `GIT_TERMINAL_PROMPT=0` is set, so a private template must come
+from a credential helper or an SSH key rather than an interactive password
+prompt. The clone's `.git` is removed before anything is copied, so the
+template's history never becomes the compute directory's own. The clone happens
+before the destination is created, so a template that cannot be fetched, a ref
+that does not exist, a subdirectory the repository does not have, or a template
+tree with no files in it leaves nothing on disk and no `config.toml` entry.
+
+A template is the compute's entire contents: when one is given, none of the
+runtime's starter files are written, and the destination holds exactly what the
+template's tree holds. The starters are what a compute with no code yet needs, and
+writing both would leave behind whichever of them the template happened not to
+name — which is not merely untidy, because the catalog runtimes load a fixed entry
+file. A node template whose entry is `src/server.js` would sit next to the
+starter's `index.mjs`, and `index.mjs` is what the runtime loads, so the deployed
+compute would serve the greeting scaffold instead of the template's code, with
+nothing reporting it. Nothing about the template itself is recorded in
+`config.toml`.
+
+When `--runtime` is omitted, the runtime _default_ is read out of the staged
+template's own marker files — `Dockerfile`, then `deno.json`/`deno.jsonc`/
+`deno.lock`, then `package.json`, falling back to `deno` — the same markers
+`push` classifies an unconfigured directory by. It is a default, not an answer:
+`--runtime` still wins, and an interactive run is still asked, with the inference
+pre-selected. Recording the catalog default instead would write `runtime = "deno"`
+for a template that ships a `Dockerfile`, and `push` would then deploy a base
+image that never reads it.
+
+Because the runtime default depends on the template, the clone happens before the
+runtime, size and exposure are resolved — after every refusal that does not depend
+on them, as above. Cancelling a dial prompt after the clone still writes nothing.
+
 Nothing at the destination is ever removed or overwritten: a destination that
-exists and is not empty is refused, and clearing it is left to the user.
+exists and is not empty is refused, and clearing it is left to the user. That
+refusal, and a bad `--source`, are both checked before the runtime, size and
+exposure are asked for and before any `--template` is cloned — none of them depend
+on the destination, so a run that is going to be refused for it is refused without
+asking three questions or paying for a fetch first.
 `--source` is refused when it resolves to the project root, `supabase/`,
 `supabase/functions/`, `supabase/migrations/`, or outside the project. Symlinks
 are resolved first, so a path inside the project that points outside it is
@@ -96,6 +147,9 @@ root.
 | `1`  | no name given, and nowhere to ask for one — stdin or stdout is not a terminal, or `-o` is in force                                              |
 | `1`  | bad `--source`: outside the project, or a path the CLI owns                                                                                     |
 | `1`  | destination exists and is not empty                                                                                                             |
+| `1`  | `--template` is neither a GitHub slug nor a URL git can clone (`InvalidComputeTemplateError`) — refused before any prompt                       |
+| `1`  | the template could not be cloned: no `git`, no such repository, or no such ref (`ComputeTemplateFetchError`)                                    |
+| `1`  | the clone does not hold what `--template` named, or holds no files (`ComputeTemplateContentError`)                                              |
 | `1`  | the compute is already recorded in `config.toml`, in any form                                                                                   |
 | `1`  | the rendered `config.toml` would not parse, or `[compute]` is a sealed inline table                                                             |
 
