@@ -412,7 +412,12 @@ const activate = async <A>(
   return result;
 };
 
-const request = (base: string, path: string, init: RequestInit = {}): Promise<Response> => {
+const request = (
+  base: string,
+  path: string,
+  init: RequestInit = {},
+  options: Readonly<{ expectedStatus?: number }> = {},
+): Promise<Response> => {
   const url = new URL(path, `${base.replace(/\/$/u, "")}/`);
   const program = Effect.gen(function* () {
     const webRequest = new Request(url.href, init);
@@ -430,7 +435,11 @@ const request = (base: string, path: string, init: RequestInit = {}): Promise<Re
     }
     const response = yield* HttpClient.execute(outgoing);
     const body = yield* response.arrayBuffer;
-    if (response.status < 200 || response.status >= 300)
+    const statusMatches =
+      options.expectedStatus === undefined
+        ? response.status >= 200 && response.status < 300
+        : response.status === options.expectedStatus;
+    if (!statusMatches)
       return yield* new E2ERequestError({
         message: `${init.method ?? "GET"} ${url} returned ${response.status}: ${new TextDecoder().decode(body)}`,
       });
@@ -610,7 +619,10 @@ const serviceHeaders = (credentials: PromiseStackCredentials): Record<string, st
   apiHeaders(credentials, credentials.api.serviceRoleJwt);
 
 const functionSource = (table: string, marker: string): string => `
-Deno.serve(async () => {
+Deno.serve(async (request) => {
+  if (request.headers.get("x-reject-before-body") === "true") {
+    return new Response("rejected", { status: 400 });
+  }
   console.log("${marker}");
   let publishableKey: unknown;
   try {
@@ -1024,6 +1036,20 @@ const exerciseWholeStackFunctions = async (scenario: WholeStackScenario): Promis
         rows: expect.arrayContaining([{ id: 1, payload: markers.first }]),
       }),
     );
+    const earlyResponse = await request(
+      api.url,
+      functionPath,
+      {
+        method: "POST",
+        headers: { ...apiHeaders(credentials), "x-reject-before-body": "true" },
+        body: new Uint8Array(128 * 1024),
+        signal: AbortSignal.timeout(5_000),
+      },
+      { expectedStatus: 400 },
+    );
+    expect(earlyResponse.status).toBe(400);
+    expect(await earlyResponse.text()).toBe("rejected");
+
     await writeFile(
       join(projectRoot, "supabase", "functions", functionSlug, "index.ts"),
       functionSource(table, markers.second),
