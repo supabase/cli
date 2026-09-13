@@ -38,6 +38,9 @@ import type { DbConfigFlags } from "./db-config.types.ts";
 import { DebugLogger } from "./debug-logger.service.ts";
 import { getHostname } from "./hostname.ts";
 import { mapHttpError } from "./http-errors.ts";
+import { currentStackBackend } from "./stack-backend.ts";
+import { StackApi, stackApiLayer } from "./stack-api.ts";
+import { stackLocalDatabaseConn } from "./stack-local-database.ts";
 
 const DIRECT_PORT = 5432;
 const TCP_PROBE_TIMEOUT = Duration.seconds(5);
@@ -375,10 +378,11 @@ export const resolveLinkedConn = Effect.fnUntraced(function* (
   return poolerConn.value;
 });
 
-export const dbConfigLayer = Layer.effect(
+export const dbConfigResolverLayer = Layer.effect(
   DbConfigResolver,
   Effect.gen(function* () {
     const cliSettings = yield* CommandSettings;
+    const stackApi = yield* StackApi;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const debug = yield* DebugLogger;
@@ -561,6 +565,15 @@ export const dbConfigLayer = Layer.effect(
         const tomlValues = yield* readDbToml(fs, path, cliSettings.workdir, undefined, {
           resolveVaultSecrets,
         });
+        const backend = yield* currentStackBackend;
+        if (backend.kind === "stack") {
+          // `resolve`'s R is `never`, so capture StackApi at layer build.
+          const conn = yield* stackLocalDatabaseConn.pipe(
+            Effect.provideService(CommandSettings, cliSettings),
+            Effect.provideService(StackApi, stackApi),
+          );
+          return { conn, isLocal: true };
+        }
         return {
           conn: {
             host: localHost,
@@ -628,3 +641,5 @@ export const dbConfigLayer = Layer.effect(
     });
   }),
 );
+
+export const dbConfigLayer = dbConfigResolverLayer.pipe(Layer.provide(stackApiLayer));

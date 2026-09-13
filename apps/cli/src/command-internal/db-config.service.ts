@@ -10,6 +10,7 @@ import type {
 import type { ProfileLoadError } from "./profile-load.ts";
 import type { ProjectRefReadError } from "./temp-paths.ts";
 import type { DbConnectError } from "./db-connection.errors.ts";
+import type { LocalDbRunningError } from "./db-bootstrap/local-db-running.ts";
 import type {
   DbConfigConnectTempRoleError,
   DbConfigIpv6Error,
@@ -29,6 +30,7 @@ import type { DbConfigFlags, ResolvedDbConfig } from "./db-config.types.ts";
 export type DbConfigError =
   | DbConfigParseUrlError
   | DbConfigLoadError
+  | LocalDbRunningError
   | ProjectRefNotLinkedError
   | InvalidProjectRefError
   // A hard linked-ref load surfaces a real `.temp/project-ref` read error instead of masking it

@@ -28,6 +28,16 @@ import { toPostgresURL } from "../../../command-internal/postgres-url.ts";
 import { schemaToCsvField } from "../../../command-internal/schema-flags.ts";
 import { findDropStatements } from "../../../command-internal/sql-split.ts";
 import { buildLocalDbContainerInputs } from "../../../command-internal/db-bootstrap/local-container-inputs.ts";
+import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
+import { StackApi } from "../../../command-internal/stack-api.ts";
+import {
+  stackLocalDatabaseConn,
+  stackRejectNativeDockerDiffEngine,
+} from "../../../command-internal/stack-local-database.ts";
+import {
+  stackPrepareShadowSource,
+  stackWithShadowDatabase,
+} from "../../../command-internal/stack-shadow.ts";
 import { isLocalDbRunning } from "../../../command-internal/db-bootstrap/local-db-running.ts";
 import { waitForHealthyServices } from "../../../command-internal/db-bootstrap/health-check.ts";
 import { withShadowDatabase } from "../../../command-internal/db-bootstrap/shadow-cache.ts";
@@ -136,6 +146,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
   const path = yield* Path.Path;
   const dnsResolver = yield* DnsResolverFlag;
   const debug = yield* DebugFlag;
+  const stackApi = yield* Effect.serviceOption(StackApi);
 
   // Resolved linked ref, captured so the post-run finalizer caches the project
   // (GET /v1/projects/{ref}).
@@ -167,6 +178,13 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
           message: `if any flags in the group [db-url linked local] are set none of the others can be; [${[...targetSet].sort().join(" ")}] were all set`,
         }),
       );
+    }
+    if (
+      Option.isSome(flags.useMigra) ||
+      Option.isSome(flags.usePgAdmin) ||
+      Option.isSome(flags.usePgSchema)
+    ) {
+      yield* stackRejectNativeDockerDiffEngine;
     }
 
     // Config is read lazily per path, not unconditionally up front: reading the base config
@@ -253,13 +271,41 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
         Effect.gen(function* () {
           switch (classifyExplicitRef(ref)) {
             case "local": {
-              const connection = {
-                host: getHostname(),
-                port: cfg.port,
-                user: "postgres",
-                password: cfg.password,
-                database: "postgres",
-              };
+              const backend = yield* currentStackBackend;
+              if (backend.kind !== "stack") {
+                const connection = {
+                  host: getHostname(),
+                  port: cfg.port,
+                  user: "postgres",
+                  password: cfg.password,
+                  database: "postgres",
+                };
+                return {
+                  kind: "database",
+                  ref: toPostgresURL(connection),
+                  connection,
+                  connectOptions: { isLocal: true, dnsResolver },
+                } satisfies PgDeltaDatabaseEndpoint;
+              }
+              if (Option.isNone(stackApi)) {
+                return yield* Effect.fail(
+                  new DbDiffDbNotRunningError({
+                    message: "supabase start is not running.",
+                  }),
+                );
+              }
+              const connection = yield* stackLocalDatabaseConn.pipe(
+                Effect.provideService(CommandSettings, cliSettings),
+                Effect.provideService(StackApi, stackApi.value),
+                Effect.mapError(
+                  (cause) =>
+                    new DbDiffDbNotRunningError({
+                      message: cause.message,
+                      daemonDown: cause.daemonDown,
+                      suggestion: cause.suggestion,
+                    }),
+                ),
+              );
               return {
                 kind: "database",
                 ref: toPostgresURL(connection),
@@ -495,11 +541,13 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
 
     // Engine resolution: the pg-delta env/config/flag gate, read from the
     // (possibly remote-merged) config.
-    const pgDeltaDefault = shouldUsePgDelta({
-      configEnabled: cfg.pgDelta.enabled,
-      usePgDeltaFlag: Option.getOrElse(flags.usePgDelta, () => false),
-      envEnabled: parseBoolEnv(cfg.envLookup("SUPABASE_EXPERIMENTAL_PG_DELTA")),
-    });
+    const pgDeltaDefault =
+      (yield* currentStackBackend).kind === "stack" ||
+      shouldUsePgDelta({
+        configEnabled: cfg.pgDelta.enabled,
+        usePgDeltaFlag: Option.getOrElse(flags.usePgDelta, () => false),
+        envEnabled: parseBoolEnv(cfg.envLookup("SUPABASE_EXPERIMENTAL_PG_DELTA")),
+      });
     const useDelta = resolveDiffEngine({
       useMigraChanged: Option.isSome(flags.useMigra),
       usePgAdmin,
@@ -521,7 +569,10 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
     // branch's own "Creating shadow database..." banner announces, so every call site emits its
     // banner first and only then invokes this.
     const resolveShadowRunInput = Effect.fnUntraced(function* () {
-      const resolvedShadowImage = yield* localInputs.resolvePostgresImage;
+      const stackBackend = (yield* currentStackBackend).kind === "stack";
+      const resolvedShadowImage = stackBackend
+        ? "stack-ephemeral"
+        : yield* localInputs.resolvePostgresImage;
       return shadowRunInputFromLocalContainerInputs(
         localInputs,
         resolvedShadowImage,
@@ -622,63 +673,72 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
         schemaPaths: cfg.schemaPathPatterns,
         pgDelta: cfg.pgDelta,
       };
+      const runDiff = (
+        shadow: Pick<typeof shadowInput, never> & {
+          readonly sourceUrl: string;
+          readonly targetUrlOverride?: string;
+        },
+      ) =>
+        Effect.gen(function* () {
+          const target = shadow.targetUrlOverride ?? targetUrl;
+          yield* output.raw(
+            flags.schema.length > 0
+              ? `Diffing schemas: ${flags.schema.join(",")}\n`
+              : "Diffing schemas...\n",
+            "stderr",
+          );
+          if (useDelta) {
+            const result = yield* pgDelta.diffDatabase({
+              context: ctx,
+              source: {
+                kind: "database",
+                ref: shadow.sourceUrl,
+                connectOptions: { isLocal: true, dnsResolver: "native" },
+              },
+              target: {
+                kind: "database",
+                ref: target,
+                ...(shadow.targetUrlOverride === undefined ? { connection: resolved.conn } : {}),
+                connectOptions: {
+                  isLocal: shadow.targetUrlOverride !== undefined || resolved.isLocal,
+                  dnsResolver,
+                },
+              },
+              schema: flags.schema,
+              formatOptions,
+              debug: isPgDeltaDebugEnabled(),
+              strictCoverage: flags.strictCoverage,
+            });
+            return { sql: result.sql, files: result.files, hazards: result.hazards };
+          }
+          const sql = yield* diffMigra(ctx, {
+            source: shadow.sourceUrl,
+            target,
+            schema: flags.schema,
+            connectOptions: { isLocal: resolved.isLocal, dnsResolver },
+          });
+          return { sql, files: undefined };
+        });
       // `withShadowDatabase` (`shadow-cache.ts`) owns the interrupt-safe lifecycle and the
       // cache seam — a plain create/remove pair when `SUPABASE_SHADOW_CACHE` is explicitly
       // disabled (the cache is on by default). The key's webhooks policy must mirror what
       // `prepareShadowSource` selects for this mode (legacy migrate forces `pg_net` on,
       // next follows config), or the two engines could restore each other's tars.
-      diffResult = yield* withShadowDatabase(
-        spawner,
-        shadowInput,
-        (handle) =>
-          Effect.gen(function* () {
-            const shadow = yield* prepareShadowSource(spawner, handle, shadowInput);
-            const target = shadow.targetUrlOverride ?? targetUrl;
-            yield* output.raw(
-              flags.schema.length > 0
-                ? `Diffing schemas: ${flags.schema.join(",")}\n`
-                : "Diffing schemas...\n",
-              "stderr",
-            );
-            if (useDelta) {
-              const result = yield* pgDelta.diffDatabase({
-                context: ctx,
-                source: {
-                  kind: "database",
-                  ref: shadow.sourceUrl,
-                  connectOptions: { isLocal: true, dnsResolver: "native" },
-                },
-                target: {
-                  kind: "database",
-                  ref: target,
-                  ...(shadow.targetUrlOverride === undefined ? { connection: resolved.conn } : {}),
-                  connectOptions: {
-                    isLocal: shadow.targetUrlOverride !== undefined || resolved.isLocal,
-                    dnsResolver,
-                  },
-                },
-                schema: flags.schema,
-                formatOptions,
-                debug: isPgDeltaDebugEnabled(),
-                strictCoverage: flags.strictCoverage,
-              });
-              // Keep the per-unit plan files so a multi-unit plan can be written as one
-              // migration file each; `sql` stays the flattened join for stdout review +
-              // machine payloads.
-              return { sql: result.sql, files: result.files, hazards: result.hazards };
-            }
-            const sql = yield* diffMigra(ctx, {
-              source: shadow.sourceUrl,
-              target,
-              schema: flags.schema,
-              connectOptions: { isLocal: resolved.isLocal, dnsResolver },
-            });
-            // The migra engine has no execution-aware plan units, so it always writes a
-            // single migration file.
-            return { sql, files: undefined };
-          }),
-        { webhooks: migrationMode === "pgdelta-next" ? "config" : "enabled" },
-      );
+      const stackBackend = (yield* currentStackBackend).kind === "stack";
+      diffResult = stackBackend
+        ? yield* stackWithShadowDatabase(shadowInput, (handle) =>
+            stackPrepareShadowSource(handle, shadowInput).pipe(Effect.flatMap(runDiff)),
+          )
+        : yield* withShadowDatabase(
+            spawner,
+            shadowInput,
+            (handle) =>
+              Effect.gen(function* () {
+                const shadow = yield* prepareShadowSource(spawner, handle, shadowInput);
+                return yield* runDiff(shadow);
+              }),
+            { webhooks: migrationMode === "pgdelta-next" ? "config" : "enabled" },
+          );
     }
     const out = diffResult.sql;
 

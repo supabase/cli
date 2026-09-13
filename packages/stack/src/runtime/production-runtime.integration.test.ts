@@ -2902,6 +2902,7 @@ describe("production runtime", () => {
       stop: () => Effect.void,
       remove: () => Effect.void,
       cleanup: () => Effect.fail(runtimeFailure),
+      wipePersistentData: () => Effect.void,
     };
     const envOwner: RuntimeEnvFileOwner = {
       write: () => Effect.die("unused"),
@@ -2929,6 +2930,7 @@ describe("production runtime", () => {
       stop: () => Effect.void,
       remove: () => Effect.void,
       cleanup: () => Effect.void,
+      wipePersistentData: () => Effect.void,
     };
     const envOwner: RuntimeEnvFileOwner = {
       write: () => Effect.die("unused"),

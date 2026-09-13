@@ -1,5 +1,17 @@
 import { NodeServices } from "@effect/platform-node";
-import { Crypto, Effect, FileSystem, Layer, Option, Path, Redacted, Schema, Stream } from "effect";
+import {
+  Crypto,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Redacted,
+  Schema,
+  Scope,
+  Stream,
+} from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import {
   createStack as createEffectStack,
@@ -26,6 +38,11 @@ import type { StackId } from "./StackId.ts";
 import type { PreparedCapability, PrepareStackResult } from "./EffectStack.ts";
 import { InvalidStackConfigError } from "./Errors.ts";
 import { StackRuntimeEnvironment, type StackRuntimeEnvironmentValue } from "../state/Ownership.ts";
+import {
+  createEphemeralPostgres as createEffectEphemeralPostgres,
+  type CreateEphemeralPostgresOptions,
+} from "./EphemeralPostgres.ts";
+import type { StackRuntime } from "./Runtime.ts";
 
 /** Recursively replaces Effect `Redacted` leaves with their plain value. */
 type Unredacted<T> =
@@ -53,8 +70,30 @@ export interface PromiseStack {
   readonly start: (options?: PromiseStartStackOptions) => Promise<StackStatus>;
   readonly stop: () => Promise<void>;
   readonly destroy: () => Promise<void>;
+  readonly resetDatabase: () => Promise<StackStatus>;
   readonly logs: (query?: LogQuery) => Promise<StackLogBatch>;
   readonly followLogs: (query?: LogQuery) => AsyncIterable<StackLogEntry>;
+}
+
+export type PromiseCreateEphemeralPostgresOptions = Omit<
+  CreateEphemeralPostgresOptions,
+  "databasePassword" | "jwtSecret"
+> & {
+  readonly databasePassword: string;
+  readonly jwtSecret: string;
+};
+
+export interface PromiseEphemeralPostgres {
+  readonly host: string;
+  readonly port: number;
+  readonly version: string;
+  readonly runtime: StackRuntime;
+  readonly artifactIdentity: string;
+  readonly url: string;
+  readonly start: () => Promise<void>;
+  readonly stop: () => Promise<void>;
+  readonly exportPgData: (tarPath: string) => Promise<void>;
+  readonly destroy: () => Promise<void>;
 }
 
 interface PromiseStackApi {
@@ -64,6 +103,9 @@ interface PromiseStackApi {
   readonly listStacks: (options?: ListStacksOptions) => Promise<ReadonlyArray<StackDescriptor>>;
   readonly discoverStacks: (options?: ListStacksOptions) => Promise<StackDiscoveryResult>;
   readonly inspectStack: (id: StackId) => Promise<StackInspection>;
+  readonly createEphemeralPostgres: (
+    options: PromiseCreateEphemeralPostgresOptions,
+  ) => Promise<PromiseEphemeralPostgres>;
 }
 
 type PlatformLayer = typeof NodeServices.layer;
@@ -149,6 +191,7 @@ export const adaptEffectStack = (effectStack: EffectStack): PromiseStack => {
       ),
     stop: () => invoke(effectStack.stop),
     destroy: () => invoke(effectStack.destroy),
+    resetDatabase: () => invoke(effectStack.resetDatabase),
     logs: (query) => invoke(effectStack.logs(query)),
     followLogs: (query) => adaptStream(effectStack.followLogs(query)),
   };
@@ -176,6 +219,37 @@ export const makePromiseApi = (
     listStacks: (options) => run(listEffectStacks(options)),
     discoverStacks: (options) => run(discoverEffectStacks(options)),
     inspectStack: (id) => run(inspectEffectStack(id)),
+    createEphemeralPostgres: (options) =>
+      run(
+        Effect.gen(function* () {
+          const scope = yield* Scope.make();
+          const handle = yield* createEffectEphemeralPostgres({
+            ...options,
+            databasePassword: Redacted.make(options.databasePassword),
+            jwtSecret: Redacted.make(options.jwtSecret),
+          }).pipe(
+            Effect.provideService(Scope.Scope, scope),
+            Effect.onError(() => Scope.close(scope, Exit.void).pipe(Effect.ignore)),
+          );
+          return { handle, scope };
+        }),
+      ).then(({ handle, scope }) => {
+        const runInScope = <A, E>(
+          effect: Effect.Effect<A, E, RuntimeRequirements | Scope.Scope>,
+        ): Promise<A> => run(effect.pipe(Effect.provideService(Scope.Scope, scope)));
+        return {
+          host: handle.host,
+          port: handle.port,
+          version: handle.version,
+          runtime: handle.runtime,
+          artifactIdentity: handle.artifactIdentity,
+          url: Redacted.value(handle.url),
+          start: () => runInScope(handle.start),
+          stop: () => runInScope(handle.stop),
+          exportPgData: (tarPath: string) => runInScope(handle.exportPgData(tarPath)),
+          destroy: () => run(Scope.close(scope, Exit.void)),
+        };
+      }),
   };
 };
 
@@ -186,6 +260,7 @@ export const findStack = defaultApi.findStack;
 export const listStacks = defaultApi.listStacks;
 export const discoverStacks = defaultApi.discoverStacks;
 export const inspectStack = defaultApi.inspectStack;
+export const createEphemeralPostgres = defaultApi.createEphemeralPostgres;
 
 export type {
   CreateStackOptions,

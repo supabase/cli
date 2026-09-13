@@ -41,6 +41,7 @@ import { GoProxy } from "../../../../../command-internal/go-proxy.service.ts";
 import { CommandPlatformApi } from "../../../../../auth/command-platform-api.service.ts";
 import { CommandPlatformApiFactory } from "../../../../../auth/command-platform-api-factory.service.ts";
 import { dockerRunLayer } from "../../../../../command-internal/docker-run.layer.ts";
+import { stackBackendLayer } from "../../../../../command-internal/stack-backend.ts";
 import { DbConfigResolver } from "../../../../../command-internal/db-config.service.ts";
 import {
   type DbSession,
@@ -71,6 +72,7 @@ interface SetupOpts {
   /** Makes the engine's `exportDeclarativeSchema` fail after recording the call. */
   exportFails?: boolean;
   staleLocalImage?: boolean;
+  stackBackend?: boolean;
 }
 
 /** What the handler handed the engine for one `exportDeclarativeSchema` call. */
@@ -171,6 +173,18 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   const resolver = Layer.succeed(DbConfigResolver, {
     resolve: (flags) => {
       resolverCalls.push(flags);
+      if (flags.connType === "local") {
+        return Effect.succeed({
+          conn: {
+            host: "127.0.0.1",
+            port: 54329,
+            user: "postgres",
+            password: "stack-secret",
+            database: "postgres",
+          },
+          isLocal: true,
+        });
+      }
       return Effect.succeed({
         conn: {
           host: "db.remote",
@@ -234,6 +248,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     processControl.layer,
     alwaysReadyHttpClientLayer,
     dockerRun,
+    ...(opts.stackBackend === true ? [stackBackendLayer("stack")] : []),
   );
   return {
     layer,
@@ -434,6 +449,20 @@ describe("db schema declarative generate integration", () => {
       expect(s.ensureStartedCalls).toBe(1);
     }).pipe(Effect.provide(s.layer));
   });
+
+  it.effect(
+    "explicit --local on the stack backend exports from stack credentials, not toml [db].port",
+    () => {
+      const s = setup(tmp.current, { experimental: true, stackBackend: true });
+      return Effect.gen(function* () {
+        yield* dbSchemaDeclarativeGenerate(flags({ local: Option.some(true) }));
+        expect(s.engineExportCalls[0]!.targetRef).toContain(
+          "postgresql://postgres:stack-secret@127.0.0.1:54329",
+        );
+        expect(s.engineExportCalls[0]!.targetRef).not.toContain(":54322");
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
 
   it.effect(
     "--output-dir writes a complete export relative to the project without activating it",

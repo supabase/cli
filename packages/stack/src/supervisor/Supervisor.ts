@@ -72,6 +72,14 @@ import {
 
 import type { ActivationResult } from "../gateway/Gateway.ts";
 
+const RESET_DATABASE_BOUNCE_CAPABILITIES: ReadonlySet<CapabilityName> = new Set([
+  "auth",
+  "storage",
+  "realtime",
+  "pooler",
+  "analytics",
+]);
+
 interface SupervisorLaunchAttempt {
   /** Rolls back only workloads and ingress acquired by this launch. */
   readonly rollback: Effect.Effect<void, StackError>;
@@ -105,6 +113,8 @@ export interface Supervisor {
     readonly config?: StackConfig;
   }) => Effect.Effect<StackStatus, StackError>;
   readonly destroy: Effect.Effect<void, StackError>;
+  /** Wipes Postgres data for the running stack and bootstraps a fresh cluster. */
+  readonly resetDatabase: Effect.Effect<StackStatus, StackError>;
   /** Completes after a successful stop or destroy shutdown signal. */
   readonly shutdown: Effect.Effect<void>;
   /** Shuts down only when durable state is absent or cleanly non-running. */
@@ -274,7 +284,7 @@ export const makeSupervisor = (
       });
     const joinExit = <A, E>(result: Exit.Exit<A, E>): Effect.Effect<A, E> =>
       Exit.isSuccess(result) ? Effect.succeed(result.value) : Effect.failCause(result.cause);
-    type LifecycleKind = "start" | "stop" | "destroy";
+    type LifecycleKind = "start" | "stop" | "destroy" | "reset";
     type LifecycleResult = Deferred.Deferred<Exit.Exit<void, StackError>, never>;
     type ActiveLifecycle = Readonly<{
       kind: LifecycleKind;
@@ -289,7 +299,7 @@ export const makeSupervisor = (
         // installing its workloads. Wait for that shared lifecycle result before attempting lazy
         // activation; otherwise the phase check below would turn a valid cold request into 503.
         const lifecycle = yield* Ref.get(lifecycleActive);
-        if (lifecycle?.kind === "start") {
+        if (lifecycle?.kind === "start" || lifecycle?.kind === "reset") {
           const started = yield* Deferred.await(lifecycle.result);
           yield* joinExit(started);
         }
@@ -676,6 +686,63 @@ export const makeSupervisor = (
         yield* submitLifecycle("start", startOperation(startOptions));
         return yield* snapshot();
       });
+    const resetDatabaseOperation = () =>
+      Effect.gen(function* () {
+        const previous = yield* Ref.get(phase);
+        if (previous !== "running")
+          return yield* new StackNotRunningError({
+            stackId: options.stackId,
+            message: "Stack is not running",
+          });
+        const state = yield* read();
+        if (state === undefined || state.definition === undefined)
+          return yield* new StackStateInvalidError({ message: "Stack state is missing" });
+        const status = yield* snapshot();
+        const database = status.capabilities.find((capability) => capability.name === "database");
+        if (database?.state !== "ready")
+          return yield* new StackNotRunningError({
+            stackId: options.stackId,
+            message: "Database is not running",
+          });
+        const plan = yield* rebuildExecutionPlan(state.runtime, state.definition).pipe(
+          Effect.provideContext(options.context),
+          Effect.mapError(
+            (error) => new StackStateInvalidError({ message: error.message, cause: error }),
+          ),
+        );
+        const bounceNames = new Set<CapabilityName>(
+          status.capabilities.flatMap((capability) =>
+            capability.state === "ready" && RESET_DATABASE_BOUNCE_CAPABILITIES.has(capability.name)
+              ? [capability.name]
+              : [],
+          ),
+        );
+        const bounce = plan.workloads.filter((workload) => bounceNames.has(workload.capability));
+        const databaseWorkload = plan.workloads.find(
+          (workload) => workload.id === "database:database",
+        );
+        if (databaseWorkload === undefined)
+          return yield* new StackStateInvalidError({ message: "Database workload is missing" });
+        const stopOne = (workloadId: string) =>
+          Effect.gen(function* () {
+            const key = { stackId: options.stackId, workloadId: workloadId };
+            yield* runtime.driver.stop(key).pipe(Effect.mapError(mapRuntimeError));
+            yield* runtime.driver.remove(key).pipe(Effect.mapError(mapRuntimeError));
+            yield* launcher.forget([workloadId]);
+          });
+        for (const workload of [...bounce].reverse()) yield* stopOne(workload.id);
+        yield* stopOne(databaseWorkload.id);
+        yield* runtime.driver
+          .wipePersistentData({ stackId: options.stackId, workloadId: databaseWorkload.id })
+          .pipe(Effect.mapError(mapRuntimeError));
+        const resetWorkloads = [databaseWorkload, ...bounce];
+        yield* launcher
+          .launch({ ...plan, workloads: resetWorkloads })
+          .pipe(Effect.mapError(mapRuntimeError));
+      });
+    const resetDatabase = submitLifecycle("reset", resetDatabaseOperation()).pipe(
+      Effect.andThen(snapshot()),
+    );
     const stopOperation = () =>
       Effect.gen(function* () {
         const previous = yield* Ref.get(phase);
@@ -904,11 +971,13 @@ export const makeSupervisor = (
       credentials: () => credentials,
       start: ({ config }: { readonly config?: StackConfig }) => operation(start({ config })),
       destroy: () => operation(destroy),
+      resetDatabase: () => operation(resetDatabase),
       logs: (query: LogQuery) => operation(logs(query)),
     });
     return {
       status,
       start,
+      resetDatabase,
       destroy,
       shutdown: Deferred.await(shutdownSignal),
       shutdownIfIdle,

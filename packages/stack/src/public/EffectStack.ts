@@ -72,6 +72,8 @@ import {
   PortUnavailableError,
   GatewayActivationError,
   InvalidLogCursorError,
+  EphemeralPostgresError,
+  RequiresActivatedProcessError,
   type CreateStackError,
   type OpenStackError,
   type StackDiscoveryError,
@@ -82,6 +84,7 @@ import {
   type StackStopError,
   type StackLogsError,
   type DestroyStackError,
+  type ResetDatabaseError,
   type StackError,
   type StackErrorTag,
   isStackError,
@@ -93,6 +96,7 @@ import {
   STACK_STOP_ERROR_TAGS,
   STACK_LOGS_ERROR_TAGS,
   DESTROY_STACK_ERROR_TAGS,
+  RESET_DATABASE_ERROR_TAGS,
 } from "./Errors.ts";
 import {
   ownerLockExists,
@@ -113,10 +117,9 @@ import {
 } from "../supervisor/Launcher.ts";
 import {
   ContainerEngineResolver,
-  defaultContainerEngineResolver,
+  selectDefaultRuntime,
   type ContainerEngineResolverShape,
 } from "../runtime/ContainerEngineResolver.ts";
-import type { ContainerEngineFailure } from "../runtime/ContainerEngine.ts";
 import { statusFor } from "../supervisor/StatusProjection.ts";
 import { EMPTY_LOG_CURSOR, readRetainedLogs, selectLogBatch } from "../supervisor/LogStore.ts";
 import {
@@ -151,24 +154,6 @@ export interface PreparedCapability {
   readonly outcome: "cached" | "downloaded" | "pulled";
 }
 
-const selectDefaultRuntime = (
-  resolver: ContainerEngineResolverShape | undefined,
-): Effect.Effect<StackRuntime, ContainerEngineError, ChildProcessSpawnerService> => {
-  return (resolver ?? defaultContainerEngineResolver).isInstalled("docker").pipe(
-    Effect.map((installed): StackRuntime =>
-      installed ? { kind: "container", engine: "docker" } : { kind: "native" },
-    ),
-    Effect.mapError(
-      (error: ContainerEngineFailure) =>
-        new ContainerEngineError({
-          engine: "docker",
-          message: `Unable to determine whether Docker is installed: ${error.message}`,
-          cause: error,
-        }),
-    ),
-  );
-};
-
 export interface PrepareStackResult {
   readonly capabilities: ReadonlyArray<PreparedCapability>;
 }
@@ -183,6 +168,7 @@ export interface EffectStack {
   readonly start: (options?: StartStackOptions) => Effect.Effect<StackStatus, StackStartError>;
   readonly stop: Effect.Effect<void, StackStopError>;
   readonly destroy: Effect.Effect<void, DestroyStackError>;
+  readonly resetDatabase: Effect.Effect<StackStatus, ResetDatabaseError>;
   readonly logs: (query?: LogQuery) => Effect.Effect<StackLogBatch, StackLogsError>;
   readonly followLogs: (query?: LogQuery) => Stream.Stream<StackLogEntry, StackLogsError>;
 }
@@ -245,6 +231,9 @@ const stackErrorFactories = {
   StackCleanupError: (message: string) => new StackCleanupError({ message }),
   ContainerEngineError: (message: string) => new ContainerEngineError({ message }),
   StackDestructionError: (message: string) => new StackDestructionError({ message }),
+  EphemeralPostgresError: (message: string) => new EphemeralPostgresError({ message }),
+  RequiresActivatedProcessError: (message: string) =>
+    new RequiresActivatedProcessError({ message, capability: "unknown" }),
 } satisfies Record<StackErrorTag, (message: string) => StackError>;
 
 const isOwnerUnreachable = (error: unknown): boolean =>
@@ -306,6 +295,12 @@ const logsError = (error: ControlError): StackLogsError =>
   narrowError(error, STACK_LOGS_ERROR_TAGS, (message) => new StackStateInvalidError({ message }));
 const destroyError = (error: ControlError): DestroyStackError =>
   narrowError(error, DESTROY_STACK_ERROR_TAGS, (message) => new StackDestructionError({ message }));
+const resetDatabaseError = (error: ControlError): ResetDatabaseError =>
+  narrowError(
+    error,
+    RESET_DATABASE_ERROR_TAGS,
+    (message) => new StackStateInvalidError({ message }),
+  );
 
 /** Internal control-transport seam used by public lifecycle integration tests. */
 export interface HandleDependencies {
@@ -579,6 +574,30 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
           }),
         ),
       );
+    const resetDatabase: Effect.Effect<StackStatus, ResetDatabaseError> = Effect.suspend(
+      (): Effect.Effect<StackStatus, ResetDatabaseError> =>
+        invoke((rpc) => rpc.resetDatabase(undefined), resetDatabaseError).pipe(
+          Effect.catchTag("StackOwnershipConflictError", (ownershipError) => {
+            const offline: Effect.Effect<never, ResetDatabaseError> = options.readOfflineState.pipe(
+              Effect.mapError(resetDatabaseError),
+              Effect.flatMap((state): Effect.Effect<never, ResetDatabaseError> =>
+                Option.isNone(state)
+                  ? Effect.fail(stackNotFound())
+                  : isStoppedState(state.value)
+                    ? Effect.fail(
+                        new StackNotRunningError({
+                          stackId: id,
+                          message: "Stack is not running",
+                        }),
+                      )
+                    : Effect.fail(ownershipError),
+              ),
+              Effect.catchTag("StackOwnershipConflictError", () => Effect.fail(ownershipError)),
+            );
+            return offline;
+          }),
+        ),
+    );
     const start = (startOptions?: StartStackOptions) => {
       return invoke(
         (rpc) =>
@@ -687,6 +706,7 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
       start,
       stop,
       destroy,
+      resetDatabase,
       logs,
       followLogs: (query) =>
         Stream.paginate({ cursor: query?.cursor, first: true }, ({ cursor, first }) => {

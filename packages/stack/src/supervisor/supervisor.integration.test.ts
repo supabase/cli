@@ -96,6 +96,7 @@ const makeFixture = (
     readonly stopStarted?: Deferred.Deferred<void>;
     readonly workloadStopFailFirst?: Ref.Ref<boolean>;
     readonly workloadRemoveFailFirst?: Ref.Ref<boolean>;
+    readonly wipeFailFirst?: Ref.Ref<boolean>;
     readonly stopFailFirst?: Ref.Ref<boolean>;
     readonly destroyGate?: Deferred.Deferred<void>;
     readonly destroyStarted?: Deferred.Deferred<void>;
@@ -327,6 +328,26 @@ const makeFixture = (
           yield* Ref.set(resources, []);
           if (!destroy && gateStopCleanup)
             yield* Ref.update(logEntries, (current) => [...current, finalEntry]);
+        }),
+      wipePersistentData: (key) =>
+        Effect.gen(function* () {
+          if (fixtureOptions.wipeFailFirst !== undefined) {
+            const fail = yield* Ref.get(fixtureOptions.wipeFailFirst);
+            if (fail) {
+              yield* Ref.set(fixtureOptions.wipeFailFirst, false);
+              return yield* new RuntimeDriverError({
+                message: "injected wipe failure",
+                stackId: key.stackId,
+                workloadId: key.workloadId,
+              });
+            }
+          }
+          if (fixtureOptions.timeline !== undefined)
+            yield* Ref.update(fixtureOptions.timeline, (current) => [
+              ...current,
+              `wipe:${key.workloadId}`,
+            ]);
+          yield* Ref.update(calls, (current) => [...current, `wipe:${key.workloadId}`]);
         }),
     };
     const runtime: SupervisorRuntime = {
@@ -1488,6 +1509,67 @@ describe("Supervisor composition", () => {
         expect(response.ok).toBe(false);
         expect(yield* Ref.get(fixture.calls)).toContain("cleanup:stop");
         expect((yield* fixture.supervisor.status).lifecycle).toBe("stopping");
+      }),
+    ),
+  );
+
+  it.live("wipes only the database workload and bounces ready dependents", () =>
+    run(
+      Effect.gen(function* () {
+        const timeline = yield* Ref.make<ReadonlyArray<string>>([]);
+        const fixture = yield* makeFixture({ timeline });
+        yield* fixture.supervisor.start({
+          config: { capabilities: { auth: { activation: "eager" } } },
+        });
+        yield* Ref.set(timeline, []);
+        yield* Ref.set(fixture.calls, []);
+
+        const status = yield* fixture.supervisor.resetDatabase;
+        expect(status.lifecycle).toBe("running");
+        expect(
+          status.capabilities.find((capability) => capability.name === "database")?.state,
+        ).toBe("ready");
+        expect(yield* Ref.get(timeline)).toEqual([
+          "stop:auth:auth",
+          "stop:database:database",
+          "wipe:database:database",
+          "start:database:database",
+          "start:auth:auth",
+        ]);
+        expect(yield* Ref.get(fixture.calls)).toContain("wipe:database:database");
+      }),
+    ),
+  );
+
+  it.live(
+    "relaunches the database after a wipe failure because stopped workloads were forgotten",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const timeline = yield* Ref.make<ReadonlyArray<string>>([]);
+          const wipeFailFirst = yield* Ref.make(true);
+          const fixture = yield* makeFixture({ timeline, wipeFailFirst });
+          yield* fixture.supervisor.start();
+          yield* Ref.set(timeline, []);
+
+          const resetExit = yield* fixture.supervisor.resetDatabase.pipe(Effect.exit);
+          expect(Exit.isFailure(resetExit)).toBe(true);
+
+          yield* fixture.supervisor.start();
+          expect(yield* Ref.get(timeline)).toEqual([
+            "stop:database:database",
+            "start:database:database",
+          ]);
+        }),
+      ),
+  );
+
+  it.live("refuses reset when the database is not running", () =>
+    run(
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        const exit = yield* fixture.supervisor.resetDatabase.pipe(Effect.exit);
+        expect(errorOf(exit)).toBeInstanceOf(StackNotRunningError);
       }),
     ),
   );

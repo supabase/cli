@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option, Stream, Redacted } from "effect";
 
 import { stripAnsi } from "../../../../../../tests/helpers/ansi.ts";
 import {
@@ -39,6 +39,9 @@ import {
 import { CommandPlatformApi } from "../../../../../auth/command-platform-api.service.ts";
 import { CommandPlatformApiFactory } from "../../../../../auth/command-platform-api-factory.service.ts";
 import { dockerRunLayer } from "../../../../../command-internal/docker-run.layer.ts";
+import { stackBackendLayer } from "../../../../../command-internal/stack-backend.ts";
+import { StackApi } from "../../../../../command-internal/stack-api.ts";
+import { CAPABILITY_NAMES, StackIdSchema, type EffectStack } from "@supabase/stack/effect";
 import { DbConfigResolver } from "../../../../../command-internal/db-config.service.ts";
 import {
   type DbBatchStatement,
@@ -79,6 +82,68 @@ interface SetupOpts {
   renderedFiles?: ReadonlyArray<PgDeltaRenderedFile>;
   removals?: PgDeltaRemovalSummary;
   planErrors?: ReadonlyArray<PgDeltaEngineError>;
+  stackBackend?: boolean;
+}
+
+const SYNC_STACK_ID = StackIdSchema.make("e".repeat(64));
+const unusedSync = () => Effect.die("unused");
+const unusedSyncEffect = Effect.die("unused");
+const STACK_APPLY_PORT = 54329;
+
+function syncStackApi(workdir: string, port: number) {
+  const stack: EffectStack = {
+    id: SYNC_STACK_ID,
+    status: Effect.succeed({
+      id: SYNC_STACK_ID,
+      lifecycle: "running",
+      desiredLifecycle: "running",
+      runtime: { kind: "native" },
+      endpoints: {},
+      versions: {},
+      capabilities: CAPABILITY_NAMES.map((name) => ({
+        name,
+        activation: name === "database" ? "eager" : "lazy",
+        state: name === "database" ? "ready" : "dormant",
+      })),
+      artifacts: [],
+    }),
+    credentials: Effect.succeed({
+      database: {
+        url: Redacted.make(`postgresql://postgres:postgres@127.0.0.1:${port}/postgres`),
+        password: Redacted.make("postgres"),
+      },
+      api: {
+        publishableKey: "anon",
+        secretKey: Redacted.make("service"),
+        anonJwt: "anon",
+        serviceRoleJwt: Redacted.make("service"),
+      },
+    }),
+    prepare: unusedSync,
+    start: unusedSync,
+    stop: unusedSyncEffect,
+    destroy: unusedSyncEffect,
+    resetDatabase: unusedSyncEffect,
+    logs: unusedSync,
+    followLogs: () => Stream.empty,
+  };
+  return Layer.succeed(StackApi, {
+    createStack: unusedSync,
+    findStack: () =>
+      Effect.succeed(
+        Option.some({
+          id: SYNC_STACK_ID,
+          projectRoot: workdir,
+          name: "default",
+          branchContext: "main",
+          runtime: { kind: "native" as const },
+          desiredLifecycle: "running",
+        }),
+      ),
+    discoverStacks: unusedSync,
+    openStack: () => Effect.succeed(stack),
+    inspectStack: unusedSync,
+  });
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
@@ -119,9 +184,11 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   // shadow also connects through this fake `DbConnection`, so its SQL must be excluded from
   // `dbExec`, which every "not yet applied" assertion expects to stay empty until real apply.
   const SHADOW_PORT = 54320;
+  const dbConnectPorts: number[] = [];
   const dbConn = Layer.succeed(DbConnection, {
-    connect: (cfg: PgConnInput) =>
-      Effect.succeed({
+    connect: (cfg: PgConnInput) => {
+      if (cfg.port !== SHADOW_PORT) dbConnectPorts.push(cfg.port);
+      return Effect.succeed({
         exec: (sql: string) =>
           opts.applyFails === true && sql.startsWith("ALTER")
             ? Effect.fail({ _tag: "DbExecError", message: "boom" } as never)
@@ -155,7 +222,8 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         extensionExists: () => Effect.succeed(false),
         copyToCsv: () => Effect.succeed(new Uint8Array()),
         queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
-      }),
+      });
+    },
   });
   // The no-files bootstrap delegates to the shared smart-target resolver; its
   // local path never calls `resolve`, but the linked/custom branches would.
@@ -265,6 +333,9 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     processControl.layer,
     alwaysReadyHttpClientLayer,
     dockerRun,
+    ...(opts.stackBackend === true
+      ? [stackBackendLayer("stack"), syncStackApi(workdir, STACK_APPLY_PORT)]
+      : []),
   );
   return {
     layer,
@@ -272,6 +343,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     child,
     dbExec,
     dbBatches,
+    dbConnectPorts,
     cache,
     telemetry,
     localPostgresImageChecks,
@@ -824,6 +896,20 @@ describe("db schema declarative sync integration", () => {
       expect(s.out.rawChunks.some((c) => c.text.includes("Migration applied successfully"))).toBe(
         true,
       );
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("--apply on the stack backend uses stack credentials, not toml.port", () => {
+    seedDeclarative(tmp.current);
+    const s = setup(tmp.current, {
+      experimental: true,
+      diffSql: "ALTER TABLE a ADD COLUMN b int;\n",
+      stackBackend: true,
+    });
+    return Effect.gen(function* () {
+      yield* dbSchemaDeclarativeSync(flags({ apply: Option.some(true) }));
+      expect(s.dbConnectPorts).toContain(STACK_APPLY_PORT);
+      expect(s.dbConnectPorts).not.toContain(54322);
     }).pipe(Effect.provide(s.layer));
   });
 

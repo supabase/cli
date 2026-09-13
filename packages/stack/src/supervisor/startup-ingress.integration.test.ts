@@ -145,6 +145,7 @@ const makeStartupFixture = () =>
       stop: () => Effect.void,
       remove: () => Effect.void,
       cleanup: () => Effect.void,
+      wipePersistentData: () => Effect.void,
     };
     const entry: StackLogEntry = {
       cursor: { opaque: "v1_1" },

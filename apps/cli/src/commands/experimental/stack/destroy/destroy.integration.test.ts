@@ -67,6 +67,7 @@ function setup(options: {
       : options.destroyFailure
         ? Effect.fail(new StackDestructionError({ message: "destroy failed" }))
         : Effect.sync(() => void state.destroyed++),
+    resetDatabase: Effect.die("unused"),
     logs: () => Effect.die("unused"),
     followLogs: () => Stream.empty,
   };

@@ -4,7 +4,8 @@ import process from "node:process";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option, Sink, Stream } from "effect";
+import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { mockOutput, mockTty, processEnvLayer } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -34,6 +35,9 @@ import { DockerRunError } from "../../../command-internal/docker-run.errors.ts";
 import { DockerRun, type DockerRunOpts } from "../../../command-internal/docker-run.service.ts";
 import type { DbDumpFlags } from "./dump.command.ts";
 import { dbDump } from "./dump.handler.ts";
+import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
+import { StackApi } from "../../../command-internal/stack-api.ts";
+import { StackIdSchema, type EffectStack } from "@supabase/stack/effect";
 
 const LOCAL_CONN: PgConnInput = {
   host: "127.0.0.1",
@@ -972,4 +976,307 @@ describe("db dump integration", () => {
       }).pipe(Effect.provide(layer));
     });
   }
+
+  const DUMP_STACK_ID = StackIdSchema.make("d".repeat(64));
+  const unusedDump = () => Effect.die("unused");
+  const unusedDumpEffect = Effect.die("unused");
+  const dumpStackApi = (
+    runtime: { kind: "native" } | { kind: "container"; engine: "docker" },
+    databaseVersion = "17.6.1",
+  ) => {
+    const stack: EffectStack = {
+      id: DUMP_STACK_ID,
+      status: Effect.succeed({
+        id: DUMP_STACK_ID,
+        lifecycle: "running",
+        desiredLifecycle: "running",
+        runtime,
+        endpoints: {},
+        versions: { database: databaseVersion },
+        capabilities: [],
+        artifacts: [],
+      }),
+      credentials: unusedDumpEffect,
+      prepare: unusedDump,
+      start: unusedDump,
+      stop: unusedDumpEffect,
+      destroy: unusedDumpEffect,
+      resetDatabase: unusedDumpEffect,
+      logs: unusedDump,
+      followLogs: () => Stream.empty,
+    };
+    return Layer.succeed(StackApi, {
+      createStack: unusedDump,
+      findStack: () =>
+        Effect.succeed(
+          Option.some({
+            id: DUMP_STACK_ID,
+            projectRoot: "/work/project",
+            name: "default",
+            branchContext: "main",
+            runtime,
+            desiredLifecycle: "running",
+          }),
+        ),
+      discoverStacks: unusedDump,
+      openStack: () => Effect.succeed(stack),
+      inspectStack: unusedDump,
+    });
+  };
+
+  it.live(
+    "dump --local on the stack backend fails instead of using Docker when no stack exists",
+    () => {
+      const { layer, docker } = setup({ isLocal: true, stdout: "-- schema\n" });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(dbDump(flags({ local: Option.some(true) })));
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(failMessage(exit)).toContain("Could not determine the stack runtime");
+        expect(docker.lastOpts).toBeUndefined();
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layer,
+            stackBackendLayer("stack"),
+            Layer.succeed(StackApi, {
+              createStack: unusedDump,
+              findStack: () => Effect.succeed(Option.none()),
+              discoverStacks: unusedDump,
+              openStack: unusedDump,
+              inspectStack: unusedDump,
+            }),
+          ),
+        ),
+      );
+    },
+  );
+
+  it.live("dump --local on a docker stack never uses PGHOST=db", () => {
+    const { layer, docker } = setup({
+      isLocal: true,
+      stdout: "-- schema\n",
+      platform: "darwin",
+    });
+    return Effect.gen(function* () {
+      yield* dbDump(flags({ local: Option.some(true) }));
+      expect(docker.lastOpts?.env["PGHOST"]).toBe("host.docker.internal");
+      expect(docker.lastOpts?.env["PGHOST"]).not.toBe("db");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layer,
+          stackBackendLayer("stack"),
+          dumpStackApi({ kind: "container", engine: "docker" }),
+        ),
+      ),
+    );
+  });
+
+  it.live("dump --local on a docker stack ignores compose SUPABASE_NETWORK_ID", () => {
+    const { layer, docker } = setup({
+      isLocal: true,
+      stdout: "-- schema\n",
+      platform: "darwin",
+      env: { SUPABASE_NETWORK_ID: "supabase_network_test" },
+    });
+    return Effect.gen(function* () {
+      yield* dbDump(flags({ local: Option.some(true) }));
+      expect(docker.lastOpts?.network).toEqual({ _tag: "host" });
+      expect(docker.lastOpts?.env["PGHOST"]).toBe("host.docker.internal");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layer,
+          stackBackendLayer("stack"),
+          dumpStackApi({ kind: "container", engine: "docker" }),
+        ),
+      ),
+    );
+  });
+
+  it.live("dump --local on a native stack uses PATH pg_dump, not a tool container", () => {
+    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+    writeFileSync(
+      join(tmp.current, "supabase", "config.toml"),
+      'project_id = "test"\n[db]\nmajor_version = 17\n',
+    );
+    const spawned: Array<string> = [];
+    const spawner = ChildProcessSpawner.make((command) =>
+      Effect.sync(() => {
+        const name = command._tag === "StandardCommand" ? command.command : "";
+        spawned.push(name);
+        const stdoutText = name === "pg_dump" ? "pg_dump (PostgreSQL) 17.4\n" : "-- schema\n";
+        return ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(1),
+          stdout: Stream.fromIterable([new TextEncoder().encode(stdoutText)]),
+          stderr: Stream.empty,
+          all: Stream.empty,
+          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+          isRunning: Effect.succeed(false),
+          stdin: Sink.drain,
+          kill: () => Effect.void,
+          unref: Effect.succeed(Effect.void),
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+        });
+      }),
+    );
+    const { layer, docker, out } = setup({
+      isLocal: true,
+      workdir: tmp.current,
+    });
+    return Effect.gen(function* () {
+      yield* dbDump(flags({ local: Option.some(true) }));
+      expect(docker.lastOpts).toBeUndefined();
+      expect(spawned).toContain("pg_dump");
+      expect(spawned).toContain("bash");
+      expect(out.stdoutText).toContain("-- schema");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layer,
+          stackBackendLayer("stack"),
+          dumpStackApi({ kind: "native" }),
+          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        ),
+      ),
+    );
+  });
+
+  it.live("dump --local on a native stack reports PATH pg_dump exit, not a container", () => {
+    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+    writeFileSync(
+      join(tmp.current, "supabase", "config.toml"),
+      'project_id = "test"\n[db]\nmajor_version = 17\n',
+    );
+    const spawner = ChildProcessSpawner.make((command) =>
+      Effect.sync(() => {
+        const name = command._tag === "StandardCommand" ? command.command : "";
+        const stdoutText = name === "pg_dump" ? "pg_dump (PostgreSQL) 17.4\n" : "partial\n";
+        return ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(1),
+          stdout: Stream.fromIterable([new TextEncoder().encode(stdoutText)]),
+          stderr: Stream.empty,
+          all: Stream.empty,
+          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(name === "bash" ? 1 : 0)),
+          isRunning: Effect.succeed(false),
+          stdin: Sink.drain,
+          kill: () => Effect.void,
+          unref: Effect.succeed(Effect.void),
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+        });
+      }),
+    );
+    const { layer, docker } = setup({
+      isLocal: true,
+      workdir: tmp.current,
+    });
+    return Effect.gen(function* () {
+      const exit = yield* dbDump(flags({ local: Option.some(true) })).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(failMessage(exit)).toBe("error running pg_dump: exit 1");
+      expect(docker.lastOpts).toBeUndefined();
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layer,
+          stackBackendLayer("stack"),
+          dumpStackApi({ kind: "native" }),
+          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        ),
+      ),
+    );
+  });
+
+  it.live("dump --local on a Windows native stack uses a Docker pg_dump client", () => {
+    const { layer, docker } = setup({
+      isLocal: true,
+      stdout: "-- schema\n",
+      platform: "win32",
+    });
+    return Effect.gen(function* () {
+      yield* dbDump(flags({ local: Option.some(true) }));
+      expect(docker.lastOpts?.env["PGHOST"]).toBe("host.docker.internal");
+      expect(docker.lastOpts?.network).toEqual({ _tag: "host" });
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layer,
+          stackBackendLayer("stack"),
+          dumpStackApi({ kind: "native" }),
+        ),
+      ),
+    );
+  });
+
+  it.live(
+    "dump --local on a Windows native stack asks for Docker Desktop when Docker is missing",
+    () => {
+      const { layer } = setup({
+        isLocal: true,
+        platform: "win32",
+        runFails: true,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* dbDump(flags({ local: Option.some(true) })).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(failMessage(exit)).toContain("failed to run docker");
+        expect(failSuggestion(exit)).toContain("Docker Desktop");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layer,
+            stackBackendLayer("stack"),
+            dumpStackApi({ kind: "native" }),
+          ),
+        ),
+      );
+    },
+  );
+
+  it.live("dump --local on the stack backend uses status().versions.database for the client major", () => {
+    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+    writeFileSync(
+      join(tmp.current, "supabase", "config.toml"),
+      'project_id = "test"\n[db]\nmajor_version = 17\n',
+    );
+    const spawner = ChildProcessSpawner.make((command) =>
+      Effect.sync(() => {
+        const name = command._tag === "StandardCommand" ? command.command : "";
+        const stdoutText = name === "pg_dump" ? "pg_dump (PostgreSQL) 17.4\n" : "-- schema\n";
+        return ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(1),
+          stdout: Stream.fromIterable([new TextEncoder().encode(stdoutText)]),
+          stderr: Stream.empty,
+          all: Stream.empty,
+          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+          isRunning: Effect.succeed(false),
+          stdin: Sink.drain,
+          kill: () => Effect.void,
+          unref: Effect.succeed(Effect.void),
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+        });
+      }),
+    );
+    const { layer } = setup({
+      isLocal: true,
+      workdir: tmp.current,
+    });
+    return Effect.gen(function* () {
+      const exit = yield* dbDump(flags({ local: Option.some(true) })).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(failMessage(exit)).toContain("does not match stack Postgres 16");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layer,
+          stackBackendLayer("stack"),
+          dumpStackApi({ kind: "native" }, "16.6.1"),
+          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        ),
+      ),
+    );
+  });
 });

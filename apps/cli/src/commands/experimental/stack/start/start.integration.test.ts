@@ -44,6 +44,7 @@ import {
   actionability,
   ErrorActionabilityId,
 } from "../../../../shared/telemetry/error-actionability.ts";
+import { noopStackCatalogSetupLayer, StackCatalogSetup } from "../../../../command-internal/stack-catalog-setup.ts";
 
 const project = (): string => {
   const root = mkdtempSync(join(tmpdir(), "supabase-experimental-stack-start-"));
@@ -101,6 +102,7 @@ function fakeStack(
     start,
     stop: Effect.void,
     destroy: Effect.die("destroy not used in start test"),
+    resetDatabase: Effect.die("resetDatabase not used in start test"),
     logs: () => Effect.die("logs not used in start test"),
     followLogs: () => Stream.empty,
   } satisfies EffectStack;
@@ -162,6 +164,7 @@ function handlerLayer(opts: {
       targetLayer,
       apiLayer,
       BunServices.layer,
+      noopStackCatalogSetupLayer,
     ),
   };
 }
@@ -233,6 +236,29 @@ describe("stack start targeting", () => {
       expect(readFileSync(join(root, "supabase", "config.toml"), "utf8")).toBe(configBefore);
     }).pipe(
       Effect.provide(setup.layer),
+      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live("applies catalog setup from pre-exclude config after start returns", () => {
+    const root = project();
+    const applied: Array<{ kind: string; authEnabled: boolean | undefined }> = [];
+    const catalog = Layer.succeed(StackCatalogSetup, {
+      apply: (input) =>
+        Effect.sync(() => {
+          applied.push({
+            kind: input.target.kind,
+            authEnabled: input.target.config.capabilities?.auth?.enabled,
+          });
+        }),
+    });
+    const stack = fakeStack("f".repeat(64), () => Effect.succeed(status("f".repeat(64))));
+    const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
+    return Effect.gen(function* () {
+      yield* stackStart(flags({ exclude: ["auth"] }));
+      expect(applied).toEqual([{ kind: "live", authEnabled: undefined }]);
+    }).pipe(
+      Effect.provide(Layer.mergeAll(setup.layer, catalog)),
       Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
     );
   });

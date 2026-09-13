@@ -21,6 +21,16 @@ import {
   TestDbRunError,
 } from "./test-db.errors.ts";
 import { buildPgProveArgs } from "./test-db.pg-prove-args.ts";
+import { currentStackBackend } from "./stack-backend.ts";
+import {
+  stackProjectDatabaseMajor,
+  stackRequireProjectRuntime,
+} from "./stack-local-database.ts";
+import {
+  rewriteDumpHostForToolContainer,
+  requireHostPgProve,
+  streamHostCommand,
+} from "./postgres-client.run.ts";
 
 const ENABLE_PGTAP = "create extension if not exists pgtap with schema extensions";
 const DISABLE_PGTAP = "drop extension if exists pgtap";
@@ -101,25 +111,37 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
       debug,
     });
 
-    // For a local database the pg_prove container joins the supabase docker
-    // network and reaches postgres via the internal `db:5432` alias; otherwise
-    // it uses host networking.
+    const backend = yield* currentStackBackend;
+    const stackRuntime =
+      backend.kind === "stack" && isLocal ? yield* stackRequireProjectRuntime : undefined;
+    const useHostProve = stackRuntime?.kind === "native" && runtimeInfo.platform !== "win32";
+    const stackContainerProve = backend.kind === "stack" && isLocal && !useHostProve;
+
+    const networkId = Option.getOrUndefined(networkIdFlag);
+    const dumpUsesHostNetwork = networkId === undefined || networkId.length === 0;
     const runEnv = {
-      PGHOST: isLocal ? "db" : conn.host,
-      PGPORT: isLocal ? "5432" : String(conn.port),
+      PGHOST: useHostProve
+        ? "127.0.0.1"
+        : stackContainerProve
+          ? rewriteDumpHostForToolContainer(conn.host, {
+              platform: runtimeInfo.platform,
+              usesHostNetwork: dumpUsesHostNetwork,
+            })
+          : isLocal
+            ? "db"
+            : conn.host,
+      PGPORT: isLocal && backend.kind !== "stack" ? "5432" : String(conn.port),
       PGUSER: conn.user,
       PGPASSWORD: conn.password,
       PGDATABASE: conn.database,
     };
 
     // A non-empty `--network-id` overrides everything (even host mode);
-    // otherwise local uses the generated `supabase_network_<project_id>`
-    // network and remote uses host networking.
-    const networkId = Option.getOrUndefined(networkIdFlag);
+    // otherwise local Compose uses `supabase_network_<project_id>` and remote / stack uses host networking.
     const network =
       networkId !== undefined && networkId.length > 0
         ? { _tag: "named" as const, name: networkId }
-        : isLocal
+        : isLocal && backend.kind !== "stack"
           ? yield* Effect.gen(function* () {
               const toml = yield* readDbToml(fs, path, cliSettings.workdir);
               // The project id is sanitized unconditionally before deriving the
@@ -179,9 +201,43 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
         // Docker Desktop provide the mapping natively.
         const extraHosts =
           runtimeInfo.platform === "linux" ? ["host.docker.internal:host-gateway"] : [];
-        // Stream (rather than inherit) stdout so the verdict can be read on the
-        // way past; every chunk is forwarded byte-exact and unframed. stderr is
-        // teed live, as inheriting it did.
+        const onStdout = (chunk: Uint8Array) =>
+          Effect.suspend(() => {
+            // Split on newlines, carrying the incomplete trailing line into the
+            // next chunk so a verdict straddling a chunk boundary is still seen.
+            const lines = (pendingLine + decoder.decode(chunk, { stream: true })).split("\n");
+            pendingLine = lines.pop() ?? "";
+            for (const line of lines) {
+              if (line.startsWith(VERDICT_PREFIX)) lastVerdict = line;
+              else if (FILES_SUMMARY.test(line)) lastSummary = line;
+            }
+            return output.rawBytes(chunk, "stdout");
+          });
+        if (useHostProve) {
+          const toml = yield* readDbToml(fs, path, cliSettings.workdir);
+          const expectedMajor =
+            (backend.kind === "stack" ? yield* stackProjectDatabaseMajor : undefined) ??
+            toml.majorVersion;
+          yield* requireHostPgProve(expectedMajor);
+          const hostPath = args.hostPaths[0];
+          const hostWorkingDir =
+            hostPath === undefined
+              ? undefined
+              : nodePath.extname(hostPath) !== ""
+                ? nodePath.dirname(hostPath)
+                : hostPath;
+          const hostArgs = ["--ext", ".pg", "--ext", ".sql", "-r", ...args.hostPaths];
+          if (debug) hostArgs.push("--verbose");
+          return yield* streamHostCommand({
+            command: "pg_prove",
+            args: hostArgs,
+            env: runEnv,
+            cwd: hostWorkingDir,
+            onStdout,
+            teeStderr: true,
+            captureStderr: false,
+          });
+        }
         return yield* docker.runStream(
           {
             image: getRegistryImageUrl(PG_PROVE_IMAGE),
@@ -194,20 +250,7 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
             network,
           },
           {
-            onStdout: (chunk) =>
-              Effect.suspend(() => {
-                // Split on newlines, carrying the incomplete trailing line into the
-                // next chunk so a verdict straddling a chunk boundary is still seen.
-                const lines = (pendingLine + decoder.decode(chunk, { stream: true })).split("\n");
-                pendingLine = lines.pop() ?? "";
-                for (const line of lines) {
-                  if (line.startsWith(VERDICT_PREFIX)) lastVerdict = line;
-                  else if (FILES_SUMMARY.test(line)) lastSummary = line;
-                }
-                return output.rawBytes(chunk, "stdout");
-              }),
-            // Teed straight to the terminal as inheriting it did; nothing here reads
-            // the buffered copy, and a pgTAP suite's psql notices are unbounded.
+            onStdout,
             teeStderr: true,
             captureStderr: false,
           },
@@ -223,7 +266,9 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
     // already streamed to stdout.
     if (exitCode !== 0) {
       return yield* Effect.fail(
-        new TestDbRunError({ message: `error running container: exit ${exitCode}` }),
+        new TestDbRunError({
+          message: `error running ${useHostProve ? "pg_prove" : "container"}: exit ${exitCode}`,
+        }),
       );
     }
 

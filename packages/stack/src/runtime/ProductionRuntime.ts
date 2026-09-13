@@ -967,6 +967,26 @@ export const makeProductionRuntime = (
         waitForReadiness,
         bootstrapDatabase: bootstrapWorkloadDatabase,
         logStore: logs,
+        wipeDatabaseData: Effect.gen(function* () {
+          const dataPath = pathService.join(paths.data, "database");
+          const key = { stackId: options.stackId, workloadId: "database:database" };
+          const exists = yield* fileSystem.exists(dataPath).pipe(Effect.orElseSucceed(() => false));
+          if (exists)
+            yield* fileSystem
+              .remove(dataPath, { recursive: true })
+              .pipe(
+                Effect.mapError((error) =>
+                  driverError(key, "Unable to wipe native database data", error),
+                ),
+              );
+          yield* fileSystem
+            .makeDirectory(dataPath, { recursive: true, mode: 0o700 })
+            .pipe(
+              Effect.mapError((error) =>
+                driverError(key, "Unable to recreate native database data directory", error),
+              ),
+            );
+        }),
       }).pipe(
         Effect.mapError((error) => preparationError("Unable to initialize native runtime", error)),
       );

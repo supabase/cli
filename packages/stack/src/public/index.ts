@@ -29,3 +29,26 @@ export type {
   PreparedCapability,
   PrepareStackResult,
 } from "./EffectStack.ts";
+export { databaseBootstrapIdentity } from "../model/DatabaseBootstrap.ts";
+export { createEphemeralPostgres, resolveEphemeralPostgresRelease } from "./EphemeralPostgres.ts";
+export type {
+  CreateEphemeralPostgresOptions,
+  EffectEphemeralPostgres,
+  EphemeralPostgresRelease,
+  EphemeralPostgresServices,
+  EphemeralPostgresSettings,
+} from "./EphemeralPostgres.ts";
+export {
+  schemaInit,
+  SCHEMA_INIT_CAPABILITY_NAMES,
+  schemaInitArtifactIdentity,
+} from "./SchemaInit.ts";
+export type {
+  SchemaInitCapabilityName,
+  SchemaInitEphemeralTarget,
+  SchemaInitLiveTarget,
+  SchemaInitOptions,
+  SchemaInitSecrets,
+  SchemaInitServices,
+  SchemaInitTarget,
+} from "./SchemaInit.ts";

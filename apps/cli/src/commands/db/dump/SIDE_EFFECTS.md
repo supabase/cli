@@ -1,7 +1,8 @@
 # `supabase db dump`
 
 Native TypeScript port (`dump.handler.ts`). Streams a `pg_dump`/`pg_dumpall`
-script run inside the local Postgres image to stdout or `--file`.
+script run inside the local Postgres image (or PATH `pg_dump`/`pg_dumpall` on
+a native stack) to stdout or `--file`.
 
 ## Files Read
 
@@ -43,11 +44,11 @@ script run inside the local Postgres image to stdout or `--file`.
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                           |
-| ---- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success                                                                                                                             |
-| `1`  | `--use-copy`/`--exclude` without `--data-only`; mutually-exclusive flags; bad `--file` path; connection failure; container exit ≠ 0 |
-| `1`  | `--project-ref` set with a resolved target other than linked (see Notes / Divergences)                                              |
+| Code | Condition                                                                                                                                                          |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `0`  | success                                                                                                                                                            |
+| `1`  | `--use-copy`/`--exclude` without `--data-only`; mutually-exclusive flags; bad `--file` path; connection failure; container or PATH `pg_dump`/`pg_dumpall` exit ≠ 0 |
+| `1`  | `--project-ref` set with a resolved target other than linked (see Notes / Divergences)                                                                             |
 
 ## Output
 

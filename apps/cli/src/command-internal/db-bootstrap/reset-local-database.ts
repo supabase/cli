@@ -28,12 +28,20 @@ import {
 } from "../../shared/telemetry/error-actionability.ts";
 import { aqua, yellow } from "../colors.ts";
 import { CommandSettings } from "../../config/command-settings.service.ts";
-import { checkDbToml, loadProjectEnv } from "../db-config.toml-read.ts";
+import { checkDbToml, loadProjectEnv, readDbToml } from "../db-config.toml-read.ts";
+import { DbConnection } from "../db-connection.service.ts";
+import { loadLocalProjectContext } from "../local-project-context.ts";
+import { migrateAndSeed } from "../migrate-and-seed.ts";
 import { seedBucketsRun } from "../seed-buckets.ts";
 import { awaitStorageReady } from "./await-storage-ready.ts";
+import { resolveResetSeedConfig } from "./db-setup.ts";
 import { buildLocalDbContainerInputs } from "./local-container-inputs.ts";
 import { isLocalDbRunning } from "./local-db-running.ts";
 import { recreateLocalDatabase } from "./recreate-local-database.ts";
+import { currentStackBackend } from "../stack-backend.ts";
+import { stackLocalDatabaseConn, stackOpenReadyProject } from "../stack-local-database.ts";
+import { loadStackConfig } from "../../commands/experimental/stack/stack-config.ts";
+import { StackCatalogSetup } from "../stack-catalog-setup.ts";
 
 /** The local database container is not running. */
 class ResetLocalDbNotRunningError extends Data.TaggedError("ResetLocalDbNotRunningError")<{
@@ -41,6 +49,15 @@ class ResetLocalDbNotRunningError extends Data.TaggedError("ResetLocalDbNotRunni
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.startStack;
+  }
+}
+
+class ResetLocalDbFailedError extends Data.TaggedError("ResetLocalDbFailedError")<{
+  readonly message: string;
+  readonly suggestion?: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dbConnection;
   }
 }
 
@@ -60,20 +77,22 @@ const PLAIN_FULL_RESET: ResetLocalDatabaseInput = {
   seedFlags: { noSeed: false, sqlPaths: [] },
 };
 
+const notRunning = () =>
+  new ResetLocalDbNotRunningError({
+    message: `${aqua("supabase start")} is not running.`,
+  });
+
+const resetFailed = (message: string) => new ResetLocalDbFailedError({ message });
+
 /** Resets the local database in-process. See this module's own header for the full design rationale. */
 export const resetLocalDatabase = Effect.fnUntraced(function* (
   input: ResetLocalDatabaseInput = PLAIN_FULL_RESET,
 ) {
+  const backend = yield* currentStackBackend;
   const output = yield* Output;
   const cliSettings = yield* CommandSettings;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const runtimeInfo = yield* RuntimeInfo;
-  const networkIdFlag = yield* NetworkIdFlag;
-  // Threaded into `buildLocalDbContainerInputs`'s `setup.debug`, so a failed fresh-volume
-  // Realtime/Storage/Auth migrate job on the PG15 recreate path tees its own stderr.
-  const debug = yield* DebugFlag;
 
   const workdir = cliSettings.workdir;
   // Load the project env first so a `SUPABASE_EXPERIMENTAL` set only in `supabase/.env` is
@@ -82,9 +101,103 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
   const yes = yield* resolveYesWithProjectEnv(projectEnv);
   const experimental = yield* resolveExperimentalWithProjectEnv(projectEnv);
 
-  // Validate config before checking whether the container is running, so a malformed config
+  // Validate config before checking whether the database is running, so a malformed config
   // aborts before the local database is recreated — the same pattern `db start`/`db push` use.
   yield* checkDbToml(fs, path, workdir);
+
+  if (backend.kind === "stack") {
+    const opened = yield* stackOpenReadyProject;
+    if (Option.isNone(opened)) return yield* Effect.fail(notRunning());
+    yield* output.raw(`Resetting local database${toLogMessage(input.version)}\n`, "stderr");
+    yield* opened.value.stack.resetDatabase.pipe(
+      Effect.catchTag("StackNotRunningError", () => Effect.fail(notRunning())),
+      Effect.mapError((cause) => resetFailed(`failed to reset local database: ${cause.message}`)),
+    );
+    const catalog = yield* Effect.serviceOption(StackCatalogSetup);
+    if (Option.isNone(catalog))
+      return yield* resetFailed("stack catalog setup is unavailable");
+    const stackConfig = yield* loadStackConfig(workdir).pipe(
+      Effect.mapError((cause) => resetFailed(cause.message)),
+    );
+    const toml = yield* readDbToml(fs, path, workdir);
+    yield* catalog.value
+      .apply({
+        target: {
+          kind: "live",
+          stack: opened.value.stack,
+          projectRoot: workdir,
+          config: stackConfig,
+        },
+        overlay: {
+          webhooks: "config",
+          webhooksEnabled: toml.webhooksEnabled,
+          apiAutoExposeNewTables: toml.baseline.apiAutoExposeNewTables,
+          vault: toml.vault,
+          workdir,
+        },
+      })
+      .pipe(Effect.mapError((cause) => resetFailed(cause.message)));
+    const dbConn = yield* DbConnection;
+    const conn = yield* stackLocalDatabaseConn.pipe(
+      Effect.mapError((cause) => new ResetLocalDbNotRunningError({ message: cause.message })),
+    );
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const session = yield* dbConn
+          .connect(conn, { isLocal: true, dnsResolver: "native" })
+          .pipe(
+            Effect.mapError((cause) =>
+              resetFailed(`failed to connect after reset: ${cause.message}`),
+            ),
+          );
+        yield* migrateAndSeed(session, fs, path, workdir, input.version, {
+          migrationsEnabled: toml.migrationsEnabled,
+          seed: resolveResetSeedConfig(toml.seed, input.seedFlags, path),
+          experimental,
+          pgDeltaEnabled: toml.pgDelta.enabled,
+          schemaPaths: toml.schemaPaths,
+          localDatabaseWebhooksEnabled: toml.webhooksEnabled,
+        }).pipe(Effect.mapError((cause) => resetFailed(cause.message)));
+      }),
+    );
+    const after = yield* opened.value.stack.status.pipe(
+      Effect.mapError((cause) =>
+        resetFailed(`failed to inspect stack after reset: ${cause.message}`),
+      ),
+    );
+    const storage = after.capabilities.find((capability) => capability.name === "storage");
+    if (storage?.state === "ready") {
+      const context = yield* loadLocalProjectContext(workdir, (message) => resetFailed(message));
+      yield* seedBucketsRun({
+        projectRef: "",
+        emitSummary: false,
+        interactive: false,
+        yes,
+        resolvedConfig: { config: context.config, document: context.loaded?.document },
+        projectEnvValues: projectEnv,
+      }).pipe(
+        Effect.catchTag("SeedConfigLoadError", (error) =>
+          output.raw(
+            `${yellow("WARNING:")} skipped seeding storage buckets: ${error.message}\n`,
+            "stderr",
+          ),
+        ),
+      );
+    }
+    const branch = Option.getOrElse(yield* detectGitBranch(workdir), () => "main");
+    yield* output.raw(
+      `Finished ${aqua("supabase db reset")} on branch ${aqua(branch)}.\n`,
+      "stderr",
+    );
+    return;
+  }
+
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const runtimeInfo = yield* RuntimeInfo;
+  const networkIdFlag = yield* NetworkIdFlag;
+  // Threaded into `buildLocalDbContainerInputs`'s `setup.debug`, so a failed fresh-volume
+  // Realtime/Storage/Auth migrate job on the PG15 recreate path tees its own stderr.
+  const debug = yield* DebugFlag;
 
   // Error if the local db container is down.
   const running = yield* isLocalDbRunning(
@@ -95,11 +208,7 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
     Option.getOrUndefined(cliSettings.projectId),
   );
   if (!running) {
-    return yield* Effect.fail(
-      new ResetLocalDbNotRunningError({
-        message: `${aqua("supabase start")} is not running.`,
-      }),
-    );
+    return yield* Effect.fail(notRunning());
   }
   // "Resetting local database…" then recreate + migrate + seed.
   yield* output.raw(`Resetting local database${toLogMessage(input.version)}\n`, "stderr");

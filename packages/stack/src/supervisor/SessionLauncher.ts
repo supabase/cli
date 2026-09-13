@@ -17,6 +17,8 @@ export interface SessionLauncher {
   readonly launch: (plan: ExecutionPlan) => Effect.Effect<SessionLaunch, RuntimeDriverError>;
   /** Stops and removes every workload started in this session in reverse order. */
   readonly stop: Effect.Effect<void, RuntimeDriverError>;
+  /** Drops session ownership after the caller already stopped those workloads. */
+  readonly forget: (workloadIds: ReadonlyArray<string>) => Effect.Effect<void>;
   /** Whether the most recent launch/rollback cleanup completed exactly. */
   readonly cleanupProven: Effect.Effect<boolean>;
   /** Clears the session after stack-wide runtime cleanup has completed. */
@@ -190,9 +192,14 @@ export const makeSessionLauncher = (options: {
       });
 
     const stop = Effect.suspend(() => Ref.get(session).pipe(Effect.flatMap(cleanup)));
+    const forget = (workloadIds: ReadonlyArray<string>) =>
+      Ref.update(session, (current) =>
+        current.filter((entry) => !workloadIds.includes(entry.key.workloadId)),
+      );
     return {
       launch,
       stop,
+      forget,
       cleanupProven: Ref.get(cleanupProven),
       clear: Ref.set(session, []),
     } satisfies SessionLauncher;

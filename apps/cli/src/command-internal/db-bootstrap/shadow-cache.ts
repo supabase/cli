@@ -171,7 +171,7 @@ const shadowBaselineEmbeddedDigest = (): string =>
     .digest("hex"));
 
 /** JSON with recursively key-sorted objects, so `db.settings`' own property order cannot change the key. */
-function canonicalJson(value: unknown): string {
+export function canonicalJson(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
   const entries = Object.entries(value)
@@ -363,6 +363,8 @@ export interface ShadowBaselineRetentionOpts {
   readonly maxAgeMs?: number;
   /** Never evict this published tar, even if it is older than the TTL or over the cap. */
   readonly retainFileName?: string;
+  /** Defaults to {@link isShadowBaselineTar}. */
+  readonly isPublishedTar?: (fileName: string) => boolean;
 }
 
 /**
@@ -377,8 +379,9 @@ export function shadowBaselineTarsToEvict(
   const keep = opts.keep ?? SHADOW_BASELINE_KEEP;
   const maxAgeMs = opts.maxAgeMs ?? SHADOW_BASELINE_MAX_AGE_MS;
   const retain = opts.retainFileName;
+  const isPublishedTar = opts.isPublishedTar ?? isShadowBaselineTar;
   const candidates = entries.filter(
-    (entry) => isShadowBaselineTar(entry.fileName) && entry.fileName !== retain,
+    (entry) => isPublishedTar(entry.fileName) && entry.fileName !== retain,
   );
   const aged = new Set(
     candidates.filter((entry) => now - entry.mtimeMs > maxAgeMs).map((entry) => entry.fileName),
@@ -469,7 +472,10 @@ const sweepShadowBaselineRetention = <E>(
   });
 
 /** Refresh mtime on a warm hit so frequently used keys survive LRU/TTL. Best-effort. */
-const touchShadowBaselineTar = (fs: FileSystem.FileSystem, tarPath: string): Effect.Effect<void> =>
+export const touchShadowBaselineTar = (
+  fs: FileSystem.FileSystem,
+  tarPath: string,
+): Effect.Effect<void> =>
   Effect.gen(function* () {
     const now = new Date(yield* Clock.currentTimeMillis);
     yield* fs.utimes(tarPath, now, now);
