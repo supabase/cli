@@ -68,8 +68,9 @@ Every applicable command must preserve these invariants:
    [profile loader's schema](src/command-internal/profile-load.ts). Both the
    [E2E harness](../../packages/cli-test-helpers/src/harness.ts) and
    [live fixture](tests/helpers/live.ts) depend on file-path mode.
-5. Sibling layers in `Layer.mergeAll` each receive required services explicitly. Production layer
-   changes require a CLI build and a targeted binary smoke test.
+5. Sibling layers in `Layer.mergeAll` each receive required services explicitly. Any production
+   path that can reach `promptYesNo` provides `stdinLayer`; handler-only tests do not prove this
+   wiring. Production layer changes require a CLI build and a targeted binary smoke test.
 6. Honor both output flags. `-o`/`--output` takes precedence over
    `--output-format`; a new command may reject `--output` with guidance to use
    `--output-format`, as established by `config diff` and `config pull`.

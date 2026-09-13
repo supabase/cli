@@ -1,9 +1,10 @@
-import { Option } from "effect";
+import { Layer, Option } from "effect";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { Command, Flag } from "effect/unstable/cli";
 
 import { PROJECT_REF_PATTERN } from "../../../config/project-ref.service.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
+import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
 import { GLOBAL_OUTPUT_FORMATS } from "../../../command-internal/global-flags.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
@@ -75,5 +76,5 @@ export const configPullCommand = Command.make("pull", config).pipe(
     },
   ]),
   Command.withHandler(configPullHandler),
-  Command.provide(managementApiRuntimeLayer(["config", "pull"])),
+  Command.provide(Layer.mergeAll(managementApiRuntimeLayer(["config", "pull"]), stdinLayer)),
 );
