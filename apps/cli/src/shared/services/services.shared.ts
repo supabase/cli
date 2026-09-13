@@ -3,7 +3,7 @@ import { makeApiClient, type ApiClient } from "@supabase/api/effect";
 import { Data, Duration, Effect, Exit, Redacted } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import { renderGlamourTable } from "../../output/legacy-glamour-table.ts";
+import { renderGlamourTable } from "../../output/glamour-table.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -47,10 +47,9 @@ export interface LocalServiceImageOptions {
   readonly slimCurrentPinOnly?: boolean;
 }
 
-// Mirrors Go's `utils.ProjectRefPattern` (`apps/cli-go/internal/utils/misc.go`).
-// Validating the ref before it reaches the management API path param or the
-// tenant gateway hostname keeps a tampered/malformed value from redirecting the
-// service-role key to an attacker-controlled host.
+// Validates the ref before it reaches the management API path param or the tenant gateway
+// hostname, so a tampered/malformed value can't redirect the service-role key to an
+// attacker-controlled host.
 const PROJECT_REF_PATTERN = /^[a-z]{20}$/;
 
 interface ServiceImageSpec {
@@ -227,7 +226,7 @@ export interface ServiceFetchConfig {
 }
 
 /** @public */
-export class ServiceVersionNotFoundError extends Data.TaggedError("ServiceVersionNotFoundError")<{
+class ServiceVersionNotFoundError extends Data.TaggedError("ServiceVersionNotFoundError")<{
   readonly service: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -304,9 +303,8 @@ function hasProjectAccessKey<T extends ProjectApiKey>(keys: ReadonlyArray<T>): b
 const authenticatedRequest = (url: string, accessKey: Redacted.Redacted<string>) => {
   const key = Redacted.value(accessKey);
   const request = HttpClientRequest.get(url).pipe(HttpClientRequest.setHeader("apikey", key));
-  // New-style `sb_…` keys authenticate via the `apikey` header alone; older JWT
-  // keys additionally require a bearer token. Mirrors the conditional auth in
-  // `apps/cli-go/pkg/fetcher/gateway.go` and `command-internal/legacy-tenant-versions.ts`.
+  // New-style `sb_…` keys authenticate via the `apikey` header alone; older JWT keys also
+  // need a bearer token.
   return key.startsWith("sb_")
     ? request
     : request.pipe(HttpClientRequest.setHeader("Authorization", `Bearer ${key}`));
@@ -441,9 +439,8 @@ export function renderServicesWarning(rows: ReadonlyArray<ServiceVersionRow>): s
 }
 
 /**
- * Renders the linked-version mismatch warning for stderr. In text mode the
- * `WARNING:` prefix is colorized (matching Go's `utils.Yellow`); machine modes
- * keep it plain so the stderr line stays parseable.
+ * Renders the linked-version mismatch warning for stderr. The `WARNING:` prefix is colorized
+ * in text mode; machine modes keep it plain so the stderr line stays parseable.
  */
 export function formatServicesWarning(message: string, textMode: boolean): string {
   const lines = message.split("\n");
@@ -455,9 +452,8 @@ export function formatServicesWarning(message: string, textMode: boolean): strin
 export function fetchLinkedServiceVersions(input: ServiceFetchConfig) {
   return Effect.gen(function* () {
     const exit = yield* Effect.gen(function* () {
-      // Reject malformed refs before they reach the management API path param or
-      // the tenant gateway hostname (`https://<ref>.<host>`). The override is
-      // test-only, so it bypasses the check.
+      // Malformed refs are rejected before reaching the management API path param or the
+      // tenant gateway hostname; the test-only override bypasses this check.
       if (
         input.tenantBaseUrlOverride === undefined &&
         !PROJECT_REF_PATTERN.test(input.projectRef)

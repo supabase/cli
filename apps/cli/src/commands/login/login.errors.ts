@@ -6,24 +6,17 @@ import {
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
 
-/**
- * `ErrMissingToken`. The reference implementation Aqua-styles the
- * `--token` / `SUPABASE_ACCESS_TOKEN` substrings, but the legacy port renders
- * styling as plain text (color is stripped on a non-TTY anyway), so this is
- * byte-exact.
- */
-export const LEGACY_LOGIN_MISSING_TOKEN_MESSAGE =
+export const LOGIN_MISSING_TOKEN_MESSAGE =
   `Cannot use automatic login flow inside non-TTY environments. ` +
   `Please provide --token flag or set the SUPABASE_ACCESS_TOKEN environment variable.`;
 
 /**
- * Token-path save failure — message format `cannot save provided token: %w`
- * (`login.go:171`). Only ever constructed on the provided-token paths (`--token`
- * / `SUPABASE_ACCESS_TOKEN` / piped stdin); the browser flow saves via the raw
- * `credentials.saveAccessToken`. A malformed provided token is not fixable by
- * `supabase login`, so the remediation is to correct that input.
+ * Token-path save failure. Only ever constructed on the provided-token paths (`--token` /
+ * `SUPABASE_ACCESS_TOKEN` / piped stdin); the browser flow saves via `credentials.saveAccessToken`
+ * directly. A malformed provided token isn't fixable by `supabase login`, so the remediation is
+ * to correct that input.
  */
-export class LegacyLoginSaveTokenError extends Data.TaggedError("LegacyLoginSaveTokenError")<{
+export class LoginSaveTokenError extends Data.TaggedError("LoginSaveTokenError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -31,8 +24,8 @@ export class LegacyLoginSaveTokenError extends Data.TaggedError("LegacyLoginSave
   }
 }
 
-/** Non-TTY environment with no token supplied (`login.go:34-35`). */
-export class LegacyLoginMissingTokenError extends Data.TaggedError("LegacyLoginMissingTokenError")<{
+/** Non-TTY environment with no token supplied. */
+export class LoginMissingTokenError extends Data.TaggedError("LoginMissingTokenError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -41,12 +34,11 @@ export class LegacyLoginMissingTokenError extends Data.TaggedError("LegacyLoginM
 }
 
 /**
- * A single login-session poll/parse failure. Carries the underlying message so
- * the retry notifier can print `<err>\nRetry (n/2): ` exactly like Go's
- * `newErrorCallback` (`login.go:159-166`); also the value `verifyWithRetries`
- * surfaces after the final attempt.
+ * A single login-session poll/parse failure. Carries the underlying message so the retry
+ * notifier can print `<err>\nRetry (n/2): `; also the value `verifyWithRetries` surfaces after
+ * the final attempt.
  */
-export class LegacyLoginVerificationError extends Data.TaggedError("LegacyLoginVerificationError")<{
+export class LoginVerificationError extends Data.TaggedError("LoginVerificationError")<{
   readonly message: string;
   /** HTTP status of a non-200 poll response, when one was received. */
   readonly statusCode?: number;
@@ -64,14 +56,11 @@ export class LegacyLoginVerificationError extends Data.TaggedError("LegacyLoginV
 }
 
 /**
- * All verification retries exhausted (`login.go:214-216`). Carries the LAST
- * poll failure's discriminant so classification distinguishes "the user never
- * completed the browser flow" (the endpoint keeps returning a pending 4xx, or
- * no signal) from a genuine platform problem (5xx / transport). See the Go
- * poll protocol: `pollForAccessToken` treats every non-200 as a retryable
- * error (`login.go:132-157`, `pkg/fetcher/http.go:102-113`).
+ * All verification retries exhausted. Carries the last poll failure's discriminant so
+ * classification distinguishes "the user never completed the browser flow" (a pending 4xx, or
+ * no signal) from a genuine platform problem (5xx or transport).
  */
-export class LegacyLoginFailedError extends Data.TaggedError("LegacyLoginFailedError")<{
+export class LoginFailedError extends Data.TaggedError("LoginFailedError")<{
   readonly message: string;
   readonly statusCode?: number;
   readonly network?: boolean;
@@ -96,8 +85,8 @@ export class LegacyLoginFailedError extends Data.TaggedError("LegacyLoginFailedE
   }
 }
 
-/** ECDH / AES-GCM decryption failure — message `cannot decrypt access token` (`login.go:47`). */
-export class LegacyLoginDecryptError extends Data.TaggedError("LegacyLoginDecryptError")<{
+/** ECDH / AES-GCM decryption failure; the message is `cannot decrypt access token`. */
+export class LoginDecryptError extends Data.TaggedError("LoginDecryptError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -105,8 +94,8 @@ export class LegacyLoginDecryptError extends Data.TaggedError("LegacyLoginDecryp
   }
 }
 
-/** ECDH keypair generation failure — message `cannot generate crypto keys` (`login.go:66`). */
-export class LegacyLoginCryptoError extends Data.TaggedError("LegacyLoginCryptoError")<{
+/** ECDH keypair generation failure; the message is `cannot generate crypto keys`. */
+export class LoginCryptoError extends Data.TaggedError("LoginCryptoError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {

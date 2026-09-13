@@ -1,88 +1,52 @@
 /**
  * Storage container spec builder, plus the vector-bucket env helper
- * `legacyAppendStorageVectorEnv`.
- *
- * Enabled gate: `isStorageEnabled` — `config.storage.enabled &&
- * !isContainerExcluded(storageImage, excluded)`. Gating itself is the
- * caller's responsibility (`start.services.ts`'s `storage` catalog entry,
- * `enabledGate: "storage.enabled"`); this module only builds the container
- * spec once called.
- *
- * `imageTransformationEnabled` (below) is a COMPOUND value (`storage.enabled`
- * is already implied by the fact Storage itself is starting) &&
- * `config.storage.image_transformation?.enabled &&
- * !isContainerExcluded(imgproxyImage, excluded)`, NOT the bare
- * `config.storage.image_transformation?.enabled` field alone. The caller
- * must compute this compound boolean exactly once and pass the SAME value
- * both here (`ENABLE_IMAGE_TRANSFORMATION`) and to the decision of whether
- * to actually start the ImgProxy container
- * (`imgproxy.service.ts`'s `legacyBuildImgproxyContainerSpec` precondition)
- * — the two must never disagree.
- *
- * `s3ProtocolEnabled` is `config.storage.s3_protocol.enabled` directly (no
- * exclusion factor — S3 protocol support is a Storage feature flag, not a
- * separate container). The embedded default config template always sets
- * `[storage.s3_protocol]\nenabled = true` and is merged in as the base layer
- * before any real config loads, so this section is always present in
- * practice. `@supabase/config`'s schema mirrors this by decoding
- * `storage.s3_protocol` unconditionally (never `optionalKey`, unlike
- * `image_transformation`), so the raw decoded boolean needs no extra
- * PRESENCE check — but the caller is still responsible for applying
- * `SUPABASE_STORAGE_S3_PROTOCOL_ENABLED`/`SUPABASE_STORAGE_VECTOR_ENABLED`
- * (the same override mechanism `imageTransformationEnabled`'s own compound
- * gate already accounts for) before passing
- * `s3ProtocolEnabled`/`vectorBucketsEnabled` in.
+ * `appendStorageVectorEnv`. Gated on `config.storage.enabled` by the caller.
  */
 
 import type { CliConfig } from "@supabase/config";
 
-import { legacyServiceContainerName } from "../../../command-internal/legacy-docker-ids.ts";
-import type { LegacyStartContainerSpec } from "../../../command-internal/db-bootstrap/docker-create-args.ts";
-import { ramInBytes } from "../../../command-internal/legacy-size-units.ts";
-import { legacyEnvOrDefault } from "../lib/legacy-env-or-default.ts";
+import { serviceContainerName } from "../../../command-internal/docker-ids.ts";
+import type { StartContainerSpec } from "../../../command-internal/db-bootstrap/docker-create-args.ts";
+import { ramInBytes } from "../../../command-internal/size-units.ts";
+import { envOrDefault } from "../lib/env-or-default.ts";
 import {
-  legacyStartInternalDbUrl,
-  legacyStartInternalDbPassword,
+  startInternalDbUrl,
+  startInternalDbPassword,
 } from "../../../command-internal/db-bootstrap/internal-db-connection.ts";
-import {
-  legacySlimWgetHealthcheck,
-  legacyUsesSlimRuntime,
-} from "../../../command-internal/db-bootstrap/slim-runtime.ts";
+import { slimWgetHealthcheck } from "../../../command-internal/db-bootstrap/slim-runtime.ts";
+import { usesSlimImageRuntime } from "../../../shared/services/slim-images.ts";
 
 /** Both the container's `FILE_STORAGE_BACKEND_PATH` and its named-volume mount target. */
-const LEGACY_STORAGE_DOCKER_PATH = "/mnt";
+const STORAGE_DOCKER_PATH = "/mnt";
 
-export interface LegacyStorageVectorEnvInput {
-  /** The `db` container's own Docker name (`legacyServiceContainerName("db", projectId)`). */
+export interface StorageVectorEnvInput {
+  /** The `db` container's own Docker name (`serviceContainerName("db", projectId)`). */
   readonly dbHost: string;
-  /** See `legacyStartInternalDbPassword` (`../../../shared/db-bootstrap/internal-db-connection.ts`). */
+  /** See {@link startInternalDbPassword}. */
   readonly dbPassword: string;
   readonly projectEnvValues?: Readonly<Record<string, string>>;
 }
 
-/**
- * Only called when `config.storage.vector.enabled` — note the TOML key is
- * `[storage.vector]`, not `vector_buckets`.
- */
-export function legacyAppendStorageVectorEnv(
+/** Called only when `config.storage.vector.enabled` — the TOML key is `[storage.vector]`, not `vector_buckets`. */
+export function appendStorageVectorEnv(
   env: Readonly<Record<string, string>>,
-  input: LegacyStorageVectorEnvInput,
+  input: StorageVectorEnvInput,
 ): Record<string, string> {
-  const defaultVectorUrl = legacyStartInternalDbUrl("postgres", input.dbHost, input.dbPassword);
+  const defaultVectorUrl = startInternalDbUrl("postgres", input.dbHost, input.dbPassword);
   return {
     ...env,
-    VECTOR_ENABLED: legacyEnvOrDefault("VECTOR_ENABLED", "true", input.projectEnvValues),
-    VECTOR_BUCKET_PROVIDER: legacyEnvOrDefault(
+    VECTOR_ENABLED: envOrDefault("VECTOR_ENABLED", "true", input.projectEnvValues),
+    VECTOR_BUCKET_PROVIDER: envOrDefault(
       "VECTOR_BUCKET_PROVIDER",
       "pgvector",
       input.projectEnvValues,
     ),
-    VECTOR_STORE_MIGRATIONS_ENABLED: legacyEnvOrDefault(
+    VECTOR_STORE_MIGRATIONS_ENABLED: envOrDefault(
       "VECTOR_STORE_MIGRATIONS_ENABLED",
       "true",
       input.projectEnvValues,
     ),
-    VECTOR_DATABASE_URL: legacyEnvOrDefault(
+    VECTOR_DATABASE_URL: envOrDefault(
       "VECTOR_DATABASE_URL",
       defaultVectorUrl,
       input.projectEnvValues,
@@ -90,65 +54,59 @@ export function legacyAppendStorageVectorEnv(
   };
 }
 
-export interface LegacyStorageEnvInput {
+export interface StorageEnvInput {
   /**
-   * The storage target-migration pin, resolved from a version-pin file, not
-   * from `@supabase/config`'s schema. Out of scope for this builder (like
-   * `image`); the caller resolves it and typically passes `""` when the
-   * file is absent.
+   * The storage target-migration pin, resolved by the caller from a version-pin file (not from
+   * `@supabase/config`'s schema); typically `""` when the file is absent.
    */
   readonly targetMigration: string;
-  /** `LegacyLocalConfigValues.anonKey`. */
+  /** `LocalConfigValues.anonKey`. */
   readonly anonKey: string;
-  /** `LegacyLocalConfigValues.serviceRoleKey`. */
+  /** `LocalConfigValues.serviceRoleKey`. */
   readonly serviceRoleKey: string;
-  /** `LegacyLocalConfigValues.jwtSecret`. */
+  /** `LocalConfigValues.jwtSecret`. */
   readonly jwtSecret: string;
-  /** `legacyResolveLocalJwks`'s resolved JWKS JSON string. */
+  /** `resolveLocalJwks`'s resolved JWKS JSON string. */
   readonly jwks: string;
-  /** The `db` container's own Docker name (`legacyServiceContainerName("db", projectId)`). */
+  /** The `db` container's own Docker name (`serviceContainerName("db", projectId)`). */
   readonly dbHost: string;
-  /** See `legacyStartInternalDbPassword` (`../../../shared/db-bootstrap/internal-db-connection.ts`). */
+  /** See {@link startInternalDbPassword}. */
   readonly dbPassword: string;
   /** `config.storage.file_size_limit`, e.g. `"50MiB"` — converted to a byte count via `ramInBytes`. */
   readonly fileSizeLimit: CliConfig["storage"]["file_size_limit"];
-  /** `LegacyLocalConfigValues.storageS3Region`. */
+  /** `LocalConfigValues.storageS3Region`. */
   readonly s3Region: string;
-  /** `LegacyLocalConfigValues.storageS3AccessKeyId`. */
+  /** `LocalConfigValues.storageS3AccessKeyId`. */
   readonly s3AccessKeyId: string;
-  /** `LegacyLocalConfigValues.storageS3SecretAccessKey`. */
+  /** `LocalConfigValues.storageS3SecretAccessKey`. */
   readonly s3SecretAccessKey: string;
-  /** The compound image-transformation-enabled boolean — see this file's header for why this is NOT the bare config field. */
+  /**
+   * The compound image-transformation-enabled boolean (`image_transformation?.enabled` plus
+   * image exclusion), not the bare config field. Must equal the value used to decide whether the
+   * ImgProxy container itself starts.
+   */
   readonly imageTransformationEnabled: boolean;
-  /** The ImgProxy container's own Docker name (`legacyServiceContainerName("imgproxy", projectId)`). */
+  /** The ImgProxy container's own Docker name (`serviceContainerName("imgproxy", projectId)`). */
   readonly imgproxyHost: string;
-  /** `config.storage.s3_protocol.enabled` — see this file's header for why no extra presence check is needed. */
+  /** `config.storage.s3_protocol.enabled`; the schema decodes this key unconditionally, so no separate presence check is needed. */
   readonly s3ProtocolEnabled: boolean;
   /** `config.storage.vector.enabled`. */
   readonly vectorBucketsEnabled: boolean;
   readonly projectEnvValues?: Readonly<Record<string, string>>;
 }
 
-/**
- * Pure env-var builder, split out from {@link legacyBuildStorageContainerSpec}
- * so the full env set — including the conditional vector-bucket branch — is
- * unit-testable without constructing a whole container spec.
- */
-export function legacyBuildStorageEnv(input: LegacyStorageEnvInput): Record<string, string> {
+/** Builds the env vars for the Storage container, including the conditional vector-bucket branch. */
+export function buildStorageEnv(input: StorageEnvInput): Record<string, string> {
   const env: Record<string, string> = {
     DB_MIGRATIONS_FREEZE_AT: input.targetMigration,
     ANON_KEY: input.anonKey,
     SERVICE_KEY: input.serviceRoleKey,
     AUTH_JWT_SECRET: input.jwtSecret,
     JWT_JWKS: input.jwks,
-    DATABASE_URL: legacyStartInternalDbUrl(
-      "supabase_storage_admin",
-      input.dbHost,
-      input.dbPassword,
-    ),
+    DATABASE_URL: startInternalDbUrl("supabase_storage_admin", input.dbHost, input.dbPassword),
     FILE_SIZE_LIMIT: String(ramInBytes(input.fileSizeLimit)),
     STORAGE_BACKEND: "file",
-    FILE_STORAGE_BACKEND_PATH: LEGACY_STORAGE_DOCKER_PATH,
+    FILE_STORAGE_BACKEND_PATH: STORAGE_DOCKER_PATH,
     TENANT_ID: "stub",
     // TODO: https://github.com/supabase/storage-api/issues/55
     STORAGE_S3_REGION: input.s3Region,
@@ -168,7 +126,7 @@ export function legacyBuildStorageEnv(input: LegacyStorageEnvInput): Record<stri
   };
 
   return input.vectorBucketsEnabled
-    ? legacyAppendStorageVectorEnv(env, {
+    ? appendStorageVectorEnv(env, {
         dbHost: input.dbHost,
         dbPassword: input.dbPassword,
         projectEnvValues: input.projectEnvValues,
@@ -176,12 +134,12 @@ export function legacyBuildStorageEnv(input: LegacyStorageEnvInput): Record<stri
     : env;
 }
 
-export interface LegacyStorageContainerSpecInput {
-  /** The sanitized project id — see `legacyServiceContainerName`'s callers. */
+export interface StorageContainerSpecInput {
+  /** The sanitized project id. */
   readonly projectId: string;
-  /** `container.HostConfig.NetworkMode`/`network.NetworkingConfig` target — the `--network-id` override or `utils.NetId`. */
+  /** `container.HostConfig.NetworkMode`'s target; resolved once per `start` run, not per-container. */
   readonly networkId: string;
-  /** `utils.Config.Storage.Image`, already resolved/pulled by the caller (`image-prepull.ts`). */
+  /** `config.storage.image`, already resolved/pulled by the caller. */
   readonly image: string;
   readonly targetMigration: string;
   readonly fileSizeLimit: CliConfig["storage"]["file_size_limit"];
@@ -191,7 +149,7 @@ export interface LegacyStorageContainerSpecInput {
   readonly s3ProtocolEnabled: boolean;
   readonly imageTransformationEnabled: boolean;
   readonly vectorBucketsEnabled: boolean;
-  /** `LegacyLocalConfigValues.dbUrl` — reused, not recomputed, to derive the internal DB password. */
+  /** `LocalConfigValues.dbUrl` — reused, not recomputed, to derive the internal DB password. */
   readonly dbUrl: string;
   readonly jwtSecret: string;
   readonly jwks: string;
@@ -205,24 +163,22 @@ export interface LegacyStorageContainerSpecInput {
  * the container's own named volume at `/mnt` — no `ports`/`exposedPorts`,
  * Storage is reached only via its Docker network alias.
  */
-export function legacyBuildStorageContainerSpec(
-  input: LegacyStorageContainerSpecInput,
-): LegacyStartContainerSpec {
-  const containerName = legacyServiceContainerName("storage", input.projectId);
-  const env = legacyBuildStorageEnv({
+export function buildStorageContainerSpec(input: StorageContainerSpecInput): StartContainerSpec {
+  const containerName = serviceContainerName("storage", input.projectId);
+  const env = buildStorageEnv({
     targetMigration: input.targetMigration,
     anonKey: input.anonKey,
     serviceRoleKey: input.serviceRoleKey,
     jwtSecret: input.jwtSecret,
     jwks: input.jwks,
-    dbHost: legacyServiceContainerName("db", input.projectId),
-    dbPassword: legacyStartInternalDbPassword(input.dbUrl),
+    dbHost: serviceContainerName("db", input.projectId),
+    dbPassword: startInternalDbPassword(input.dbUrl),
     fileSizeLimit: input.fileSizeLimit,
     s3Region: input.s3Region,
     s3AccessKeyId: input.s3AccessKeyId,
     s3SecretAccessKey: input.s3SecretAccessKey,
     imageTransformationEnabled: input.imageTransformationEnabled,
-    imgproxyHost: legacyServiceContainerName("imgproxy", input.projectId),
+    imgproxyHost: serviceContainerName("imgproxy", input.projectId),
     s3ProtocolEnabled: input.s3ProtocolEnabled,
     vectorBucketsEnabled: input.vectorBucketsEnabled,
     projectEnvValues: input.projectEnvValues,
@@ -232,10 +188,10 @@ export function legacyBuildStorageContainerSpec(
     image: input.image,
     containerName,
     env,
-    binds: [`${containerName}:${LEGACY_STORAGE_DOCKER_PATH}`],
+    binds: [`${containerName}:${STORAGE_DOCKER_PATH}`],
     // IPv4 loopback: localhost can resolve to IPv6 on GitPod and miss the listener.
-    healthcheck: legacyUsesSlimRuntime(input.image)
-      ? legacySlimWgetHealthcheck("http://127.0.0.1:5000/status")
+    healthcheck: usesSlimImageRuntime(input.image)
+      ? slimWgetHealthcheck("http://127.0.0.1:5000/status")
       : {
           test: [
             "CMD",
@@ -251,7 +207,6 @@ export function legacyBuildStorageContainerSpec(
         },
     restartPolicy: "unless-stopped",
     networkId: input.networkId,
-    // The Storage network alias.
     networkAliases: ["storage"],
     labels: {},
   };

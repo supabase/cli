@@ -21,7 +21,7 @@ const NS_PER_US = 1_000;
  * Accepts: "5s", "1m0s", "24h0m0s", "300ms", "0s", "1.5s", etc.
  * Throws on invalid input.
  */
-export function legacyParseDuration(s: string): number {
+export function parseDuration(s: string): number {
   if (s === "0") return 0;
   const orig = s;
   let neg = false;

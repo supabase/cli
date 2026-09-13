@@ -1,36 +1,36 @@
 import type { V1ListAllSecretsOutput } from "@supabase/api/effect";
 import { Effect, Option } from "effect";
 
-import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { LegacyOutputFlag } from "../../../shared/legacy/global-flags.ts";
+import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
+import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { encodeGoJson } from "../../../command-internal/legacy-go-output.encoders.ts";
+import { encodeGoJson } from "../../../command-internal/go-output.encoders.ts";
 import {
-  encodeLegacyGoToml,
-  encodeLegacyGoYaml,
-  legacyGoPtr,
-  legacyGoSlice,
-  legacyGoString,
-  legacyGoStruct,
-  legacyGoTomlListWrapper,
-} from "../../../command-internal/legacy-go-struct-output.encoders.ts";
-import { mapLegacyHttpError } from "../../../command-internal/legacy-http-errors.ts";
+  encodeGoToml,
+  encodeGoYaml,
+  goPtr,
+  goSlice,
+  goString,
+  goStruct,
+  goTomlListWrapper,
+} from "../../../command-internal/go-struct-output.encoders.ts";
+import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import {
-  LegacySecretsEnvNotSupportedError,
-  LegacySecretsListNetworkError,
-  LegacySecretsListUnexpectedStatusError,
+  SecretsEnvNotSupportedError,
+  SecretsListNetworkError,
+  SecretsListUnexpectedStatusError,
 } from "../secrets.errors.ts";
 import { renderSecretsListTable } from "../secrets.format.ts";
-import type { LegacySecretsListFlags } from "./list.command.ts";
+import type { SecretsListFlags } from "./list.command.ts";
 
 type Secrets = typeof V1ListAllSecretsOutput.Type;
 
-const mapListError = mapLegacyHttpError({
-  networkError: LegacySecretsListNetworkError,
-  statusError: LegacySecretsListUnexpectedStatusError,
+const mapListError = mapHttpError({
+  networkError: SecretsListNetworkError,
+  statusError: SecretsListUnexpectedStatusError,
   networkMessage: (cause) => `failed to list secrets: ${cause}`,
   statusMessage: (status, body) => `unexpected list secrets status ${status}: ${body}`,
 });
@@ -39,34 +39,27 @@ function sortSecrets(secrets: Secrets): Secrets {
   return [...secrets].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 }
 
-/** Type shape for the secrets response, used to drive `-o yaml|toml` key casing (see `apps/cli-go/pkg/api/types.gen.go`). */
-const LEGACY_GO_SECRET_RESPONSE = legacyGoStruct([
-  ["name", legacyGoString],
-  ["updated_at", legacyGoPtr(legacyGoString)],
-  ["value", legacyGoString],
+/** Struct shape for the secrets response; drives `-o yaml|toml` key casing. */
+const GO_SECRET_RESPONSE = goStruct([
+  ["name", goString],
+  ["updated_at", goPtr(goString)],
+  ["value", goString],
 ]);
 
-const LEGACY_GO_SECRETS_LIST = legacyGoSlice(LEGACY_GO_SECRET_RESPONSE);
+const GO_SECRETS_LIST = goSlice(GO_SECRET_RESPONSE);
 
-const LEGACY_GO_SECRETS_TOML_WRAPPER = legacyGoTomlListWrapper(
-  "secrets",
-  LEGACY_GO_SECRET_RESPONSE,
-);
+const GO_SECRETS_TOML_WRAPPER = goTomlListWrapper("secrets", GO_SECRET_RESPONSE);
 
-export const legacySecretsList = Effect.fn("legacy.secrets.list")(function* (
-  flags: LegacySecretsListFlags,
-) {
+export const secretsList = Effect.fn("secrets.list")(function* (flags: SecretsListFlags) {
   const output = yield* Output;
-  const goOutputFlag = yield* LegacyOutputFlag;
-  const api = yield* LegacyPlatformApi;
-  const resolver = yield* LegacyProjectRefResolver;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
+  const goOutputFlag = yield* OutputFlag;
+  const api = yield* CommandPlatformApi;
+  const resolver = yield* ProjectRefResolver;
+  const linkedProjectCache = yield* LinkedProjectCache;
+  const telemetryState = yield* TelemetryState;
 
   const ref = yield* resolver.resolve(flags.projectRef);
 
-  // Write the linked-project cache and persist the telemetry state file
-  // whether the main API call succeeds or fails.
   yield* Effect.gen(function* () {
     const fetching =
       output.format === "text" ? yield* output.task("Fetching secrets...") : undefined;
@@ -80,7 +73,7 @@ export const legacySecretsList = Effect.fn("legacy.secrets.list")(function* (
     const goFmt = Option.getOrUndefined(goOutputFlag);
 
     if (goFmt === "env") {
-      return yield* new LegacySecretsEnvNotSupportedError({
+      return yield* new SecretsEnvNotSupportedError({
         message: "--output env flag is not supported",
       });
     }
@@ -89,16 +82,14 @@ export const legacySecretsList = Effect.fn("legacy.secrets.list")(function* (
       return;
     }
     if (goFmt === "yaml") {
-      yield* output.raw(encodeLegacyGoYaml(sorted, LEGACY_GO_SECRETS_LIST));
+      yield* output.raw(encodeGoYaml(sorted, GO_SECRETS_LIST));
       return;
     }
     if (goFmt === "toml") {
-      yield* output.raw(encodeLegacyGoToml({ secrets: sorted }, LEGACY_GO_SECRETS_TOML_WRAPPER));
+      yield* output.raw(encodeGoToml({ secrets: sorted }, GO_SECRETS_TOML_WRAPPER));
       return;
     }
 
-    // goFmt is undefined or "pretty" — defer to TS --output-format for JSON/stream-json,
-    // otherwise render the Glamour-styled table (Go --output pretty parity).
     if (output.format === "json" || output.format === "stream-json") {
       yield* output.success("", { secrets: sorted });
       return;

@@ -1,9 +1,4 @@
-// CLI telemetry catalog. Mirrors apps/cli-go/internal/telemetry/events.go
-// 1:1 so legacy/ ports send byte-identical PostHog payloads. When the Go
-// catalog changes, update this file in the same PR. The failure-classification
-// properties below (error_kind … workflow) are TS-only: the native shells
-// classify failures (CLI-1561) and the Go binary never emits these fields, so
-// they are deliberately absent from the Go catalog.
+// CLI telemetry catalog: canonical event and property-key constants sent to PostHog.
 
 export const EventCommandExecuted = "cli_command_executed";
 export const EventProjectLinked = "cli_project_linked";
@@ -14,10 +9,8 @@ export const EventUpgradeSuggested = "cli_upgrade_suggested";
 export const PropFeatureKey = "feature_key";
 export const PropOrgSlug = "org_slug";
 
-// TS-only extension to `cli_project_linked` (CLI-2167): `link` accepts a branch
-// name/UUID in addition to a project ref (no Go counterpart), so these two
-// properties distinguish a branch-name link from a plain ref link. Absent from
-// the Go catalog.
+// `link` also accepts a branch name/UUID in addition to a project ref; these two properties
+// distinguish a branch-name link from a plain ref link.
 export const PropLinkedVia = "linked_via";
 export const PropParentProjectRef = "parent_project_ref";
 
@@ -55,7 +48,6 @@ export const GroupProject = "project";
 export const MaxEnvSignalValueLength = 80;
 
 // Env vars whose presence (any non-empty value) is recorded as `true` in env_signals.
-// Order matches apps/cli-go/internal/telemetry/events.go:126-167.
 export const EnvSignalPresenceKeys: ReadonlyArray<string> = [
   // AI tools signals
   "CURSOR_AGENT",
@@ -100,7 +92,7 @@ export const EnvSignalPresenceKeys: ReadonlyArray<string> = [
 ];
 
 // Env vars whose trimmed values are recorded in env_signals, capped at
-// MaxEnvSignalValueLength chars. Order matches events.go:171-178.
+// MaxEnvSignalValueLength chars.
 export const EnvSignalValueKeys: ReadonlyArray<string> = [
   "AI_AGENT",
   "CURSOR_EXTENSION_HOST_ROLE",

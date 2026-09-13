@@ -1,12 +1,10 @@
 /**
- * The canonical `vector.yaml` template — this is the sole source of truth;
- * do not hand-edit the YAML body.
+ * Canonical `vector.yaml` template; do not hand-edit the YAML body.
  *
- * Placeholders (`{{ .Field }}`): ApiKey, VectorId, LogflareId, KongId,
- * GotrueId, RestId, RealtimeId, StorageId, EdgeRuntimeId, DbId. Rendered by
- * `lib/template-render.ts`.
+ * Placeholders (`{{ .Field }}`): ApiKey, VectorId, LogflareId, KongId, GotrueId, RestId,
+ * RealtimeId, StorageId, EdgeRuntimeId, DbId — rendered by `lib/template-render.ts`.
  */
-export const LEGACY_START_VECTOR_YAML_TEMPLATE = `api:
+export const START_VECTOR_YAML_TEMPLATE = `api:
   enabled: true
   address: 0.0.0.0:9001
 

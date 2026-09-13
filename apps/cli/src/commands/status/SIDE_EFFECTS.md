@@ -4,17 +4,18 @@ TS-only divergence (CLI-2167 follow-up, no Go counterpart): `status` additionall
 surfaces the current linked project/branch — a "Linked Project:" block on stdout in human text
 mode, and additive fields in every machine-readable output — so an agent (or a human who forgot
 which branch they linked) can discover which project/branch it's on without a separate
-`link`/`branches` call. See `command-internal/legacy-linked-state.ts`.
+`link`/`branches` call. See `command-internal/linked-state.ts`.
 
 ## Files Read
 
-| Path                                                                                                                | Format     | When                                                                                                                     |
-| ------------------------------------------------------------------------------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `<workdir>/supabase/config.toml`                                                                                    | TOML       | always, to resolve project configuration                                                                                 |
-| `auth.signing_keys_path` (config-relative or absolute)                                                              | JSON       | only when `auth.signing_keys_path` is set in config.toml                                                                 |
-| `api.tls.cert_path` / `api.tls.key_path` (unconditionally joined with `<workdir>/supabase`, no absolute-path guard) | raw bytes  | only when `api.enabled` and `api.tls.enabled`, and the respective path is set                                            |
-| `<workdir>/supabase/.temp/project-ref`                                                                              | plain text | always (soft) — the linked-state "currently linked ref" lookup (CLI-2167 follow-up, TS-only)                             |
-| `<workdir>/supabase/.temp/linked-project.json`                                                                      | JSON       | always (soft), once linked — determines plain-project-vs-branch state and the display name (CLI-2167 follow-up, TS-only) |
+| Path                                                                                                                | Format                                                                                | When                                                                                                                                                                                                                                                     |
+| ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml`                                                                                    | TOML                                                                                  | always, to resolve project configuration                                                                                                                                                                                                                 |
+| `auth.signing_keys_path` (config-relative or absolute)                                                              | JSON                                                                                  | only when `auth.signing_keys_path` is set in config.toml                                                                                                                                                                                                 |
+| `api.tls.cert_path` / `api.tls.key_path` (unconditionally joined with `<workdir>/supabase`, no absolute-path guard) | raw bytes                                                                             | only when `api.enabled` and `api.tls.enabled`, and the respective path is set                                                                                                                                                                            |
+| `auth.email.template.*` / `auth.email.notification.*` `content_path` (config-relative or absolute)                  | text (existence/readability only — bytes discarded, used only to validate the config) | only when `auth.enabled`, for every configured template and every notification with `enabled = true`; the resolved path is CONFINED to the project root (symlinks dereferenced with `realpathSync`) — a path resolving outside it aborts before the read |
+| `<workdir>/supabase/.temp/project-ref`                                                                              | plain text                                                                            | always (soft) — the linked-state "currently linked ref" lookup (CLI-2167 follow-up, TS-only)                                                                                                                                                             |
+| `<workdir>/supabase/.temp/linked-project.json`                                                                      | JSON                                                                                  | always (soft), once linked — determines plain-project-vs-branch state and the display name (CLI-2167 follow-up, TS-only)                                                                                                                                 |
 
 ## Files Written
 
@@ -30,21 +31,21 @@ which branch they linked) can discover which project/branch it's on without a se
 
 Everything else is resolved from local `config.toml` and the local Docker daemon — `status` never
 required a Management API call before CLI-2167's linked-state follow-up, and still doesn't need
-one to succeed. The one route above is part of the shared, best-effort `legacyResolveLinkedState`
+one to succeed. The one route above is part of the shared, best-effort `resolveLinkedState`
 helper: it fires ONLY when `linked-project.json` names a genuinely different parent than the
 currently linked ref — with no cache at all, the plain project shape renders with zero API calls
 (there is no ref-only env/file fallback query anymore — PR #6168 review). When the linked ref came
 from `SUPABASE_PROJECT_ID` (env) rather than the `project-ref` file, the route still fires the
 same way, but a no-match/failure/timeout result degrades all the way to the plain shape instead of
-keeping the cache's parent claim — see `legacyResolveLinkedState`'s doc comment.
+keeping the cache's parent claim — see `resolveLinkedState`'s doc comment.
 
 The Management API client is acquired LAZILY: `status`'s runtime layer wires up
-`LegacyPlatformApiFactory` (not the eager `LegacyPlatformApi`), which resolves NO access token and
+`CommandPlatformApiFactory` (not the eager `CommandPlatformApi`), which resolves NO access token and
 makes NO network call at layer-build time — token resolution and client construction only happen
-inside `legacyResolveLinkedState`, exactly when this route is about to be called, via
+inside `resolveLinkedState`, exactly when this route is about to be called, via
 `factory.make`. Any failure there (no token, invalid token, keyring/file miss, network, decode) is
 caught and degrades the linked-state display rather than failing `status` — see the Exit Codes
-callout below. This is deliberately NOT the eager `legacyManagementApiRuntimeLayer` stack, which
+callout below. This is deliberately NOT the eager `managementApiRuntimeLayer` stack, which
 resolves a token at layer-build time and would break every offline/token-less `status` run.
 
 ## Environment Variables
@@ -86,14 +87,14 @@ convention used elsewhere in config loading, and take precedence over the corres
 | `1`  | `api.enabled` and `api.tls.enabled` are true, both `cert_path` and `key_path` are set, but one of the files can't be read                                                                                                                                                                                                                                       |
 
 > The linked-state resolution (CLI-2167 follow-up, TS-only) never affects the exit code or any of
-> the failure conditions above — it never fails (see `legacyResolveLinkedState`'s doc comment),
+> the failure conditions above — it never fails (see `resolveLinkedState`'s doc comment),
 > and every one of `status`'s existing failure paths (workdir, config, Docker/health) is untouched.
 > If `status` fails, it fails exactly as it did before this feature existed; in human text mode the
 > "Linked Project:" block has already been printed to stdout before that failure occurs, and in
 > `--output-format json`/`stream-json` the same linked-state fields are carried on the failure
 > envelope itself (see Output below). This holds even when the lazy Management API acquisition
 > itself fails (no token, invalid token, network, decode) — that failure is caught inside
-> `legacyResolveLinkedState` and only degrades the block's/envelope's content, never `status`'s own
+> `resolveLinkedState` and only degrades the block's/envelope's content, never `status`'s own
 > exit code.
 
 ## Telemetry Events Fired
@@ -205,7 +206,7 @@ the 13 expected service containers isn't in the running set.
 ### `-o env`
 
 `KEY="VALUE"` lines (unquoted for integer-looking values), one per resolved field, sorted by
-key — see `legacy-go-output.encoders.ts`'s `encodeEnv`.
+key — see `go-output.encoders.ts`'s `encodeEnv`.
 
 TS-only addition (CLI-2167 follow-up, no Go counterpart): additive `LINKED_PROJECT_REF`,
 `LINKED_PROJECT_NAME`, `LINKED_ORG_SLUG`, `LINKED_ORG_ID`, `LINKED_BRANCH`,
@@ -291,7 +292,7 @@ daemon/stack, since a stopped stack is the common state an agent probes `status`
 ```json
 {
   "_tag": "Error",
-  "error": { "code": "LegacyStatusDbInspectError", "message": "..." },
+  "error": { "code": "StatusDbInspectError", "message": "..." },
   "linked_project": {
     "project_ref": "wenchaxrhtjkzqzxctxr",
     "branch": "feature-branch",
@@ -310,7 +311,7 @@ daemon/stack, since a stopped stack is the common state an agent probes `status`
 `fail` read via `Effect.serviceOption` (so any command can adopt it; only `status` does today) and
 spread onto the envelope's top level, never inside `error`. `status`'s handler sets it (also via
 `Effect.serviceOption`, so this stays a no-op wherever the layer isn't wired) right after resolving
-the linked state, before any daemon/stack work, mirroring the same `legacyLinkedStateJsonField`
+the linked state, before any daemon/stack work, mirroring the same `linkedStateJsonField`
 value the success path already uses.
 
 **`-o env|json|yaml|toml`'s failure output is intentionally UNCHANGED** — those Go-compatible
@@ -323,13 +324,13 @@ the Go CLI's own contract exactly. The additive failure envelope above is scoped
 - The linked-state feature (CLI-2167 follow-up) resolves in EVERY output mode, not just human
   text — the intent is that an AI agent driving `status` in a machine format can discover which
   project/branch it's on without a separate `link`/`branches` call. The resolution
-  (`legacyResolveLinkedState`) never fails: not linked, a missing/unreadable cache file, no
+  (`resolveLinkedState`) never fails: not linked, a missing/unreadable cache file, no
   resolvable parent, no Management API service in scope, an offline/token-less
-  `LegacyPlatformApiFactory` acquisition failure, or a failed/empty branch lookup all degrade
+  `CommandPlatformApiFactory` acquisition failure, or a failed/empty branch lookup all degrade
   rather than erroring, so this feature can never be the reason `status` fails or its exit code
-  changes. `legacyAcquireBranchLookupApi` (in `legacy-branch-target.ts`) tries
-  `Effect.serviceOption(LegacyPlatformApi)` first (the cheapest path, and what tests provide
-  directly), then falls back to `Effect.serviceOption(LegacyPlatformApiFactory)` → `factory.make`
+  changes. `acquireBranchLookupApi` (in `branch-target.ts`) tries
+  `Effect.serviceOption(CommandPlatformApi)` first (the cheapest path, and what tests provide
+  directly), then falls back to `Effect.serviceOption(CommandPlatformApiFactory)` → `factory.make`
   with every failure caught — `status`'s runtime layer only ever wires up the lazy factory (see
   API Routes above), never the eager client. The branch-name lookup (acquisition + the
   `listAllBranches` call together) is hard-bounded to 5 seconds (`Effect.timeout`, PR #6168
@@ -340,7 +341,7 @@ the Go CLI's own contract exactly. The additive failure envelope above is scoped
   against `PROJECT_REF_PATTERN` before use: malformed or symlinked non-ref content (e.g. a
   `project-ref` symlinked at an access token) is treated as not linked and never reaches ANY
   output channel — machine formats included (PR #6168 review). The cache-sourced display fields
-  (name, org slug/id) remain merely sanitized (`legacySanitizeInlineName`), as are all strings in
+  (name, org slug/id) remain merely sanitized (`sanitizeInlineName`), as are all strings in
   the human-text block, so a hostile name cannot inject ANSI/OSC/newline controls into stdout;
   machine payloads stay data-faithful for those fields since JSON/YAML/TOML/env encoding already
   neutralizes control characters.
@@ -349,7 +350,7 @@ the Go CLI's own contract exactly. The additive failure envelope above is scoped
   unset) falls through to `--output-format`'s text/json/stream-json handling.
 - `--override-name api.url=NEXT_PUBLIC_SUPABASE_URL` remaps a single field's output KEY; the
   value and group layout are unaffected. An unknown key or a malformed (non `KEY=VALUE`) entry
-  fails with `LegacyStatusOverrideParseError`. This only affects the `env`/`json`/`toml`/`yaml`
+  fails with `StatusOverrideParseError`. This only affects the `env`/`json`/`toml`/`yaml`
   (`printStatus`) output path — the pretty table (`-o pretty` or unset) always
   renders with un-overridden names.
   An override that renames a field to collide with one of the additive `linked_*`/`linked_project`
@@ -366,16 +367,16 @@ the Go CLI's own contract exactly. The additive failure envelope above is scoped
 - `--ignore-health-check` (hidden) skips the db container health assertion entirely and always
   exits `0`.
 - Default `auth.anon_key`/`auth.service_role_key`/`auth.jwt_secret` values are generated via a
-  Go-byte-exact HS256 signer (`legacy-go-jwt.ts`), not `@supabase/stack`'s `generateJwt` — the
+  Go-byte-exact HS256 signer (`go-jwt.ts`), not `@supabase/stack`'s `generateJwt` — the
   latter uses a different issuer, expiry, and claim order that would not match the old Go CLI's
   local dev keys. A configured `auth.jwt_secret` shorter than 16 characters fails the command
-  (`LegacyStatusInvalidConfigError`) at config-load time before any command can render output.
+  (`StatusInvalidConfigError`) at config-load time before any command can render output.
 - When `auth.signing_keys_path` is set and resolves to a non-empty JWK array, `anon_key`/
   `service_role_key` are instead signed asymmetrically (RS256/ES256) with the file's first key —
   a relative path resolves against
   `<workdir>/supabase`. This path is skipped entirely when `auth.anon_key`/`auth.service_role_key`
   are explicitly configured. A missing/malformed file, or a first key with an algorithm other than
-  `RS256`/`ES256`, fails the command (`LegacyStatusInvalidConfigError`).
+  `RS256`/`ES256`, fails the command (`StatusInvalidConfigError`).
 - `SUPABASE_AUTH_JWT_SECRET`/`SUPABASE_AUTH_PUBLISHABLE_KEY`/`SUPABASE_AUTH_SECRET_KEY`/
   `SUPABASE_AUTH_ANON_KEY`/`SUPABASE_AUTH_SERVICE_ROLE_KEY` override the corresponding
   `config.toml` value at higher precedence — an empty env var
@@ -383,7 +384,7 @@ the Go CLI's own contract exactly. The additive failure envelope above is scoped
   general `@supabase/config` port of Viper's `AutomaticEnv` (which applies to every config field).
 - `db.password` and the `storage.s3_credentials` triple have no `@supabase/config` schema field;
   the old Go CLI hardcoded both (`"postgres"` and the S3 access key/secret/region seen above),
-  reproduced identically in `legacy-local-config-values.ts`.
+  reproduced identically in `local-config-values.ts`.
 - No e2e test is planned for this command: there is no Docker-daemon-free golden path, and the
   e2e harness (`runSupabase()`) does not provision a real local stack. This is a scope reduction
   relative to the Linear issue's "E2E compatibility test added" checkbox; see the port plan for

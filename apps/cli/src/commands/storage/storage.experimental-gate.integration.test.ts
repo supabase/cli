@@ -5,7 +5,7 @@ import { CliOutput, Command } from "effect/unstable/cli";
 
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { textCliOutputFormatter } from "../../shared/output/text-formatter.ts";
-import { LEGACY_GLOBAL_FLAGS } from "../../shared/legacy/global-flags.ts";
+import { GLOBAL_FLAGS } from "../../command-internal/global-flags.ts";
 import {
   mockAnalytics,
   mockOutput,
@@ -13,25 +13,16 @@ import {
   mockTelemetryRuntime,
   mockTty,
 } from "../../../tests/helpers/mocks.ts";
-import {
-  legacyIsolatedHomeLayer,
-  useLegacyTempWorkdir,
-} from "../../../tests/helpers/legacy-mocks.ts";
-import { LegacyExperimentalRequiredError } from "../../command-internal/legacy-experimental-gate.ts";
-import { legacyStorageCommand } from "./storage.command.ts";
-import { LegacyStorageMutuallyExclusiveFlagsError } from "./storage.errors.ts";
+import { isolatedHomeLayer, useTempWorkdir } from "../../../tests/helpers/command-mocks.ts";
+import { ExperimentalRequiredError } from "../../command-internal/experimental-gate.ts";
+import { storageCommand } from "./storage.command.ts";
+import { StorageMutuallyExclusiveFlagsError } from "./storage.errors.ts";
 
-// The experimental gate runs before mutual-exclusivity checks. So
-// `supabase storage ls --linked --local` without `--experimental` must
-// surface the experimental-gate error, not the mutex error — this suite
-// proves that ordering is wired into the actual `.command.ts` handler
-// pipeline for all four leaves, not just the shared helper in isolation.
-
-const tempRoot = useLegacyTempWorkdir("supabase-storage-experimental-int-");
+const tempRoot = useTempWorkdir("supabase-storage-experimental-int-");
 
 const testRoot = Command.make("supabase").pipe(
-  Command.withSubcommands([legacyStorageCommand]),
-  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
+  Command.withSubcommands([storageCommand]),
+  Command.withGlobalFlags(GLOBAL_FLAGS),
 );
 
 function setup(args: ReadonlyArray<string>) {
@@ -41,12 +32,9 @@ function setup(args: ReadonlyArray<string>) {
     CliOutput.layer(textCliOutputFormatter()),
     out.layer,
     Layer.succeed(CliArgs, { args }),
-    // `legacyStorageGatewayRuntimeLayer`'s cliSettings/credentials layers read
-    // real env/files when built. Neither check under test ever reaches that
-    // lazy factory, but isolate ambient env and homeDir defensively anyway —
-    // same rationale as the sibling experimental-gate tests (ssl-enforcement,
-    // postgres-config, network-bans).
-    legacyIsolatedHomeLayer(tempRoot.current, { SUPABASE_NO_KEYRING: "1" }),
+    // Isolates ambient env/homeDir defensively even though neither check here reaches
+    // storageGatewayRuntimeLayer's lazy cliSettings/credentials factory.
+    isolatedHomeLayer(tempRoot.current, { SUPABASE_NO_KEYRING: "1" }),
     mockProcessControl().layer,
     mockTty({ stdinIsTty: false, stdoutIsTty: false }),
     mockAnalytics().layer,
@@ -58,7 +46,7 @@ function setup(args: ReadonlyArray<string>) {
   return { layer };
 }
 
-describe("legacy storage experimental gate vs mutual-exclusivity ordering (Go PersistentPreRunE parity)", () => {
+describe("storage experimental gate vs mutual-exclusivity ordering (Go PersistentPreRunE parity)", () => {
   const leaves: ReadonlyArray<{ readonly name: string; readonly args: ReadonlyArray<string> }> = [
     { name: "ls", args: ["storage", "ls", "ss:///bucket"] },
     { name: "cp", args: ["storage", "cp", "ss:///bucket/a", "ss:///bucket/b"] },
@@ -81,7 +69,7 @@ describe("legacy storage experimental gate vs mutual-exclusivity ordering (Go Pe
           if (Exit.isFailure(exit)) {
             const failure = Cause.findErrorOption(exit.cause);
             expect(
-              Option.isSome(failure) && failure.value instanceof LegacyExperimentalRequiredError,
+              Option.isSome(failure) && failure.value instanceof ExperimentalRequiredError,
             ).toBe(true);
           }
         }).pipe(Effect.provide(layer));
@@ -99,8 +87,7 @@ describe("legacy storage experimental gate vs mutual-exclusivity ordering (Go Pe
         if (Exit.isFailure(exit)) {
           const failure = Cause.findErrorOption(exit.cause);
           expect(
-            Option.isSome(failure) &&
-              failure.value instanceof LegacyStorageMutuallyExclusiveFlagsError,
+            Option.isSome(failure) && failure.value instanceof StorageMutuallyExclusiveFlagsError,
           ).toBe(true);
         }
       }).pipe(Effect.provide(layer));

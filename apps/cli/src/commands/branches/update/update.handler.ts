@@ -1,61 +1,53 @@
 import type { V1UpdateABranchConfigInput, V1UpdateABranchConfigOutput } from "@supabase/api/effect";
 import { Effect, Option } from "effect";
 
-import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { LegacyOutputFlag } from "../../../shared/legacy/global-flags.ts";
+import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
+import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
+import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { Tty } from "../../../shared/runtime/tty.service.ts";
-import { encodeEnv, encodeGoJson } from "../../../command-internal/legacy-go-output.encoders.ts";
+import { encodeEnv, encodeGoJson } from "../../../command-internal/go-output.encoders.ts";
+import { encodeGoToml, encodeGoYaml } from "../../../command-internal/go-struct-output.encoders.ts";
+import { mapHttpError } from "../../../command-internal/http-errors.ts";
+import { resolveParentScopedProjectRef } from "../../../command-internal/parent-project-ref.ts";
+import { gateMapError } from "../../../command-internal/upgrade-suggest.ts";
+import { GO_BRANCH_RESPONSE } from "../branches.go-payload.ts";
 import {
-  encodeLegacyGoToml,
-  encodeLegacyGoYaml,
-} from "../../../command-internal/legacy-go-struct-output.encoders.ts";
-import { mapLegacyHttpError } from "../../../command-internal/legacy-http-errors.ts";
-import { legacyResolveParentScopedProjectRef } from "../../../command-internal/legacy-parent-project-ref.ts";
-import { legacyGateMapError } from "../../../command-internal/legacy-upgrade-suggest.ts";
-import { LEGACY_GO_BRANCH_RESPONSE } from "../branches.go-payload.ts";
-import {
-  LegacyBranchesUpdateNetworkError,
-  LegacyBranchesUpdateUnexpectedStatusError,
+  BranchesUpdateNetworkError,
+  BranchesUpdateUnexpectedStatusError,
 } from "../branches.errors.ts";
 import { renderBranchesListTable } from "../branches.format.ts";
-import { legacyPromptBranchId } from "../branches.prompt.ts";
-import { legacyResolveBranchProjectRef } from "../branches.resolver.ts";
-import type { LegacyBranchesUpdateFlags } from "./update.command.ts";
+import { promptBranchId } from "../branches.prompt.ts";
+import { resolveBranchProjectRef } from "../branches.resolver.ts";
+import type { BranchesUpdateFlags } from "./update.command.ts";
 
 type UpdatedBranch = typeof V1UpdateABranchConfigOutput.Type;
 type UpdateInput = typeof V1UpdateABranchConfigInput.Type;
 type BranchStatus = NonNullable<UpdateInput["status"]>;
 
-const mapUpdateError = mapLegacyHttpError({
-  networkError: LegacyBranchesUpdateNetworkError,
-  statusError: LegacyBranchesUpdateUnexpectedStatusError,
+const mapUpdateError = mapHttpError({
+  networkError: BranchesUpdateNetworkError,
+  statusError: BranchesUpdateUnexpectedStatusError,
   networkMessage: (cause) => `failed to update preview branch: ${cause}`,
   statusMessage: (status, body) => `unexpected update branch status ${status}: ${body}`,
 });
 
-export const legacyBranchesUpdate = Effect.fn("legacy.branches.update")(function* (
-  flags: LegacyBranchesUpdateFlags,
-) {
+export const branchesUpdate = Effect.fn("branches.update")(function* (flags: BranchesUpdateFlags) {
   const output = yield* Output;
-  const goOutputFlag = yield* LegacyOutputFlag;
-  const api = yield* LegacyPlatformApi;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
-  // Force `Tty` into the handler's R channel so `legacyPromptBranchId` (which
-  // requires it) resolves. The yielded value itself is unused.
-  void (yield* Tty);
+  const goOutputFlag = yield* OutputFlag;
+  const api = yield* CommandPlatformApi;
+  const linkedProjectCache = yield* LinkedProjectCache;
+  const telemetryState = yield* TelemetryState;
+  void (yield* Tty); // ensures Tty is in handler R so promptBranchId resolves
 
-  // `branches` is PARENT-scoped: after `supabase link <branch>`,
-  // `supabase/.temp/project-ref` holds the branch's own ref, and the platform
-  // 403s on that ref for every branches-management endpoint (CLI-2167 follow-up).
-  const ref = yield* legacyResolveParentScopedProjectRef(flags.projectRef);
+  // `branches` is parent-scoped: after `supabase link <branch>`, `supabase/.temp/project-ref`
+  // holds the branch's own ref, which the platform 403s on for every branches-management endpoint.
+  const ref = yield* resolveParentScopedProjectRef(flags.projectRef);
 
   yield* Effect.gen(function* () {
-    const branchInput = yield* legacyPromptBranchId(flags.branchId, ref);
-    const branchRef = yield* legacyResolveBranchProjectRef(branchInput, ref);
+    const branchInput = yield* promptBranchId(flags.branchId, ref);
+    const branchRef = yield* resolveBranchProjectRef(branchInput, ref);
 
     const patching =
       output.format === "text" ? yield* output.task("Updating branch...") : undefined;
@@ -71,17 +63,16 @@ export const legacyBranchesUpdate = Effect.fn("legacy.branches.update")(function
       })
       .pipe(
         Effect.tapError(() => patching?.fail() ?? Effect.void),
-        // Pass the resolved branch's project ref so the entitlements check
-        // is scoped to the branch's org.
+        // Scopes the entitlements check to the branch's own org via its resolved project ref.
         Effect.catch(
-          legacyGateMapError(
+          gateMapError(
             { projectRef: branchRef, featureKey: "branching_persistent" },
             (cause, upgradeSuggested) =>
               Effect.gen(function* () {
                 const mapped = yield* Effect.flip(mapUpdateError(cause));
-                if (mapped._tag === "LegacyBranchesUpdateUnexpectedStatusError") {
+                if (mapped._tag === "BranchesUpdateUnexpectedStatusError") {
                   return yield* Effect.fail(
-                    new LegacyBranchesUpdateUnexpectedStatusError({
+                    new BranchesUpdateUnexpectedStatusError({
                       status: mapped.status,
                       body: mapped.body,
                       message: mapped.message,
@@ -98,8 +89,7 @@ export const legacyBranchesUpdate = Effect.fn("legacy.branches.update")(function
 
     const goFmt = Option.getOrUndefined(goOutputFlag);
 
-    // Go writes "Updated preview branch:" to STDERR (`fmt.Fprintln(os.Stderr, ...)`),
-    // then the payload to stdout via EncodeOutput / RenderTable.
+    // The confirmation message goes to stderr; the payload always goes to stdout.
     if (goFmt === "json") {
       yield* output.raw("Updated preview branch:\n", "stderr");
       yield* output.raw(encodeGoJson(updated));
@@ -107,12 +97,12 @@ export const legacyBranchesUpdate = Effect.fn("legacy.branches.update")(function
     }
     if (goFmt === "yaml") {
       yield* output.raw("Updated preview branch:\n", "stderr");
-      yield* output.raw(encodeLegacyGoYaml(updated, LEGACY_GO_BRANCH_RESPONSE));
+      yield* output.raw(encodeGoYaml(updated, GO_BRANCH_RESPONSE));
       return;
     }
     if (goFmt === "toml") {
       yield* output.raw("Updated preview branch:\n", "stderr");
-      yield* output.raw(encodeLegacyGoToml(updated, LEGACY_GO_BRANCH_RESPONSE));
+      yield* output.raw(encodeGoToml(updated, GO_BRANCH_RESPONSE));
       return;
     }
     if (goFmt === "env") {

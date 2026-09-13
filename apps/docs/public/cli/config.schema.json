@@ -651,6 +651,16 @@
               "description": "Controls the minimum amount of time that must pass before sending another sms otp.",
               "default": "5s"
             },
+            "otp_length": {
+              "type": "number",
+              "description": "Number of characters used in the SMS OTP.",
+              "default": 6
+            },
+            "otp_expiry": {
+              "type": "number",
+              "description": "Number of seconds before the SMS OTP expires.",
+              "default": 60
+            },
             "twilio": {
               "type": "object",
               "properties": {
@@ -668,6 +678,10 @@
                   "type": "string",
                   "description": "The message service SID for the Twilio API.",
                   "default": ""
+                },
+                "content_sid": {
+                  "type": "string",
+                  "description": "The content SID of a WhatsApp/Messaging Content Template for the Twilio API."
                 },
                 "auth_token": {
                   "type": "string",
@@ -964,6 +978,47 @@
                 "redirect_uri": {
                   "type": "string",
                   "description": "The URI the Facebook OAuth2 provider will redirect to with the code and state values.",
+                  "default": ""
+                },
+                "skip_nonce_check": {
+                  "type": "boolean",
+                  "description": "If true, the nonce check will be skipped.",
+                  "default": false
+                },
+                "email_optional": {
+                  "type": "boolean",
+                  "description": "If true, authentication succeeds when the provider does not return an email address.",
+                  "default": false
+                }
+              },
+              "additionalProperties": false
+            },
+            "figma": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "description": "Use the Figma OAuth provider.",
+                  "default": false
+                },
+                "client_id": {
+                  "type": "string",
+                  "description": "Client ID for the Figma OAuth provider.",
+                  "default": ""
+                },
+                "secret": {
+                  "type": "string",
+                  "description": "Client secret for the Figma OAuth provider.\n\nDO NOT commit your OAuth provider secret to git. Use environment variable substitution instead.",
+                  "examples": ["env(SUPABASE_AUTH_EXTERNAL_FIGMA_SECRET)"]
+                },
+                "url": {
+                  "type": "string",
+                  "description": "The base URL used for constructing the URLs to request authorization and access tokens.",
+                  "default": ""
+                },
+                "redirect_uri": {
+                  "type": "string",
+                  "description": "The URI the Figma OAuth2 provider will redirect to with the code and state values.",
                   "default": ""
                 },
                 "skip_nonce_check": {
@@ -2296,7 +2351,7 @@
       },
       "additionalProperties": false
     },
-    "workers": {
+    "compute": {
       "anyOf": [
         {
           "type": "object",
@@ -2306,7 +2361,7 @@
               "properties": {
                 "runtime": {
                   "type": "string",
-                  "description": "Runtime the worker is built on: `dockerfile` to build the directory's own\nDockerfile, or one of the catalog runtimes (`node`, `deno`). Guessed from\nmarker files when unset.",
+                  "description": "Runtime the compute is built on: `dockerfile` to build the directory's own\nDockerfile, or one of the catalog runtimes (`node`, `deno`). Guessed from\nmarker files when unset.",
                   "examples": ["node"]
                 },
                 "size": {
@@ -2316,25 +2371,25 @@
                 },
                 "exposure": {
                   "type": "string",
-                  "description": "How the worker is reached: `public` gives it an internet-facing URL,\n`private` keeps it reachable only from inside the project. Every deploy\nsends a complete spec, so the value recorded here is what keeps a private\nworker private; `--exposure` overrides it for one deploy. Defaults to\n`public`.",
+                  "description": "How the compute is reached: `public` gives it an internet-facing URL,\n`private` keeps it reachable only from inside the project. Every deploy\nsends a complete spec, so the value recorded here is what keeps a private\ncompute private; `--exposure` overrides it for one deploy. Defaults to\n`public`.",
                   "examples": ["private"]
                 },
                 "instances": {
                   "type": "integer",
                   "minimum": 0,
-                  "description": "Number of instances to run. Every deploy sends a complete spec, so a count\nrecorded here is what keeps a scaled worker scaled; `--instances` overrides\nit for one deploy. Defaults to 1.",
+                  "description": "Number of instances to run. Every deploy sends a complete spec, so a count\nrecorded here is what keeps a scaled compute scaled; `--instances` overrides\nit for one deploy. Defaults to 1.",
                   "examples": [3]
                 },
                 "source": {
                   "type": "string",
-                  "description": "Directory holding the worker's code, relative to the project root, when it\ndoes not live at `supabase/workers/<name>/`.",
+                  "description": "Directory holding the compute's code, relative to the project root, when it\ndoes not live at `supabase/compute/<name>/`.",
                   "examples": ["packages/api"]
                 }
               },
               "additionalProperties": false
             }
           },
-          "description": "Worker-specific configuration keyed by worker name.",
+          "description": "Compute-specific configuration keyed by compute name.",
           "default": {}
         },
         {
@@ -2345,6 +2400,14 @@
     "experimental": {
       "type": "object",
       "properties": {
+        "compute": {
+          "type": "boolean",
+          "description": "Enable the experimental compute command family."
+        },
+        "stack": {
+          "type": "boolean",
+          "description": "Use the new local stack backend for top-level start and stop commands."
+        },
         "orioledb_version": {
           "type": "string",
           "description": "Postgres storage engine version for OrioleDB."
@@ -3095,6 +3158,16 @@
                             "description": "Controls the minimum amount of time that must pass before sending another sms otp.",
                             "default": "5s"
                           },
+                          "otp_length": {
+                            "type": "number",
+                            "description": "Number of characters used in the SMS OTP.",
+                            "default": 6
+                          },
+                          "otp_expiry": {
+                            "type": "number",
+                            "description": "Number of seconds before the SMS OTP expires.",
+                            "default": 60
+                          },
                           "twilio": {
                             "type": "object",
                             "properties": {
@@ -3112,6 +3185,10 @@
                                 "type": "string",
                                 "description": "The message service SID for the Twilio API.",
                                 "default": ""
+                              },
+                              "content_sid": {
+                                "type": "string",
+                                "description": "The content SID of a WhatsApp/Messaging Content Template for the Twilio API."
                               },
                               "auth_token": {
                                 "type": "string",
@@ -3408,6 +3485,47 @@
                               "redirect_uri": {
                                 "type": "string",
                                 "description": "The URI the Facebook OAuth2 provider will redirect to with the code and state values.",
+                                "default": ""
+                              },
+                              "skip_nonce_check": {
+                                "type": "boolean",
+                                "description": "If true, the nonce check will be skipped.",
+                                "default": false
+                              },
+                              "email_optional": {
+                                "type": "boolean",
+                                "description": "If true, authentication succeeds when the provider does not return an email address.",
+                                "default": false
+                              }
+                            },
+                            "additionalProperties": false
+                          },
+                          "figma": {
+                            "type": "object",
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean",
+                                "description": "Use the Figma OAuth provider.",
+                                "default": false
+                              },
+                              "client_id": {
+                                "type": "string",
+                                "description": "Client ID for the Figma OAuth provider.",
+                                "default": ""
+                              },
+                              "secret": {
+                                "type": "string",
+                                "description": "Client secret for the Figma OAuth provider.\n\nDO NOT commit your OAuth provider secret to git. Use environment variable substitution instead.",
+                                "examples": ["env(SUPABASE_AUTH_EXTERNAL_FIGMA_SECRET)"]
+                              },
+                              "url": {
+                                "type": "string",
+                                "description": "The base URL used for constructing the URLs to request authorization and access tokens.",
+                                "default": ""
+                              },
+                              "redirect_uri": {
+                                "type": "string",
+                                "description": "The URI the Figma OAuth2 provider will redirect to with the code and state values.",
                                 "default": ""
                               },
                               "skip_nonce_check": {
@@ -4740,7 +4858,7 @@
                     },
                     "additionalProperties": false
                   },
-                  "workers": {
+                  "compute": {
                     "anyOf": [
                       {
                         "type": "object",
@@ -4750,7 +4868,7 @@
                             "properties": {
                               "runtime": {
                                 "type": "string",
-                                "description": "Runtime the worker is built on: `dockerfile` to build the directory's own\nDockerfile, or one of the catalog runtimes (`node`, `deno`). Guessed from\nmarker files when unset.",
+                                "description": "Runtime the compute is built on: `dockerfile` to build the directory's own\nDockerfile, or one of the catalog runtimes (`node`, `deno`). Guessed from\nmarker files when unset.",
                                 "examples": ["node"]
                               },
                               "size": {
@@ -4760,25 +4878,25 @@
                               },
                               "exposure": {
                                 "type": "string",
-                                "description": "How the worker is reached: `public` gives it an internet-facing URL,\n`private` keeps it reachable only from inside the project. Every deploy\nsends a complete spec, so the value recorded here is what keeps a private\nworker private; `--exposure` overrides it for one deploy. Defaults to\n`public`.",
+                                "description": "How the compute is reached: `public` gives it an internet-facing URL,\n`private` keeps it reachable only from inside the project. Every deploy\nsends a complete spec, so the value recorded here is what keeps a private\ncompute private; `--exposure` overrides it for one deploy. Defaults to\n`public`.",
                                 "examples": ["private"]
                               },
                               "instances": {
                                 "type": "integer",
                                 "minimum": 0,
-                                "description": "Number of instances to run. Every deploy sends a complete spec, so a count\nrecorded here is what keeps a scaled worker scaled; `--instances` overrides\nit for one deploy. Defaults to 1.",
+                                "description": "Number of instances to run. Every deploy sends a complete spec, so a count\nrecorded here is what keeps a scaled compute scaled; `--instances` overrides\nit for one deploy. Defaults to 1.",
                                 "examples": [3]
                               },
                               "source": {
                                 "type": "string",
-                                "description": "Directory holding the worker's code, relative to the project root, when it\ndoes not live at `supabase/workers/<name>/`.",
+                                "description": "Directory holding the compute's code, relative to the project root, when it\ndoes not live at `supabase/compute/<name>/`.",
                                 "examples": ["packages/api"]
                               }
                             },
                             "additionalProperties": false
                           }
                         },
-                        "description": "Worker-specific configuration keyed by worker name.",
+                        "description": "Compute-specific configuration keyed by compute name.",
                         "default": {}
                       },
                       {
@@ -4789,6 +4907,14 @@
                   "experimental": {
                     "type": "object",
                     "properties": {
+                      "compute": {
+                        "type": "boolean",
+                        "description": "Enable the experimental compute command family."
+                      },
+                      "stack": {
+                        "type": "boolean",
+                        "description": "Use the new local stack backend for top-level start and stop commands."
+                      },
                       "orioledb_version": {
                         "type": "string",
                         "description": "Postgres storage engine version for OrioleDB."

@@ -69,9 +69,8 @@ function fakeCommit(hash: string, message: string): Commit {
 }
 
 // AnalyzeCommitsContext pulls in every field of semantic-release's
-// VerifyConditionsContext/BaseContext, but analyzeCommits() (ours and the
-// real commit-analyzer it delegates to) only reads commits/cwd/logger.log;
-// the rest is dummy filler required purely to satisfy the type.
+// VerifyConditionsContext/BaseContext, but `analyzeCommits()` only reads
+// `commits`/`cwd`/`logger.log`; the rest is dummy filler to satisfy the type.
 function fakeAnalyzeCommitsContext(commits: Commit[], cwd: string): AnalyzeCommitsContext {
   return {
     commits,

@@ -2,7 +2,7 @@ import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { CLI_CONFIG_SCHEMA_URL, PROJECT_CONFIG_SCHEMA_URL } from "@supabase/config";
-import { legacyRoot } from "../src/cli/root.ts";
+import { rootCommand } from "../src/cli/root.ts";
 import { collectCommands, getHelpDoc } from "../src/shared/cli/command-docs.ts";
 import { formatHelpDocAsMarkdown } from "../src/shared/cli/markdown-formatter.ts";
 
@@ -15,7 +15,7 @@ const contentDir = process.argv[2]
   : defaultContentDir;
 
 function generateCommandDocs() {
-  const leaves = collectCommands(legacyRoot, [BINARY_NAME]).filter(
+  const leaves = collectCommands(rootCommand, [BINARY_NAME]).filter(
     ({ command, commandPath }) => commandPath.length > 1 && command.subcommands.length === 0,
   );
 
@@ -74,13 +74,10 @@ function generateCommandDocs() {
 }
 
 /**
- * Copies `@supabase/config`'s already post-processed (metadata + number-
- * union-collapsed) `dist/*.json` schema artifact straight to its docs-site
- * public path, rather than re-rendering `toCliConfigJsonSchema()`/
- * `toProjectConfigJsonSchema()` here (CLI-2234) — re-rendering would bypass
- * `json-schema-postprocess.ts` and produce a document whose `$id` doesn't
- * match what actually gets published. Requires `@supabase/config#build` to
- * have already run (wired via `turbo.json`).
+ * Copies `@supabase/config`'s post-processed `dist/*.json` schema artifact to its docs-site
+ * public path rather than re-rendering it here, since re-rendering would bypass
+ * `json-schema-postprocess.ts` and produce a mismatched `$id`. Requires
+ * `@supabase/config#build` to have already run (wired via `turbo.json`).
  */
 function copyConfigSchemaAsset(schemaUrl: string, distFileName: string) {
   const schemaPathname = new URL(schemaUrl).pathname.replace(/^\/docs/, "");

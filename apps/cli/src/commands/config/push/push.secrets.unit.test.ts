@@ -1,19 +1,15 @@
-/**
- * Unit tests for push.secrets.ts.
- */
-
 import type { CliConfig, ProjectConfig } from "@supabase/config";
 import { getDefaultCliConfig } from "@supabase/config";
 import { projectConfigMappingRows } from "@supabase/config/internal";
 import { describe, expect, it } from "vitest";
 
-import { legacySecretDigestHex } from "./push.secret.ts";
-import { legacyResolveAuthSecrets } from "./push.secrets.ts";
+import { secretDigestHex } from "./push.secret.ts";
+import { resolveAuthSecrets } from "./push.secrets.ts";
 
 const PROJECT_REF = "abcdefghijklmnopqrst";
 
 function hex(value: string): string {
-  const digest = legacySecretDigestHex(PROJECT_REF, value, []);
+  const digest = secretDigestHex(PROJECT_REF, value, []);
   if (digest === undefined) {
     throw new Error("test fixture value must hash to a digest");
   }
@@ -150,12 +146,12 @@ function fullyEnabledLocal(): ProjectConfig {
   return { auth: config.auth };
 }
 
-describe("legacyResolveAuthSecrets", () => {
+describe("resolveAuthSecrets", () => {
   it("resolves the registry's own apiPath[1] as apiKey for every secret row", () => {
     const config = buildFullyEnabledConfig();
     const local = fullyEnabledLocal();
     const maskedPaths = FULLY_ENABLED_SECRET_VALUES.map((entry) => entry.path);
-    const decisions = legacyResolveAuthSecrets({
+    const decisions = resolveAuthSecrets({
       maskedPaths,
       config,
       local,
@@ -182,7 +178,7 @@ describe("legacyResolveAuthSecrets", () => {
   it("marks a secret unchanged when its digest matches the remote attribute", () => {
     const config = buildFullyEnabledConfig();
     const local = fullyEnabledLocal();
-    const decisions = legacyResolveAuthSecrets({
+    const decisions = resolveAuthSecrets({
       maskedPaths: [["auth", "captcha", "secret"]],
       config,
       local,
@@ -210,7 +206,7 @@ describe("legacyResolveAuthSecrets", () => {
     const local = fullyEnabledLocal();
     const remoteAuthAttributes: Record<string, unknown> =
       remoteValue === undefined ? {} : { security_captcha_secret: remoteValue };
-    const decisions = legacyResolveAuthSecrets({
+    const decisions = resolveAuthSecrets({
       maskedPaths: [["auth", "captcha", "secret"]],
       config,
       local,
@@ -236,7 +232,7 @@ describe("legacyResolveAuthSecrets", () => {
       auth: { ...base.auth, captcha: { enabled: true, provider: "hcaptcha", secret: "" } },
     };
     const local: ProjectConfig = { auth: { captcha: { enabled: true } } };
-    const decisions = legacyResolveAuthSecrets({
+    const decisions = resolveAuthSecrets({
       maskedPaths: [["auth", "captcha", "secret"]],
       config,
       local,
@@ -264,7 +260,7 @@ describe("legacyResolveAuthSecrets", () => {
       },
     };
     const local: ProjectConfig = { auth: { captcha: { enabled: true } } };
-    const decisions = legacyResolveAuthSecrets({
+    const decisions = resolveAuthSecrets({
       maskedPaths: [["auth", "captcha", "secret"]],
       config,
       local,
@@ -320,7 +316,7 @@ describe("legacyResolveAuthSecrets", () => {
       ],
     ])("%s → gated, never sent", (_label, path, local) => {
       const config = buildFullyEnabledConfig();
-      const decisions = legacyResolveAuthSecrets({
+      const decisions = resolveAuthSecrets({
         maskedPaths: [path],
         config,
         local,
@@ -335,10 +331,9 @@ describe("legacyResolveAuthSecrets", () => {
 
     it("gates when the container is present but its `enabled` field is not a boolean (never coerced to eligible)", () => {
       const config = buildFullyEnabledConfig();
-      // No `enabled` key at all on the captcha container — an undetermined
-      // state, not an eligible one.
+      // No `enabled` key at all here — an undetermined state, not an eligible one.
       const local: ProjectConfig = { auth: { captcha: {} } };
-      const decisions = legacyResolveAuthSecrets({
+      const decisions = resolveAuthSecrets({
         maskedPaths: [["auth", "captcha", "secret"]],
         config,
         local,
@@ -372,7 +367,7 @@ describe("legacyResolveAuthSecrets", () => {
         },
       };
       const local: ProjectConfig = { auth: { captcha: { enabled: true } } };
-      const decisions = legacyResolveAuthSecrets({
+      const decisions = resolveAuthSecrets({
         maskedPaths: [["auth", "captcha", "secret"]],
         config,
         local,
@@ -401,7 +396,7 @@ describe("legacyResolveAuthSecrets", () => {
         },
       };
       const local: ProjectConfig = { auth: { captcha: { enabled: true } } };
-      const decisions = legacyResolveAuthSecrets({
+      const decisions = resolveAuthSecrets({
         maskedPaths: [["auth", "captcha", "secret"]],
         config,
         local,
@@ -421,7 +416,7 @@ describe("legacyResolveAuthSecrets", () => {
   });
 
   it("ignores a masked path with no matching secret row", () => {
-    const decisions = legacyResolveAuthSecrets({
+    const decisions = resolveAuthSecrets({
       maskedPaths: [["auth", "not_a_real_secret"]],
       config: getDefaultCliConfig(),
       local: {},

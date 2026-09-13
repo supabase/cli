@@ -7,10 +7,6 @@ on:
         description: npm package version to publish
         required: true
         type: string
-      shell:
-        description: CLI shell to package as the shipped supabase binary
-        required: true
-        type: string
       npm_tag:
         description: npm dist-tag to publish under
         required: true
@@ -59,13 +55,14 @@ on:
         required: false
       LINEAR_CLI_BETA_RELEASE_ACCESS_KEY:
         required: false
+      SUPABASE_E2E_CLI_LIVE_STAGING_ACCESS_TOKEN:
+        required: false
 jobs:
   build-blacksmith:
     name: Build CLI artifacts (Blacksmith)
     uses: ./.github/workflows/build-cli-artifacts.yml
     with:
       version: ${{ inputs.version }}
-      shell: ${{ inputs.shell }}
     secrets:
       SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
       POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
@@ -77,7 +74,6 @@ jobs:
     uses: ./.github/workflows/build-cli-artifacts.yml
     with:
       version: ${{ inputs.version }}
-      shell: ${{ inputs.shell }}
       runner: large-linux-x86
       cache_key_suffix: -github
       timeout_minutes: 45
@@ -119,16 +115,14 @@ jobs:
           path: |
             packages/cli-*/bin/
             dist/
-          key: cli-build-${{ github.run_id }}-${{ inputs.shell }}-${{ inputs.version }}-v1
+          key: cli-build-${{ github.run_id }}-${{ inputs.version }}-v1
           enableCrossOsArchive: true
           fail-on-cache-miss: true
 
-      # Docker's classic image store keeps a single platform manifest per
-      # tag, so pulling `alpine:3.21` for amd64 and again for arm64 leaves
-      # only the most recent one in the local store — and `docker save`
-      # captures only that one. Enabling the containerd snapshotter lets
-      # the store hold multi-platform manifests under a single tag, which
-      # is what makes the cache step below work for both arches.
+      # Docker's classic image store keeps a single platform manifest per tag, so pulling
+      # `alpine:3.21` for amd64 then arm64 leaves only the most recent in the local store, and
+      # `docker save` captures only that one. The containerd snapshotter lets the store hold
+      # multi-platform manifests under a single tag instead.
       - name: Enable containerd image store
         if: runner.os == 'Linux'
         run: |
@@ -137,17 +131,12 @@ jobs:
           sudo systemctl restart docker
           docker info --format '{{.DriverStatus}}'
 
-      # The host's binfmt_misc must be mounted BEFORE installing QEMU. On cold
-      # Blacksmith VMs it is not mounted by default; the privileged
-      # tonistiigi/binfmt installer that setup-qemu-action runs then registers
-      # the qemu interpreters inside its own mount namespace — it prints
-      # "installing: arm64 OK" but the handlers vanish when the container exits,
-      # so the host kernel never gains arm64 emulation and every
-      # `docker run --platform linux/arm64` dies with "exec format error".
-      # Warm/reused VMs already had it mounted, which is why this only failed
-      # intermittently (on cache-miss, i.e. cold-VM, runs). Mount it on the host
-      # after the docker restart so the registration lands in the host kernel
-      # and persists through to the smoke tests.
+      # The host's binfmt_misc must be mounted before installing QEMU. On cold Blacksmith VMs it
+      # isn't mounted by default, so setup-qemu-action's privileged installer registers the qemu
+      # interpreters inside its own mount namespace — they vanish when the container exits, and
+      # `docker run --platform linux/arm64` fails with "exec format error" (only on cold-VM runs,
+      # since warm VMs already have it mounted). Mount it on the host after the docker restart so
+      # the registration lands in the host kernel.
       - name: Ensure binfmt_misc is mounted on the host
         if: runner.os == 'Linux'
         run: |
@@ -160,7 +149,7 @@ jobs:
 
       - name: Setup QEMU for cross-platform Docker
         if: runner.os == 'Linux'
-        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+        uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4.3.0
 
       - name: Verify linux/arm64 emulation is registered
         if: runner.os == 'Linux'
@@ -171,11 +160,10 @@ jobs:
           # the host kernel. Reads binfmt_misc directly — no image pull, no network.
           grep -q enabled /proc/sys/fs/binfmt_misc/qemu-aarch64
 
-      # Cache the smoke-test base images across runs. Without this, eight
-      # parallel `docker run` calls in smoke-test-linux.ts race on first-time
-      # pulls and surface as docker exit 125 ("daemon could not start the
-      # container") on a subset of jobs. Bump the `-v<N>` suffix to invalidate
-      # the cache when the image list or tags change.
+      # Caches the smoke-test base images across runs — without it, eight parallel `docker run`
+      # calls in smoke-test-linux.ts race on first-time pulls and fail with docker exit 125
+      # ("daemon could not start the container"). Bump the `-v<N>` suffix to invalidate when the
+      # image list or tags change.
       - name: Cache smoke-test docker images
         if: runner.os == 'Linux'
         id: smoke-docker-cache
@@ -223,9 +211,8 @@ jobs:
         run: chmod +x packages/cli-*/bin/supabase || true
 
       - name: Run smoke tests
-        # Force bash so ${VERSION}/${NPM_TAG} expand identically across the
-        # ubuntu/macos/windows matrix — windows-latest defaults to pwsh, which
-        # treats those as empty PowerShell variables (env vars are `$env:VAR`).
+        # Force bash so ${VERSION}/${NPM_TAG} expand identically across the ubuntu/macos/windows
+        # matrix — windows-latest defaults to pwsh, which treats those as empty PowerShell variables.
         shell: bash
         run: pnpm run test:smoke -- --version "${VERSION}" --tag "${NPM_TAG}"
         working-directory: apps/cli
@@ -255,7 +242,7 @@ jobs:
           path: |
             packages/cli-*/bin/
             dist/
-          key: cli-build-${{ github.run_id }}-${{ inputs.shell }}-${{ inputs.version }}-github-v1
+          key: cli-build-${{ github.run_id }}-${{ inputs.version }}-github-v1
           enableCrossOsArchive: true
           fail-on-cache-miss: true
 
@@ -267,17 +254,25 @@ jobs:
         run: pnpm run test:smoke -- --version "${VERSION}" --tag "${NPM_TAG}"
         working-directory: apps/cli
 
+  live-e2e-gate:
+    name: Verify live e2e before stable publication
+    if: ${{ inputs.channel == 'stable' && !inputs.dry_run }}
+    uses: ./.github/workflows/live-e2e-gate.yml
+    with:
+      sha: ${{ github.sha }}
+    secrets:
+      SUPABASE_E2E_CLI_LIVE_STAGING_ACCESS_TOKEN: ${{ secrets.SUPABASE_E2E_CLI_LIVE_STAGING_ACCESS_TOKEN }}
+
   publish:
     needs:
       - build-github
       - smoke-test
       - smoke-test-macos
-    if: ${{ !inputs.dry_run }}
-    # npm provenance verification rejects non-GitHub-hosted runners with
-    # E422 ("Unsupported GitHub Actions runner environment: self-hosted").
-    # Blacksmith runners count as self-hosted from sigstore's POV, so the
-    # publish job must stay on a github-hosted runner. The job is short
-    # and not compute-bound, so the wall-clock cost is negligible.
+      - live-e2e-gate
+    if: ${{ !cancelled() && !inputs.dry_run && needs.build-github.result == 'success' && needs.smoke-test.result == 'success' && needs.smoke-test-macos.result == 'success' && (inputs.channel != 'stable' || needs.live-e2e-gate.result == 'success') }}
+    # npm provenance verification rejects non-GitHub-hosted runners with E422; Blacksmith runners
+    # count as self-hosted from sigstore's POV, so this job must stay on a github-hosted runner
+    # (it's short and not compute-bound, so the cost is negligible).
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -317,7 +312,7 @@ jobs:
           path: |
             packages/cli-*/bin/
             dist/
-          key: cli-build-${{ github.run_id }}-${{ inputs.shell }}-${{ inputs.version }}-github-v1
+          key: cli-build-${{ github.run_id }}-${{ inputs.version }}-github-v1
           enableCrossOsArchive: true
           fail-on-cache-miss: true
 
@@ -332,13 +327,10 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      # Push the version tag to origin as soon as npm has the bytes, before any
-      # downstream step that can fail. Without this, a failure in the GH-release
-      # step (or anything after) leaves origin with no tag for the version that
-      # is now live on npm — and `semantic-release --dry-run` on the next push
-      # will keep recomputing the same version, causing the publish job to no-op
-      # against stale bytes. Idempotent: skips push if the tag is already on
-      # origin (e.g. a re-run of a job that previously got past this step).
+      # Pushes the tag as soon as npm has the bytes, before any downstream step that can fail —
+      # otherwise a later failure leaves origin untagged for a version already live on npm, and
+      # `semantic-release --dry-run` on the next push keeps recomputing the same version.
+      # Idempotent: skips if the tag is already on origin.
       - name: Push version tag
         run: |
           set -euo pipefail
@@ -350,37 +342,32 @@ jobs:
             git push origin "${tag}"
           fi
 
-      # semantic-release matches tags against branch.channel using git-notes
-      # under refs/notes/semantic-release-<tag>. Without this note, the develop
-      # plan job recomputes the same prerelease version every push (see
-      # docs/ci-beta-tags-investigation.md). Stable releases on main don't
-      # need this — main's branch config has no explicit channel.
+      # semantic-release matches tags against branch.channel using git-notes under
+      # refs/notes/semantic-release-<tag>; without this note, the develop plan job recomputes
+      # the same prerelease version every push (see docs/ci-beta-tags-investigation.md). Stable
+      # releases on main don't need this, since main's branch config has no explicit channel.
       #
-      # The note must be attached to the underlying commit, not the annotated
-      # tag object created by "Push version tag" above. semantic-release reads
-      # notes via `git log --no-walk --tags=* --notes=...`, which looks for
-      # notes on commits; a note on the tag object is invisible to it and
-      # leaves the tag with channels:[null], so the prerelease arm of
-      # getLastRelease's filter rejects it and the plan falls back to the
-      # last stable. Hence the `${tag}^{commit}` deref.
+      # The note must attach to the underlying commit, not the annotated tag object created by
+      # "Push version tag" above — semantic-release reads notes via `git log --no-walk
+      # --tags=* --notes=...`, which looks at commits, so a note on the tag object leaves the tag
+      # with channels:[null] and the plan falls back to the last stable. Hence the
+      # `${tag}^{commit}` deref.
       - name: Push channel note for prerelease tags
         if: ${{ inputs.prerelease }}
         run: |
           set -euo pipefail
           tag="v${VERSION}"
-          channel="${CHANNEL}"
           note_ref="refs/notes/semantic-release-${tag}"
           if git ls-remote origin "${note_ref}" | grep -q .; then
             echo "Channel note ${note_ref} already on origin; skipping push."
           else
-            git notes --ref="${note_ref}" add -f -m "{\"channels\":[\"${channel}\"]}" "${tag}^{commit}"
+            git notes --ref="${note_ref}" add -f -m "{\"channels\":[\"${CHANNEL}\"]}" "${tag}^{commit}"
             git push origin "${note_ref}"
           fi
 
-      # goreleaser used to publish both supabase_<version>_<os>_<arch>.tar.gz and
-      # supabase_<os>_<arch>.tar.gz; setup-cli, install scripts, docs and various
-      # third-party tools point at releases/latest/download/<unversioned>.tar.gz.
-      # Re-publish the alias so those callers keep working. See supabase/cli#5257.
+      # setup-cli, install scripts, docs, and other tools reference
+      # releases/latest/download/<unversioned>.tar.gz, so republish that alias alongside the
+      # versioned tarball.
       - name: Create unversioned tarball aliases
         run: |
           set -euo pipefail
@@ -426,7 +413,7 @@ jobs:
 
       - name: Sync stable release to Linear
         if: ${{ inputs.channel == 'stable' && env.LINEAR_CLI_STABLE_RELEASE_ACCESS_KEY != '' }}
-        uses: linear/linear-release-action@3f31fcf14c110cc53579fcc3575a26d469c413b4 # v0
+        uses: linear/linear-release-action@53ad0f863963e7f8e270fba18426bbb55ef55384 # v0
         with:
           access_key: ${{ env.LINEAR_CLI_STABLE_RELEASE_ACCESS_KEY }}
           version: v${{ inputs.version }}
@@ -437,7 +424,7 @@ jobs:
 
       - name: Sync beta release to Linear
         if: ${{ inputs.channel == 'beta' && env.LINEAR_CLI_BETA_RELEASE_ACCESS_KEY != '' }}
-        uses: linear/linear-release-action@3f31fcf14c110cc53579fcc3575a26d469c413b4 # v0
+        uses: linear/linear-release-action@53ad0f863963e7f8e270fba18426bbb55ef55384 # v0
         with:
           access_key: ${{ env.LINEAR_CLI_BETA_RELEASE_ACCESS_KEY }}
           version: v${{ inputs.version }}
@@ -459,11 +446,10 @@ jobs:
     secrets:
       DF_FIREWALL_TOKEN: ${{ secrets.DF_FIREWALL_TOKEN }}
 
-  # Once the raw semantic-release block is in the release body, ask Claude to
-  # rewrite it into user-centric notes and open a PR for human approval. Stable
-  # releases only on this path — prereleases keep the raw body. Non-blocking so
-  # an LLM hiccup never gates a published release; reviewers can propose beta
-  # notes manually from the Actions tab (workflow_dispatch).
+  # Once the raw semantic-release block is in the release body, asks Claude to rewrite it into
+  # user-centric notes and open a PR for human approval. Stable only — prereleases keep the raw
+  # body. Non-blocking so an LLM hiccup never gates a published release; reviewers can propose
+  # beta notes manually via workflow_dispatch.
   propose-release-notes:
     uses: ./.github/workflows/propose-release-notes.yml
     needs: backfill-release-notes
@@ -497,19 +483,17 @@ jobs:
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
 
-      # Must restore the github-hosted build (-github-v1), the same artifacts
-      # the publish job uploads to the GitHub Release. The Bun-compiled binaries
-      # are not byte-for-byte reproducible across the blacksmith and github
-      # builds, so the blacksmith dist/checksums.txt does not match the released
-      # tarballs. Reading it here produced a formula whose sha256 rejected the
-      # downloaded archive ("Formula reports different checksum").
+      # Restores the github-hosted build (-github-v1) — the same artifacts the publish job
+      # uploads to the GitHub Release. Bun-compiled binaries aren't byte-for-byte reproducible
+      # across the blacksmith and github builds, so the blacksmith checksums.txt doesn't match
+      # the released tarballs, and a formula built from it rejects the downloaded archive.
       - name: Restore build artifacts cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             packages/cli-*/bin/
             dist/
-          key: cli-build-${{ github.run_id }}-${{ inputs.shell }}-${{ inputs.version }}-github-v1
+          key: cli-build-${{ github.run_id }}-${{ inputs.version }}-github-v1
           enableCrossOsArchive: true
           fail-on-cache-miss: true
 
@@ -560,19 +544,17 @@ jobs:
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
 
-      # Must restore the github-hosted build (-github-v1), the same artifacts
-      # the publish job uploads to the GitHub Release. The Bun-compiled binaries
-      # are not byte-for-byte reproducible across the blacksmith and github
-      # builds, so the blacksmith dist/checksums.txt does not match the released
-      # tarballs. Reading it here would produce a manifest whose hash rejects the
-      # downloaded archive.
+      # Restores the github-hosted build (-github-v1) — the same artifacts the publish job
+      # uploads to the GitHub Release. Bun-compiled binaries aren't byte-for-byte reproducible
+      # across the blacksmith and github builds, so the blacksmith checksums.txt doesn't match
+      # the released tarballs, and a manifest built from it rejects the downloaded archive.
       - name: Restore build artifacts cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             packages/cli-*/bin/
             dist/
-          key: cli-build-${{ github.run_id }}-${{ inputs.shell }}-${{ inputs.version }}-github-v1
+          key: cli-build-${{ github.run_id }}-${{ inputs.version }}-github-v1
           enableCrossOsArchive: true
           fail-on-cache-miss: true
 
@@ -602,18 +584,12 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
 
-  # Post-publish smoke test for the `supabase/setup-cli` GitHub Action against
-  # the just-released CLI. Runs last and intentionally does not gate
-  # publish-homebrew / publish-scoop — by the time the smoke runs, the npm
-  # package and GitHub release are already live and the brew/scoop pushes
-  # have either succeeded or skipped, so a setup-cli regression surfaces as
-  # a red post-release signal without holding back the rest of the channel.
-  #
-  # Depends on the publish jobs only via `needs` for ordering; the `if`
-  # uses `always() && needs.publish.result == 'success'` so the smoke still
-  # runs when publish-homebrew / publish-scoop are skipped or fail.
-  # The reusable workflow can also be dispatched manually against any
-  # already-published version when debugging setup-cli regressions.
+  # Post-publish smoke test for the `supabase/setup-cli` GitHub Action against the just-released
+  # CLI. Runs last and intentionally doesn't gate publish-homebrew/publish-scoop — by the time it
+  # runs, the npm package and GitHub release are already live, so a setup-cli regression surfaces
+  # as a red post-release signal without holding back the rest of the channel. `needs` is for
+  # ordering only; `always() && needs.publish.result == 'success'` lets it run even when
+  # publish-homebrew/publish-scoop are skipped or fail.
   setup-cli-smoke:
     needs: [publish, publish-homebrew, publish-scoop]
     if: ${{ always() && !inputs.dry_run && needs.publish.result == 'success' }}
@@ -621,16 +597,11 @@ jobs:
     with:
       version: ${{ inputs.version }}
 
-  # Post-publish end-to-end check that the Homebrew tap, Scoop bucket, and the
-  # curl|bash install script actually install the just-released CLI. brew/scoop
-  # verify the published checksum against the downloaded tarball, so this is the
-  # signal that would have caught CLI v2.107.0 (mismatched brew/scoop sha256s).
-  #
-  # Only runs when brew/scoop were published (beta/stable) and both pushes
-  # succeeded. A channel that skipped brew/scoop entirely is covered by the GitHub
-  # Release download path in setup-cli-smoke. Like setup-cli-smoke, it runs last
-  # and does not gate the rest of the channel: by the time it runs the manifests
-  # are already live, so a failure surfaces as a red post-release signal.
+  # Post-publish check that the Homebrew tap, Scoop bucket, and curl|bash install script
+  # actually install the just-released CLI — brew/scoop verify the published checksum against
+  # the downloaded tarball, catching a mismatch like CLI v2.107.0. Only runs when brew/scoop were
+  # published and both pushes succeeded; a skipped channel is covered by the GitHub Release
+  # download path in setup-cli-smoke. Runs last and doesn't gate the rest of the channel.
   verify-install-channels:
     needs: [publish, publish-homebrew, publish-scoop]
     if: ${{ always() && !inputs.dry_run && inputs.publish_brew_scoop && needs.publish-homebrew.result == 'success' && needs.publish-scoop.result == 'success' }}

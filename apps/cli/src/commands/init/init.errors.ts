@@ -7,18 +7,10 @@ import {
 } from "../../shared/telemetry/error-actionability.ts";
 
 /**
- * `supabase/config.toml` already exists and `--force` was not set. Reproduces
- * the wrapped `O_EXCL` open error from `utils.InitConfig`
- * (`apps/cli-go/internal/utils/config.go:243-246`) — a `*os.PathError` passed
- * through verbatim, so the message is platform-specific:
- * `failed to create config file: open supabase/config.toml: file exists` on
- * Linux/macOS (POSIX `EEXIST` text), and
- * `failed to create config file: open supabase\config.toml: The file exists.`
- * on Windows (`filepath.Join` separator + `ERROR_FILE_EXISTS` errno text) —
- * plus the `utils.CmdSuggestion` set (platform-independent, since
- * `errors.Is(err, os.ErrExist)` matches `ERROR_FILE_EXISTS` too).
+ * `supabase/config.toml` already exists and `--force` was not set. The message reproduces the
+ * platform's raw file-exists error text: `file exists` (POSIX) or `The file exists.` (Windows).
  */
-export class LegacyInitConfigExistsError extends Data.TaggedError("LegacyInitConfigExistsError")<{
+export class InitConfigExistsError extends Data.TaggedError("InitConfigExistsError")<{
   readonly message: string;
   readonly suggestion: string;
 }> {
@@ -28,14 +20,12 @@ export class LegacyInitConfigExistsError extends Data.TaggedError("LegacyInitCon
 }
 
 /**
- * `--use-orioledb` without `--experimental`. Reproduces cobra's
- * `MarkFlagRequired("experimental")` PreRun error, byte-for-byte
- * (`required flag(s) "experimental" not set`). No suggestion — `recoverAndExit`
- * appends the generic `--debug` troubleshooting hint, which the text output
- * layer's `fail` already adds when `suggestion` is unset.
+ * `--use-orioledb` without `--experimental`. Reproduces the established required-flag error
+ * text verbatim: `required flag(s) "experimental" not set`. No suggestion — the text output
+ * layer's `fail` already appends the generic `--debug` hint when unset.
  */
-export class LegacyInitExperimentalRequiredError extends Data.TaggedError(
-  "LegacyInitExperimentalRequiredError",
+export class InitExperimentalRequiredError extends Data.TaggedError(
+  "InitExperimentalRequiredError",
 )<{
   readonly message: string;
 }> {

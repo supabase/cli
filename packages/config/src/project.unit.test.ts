@@ -55,11 +55,6 @@ describe("project discovery and lazy env resolution", () => {
   });
 
   test("search: false only checks cwd itself, matching Go's exact-workdir resolution", async () => {
-    // Mirrors Go's `ChangeWorkDir` (`apps/cli-go/internal/utils/misc.go:238-257`):
-    // an explicit workdir is used exactly as given, with no ancestor climb —
-    // callers that already hold a Go-equivalent project root (e.g. the legacy
-    // `stop`/`status` ports' `cliSettings.workdir`) pass `search: false` to avoid
-    // picking up an unrelated ancestor project.
     const cwd = makeTempProject();
     const repoRoot = join(cwd, "repo");
     const packageRoot = join(repoRoot, "apps", "web");
@@ -92,9 +87,6 @@ describe("project discovery and lazy env resolution", () => {
   });
 
   test("climbs past a FILE named `supabase` in the starting directory instead of failing with ENOTDIR", async () => {
-    // Go's getProjectRoot keeps climbing on any stat error
-    // (apps/cli-go/internal/utils/misc.go:216-231) — a stray FILE named
-    // `supabase` (not a directory) must read as "no config here", not crash.
     const cwd = makeTempProject();
     const nestedCwd = join(cwd, "child");
 
@@ -257,10 +249,6 @@ describe("project discovery and lazy env resolution", () => {
   });
 
   test("skipEnvLocal ignores .env.local entirely, matching Go's SUPABASE_ENV=test gate", async () => {
-    // Go's `loadDefaultEnv` (`apps/cli-go/pkg/config/config.go:1243-1250`) omits
-    // `.env.local` from its candidate filename list whenever `SUPABASE_ENV=test`,
-    // so a malformed `.env.local` is invisible to Go in that mode. Callers that
-    // reproduce this gate (`status`/`stop` handlers) pass `skipEnvLocal: true`.
     const cwd = makeTempProject();
 
     try {
@@ -278,7 +266,6 @@ describe("project discovery and lazy env resolution", () => {
       expect(projectEnv?.values.FROM_ENV).toBe("1");
       expect(projectEnv?.loadedPaths).toEqual([join(cwd, "supabase", ".env")]);
 
-      // Without the flag, the same malformed file still fails as before.
       await expect(runConfigEffect(loadCliProjectEnvironment({ cwd }))).rejects.toBeInstanceOf(
         CliProjectEnvParseError,
       );
@@ -296,8 +283,6 @@ describe("project discovery and lazy env resolution", () => {
       await writeFile(join(projectRoot, "supabase", "config.toml"), `project_id = "ref_123"\n`);
 
       const defaultLoaded = await runConfigEffect(loadCliConfig(projectRoot));
-      // The field stays optional so an explicit choice in either direction remains
-      // distinguishable from unset, which `config push` omits from the API payload.
       expect(defaultLoaded!.config.api.auto_expose_new_tables).toBeUndefined();
 
       await writeFile(
@@ -456,8 +441,6 @@ jwt_secret = "env(MISSING_SECRET)"
         resolveCliConfigValue(loaded!.config.auth.jwt_secret, projectEnv!, "auth.jwt_secret"),
       );
 
-      // Secret paths are normally redacted, but unresolved env() literals pass
-      // through as plain strings so callers can see the missing reference.
       expect(Redacted.isRedacted(resolved)).toBe(false);
       expect(resolved).toBe("env(MISSING_SECRET)");
     } finally {
@@ -465,10 +448,6 @@ jwt_secret = "env(MISSING_SECRET)"
     }
   });
 
-  // Go's `LoadEnvHook` (`apps/cli-go/pkg/config/decode_hooks.go:19-24`) only
-  // substitutes a non-empty env var (`len(env) > 0`) — a present-but-empty
-  // dotenv line (`EMPTY_SECRET=`) is treated the same as an unset var, so the
-  // literal `env(...)` reference is preserved rather than resolved to `""`.
   test("resolveCliConfigValue preserves env() literal when the env var is present but empty (Go parity)", async () => {
     const cwd = makeTempProject();
     const projectRoot = join(cwd, "repo");
@@ -556,9 +535,6 @@ account_sid = "AC123"
     }
   });
 
-  // Pins the pre-PR-#5765 strict SCREAMING_SNAKE_CASE `env()` matcher as the
-  // default for `resolveCliConfigValue`/`resolveCliConfigSubtree`, since `next/`
-  // and `packages/stack` call these without ever passing `goViperCompat`.
   test("resolveCliConfigValue does not resolve a lowercase-named env() reference by default", async () => {
     const cwd = makeTempProject();
     const projectRoot = join(cwd, "repo");

@@ -21,24 +21,13 @@ const readString = (value: ErrorRecord, key: string): string | undefined => {
   return typeof field === "string" && field.trim().length > 0 ? field.trim() : undefined;
 };
 
-// Unlike `readString`, does not trim or reject empty strings. Use this for
-// fields that carry raw user input (e.g. `CliError.InvalidValue#value`),
-// where an empty string or meaningful surrounding whitespace is a legitimate
-// value the user typed (`supabase --output-format ''`) and must be preserved
-// and reported verbatim rather than normalized away.
+// Unlike `readString`, does not trim or reject empty strings: some fields
+// carry raw user input (e.g. `CliError.InvalidValue#value`) where an empty
+// string or meaningful whitespace is a legitimate value that must be
+// reported verbatim.
 const readRawString = (value: ErrorRecord, key: string): string | undefined => {
   const field = value[key];
   return typeof field === "string" ? field : undefined;
-};
-
-const readCauseMessage = (value: ErrorRecord): string | undefined => {
-  const cause = value["cause"];
-  if (cause instanceof Error && cause.message.trim().length > 0) return cause.message.trim();
-  if (typeof cause === "string" && cause.trim().length > 0) return cause.trim();
-  if (isErrorRecord(cause)) {
-    return readString(cause, "message") ?? readString(cause, "detail");
-  }
-  return undefined;
 };
 
 const mappedError = (
@@ -47,139 +36,11 @@ const mappedError = (
 ): NormalizedCliError | undefined => {
   const tag = readString(error, "_tag");
   switch (tag) {
-    case "NoRunningStackError":
-      return {
-        code: tag,
-        message: "No local Supabase stack is running for this project.",
-        detail: "The CLI could not find a running stack for the current working directory.",
-        suggestion:
-          "Run `supabase start` in this project, or change into a directory with a running stack.",
-      };
-
-    case "DaemonStartError":
-      return {
-        code: tag,
-        message: readString(error, "message") ?? "Failed to start the Supabase daemon.",
-        suggestion: "Check local resources and try `supabase start` again.",
-      };
-    case "DaemonUpgradeRequired": {
-      const oldCliVersion = readString(error, "oldCliVersion") ?? "an older CLI";
-      const newCliVersion = readString(error, "newCliVersion") ?? "the current CLI";
-      return {
-        code: tag,
-        message: `The local Supabase stack is running under ${oldCliVersion}, but this CLI is ${newCliVersion}.`,
-        suggestion: "Run `supabase start` to restart the stack with the current CLI.",
-      };
-    }
-    case "StackUnavailableError": {
-      const phase = readString(error, "phase");
-      const detail = readString(error, "detail");
-      const message =
-        phase === "starting"
-          ? "The local Supabase stack is still starting."
-          : phase === "stopping"
-            ? "The local Supabase stack is still stopping."
-            : phase === "failed"
-              ? "The local Supabase stack failed to start."
-              : "The local Supabase stack is unavailable.";
-      const suggestion =
-        phase === "starting"
-          ? "Wait for `supabase start` to finish, then try again."
-          : phase === "stopping"
-            ? "Wait for the current stop operation to finish, then try again."
-            : phase === "failed"
-              ? "Run `supabase start` again to recreate the local stack."
-              : "Run `supabase start`, then retry the command.";
-      return {
-        code: tag,
-        message,
-        ...(detail === undefined ? {} : { detail }),
-        suggestion,
-      };
-    }
-    case "StackRpcTransportError": {
-      const endpoint = readString(error, "endpoint") ?? "the local stack endpoint";
-      const procedure = readString(error, "procedure") ?? "the requested operation";
-      const cause = readCauseMessage(error);
-      return {
-        code: tag,
-        message: "Could not communicate with the local Supabase stack.",
-        detail: `RPC ${procedure} at ${endpoint} failed${cause === undefined ? "." : `: ${cause}`}`,
-        suggestion: "Check that the stack is running, then retry the command.",
-      };
-    }
-    case "StackRpcProtocolError": {
-      const endpoint = readString(error, "endpoint") ?? "the local stack endpoint";
-      const procedure = readString(error, "procedure") ?? "the requested operation";
-      const detail = readString(error, "detail") ?? "the response did not match the RPC protocol";
-      return {
-        code: tag,
-        message: "The local Supabase stack returned an invalid RPC response.",
-        detail: `RPC ${procedure} at ${endpoint} failed protocol validation: ${detail}`,
-        suggestion: "Restart the stack with `supabase start`, then retry the command.",
-      };
-    }
-    case "StopTimeout": {
-      const endpoint = readString(error, "endpoint") ?? "the local stack endpoint";
-      const lastState = readString(error, "lastState");
-      return {
-        code: tag,
-        message: "Timed out waiting for the local Supabase stack to stop.",
-        detail: `The stack at ${endpoint} did not stop before the timeout${
-          lastState === undefined ? "." : ` (last state: ${lastState}).`
-        }`,
-        suggestion: "Check `supabase status`, then retry `supabase stop`.",
-      };
-    }
-    case "ControlBindError":
-      return {
-        code: tag,
-        message: "Could not start the local Supabase stack control service.",
-        suggestion:
-          "Check for another local process using the stack control port, then retry `supabase start`.",
-      };
-    case "ControlTransportError":
-      return {
-        code: tag,
-        message: "Could not communicate with the local Supabase stack control service.",
-        suggestion: "Run `supabase start` to restore the local stack, then retry the command.",
-      };
-    case "ControlProtocolError":
-      return {
-        code: tag,
-        message: "The local Supabase stack control service returned an invalid response.",
-        suggestion: "Restart the stack with `supabase start`, then retry the command.",
-      };
-    case "ControlProtocolMismatchError":
-      return {
-        code: tag,
-        message: "The local Supabase stack uses an incompatible control protocol.",
-        suggestion: "Restart the stack with `supabase start`, then retry the command.",
-      };
-    case "ControlAddressConflictError":
-      return {
-        code: tag,
-        message: "The local Supabase stack control endpoint is occupied by another process.",
-        suggestion: "Stop the conflicting local stack or process, then retry `supabase start`.",
-      };
-    case "ControlStopConflictError":
-      return {
-        code: tag,
-        message: "The local Supabase stack changed owners while it was stopping.",
-        suggestion: "Retry `supabase stop` to stop the current owner.",
-      };
-    case "ControlMaintenanceBusyError":
-      return {
-        code: tag,
-        message: "The local Supabase stack is being maintained by another command.",
-        suggestion: "Wait for that command to finish, then retry this command.",
-      };
     case "MissingOption": {
-      // Mirror Go Cobra's `required flag(s) "X" not set` wording. Effect CLI's
-      // default `Missing required flag: --X` differs and would break scripts
-      // that parse the Go CLI's stderr. We still cannot suppress Effect CLI's
-      // pre-error help dump (Cobra doesn't show it on parse error) — that
-      // would require a forked CLI parser. Match what we can.
+      // Matches the CLI's established `required flag(s) "X" not set` wording
+      // (not Effect CLI's default `Missing required flag: --X`) so scripts
+      // parsing stderr keep working. The pre-error help dump above it can't
+      // be suppressed without forking the parser.
       const option = readString(error, "option");
       return {
         code: tag,
@@ -189,20 +50,13 @@ const mappedError = (
       };
     }
     case "InvalidValue": {
-      // `CliError.InvalidValue` for a `GlobalFlag.setting` flag (e.g.
-      // `--output-format`, or the legacy `--output`/`-o`, `--dns-resolver`,
-      // `--agent`) never reaches `CliOutput.Formatter` — `Command.runWith`
-      // validates those flags in a step that runs outside the `ShowHelp`
-      // path, so the failure lands here instead. Apply the same
-      // doubled-"Expected"-prefix workaround `subcommand-flag-suggestions.ts`
-      // applies for the `ShowHelp`-formatted case (see CLI-1898), so every
-      // `InvalidValue` failure — whichever path it takes — renders the same
-      // way.
+      // A global-flag `InvalidValue` (`--output-format`, `--output`/`-o`,
+      // `--dns-resolver`, `--agent`) bypasses `CliOutput.Formatter` and lands
+      // here; apply the same doubled-"Expected"-prefix fix as the `ShowHelp` path.
       const option = readString(error, "option");
-      // Raw read: `value` is the exact argv token the user typed and can
-      // legitimately be `""` or carry surrounding whitespace — `readString`
-      // would trim it or drop it entirely, either masking the bug this case
-      // exists to fix or misreporting what the user actually typed.
+      // Raw read: `value` is the exact argv token typed by the user and may
+      // legitimately be `""` or carry whitespace; `readString` would trim or
+      // drop it, masking the bug this case exists to fix.
       const value = readRawString(error, "value");
       const expected = readString(error, "expected");
       const kind = readString(error, "kind");
@@ -223,12 +77,9 @@ const mappedError = (
         message: readString(error, "message") ?? "Unknown subcommand",
       };
     case "ShowHelp": {
-      // Effect CLI wraps parse errors in a ShowHelp envelope (`CliError.ts`)
-      // whose `errors` array holds the underlying causes. If exactly one of
-      // those is a known recoverable type with a Go-parity mapping, unwrap
-      // and surface that instead of the generic "Help requested" envelope
-      // message — otherwise the user sees a useless top-line above the real
-      // problem.
+      // `ShowHelp` wraps parse errors; if exactly one inner error has a known
+      // mapping here, surface that instead of the generic "Help requested"
+      // envelope message.
       const errors = error["errors"];
       if (!Array.isArray(errors) || errors.length === 0) return undefined;
 
@@ -240,21 +91,9 @@ const mappedError = (
         }
       }
 
-      // No Go-parity-specific single-error mapping applies (either more than
-      // one simultaneous error, e.g. a child flag placed before its
-      // subcommand — `UnrecognizedOption` plus the `UnknownSubcommand` its
-      // misplaced value gets parsed as — or a lone error with no known
-      // mapping: UnrecognizedOption, DuplicateOption, MissingArgument,
-      // UnknownSubcommand, UserError, or an InvalidValue that doesn't hit
-      // CLI-1898's doubled-"Expected"-prefix bug). Surface every inner
-      // error's own message — reusing the same `formatCliErrorsForDisplay`
-      // the text/json formatters use, so a subcommand-flag hint (e.g. "Hint:
-      // --foo is available on `branches create`. Pass it after the
-      // subcommand") survives — rather than falling through to ShowHelp's
-      // useless "Help requested" envelope message: since CLI-1901 (`run.ts`'s
-      // `withoutParseErrorHelpDump`) stopped the vendored library from also
-      // `Console.error`-ing this same text, this is now the ONLY place any
-      // of it reaches the user, for one error or many.
+      // No known single-error mapping applies. Reuse
+      // `formatCliErrorsForDisplay` so subcommand-flag hints survive, rather
+      // than falling through to the generic "Help requested" envelope message.
       if (errors.every(CliError.isCliError)) {
         const formatted = formatCliErrorsForDisplay(errors, context);
         if (formatted.errors.length > 0) {
@@ -266,9 +105,9 @@ const mappedError = (
         }
       }
 
-      // Defensive fallback for a single inner value that carries a usable
-      // `_tag`/`message` pair but isn't a real `CliError` instance (e.g. a
-      // hand-rolled test double) — real `ShowHelp.errors` entries always are.
+      // Defensive fallback for an inner value with a usable `_tag`/`message`
+      // pair but not a real `CliError` instance (e.g. a hand-rolled test
+      // double); real `ShowHelp.errors` entries always are.
       if (errors.length === 1) {
         const inner = errors[0];
         if (isErrorRecord(inner)) {
@@ -295,12 +134,9 @@ export function normalizeCliError(
     const code = readString(error, "_tag") ?? "UnknownError";
     const message = readString(error, "message") ?? readString(error, "detail") ?? code;
     const detail = readString(error, "detail");
-    // Raw read: some producers' suggestion text is meaningful leading/trailing
-    // whitespace, not incidental — e.g. `suggestLegacyBundle`'s Go-parity
-    // string (`shared/functions/download.ts`) starts with `\n` to reproduce
-    // Go's blank separator line before the hint (`cmd/root.go:301-302`,
-    // `Fprintln(os.Stderr, CmdSuggestion)`). `readString` would trim exactly
-    // that away.
+    // Raw read: some producers' suggestion text carries meaningful leading
+    // whitespace (e.g. `suggestLegacyBundle`'s leading `\n` for a blank
+    // separator line); `readString` would trim exactly that away.
     const suggestion = readRawString(error, "suggestion");
     return {
       code,

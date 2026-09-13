@@ -1,20 +1,9 @@
 name: Dispatch cli-e2e-ci
 
-# Asks the supabase/cli-e2e-ci harness to run the cli `test:live` suite against
-# a full supabox stack, built from THIS PR's head commit (CLI-1825 / CLI-1831).
-#
-# This is distinct from `live-e2e.yml`, which runs the collocated live suite
-# against managed staging (api.supabase.green). Here the same `apps/cli` suite
-# runs against a local Supabox stack stood up inside the private cli-e2e-ci repo;
-# we only fire the trigger and pass our head SHA — cli-e2e-ci checks that SHA out
-# into its `cli` submodule.
-#
-# Opt-in by label to keep the expensive full-stack run off every PR: add the
-# `run-live-e2e-ci` label (re-dispatches on each subsequent push while labeled).
-# cli-e2e-ci reports a `cli-e2e-ci / live` commit status back onto the head SHA.
-#
-# Fork PRs cannot dispatch (no access to the App secret); run cli-e2e-ci's own
-# workflow_dispatch with `cli_ref` for those.
+# Triggers supabase/cli-e2e-ci to run the cli `test:live` suite against a full Supabox stack
+# built from this PR's head commit — distinct from live-e2e.yml, which targets managed staging.
+# Opt in with the `run-live-e2e-ci` label; fork PRs cannot dispatch (no access to the App
+# secret) and use cli-e2e-ci's own workflow_dispatch with `cli_ref` instead.
 on:
   pull_request:
     types: [labeled, synchronize, reopened]
@@ -24,9 +13,7 @@ permissions:
 
 jobs:
   dispatch:
-    # Same-repo PRs only: fork PRs don't receive secrets (GH_APP_PRIVATE_KEY), so
-    # the App-token step would fail and leave a red check. Skip them cleanly —
-    # fork PRs use cli-e2e-ci's workflow_dispatch with `cli_ref` instead.
+    # Fork PRs don't receive secrets (GH_APP_PRIVATE_KEY), so the App-token step would fail; skip them.
     if: >-
       contains(github.event.pull_request.labels.*.name, 'run-live-e2e-ci')
       && github.event.pull_request.head.repo.full_name == github.repository

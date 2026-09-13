@@ -368,13 +368,6 @@ async function forceCleanup(
       rmSync(stackDir, { recursive: true, force: true });
     } catch {}
   }
-
-  if (homeDir !== undefined) {
-    const managedStacksRoot = path.join(normalizeDir(homeDir), "managed", "stacks");
-    try {
-      rmSync(managedStacksRoot, { recursive: true, force: true });
-    } catch {}
-  }
 }
 
 function createRealEnvironment(): CleanupEnvironment {
@@ -482,15 +475,9 @@ export function createStackE2eCleanupManager(
         }
       }
 
-      // Cleanup of leaked stack resources is best-effort: assertions in the
-      // test itself have already passed by the time `drain()` runs, and CI
-      // runners are ephemeral so a leaked temp dir doesn't affect
-      // correctness. Surface the details so developers can still see them
-      // locally, but don't fail the test (in particular: `functions dev`
-      // leaves root-owned files from edge-runtime's docker container that
-      // the runner user cannot unlink, and the docker fallback may itself
-      // fail in environments where the daemon is unreachable from the
-      // sandbox).
+      // Cleanup failures are best-effort and don't fail the test: assertions already
+      // ran, CI runners are ephemeral, and cases like `functions dev`'s root-owned
+      // docker files can make cleanup itself impossible.
       if (failures.length > 0) {
         console.warn(
           `[stack-e2e-cleanup] ${failures.length} resource(s) could not be cleaned up:\n${failures.join("\n")}`,

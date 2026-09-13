@@ -9,12 +9,12 @@ This document explains how the CLI's on-disk config document loading works, acro
   — the full local superset, including local-only sections (`studio`, ports, `edge_runtime`,
   `analytics`, …) plus `[remotes.*]` overrides. Owned by `@supabase/config`.
 - `ProjectConfig`: the hosted-project subset — the sections a hosted project manages (`api`,
-  `auth`, `db`, `realtime`, `storage`, `workers`, `experimental`), produced by `toProjectConfig`
+  `auth`, `db`, `realtime`, `storage`, `compute`, `experimental`), produced by `toProjectConfig`
   from either a `CliConfig` document or a Management API v2 project-config response (CLI-2230).
   Sparse by design: it carries only what its source actually said, so it composes with the
   subtraction core (`subtractCliConfig`/`omitDefaultValues`, operand type `EffectiveConfig`)
   without fabricating drift from schema defaults. An API-sourced value may speak for fewer
-  fields than the section list implies — `realtime` maps no fields today, and `workers`/
+  fields than the section list implies — `realtime` maps no fields today, and `compute`/
   `experimental` have no v2 project-config API counterpart at all — so a comparison consumer
   should restrict itself to `comparableProjectConfigPaths`/`isComparableProjectConfigPath`
   rather than treating a section's presence in that list as a per-field guarantee. Owned by
@@ -27,9 +27,10 @@ This document explains how the CLI's on-disk config document loading works, acro
 - `CliProjectPaths`: the discovered filesystem paths for the active project.
 - `CliProjectContext`: apps/cli's runtime bundle of discovered paths + merged env for the active
   project.
-- `LegacyCliSettings`: apps/cli's legacy shell's own equivalent of `CliSettings` — same role,
-  scoped to the legacy shell, and pending deletion once the legacy/next shells consolidate.
-  Defined at `apps/cli/src/config/legacy-cli-settings.service.ts`.
+- `CommandSettings`: apps/cli's command-level counterpart to `CliSettings` — the per-invocation
+  settings every command handler resolves (active profile, `--workdir`, project id, access token).
+  It predates `CliSettings`; the two are slated to consolidate. Defined at
+  `apps/cli/src/config/command-settings.service.ts`.
 
 The `Cli*` prefix is a rule, not a per-name coincidence: it names the local checkout side — what
 the CLI reads, writes, or resolves about itself on disk. A bare `Project*` name is reserved for the
@@ -45,9 +46,9 @@ ref — the value that binds that remote block to a specific persistent Supabase
 The `Cli*` prefix names the local checkout side — what the CLI reads, writes, or resolves about
 itself on disk. A bare `Project*` name is reserved for the hosted Supabase project side. (Deliberate
 exceptions live in apps/cli: services that describe the hosted project itself or the CLI's link to
-it — `ProjectLinkRemote`, `ProjectLinkState` (both in `next/config`), and legacy's
-`ProjectRefResolver` (exported as `LegacyProjectRefResolver`, carrying the legacy shell's own
-separate mandatory prefix) — keep the bare `Project*` root under this same rule.)
+it — `ProjectLinkRemote`, `ProjectLinkState` (both in `shared/config`), and
+`ProjectRefResolver` (in `apps/cli/src/config`) — keep the bare `Project*` root under this same
+rule.)
 
 ## The `/io` facade
 
@@ -203,6 +204,29 @@ cross-field feature contracts such as `enabled => required sibling fields`. Raw 
 fails when a feature block is structurally invalid, but not just because a field still contains a
 literal, unresolved `env(NAME)`.
 
+### In-memory effective config validation
+
+Callers that start with a loaded config and apply an in-memory override should validate the
+effective document before consuming it:
+
+```ts
+const loaded = yield * loadCliConfig(cwd);
+const effective = applyCallerOverrides(loaded.config);
+const config = yield * validateCliConfig(effective);
+consumeConfig(config);
+```
+
+`validateCliConfig` is exported from `@supabase/config/effect`. It reads only the value supplied
+by the caller: it does not reread config files, read project or ambient environment variables, or
+interpolate `env(NAME)` references. It returns an `Effect` with the native Effect Schema error
+channel, so schema failures remain typed for the caller to handle.
+
+Validation follows the loader's existing remote policy. The base document receives all schema
+business-rule checks. Each `[remotes.*]` block still receives structural decoding, defaults, and
+transformations, while its business-rule checks are disabled until a caller selects and merges
+that remote into the effective config. An unselected remote may therefore be an incomplete but
+structurally valid stub; structurally invalid remote values still fail validation.
+
 ## Lazy `env(NAME)` Resolution
 
 A caller can also resolve `env(NAME)` references explicitly, after config is loaded. The package
@@ -238,7 +262,7 @@ resolves and redacts leaves nested inside `[remotes.*]` blocks.
 
 An optional `goViperCompat` flag switches the `env(NAME)` matcher from the default, strict
 `SCREAMING_SNAKE_CASE`-only pattern to Go/viper's case-agnostic `^env\((.*)\)$` form; only the
-Go-parity legacy shell sets it. The public `resolveCliConfigValue`/`resolveCliConfigSubtree` on
+Go-parity CLI sets it. The public `resolveCliConfigValue`/`resolveCliConfigSubtree` on
 `.`/`./effect` take no options parameter at all (CLI-2234) — `goViperCompat` is internal-only,
 typed on `InternalResolveCliConfigOptions`, a package-internal type that is not itself exported.
 `@supabase/config/internal` re-exports these same runtime functions re-typed to additionally
@@ -336,13 +360,11 @@ The CLI also keeps machine-local project state outside `@supabase/config`'s scop
 (see `apps/cli/docs/supabase-home.md` for the full layout):
 
 - a repo-local `.supabase/` directory, sibling to `supabase/`, holding checkout-specific caches:
-  linked remote project metadata (`project.json`), checkout-local service-version overrides
-  (`local-versions.json`), and, for ordinary non-Git folders, a workspace-identity marker
-  (`identity.json`) — Git checkouts keep that identity in Git metadata instead and don't write
-  that marker
+  linked remote project metadata (`project.json`) and checkout-local service-version overrides
+  (`local-versions.json`). It does not hold stack identity markers
 - the global `SUPABASE_HOME` directory, holding managed-stack metadata and runtime state, keyed by
-  stack identity — the canonical local-project key relative to the enclosing Git checkout, plus
-  workspace identity — not the config-discovered project root
+  the canonical project root, the full Git branch ref (or `detached`/`ordinary-workspace`), and
+  the stack name
 
 Neither is part of `@supabase/config`'s input.
 

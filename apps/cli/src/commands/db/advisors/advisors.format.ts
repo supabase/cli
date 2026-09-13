@@ -6,20 +6,17 @@
  * byte-for-byte. The only `omitempty` field is `metadata`.
  */
 
-import { encodeGoJsonIndented } from "../../../command-internal/legacy-go-json.ts";
-import { makeLegacyLevelEnum } from "../../../command-internal/legacy-fail-on.ts";
+import { encodeGoJsonIndented } from "../../../command-internal/go-json.ts";
+import { makeLevelEnum } from "../../../command-internal/fail-on.ts";
 
 /** Lowest severity first. */
-const LEGACY_ADVISORS_ALLOWED_LEVELS = ["info", "warn", "error"] as const;
+const ADVISORS_ALLOWED_LEVELS = ["info", "warn", "error"] as const;
 
 /** Exact, case-insensitive level switch. */
-export const LEGACY_ADVISORS_LEVEL_ENUM = makeLegacyLevelEnum(
-  LEGACY_ADVISORS_ALLOWED_LEVELS,
-  "exact-ci",
-);
+export const ADVISORS_LEVEL_ENUM = makeLevelEnum(ADVISORS_ALLOWED_LEVELS, "exact-ci");
 
 /** A single advisor lint — fields in the established output-contract order. */
-export interface LegacyAdvisorLint {
+export interface AdvisorLint {
   readonly name: string;
   readonly title: string;
   readonly level: string;
@@ -46,10 +43,9 @@ const asStringArray = (value: unknown): ReadonlyArray<string> =>
   Array.isArray(value) ? value.map(asString) : [];
 
 /**
- * Decodes a JSON value into a plain string field: an absent or `null` value is
- * the zero value `""`; a present non-string (number/bool/object/array) throws.
- * Any string value is accepted (the deliberate unknown-enum tolerance). Used
- * only on the typed-API path, not the local `rows.Scan` path.
+ * Decodes a JSON value into a plain string field: an absent or `null` value is the zero value
+ * `""`; a present non-string (number/bool/object/array) throws. Any string value is accepted
+ * (an intentional unknown-enum tolerance), used only on the typed-API path, not `rows.Scan`.
  */
 function requireApiString(value: unknown, field: string): string {
   if (value === undefined || value === null) return "";
@@ -110,7 +106,7 @@ function normalizeLocalMetadata(value: unknown): unknown {
  * keys rows by column name; the `lints.sql` query aliases the ten columns
  * exactly as referenced here.
  */
-export function scanLegacyAdvisorLintRow(row: Record<string, unknown>): LegacyAdvisorLint {
+export function scanAdvisorLintRow(row: Record<string, unknown>): AdvisorLint {
   const metadata = normalizeLocalMetadata(row["metadata"]);
   return {
     name: asString(row["name"]),
@@ -181,20 +177,18 @@ function projectApiMetadata(value: unknown): Record<string, unknown> | undefined
 }
 
 /**
- * Reads the advisors API response with plain string narrowing instead of the
- * generated closed-enum schema (which would reject advisor names / metadata
- * types the API can add): `name` / `level` / `facing` / category values pass
- * through as raw strings.
+ * Reads the advisors API response with plain string narrowing instead of the generated
+ * closed-enum schema, which would reject advisor names/metadata types the API can add: `name` /
+ * `level` / `facing` / category values pass through as raw strings.
  *
- * Structurally strict, though — a top-level non-object, a `lints` /
- * `categories` / `metadata` / `fkey_columns` of the wrong JSON container type,
- * or a non-object lint entry throws rather than surfacing as a non-zero
- * failure. **Throws** on those so a malformed 200 body fails instead of being
- * reported as "No issues found"; the caller maps the throw to the same
- * `failed to fetch … advisors` error. A top-level `null` decodes to the zero
- * value (no lints).
+ * Structurally strict, though: a top-level non-object, a wrongly-typed `lints`/`categories`/
+ * `metadata`/`fkey_columns` container, or a non-object lint entry throws — so a malformed 200
+ * body fails instead of being reported as "No issues found". A top-level `null` decodes to the
+ * zero value (no lints).
+ *
+ * @throws On structurally invalid input; the caller maps it to `failed to fetch … advisors`.
  */
-export function apiResponseToLegacyAdvisorLints(parsed: unknown): ReadonlyArray<LegacyAdvisorLint> {
+export function apiResponseToAdvisorLints(parsed: unknown): ReadonlyArray<AdvisorLint> {
   if (parsed === null) return [];
   if (typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new TypeError("cannot unmarshal advisors response");
@@ -204,11 +198,10 @@ export function apiResponseToLegacyAdvisorLints(parsed: unknown): ReadonlyArray<
   if (!Array.isArray(lintsRaw)) {
     throw new TypeError("cannot unmarshal lints into []Lint");
   }
-  const lints: Array<LegacyAdvisorLint> = [];
+  const lints: Array<AdvisorLint> = [];
   for (const entry of lintsRaw) {
-    // A null slice element decodes to the zero-value struct (all fields at
-    // their zero values), not a throw. Normalise null/undefined to an empty
-    // record so the field decoders produce zero values.
+    // A null slice element decodes to the zero-value struct, not a throw; normalize
+    // null/undefined to an empty record so the field decoders produce zero values.
     if (entry === null || entry === undefined) {
       lints.push({
         name: "",
@@ -245,7 +238,7 @@ export function apiResponseToLegacyAdvisorLints(parsed: unknown): ReadonlyArray<
 }
 
 /** Advisor-type match: `all` matches every lint, otherwise checks categories. */
-export function matchesLegacyAdvisorType(lint: LegacyAdvisorLint, advisorType: string): boolean {
+export function matchesAdvisorType(lint: AdvisorLint, advisorType: string): boolean {
   if (advisorType === "all") return true;
   for (const category of lint.categories ?? []) {
     if (advisorType === "security" && category === "SECURITY") return true;
@@ -255,21 +248,20 @@ export function matchesLegacyAdvisorType(lint: LegacyAdvisorLint, advisorType: s
 }
 
 /** Type + minimum-level filter. */
-export function filterLegacyAdvisorLints(
-  lints: ReadonlyArray<LegacyAdvisorLint>,
+export function filterAdvisorLints(
+  lints: ReadonlyArray<AdvisorLint>,
   advisorType: string,
   level: string,
-): ReadonlyArray<LegacyAdvisorLint> {
-  const minLevel = LEGACY_ADVISORS_LEVEL_ENUM.toEnum(level);
+): ReadonlyArray<AdvisorLint> {
+  const minLevel = ADVISORS_LEVEL_ENUM.toEnum(level);
   return lints.filter(
     (lint) =>
-      matchesLegacyAdvisorType(lint, advisorType) &&
-      LEGACY_ADVISORS_LEVEL_ENUM.toEnum(lint.level) >= minLevel,
+      matchesAdvisorType(lint, advisorType) && ADVISORS_LEVEL_ENUM.toEnum(lint.level) >= minLevel,
   );
 }
 
 /** Re-materialises a lint as a plain object with keys in output-contract order. */
-function toEncodableLint(lint: LegacyAdvisorLint): Record<string, unknown> {
+function toEncodableLint(lint: AdvisorLint): Record<string, unknown> {
   const out: Record<string, unknown> = {
     name: lint.name,
     title: lint.title,
@@ -291,6 +283,6 @@ function toEncodableLint(lint: LegacyAdvisorLint): Record<string, unknown> {
  * produces no output (a stderr message is written instead), so the caller
  * skips emission.
  */
-export function encodeLegacyAdvisorLints(lints: ReadonlyArray<LegacyAdvisorLint>): string {
+export function encodeAdvisorLints(lints: ReadonlyArray<AdvisorLint>): string {
   return encodeGoJsonIndented(lints.map(toEncodableLint));
 }

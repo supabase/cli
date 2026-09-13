@@ -1,14 +1,14 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import {
-  legacyBuildGotrueContainerSpec,
-  legacyBuildGotrueEnv,
-  legacyFormatMapForEnvConfig,
-  type LegacyBuildGotrueEnvInput,
-  type LegacyGotrueExternalProviderInput,
-  type LegacyGotrueHookInput,
-  type LegacyGotrueSigningKey,
-  type LegacyGotrueWebauthnInput,
+  buildGotrueContainerSpec,
+  buildGotrueEnv,
+  formatMapForEnvConfig,
+  type BuildGotrueEnvInput,
+  type GotrueExternalProviderInput,
+  type GotrueHookInput,
+  type GotrueSigningKey,
+  type GotrueWebauthnInput,
 } from "./gotrue.service.ts";
 
 afterEach(() => {
@@ -17,7 +17,7 @@ afterEach(() => {
 
 // Every field not asserted by a specific subtest below reflects the
 // default config's own values.
-const baseEnvInput: LegacyBuildGotrueEnvInput = {
+const baseEnvInput: BuildGotrueEnvInput = {
   dbHost: "db",
   dbPassword: "postgres",
   apiUrl: "http://127.0.0.1:54321",
@@ -97,10 +97,10 @@ const baseEnvInput: LegacyBuildGotrueEnvInput = {
   externalProviders: {},
 };
 
-describe("legacyBuildGotrueEnv", () => {
+describe("buildGotrueEnv", () => {
   describe("TestBuildGotrueEnv parity", () => {
     test("uses auth scoped external url and absolute mailer verify urls", () => {
-      const env = legacyBuildGotrueEnv({
+      const env = buildGotrueEnv({
         ...baseEnvInput,
         apiUrl: "http://127.0.0.1:54321",
         jwtIssuer: undefined,
@@ -133,7 +133,7 @@ describe("legacyBuildGotrueEnv", () => {
     });
 
     test("honors an explicit auth.external_url override for API_EXTERNAL_URL, the JWT issuer default, the mailer verify URL, and OAuth redirects", () => {
-      const env = legacyBuildGotrueEnv({
+      const env = buildGotrueEnv({
         ...baseEnvInput,
         apiUrl: "http://127.0.0.1:54321",
         authExternalUrl: "https://auth.example.com",
@@ -158,7 +158,7 @@ describe("legacyBuildGotrueEnv", () => {
     });
 
     test("preserves explicit provider redirect override", () => {
-      const env = legacyBuildGotrueEnv({
+      const env = buildGotrueEnv({
         ...baseEnvInput,
         apiUrl: "http://127.0.0.1:54321",
         jwtIssuer: "https://issuer.example.com/auth/v1",
@@ -182,12 +182,12 @@ describe("legacyBuildGotrueEnv", () => {
     });
 
     test("wires passkey and webauthn settings", () => {
-      const webauthn: LegacyGotrueWebauthnInput = {
+      const webauthn: GotrueWebauthnInput = {
         rpId: "localhost",
         rpDisplayName: "Supabase",
         rpOrigins: ["http://127.0.0.1:5173", "http://localhost:5173"],
       };
-      const env = legacyBuildGotrueEnv({
+      const env = buildGotrueEnv({
         ...baseEnvInput,
         passkeyEnabled: true,
         webauthn,
@@ -200,7 +200,7 @@ describe("legacyBuildGotrueEnv", () => {
     });
 
     test("omits passkey and webauthn env when sections are unset", () => {
-      const env = legacyBuildGotrueEnv({
+      const env = buildGotrueEnv({
         ...baseEnvInput,
         passkeyEnabled: undefined,
         webauthn: undefined,
@@ -211,24 +211,22 @@ describe("legacyBuildGotrueEnv", () => {
     });
   });
 
-  // Exercised through GOTRUE_SMS_TEST_OTP since `legacyFormatMapForEnvConfig`
-  // is only ever called from inside `legacyBuildGotrueEnv`.
   describe("GOTRUE_SMS_TEST_OTP / formatMapForEnvConfig parity", () => {
-    test("legacyFormatMapForEnvConfig produces key:value pairs with no trailing comma", () => {
-      expect(legacyFormatMapForEnvConfig({})).toBe("");
-      expect(legacyFormatMapForEnvConfig({ "123456": "123456" })).toMatch(/^\w{6}:\w{6}$/);
-      expect(legacyFormatMapForEnvConfig({ "123456": "123456", "234567": "234567" })).toMatch(
+    test("formatMapForEnvConfig produces key:value pairs with no trailing comma", () => {
+      expect(formatMapForEnvConfig({})).toBe("");
+      expect(formatMapForEnvConfig({ "123456": "123456" })).toMatch(/^\w{6}:\w{6}$/);
+      expect(formatMapForEnvConfig({ "123456": "123456", "234567": "234567" })).toMatch(
         /^\w{6}:\w{6},\w{6}:\w{6}$/,
       );
     });
 
     test("defaults GOTRUE_SMS_TEST_OTP to an empty string when auth.sms.test_otp is unset", () => {
-      const env = legacyBuildGotrueEnv({ ...baseEnvInput, sms: { ...baseEnvInput.sms } });
+      const env = buildGotrueEnv({ ...baseEnvInput, sms: { ...baseEnvInput.sms } });
       expect(env["GOTRUE_SMS_TEST_OTP"]).toBe("");
     });
 
     test("formats a single-entry auth.sms.test_otp map", () => {
-      const env = legacyBuildGotrueEnv({
+      const env = buildGotrueEnv({
         ...baseEnvInput,
         sms: { ...baseEnvInput.sms, test_otp: { "5555555555": "123456" } },
       });
@@ -236,7 +234,7 @@ describe("legacyBuildGotrueEnv", () => {
     });
 
     test("formats a multi-entry auth.sms.test_otp map with commas and no trailing comma", () => {
-      const env = legacyBuildGotrueEnv({
+      const env = buildGotrueEnv({
         ...baseEnvInput,
         sms: {
           ...baseEnvInput.sms,
@@ -252,7 +250,7 @@ describe("legacyBuildGotrueEnv", () => {
 
   describe("external OAuth providers", () => {
     test("a simple enabled provider (github) emits the full env set, with URL omitted when unset", () => {
-      const github: LegacyGotrueExternalProviderInput = {
+      const github: GotrueExternalProviderInput = {
         enabled: true,
         clientId: "gh-client-id",
         secret: "gh-secret",
@@ -260,7 +258,7 @@ describe("legacyBuildGotrueEnv", () => {
         skipNonceCheck: false,
         emailOptional: true,
       };
-      const env = legacyBuildGotrueEnv({
+      const env = buildGotrueEnv({
         ...baseEnvInput,
         externalProviders: { github },
       });
@@ -277,7 +275,7 @@ describe("legacyBuildGotrueEnv", () => {
     });
 
     test("a provider with a configured base url (keycloak) emits GOTRUE_EXTERNAL_<X>_URL", () => {
-      const env = legacyBuildGotrueEnv({
+      const env = buildGotrueEnv({
         ...baseEnvInput,
         externalProviders: {
           keycloak: {
@@ -298,7 +296,7 @@ describe("legacyBuildGotrueEnv", () => {
     });
 
     test("emits full env for a configured-but-disabled provider (Go has no `if config.Enabled` gate)", () => {
-      const env = legacyBuildGotrueEnv({
+      const env = buildGotrueEnv({
         ...baseEnvInput,
         externalProviders: {
           apple: {
@@ -317,7 +315,7 @@ describe("legacyBuildGotrueEnv", () => {
     });
 
     test("omits any env for a provider absent from the (caller-presence-filtered) input map", () => {
-      const env = legacyBuildGotrueEnv({ ...baseEnvInput, externalProviders: {} });
+      const env = buildGotrueEnv({ ...baseEnvInput, externalProviders: {} });
 
       expect(env["GOTRUE_EXTERNAL_GITHUB_ENABLED"]).toBeUndefined();
       expect(env["GOTRUE_EXTERNAL_APPLE_ENABLED"]).toBeUndefined();
@@ -327,7 +325,7 @@ describe("legacyBuildGotrueEnv", () => {
 
   describe("SMTP / Mailpit fallback", () => {
     test("uses configured SMTP when present, overriding the hardcoded GOTRUE_RATE_LIMIT_EMAIL_SENT default", () => {
-      const env = legacyBuildGotrueEnv({
+      const env = buildGotrueEnv({
         ...baseEnvInput,
         rateLimit: { ...baseEnvInput.rateLimit, email_sent: 99 },
         smtp: {
@@ -350,7 +348,7 @@ describe("legacyBuildGotrueEnv", () => {
     });
 
     test("falls back to Mailpit when SMTP is unset and local_smtp is enabled", () => {
-      const env = legacyBuildGotrueEnv({
+      const env = buildGotrueEnv({
         ...baseEnvInput,
         mailpit: { containerName: "supabase_inbucket_proj" },
       });
@@ -363,7 +361,7 @@ describe("legacyBuildGotrueEnv", () => {
     });
 
     test("emits neither SMTP nor Mailpit env when both are unset", () => {
-      const env = legacyBuildGotrueEnv(baseEnvInput);
+      const env = buildGotrueEnv(baseEnvInput);
       expect(env["GOTRUE_SMTP_HOST"]).toBeUndefined();
       expect(env["GOTRUE_RATE_LIMIT_EMAIL_SENT"]).toBe("360000");
     });
@@ -371,13 +369,13 @@ describe("legacyBuildGotrueEnv", () => {
 
   describe("sessions", () => {
     test("omits GOTRUE_SESSIONS_TIMEBOX/INACTIVITY_TIMEOUT when unset", () => {
-      const env = legacyBuildGotrueEnv(baseEnvInput);
+      const env = buildGotrueEnv(baseEnvInput);
       expect(env["GOTRUE_SESSIONS_TIMEBOX"]).toBeUndefined();
       expect(env["GOTRUE_SESSIONS_INACTIVITY_TIMEOUT"]).toBeUndefined();
     });
 
     test("reformats a configured duration into Go's canonical Duration.String() form", () => {
-      const env = legacyBuildGotrueEnv({
+      const env = buildGotrueEnv({
         ...baseEnvInput,
         sessions: { timebox: "1h", inactivity_timeout: "90s" },
       });
@@ -386,7 +384,7 @@ describe("legacyBuildGotrueEnv", () => {
     });
 
     test("omits a configured but zero-valued duration, matching Go's `> 0` guard", () => {
-      const env = legacyBuildGotrueEnv({
+      const env = buildGotrueEnv({
         ...baseEnvInput,
         sessions: { timebox: "0s" },
       });
@@ -396,7 +394,7 @@ describe("legacyBuildGotrueEnv", () => {
 
   describe("SMS provider switch", () => {
     test("twilio takes priority when multiple providers are enabled", () => {
-      const env = legacyBuildGotrueEnv({
+      const env = buildGotrueEnv({
         ...baseEnvInput,
         sms: {
           ...baseEnvInput.sms,
@@ -418,7 +416,7 @@ describe("legacyBuildGotrueEnv", () => {
     });
 
     test("vonage is used when it is the only enabled provider", () => {
-      const env = legacyBuildGotrueEnv({
+      const env = buildGotrueEnv({
         ...baseEnvInput,
         sms: {
           ...baseEnvInput.sms,
@@ -433,14 +431,14 @@ describe("legacyBuildGotrueEnv", () => {
     });
 
     test("omits GOTRUE_SMS_PROVIDER when no provider is enabled", () => {
-      const env = legacyBuildGotrueEnv(baseEnvInput);
+      const env = buildGotrueEnv(baseEnvInput);
       expect(env["GOTRUE_SMS_PROVIDER"]).toBeUndefined();
     });
   });
 
   describe("CAPTCHA", () => {
     test("emits CAPTCHA env when present", () => {
-      const env = legacyBuildGotrueEnv({
+      const env = buildGotrueEnv({
         ...baseEnvInput,
         captcha: { enabled: true, provider: "hcaptcha", secret: "captcha-secret" },
       });
@@ -450,19 +448,19 @@ describe("legacyBuildGotrueEnv", () => {
     });
 
     test("omits CAPTCHA env when unset", () => {
-      const env = legacyBuildGotrueEnv(baseEnvInput);
+      const env = buildGotrueEnv(baseEnvInput);
       expect(env["GOTRUE_SECURITY_CAPTCHA_ENABLED"]).toBeUndefined();
     });
   });
 
   describe("hooks", () => {
     test("emits ENABLED/URI/SECRETS for each enabled hook, omits disabled ones", () => {
-      const customAccessToken: LegacyGotrueHookInput = {
+      const customAccessToken: GotrueHookInput = {
         enabled: true,
         uri: "pg-functions://postgres/public/custom_access_token_hook",
         secrets: "hook-secret",
       };
-      const env = legacyBuildGotrueEnv({
+      const env = buildGotrueEnv({
         ...baseEnvInput,
         hooks: { ...baseEnvInput.hooks, customAccessToken },
       });
@@ -478,7 +476,7 @@ describe("legacyBuildGotrueEnv", () => {
 
   describe("MFA phone extras", () => {
     test("emits template/otp_length/max_frequency when phone enrollment is enabled", () => {
-      const env = legacyBuildGotrueEnv({
+      const env = buildGotrueEnv({
         ...baseEnvInput,
         mfa: {
           ...baseEnvInput.mfa,
@@ -491,7 +489,7 @@ describe("legacyBuildGotrueEnv", () => {
     });
 
     test("omits phone extras when neither enroll nor verify is enabled", () => {
-      const env = legacyBuildGotrueEnv(baseEnvInput);
+      const env = buildGotrueEnv(baseEnvInput);
       expect(env["GOTRUE_MFA_PHONE_TEMPLATE"]).toBeUndefined();
       expect(env["GOTRUE_MFA_PHONE_MAX_FREQUENCY"]).toBeUndefined();
     });
@@ -499,7 +497,7 @@ describe("legacyBuildGotrueEnv", () => {
 
   describe("mailer templates and notifications", () => {
     test("emits a template URL and subject, using the content path's extension", () => {
-      const env = legacyBuildGotrueEnv({
+      const env = buildGotrueEnv({
         ...baseEnvInput,
         email: {
           ...baseEnvInput.email,
@@ -518,11 +516,8 @@ describe("legacyBuildGotrueEnv", () => {
       expect(env["GOTRUE_MAILER_SUBJECTS_CONFIRMATION"]).toBe("Confirm your signup");
     });
 
-    // The email template's subject is optional; the gate is strictly
-    // `subject !== undefined`, not on string length — an explicit blank
-    // subject is still emitted, distinct from an absent one below.
     test("still emits an explicit empty subject, distinct from an absent one", () => {
-      const env = legacyBuildGotrueEnv({
+      const env = buildGotrueEnv({
         ...baseEnvInput,
         email: {
           ...baseEnvInput.email,
@@ -539,7 +534,7 @@ describe("legacyBuildGotrueEnv", () => {
     });
 
     test("omits the subject env var entirely when subject is absent (undefined)", () => {
-      const env = legacyBuildGotrueEnv({
+      const env = buildGotrueEnv({
         ...baseEnvInput,
         email: {
           ...baseEnvInput.email,
@@ -556,7 +551,7 @@ describe("legacyBuildGotrueEnv", () => {
     });
 
     test("emits a notification's ENABLED flag and template/subject with the _notification suffix", () => {
-      const env = legacyBuildGotrueEnv({
+      const env = buildGotrueEnv({
         ...baseEnvInput,
         email: {
           ...baseEnvInput.email,
@@ -580,7 +575,7 @@ describe("legacyBuildGotrueEnv", () => {
     });
 
     test("omits a disabled notification's env entirely", () => {
-      const env = legacyBuildGotrueEnv({
+      const env = buildGotrueEnv({
         ...baseEnvInput,
         email: {
           ...baseEnvInput.email,
@@ -601,7 +596,7 @@ describe("legacyBuildGotrueEnv", () => {
 
   describe("web3 and OAuth server", () => {
     test("always emits both Web3 flags, regardless of value", () => {
-      const env = legacyBuildGotrueEnv({
+      const env = buildGotrueEnv({
         ...baseEnvInput,
         web3: { solana: { enabled: true }, ethereum: { enabled: false } },
       });
@@ -610,10 +605,10 @@ describe("legacyBuildGotrueEnv", () => {
     });
 
     test("emits OAuth server env only when enabled", () => {
-      const disabled = legacyBuildGotrueEnv(baseEnvInput);
+      const disabled = buildGotrueEnv(baseEnvInput);
       expect(disabled["GOTRUE_OAUTH_SERVER_ENABLED"]).toBeUndefined();
 
-      const enabled = legacyBuildGotrueEnv({
+      const enabled = buildGotrueEnv({
         ...baseEnvInput,
         oauthServer: {
           enabled: true,
@@ -636,14 +631,14 @@ describe("legacyBuildGotrueEnv", () => {
         "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789",
       ],
     ] as const)("%s -> %s", (passwordRequirements, expected) => {
-      const env = legacyBuildGotrueEnv({ ...baseEnvInput, passwordRequirements });
+      const env = buildGotrueEnv({ ...baseEnvInput, passwordRequirements });
       expect(env["GOTRUE_PASSWORD_REQUIRED_CHARACTERS"]).toBe(expected);
     });
   });
 
   describe("JWT signing keys", () => {
     test("defaults to Go's hardcoded ES256 signing key when unset", () => {
-      const env = legacyBuildGotrueEnv(baseEnvInput);
+      const env = buildGotrueEnv(baseEnvInput);
       const keys = JSON.parse(env["GOTRUE_JWT_KEYS"] as string);
       expect(keys).toEqual([
         {
@@ -664,8 +659,8 @@ describe("legacyBuildGotrueEnv", () => {
     });
 
     test("serializes a configured signing key, omitting unset fields", () => {
-      const rsaKey: LegacyGotrueSigningKey = { kty: "RSA", alg: "RS256", n: "modulus", e: "AQAB" };
-      const env = legacyBuildGotrueEnv({
+      const rsaKey: GotrueSigningKey = { kty: "RSA", alg: "RS256", n: "modulus", e: "AQAB" };
+      const env = buildGotrueEnv({
         ...baseEnvInput,
         signingKeys: [rsaKey],
       });
@@ -676,9 +671,9 @@ describe("legacyBuildGotrueEnv", () => {
   });
 });
 
-describe("legacyBuildGotrueContainerSpec", () => {
+describe("buildGotrueContainerSpec", () => {
   test("assembles the full container spec, deriving dbHost/dbPassword from projectId/dbUrl", () => {
-    const spec = legacyBuildGotrueContainerSpec({
+    const spec = buildGotrueContainerSpec({
       image: "supabase/gotrue:v2.180.0",
       projectId: "proj",
       networkId: "supabase_network_proj",
@@ -709,7 +704,6 @@ describe("legacyBuildGotrueContainerSpec", () => {
     expect(spec.networkAliases).toEqual(["auth"]);
     expect(spec.labels).toEqual({});
 
-    // dbHost/dbPassword flow from projectId/dbUrl into the env's connection string.
     expect(spec.env["GOTRUE_DB_DATABASE_URL"]).toBe(
       "postgresql://supabase_auth_admin:secret@supabase_db_proj:5432/postgres",
     );
@@ -717,7 +711,7 @@ describe("legacyBuildGotrueContainerSpec", () => {
 
   test("uses BusyBox wget flags on a slim auth image", () => {
     vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
-    const spec = legacyBuildGotrueContainerSpec({
+    const spec = buildGotrueContainerSpec({
       image: "ghcr.io/supabase/cli/auth:v2.196.0",
       projectId: "proj",
       networkId: "supabase_network_proj",

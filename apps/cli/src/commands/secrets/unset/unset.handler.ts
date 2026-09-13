@@ -1,52 +1,50 @@
 import type { V1ListAllSecretsOutput } from "@supabase/api/effect";
 import { Effect } from "effect";
 
-import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { legacyResolveYes } from "../../../shared/legacy/global-flags.ts";
-import { legacyPromptYesNo } from "../../../shared/legacy/legacy-prompt-yes-no.ts";
+import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
+import { resolveYes } from "../../../command-internal/global-flags.ts";
+import { promptYesNo } from "../../../command-internal/prompt-yes-no.ts";
 import { CONTEXT_CANCELED_MESSAGE } from "../../../shared/output/errors.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { mapLegacyHttpError } from "../../../command-internal/legacy-http-errors.ts";
+import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import {
-  LegacySecretsListNetworkError,
-  LegacySecretsListUnexpectedStatusError,
-  LegacySecretsUnsetCancelledError,
-  LegacySecretsUnsetNetworkError,
-  LegacySecretsUnsetUnexpectedStatusError,
+  SecretsListNetworkError,
+  SecretsListUnexpectedStatusError,
+  SecretsUnsetCancelledError,
+  SecretsUnsetNetworkError,
+  SecretsUnsetUnexpectedStatusError,
 } from "../secrets.errors.ts";
-import type { LegacySecretsUnsetFlags } from "./unset.command.ts";
+import type { SecretsUnsetFlags } from "./unset.command.ts";
 
 type Secrets = typeof V1ListAllSecretsOutput.Type;
 
 // The empty-args path lists secrets first, so it shares the LIST error pair
 // with the `list` handler.
-const mapListErrorForUnset = mapLegacyHttpError({
-  networkError: LegacySecretsListNetworkError,
-  statusError: LegacySecretsListUnexpectedStatusError,
+const mapListErrorForUnset = mapHttpError({
+  networkError: SecretsListNetworkError,
+  statusError: SecretsListUnexpectedStatusError,
   networkMessage: (cause) => `failed to list secrets: ${cause}`,
   statusMessage: (status, body) => `unexpected list secrets status ${status}: ${body}`,
 });
 
-const mapUnsetError = mapLegacyHttpError({
-  networkError: LegacySecretsUnsetNetworkError,
-  statusError: LegacySecretsUnsetUnexpectedStatusError,
+const mapUnsetError = mapHttpError({
+  networkError: SecretsUnsetNetworkError,
+  statusError: SecretsUnsetUnexpectedStatusError,
   networkMessage: (cause) => `failed to delete secrets: ${cause}`,
   statusMessage: (_status, body) => `Unexpected error unsetting project secrets: ${body}`,
 });
 
-export const legacySecretsUnset = Effect.fn("legacy.secrets.unset")(function* (
-  flags: LegacySecretsUnsetFlags,
-) {
+export const secretsUnset = Effect.fn("secrets.unset")(function* (flags: SecretsUnsetFlags) {
   const output = yield* Output;
-  const api = yield* LegacyPlatformApi;
-  const resolver = yield* LegacyProjectRefResolver;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
-  // `--yes` OR `SUPABASE_YES` (mirrors viper's AutomaticEnv, root.go:318-320).
-  const yes = yield* legacyResolveYes;
+  const api = yield* CommandPlatformApi;
+  const resolver = yield* ProjectRefResolver;
+  const linkedProjectCache = yield* LinkedProjectCache;
+  const telemetryState = yield* TelemetryState;
+  // `resolveYes` also honors `SUPABASE_YES`, not just the `--yes` flag.
+  const yes = yield* resolveYes;
 
   const ref = yield* resolver.resolve(flags.projectRef);
 
@@ -54,8 +52,6 @@ export const legacySecretsUnset = Effect.fn("legacy.secrets.unset")(function* (
     let names: ReadonlyArray<string> = flags.names;
 
     if (names.length === 0) {
-      // Fetches the full list and filters out SUPABASE_-prefixed entries.
-      // Reuse the LIST error pair here.
       const all: Secrets = yield* api.v1
         .listAllSecrets({ ref })
         .pipe(Effect.catch(mapListErrorForUnset));
@@ -69,16 +65,14 @@ export const legacySecretsUnset = Effect.fn("legacy.secrets.unset")(function* (
 
     const label = `Do you want to unset these function secrets?\n • ${names.join("\n • ")}\n\n`;
 
-    // `PromptYesNo(msg, true)` (`console.go:64-82`): `--yes`/`SUPABASE_YES`
-    // auto-confirms with the `<label> [Y/n] y` stderr echo; a non-TTY stdin
-    // still prints the label and scans one piped line (100ms), so `echo n |
-    // supabase secrets unset` declines instead of hardcoding the Yes default
-    // (CLI-1974).
-    const confirmed = yield* legacyPromptYesNo(output, yes, label, true);
+    // `promptYesNo` echoes `<label> [Y/n] <answer>` to stderr even on a non-TTY: it scans one
+    // piped line (100ms timeout) so `echo n | supabase secrets unset` declines instead of
+    // hardcoding the Yes default.
+    const confirmed = yield* promptYesNo(output, yes, label, true);
 
     if (!confirmed) {
       return yield* Effect.fail(
-        new LegacySecretsUnsetCancelledError({ message: CONTEXT_CANCELED_MESSAGE }),
+        new SecretsUnsetCancelledError({ message: CONTEXT_CANCELED_MESSAGE }),
       );
     }
 

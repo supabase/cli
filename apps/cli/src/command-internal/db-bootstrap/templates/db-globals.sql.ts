@@ -1,11 +1,8 @@
 /**
- * Transcribed verbatim from `apps/cli-go/internal/utils/templates/globals.sql`
- * (Go `//go:embed templates/globals.sql`, `apps/cli-go/internal/utils/misc.go:67-68`,
- * exported as `utils.GlobalsSql`). Run via `ExecBatch` against a fresh PG<=14 local
- * database as the first step of `initSchema` (`apps/cli-go/internal/db/start/start.go:243-251`).
- * Not a Go `text/template`. Do not hand-edit — re-transcribe from the Go source if it changes.
+ * Baseline SQL run via `ExecBatch` against a fresh PG<=14 local database, as the first step of
+ * `initSchema`.
  */
-export const LEGACY_START_DB_GLOBALS_SQL = `--
+export const START_DB_GLOBALS_SQL = `--
 -- PostgreSQL database cluster dump
 --
 

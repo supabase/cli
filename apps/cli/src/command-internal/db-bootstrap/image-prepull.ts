@@ -1,20 +1,7 @@
 /**
- * Port of Go's `ensureImagesCached` (`apps/cli-go/internal/start/start.go:225-262`,
- * deleted in CLI-1966; last present at commit a253ccba2):
- * guarantees every image `supabase start` needs is resolved/pulled into the
- * local Docker cache BEFORE any container is created, using the same
- * multi-registry fallback as the per-container start path
- * (`legacyMakeDockerImageResolver`).
- *
- * Go's caller (`internal/start/start.go:264-291`, `run`) also runs a
- * best-effort `docker-compose`-based pre-pull first
- * (`pullImagesUsingCompose`) and treats `ensureImagesCached` as the hard-failing
- * backstop that catches whatever the compose pre-pull's `IgnoreFailures` step
- * skipped. This port does not implement docker-compose integration anywhere
- * (an intentional architecture decision for this port), so
- * {@link legacyEnsureImagesCached} is the ONLY image pre-pull step here, not a
- * backstop for a separate best-effort pass — every image must resolve through
- * this call before any container starts.
+ * Resolves and pulls every image `supabase start` needs into the local Docker cache before any
+ * container is created, using the same multi-registry fallback as the per-container start path.
+ * This is the only pre-pull step; every image must resolve through it before a container starts.
  */
 
 import { Data, Effect, Result } from "effect";
@@ -25,21 +12,16 @@ import {
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
-import { legacyMakeDockerImageResolver } from "../legacy-docker-image-resolve.ts";
-import {
-  LEGACY_SUGGEST_DOCKER_INSTALL,
-  legacyIsDockerDaemonUnreachable,
-} from "../legacy-docker-suggest.ts";
+import { makeDockerImageResolver } from "../docker-image-resolve.ts";
+import { SUGGEST_DOCKER_INSTALL, isDockerDaemonUnreachable } from "../docker-suggest.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
 
 /**
- * One or more images failed to resolve/pull from every registry candidate.
- * Mirrors Go's `errors.Join(result...)` (`start.go:257`): the message
- * aggregates every failed image's own error rather than surfacing only the
- * first failure, so a caller can see every broken image in one report.
+ * One or more images failed to resolve/pull from every registry candidate. The message
+ * aggregates every failed image's own error rather than surfacing only the first failure.
  */
-export class LegacyImagePrepullError extends Data.TaggedError("LegacyImagePrepullError")<{
+export class ImagePrepullError extends Data.TaggedError("ImagePrepullError")<{
   readonly message: string;
   readonly reason: "docker_daemon" | "registry_pull" | "image_inspect";
 }> {
@@ -56,25 +38,19 @@ export class LegacyImagePrepullError extends Data.TaggedError("LegacyImagePrepul
 }
 
 /**
- * Resolves every image in `images` concurrently (Go's `utils.WaitAll` —
- * unbounded goroutines) via the shared registry-fallback resolver, and returns
- * a map from the ORIGINAL image reference to the resolved image URL a caller
- * must use to reference that image afterward (e.g. as
- * `LegacyStartContainerSpec.image`) — resolving the same image twice would be
- * wasteful and could, in theory, land on a different registry candidate on a
- * second, independent call.
+ * Resolves every image in `images` concurrently through the shared registry-fallback resolver.
  *
- * `images` is deduped here (Go's `seen := map[string]struct{}{}`,
- * `start.go:238-249`) — callers are not expected to have already deduped their
- * service image list.
+ * Returns a map from each original image reference to the resolved image URL callers must use
+ * to reference that image afterward — re-resolving the same image could land on a different
+ * registry candidate on a second call. `images` is deduped internally.
  */
-export function legacyEnsureImagesCached(
+export function ensureImagesCached(
   spawner: Spawner,
   images: ReadonlyArray<string>,
   projectEnvValues?: Readonly<Record<string, string>>,
-): Effect.Effect<ReadonlyMap<string, string>, LegacyImagePrepullError> {
+): Effect.Effect<ReadonlyMap<string, string>, ImagePrepullError> {
   const uniqueImages = [...new Set(images)];
-  const resolveImage = legacyMakeDockerImageResolver(spawner, projectEnvValues);
+  const resolveImage = makeDockerImageResolver(spawner, projectEnvValues);
 
   return Effect.gen(function* () {
     const results = yield* Effect.all(
@@ -84,7 +60,7 @@ export function legacyEnsureImagesCached(
 
     const resolved = new Map<string, string>();
     const failures: Array<string> = [];
-    let failureReason: LegacyImagePrepullError["reason"] = "image_inspect";
+    let failureReason: ImagePrepullError["reason"] = "image_inspect";
     for (const [index, image] of uniqueImages.entries()) {
       const result = results[index];
       if (result === undefined || Result.isFailure(result)) {
@@ -103,17 +79,11 @@ export function legacyEnsureImagesCached(
     }
 
     if (failures.length > 0) {
-      // Go sets the install hint once, sequentially, after the concurrent
-      // resolve finishes (`SuggestDockerInstallIfConnectionFailed`,
-      // `start.go:254-259`) rather than from inside the resolver itself, where
-      // concurrent goroutines would race on the shared `CmdSuggestion` global.
-      // There is no such global here, so the hint is appended directly onto
-      // the joined message instead.
-      const hint = failures.some(legacyIsDockerDaemonUnreachable)
-        ? `\n\n${LEGACY_SUGGEST_DOCKER_INSTALL}`
-        : "";
+      // The install hint is appended once after every resolve finishes, rather than emitted
+      // from inside the resolver, to avoid duplicate hints from concurrent failures.
+      const hint = failures.some(isDockerDaemonUnreachable) ? `\n\n${SUGGEST_DOCKER_INSTALL}` : "";
       return yield* Effect.fail(
-        new LegacyImagePrepullError({
+        new ImagePrepullError({
           message: `${failures.join("\n")}${hint}`,
           reason: failureReason,
         }),

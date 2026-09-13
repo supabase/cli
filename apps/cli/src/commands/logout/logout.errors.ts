@@ -6,16 +6,11 @@ import {
 } from "../../shared/telemetry/error-actionability.ts";
 
 /**
- * Raised when the user declines the logout confirmation prompt. The
- * reference implementation returns `errors.New(context.Canceled)`, which the
- * root error handler renders as `context canceled` on stderr with exit code
- * 1 and no `--debug` suggestion (`cmd/root.go:287-303` skips
- * `SuggestDebugFlag` for `context.Canceled`). The TS renderer mirrors that:
- * constructing this error with `CONTEXT_CANCELED_MESSAGE`
- * (`shared/output/errors.ts`) is what makes the text `Output.fail` withhold
- * the debug hint (CLI-1973).
+ * Raised when the user declines the logout confirmation prompt. Constructing it with
+ * `CONTEXT_CANCELED_MESSAGE` (`shared/output/errors.ts`) is what makes `Output.fail` render
+ * `context canceled` on stderr without the `--debug` suggestion.
  */
-export class LegacyLogoutCancelledError extends Data.TaggedError("LegacyLogoutCancelledError")<{
+export class LogoutCancelledError extends Data.TaggedError("LogoutCancelledError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {

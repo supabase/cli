@@ -1,16 +1,15 @@
 import type { ApiKeyResponse } from "@supabase/api/effect";
 
-import { apiKeysToEnv } from "../../command-internal/legacy-api-keys.format.ts";
-import { type LegacyDbConfig, toPostgresUrl } from "./bootstrap.pgconfig.ts";
+import { apiKeysToEnv } from "../../command-internal/api-keys.format.ts";
+import { type DbConfig, toPostgresUrl } from "./bootstrap.pgconfig.ts";
 
 type ApiKey = typeof ApiKeyResponse.Type;
 
-// Env-var keys bootstrap writes / derives.
 const SUPABASE_SERVICE_ROLE_KEY = "SUPABASE_SERVICE_ROLE_KEY";
 const SUPABASE_ANON_KEY = "SUPABASE_ANON_KEY";
 const SUPABASE_URL = "SUPABASE_URL";
 const POSTGRES_URL = "POSTGRES_URL";
-// Derived keys (only populated when present in .env.example).
+// Only populated when present in .env.example.
 const POSTGRES_PRISMA_URL = "POSTGRES_PRISMA_URL";
 const POSTGRES_URL_NON_POOLING = "POSTGRES_URL_NON_POOLING";
 const POSTGRES_USER = "POSTGRES_USER";
@@ -23,16 +22,14 @@ const EXPO_PUBLIC_SUPABASE_ANON_KEY = "EXPO_PUBLIC_SUPABASE_ANON_KEY";
 const EXPO_PUBLIC_SUPABASE_URL = "EXPO_PUBLIC_SUPABASE_URL";
 
 /**
- * Env-map construction: seeds the api-key env vars (`SUPABASE_<NAME>_KEY`),
- * the project `SUPABASE_URL`, and the pooled `POSTGRES_URL` (transaction
- * mode, port 6543). When a `.env.example` map is supplied, each of its keys
- * is merged: the four seeded keys are preserved, the derived `POSTGRES_*` /
- * `NEXT_PUBLIC_*` / `EXPO_PUBLIC_*` keys are computed from the db config +
- * seeded values, and any other key copies its example value verbatim.
+ * Builds the bootstrap `.env` map: seeds the api-key vars, `SUPABASE_URL`, and the pooled
+ * `POSTGRES_URL` (transaction mode, port 6543). When `example` (from `.env.example`) is given,
+ * seeded keys win, `POSTGRES_*`/`NEXT_PUBLIC_*`/`EXPO_PUBLIC_*` keys are derived from `config`
+ * and the seeded values, and every other key copies its example value verbatim.
  */
 export function buildDotEnv(
   keys: ReadonlyArray<ApiKey>,
-  config: LegacyDbConfig,
+  config: DbConfig,
   supabaseUrl: string,
   example: Readonly<Record<string, string>> | undefined,
 ): Record<string, string> {
@@ -85,8 +82,7 @@ export function buildDotEnv(
   return initial;
 }
 
-// godotenv's `doubleQuoteSpecialChars` (`joho/godotenv/godotenv.go`): backslash,
-// newline, carriage return, double-quote, `!`, `$`, backtick.
+// Chars escaped in double-quoted values: backslash, newline, CR, double-quote, `!`, `$`, backtick.
 const DOUBLE_QUOTE_SPECIAL = ["\\", "\n", "\r", '"', "!", "$", "`"] as const;
 
 function doubleQuoteEscape(line: string): string {
@@ -98,14 +94,13 @@ function doubleQuoteEscape(line: string): string {
   return out;
 }
 
-// strconv.Atoi surface: optional sign + base-10 digits, parsed within int range.
+// Optional sign plus base-10 digits, matching integer values that render unquoted.
 const INTEGER_PATTERN = /^[+-]?\d+$/;
 
 /**
- * Reproduces `godotenv.Marshal`: each entry renders as `KEY=<int>` when the value
- * parses as an integer (`strconv.Atoi` + `%d`), otherwise `KEY="<escaped>"`.
- * Lines are sorted lexicographically (`godotenv.Marshal` sorts the rendered
- * lines, which orders by key) and joined with `\n` (no trailing newline).
+ * Renders `.env` entries as `KEY=<int>` for integer-valued values, otherwise
+ * `KEY="<escaped>"`, sorted lexicographically by key and joined with `\n` (no trailing
+ * newline).
  */
 export function marshalDotEnv(env: Readonly<Record<string, string>>): string {
   const lines: Array<string> = [];

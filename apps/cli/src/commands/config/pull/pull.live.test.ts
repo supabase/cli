@@ -2,13 +2,10 @@ import { expect } from "vitest";
 
 import { requireLiveSuccess, test } from "../../../../tests/helpers/live.ts";
 
-// Golden path only: the one thing mocks cannot prove is a real
-// `GET /v2/projects/{ref}/config` response decoding, planning, and writing
-// cleanly against a real (freshly-initialized) `supabase/config.toml`, and
-// that a second run against the SAME project leaves nothing to write (the
-// convergence check's own real-world counterpart — branch coverage lives in
-// pull.integration.test.ts). The `workspace` fixture behind `cli` is a fresh
-// `supabase init` project directory.
+// Golden path only: the one thing mocks can't prove is a real
+// `GET /v2/projects/{ref}/config` response decoding, planning, and writing cleanly against a
+// real (freshly-initialized) config.toml, and that a second run against the same project leaves
+// nothing to write. Branch coverage lives in pull.integration.test.ts.
 test("pulls remote config into a fresh project, leaving nothing to write on a second run", async ({
   cli,
   project,

@@ -7,15 +7,15 @@ import { Effect, Exit, Option } from "effect";
 
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
-  LEGACY_VALID_REF,
-  buildLegacyTestRuntime,
-  mockLegacyCliSettings,
-  mockLegacyLinkedProjectCacheTracked,
-  mockLegacyPlatformApi,
-  mockLegacyTelemetryStateTracked,
-  useLegacyTempWorkdir,
-} from "../../../../tests/helpers/legacy-mocks.ts";
-import { legacyBranchesList } from "./list.handler.ts";
+  VALID_REF,
+  buildTestRuntime,
+  mockCommandSettings,
+  mockLinkedProjectCacheTracked,
+  mockCommandPlatformApi,
+  mockTelemetryStateTracked,
+  useTempWorkdir,
+} from "../../../../tests/helpers/command-mocks.ts";
+import { branchesList } from "./list.handler.ts";
 
 type Branches = typeof V1ListAllBranchesOutput.Type;
 
@@ -39,11 +39,9 @@ const SAMPLE_BRANCH_PIPE: Branches[number] = {
   git_branch: "g|pipe",
 };
 
-const tempRoot = useLegacyTempWorkdir("supabase-branches-list-int-");
+const tempRoot = useTempWorkdir("supabase-branches-list-int-");
 
-// Distinct 20-lowercase-letter refs used across the parent-scoped resolution
-// tests below (CLI-2167 follow-up), so it's unambiguous which candidate a
-// given `listAllBranches` call actually used.
+// Distinct refs per resolution source make it unambiguous which candidate a given call used.
 const PARENT_REF = "parentprojectrefxxxx";
 const BRANCH_OWN_REF = "branchownrefyyyyyyyy";
 const EXPLICIT_REF = "explicitprojectrefzz";
@@ -60,14 +58,13 @@ function writeTempContent(workdir: string, name: string, content: string): void 
   writeFileSync(tempFile(workdir, name), content);
 }
 
-// Seeds `supabase/.temp/project-ref` — the 3rd-priority parent candidate, and
-// (pre-CLI-2167-follow-up) the ONLY thing `branches` subcommands read.
+// Seeds `supabase/.temp/project-ref`, the 3rd-priority parent candidate.
 function writeProjectRefFile(workdir: string, ref: string): void {
   writeTempContent(workdir, "project-ref", ref);
 }
 
-// Seeds `supabase/.temp/linked-project.json` — the 2nd-priority parent
-// candidate, written by `link`'s own success path only for a REAL project.
+// Seeds `supabase/.temp/linked-project.json`, the 2nd-priority parent candidate, written only
+// when `link` resolves a real project.
 function writeLinkedProjectCacheFile(workdir: string, ref: string): void {
   writeTempContent(
     workdir,
@@ -92,15 +89,15 @@ interface SetupOpts {
 
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
-  const api = mockLegacyPlatformApi({
+  const api = mockCommandPlatformApi({
     response: { status: opts.status ?? 200, body: opts.response ?? [SAMPLE_BRANCH] },
     network: opts.network,
   });
-  const cliSettings = mockLegacyCliSettings({
+  const cliSettings = mockCommandSettings({
     workdir: tempRoot.current,
     projectId: opts.projectId,
   });
-  const layer = buildLegacyTestRuntime({
+  const layer = buildTestRuntime({
     out,
     api,
     cliSettings,
@@ -111,14 +108,14 @@ function setup(opts: SetupOpts = {}) {
 
 function setupTracked(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
-  const api = mockLegacyPlatformApi({
+  const api = mockCommandPlatformApi({
     response: { status: opts.status ?? 200, body: opts.response ?? [SAMPLE_BRANCH] },
     network: opts.network,
   });
-  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
-  const telemetry = mockLegacyTelemetryStateTracked();
-  const cache = mockLegacyLinkedProjectCacheTracked();
-  const layer = buildLegacyTestRuntime({
+  const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
+  const telemetry = mockTelemetryStateTracked();
+  const cache = mockLinkedProjectCacheTracked();
+  const layer = buildTestRuntime({
     out,
     api,
     cliSettings,
@@ -128,11 +125,11 @@ function setupTracked(opts: SetupOpts = {}) {
   return { layer, out, api, telemetry, cache };
 }
 
-describe("legacy branches list integration", () => {
+describe("branches list integration", () => {
   it.live("renders a Glamour table with all 8 columns in text mode", () => {
     const { layer, out } = setup({ response: [SAMPLE_BRANCH] });
     return Effect.gen(function* () {
-      yield* legacyBranchesList({ projectRef: Option.none() });
+      yield* branchesList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("ID");
       expect(out.stdoutText).toContain("NAME");
       expect(out.stdoutText).toContain("DEFAULT");
@@ -149,7 +146,7 @@ describe("legacy branches list integration", () => {
   it.live("renders literal `|` characters in branch fields (Go parity)", () => {
     const { layer, out } = setup({ response: [SAMPLE_BRANCH_PIPE] });
     return Effect.gen(function* () {
-      yield* legacyBranchesList({ projectRef: Option.none() });
+      yield* branchesList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("with|pipe");
       expect(out.stdoutText).toContain("g|pipe");
     }).pipe(Effect.provide(layer));
@@ -158,7 +155,7 @@ describe("legacy branches list integration", () => {
   it.live("renders an empty table when API returns []", () => {
     const { layer, out } = setup({ response: [] });
     return Effect.gen(function* () {
-      yield* legacyBranchesList({ projectRef: Option.none() });
+      yield* branchesList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("STATUS");
       expect(out.stdoutText).not.toContain("feat-1");
     }).pipe(Effect.provide(layer));
@@ -167,7 +164,7 @@ describe("legacy branches list integration", () => {
   it.live("emits a success event with { branches } for --output-format=json", () => {
     const { layer, out } = setup({ format: "json", response: [SAMPLE_BRANCH] });
     return Effect.gen(function* () {
-      yield* legacyBranchesList({ projectRef: Option.none() });
+      yield* branchesList({ projectRef: Option.none() });
       const success = out.messages.find((m) => m.type === "success");
       expect(success).toBeDefined();
       expect(success?.data).toMatchObject({ branches: [SAMPLE_BRANCH] });
@@ -177,7 +174,7 @@ describe("legacy branches list integration", () => {
   it.live("emits a success event for --output-format=stream-json", () => {
     const { layer, out } = setup({ format: "stream-json", response: [SAMPLE_BRANCH] });
     return Effect.gen(function* () {
-      yield* legacyBranchesList({ projectRef: Option.none() });
+      yield* branchesList({ projectRef: Option.none() });
       expect(out.messages.find((m) => m.type === "success")).toBeDefined();
     }).pipe(Effect.provide(layer));
   });
@@ -185,18 +182,15 @@ describe("legacy branches list integration", () => {
   it.live("emits Go-byte-exact indented JSON for --output json", () => {
     const { layer, out } = setup({ goOutput: "json", response: [SAMPLE_BRANCH] });
     return Effect.gen(function* () {
-      yield* legacyBranchesList({ projectRef: Option.none() });
-      // Output is indented JSON with sorted keys + trailing newline.
+      yield* branchesList({ projectRef: Option.none() });
       expect(out.stdoutText.startsWith("[\n  {\n")).toBe(true);
       expect(out.stdoutText.endsWith("]\n")).toBe(true);
-      // First key after sorting alphabetically is `created_at`.
       expect(out.stdoutText).toContain('"created_at": "2026-05-27T01:02:03Z"');
     }).pipe(Effect.provide(layer));
   });
 
   it.live("emits Go-byte-exact YAML for --output yaml", () => {
-    // Second branch has every optional (Go pointer) field absent: Go
-    // zero-fills the value fields and emits explicit nulls for nil pointers.
+    // Omits every optional field to assert how absent values render.
     const zeroBranch: Branches[number] = {
       id: "00000000-0000-0000-0000-000000000000",
       name: "Production",
@@ -211,10 +205,7 @@ describe("legacy branches list integration", () => {
     };
     const { layer, out } = setup({ goOutput: "yaml", response: [SAMPLE_BRANCH, zeroBranch] });
     return Effect.gen(function* () {
-      yield* legacyBranchesList({ projectRef: Option.none() });
-      // Established output contract: yaml.v3 lowercases the struct's field
-      // names, renders nil pointers as null, and leaves time.Time timestamps
-      // unquoted.
+      yield* branchesList({ projectRef: Option.none() });
       expect(out.stdoutText).toBe(`- createdat: 2026-05-27T01:02:03Z
   deletionscheduledat: null
   gitbranch: feat-1
@@ -256,9 +247,7 @@ describe("legacy branches list integration", () => {
   it.live("emits nothing for --output toml when the branch list is empty (Go nil slice)", () => {
     const { layer, out } = setup({ goOutput: "toml", response: [] });
     return Effect.gen(function* () {
-      yield* legacyBranchesList({ projectRef: Option.none() });
-      // Go builds the list with append, so an empty list stays a nil slice
-      // and BurntSushi writes no bytes at all.
+      yield* branchesList({ projectRef: Option.none() });
       expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(layer));
   });
@@ -266,9 +255,7 @@ describe("legacy branches list integration", () => {
   it.live("wraps result as { branches = [...] } for --output toml", () => {
     const { layer, out } = setup({ goOutput: "toml", response: [SAMPLE_BRANCH] });
     return Effect.gen(function* () {
-      yield* legacyBranchesList({ projectRef: Option.none() });
-      // Established output contract: BurntSushi emits PascalCase Go field names,
-      // 2-space indentation, native TOML datetimes, and omits nil pointers.
+      yield* branchesList({ projectRef: Option.none() });
       expect(out.stdoutText).toBe(`[[branches]]
   CreatedAt = 2026-05-27T01:02:03Z
   GitBranch = "feat-1"
@@ -285,14 +272,14 @@ describe("legacy branches list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with LegacyBranchesEnvNotSupportedError for --output env", () => {
+  it.live("fails with BranchesEnvNotSupportedError for --output env", () => {
     const { layer } = setup({ goOutput: "env", response: [SAMPLE_BRANCH] });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyBranchesList({ projectRef: Option.none() }));
+      const exit = yield* Effect.exit(branchesList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const json = JSON.stringify(exit.cause);
-        expect(json).toContain("LegacyBranchesEnvNotSupportedError");
+        expect(json).toContain("BranchesEnvNotSupportedError");
         expect(json).toContain("--output env flag is not supported");
       }
     }).pipe(Effect.provide(layer));
@@ -301,7 +288,7 @@ describe("legacy branches list integration", () => {
   it.live("treats --output pretty as identical to text mode (table render)", () => {
     const { layer, out } = setup({ goOutput: "pretty", response: [SAMPLE_BRANCH] });
     return Effect.gen(function* () {
-      yield* legacyBranchesList({ projectRef: Option.none() });
+      yield* branchesList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("STATUS");
     }).pipe(Effect.provide(layer));
   });
@@ -313,7 +300,7 @@ describe("legacy branches list integration", () => {
       response: [SAMPLE_BRANCH],
     });
     return Effect.gen(function* () {
-      yield* legacyBranchesList({ projectRef: Option.none() });
+      yield* branchesList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("name: feat-1");
     }).pipe(Effect.provide(layer));
   });
@@ -321,9 +308,9 @@ describe("legacy branches list integration", () => {
   it.live("passes the resolved project ref to listAllBranches", () => {
     const { layer, api } = setup({ response: [SAMPLE_BRANCH] });
     return Effect.gen(function* () {
-      yield* legacyBranchesList({ projectRef: Option.none() });
+      yield* branchesList({ projectRef: Option.none() });
       expect(api.requests).toHaveLength(1);
-      expect(api.requests[0]?.url).toContain(`/v1/projects/${LEGACY_VALID_REF}/branches`);
+      expect(api.requests[0]?.url).toContain(`/v1/projects/${VALID_REF}/branches`);
     }).pipe(Effect.provide(layer));
   });
 
@@ -331,9 +318,6 @@ describe("legacy branches list integration", () => {
     it.live(
       "resolves the linked PARENT (not the branch's own ref) when linked to a branch, and renders the table",
       () => {
-        // Colum's manual repro: `supabase link <branch>` leaves the branch's OWN
-        // ref in project-ref, but linked-project.json still holds the real
-        // parent. `branches list` must call the endpoint scoped to the parent.
         const { layer, out, api, workdir } = setup({
           projectId: Option.none(),
           response: [SAMPLE_BRANCH],
@@ -341,7 +325,7 @@ describe("legacy branches list integration", () => {
         writeProjectRefFile(workdir, BRANCH_OWN_REF);
         writeLinkedProjectCacheFile(workdir, PARENT_REF);
         return Effect.gen(function* () {
-          yield* legacyBranchesList({ projectRef: Option.none() });
+          yield* branchesList({ projectRef: Option.none() });
           expect(api.requests).toHaveLength(1);
           expect(api.requests[0]?.url).toContain(`/v1/projects/${PARENT_REF}/branches`);
           expect(out.stdoutText).toContain("STATUS");
@@ -360,7 +344,7 @@ describe("legacy branches list integration", () => {
         writeProjectRefFile(workdir, BRANCH_OWN_REF);
         writeLinkedProjectCacheFile(workdir, PARENT_REF);
         return Effect.gen(function* () {
-          yield* legacyBranchesList({ projectRef: Option.some(EXPLICIT_REF) });
+          yield* branchesList({ projectRef: Option.some(EXPLICIT_REF) });
           expect(api.requests[0]?.url).toContain(`/v1/projects/${EXPLICIT_REF}/branches`);
         }).pipe(Effect.provide(layer));
       },
@@ -374,7 +358,7 @@ describe("legacy branches list integration", () => {
       writeProjectRefFile(workdir, BRANCH_OWN_REF);
       writeLinkedProjectCacheFile(workdir, CACHE_REF);
       return Effect.gen(function* () {
-        yield* legacyBranchesList({ projectRef: Option.none() });
+        yield* branchesList({ projectRef: Option.none() });
         expect(api.requests[0]?.url).toContain(`/v1/projects/${ENV_REF}/branches`);
       }).pipe(Effect.provide(layer));
     });
@@ -382,10 +366,6 @@ describe("legacy branches list integration", () => {
     it.live(
       "SUPABASE_PROJECT_ID merely restating the linked branch ref is deduped; the cached parent wins (PR #6168 review)",
       () => {
-        // CI exports the branch's own ref after `link <branch>`: env === file.
-        // The env candidate adds no parent information beyond the file, so it
-        // must not shadow the cache (which holds the real parent) — otherwise
-        // parent-scoped endpoints 403 again.
         const { layer, api, workdir } = setup({
           projectId: Option.some(BRANCH_OWN_REF),
           response: [SAMPLE_BRANCH],
@@ -393,20 +373,15 @@ describe("legacy branches list integration", () => {
         writeProjectRefFile(workdir, BRANCH_OWN_REF);
         writeLinkedProjectCacheFile(workdir, PARENT_REF);
         return Effect.gen(function* () {
-          yield* legacyBranchesList({ projectRef: Option.none() });
+          yield* branchesList({ projectRef: Option.none() });
           expect(api.requests[0]?.url).toContain(`/v1/projects/${PARENT_REF}/branches`);
         }).pipe(Effect.provide(layer));
       },
     );
 
     it.live(
-      "a garbage SUPABASE_PROJECT_ID hard-fails with LegacyInvalidProjectRefError even when a valid cache/file exists (PR #6168 review)",
+      "a garbage SUPABASE_PROJECT_ID hard-fails with InvalidProjectRefError even when a valid cache/file exists (PR #6168 review)",
       () => {
-        // Superseded behavior: a malformed env used to be silently skipped in
-        // favor of the cache. An explicit-but-typo'd override silently acting
-        // on a DIFFERENT project is the same "silent wrong target" class the
-        // rest of this feature guards against — and hard-failing restores the
-        // pre-CLI-2167 resolver's env validation.
         const { layer, api, workdir } = setup({
           projectId: Option.some("not-a-valid-ref"),
           response: [SAMPLE_BRANCH],
@@ -414,10 +389,10 @@ describe("legacy branches list integration", () => {
         writeProjectRefFile(workdir, FILE_ONLY_REF);
         writeLinkedProjectCacheFile(workdir, CACHE_REF);
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(legacyBranchesList({ projectRef: Option.none() }));
+          const exit = yield* Effect.exit(branchesList({ projectRef: Option.none() }));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("LegacyInvalidProjectRefError");
+            expect(JSON.stringify(exit.cause)).toContain("InvalidProjectRefError");
           }
           expect(api.requests).toHaveLength(0);
         }).pipe(Effect.provide(layer));
@@ -425,14 +400,14 @@ describe("legacy branches list integration", () => {
     );
 
     it.live(
-      "a garbage SUPABASE_PROJECT_ID with no cache and no file falls back to the unchanged LegacyInvalidProjectRefError",
+      "a garbage SUPABASE_PROJECT_ID with no cache and no file falls back to the unchanged InvalidProjectRefError",
       () => {
         const { layer, api } = setup({ projectId: Option.some("not-a-valid-ref") });
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(legacyBranchesList({ projectRef: Option.none() }));
+          const exit = yield* Effect.exit(branchesList({ projectRef: Option.none() }));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("LegacyInvalidProjectRefError");
+            expect(JSON.stringify(exit.cause)).toContain("InvalidProjectRefError");
           }
           expect(api.requests).toHaveLength(0);
         }).pipe(Effect.provide(layer));
@@ -442,34 +417,28 @@ describe("legacy branches list integration", () => {
     it.live("nothing linked anywhere, non-TTY, fails with the unchanged not-linked error", () => {
       const { layer, api } = setup({ projectId: Option.none() });
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(legacyBranchesList({ projectRef: Option.none() }));
+        const exit = yield* Effect.exit(branchesList({ projectRef: Option.none() }));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("LegacyProjectNotLinkedError");
+          expect(JSON.stringify(exit.cause)).toContain("ProjectRefNotLinkedError");
         }
         expect(api.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
     });
 
     it.live(
-      "the cache alone is never proof of a link: no project-ref file/env means LegacyProjectNotLinkedError, no API call (PR #6168 review)",
+      "the cache alone is never proof of a link: no project-ref file/env means ProjectRefNotLinkedError, no API call (PR #6168 review)",
       () => {
-        // Only linked-project.json exists — no supabase/.temp/project-ref and no
-        // SUPABASE_PROJECT_ID. `legacyResolveLinkedParentRef`'s cache candidate
-        // only ever participates once a link has actually completed (proven by
-        // the project-ref file's presence, the fix this test pins) — a FAILED
-        // `link` can leave a stale cache entry behind, so the cache by itself
-        // must never be trusted as linked-state evidence.
         const { layer, api, workdir } = setup({
           projectId: Option.none(),
           response: [SAMPLE_BRANCH],
         });
         writeLinkedProjectCacheFile(workdir, PARENT_REF);
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(legacyBranchesList({ projectRef: Option.none() }));
+          const exit = yield* Effect.exit(branchesList({ projectRef: Option.none() }));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("LegacyProjectNotLinkedError");
+            expect(JSON.stringify(exit.cause)).toContain("ProjectRefNotLinkedError");
           }
           expect(api.requests).toHaveLength(0);
         }).pipe(Effect.provide(layer));
@@ -485,7 +454,7 @@ describe("legacy branches list integration", () => {
         });
         writeProjectRefFile(workdir, FILE_ONLY_REF);
         return Effect.gen(function* () {
-          yield* legacyBranchesList({ projectRef: Option.none() });
+          yield* branchesList({ projectRef: Option.none() });
           expect(api.requests[0]?.url).toContain(`/v1/projects/${FILE_ONLY_REF}/branches`);
         }).pipe(Effect.provide(layer));
       },
@@ -507,7 +476,7 @@ describe("legacy branches list integration", () => {
       });
       writeProjectRefFile(workdir, SAMPLE_BRANCH.project_ref);
       return Effect.gen(function* () {
-        yield* legacyBranchesList({ projectRef: Option.none() });
+        yield* branchesList({ projectRef: Option.none() });
         expect(out.stdoutText).toContain("feat-1 (active)");
         expect(out.stdoutText).not.toContain("other (active)");
       }).pipe(Effect.provide(layer));
@@ -523,7 +492,7 @@ describe("legacy branches list integration", () => {
         });
         writeProjectRefFile(workdir, SAMPLE_BRANCH.project_ref);
         return Effect.gen(function* () {
-          yield* legacyBranchesList({ projectRef: Option.none() });
+          yield* branchesList({ projectRef: Option.none() });
           expect(out.stdoutText).not.toContain("active");
         }).pipe(Effect.provide(layer));
       },
@@ -539,7 +508,7 @@ describe("legacy branches list integration", () => {
         });
         writeProjectRefFile(workdir, SAMPLE_BRANCH.project_ref);
         return Effect.gen(function* () {
-          yield* legacyBranchesList({ projectRef: Option.none() });
+          yield* branchesList({ projectRef: Option.none() });
           const success = out.messages.find((m) => m.type === "success");
           expect(success?.data).toEqual({ branches: [SAMPLE_BRANCH] });
         }).pipe(Effect.provide(layer));
@@ -552,33 +521,33 @@ describe("legacy branches list integration", () => {
         response: [SAMPLE_BRANCH],
       });
       return Effect.gen(function* () {
-        yield* legacyBranchesList({ projectRef: Option.none() });
+        yield* branchesList({ projectRef: Option.none() });
         expect(out.stdoutText).not.toContain("(active)");
       }).pipe(Effect.provide(layer));
     });
   });
 
-  it.live("fails with LegacyBranchesListUnexpectedStatusError on HTTP 503", () => {
+  it.live("fails with BranchesListUnexpectedStatusError on HTTP 503", () => {
     const { layer } = setup({ status: 503, response: [] });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyBranchesList({ projectRef: Option.none() }));
+      const exit = yield* Effect.exit(branchesList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const json = JSON.stringify(exit.cause);
-        expect(json).toContain("LegacyBranchesListUnexpectedStatusError");
+        expect(json).toContain("BranchesListUnexpectedStatusError");
         expect(json).toContain("unexpected list branch status 503");
       }
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with LegacyBranchesListNetworkError on transport failure", () => {
+  it.live("fails with BranchesListNetworkError on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyBranchesList({ projectRef: Option.none() }));
+      const exit = yield* Effect.exit(branchesList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const json = JSON.stringify(exit.cause);
-        expect(json).toContain("LegacyBranchesListNetworkError");
+        expect(json).toContain("BranchesListNetworkError");
         expect(json).toContain("failed to list branch");
       }
     }).pipe(Effect.provide(layer));
@@ -587,7 +556,7 @@ describe("legacy branches list integration", () => {
   it.live("writes linked-project cache + telemetry state on success", () => {
     const { layer, telemetry, cache } = setupTracked();
     return Effect.gen(function* () {
-      yield* legacyBranchesList({ projectRef: Option.none() });
+      yield* branchesList({ projectRef: Option.none() });
       expect(telemetry.flushed).toBe(true);
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -596,7 +565,7 @@ describe("legacy branches list integration", () => {
   it.live("writes linked-project cache + telemetry state on failure", () => {
     const { layer, telemetry, cache } = setupTracked({ status: 503 });
     return Effect.gen(function* () {
-      yield* Effect.exit(legacyBranchesList({ projectRef: Option.none() }));
+      yield* Effect.exit(branchesList({ projectRef: Option.none() }));
       expect(telemetry.flushed).toBe(true);
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));

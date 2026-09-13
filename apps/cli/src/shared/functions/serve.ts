@@ -17,7 +17,7 @@ import {
   defaultPublishableKey,
   defaultSecretKey,
   edgeRuntimeNofileUlimit,
-} from "@supabase/stack/effect";
+} from "../stack-constants.ts";
 import {
   createHmac,
   createPrivateKey,
@@ -42,15 +42,15 @@ import {
 } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import {
-  legacyDescribeContainerCliFailure,
+  describeContainerCliFailure,
   spawnContainerCli,
-} from "../../command-internal/legacy-container-cli.ts";
+} from "../../command-internal/container-cli.ts";
 import {
-  LEGACY_SUGGEST_DOCKER_INSTALL,
-  legacyIsDockerDaemonUnreachable,
-} from "../../command-internal/legacy-docker-suggest.ts";
-import { parseDotEnv } from "../../command-internal/legacy-dotenv.ts";
-import { legacyViperEnvStringWithProjectFallback } from "../legacy/legacy-viper-env.ts";
+  SUGGEST_DOCKER_INSTALL,
+  isDockerDaemonUnreachable,
+} from "../../command-internal/docker-suggest.ts";
+import { parseDotEnv } from "../../command-internal/dotenv.ts";
+import { viperEnvStringWithProjectFallback } from "../../command-internal/viper-env.ts";
 import {
   resolveRemoteJwks,
   resolveThirdPartyIssuerUrl,
@@ -69,6 +69,7 @@ import {
   discoverFunctionSlugs,
   type DockerBind,
   formatDockerBind,
+  pruneRedundantDockerBinds,
   dockerWorkdirLabel,
   rawFunctionConfigRecord,
   resolveFunctionConfigs,
@@ -95,8 +96,8 @@ const defaultCliConfig = decodeCliConfig({});
 
 const dockerRuntimeServerPort = 8081;
 const dockerRuntimeInspectorPort = 8083;
-// Unix timestamp (~2032-11-30) used as the `exp` claim of the local-dev default
-// JWTs, matching the Go CLI's hardcoded expiry for anon/service_role tokens.
+// Unix timestamp (~2032-11-30) used as the `exp` claim of the local-dev
+// default JWTs (anon/service_role tokens).
 const defaultJwtExpiry = 1983812996;
 const defaultSigningKey = {
   kty: "EC",
@@ -124,7 +125,7 @@ const dockerLogDiagnosticTailLength = 4_096;
 const defaultSupabaseEnv = "development";
 const serveMainDir = "/root";
 const shellVariableNamePattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
-let cachedLegacyFunctionsServeMainTemplate: string | undefined;
+let cachedFunctionsServeMainTemplate: string | undefined;
 const watchIgnoreGlobs = [
   "**/.git/**",
   "**/node_modules/**",
@@ -164,10 +165,9 @@ export interface FunctionsServeDependencies {
   readonly projectIdOverride: Option.Option<string>;
   readonly goViperCompat: boolean;
   /**
-   * `undefined` in `next`; the legacy shell injects
-   * `legacyFunctionsGoConfigCompat` so this file never imports `legacy/`
-   * directly — see {@link FunctionsGoConfigCompat}. Distinct from
-   * `goViperCompat` above, which only gates `env(...)` interpolation.
+   * `undefined` for library callers; the CLI injects this so this file
+   * never imports the command tree directly — see {@link FunctionsGoConfigCompat}.
+   * Distinct from `goViperCompat` above, which only gates `env(...)` interpolation.
    */
   readonly goConfigCompat: FunctionsGoConfigCompat | undefined;
 }
@@ -199,7 +199,7 @@ interface ServeResolvedConfig {
   readonly configFunctions: Readonly<Record<string, ManifestFunctionConfig>>;
   readonly rawConfigFunctions: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
   readonly configPath?: string;
-  /** Go's post-`loadNestedEnv` merged env (ambient-wins). `undefined` in `next`. */
+  /** Merged env with ambient values winning; `undefined` for library callers. */
   readonly projectEnvValues: Readonly<Record<string, string>> | undefined;
 }
 
@@ -224,15 +224,11 @@ export interface StartedRuntime {
 }
 
 /**
- * Every already-resolved secret/key {@link startEdgeRuntimeContainer} needs,
- * matching {@link finalizeAuthArtifacts}'s return shape. Named and exported so
- * a caller outside this module (`start`'s own edge-runtime bring-up,
- * `commands/start/services/edge-runtime.service.ts`) can build the
- * exact same shape from values it has already resolved itself, instead of
- * calling {@link resolveLocalAuthArtifacts} (which re-reads `config.toml`/signing
- * keys independently — correct for the standalone `functions serve` command,
- * but would risk resolving different secrets than the rest of a `start`
- * stack for a caller that already has these values).
+ * Every already-resolved secret/key {@link startEdgeRuntimeContainer} needs.
+ * Exported so a caller outside this module (`start`'s own edge-runtime
+ * bring-up) can build this from values it already resolved, instead of
+ * {@link resolveLocalAuthArtifacts} re-reading `config.toml`/signing keys
+ * independently and risking different secrets than the rest of that stack.
  */
 export interface ServeAuthArtifacts {
   readonly publishableKey: string;
@@ -245,14 +241,10 @@ export interface ServeAuthArtifacts {
 
 /**
  * Everything {@link startEdgeRuntimeContainer} needs from `config.toml`
- * beyond auth (see {@link ServeAuthArtifacts}) — a narrowed, exported view of
- * {@link ServeResolvedConfig} (which also carries `auth`/`configPath`, used
- * only to resolve {@link ServeAuthArtifacts} and therefore irrelevant once
- * those are already resolved). `start`'s own bring-up builds this directly
- * from its own already-loaded `CliConfig` via {@link toPlainEdgeRuntimeConfig}/
- * {@link toPlainFunctionRecord}/`inferFunctionsManifest` (`@supabase/config`)
- * rather than going through {@link resolveServeConfig}'s independent
- * config-loading pipeline.
+ * beyond auth (see {@link ServeAuthArtifacts}) — a narrowed view of
+ * {@link ServeResolvedConfig}. `start`'s own bring-up builds this directly
+ * from its own already-loaded `CliConfig` rather than going through
+ * {@link resolveServeConfig}'s independent config-loading pipeline.
  */
 export interface ServeEdgeRuntimeContainerConfig {
   readonly projectId: string;
@@ -268,25 +260,20 @@ export interface ServeEdgeRuntimeContainerConfig {
 /**
  * Input to {@link startEdgeRuntimeContainer} — the reusable "bring up one
  * Edge Runtime container" core extracted from `serveFunctions`'s interactive
- * loop, kept independent of BOTH `functions serve`'s own config-loading
- * (`resolveServeConfig`/`resolveLocalAuthArtifacts`) and its file-watch/log-stream
- * loop, so `start`'s bring-up can call it directly with values it has already
- * resolved through its own pipeline (see `internal-db-connection.ts` for why
- * {@link dbUrl} specifically must be caller-supplied rather than hardcoded).
+ * loop, kept independent of both `functions serve`'s own config-loading and
+ * its file-watch/log-stream loop, so `start`'s bring-up can call it directly
+ * with values already resolved through its own pipeline.
  */
 export interface StartEdgeRuntimeContainerInput {
   readonly onContainerCreated?: () => void;
   readonly config: ServeEdgeRuntimeContainerConfig;
   readonly authArtifacts: ServeAuthArtifacts;
   /**
-   * `SUPABASE_DB_URL`. Deliberately NOT hardcoded in the shared core: Go's own
-   * two callers resolve this differently — standalone `functions serve`
-   * (`restartEdgeRuntime`, `serve.go:122`) always uses the `db` network alias
-   * (`postgresql://postgres:postgres@db:5432/postgres`, matching
-   * {@link legacyDefaultServeDbUrl} below), while `start`'s direct call
-   * (`start.go:66-72,1103`) uses the real `dbConfig` — the `db` container's
-   * own sanitized name and `config.db.password` — NOT the alias. Every caller
-   * must supply its own Go-accurate value; this module does not choose one.
+   * `SUPABASE_DB_URL`. Not hardcoded in the shared core: standalone
+   * `functions serve` always uses the `db` network alias (matching
+   * {@link defaultServeDbUrl} below), while `start`'s direct call uses the
+   * `db` container's own sanitized name and `config.db.password` instead.
+   * Every caller must supply its own value; this module does not choose one.
    */
   readonly dbUrl: string;
   /** Already-resolved edge-runtime image reference (registry-mapped, tag/deno-version already applied). */
@@ -334,11 +321,9 @@ export const serveFileWatcherLayer = Layer.sync(FileWatcher, () =>
                 filename === null || filename === undefined || filename.length === 0
                   ? root
                   : resolve(root, filename.toString());
-              // Node's `fs.watch` only distinguishes "rename" (create/delete/
-              // rename) from "change" (write); Go prints the real fsnotify op
-              // (`internal/functions/serve/watcher.go:100`). The closest
-              // recoverable equivalent is an existence check on "rename"
-              // events: present → create, gone → delete; "change" → update.
+              // `fs.watch` only distinguishes "rename" (create/delete/rename)
+              // from "change" (write); an existence check on "rename"
+              // disambiguates create vs delete, "change" always means update.
               const type: FileWatchEvent["type"] =
                 eventType === "rename" ? (existsSync(pathname) ? "create" : "delete") : "update";
               Queue.offerUnsafe(queue, [{ path: pathname, type }]);
@@ -359,30 +344,30 @@ export const serveFileWatcherLayer = Layer.sync(FileWatcher, () =>
 
 /**
  * `serve.main.ts` runs verbatim as a Deno entrypoint inside the edge-runtime
- * container (written to `/root/index.ts`). It is bundled into a single
- * self-contained module so its `jose` and local helper dependencies are inlined and
- * the runtime needs no network access on start (supabase/supabase#45570).
+ * container (written to `/root/index.ts`), bundled into a single
+ * self-contained module so its `jose` and local helper dependencies are
+ * inlined and the runtime needs no network access on start.
  *
  * Compiled builds embed the pre-bundled template via the
- * `SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE` define (see `scripts/build.ts`), so the
- * shipped binary never bundles at runtime. Running from source (`bun src/supabase.ts`)
+ * `SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE` define (see `scripts/build.ts`),
+ * so the shipped binary never bundles at runtime. Running from source
  * bundles on demand.
  */
-function getLegacyFunctionsServeMainTemplate(): Promise<string> {
-  if (cachedLegacyFunctionsServeMainTemplate !== undefined) {
-    return Promise.resolve(cachedLegacyFunctionsServeMainTemplate);
+function getFunctionsServeMainTemplate(): Promise<string> {
+  if (cachedFunctionsServeMainTemplate !== undefined) {
+    return Promise.resolve(cachedFunctionsServeMainTemplate);
   }
   if (typeof SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE === "string") {
-    cachedLegacyFunctionsServeMainTemplate = SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE;
-    return Promise.resolve(cachedLegacyFunctionsServeMainTemplate);
+    cachedFunctionsServeMainTemplate = SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE;
+    return Promise.resolve(cachedFunctionsServeMainTemplate);
   }
-  // Running from source: the build-time define is absent, so bundle on demand. The
-  // bundler (and its esbuild dependency) is imported lazily and only here, so it is
-  // never loaded by shipped binaries — which always take the define branch above.
+  // Bundler (and its esbuild dependency) is imported lazily and only here,
+  // so it's never loaded by shipped binaries, which always take the define
+  // branch above.
   return import("./serve-main-bundler.ts")
     .then(({ bundleServeMainTemplate }) => bundleServeMainTemplate())
     .then((bundled) => {
-      cachedLegacyFunctionsServeMainTemplate = bundled;
+      cachedFunctionsServeMainTemplate = bundled;
       return bundled;
     });
 }
@@ -433,11 +418,9 @@ function toPlainAuthConfig(
 }
 
 /**
- * Exported so `start`'s own edge-runtime bring-up
- * (`commands/start/services/edge-runtime.service.ts`) can reuse this
- * exact `Redacted`-unwrapping/zero-hash-filtering logic against its own,
- * already-loaded `CliConfig` instead of duplicating it — see
- * {@link ServeEdgeRuntimeContainerConfig}'s doc comment.
+ * Exported so `start`'s own edge-runtime bring-up can reuse this exact
+ * `Redacted`-unwrapping/zero-hash-filtering logic against its own,
+ * already-loaded `CliConfig` instead of duplicating it.
  */
 export function toPlainEdgeRuntimeConfig(
   edgeRuntime: CliConfig["edge_runtime"] | ResolvedCliConfigValue<CliConfig["edge_runtime"]>,
@@ -446,19 +429,11 @@ export function toPlainEdgeRuntimeConfig(
     policy: reveal(edgeRuntime.policy) ?? "",
     inspector_port: edgeRuntime.inspector_port,
     deno_version: edgeRuntime.deno_version,
-    // Go's config loader rewrites every `[edge_runtime.secrets]` key with
-    // `strings.ToUpper` (`pkg/config/config.go:766-771`, the viper #1014
-    // workaround) before `set.ListSecrets`
-    // (`internal/secrets/set/set.go:48-52`) reads the map, so secret names
-    // always reach the container env UPPERCASED regardless of authored
-    // casing. ListSecrets then keeps only entries with a non-empty SHA256:
-    // `DecryptSecretHookFunc` (`pkg/config/secret.go:94-107`) leaves the
-    // SHA256 empty exactly when the value is empty or a still-unresolved
-    // `env(VAR)` literal. In the TS pipeline `resolveCliConfigSubtree` wraps
-    // resolved secret leaves in `Redacted` and leaves unresolved `env()`
-    // literals as plain strings, so `Redacted.isRedacted` + non-empty mirrors
-    // both zero-hash cases — the same guard `secrets set` uses
-    // (`commands/secrets/set/set.handler.ts`).
+    // Secret names always reach the container env uppercased regardless of
+    // authored casing. Only resolved (non-empty) values are kept — an
+    // unresolved `env(VAR)` literal stays a plain string, not `Redacted`, so
+    // `Redacted.isRedacted` + non-empty filters it out, the same guard
+    // `secrets set` uses.
     secrets: Object.fromEntries(
       Object.entries(edgeRuntime.secrets ?? {}).flatMap(([name, value]) =>
         Redacted.isRedacted(value) && Redacted.value(value).length > 0
@@ -569,20 +544,16 @@ interface ServeLocalAuthArtifacts {
   readonly serviceRoleKey: string;
   /** Third-party issuer to fetch remote JWKS from, if one is configured. */
   readonly issuerUrl: string | undefined;
-  /** Local JWKS entries (signing keys / oct fallback), appended AFTER any remote keys (`config.go:1776-1786`). */
+  /** Local JWKS entries (signing keys / oct fallback), appended after any remote keys. */
   readonly localKeys: ReadonlyArray<unknown>;
 }
 
 /**
- * Config-load-time auth resolution — exactly the work Go performs during
- * `flags.LoadConfig`/`Config.Validate`, BEFORE `AssertSupabaseDbIsRunning`:
- * the signing-keys read (`pkg/config/config.go:1110-1115`), the
- * `auth.jwt_secret` ≥16-chars check (`pkg/config/apikeys.go:43-47` via
- * `config.go:1156`), and anon/service-role key generation. Deliberately does
- * NOT fetch remote JWKS: Go only does that inside `ServeFunctions`
- * (`serve.go:141` → `ResolveJWKS`, `config.go:1727-1776`), after the DB
- * assertion — that half lives in {@link finalizeAuthArtifacts} so a config
- * error here still beats a docker-down error, matching Go's precedence.
+ * Config-load-time auth resolution: signing-keys read, the `auth.jwt_secret`
+ * ≥16-chars check, and anon/service-role key generation. Does not fetch
+ * remote JWKS — that half lives in {@link finalizeAuthArtifacts}, run after
+ * the DB assertion, so a config error here still surfaces before a
+ * docker-down error.
  */
 const resolveLocalAuthArtifacts = Effect.fnUntraced(function* (
   auth: PlainServeAuthConfig,
@@ -634,12 +605,9 @@ const resolveLocalAuthArtifacts = Effect.fnUntraced(function* (
       : auth.service_role_key;
   const shouldUseJwtSecretFallback = signingKeysPath.length === 0;
 
-  // Go's `Auth.ThirdParty.validate()` (the "at most one enabled" + required-field checks
-  // `resolveThirdPartyIssuerUrl` performs) only runs inside `Config.Validate`'s `if
-  // c.Auth.Enabled` block (`config.go:1087-1153`), but `functions serve`'s own JWKS resolution
-  // (`serve.go:141`) discards `ResolveJWKS`'s error unconditionally, regardless of `auth.enabled`.
-  // So a malformed/multi-enabled third-party config must not throw here when auth is disabled —
-  // use the unchecked, no-throw `IssuerURL()`-only builder instead, matching Go exactly.
+  // A malformed/multi-enabled third-party config must not throw when auth is
+  // disabled, so this uses the unchecked, no-throw issuer-URL-only builder
+  // instead of the validating one in that case.
   const issuerUrl = auth.enabled
     ? resolveThirdPartyIssuerUrl(auth.third_party)
     : thirdPartyIssuerUrlUnchecked(auth.third_party);
@@ -676,16 +644,11 @@ const resolveLocalAuthArtifacts = Effect.fnUntraced(function* (
 });
 
 /**
- * The post-assertion half of `functions serve`'s auth resolution — Go's
- * `ResolveJWKS` call inside `ServeFunctions` (`serve.go:141`,
- * `pkg/config/config.go:1727-1786`): fetch the third-party provider's remote
- * JWKS (two sequential OIDC/JWKS requests with 10s-timeout clients,
- * `config.go:1727-1776`) with the fetch error discarded (`jwks, _ :=`), then
- * assemble the final key set with remote keys FIRST and local keys after
- * (`config.go:1776-1786`). Kept separate from
+ * The post-assertion half of auth resolution: fetches the third-party
+ * provider's remote JWKS (error discarded on failure) and assembles the
+ * final key set with remote keys first, then local keys. Kept separate from
  * {@link resolveLocalAuthArtifacts} so `startEdgeRuntime` can run it strictly
- * after `assertLocalDbRunning`, matching Go's ordering — with Docker down, no
- * external JWKS request is ever made.
+ * after the DB assertion — with Docker down, no external JWKS request is made.
  */
 const finalizeAuthArtifacts = Effect.fnUntraced(function* (local: ServeLocalAuthArtifacts) {
   const keys: unknown[] = [];
@@ -715,7 +678,13 @@ const resolveServeConfig = Effect.fnUntraced(function* (
   goViperCompat: boolean,
   goConfigCompat: FunctionsGoConfigCompat | undefined,
 ) {
-  const projectEnv = yield* loadServeCliProjectEnvironment(projectRoot);
+  // Keeps `.env` discovery, config load, and functions-manifest inference
+  // from resolving three different roots: the CLI's `search: false` must
+  // match `loadFunctionsCliConfig`'s own options exactly (see below).
+  const searchAncestors = goConfigCompat === undefined;
+  const projectEnv = yield* loadServeCliProjectEnvironment(projectRoot, {
+    search: searchAncestors,
+  });
   const projectRef = Option.match(projectIdOverride, {
     onNone: () => undefined,
     onSome: (value) => {
@@ -723,24 +692,21 @@ const resolveServeConfig = Effect.fnUntraced(function* (
       return normalized.length > 0 ? normalized : undefined;
     },
   });
-  // `loadCliConfig` interpolates `env()` references against the project
-  // environment. We resolve that environment ourselves (Go-accurate, layering
-  // `.env.<SUPABASE_ENV>`/`.env.local`/`.env` over the ambient env) and pass it
-  // in, so loading neither re-reads those files nor mutates `process.env`.
+  // We resolve the project environment ourselves (layering
+  // `.env.<SUPABASE_ENV>`/`.env.local`/`.env` over the ambient env) and pass
+  // it in, so `loadCliConfig`'s `env()` interpolation neither re-reads those
+  // files nor mutates `process.env`.
   //
-  // `search: false`/`tomlOnly: true` when `goConfigCompat` is set (legacy
-  // shell): this MUST match `loadFunctionsCliConfig`'s own options below
-  // exactly, or the two loads can resolve two different files (an ancestor's
-  // config.toml vs this dir's; a stray config.json vs config.toml) — one
-  // supplying `auth`/`edgeRuntime`/`apiPort` here, the other supplying
-  // `denoVersion`/`Config.Validate` below, silently mixing fields from two
-  // different projects. `next` (`goConfigCompat === undefined`) keeps the
-  // package defaults (ancestor search, JSON preferred), unchanged.
+  // `search`/`tomlOnly` here must match `loadFunctionsCliConfig`'s own
+  // options below exactly, or the two loads can resolve two different files,
+  // silently mixing fields from two different projects. Library callers
+  // (`goConfigCompat === undefined`) keep the package defaults unchanged.
   const loadedConfig = yield* loadCliConfig(projectRoot, {
     ...(projectRef === undefined ? {} : { projectRef }),
     ...(projectEnv === null ? {} : { cliProjectEnv: projectEnv }),
     goViperCompat,
-    ...(goConfigCompat === undefined ? {} : { search: false, tomlOnly: true }),
+    search: searchAncestors,
+    ...(goConfigCompat === undefined ? {} : { tomlOnly: true }),
   });
   const baseConfig = loadedConfig?.config ?? defaultCliConfig;
 
@@ -777,6 +743,7 @@ const resolveServeConfig = Effect.fnUntraced(function* (
   const configFunctions = yield* inferFunctionsManifest({
     cwd: projectRoot,
     config: configForManifest,
+    search: searchAncestors,
   });
   const configProjectId =
     projectEnv === null
@@ -789,37 +756,12 @@ const resolveServeConfig = Effect.fnUntraced(function* (
   const rawProjectId = Option.getOrElse(projectIdOverride, () => configProjectId).trim();
   const fallbackProjectId = basename(resolve(projectRoot));
 
-  // Go: `flags.LoadConfig` -> `Config.Validate` (`pkg/config/config.go:878,989-1192`)
-  // — `restartEdgeRuntime` runs this FIRST, before `AssertSupabaseDbIsRunning`
-  // (see this function's own caller for that ordering) — so an invalid
-  // config must fail here too, before any Docker check. Legacy shell only;
-  // `next` keeps its own package-default config resolution above unchanged.
-  // A second, independent config/dotenv load (rather than reusing this
-  // function's own `loadedConfig`/`projectEnv` above) — that pipeline's
-  // `env(...)`-interpolation purpose is unrelated to Go's `SUPABASE_*`
-  // `AutomaticEnv` override system this one provides, and the two shouldn't
-  // be entangled for a shipped, long-running command's config path.
-  // `search`/`tomlOnly` are aligned with this file's own `loadedConfig` call
-  // above (see its comment) so the two loads can never disagree about which
-  // file is "the" project config. `projectEnvValues` (for registry/network-id
-  // env lookups, this file's own caller) and the env-overridden
-  // `deno_version` are consumed from it; `auth`/`apiPort`/functions above
-  // keep their existing derivation. `projectId` also keeps its existing
-  // derivation — a known gap, narrow to trigger but NOT cosmetic when hit:
-  // unlike `deploy`/`download` (which use `context.projectId` outright),
-  // `rawProjectId` below only ever sees `SUPABASE_PROJECT_ID` from the
-  // *ambient* shell (`projectIdOverride`, from `LegacyCliSettings`), not from
-  // project dotenv. A project that sets it only in `supabase/.env` therefore
-  // gets a different `supabase_edge_runtime_<id>`/`supabase_network_<id>`
-  // here than `deploy`/`download`/`start` resolve for the SAME project — so
-  // `serve` creates a second network and a container `reloadKong(projectId)`'s
-  // Kong (named off the other id) can't route to: a silently non-functional
-  // `serve`, where Go reads one `Config.ProjectId` for everything. Folding
-  // `goContext.projectEnvValues` in here would also require reconciling this
-  // function's `projectIdOverride`-wins-unconditionally precedence with
-  // `legacyResolveLocalProjectId`'s config-file-wins-over-`projectRef`
-  // precedence (they're not the same order) — left open rather than risking
-  // that regression under time pressure (review round on CLI-1963).
+  // A second, independent config/dotenv load, run before any Docker check so
+  // an invalid config fails here too; its `search`/`tomlOnly` must match the
+  // `loadedConfig` call above or the two loads can pick different files.
+  // Known gap: `projectId` only sees ambient-shell `SUPABASE_PROJECT_ID`, not
+  // project dotenv, so a project setting it only in `.env` gets a different
+  // Docker network than `deploy`/`download`/`start` — a silently broken `serve`.
   const goContext =
     goConfigCompat === undefined
       ? undefined
@@ -951,9 +893,8 @@ function toFunctionContainerConfig(
   };
 
   return {
-    // The Go serve path defaults verifyJWT to true when verify_jwt is not set in
-    // config.toml (serve.go: `verifyJWT := true; if fc.VerifyJWT != nil { ... }`),
-    // unlike deploy which omits it. Mirror that default here.
+    // Defaults to `true` when `verify_jwt` is unset, unlike `deploy` which
+    // omits it.
     verifyJWT: config.verifyJwt ?? true,
     entrypointPath: toContainerPath(config.entrypoint),
     ...(config.importMap.length === 0 ? {} : { importMapPath: toContainerPath(config.importMap) }),
@@ -1005,10 +946,9 @@ async function writeDockerMultilineEnvScript(
   containerDir: string,
   dir: string,
 ) {
-  // Self-healing — see the matching comment in `writeDockerEnvFile` above.
-  // Runs unconditionally, before the `env.length === 0` check, so a stale
-  // directory left by an earlier invocation that DID need multiline secrets
-  // is still reclaimed even when the current invocation doesn't.
+  // Self-healing — see the matching comment in `writeDockerEnvFile`. Runs
+  // unconditionally, before the length check, so a stale directory from an
+  // earlier invocation that needed multiline secrets is still reclaimed.
   await rm(dir, { recursive: true, force: true });
 
   if (env.length === 0) {
@@ -1112,8 +1052,11 @@ function ambientProjectEnv() {
   );
 }
 
-const loadServeCliProjectEnvironment = Effect.fnUntraced(function* (projectRoot: string) {
-  const paths = yield* findCliProjectPaths(projectRoot);
+const loadServeCliProjectEnvironment = Effect.fnUntraced(function* (
+  projectRoot: string,
+  options: { readonly search: boolean },
+) {
+  const paths = yield* findCliProjectPaths(projectRoot, { search: options.search });
   if (paths === null) {
     return null;
   }
@@ -1241,10 +1184,9 @@ function eventMatchesSpec(spec: WatchSpec, event: FileWatchEvent) {
 }
 
 /**
- * fsnotify op tokens as Go prints them in the file-change line
- * (`event.Op.String()`, `internal/functions/serve/watcher.go:100`). RENAME and
- * CHMOD are unreachable here: Node's `fs.watch` folds renames into
- * create/delete pairs and does not report metadata-only changes.
+ * File-change op tokens for the established `File change detected: <path>
+ * (<OP>)` line. RENAME and CHMOD are unreachable here: `fs.watch` folds
+ * renames into create/delete pairs and doesn't report metadata-only changes.
  */
 const goFileEventOp = { create: "CREATE", update: "WRITE", delete: "REMOVE" } as const;
 
@@ -1396,17 +1338,14 @@ const streamContainerLogs = Effect.fnUntraced(function* (containerId: string) {
 const assertLocalDbRunning = Effect.fnUntraced(function* (projectId: string) {
   const dbId = localDockerId("db", projectId);
   // A spawn failure (neither `docker` nor `podman` on PATH) must keep its
-  // cause: it is the shell-out equivalent of Go's missing daemon socket, which
-  // `client.IsErrConnectionFailed` classifies as a connection failure and so
-  // gets the Docker Desktop install hint (`internal/utils/misc.go:155-166`).
-  // Blanking stderr here would demote it to a bare "failed to inspect
-  // service" with no guidance.
+  // cause: blanking stderr here would demote it to a bare "failed to inspect
+  // service" with no install guidance.
   const result = yield* runChildProcess("docker", ["container", "inspect", dbId], {
     stdout: "ignore",
     stderr: "pipe",
   }).pipe(
     Effect.catch((cause) =>
-      Effect.succeed({ exitCode: 1, stdout: "", stderr: legacyDescribeContainerCliFailure(cause) }),
+      Effect.succeed({ exitCode: 1, stdout: "", stderr: describeContainerCliFailure(cause) }),
     ),
   );
 
@@ -1422,14 +1361,12 @@ const assertLocalDbRunning = Effect.fnUntraced(function* (projectId: string) {
     result.stderr.trim().length > 0
       ? `failed to inspect service: ${result.stderr.trim()}`
       : "failed to inspect service";
-  // Go's `AssertServiceIsRunning` sets `CmdSuggestion = suggestDockerInstall`
-  // on a daemon-connection failure (`internal/utils/misc.go:155-166`), which
-  // `recoverAndExit` prints on its own stderr line after the red error
-  // (`cmd/root.go:300-303`) — mirrored here by the `suggestion` property that
-  // `normalizeCliError`/`Output.fail` render the same way.
+  // Mirrored here by the `suggestion` property, which
+  // `normalizeCliError`/`Output.fail` render on their own stderr line after
+  // the red error.
   return yield* Effect.fail(
-    legacyIsDockerDaemonUnreachable(result.stderr)
-      ? Object.assign(new Error(message), { suggestion: LEGACY_SUGGEST_DOCKER_INSTALL })
+    isDockerDaemonUnreachable(result.stderr)
+      ? Object.assign(new Error(message), { suggestion: SUGGEST_DOCKER_INSTALL })
       : new Error(message),
   );
 });
@@ -1441,9 +1378,8 @@ const bestEffortRemoveContainer = Effect.fnUntraced(function* (containerId: stri
   }).pipe(Effect.ignore);
 });
 
-// One step of Edge Runtime's create → cp → start bring-up. Only the cp step passes a
-// `messagePrefix` — its raw stderr is uninterpretable alone — while create/start keep the
-// `docker run -d` era stderr surface byte-identical.
+// One step of Edge Runtime's create → cp → start bring-up. Only the cp step
+// passes a `messagePrefix`, since its raw stderr is uninterpretable alone.
 const runEdgeRuntimeDockerStep = Effect.fnUntraced(function* (
   args: ReadonlyArray<string>,
   opts: { readonly messagePrefix?: string; readonly stdin?: Stream.Stream<Uint8Array> } = {},
@@ -1468,14 +1404,9 @@ const runEdgeRuntimeDockerStep = Effect.fnUntraced(function* (
 const reloadKong = Effect.fnUntraced(function* (projectId: string) {
   const output = yield* Output;
   const kongId = localDockerId("kong", projectId);
-  // Reload re-renders nginx.conf from Kong's default template, so it needs the
-  // template bring-up wrote (`kong.service.ts`; formerly Go's
-  // `start.go:589-592`, deleted as unreachable in CLI-1966, last present at
-  // commit a253ccba2) handed back — otherwise it drops that template's
-  // `email_templates` server (#6059). Go's own `restartEdgeRuntime`
-  // (`internal/functions/serve/serve.go:129`) passes the same flag for the
-  // same reason — an earlier revision of this file dropped it believing it was
-  // start-only (#5976), which #6065 proved wrong.
+  // Needs the `--nginx-conf` flag pointing at the custom template
+  // `kong.service.ts` wrote, or reload re-renders from Kong's default
+  // template and drops the `email_templates` server (supabase/cli#6059).
   const result = yield* runChildProcess(
     "docker",
     ["exec", kongId, "kong", "reload", "--nginx-conf", "/home/kong/custom_nginx.template"],
@@ -1529,19 +1460,17 @@ const resolveServeFunctionConfigs = Effect.fnUntraced(function* (
 
 /**
  * Docker bind mounts (function source, import map, static assets) for every
- * enabled function under `supabase/functions/**` — Go's
- * `serve.PopulatePerFunctionConfigs` (`internal/functions/serve/serve.go:
- * 277-318`), called both from Edge Runtime bring-up below (as part of its
- * own loop) and, standalone, from `start`'s Studio container spec
- * (formerly `internal/start/start.go:1149-1159`, deleted as unreachable in
- * CLI-1966; last present at commit a253ccba2), which needs only the bind mounts,
- * unconditionally of whether Edge Runtime itself is enabled or excluded.
- * `PopulatePerFunctionConfigs` logs `Skipped serving Function: <slug>`
- * unconditionally for every disabled function, regardless of which of its
- * two callers invoked it — so this shared helper reproduces that logging
- * too. Note this means Go (and this port) genuinely double-prints the
- * message when both Edge Runtime and Studio are enabled, since both call
- * sites fire; don't dedupe it, that would itself diverge from Go.
+ * enabled function under `supabase/functions/**`, called both from Edge
+ * Runtime bring-up below and, standalone, from `start`'s Studio container
+ * spec, which needs only the bind mounts.
+ *
+ * Logs `Skipped serving Function: <slug>` unconditionally for every disabled
+ * function, so the message double-prints when both Edge Runtime and Studio
+ * are enabled — established behavior, not a bug to dedupe.
+ *
+ * The returned set is not run through `pruneRedundantDockerBinds`: Studio's
+ * bring-up never `docker cp`s into its container, and pruning is limited to
+ * Edge Runtime's cp path.
  */
 export const resolveFunctionBindMounts = Effect.fn("functions.resolveFunctionBindMounts")(
   function* (
@@ -1602,25 +1531,16 @@ export const resolveFunctionBindMounts = Effect.fn("functions.resolveFunctionBin
 );
 
 /**
- * The reusable "bring up one Edge Runtime container" core — Go's
- * `ServeFunctions` (`internal/functions/serve/serve.go:135-252`), called both
- * by standalone `functions serve` (indirectly, via `startEdgeRuntime` below,
- * mirroring Go's `restartEdgeRuntime` wrapper) and directly by `start`'s own
- * bring-up (formerly `internal/start/start.go:1101-1108`, no wrapper step in
- * between; `internal/start` was deleted as unreachable in CLI-1966, last
- * present at commit a253ccba2).
- * Deliberately excludes everything `ServeFunctions` itself excludes too: no
- * config-loading (caller resolves {@link StartEdgeRuntimeContainerInput.config}/
- * {@link StartEdgeRuntimeContainerInput.authArtifacts} itself, matching how
- * Go's two callers each resolve `config.toml`/secrets once, independently, and
- * pass already-resolved values/strings into this shared core — see
- * `serve.go:141-151` vs. `start.go:66-72`), no file-watching, and no log
- * streaming (`serveFunctions`'s own loop, below, still owns both of those for
- * the standalone command). Also excludes the Kong reload: `ServeFunctions`
- * itself never reloads Kong — that only happens in `restartEdgeRuntime`
- * (`startEdgeRuntime` below), after this core succeeds, so `start`'s own
- * bring-up (which calls this core directly) correctly never reloads Kong
- * either.
+ * The reusable "bring up one Edge Runtime container" core, called both by
+ * standalone `functions serve` (via `startEdgeRuntime` below) and directly
+ * by `start`'s own bring-up.
+ *
+ * Deliberately excludes config-loading (the caller resolves
+ * {@link StartEdgeRuntimeContainerInput.config}/`authArtifacts` itself and
+ * passes in already-resolved values), file-watching, and log streaming
+ * (`serveFunctions`'s own loop still owns those for the standalone command).
+ * Also excludes the Kong reload, which only happens in `startEdgeRuntime`
+ * below, after this core succeeds.
  */
 export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeContainer")(
   function* (input: StartEdgeRuntimeContainerInput) {
@@ -1628,20 +1548,14 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
     const projectId = input.config.projectId;
     const containerId = localDockerId("edge_runtime", projectId);
     const networkMode = input.networkId;
-    // Deterministic, persistent host path (the same `<workdir>/supabase/.temp/start-secrets/`
-    // convention `start`'s own container-lifecycle bring-up used to stage Kong/Postgres/
-    // Supavisor's `secretFiles` on host disk before they moved to `docker cp` delivery —
-    // see `legacyCopyStartSecretFilesIntoContainer`'s doc comment, `container-lifecycle.ts`)
-    // rather than `os.tmpdir()`: `legacyCleanupStartSecrets` (wired into both `stop` and a
-    // failed-`start` rollback) reclaims this same `<workdir>/supabase/.temp/start-secrets/
-    // <containerId>` tree keyed by container name, so these JWT/service-role-key/secret env
-    // artifacts no longer leak on host disk indefinitely after the container is torn down.
+    // Deterministic, persistent host path (not `os.tmpdir()`): `cleanupStartSecrets`
+    // (wired into both `stop` and a failed-`start` rollback) reclaims this
+    // same tree keyed by container name, so these secret env artifacts don't
+    // leak on host disk indefinitely after the container is torn down.
     const stagingDir = join(input.projectRoot, "supabase", ".temp", "start-secrets", containerId);
-    // A single directory-wide `rm` rather than per-file `.cleanup()` closures (the JWT
-    // secrets/env file and the multiline-env script both live under `stagingDir`): this is
-    // what lets the cleanup cover the whole staging-write window below, including a mid-write
-    // failure between the first and second `writeDocker*` call, not just the final docker
-    // create/cp/start steps.
+    // A single directory-wide `rm` (not per-file cleanup closures) covers the
+    // whole staging-write window below, including a mid-write failure
+    // between two `writeDocker*` calls, not just the final docker steps.
     const removeRuntimeArtifacts = Effect.tryPromise({
       try: () => rm(stagingDir, { recursive: true, force: true }),
       catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
@@ -1717,7 +1631,12 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
       );
     }
 
-    const binds = [...functionBinds.values()];
+    const aggregatedBinds = [...functionBinds.values()];
+    // Pruned so the `docker cp` bootstrap below never sees a file bind
+    // nested inside a read-only parent bind. The workdir gate below reads
+    // the unpruned aggregate on purpose — a pruned bind's container path
+    // still exists through its covering parent.
+    const binds = pruneRedundantDockerBinds(aggregatedBinds);
 
     yield* ensureDockerNamedVolume(edgeRuntimeCacheVolume(projectId).name, projectId);
     yield* ensureDockerNetwork(networkMode, projectId);
@@ -1747,10 +1666,9 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
     const dockerEnv = Object.fromEntries(env.map(splitEnvEntry));
     const { singleLine: singleLineDockerEnv, multiline: multilineDockerEnv } =
       partitionDockerEnvEntries(dockerEnv);
-    // Everything from here on writes into `stagingDir` (or starts the container that reads from
-    // it), so the whole window — including a mid-write failure between two `writeDocker*` calls,
-    // not just the final docker create/cp/start steps — is wrapped in `Effect.onError` below.
-    // Container removal on failure stays with the callers, matching `docker run -d` behavior.
+    // Wrapped in `Effect.onError` below so the whole staging-write window is
+    // covered, not just the final docker steps. Container removal on failure
+    // stays with the callers, matching `docker run -d` behavior.
     return yield* Effect.gen(function* () {
       yield* Effect.try({
         try: () => validateDockerMultilineEnvNames(multilineDockerEnv),
@@ -1782,7 +1700,7 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
         ...buildFunctionsServeInspectArgs(input.inspectMode, input.inspectMain),
         ...(input.debug ? ["--verbose"] : []),
       ];
-      const serveMainTemplate = yield* Effect.promise(() => getLegacyFunctionsServeMainTemplate());
+      const serveMainTemplate = yield* Effect.promise(() => getFunctionsServeMainTemplate());
       // Streamed in via `docker cp` between create and start: embedding the template in the
       // `sh -c` argv hits Windows ENAMETOOLONG (#5711), and a single-file host bind mounts as
       // an empty directory on daemons that cannot see this host's filesystem (#6254, #4190).
@@ -1803,7 +1721,9 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
         networkMode,
         "--network-alias",
         "edge_runtime",
-        ...(hasBindUnder(binds, containerProjectRoot) ? ["--workdir", containerProjectRoot] : []),
+        ...(hasBindUnder(aggregatedBinds, containerProjectRoot)
+          ? ["--workdir", containerProjectRoot]
+          : []),
         "--ulimit",
         nofile.arg,
         "--label",
@@ -1849,27 +1769,19 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
 );
 
 /**
- * `SUPABASE_DB_URL`'s value for standalone `functions serve` — Go's
- * `restartEdgeRuntime` (`internal/functions/serve/serve.go:121-122`): "Use
- * network alias because Deno cannot resolve `_` in hostname", always
- * `postgresql://postgres:postgres@db:5432/postgres` regardless of
- * project/config (`db`, `utils.DbAliases[0]`, is a fixed network alias, and
- * `db.Password` is `toml:"-"` — never configurable, always the `"postgres"`
- * literal default, `pkg/config/config.go:459`). This is genuinely NOT the
- * same value `start`'s own bring-up uses — see
- * {@link StartEdgeRuntimeContainerInput.dbUrl}'s doc comment.
+ * `SUPABASE_DB_URL` for standalone `functions serve`: always the `db`
+ * network alias with the fixed default password, since Deno can't resolve
+ * `_` in a container name. Not the same value `start`'s own bring-up uses —
+ * see {@link StartEdgeRuntimeContainerInput.dbUrl}'s doc comment.
  */
-const legacyDefaultServeDbUrl = "postgresql://postgres:postgres@db:5432/postgres";
+const defaultServeDbUrl = "postgresql://postgres:postgres@db:5432/postgres";
 
 /**
- * Go's `restartEdgeRuntime` (`internal/functions/serve/serve.go:108-133`):
- * resolves `functions serve`'s own config/secrets/image independently on
+ * Resolves `functions serve`'s own config/secrets/image independently on
  * every (re)start, then delegates the actual bring-up to
- * {@link startEdgeRuntimeContainer} (Go's `ServeFunctions`) exactly like
- * `start`'s own bring-up will. Once that bring-up succeeds, this wrapper — and
- * only this wrapper, matching Go's `restartEdgeRuntime` — reloads Kong
- * (`serve.go:126-131`) so Kong's routing table picks up the freshly
- * (re)started container.
+ * {@link startEdgeRuntimeContainer}. Once that succeeds, this wrapper — and
+ * only this wrapper — reloads Kong so its routing table picks up the
+ * freshly (re)started container.
  */
 const startEdgeRuntime = Effect.fnUntraced(function* (input: {
   readonly flags: FunctionsServeFlags;
@@ -1879,16 +1791,12 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
   readonly inspectMode: FunctionsServeInspectMode | undefined;
 }) {
   const output = yield* Output;
-  // Deliberately NO docker precheck here — Go's `restartEdgeRuntime`
-  // (`internal/functions/serve/serve.go:107-113`) runs its sanity checks in
-  // order: `flags.LoadConfig` first, then `utils.AssertSupabaseDbIsRunning()`.
-  // A down Docker daemon therefore surfaces from the DB inspect below
-  // (`assertLocalDbRunning`) as `failed to inspect service: …` with the
-  // Docker Desktop install hint as a suggestion (`misc.go:155-166`), never as
-  // an upfront `failed to run docker.` failure. The remote-JWKS fetch is
-  // likewise held until AFTER that assertion (`finalizeAuthArtifacts` below —
-  // Go only fetches inside `ServeFunctions`, `serve.go:141`), so a down
-  // daemon never waits on external OIDC/JWKS requests first.
+  // No docker precheck here: config resolution runs first, then
+  // `assertLocalDbRunning` below surfaces a down daemon as "failed to
+  // inspect service: ..." with the install hint as a suggestion. The
+  // remote-JWKS fetch is likewise held until after that assertion
+  // (`finalizeAuthArtifacts` below), so a down daemon never waits on
+  // external OIDC/JWKS requests first.
   const resolved = yield* resolveServeConfig(
     input.dependencies.projectRoot,
     input.dependencies.projectIdOverride,
@@ -1900,18 +1808,14 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
   let ownsRuntime = false;
   let startedRuntime: StartedRuntime | undefined;
   return yield* Effect.gen(function* () {
-    // `SUPABASE_NETWORK_ID` (env or project dotenv) is legacy-shell-only —
-    // same Go-viper-parity gate as `resolved.projectEnvValues` itself
-    // (`undefined` in `next`).
+    // `SUPABASE_NETWORK_ID` is CLI-only, like `resolved.projectEnvValues`
+    // (`undefined` for library callers).
     const networkMode = resolveDockerNetworkMode({
       explicit: Option.getOrUndefined(input.networkId),
       envOverride:
         resolved.projectEnvValues === undefined
           ? undefined
-          : legacyViperEnvStringWithProjectFallback(
-              "SUPABASE_NETWORK_ID",
-              resolved.projectEnvValues,
-            ),
+          : viperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", resolved.projectEnvValues),
       projectId,
     });
     const localAuthArtifacts = yield* resolveLocalAuthArtifacts(resolved.auth, resolved.configPath);
@@ -1926,42 +1830,22 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
     yield* assertLocalDbRunning(projectId);
     yield* bestEffortRemoveContainer(containerId);
 
-    // Go's `restartEdgeRuntime` prints this right before calling `ServeFunctions`
-    // (`serve.go:124-125`) — `ServeFunctions` itself (this file's `startEdgeRuntimeContainer`,
-    // also called directly by `start.go:1104`) never prints it, so it belongs in this
-    // `functions serve`-only wrapper, not the shared core.
+    // Printed here, not in the shared `startEdgeRuntimeContainer` core,
+    // since `start`'s own bring-up (which calls that core directly) doesn't
+    // print it.
     yield* output.raw("Setting up Edge Functions runtime...\n", "stderr");
 
-    // Go's remote-JWKS fetch happens inside `ServeFunctions` (`serve.go:141`)
-    // — i.e. after `AssertSupabaseDbIsRunning`, the container removal, and the
-    // "Setting up…" print above — never before. Finalizing here (rather than
-    // inside `startEdgeRuntimeContainer`) keeps the shared core's
-    // caller-supplies-artifacts contract intact for `start`'s bring-up
-    // (`edge-runtime.service.ts`), which resolves its own JWKS.
+    // Finalized here, not inside `startEdgeRuntimeContainer`, to keep the
+    // shared core's caller-supplies-artifacts contract intact for `start`'s
+    // bring-up, which resolves its own JWKS.
     const authArtifacts = yield* finalizeAuthArtifacts(localAuthArtifacts);
 
-    // Go: `DockerStart` -> `DockerResolveImageIfNotCached` (`internal/utils/docker.go:326-386`)
-    // — resolved here, not earlier: `hasLocalImage` fails fast on an
-    // unreachable daemon, which would otherwise hijack the down-daemon
-    // message `assertLocalDbRunning` above is responsible for producing.
-    //
-    // Known ordering divergence (not fixed here — see below): Go's own
-    // `ServeFunctions` (`serve.go:134-167`) parses `--env-file` and every
-    // per-function config BEFORE ever calling `DockerStart`
-    // (`serve.go:218`), so a broken env file or function config fails fast,
-    // before any pull. This port's `startEdgeRuntimeContainer` (below) does
-    // that same parsing internally, but AFTER receiving an already-resolved
-    // `image` — so on a cold image cache, a broken `--env-file` now surfaces
-    // after a potentially slow `docker pull` instead of immediately. Fixing
-    // this properly means splitting `startEdgeRuntimeContainer` into a
-    // "build container config" phase and a "run it" phase so this resolve
-    // can move between them — but that function is also `start`'s bring-up
-    // core (`edge-runtime.service.ts`), which already passes in a
-    // pre-resolved image via `legacyEnsureImagesCached`, so restructuring it
-    // risks that shipped, more critical path. Left as a documented
-    // UX-only regression (the command still fails with the right error,
-    // just later) rather than a hasty change to shared, `start`-critical
-    // code (review round on CLI-1963).
+    // Resolved here, not earlier: an unreachable-daemon check on the image
+    // resolver would hijack the down-daemon message `assertLocalDbRunning`
+    // is responsible for. Known gap: parsing env-file/function config after
+    // this resolve means a broken `--env-file` now surfaces after a slow
+    // `docker pull` on cold cache instead of immediately — left open since
+    // fixing it risks `start`'s shared, more critical bring-up path.
     const image = yield* resolveFunctionsDockerImage(
       edgeRuntimeImage(edgeRuntimeVersion),
       resolved.projectEnvValues,
@@ -1982,7 +1866,7 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
         rawConfigFunctions: resolved.rawConfigFunctions,
       },
       authArtifacts,
-      dbUrl: legacyDefaultServeDbUrl,
+      dbUrl: defaultServeDbUrl,
       image,
       projectRoot: input.dependencies.projectRoot,
       supabaseDir: input.dependencies.supabaseDir,
@@ -2002,12 +1886,10 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
 
     return startedRuntime;
   }).pipe(
-    // `startEdgeRuntimeContainer`'s own `Effect.onError` only reaches while it's still running —
-    // once it returns successfully, a failure or interrupt here (e.g. mid-`reloadKong`) escapes
-    // that scope entirely, so this wrapper must also run the returned runtime's own staging-file
-    // cleanup, not just remove the container. Removal stays with this caller for bring-up
-    // failures too (`docker cp`/`docker start`), matching `docker run -d` behavior — the shared
-    // core never removes the container it created.
+    // A failure after `startEdgeRuntimeContainer` returns (e.g. mid-`reloadKong`)
+    // escapes its own `Effect.onError`, so this wrapper also runs the
+    // returned runtime's staging-file cleanup, not just container removal —
+    // the shared core never removes the container it created.
     Effect.onExit((exit) =>
       Exit.isFailure(exit)
         ? Effect.all([
@@ -2053,10 +1935,10 @@ export const serveFunctions = Effect.fn("functions.serve")(function* (
 
       const started = startOutcome.started;
 
-      // `streamContainerLogs` never succeeds: it streams logs until the container
-      // exits, then fails. A container crash therefore propagates out of this race
-      // and terminates `serve` — the Go CLI never auto-restarts a crashed container.
-      // The race only ever resolves to "shutdown" (signal) or "restart" (file change).
+      // `streamContainerLogs` never succeeds: it streams logs until the
+      // container exits, then fails, so a crash propagates out of this race
+      // and terminates `serve` rather than auto-restarting. The race
+      // otherwise only ever resolves to "shutdown" or "restart".
       const outcome = yield* Effect.raceFirst(
         Effect.raceFirst(
           processControl.awaitSignal().pipe(Effect.as("shutdown" as const)),

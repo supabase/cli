@@ -1,60 +1,51 @@
 import { Effect } from "effect";
 
-import { LegacyCredentials } from "../../auth/legacy-credentials.service.ts";
-import { LegacyTelemetryState } from "../../telemetry/legacy-telemetry-state.service.ts";
-import { legacyResolveYes } from "../../shared/legacy/global-flags.ts";
+import { CommandCredentials } from "../../auth/command-credentials.service.ts";
+import { TelemetryState } from "../../telemetry/telemetry-state.service.ts";
+import { resolveYes } from "../../command-internal/global-flags.ts";
 import { CONTEXT_CANCELED_MESSAGE } from "../../shared/output/errors.ts";
 import { Output } from "../../shared/output/output.service.ts";
-import { legacyPromptYesNo } from "../../shared/legacy/legacy-prompt-yes-no.ts";
-import { LegacyLogoutCancelledError } from "./logout.errors.ts";
+import { promptYesNo } from "../../command-internal/prompt-yes-no.ts";
+import { LogoutCancelledError } from "./logout.errors.ts";
 
 const LOGGED_OUT_MSG = "Access token deleted successfully. You are now logged out.";
 
-export const legacyLogout = Effect.fn("legacy.logout")(function* () {
+export const logout = Effect.fn("logout")(function* () {
   const output = yield* Output;
-  const credentials = yield* LegacyCredentials;
-  const telemetryState = yield* LegacyTelemetryState;
-  // `--yes` OR `SUPABASE_YES` (`viper.GetBool("YES")`, root.go:318-320): this is
-  // read before scanning stdin, so the env var auto-confirms logout too.
-  const yes = yield* legacyResolveYes;
+  const credentials = yield* CommandCredentials;
+  const telemetryState = yield* TelemetryState;
+  // `--yes` or `SUPABASE_YES`, read before scanning stdin, so the env var auto-confirms too.
+  const yes = yield* resolveYes;
 
   const confirmLabel =
     "Do you want to log out? This will remove the access token from your system.";
 
   const body = Effect.gen(function* () {
-    // Confirm prompt, honoring the global `--yes`/`SUPABASE_YES` (`logout.go:15-16`).
+    // Confirm prompt, honoring the global `--yes`/`SUPABASE_YES`.
     const confirmed = yield* Effect.gen(function* () {
-      // Machine (json/stream-json) mode without `--yes` has no Go equivalent —
-      // fail loudly on a non-interactive prompt rather than silently defaulting,
-      // preserving the existing contract.
+      // Machine (json/stream-json) mode without `--yes` fails loudly on a non-interactive
+      // prompt rather than silently defaulting.
       if (!yes && output.format !== "text") {
         return yield* output.promptConfirm(confirmLabel, { defaultValue: false });
       }
-      // Mirrors `PromptYesNo(..., false)` (`logout.go:16`): `--yes`/
-      // `SUPABASE_YES` auto-confirms WITH the `<label> [y/N] y` stderr echo
-      // (`console.go:70-72`) — do not short-circuit before the helper, or that
-      // echo line goes missing (CLI-1974). Without `--yes` it
-      // scans piped stdin before falling back to the default (`console.go:64-82`),
-      // so `printf 'y\n' | supabase logout` deletes the token.
-      return yield* legacyPromptYesNo(output, yes, confirmLabel, false);
+      // `--yes`/`SUPABASE_YES` auto-confirms through the helper, including its `<label> [y/N] y`
+      // stderr echo — don't short-circuit before calling it, or that echo line goes missing.
+      // Without `--yes` it scans piped stdin before falling back to the default, so
+      // `printf 'y\n' | supabase logout` deletes the token.
+      return yield* promptYesNo(output, yes, confirmLabel, false);
     });
     if (!confirmed) {
-      return yield* Effect.fail(
-        new LegacyLogoutCancelledError({ message: CONTEXT_CANCELED_MESSAGE }),
-      );
+      return yield* Effect.fail(new LogoutCancelledError({ message: CONTEXT_CANCELED_MESSAGE }));
     }
 
-    // Delete the access token. `LegacyNotLoggedInError` is the not-logged-in
-    // path (print to stderr, exit 0, and do NOT sweep project credentials —
-    // Go returns before `DeleteAll`, `logout.go:21-23`). `LegacyDeleteTokenError`
-    // propagates as exit 1 (`logout.go:24-26`).
+    // `NotLoggedInError` prints to stderr and exits 0 without sweeping project credentials;
+    // `DeleteTokenError` propagates as exit 1.
     const notLoggedIn = yield* credentials.deleteAccessToken.pipe(
       Effect.as(false),
-      Effect.catchTag("LegacyNotLoggedInError", (err) =>
+      Effect.catchTag("NotLoggedInError", (err) =>
         Effect.gen(function* () {
           if (output.format !== "text") {
-            // Machine modes have no Go equivalent (Go is text-only). Emit the
-            // message as the structured result so consumers can distinguish the
+            // Emits the message as the structured result so consumers can distinguish the
             // not-logged-in outcome from a real logout instead of an empty blob.
             yield* output.success(err.message);
           } else {
@@ -71,7 +62,7 @@ export const legacyLogout = Effect.fn("legacy.logout")(function* () {
       return;
     }
 
-    // Best-effort sweep of all stored project DB passwords (`logout.go:29-31`).
+    // Best-effort sweep of all stored project DB passwords.
     yield* credentials.deleteAllProjectCredentials;
 
     // Forget the telemetry identity (in-process stamp + persisted distinct_id)
@@ -85,6 +76,6 @@ export const legacyLogout = Effect.fn("legacy.logout")(function* () {
     yield* output.raw(`${LOGGED_OUT_MSG}\n`, "stdout");
   });
 
-  // PersistentPostRun parity: persist telemetry state on success and failure.
+  // Persists telemetry state on success and failure alike.
   return yield* body.pipe(Effect.ensuring(telemetryState.flush));
 });

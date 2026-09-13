@@ -1,8 +1,8 @@
 import { describe, expect, test } from "vitest";
 
-import { legacyBuildRealtimeEnv } from "./realtime-env.ts";
+import { buildRealtimeEnv } from "./realtime-env.ts";
 
-describe("legacyBuildRealtimeEnv", () => {
+describe("buildRealtimeEnv", () => {
   const base = {
     ipVersion: "IPv4" as const,
     maxHeaderLength: 4096,
@@ -13,7 +13,7 @@ describe("legacyBuildRealtimeEnv", () => {
   };
 
   test("wires the fixed internal DB address, JWT secret, and JWKS", () => {
-    const env = legacyBuildRealtimeEnv(base);
+    const env = buildRealtimeEnv(base);
     expect(env["DB_HOST"]).toBe("supabase_db_proj");
     expect(env["DB_PORT"]).toBe("5432");
     expect(env["DB_USER"]).toBe("supabase_admin");
@@ -25,7 +25,7 @@ describe("legacyBuildRealtimeEnv", () => {
   });
 
   test("matches Go's remaining static env values", () => {
-    const env = legacyBuildRealtimeEnv(base);
+    const env = buildRealtimeEnv(base);
     expect(env).toMatchObject({
       PORT: "4000",
       DB_AFTER_CONNECT_QUERY: "SET search_path TO _realtime",
@@ -41,13 +41,13 @@ describe("legacyBuildRealtimeEnv", () => {
   });
 
   test("selects inet_tcp for IPv4", () => {
-    expect(legacyBuildRealtimeEnv({ ...base, ipVersion: "IPv4" })["ERL_AFLAGS"]).toBe(
+    expect(buildRealtimeEnv({ ...base, ipVersion: "IPv4" })["ERL_AFLAGS"]).toBe(
       "-proto_dist inet_tcp",
     );
   });
 
   test("selects inet6_tcp for IPv6", () => {
-    expect(legacyBuildRealtimeEnv({ ...base, ipVersion: "IPv6" })["ERL_AFLAGS"]).toBe(
+    expect(buildRealtimeEnv({ ...base, ipVersion: "IPv6" })["ERL_AFLAGS"]).toBe(
       "-proto_dist inet6_tcp",
     );
   });

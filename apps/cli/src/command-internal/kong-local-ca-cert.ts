@@ -1,15 +1,11 @@
 /**
- * Embedded Kong local CA certificate for local HTTPS endpoints.
+ * Embedded CA certificate for the local Kong service's self-signed TLS cert
+ * (same PEM as `kong-local-tls.ts`'s `KONG_LOCAL_TLS_CERT`, which is
+ * self-signed and so acts as its own CA). Used as the default CA when
+ * `[api.tls] enabled = true` and `api.tls.cert_path` is unset.
  *
- * This is the verbatim PEM of the self-signed CA bundled with the Go CLI at
- * `apps/cli-go/pkg/config/templates/certs/kong.local.crt` (embedded via
- * `//go:embed` in `pkg/config/config.go:364-367`). It is the default CA used
- * when `[api.tls] enabled = true` and `api.tls.cert_path` is not set.
- *
- * Using an inline string constant (not a file-read) ensures the value survives
- * Bun's compiled-binary bundler without additional asset embedding.
- *
- * @see apps/cli-go/pkg/config/config.go lines 364-367, 460-461, 845-851
+ * Inlined as a string constant, not a file read, so the value survives Bun's
+ * compiled-binary bundler.
  */
 export const KONG_LOCAL_CA_CERT = `-----BEGIN CERTIFICATE-----
 MIIFJTCCAw2gAwIBAgIURUQAFIOhttOg0D12xZvx+pScX4cwDQYJKoZIhvcNAQEL

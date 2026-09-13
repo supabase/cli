@@ -95,7 +95,7 @@ stdout is payload-only. A single `result` object is emitted:
 - **Targets**: `--db-url`, `--linked` (default), and `--local` are mutually
   exclusive; with no flag the target defaults to linked.
 - **`--project-ref`** (TS-only, no Go equivalent on any user-facing `db`
-  command) overrides ONLY the linked-ref resolution `LegacyProjectRefResolver`
+  command) overrides ONLY the linked-ref resolution `ProjectRefResolver`
   performs (flag > `SUPABASE_PROJECT_ID` > `~/.supabase/<hash>/project-ref`).
   It never implies `--linked`: passing it with a resolved `--local`/`--db-url`
   target is a hard error rather than a silently discarded flag (deliberately

@@ -1,99 +1,66 @@
 /**
  * GoTrue/Auth env + container spec builder, gated on `config.auth.enabled`
- * and `!isContainerExcluded(config.auth.image, excluded)` — see
- * `legacy-service-catalog.ts`'s `gotrue` entry (`excludeKey: "gotrue"`, gated
- * on `auth.enabled`). Gating and image resolution/pre-pull are the caller's
- * job (a future `start.handler.ts`); this module only assembles the
- * env/container spec once the caller has already decided to start it.
+ * and `!isContainerExcluded(config.auth.image, excluded)`. Gating and image
+ * resolution/pre-pull are the caller's job; this module only assembles the
+ * env/container spec once the caller has decided to start it.
  *
- * {@link legacyBuildGotrueEnv} deliberately reproduces the FULL env surface
- * GoTrue's container actually receives, including every conditional env var
- * on top of the base set: JWT signing keys, SMTP/Mailpit fallback, mailer
- * template/notification URLs, the fixed-priority SMS provider switch,
- * CAPTCHA, the six auth hooks, MFA phone extras, passkey/WebAuthn, external
- * OAuth providers, Web3, OAuth server. See `gotrue.service.unit.test.ts` for
- * coverage.
+ * {@link buildGotrueEnv} reproduces the full env surface GoTrue's container
+ * receives, including every conditional var: JWT signing keys, SMTP/Mailpit
+ * fallback, mailer URLs, the fixed-priority SMS provider switch, CAPTCHA,
+ * auth hooks, MFA phone extras, passkey/WebAuthn, external OAuth providers,
+ * Web3, OAuth server. See `gotrue.service.unit.test.ts` for coverage.
  *
- * `@supabase/config` schema gaps this module works around (all pre-existing,
- * not introduced here — see each input field's own doc comment):
- *   - `auth.external_url` has no schema field at all, so the caller reads it
- *     off the raw TOML document (same pattern as the gaps below) and passes
- *     the resolved value in as {@link LegacyBuildGotrueEnvInput.authExternalUrl}
- *     — when set, it wins over the `apiUrl`-derived fallback for
- *     `API_EXTERNAL_URL`/`GOTRUE_JWT_ISSUER`'s default/the mailer verify URL/
- *     OAuth redirect-URI fallbacks. `config push`'s auth update body has no
- *     such gap to share: it has no `external_url`/`jwt_issuer` field at all,
- *     so there's nothing for that command to derive or resolve.
+ * `@supabase/config` schema gaps this module's inputs work around (see each
+ * field's own doc comment for detail):
+ *   - `auth.external_url` has no schema field; the caller reads it off the
+ *     raw TOML document and passes it as {@link BuildGotrueEnvInput.authExternalUrl}.
  *   - `auth.captcha`/`auth.passkey`/`auth.webauthn`/`auth.email.smtp`'s
- *     presence-and-default quirks (an explicitly-omitted `enabled` is
- *     treated differently depending on whether the surrounding TOML table is
- *     present at all) can't be recovered from the decoded `CliConfig`
- *     alone — the caller resolves these the same way
- *     `legacy-local-config-values.ts` already does (reading the raw TOML
- *     document) and passes the final, presence-resolved values in.
- *   - `auth.external` decodes as a FIXED struct of ~19 known providers, each
- *     always present with `enabled: false` when unconfigured — but the real
- *     provider set is whatever a user's `config.toml` actually mentions, and
- *     `legacyAppendGotrueExternalProviderEnv` iterates that real map
- *     unconditionally (emitting `_ENABLED=false` etc. for a
- *     configured-but-disabled provider, never for an unconfigured one).
- *     {@link LegacyBuildGotrueEnvInput.externalProviders} must therefore
- *     already be presence-filtered by the caller (only the providers whose
- *     `[auth.external.<name>]` section actually exists in the TOML
- *     document), the same way `legacy-local-config-values.ts`'s
- *     `validateAuthExternalProviders` already filters for its own purposes.
+ *     presence-vs-default quirks can't be recovered from the decoded
+ *     `CliConfig` alone, so the caller resolves them from the raw TOML
+ *     document, the same way `local-config-values.ts` does.
+ *   - `auth.external` always decodes all ~19 known providers with
+ *     `enabled: false`, so {@link BuildGotrueEnvInput.externalProviders}
+ *     must already be filtered to only the providers present in the TOML.
  */
 
 import type { CliConfig } from "@supabase/config";
 
-import { legacyServiceContainerName } from "../../../command-internal/legacy-docker-ids.ts";
+import { serviceContainerName } from "../../../command-internal/docker-ids.ts";
+import { formatGoDuration, parseGoDuration } from "../../../command-internal/go-duration.ts";
+import { DEFAULT_SIGNING_KEY } from "../../../command-internal/go-jwt.ts";
+import type { ResolvedAuthEmail } from "../../../command-internal/local-config-values.ts";
+import { passwordRequirementsToChar } from "../../../command-internal/password-requirements.ts";
+import type { StartContainerSpec } from "../../../command-internal/db-bootstrap/docker-create-args.ts";
 import {
-  legacyFormatGoDuration,
-  legacyParseGoDuration,
-} from "../../../command-internal/legacy-go-duration.ts";
-import { LEGACY_DEFAULT_SIGNING_KEY } from "../../../command-internal/legacy-go-jwt.ts";
-import type { LegacyResolvedAuthEmail } from "../../../command-internal/legacy-local-config-values.ts";
-import { legacyPasswordRequirementsToChar } from "../../../command-internal/legacy-password-requirements.ts";
-import type { LegacyStartContainerSpec } from "../../../command-internal/db-bootstrap/docker-create-args.ts";
-import {
-  legacyStartInternalDbPassword,
-  legacyStartInternalDbUrl,
+  startInternalDbPassword,
+  startInternalDbUrl,
 } from "../../../command-internal/db-bootstrap/internal-db-connection.ts";
-import {
-  legacySlimWgetHealthcheck,
-  legacyUsesSlimRuntime,
-} from "../../../command-internal/db-bootstrap/slim-runtime.ts";
+import { slimWgetHealthcheck } from "../../../command-internal/db-bootstrap/slim-runtime.ts";
+import { usesSlimImageRuntime } from "../../../shared/services/slim-images.ts";
 
-/** The GoTrue network alias — also this service's `containerSuffix` in `LEGACY_SERVICE_CATALOG`. */
-const LEGACY_GOTRUE_CONTAINER_SUFFIX = "auth";
+/** The GoTrue network alias — also this service's `containerSuffix` in `SERVICE_CATALOG`. */
+const GOTRUE_CONTAINER_SUFFIX = "auth";
 
 /** GoTrue's fixed listen port — never published to the host. */
-const LEGACY_GOTRUE_PORT = "9999";
+const GOTRUE_PORT = "9999";
 
 /** Kong's nginx template server port, used for mailer template/subject URLs. */
-const LEGACY_GOTRUE_NGINX_TEMPLATE_SERVER_PORT = 8088;
+const GOTRUE_NGINX_TEMPLATE_SERVER_PORT = 8088;
 
 /** The default Inbucket admin email/sender name. */
-const LEGACY_GOTRUE_DEFAULT_INBUCKET_ADMIN_EMAIL = "admin@email.com";
-const LEGACY_GOTRUE_DEFAULT_INBUCKET_SENDER_NAME = "Admin";
+const GOTRUE_DEFAULT_INBUCKET_ADMIN_EMAIL = "admin@email.com";
+const GOTRUE_DEFAULT_INBUCKET_SENDER_NAME = "Admin";
 
 /** `supabase_auth_admin` — the fixed Postgres role GoTrue's `GOTRUE_DB_DATABASE_URL` authenticates as. */
-const LEGACY_GOTRUE_DB_ROLE = "supabase_auth_admin";
+const GOTRUE_DB_ROLE = "supabase_auth_admin";
 
 /**
- * RFC 7517 JWK fields, in the exact field declaration order — needed so
- * {@link legacyBuildGotrueEnv}'s `JSON.stringify` reproduces a stable,
- * canonical serialization byte-for-byte (`JSON.stringify` serializes object
- * keys in insertion order).
- * Structurally near-identical to `command-internal/legacy-go-jwt.ts`'s `LegacyJwk`
- * (the only difference is `key_ops`'s mutable `string[]` there, needed for
- * assignability into Node's `createPrivateKey`/`JsonWebKey` input — see that
- * type's own doc comment) and a superset of `shared/auth/jwks.ts`'s `JwkLike`
- * (which omits the private-key fields `d`/`p`/`q`/`dp`/`dq`/`qi`) — kept local
- * rather than reusing either shared type, since neither of their existing
- * callers needs the union of all seventeen fields.
+ * RFC 7517 JWK fields in fixed declaration order, so {@link buildGotrueEnv}'s
+ * `JSON.stringify` produces a stable, canonical serialization. Kept separate
+ * from `go-jwt.ts`'s `Jwk` and `shared/auth/jwks.ts`'s `JwkLike` since
+ * neither covers this full field set.
  */
-export interface LegacyGotrueSigningKey {
+export interface GotrueSigningKey {
   readonly kty: string;
   readonly kid?: string;
   readonly use?: string;
@@ -114,13 +81,11 @@ export interface LegacyGotrueSigningKey {
 }
 
 /**
- * The default single signing key — used whenever `auth.signing_keys_path`
- * is unset. Hoisted to `legacy-go-jwt.ts` (as `LEGACY_DEFAULT_SIGNING_KEY`)
- * so `legacyResolveLocalJwks` publishes the exact same key's public form in
- * the JWKS this default signs with — the two must never disagree on which
- * key is "the" default.
+ * The default single signing key, used whenever `auth.signing_keys_path` is
+ * unset. Hoisted to `go-jwt.ts` so `resolveLocalJwks` publishes this same
+ * key's public form in the JWKS it signs with.
  */
-const LEGACY_GOTRUE_DEFAULT_SIGNING_KEY: LegacyGotrueSigningKey = LEGACY_DEFAULT_SIGNING_KEY;
+const GOTRUE_DEFAULT_SIGNING_KEY: GotrueSigningKey = DEFAULT_SIGNING_KEY;
 
 /**
  * The `auth.sms.test_otp` map's `GOTRUE_SMS_TEST_OTP` wire format:
@@ -128,21 +93,21 @@ const LEGACY_GOTRUE_DEFAULT_SIGNING_KEY: LegacyGotrueSigningKey = LEGACY_DEFAULT
  * `Object.entries` (insertion order); order is not part of the contract
  * here, only the `key:value,...` shape.
  */
-export function legacyFormatMapForEnvConfig(input: Readonly<Record<string, string>>): string {
+export function formatMapForEnvConfig(input: Readonly<Record<string, string>>): string {
   return Object.entries(input)
     .map(([key, value]) => `${key}:${value}`)
     .join(",");
 }
 
 /** One already-resolved, presence-gated `[auth.hook.<type>]` entry — see this module's header for why presence must be pre-resolved by the caller. */
-export interface LegacyGotrueHookInput {
+export interface GotrueHookInput {
   readonly enabled: boolean;
   readonly uri?: string;
   readonly secrets?: string;
 }
 
 /** `[auth.webauthn]`, present iff the caller's raw TOML document has that section. */
-export interface LegacyGotrueWebauthnInput {
+export interface GotrueWebauthnInput {
   readonly rpId: string;
   readonly rpDisplayName: string;
   readonly rpOrigins: ReadonlyArray<string>;
@@ -151,9 +116,9 @@ export interface LegacyGotrueWebauthnInput {
 /**
  * One already-presence-filtered `[auth.external.<name>]` entry — see this
  * module's header for why the caller must filter the whole map by TOML
- * presence before calling {@link legacyBuildGotrueEnv}.
+ * presence before calling {@link buildGotrueEnv}.
  */
-export interface LegacyGotrueExternalProviderInput {
+export interface GotrueExternalProviderInput {
   readonly enabled: boolean;
   readonly clientId: string;
   readonly secret?: string;
@@ -163,14 +128,14 @@ export interface LegacyGotrueExternalProviderInput {
   readonly emailOptional: boolean;
 }
 
-export interface LegacyBuildGotrueEnvInput {
-  /** The `db` container's own Docker name (`legacyServiceContainerName("db", projectId)`). */
+export interface BuildGotrueEnvInput {
+  /** The `db` container's own Docker name (`serviceContainerName("db", projectId)`). */
   readonly dbHost: string;
-  /** `config.db.password` — see {@link legacyStartInternalDbPassword}. */
+  /** `config.db.password` — see {@link startInternalDbPassword}. */
   readonly dbPassword: string;
 
   /**
-   * `LegacyLocalConfigValues.apiUrl` — reused, not recomputed, so
+   * `LocalConfigValues.apiUrl` — reused, not recomputed, so
    * `API_EXTERNAL_URL`/`GOTRUE_JWT_ISSUER`'s derived fallback (used when
    * {@link authExternalUrl} is unset) never drifts from what `status`
    * reports.
@@ -183,7 +148,7 @@ export interface LegacyBuildGotrueEnvInput {
    * — fall back to the `apiUrl` derivation.
    */
   readonly authExternalUrl?: string;
-  /** `LegacyLocalConfigValues.jwtSecret` — reused, not recomputed. */
+  /** `LocalConfigValues.jwtSecret` — reused, not recomputed. */
   readonly jwtSecret: string;
   /** `config.auth.jwt_issuer`, raw (`undefined` when unset — falls back to the derived auth-external URL). */
   readonly jwtIssuer: string | undefined;
@@ -200,22 +165,20 @@ export interface LegacyBuildGotrueEnvInput {
 
   /**
    * `config.auth.signing_keys_path`'s resolved contents (the file's
-   * contents via `legacy-local-config-values.ts`'s `loadSigningKeys`, when
+   * contents via `local-config-values.ts`'s `loadSigningKeys`, when
    * configured). Defaults to the hardcoded single ES256 key
-   * ({@link LEGACY_GOTRUE_DEFAULT_SIGNING_KEY}) when omitted.
+   * ({@link GOTRUE_DEFAULT_SIGNING_KEY}) when omitted.
    */
-  readonly signingKeys?: ReadonlyArray<LegacyGotrueSigningKey>;
+  readonly signingKeys?: ReadonlyArray<GotrueSigningKey>;
 
   /** `config.auth.email`, everything except `smtp` (kept separate — see {@link smtp}). */
-  readonly email: Omit<LegacyResolvedAuthEmail, "smtp">;
+  readonly email: Omit<ResolvedAuthEmail, "smtp">;
   /** Kong's own container name — mailer template/subject URLs route through it. */
   readonly kongContainerName: string;
 
   /**
    * `config.auth.email.smtp`, already presence-and-default resolved by the
-   * caller (`@supabase/config` can't reproduce the "TOML table present,
-   * `enabled` key absent → true" default on its own, see this module's
-   * header). `undefined` means the SMTP section is absent or disabled — the
+   * caller. `undefined` means the SMTP section is absent or disabled — the
    * mailpit fallback below applies instead.
    */
   readonly smtp?: {
@@ -246,25 +209,22 @@ export interface LegacyBuildGotrueEnvInput {
   readonly oauthServer: CliConfig["auth"]["oauth_server"];
   /**
    * `config.auth.hook.<type>`, each already presence-resolved AND
-   * env-override-resolved by the caller (`legacyResolveAuthHooks` —
+   * env-override-resolved by the caller (`resolveAuthHooks` —
    * `SUPABASE_AUTH_HOOK_<TYPE>_ENABLED`/`_URI`/`_SECRETS`).
    */
   readonly hooks: {
-    readonly mfaVerificationAttempt: LegacyGotrueHookInput;
-    readonly passwordVerificationAttempt: LegacyGotrueHookInput;
-    readonly customAccessToken: LegacyGotrueHookInput;
-    readonly sendSms: LegacyGotrueHookInput;
-    readonly sendEmail: LegacyGotrueHookInput;
-    readonly beforeUserCreated: LegacyGotrueHookInput;
+    readonly mfaVerificationAttempt: GotrueHookInput;
+    readonly passwordVerificationAttempt: GotrueHookInput;
+    readonly customAccessToken: GotrueHookInput;
+    readonly sendSms: GotrueHookInput;
+    readonly sendEmail: GotrueHookInput;
+    readonly beforeUserCreated: GotrueHookInput;
   };
 
   /**
-   * `config.auth.captcha`, already presence-resolved AND env-override-resolved
-   * by the caller (`legacyResolveAuthCaptcha` — `SUPABASE_AUTH_CAPTCHA_ENABLED`/
-   * `_PROVIDER`/`_SECRET`, `secret` decrypted like every other `Secret`-typed
-   * field). `@supabase/config`'s `withDecodingDefaultKey` fills in `{enabled:
-   * false}` even when `[auth.captcha]` is absent — see this module's header.
-   * `undefined` means the section itself is absent.
+   * `config.auth.captcha`, already presence-resolved and
+   * env-override-resolved by the caller (`resolveAuthCaptcha`). `undefined`
+   * means the section itself is absent.
    */
   readonly captcha?: {
     readonly enabled: boolean;
@@ -275,25 +235,24 @@ export interface LegacyBuildGotrueEnvInput {
   /** `[auth.passkey].enabled`, `undefined` iff the section is absent — see this module's header (not in `@supabase/config`'s schema at all). */
   readonly passkeyEnabled?: boolean;
   /** `[auth.webauthn]`, `undefined` iff the section is absent — independent of {@link passkeyEnabled} (each section's presence is checked separately). */
-  readonly webauthn?: LegacyGotrueWebauthnInput;
+  readonly webauthn?: GotrueWebauthnInput;
 
   /** Already presence-filtered by the caller — see this module's header. */
-  readonly externalProviders: Readonly<Record<string, LegacyGotrueExternalProviderInput>>;
+  readonly externalProviders: Readonly<Record<string, GotrueExternalProviderInput>>;
 }
 
-function legacyTrimTrailingSlashes(value: string): string {
+function trimTrailingSlashes(value: string): string {
   return value.replace(/\/+$/, "");
 }
 
 /**
- * Two INDEPENDENT presence gates for passkey/WebAuthn env vars — config
- * validation requires `Auth.Webauthn` whenever `Auth.Passkey.Enabled`, but
- * this function doesn't assume that invariant.
+ * Passkey and WebAuthn env vars are gated independently, even though config
+ * validation requires `webauthn` whenever `passkey.enabled` is set.
  */
-function legacyAppendGotruePasskeyEnv(
+function appendGotruePasskeyEnv(
   env: Record<string, string>,
   passkeyEnabled: boolean | undefined,
-  webauthn: LegacyGotrueWebauthnInput | undefined,
+  webauthn: GotrueWebauthnInput | undefined,
 ): void {
   if (passkeyEnabled !== undefined) {
     env["GOTRUE_PASSKEY_ENABLED"] = String(passkeyEnabled);
@@ -311,9 +270,9 @@ function legacyAppendGotruePasskeyEnv(
  * See this module's header for why `providers` must already be
  * presence-filtered by the caller.
  */
-function legacyAppendGotrueExternalProviderEnv(
+function appendGotrueExternalProviderEnv(
   env: Record<string, string>,
-  providers: Readonly<Record<string, LegacyGotrueExternalProviderInput>>,
+  providers: Readonly<Record<string, GotrueExternalProviderInput>>,
   jwtIssuer: string,
 ): void {
   for (const [name, provider] of Object.entries(providers)) {
@@ -341,7 +300,7 @@ function legacyAppendGotrueExternalProviderEnv(
  * any other falsy value). `JSON.stringify` then serializes in that same
  * insertion order, producing a stable, canonical byte representation.
  */
-function legacyOrderGotrueSigningKey(key: LegacyGotrueSigningKey): Record<string, unknown> {
+function orderGotrueSigningKey(key: GotrueSigningKey): Record<string, unknown> {
   const ordered: Record<string, unknown> = { kty: key.kty };
   if (key.kid !== undefined && key.kid.length > 0) ordered["kid"] = key.kid;
   if (key.use !== undefined && key.use.length > 0) ordered["use"] = key.use;
@@ -363,7 +322,7 @@ function legacyOrderGotrueSigningKey(key: LegacyGotrueSigningKey): Record<string
 }
 
 /** The last `.`-prefixed suffix of the final path segment, or `""` if there is none. */
-function legacyFileExt(path: string): string {
+function fileExt(path: string): string {
   const base = path.slice(Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")) + 1);
   const dot = base.lastIndexOf(".");
   return dot <= 0 ? "" : base.slice(dot);
@@ -375,29 +334,24 @@ function legacyFileExt(path: string): string {
  * the `@supabase/config` schema gaps this input type works around. No
  * Effect, no I/O — every field is a plain, already-resolved value.
  */
-export function legacyBuildGotrueEnv(input: LegacyBuildGotrueEnvInput): Record<string, string> {
+export function buildGotrueEnv(input: BuildGotrueEnvInput): Record<string, string> {
   const authExternalUrl =
     input.authExternalUrl !== undefined && input.authExternalUrl.length > 0
       ? input.authExternalUrl
-      : `${legacyTrimTrailingSlashes(input.apiUrl)}/auth/v1`;
+      : `${trimTrailingSlashes(input.apiUrl)}/auth/v1`;
   const jwtIssuer =
     input.jwtIssuer !== undefined && input.jwtIssuer.length > 0 ? input.jwtIssuer : authExternalUrl;
-  const mailerVerifyUrl = `${legacyTrimTrailingSlashes(authExternalUrl)}/verify`;
-  const testOtp =
-    input.sms.test_otp !== undefined ? legacyFormatMapForEnvConfig(input.sms.test_otp) : "";
+  const mailerVerifyUrl = `${trimTrailingSlashes(authExternalUrl)}/verify`;
+  const testOtp = input.sms.test_otp !== undefined ? formatMapForEnvConfig(input.sms.test_otp) : "";
 
   const env: Record<string, string> = {
     API_EXTERNAL_URL: authExternalUrl,
 
     GOTRUE_API_HOST: "0.0.0.0",
-    GOTRUE_API_PORT: LEGACY_GOTRUE_PORT,
+    GOTRUE_API_PORT: GOTRUE_PORT,
 
     GOTRUE_DB_DRIVER: "postgres",
-    GOTRUE_DB_DATABASE_URL: legacyStartInternalDbUrl(
-      LEGACY_GOTRUE_DB_ROLE,
-      input.dbHost,
-      input.dbPassword,
-    ),
+    GOTRUE_DB_DATABASE_URL: startInternalDbUrl(GOTRUE_DB_ROLE, input.dbHost, input.dbPassword),
 
     GOTRUE_SITE_URL: input.siteUrl,
     GOTRUE_URI_ALLOW_LIST: input.additionalRedirectUrls.join(","),
@@ -419,9 +373,7 @@ export function legacyBuildGotrueEnv(input: LegacyBuildGotrueEnvInput): Record<s
 
     GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED: String(input.enableAnonymousSignIns),
 
-    GOTRUE_SMTP_MAX_FREQUENCY: legacyFormatGoDuration(
-      legacyParseGoDuration(input.email.max_frequency),
-    ),
+    GOTRUE_SMTP_MAX_FREQUENCY: formatGoDuration(parseGoDuration(input.email.max_frequency)),
 
     GOTRUE_MAILER_URLPATHS_INVITE: mailerVerifyUrl,
     GOTRUE_MAILER_URLPATHS_CONFIRMATION: mailerVerifyUrl,
@@ -431,18 +383,14 @@ export function legacyBuildGotrueEnv(input: LegacyBuildGotrueEnvInput): Record<s
 
     GOTRUE_EXTERNAL_PHONE_ENABLED: String(input.sms.enable_signup),
     GOTRUE_SMS_AUTOCONFIRM: String(!input.sms.enable_confirmations),
-    GOTRUE_SMS_MAX_FREQUENCY: legacyFormatGoDuration(
-      legacyParseGoDuration(input.sms.max_frequency),
-    ),
+    GOTRUE_SMS_MAX_FREQUENCY: formatGoDuration(parseGoDuration(input.sms.max_frequency)),
     GOTRUE_SMS_OTP_EXP: "6000",
     GOTRUE_SMS_OTP_LENGTH: "6",
     GOTRUE_SMS_TEMPLATE: input.sms.template,
     GOTRUE_SMS_TEST_OTP: testOtp,
 
     GOTRUE_PASSWORD_MIN_LENGTH: String(input.minimumPasswordLength),
-    GOTRUE_PASSWORD_REQUIRED_CHARACTERS: legacyPasswordRequirementsToChar(
-      input.passwordRequirements,
-    ),
+    GOTRUE_PASSWORD_REQUIRED_CHARACTERS: passwordRequirementsToChar(input.passwordRequirements),
     GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED: String(input.enableRefreshTokenRotation),
     GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL: String(input.refreshTokenReuseInterval),
     GOTRUE_SECURITY_MANUAL_LINKING_ENABLED: String(input.enableManualLinking),
@@ -466,8 +414,8 @@ export function legacyBuildGotrueEnv(input: LegacyBuildGotrueEnvInput): Record<s
   };
 
   // JWT signing keys — `JSON.stringify` never fails for this shape.
-  const signingKeys = input.signingKeys ?? [LEGACY_GOTRUE_DEFAULT_SIGNING_KEY];
-  env["GOTRUE_JWT_KEYS"] = JSON.stringify(signingKeys.map(legacyOrderGotrueSigningKey));
+  const signingKeys = input.signingKeys ?? [GOTRUE_DEFAULT_SIGNING_KEY];
+  env["GOTRUE_JWT_KEYS"] = JSON.stringify(signingKeys.map(orderGotrueSigningKey));
   // TODO: deprecate HS256 when it's no longer supported.
   // TODO: remove VALIDMETHODS after a while to avoid breaking changes.
   env["GOTRUE_JWT_VALIDMETHODS"] = "HS256,RS256,ES256";
@@ -486,34 +434,31 @@ export function legacyBuildGotrueEnv(input: LegacyBuildGotrueEnvInput): Record<s
     env["GOTRUE_SMTP_HOST"] = input.mailpit.containerName;
     env["GOTRUE_SMTP_PORT"] = "1025";
     env["GOTRUE_SMTP_ADMIN_EMAIL"] =
-      input.mailpit.adminEmail ?? LEGACY_GOTRUE_DEFAULT_INBUCKET_ADMIN_EMAIL;
+      input.mailpit.adminEmail ?? GOTRUE_DEFAULT_INBUCKET_ADMIN_EMAIL;
     env["GOTRUE_SMTP_SENDER_NAME"] =
-      input.mailpit.senderName ?? LEGACY_GOTRUE_DEFAULT_INBUCKET_SENDER_NAME;
+      input.mailpit.senderName ?? GOTRUE_DEFAULT_INBUCKET_SENDER_NAME;
   }
 
   // Sessions — only emitted when the parsed duration is strictly positive.
   if (input.sessions?.timebox !== undefined) {
-    const nanoseconds = legacyParseGoDuration(input.sessions.timebox);
+    const nanoseconds = parseGoDuration(input.sessions.timebox);
     if (nanoseconds > 0) {
-      env["GOTRUE_SESSIONS_TIMEBOX"] = legacyFormatGoDuration(nanoseconds);
+      env["GOTRUE_SESSIONS_TIMEBOX"] = formatGoDuration(nanoseconds);
     }
   }
   if (input.sessions?.inactivity_timeout !== undefined) {
-    const nanoseconds = legacyParseGoDuration(input.sessions.inactivity_timeout);
+    const nanoseconds = parseGoDuration(input.sessions.inactivity_timeout);
     if (nanoseconds > 0) {
-      env["GOTRUE_SESSIONS_INACTIVITY_TIMEOUT"] = legacyFormatGoDuration(nanoseconds);
+      env["GOTRUE_SESSIONS_INACTIVITY_TIMEOUT"] = formatGoDuration(nanoseconds);
     }
   }
 
-  // Mailer template/notification URLs and subjects. `subject !== undefined`
-  // is the "explicit empty string" vs "absent" distinction: the caller
-  // (`legacyResolveAuthEmail`) has already recovered it from the raw
-  // document, so `undefined` here means omit the env var entirely and `""`
-  // means an explicit blank subject (still emit it).
+  // `subject !== undefined` distinguishes an explicit empty string (still
+  // emitted) from an absent value (omitted) — already resolved by the caller.
   const addMailerEnvVars = (id: string, contentPath: string, subject: string | undefined): void => {
     if (contentPath.length > 0) {
       env[`GOTRUE_MAILER_TEMPLATES_${id.toUpperCase()}`] =
-        `http://${input.kongContainerName}:${LEGACY_GOTRUE_NGINX_TEMPLATE_SERVER_PORT}/email/${id}${legacyFileExt(contentPath)}`;
+        `http://${input.kongContainerName}:${GOTRUE_NGINX_TEMPLATE_SERVER_PORT}/email/${id}${fileExt(contentPath)}`;
     }
     if (subject !== undefined) {
       env[`GOTRUE_MAILER_SUBJECTS_${id.toUpperCase()}`] = subject;
@@ -565,7 +510,7 @@ export function legacyBuildGotrueEnv(input: LegacyBuildGotrueEnvInput): Record<s
   }
 
   // Auth hooks — each independently gated on its own `enabled`.
-  const appendHookEnv = (envPrefix: string, hook: LegacyGotrueHookInput): void => {
+  const appendHookEnv = (envPrefix: string, hook: GotrueHookInput): void => {
     if (!hook.enabled) return;
     env[`GOTRUE_HOOK_${envPrefix}_ENABLED`] = "true";
     env[`GOTRUE_HOOK_${envPrefix}_URI`] = hook.uri ?? "";
@@ -582,14 +527,14 @@ export function legacyBuildGotrueEnv(input: LegacyBuildGotrueEnvInput): Record<s
   if (input.mfa.phone.enroll_enabled || input.mfa.phone.verify_enabled) {
     env["GOTRUE_MFA_PHONE_TEMPLATE"] = input.mfa.phone.template;
     env["GOTRUE_MFA_PHONE_OTP_LENGTH"] = String(input.mfa.phone.otp_length);
-    env["GOTRUE_MFA_PHONE_MAX_FREQUENCY"] = legacyFormatGoDuration(
-      legacyParseGoDuration(input.mfa.phone.max_frequency),
+    env["GOTRUE_MFA_PHONE_MAX_FREQUENCY"] = formatGoDuration(
+      parseGoDuration(input.mfa.phone.max_frequency),
     );
   }
 
   // Passkey/WebAuthn, then external OAuth providers.
-  legacyAppendGotruePasskeyEnv(env, input.passkeyEnabled, input.webauthn);
-  legacyAppendGotrueExternalProviderEnv(env, input.externalProviders, jwtIssuer);
+  appendGotruePasskeyEnv(env, input.passkeyEnabled, input.webauthn);
+  appendGotrueExternalProviderEnv(env, input.externalProviders, jwtIssuer);
 
   // Web3 — always emitted, unconditionally.
   env["GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED"] = String(input.web3.solana.enabled);
@@ -607,17 +552,17 @@ export function legacyBuildGotrueEnv(input: LegacyBuildGotrueEnvInput): Record<s
   return env;
 }
 
-export interface LegacyGotrueContainerSpecInput {
+export interface GotrueContainerSpecInput {
   /** The already-resolved `config.auth.image`. Not part of the decoded `@supabase/config` schema; resolution is the caller's responsibility. */
   readonly image: string;
-  /** The sanitized project id, used to derive this container's own name/the `db` container's own name via {@link legacyServiceContainerName}. */
+  /** The sanitized project id, used to derive this container's own name/the `db` container's own name via {@link serviceContainerName}. */
   readonly projectId: string;
   /** `container.HostConfig.NetworkMode`'s target — resolved once per `start` run, not per-container. */
   readonly networkId: string;
-  /** `LegacyLocalConfigValues.dbUrl` — reused, not recomputed, to derive the internal DB password (see {@link legacyStartInternalDbPassword}). */
+  /** `LocalConfigValues.dbUrl` — reused, not recomputed, to derive the internal DB password (see {@link startInternalDbPassword}). */
   readonly dbUrl: string;
-  /** Every value {@link legacyBuildGotrueEnv} needs, minus the two this builder derives itself (`dbHost`/`dbPassword`). */
-  readonly env: Omit<LegacyBuildGotrueEnvInput, "dbHost" | "dbPassword">;
+  /** Every value {@link buildGotrueEnv} needs, minus the two this builder derives itself (`dbHost`/`dbPassword`). */
+  readonly env: Omit<BuildGotrueEnvInput, "dbHost" | "dbPassword">;
 }
 
 /**
@@ -625,21 +570,19 @@ export interface LegacyGotrueContainerSpecInput {
  * (host-published) entry — GoTrue, like Realtime, only ever exposes its
  * port on the Docker network.
  */
-export function legacyBuildGotrueContainerSpec(
-  input: LegacyGotrueContainerSpecInput,
-): LegacyStartContainerSpec {
-  const dbHost = legacyServiceContainerName("db", input.projectId);
-  const dbPassword = legacyStartInternalDbPassword(input.dbUrl);
-  const env = legacyBuildGotrueEnv({ ...input.env, dbHost, dbPassword });
+export function buildGotrueContainerSpec(input: GotrueContainerSpecInput): StartContainerSpec {
+  const dbHost = serviceContainerName("db", input.projectId);
+  const dbPassword = startInternalDbPassword(input.dbUrl);
+  const env = buildGotrueEnv({ ...input.env, dbHost, dbPassword });
 
   return {
     image: input.image,
-    containerName: legacyServiceContainerName(LEGACY_GOTRUE_CONTAINER_SUFFIX, input.projectId),
+    containerName: serviceContainerName(GOTRUE_CONTAINER_SUFFIX, input.projectId),
     env,
     binds: [],
-    exposedPorts: [{ containerPort: LEGACY_GOTRUE_PORT }],
-    healthcheck: legacyUsesSlimRuntime(input.image)
-      ? legacySlimWgetHealthcheck(`http://127.0.0.1:${LEGACY_GOTRUE_PORT}/health`)
+    exposedPorts: [{ containerPort: GOTRUE_PORT }],
+    healthcheck: usesSlimImageRuntime(input.image)
+      ? slimWgetHealthcheck(`http://127.0.0.1:${GOTRUE_PORT}/health`)
       : {
           test: [
             "CMD",
@@ -647,7 +590,7 @@ export function legacyBuildGotrueContainerSpec(
             "--no-verbose",
             "--tries=1",
             "--spider",
-            `http://127.0.0.1:${LEGACY_GOTRUE_PORT}/health`,
+            `http://127.0.0.1:${GOTRUE_PORT}/health`,
           ],
           intervalSeconds: 10,
           timeoutSeconds: 2,
@@ -655,7 +598,7 @@ export function legacyBuildGotrueContainerSpec(
         },
     restartPolicy: "unless-stopped",
     networkId: input.networkId,
-    networkAliases: [LEGACY_GOTRUE_CONTAINER_SUFFIX],
+    networkAliases: [GOTRUE_CONTAINER_SUFFIX],
     labels: {},
   };
 }

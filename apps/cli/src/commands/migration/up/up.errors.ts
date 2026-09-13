@@ -9,9 +9,7 @@ import {
  * A remote migration version is not present in the local migrations directory.
  * The `migration repair --status reverted ...` suggestion is attached separately.
  */
-export class LegacyMigrationMissingLocalError extends Data.TaggedError(
-  "LegacyMigrationMissingLocalError",
-)<{
+export class MigrationMissingLocalError extends Data.TaggedError("MigrationMissingLocalError")<{
   readonly message: string;
   readonly suggestion: string;
 }> {
@@ -25,9 +23,7 @@ export class LegacyMigrationMissingLocalError extends Data.TaggedError(
  * `--include-all` was not set. The `--include-all` suggestion is attached
  * separately.
  */
-export class LegacyMigrationMissingRemoteError extends Data.TaggedError(
-  "LegacyMigrationMissingRemoteError",
-)<{
+export class MigrationMissingRemoteError extends Data.TaggedError("MigrationMissingRemoteError")<{
   readonly message: string;
   readonly suggestion: string;
 }> {

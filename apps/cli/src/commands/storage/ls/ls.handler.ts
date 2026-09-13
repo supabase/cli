@@ -1,18 +1,19 @@
 import { Effect, Option } from "effect";
 
-import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
+import { CommandSettings } from "../../../config/command-settings.service.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { legacyIterateStoragePaths, legacyIterateStoragePathsAll } from "../storage.iterate.ts";
+import { iterateStoragePaths, iterateStoragePathsAll } from "../storage.iterate.ts";
 import {
-  legacyConnectStorageGateway,
-  legacyLoadStorageConfig,
-  legacyParseStorageUrlEffect,
+  assertStorageWorkdir,
+  connectStorageGateway,
+  loadStorageConfig,
+  parseStorageUrlEffect,
 } from "../storage.frame.ts";
-import type { LegacyStorageLsFlags } from "./ls.command.ts";
-import { LegacyStorageMutuallyExclusiveFlagsError } from "../storage.errors.ts";
+import type { StorageLsFlags } from "./ls.command.ts";
+import { StorageMutuallyExclusiveFlagsError } from "../storage.errors.ts";
 
 /**
  * `supabase storage ls [path]` — list objects by path prefix.
@@ -21,48 +22,42 @@ import { LegacyStorageMutuallyExclusiveFlagsError } from "../storage.errors.ts";
  * with BFS. Text mode prints one entry per line to **stdout**;
  * json/stream-json emit a single `{ paths }` result.
  */
-export const legacyStorageLs = Effect.fn("legacy.storage.ls")(function* (
-  flags: LegacyStorageLsFlags,
-) {
+export const storageLs = Effect.fn("storage.ls")(function* (flags: StorageLsFlags) {
   const output = yield* Output;
-  const cliSettings = yield* LegacyCliSettings;
-  const telemetryState = yield* LegacyTelemetryState;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const resolver = yield* LegacyProjectRefResolver;
+  const cliSettings = yield* CommandSettings;
+  const telemetryState = yield* TelemetryState;
+  const linkedProjectCache = yield* LinkedProjectCache;
+  const resolver = yield* ProjectRefResolver;
 
   let linkedRef = "";
 
   yield* Effect.gen(function* () {
-    // `--project-ref` never implies `--linked` and must not be silently
-    // discarded on the local target — see push.handler.ts's identical guard
-    // (db push) for the full TS-only rationale.
+    yield* assertStorageWorkdir(cliSettings.workdir);
+
+    // `--project-ref` only applies to the linked project; it never implies `--linked`.
     if (Option.isSome(flags.projectRef) && flags.local) {
       return yield* Effect.fail(
-        new LegacyStorageMutuallyExclusiveFlagsError({
+        new StorageMutuallyExclusiveFlagsError({
           message:
             "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
         }),
       );
     }
 
-    // Routing reads the `--local` value (Go `storage.go:21-32`): local clears the
-    // ref, otherwise the linked path resolves it. No network — safe before the
-    // url parse below.
+    // `--local` clears the ref; otherwise the linked path resolves it. No network access yet,
+    // safe before the URL parse below.
     const projectRef = flags.local ? "" : yield* resolver.loadProjectRef(flags.projectRef);
     linkedRef = projectRef;
 
-    // Config is always loaded; a `[remotes.*]` match prints the override
-    // line.
-    const loaded = yield* legacyLoadStorageConfig(cliSettings.workdir, projectRef);
+    // Config is always loaded; a `[remotes.*]` match prints the override line.
+    const loaded = yield* loadStorageConfig(cliSettings, projectRef);
     if (loaded.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${loaded.appliedRemote}]\n`, "stderr");
     }
 
-    // Parse the URL BEFORE building the client (Go `ls.go:17`), so an invalid URL
-    // fails without an api-keys lookup or any Storage call.
-    const remotePath = yield* legacyParseStorageUrlEffect(
-      Option.getOrElse(flags.path, () => "ss:///"),
-    );
+    // Parse the URL before building the client, so an invalid URL fails before any
+    // api-keys lookup or Storage call.
+    const remotePath = yield* parseStorageUrlEffect(Option.getOrElse(flags.path, () => "ss:///"));
 
     const paths: Array<string> = [];
     const callback = (objectPath: string) =>
@@ -72,12 +67,12 @@ export const legacyStorageLs = Effect.fn("legacy.storage.ls")(function* (
             paths.push(objectPath);
           });
 
-    yield* legacyConnectStorageGateway(
+    yield* connectStorageGateway(
       { projectRef, config: loaded.config, userAgent: cliSettings.userAgent },
       (gateway) =>
         flags.recursive
-          ? legacyIterateStoragePathsAll(gateway, output, remotePath, callback)
-          : legacyIterateStoragePaths(gateway, output, remotePath, callback),
+          ? iterateStoragePathsAll(gateway, output, remotePath, callback)
+          : iterateStoragePaths(gateway, output, remotePath, callback),
     );
 
     if (output.format !== "text") {

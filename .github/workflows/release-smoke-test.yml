@@ -8,13 +8,6 @@ on:
         required: false
         type: string
         default: 0.0.0-smoke
-      shell:
-        description: CLI shell to package as the shipped supabase binary
-        required: false
-        type: choice
-        options:
-          - legacy
-        default: legacy
       npm_tag:
         description: npm tag to use for local package smoke tests
         required: false
@@ -28,8 +21,10 @@ on:
 permissions:
   # release-shared.yml declares privileged publish jobs. They are gated by
   # dry_run here, but GitHub validates nested-workflow permissions at startup.
+  actions: read
   contents: write
   id-token: write
+  pull-requests: write
 
 jobs:
   smoke:
@@ -37,7 +32,6 @@ jobs:
     uses: ./.github/workflows/release-shared.yml
     with:
       version: ${{ inputs.version }}
-      shell: ${{ inputs.shell }}
       npm_tag: ${{ inputs.npm_tag }}
       channel: beta
       prerelease: true

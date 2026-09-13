@@ -3,43 +3,32 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
 import { Output } from "../../shared/output/output.service.ts";
-import { sanitizeLegacyErrorBody } from "../../command-internal/legacy-http-errors.ts";
-import {
-  LegacyBootstrapTemplateDownloadError,
-  LegacyBootstrapTemplateListError,
-} from "./bootstrap.errors.ts";
+import { sanitizeErrorBody } from "../../command-internal/http-errors.ts";
+import { BootstrapTemplateDownloadError, BootstrapTemplateListError } from "./bootstrap.errors.ts";
 
-export interface LegacyStarterTemplate {
+export interface StarterTemplate {
   readonly name: string;
   readonly description: string;
   readonly url: string;
   readonly start: string;
 }
 
-interface LegacyTemplateServiceShape {
+interface TemplateServiceShape {
+  /** Fetches and decodes `samples.json` from the `supabase-community/supabase-samples` repo. */
+  readonly listSamples: Effect.Effect<ReadonlyArray<StarterTemplate>, BootstrapTemplateListError>;
   /**
-   * Fetches and decodes `samples.json` from the `supabase-community/supabase-samples`
-   * repo (`ListSamples`). Returns the declared starter templates.
-   */
-  readonly listSamples: Effect.Effect<
-    ReadonlyArray<LegacyStarterTemplate>,
-    LegacyBootstrapTemplateListError
-  >;
-  /**
-   * Downloads every file under a `https://github.com/<owner>/<repo>/tree/<ref>/<root>`
-   * template URL into `targetDir`, preserving the directory layout below `<root>`
-   * (`downloadSample`). Concurrency matches the established job queue (5).
+   * Downloads every file under a `https://github.com/<owner>/<repo>/tree/<ref>/<root>` template
+   * URL into `targetDir`, preserving the directory layout below `<root>`, with concurrency 5.
    */
   readonly download: (
     templateUrl: string,
     targetDir: string,
-  ) => Effect.Effect<void, LegacyBootstrapTemplateDownloadError>;
+  ) => Effect.Effect<void, BootstrapTemplateDownloadError>;
 }
 
-export class LegacyTemplateService extends Context.Service<
-  LegacyTemplateService,
-  LegacyTemplateServiceShape
->()("supabase/legacy/TemplateService") {}
+export class TemplateService extends Context.Service<TemplateService, TemplateServiceShape>()(
+  "supabase/cli/TemplateService",
+) {}
 
 const GITHUB_API = "https://api.github.com";
 const SAMPLES_OWNER = "supabase-community";
@@ -55,37 +44,34 @@ interface GithubContentEntry {
   readonly download_url?: string | null;
 }
 
-function isStarterTemplate(value: unknown): value is LegacyStarterTemplate {
+function isStarterTemplate(value: unknown): value is StarterTemplate {
   return (
     typeof value === "object" &&
     value !== null &&
-    typeof (value as LegacyStarterTemplate).name === "string"
+    typeof (value as StarterTemplate).name === "string"
   );
 }
 
 // Preserve an explicit non-200 / parse failure (already a tagged error); wrap any
 // transport / filesystem cause in the same tagged error so the channel stays narrow.
-const mapDownloadError = (
-  cause: unknown,
-): Effect.Effect<never, LegacyBootstrapTemplateDownloadError> =>
+const mapDownloadError = (cause: unknown): Effect.Effect<never, BootstrapTemplateDownloadError> =>
   Effect.fail(
-    cause instanceof LegacyBootstrapTemplateDownloadError
+    cause instanceof BootstrapTemplateDownloadError
       ? cause
-      : new LegacyBootstrapTemplateDownloadError({
+      : new BootstrapTemplateDownloadError({
           message: `failed to download template: ${cause}`,
         }),
   );
 
-export const legacyTemplateServiceLayer = Layer.effect(
-  LegacyTemplateService,
+export const templateServiceLayer = Layer.effect(
+  TemplateService,
   Effect.gen(function* () {
     const httpClient = yield* HttpClient.HttpClient;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const output = yield* Output;
 
-    // Go reads `GITHUB_TOKEN` directly (`utils.GetGitHubClient`) to raise the
-    // anonymous GitHub API rate limit. When unset, requests are anonymous.
+    // Raises the anonymous GitHub API rate limit when set; requests are anonymous otherwise.
     const githubToken = process.env["GITHUB_TOKEN"];
 
     const contentsRequest = (owner: string, repo: string, contentPath: string, ref: string) => {
@@ -105,31 +91,29 @@ export const legacyTemplateServiceLayer = Layer.effect(
     };
 
     const listSamples: Effect.Effect<
-      ReadonlyArray<LegacyStarterTemplate>,
-      LegacyBootstrapTemplateListError
+      ReadonlyArray<StarterTemplate>,
+      BootstrapTemplateListError
     > = Effect.gen(function* () {
       const response = yield* httpClient
         .execute(contentsRequest(SAMPLES_OWNER, SAMPLES_REPO, "samples.json", "main"))
         .pipe(
           Effect.mapError(
             (cause) =>
-              new LegacyBootstrapTemplateListError({
+              new BootstrapTemplateListError({
                 message: `failed to list samples: ${cause}`,
               }),
           ),
         );
       if (response.status !== 200) {
-        const body = sanitizeLegacyErrorBody(
-          yield* response.text.pipe(Effect.orElseSucceed(() => "")),
-        );
-        return yield* new LegacyBootstrapTemplateListError({
+        const body = sanitizeErrorBody(yield* response.text.pipe(Effect.orElseSucceed(() => "")));
+        return yield* new BootstrapTemplateListError({
           message: `failed to list samples: status ${response.status}: ${body}`,
         });
       }
       const payload = yield* response.json.pipe(
         Effect.mapError(
           (cause) =>
-            new LegacyBootstrapTemplateListError({ message: `failed to decode samples: ${cause}` }),
+            new BootstrapTemplateListError({ message: `failed to decode samples: ${cause}` }),
         ),
       );
       const decoded = Buffer.from(
@@ -139,7 +123,7 @@ export const legacyTemplateServiceLayer = Layer.effect(
       const parsed = yield* Effect.try({
         try: () => JSON.parse(decoded) as { samples?: ReadonlyArray<unknown> },
         catch: (cause) =>
-          new LegacyBootstrapTemplateListError({
+          new BootstrapTemplateListError({
             message: `failed to unmarshal samples: ${cause}`,
           }),
       });
@@ -150,7 +134,7 @@ export const legacyTemplateServiceLayer = Layer.effect(
       Effect.gen(function* () {
         const response = yield* httpClient.execute(HttpClientRequest.get(remoteUrl));
         if (response.status !== 200) {
-          return yield* new LegacyBootstrapTemplateDownloadError({
+          return yield* new BootstrapTemplateDownloadError({
             message: `failed to download template: status ${response.status}`,
           });
         }
@@ -177,16 +161,16 @@ export const legacyTemplateServiceLayer = Layer.effect(
             contentsRequest(owner, repo, contentPath, ref),
           );
           if (response.status !== 200) {
-            const body = sanitizeLegacyErrorBody(
+            const body = sanitizeErrorBody(
               yield* response.text.pipe(Effect.orElseSucceed(() => "")),
             );
-            return yield* new LegacyBootstrapTemplateDownloadError({
+            return yield* new BootstrapTemplateDownloadError({
               message: `failed to download template: status ${response.status}: ${body}`,
             });
           }
           const payload = yield* response.json;
           if (!Array.isArray(payload)) {
-            return yield* new LegacyBootstrapTemplateDownloadError({
+            return yield* new BootstrapTemplateDownloadError({
               message: `failed to download template: expected a directory listing for ${contentPath}`,
             });
           }
@@ -194,10 +178,9 @@ export const legacyTemplateServiceLayer = Layer.effect(
           for (const entry of listing) {
             const entryPath = entry.path ?? "";
             if (entry.type === "file") {
-              // Strip `<root>` on a path-segment boundary so a sibling directory that
-              // merely shares the prefix (e.g. `examples/app-2` under `root="examples/app"`)
-              // is never mis-sliced. The contents API only returns children of the queried
-              // directory, but matching on `root + "/"` is the obviously-correct form.
+              // Strip `<root>` on a path-segment boundary so a sibling directory that merely
+              // shares the prefix (e.g. `examples/app-2` under `root="examples/app"`) is never
+              // mis-sliced.
               const relative =
                 root === ""
                   ? entryPath
@@ -215,15 +198,14 @@ export const legacyTemplateServiceLayer = Layer.effect(
                 resolvedLocal !== resolvedTarget &&
                 !resolvedLocal.startsWith(resolvedTarget + path.sep)
               ) {
-                return yield* new LegacyBootstrapTemplateDownloadError({
+                return yield* new BootstrapTemplateDownloadError({
                   message: `failed to download template: entry escapes target directory: ${entryPath}`,
                 });
               }
-              // GitHub returns a null `download_url` for files over 1 MB and for
-              // submodules; without an explicit guard the `?? ""` fallback would issue
-              // `GET ""` and surface a confusing transport error instead of a clear one.
+              // GitHub returns a null `download_url` for files over 1 MB and submodules; without
+              // this guard, the `?? ""` fallback would issue `GET ""` with a confusing error.
               if (entry.download_url == null || entry.download_url.length === 0) {
-                return yield* new LegacyBootstrapTemplateDownloadError({
+                return yield* new BootstrapTemplateDownloadError({
                   message: `failed to download template: unsupported entry (no download URL): ${entryPath}`,
                 });
               }

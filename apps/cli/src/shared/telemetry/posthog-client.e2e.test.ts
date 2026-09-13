@@ -2,11 +2,9 @@ import { createServer, type Server, type Socket } from "node:net";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { runSupabase } from "../../../tests/helpers/cli.ts";
 
-// A TCP blackhole: accepts connections and never responds, so telemetry
-// requests connect and then hang until aborted. Asserting on the spawned
-// process's wall-clock exit (not scope or shutdown internals) is deliberate:
-// pending sockets keep the runtime alive, so only actual process exit proves
-// the telemetry exit cap holds end to end.
+// A TCP blackhole: accepts connections and never responds, so telemetry requests hang until
+// aborted. Asserts on the spawned process's wall-clock exit, since pending sockets keep the
+// runtime alive and only actual process exit proves the telemetry exit cap holds end to end.
 describe("telemetry against a blackholed PostHog endpoint", () => {
   let server: Server;
   let host: string;
@@ -38,7 +36,6 @@ describe("telemetry against a blackholed PostHog endpoint", () => {
   test("commands exit promptly, cleanly, and quietly", async () => {
     const startedAt = performance.now();
     const { stdout, stderr, exitCode } = await runSupabase(["telemetry", "status"], {
-      entrypoint: "legacy",
       env: {
         // spawnSupabase disables telemetry for every test by default; this
         // test exists to exercise it, so turn it back on explicitly.
@@ -53,11 +50,9 @@ describe("telemetry against a blackholed PostHog endpoint", () => {
     expect(exitCode).toBe(0);
     expect(stdout).toContain("Telemetry is enabled.");
     expect(stderr).toBe("");
-    // Telemetry must have actually reached the blackhole, otherwise the
-    // timing assertion below passes vacuously with telemetry off.
     expect(connections).toBeGreaterThanOrEqual(1);
-    // Healthy runs measure ~2.5s (2s drain cap + spawn overhead); the nearest
-    // real failure signature is the SDK's 5s default deadline plus startup.
+    // Healthy runs land near 2.5s (2s drain cap + spawn overhead); the nearest real failure
+    // signature is the SDK's 5s default deadline plus startup.
     expect(elapsedMs).toBeLessThan(4_500);
   });
 });

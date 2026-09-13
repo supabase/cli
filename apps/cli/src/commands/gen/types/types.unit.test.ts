@@ -2,12 +2,12 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit } from "effect";
 import { dockerfileServiceImageRaw } from "../../../shared/services/dockerfile-images.ts";
 import { toSlimImage } from "../../../shared/services/slim-images.ts";
-import { legacyGetHostname } from "../../../command-internal/legacy-hostname.ts";
-import { legacyParseSchemaFlags } from "../../../command-internal/legacy-schema-flags.ts";
+import { getHostname } from "../../../command-internal/hostname.ts";
+import { parseSchemaFlags } from "../../../command-internal/schema-flags.ts";
 import {
   buildPostgresUrl,
   defaultSchemas,
-  legacyRootCaBundle,
+  rootCaBundle,
   localDbContainerId,
   localDbPassword,
   localNetworkId,
@@ -171,8 +171,6 @@ describe("resolvePgmetaImage", () => {
   });
 
   it("honors SUPABASE_INTERNAL_IMAGE_REGISTRY for a non docker.io registry (e.g. ghcr.io)", () => {
-    // Regression: setup-cli exports `ghcr.io` on shared CI runners to dodge ECR
-    // rate limits, but gen types used to ignore it and still pull from ECR.
     const image = withEnv("SUPABASE_INTERNAL_IMAGE_REGISTRY", "ghcr.io", () =>
       resolvePgmetaImage("1.2.3"),
     );
@@ -205,10 +203,8 @@ describe("resolvePgmetaImage", () => {
 
 describe("schema and id helpers", () => {
   it("normalizes comma separated and repeated schema flags", () => {
-    // pflag's StringSlice parses each value via encoding/csv with NO
-    // trimming, and an empty value yields no field. Whitespace is preserved
-    // verbatim.
-    expect(legacyParseSchemaFlags(["public, auth", " storage ", ""])).toEqual([
+    // pflag's StringSlice parses via encoding/csv with no trimming; an empty value yields no field.
+    expect(parseSchemaFlags(["public, auth", " storage ", ""])).toEqual([
       "public",
       " auth",
       " storage ",
@@ -233,10 +229,10 @@ describe("schema and id helpers", () => {
   it("reads the services hostname and db password from the environment", () => {
     expect(
       withEnv("DOCKER_HOST", undefined, () =>
-        withEnv("SUPABASE_SERVICES_HOSTNAME", undefined, () => legacyGetHostname()),
+        withEnv("SUPABASE_SERVICES_HOSTNAME", undefined, () => getHostname()),
       ),
     ).toBe("127.0.0.1");
-    expect(withEnv("SUPABASE_SERVICES_HOSTNAME", "db.internal", () => legacyGetHostname())).toBe(
+    expect(withEnv("SUPABASE_SERVICES_HOSTNAME", "db.internal", () => getHostname())).toBe(
       "db.internal",
     );
     expect(withEnv("SUPABASE_DB_PASSWORD", undefined, () => localDbPassword())).toBe("postgres");
@@ -255,6 +251,6 @@ describe("schema and id helpers", () => {
   });
 
   it("bundles the staging and production CA certificates", () => {
-    expect(legacyRootCaBundle().length).toBeGreaterThan(0);
+    expect(rootCaBundle().length).toBeGreaterThan(0);
   });
 });

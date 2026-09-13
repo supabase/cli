@@ -3,21 +3,21 @@ import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { legacyRequireExperimental } from "../../../command-internal/legacy-experimental-gate.ts";
-import { LEGACY_RESOURCE_OUTPUT_FORMATS } from "../../../command-internal/legacy-go-output-flag.ts";
-import { legacyManagementApiRuntimeLayer } from "../../../command-internal/legacy-management-api-runtime.layer.ts";
-import { legacyStringSliceFlag } from "../../../command-internal/legacy-string-slice-flag.ts";
+import { requireExperimental } from "../../../command-internal/experimental-gate.ts";
+import { RESOURCE_OUTPUT_FORMATS } from "../../../command-internal/go-output-flag.ts";
+import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
+import { stringSliceFlag } from "../../../command-internal/string-slice-flag.ts";
 import {
-  legacyValidateOutputFormat,
-  withLegacyCommandInstrumentation,
-} from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyPostgresConfigUpdate } from "./update.handler.ts";
+  validateOutputFormat,
+  withCommandTelemetry,
+} from "../../../telemetry/command-telemetry.ts";
+import { postgresConfigUpdate } from "./update.handler.ts";
 
-// Go declares `--config` with pflag's `StringSliceVar` (`cmd/postgres.go:59`);
-// malformed CSV fails at parse time with pflag's exact diagnostic (CLI-2005,
-// see `legacyStringSliceFlag`) — before the `--experimental` gate, matching
-// cobra's ParseFlags-before-PersistentPreRunE ordering.
-export const legacyPostgresConfigUpdateConfigFlag = legacyStringSliceFlag(
+/**
+ * CSV-splits each occurrence into config overrides, failing at parse time with pflag's
+ * diagnostic on malformed CSV — before the --experimental gate runs.
+ */
+export const postgresConfigUpdateConfigFlag = stringSliceFlag(
   "config",
   "Config overrides specified as a 'key=value' pair",
 );
@@ -27,7 +27,7 @@ const config = {
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
-  config: legacyPostgresConfigUpdateConfigFlag,
+  config: postgresConfigUpdateConfigFlag,
   replaceExistingOverrides: Flag.boolean("replace-existing-overrides").pipe(
     Flag.withDescription(
       "If true, replaces all existing overrides with the ones provided. If false (default), merges existing overrides with the ones provided.",
@@ -40,28 +40,23 @@ const config = {
   ),
 } as const;
 
-export type LegacyPostgresConfigUpdateFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type PostgresConfigUpdateFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyPostgresConfigUpdateCommand = Command.make("update", config).pipe(
+export const postgresConfigUpdateCommand = Command.make("update", config).pipe(
   Command.withDescription("Update Postgres database config."),
   Command.withShortDescription("Update Postgres database config"),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
-      // Cobra parses flags — rejecting an out-of-enum `-o` (`internal/utils/enum.go:21-27`)
-      // — before `PersistentPreRunE` ever runs (`cobra@v1.10.2/command.go:919,985`), so an
-      // invalid `-o` value must win over a missing `--experimental` flag.
-      yield* legacyValidateOutputFormat(LEGACY_RESOURCE_OUTPUT_FORMATS);
-      // Go gates `postgresCmd` behind `--experimental` in PersistentPreRunE
-      // (root.go:91-96) BEFORE the `IsManagementAPI` login check (root.go:105-109).
-      // `legacyManagementApiRuntimeLayer` eagerly resolves an access token as part
-      // of building its `LegacyPlatformApi` layer, so it must be provided AFTER
-      // the gate (inline here) rather than via `Command.provide` on the whole
-      // command — `Command.provide` would build the layer, and fail on a missing
-      // token, before this generator's first `yield*` ever runs.
-      yield* legacyRequireExperimental;
-      return yield* legacyPostgresConfigUpdate(flags).pipe(
-        withLegacyCommandInstrumentation({ flags }),
-        Effect.provide(legacyManagementApiRuntimeLayer(["postgres-config", "update"])),
+      // Validate the -o value before the --experimental gate, so an invalid value is
+      // reported even without --experimental set.
+      yield* validateOutputFormat(RESOURCE_OUTPUT_FORMATS);
+      // managementApiRuntimeLayer eagerly resolves an access token, so it's provided here
+      // (after the gate) rather than via Command.provide, which would build it — and fail
+      // on a missing token — before this generator's first yield* runs.
+      yield* requireExperimental;
+      return yield* postgresConfigUpdate(flags).pipe(
+        withCommandTelemetry({ flags }),
+        Effect.provide(managementApiRuntimeLayer(["postgres-config", "update"])),
       );
     }).pipe(withJsonErrorHandling),
   ),

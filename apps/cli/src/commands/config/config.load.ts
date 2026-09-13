@@ -1,49 +1,46 @@
 import { loadCliConfig } from "@supabase/config/internal";
 import { Effect } from "effect";
 
-/**
- * `cause.path`/`loaded.path` are anchored under `workdir`; render them
- * relative so a message reads `supabase/config.json` like the rest of the
- * `config` family, regardless of invocation cwd.
- */
-export function legacyRelativeConfigPath(workdir: string, path: string): string {
-  return path.startsWith(workdir) ? path.slice(workdir.length).replace(/^[/\\]/, "") : path;
-}
+import {
+  missingProjectConfigMessageEffect,
+  relativeConfigPath,
+} from "../../command-internal/workdir-project.ts";
+import { shouldSearchAncestors } from "../../command-internal/workdir-search.ts";
+
+export { relativeConfigPath };
 
 /**
- * Loads `supabase/config.{toml,json}` for the `config` command family
- * (`diff`, `pull`, `push`) with one shared failure shape: a parse failure
- * names the file that actually failed — `loadCliConfig` probes
- * `supabase/config.json` before falling back to `supabase/config.toml`
- * (`findCliProjectPaths`), so hardcoding the `.toml` name would mislabel a
- * broken `config.json` — a duplicate `[remotes.*].project_id` keeps its own
- * message, and a missing file points at `supabase init`. Every family member
- * keeps its own tagged error class; `makeError` builds it from the shared
- * message text, mirroring `legacyResolveConfigTarget`'s per-family error
- * construction (`config.target.ts`).
+ * Loads `supabase/config.{toml,json}` for the `config` family (`diff`, `pull`, `push`) with one
+ * shared failure shape. A parse failure names the file that actually failed, since `config.json`
+ * is probed before falling back to `config.toml`. A missing-file message suggests `supabase init`
+ * only for a defaulted workdir; an explicit `--workdir`/`SUPABASE_WORKDIR` never climbs ancestors
+ * and fails instead of silently loading an unrelated project's config.
  */
-export function legacyLoadLocalConfig<E>(
-  workdir: string,
+export function loadLocalConfig<E>(
+  cliSettings: { readonly workdir: string; readonly explicitWorkdir: boolean },
   projectRef: string | undefined,
   makeError: (message: string) => E,
 ) {
-  return loadCliConfig(workdir, { projectRef, goViperCompat: true }).pipe(
+  return loadCliConfig(cliSettings.workdir, {
+    projectRef,
+    goViperCompat: true,
+    search: shouldSearchAncestors(cliSettings),
+  }).pipe(
     Effect.catchTags({
       CliConfigParseError: (cause) =>
         Effect.fail(
           makeError(
-            `failed to parse ${legacyRelativeConfigPath(workdir, cause.path)}: ${String(cause.cause)}`,
+            `failed to parse ${relativeConfigPath(cliSettings.workdir, cause.path)}: ${String(cause.cause)}`,
           ),
         ),
       DuplicateRemoteProjectIdError: (cause) => Effect.fail(makeError(cause.message)),
     }),
     Effect.flatMap((loaded) =>
       loaded === null
-        ? Effect.fail(
-            makeError(
-              "failed to read supabase/config.toml or supabase/config.json: file not found. Run `supabase init` to create one.",
-            ),
-          )
+        ? Effect.gen(function* () {
+            const message = yield* missingProjectConfigMessageEffect(cliSettings);
+            return yield* Effect.fail(makeError(message));
+          })
         : Effect.succeed(loaded),
     ),
   );

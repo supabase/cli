@@ -7,13 +7,7 @@ import {
   statusCodeActionability,
 } from "../../shared/telemetry/error-actionability.ts";
 
-// ---------------------------------------------------------------------------
-// HTTP-bound errors (network + unexpected-status pairs)
-// ---------------------------------------------------------------------------
-
-export class LegacySecretsListNetworkError extends Data.TaggedError(
-  "LegacySecretsListNetworkError",
-)<{
+export class SecretsListNetworkError extends Data.TaggedError("SecretsListNetworkError")<{
   readonly message: string;
   readonly decode?: boolean;
 }> {
@@ -24,8 +18,8 @@ export class LegacySecretsListNetworkError extends Data.TaggedError(
   }
 }
 
-export class LegacySecretsListUnexpectedStatusError extends Data.TaggedError(
-  "LegacySecretsListUnexpectedStatusError",
+export class SecretsListUnexpectedStatusError extends Data.TaggedError(
+  "SecretsListUnexpectedStatusError",
 )<{
   readonly status: number;
   readonly body: string;
@@ -36,7 +30,7 @@ export class LegacySecretsListUnexpectedStatusError extends Data.TaggedError(
   }
 }
 
-export class LegacySecretsSetNetworkError extends Data.TaggedError("LegacySecretsSetNetworkError")<{
+export class SecretsSetNetworkError extends Data.TaggedError("SecretsSetNetworkError")<{
   readonly message: string;
   readonly decode?: boolean;
 }> {
@@ -47,8 +41,8 @@ export class LegacySecretsSetNetworkError extends Data.TaggedError("LegacySecret
   }
 }
 
-export class LegacySecretsSetUnexpectedStatusError extends Data.TaggedError(
-  "LegacySecretsSetUnexpectedStatusError",
+export class SecretsSetUnexpectedStatusError extends Data.TaggedError(
+  "SecretsSetUnexpectedStatusError",
 )<{
   readonly status: number;
   readonly body: string;
@@ -59,9 +53,7 @@ export class LegacySecretsSetUnexpectedStatusError extends Data.TaggedError(
   }
 }
 
-export class LegacySecretsUnsetNetworkError extends Data.TaggedError(
-  "LegacySecretsUnsetNetworkError",
-)<{
+export class SecretsUnsetNetworkError extends Data.TaggedError("SecretsUnsetNetworkError")<{
   readonly message: string;
   readonly decode?: boolean;
 }> {
@@ -72,8 +64,8 @@ export class LegacySecretsUnsetNetworkError extends Data.TaggedError(
   }
 }
 
-export class LegacySecretsUnsetUnexpectedStatusError extends Data.TaggedError(
-  "LegacySecretsUnsetUnexpectedStatusError",
+export class SecretsUnsetUnexpectedStatusError extends Data.TaggedError(
+  "SecretsUnsetUnexpectedStatusError",
 )<{
   readonly status: number;
   readonly body: string;
@@ -84,13 +76,7 @@ export class LegacySecretsUnsetUnexpectedStatusError extends Data.TaggedError(
   }
 }
 
-// ---------------------------------------------------------------------------
-// Pure-path errors (validation, file I/O, user cancellation)
-// ---------------------------------------------------------------------------
-
-export class LegacySecretsEnvFileOpenError extends Data.TaggedError(
-  "LegacySecretsEnvFileOpenError",
-)<{
+export class SecretsEnvFileOpenError extends Data.TaggedError("SecretsEnvFileOpenError")<{
   readonly message: string;
   readonly reason: "not_found" | "permission" | "other";
 }> {
@@ -105,9 +91,7 @@ export class LegacySecretsEnvFileOpenError extends Data.TaggedError(
   }
 }
 
-export class LegacySecretsEnvFileParseError extends Data.TaggedError(
-  "LegacySecretsEnvFileParseError",
-)<{
+export class SecretsEnvFileParseError extends Data.TaggedError("SecretsEnvFileParseError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -115,7 +99,7 @@ export class LegacySecretsEnvFileParseError extends Data.TaggedError(
   }
 }
 
-export class LegacySecretsSetInputError extends Data.TaggedError("LegacySecretsSetInputError")<{
+export class SecretsSetInputError extends Data.TaggedError("SecretsSetInputError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -123,7 +107,7 @@ export class LegacySecretsSetInputError extends Data.TaggedError("LegacySecretsS
   }
 }
 
-export class LegacyInvalidSecretPairError extends Data.TaggedError("LegacyInvalidSecretPairError")<{
+export class InvalidSecretPairError extends Data.TaggedError("InvalidSecretPairError")<{
   readonly pair: string;
   readonly message: string;
 }> {
@@ -132,9 +116,7 @@ export class LegacyInvalidSecretPairError extends Data.TaggedError("LegacyInvali
   }
 }
 
-export class LegacySecretsNoArgumentsError extends Data.TaggedError(
-  "LegacySecretsNoArgumentsError",
-)<{
+export class SecretsNoArgumentsError extends Data.TaggedError("SecretsNoArgumentsError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -142,9 +124,7 @@ export class LegacySecretsNoArgumentsError extends Data.TaggedError(
   }
 }
 
-export class LegacySecretsEnvNotSupportedError extends Data.TaggedError(
-  "LegacySecretsEnvNotSupportedError",
-)<{
+export class SecretsEnvNotSupportedError extends Data.TaggedError("SecretsEnvNotSupportedError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -152,9 +132,7 @@ export class LegacySecretsEnvNotSupportedError extends Data.TaggedError(
   }
 }
 
-export class LegacySecretsUnsetCancelledError extends Data.TaggedError(
-  "LegacySecretsUnsetCancelledError",
-)<{
+export class SecretsUnsetCancelledError extends Data.TaggedError("SecretsUnsetCancelledError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {

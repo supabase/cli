@@ -2,11 +2,11 @@
 
 ## Files Read
 
-| Path                                      | Format                    | When                                                                                            |
-| ----------------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------- |
-| keyring `"Supabase CLI"` / `<profile>`    | OS keychain               | when `SUPABASE_ACCESS_TOKEN` unset and keyring available; account = `LegacyCliSettings.profile` |
-| keyring `"Supabase CLI"` / `access-token` | OS keychain               | legacy-key fallback when the profile-keyed lookup misses                                        |
-| `~/.supabase/access-token`                | plain text (token string) | last-resort fallback after env + keyring miss                                                   |
+| Path                                      | Format                    | When                                                                                          |
+| ----------------------------------------- | ------------------------- | --------------------------------------------------------------------------------------------- |
+| keyring `"Supabase CLI"` / `<profile>`    | OS keychain               | when `SUPABASE_ACCESS_TOKEN` unset and keyring available; account = `CommandSettings.profile` |
+| keyring `"Supabase CLI"` / `access-token` | OS keychain               | legacy-key fallback when the profile-keyed lookup misses                                      |
+| `~/.supabase/access-token`                | plain text (token string) | last-resort fallback after env + keyring miss                                                 |
 
 ## Files Written
 
@@ -14,7 +14,7 @@
 | ---------------------------- | ------ | ----------------------------------------------- |
 | `~/.supabase/telemetry.json` | JSON   | always (in `Effect.ensuring`) at end of command |
 
-`orgs list` is a user-level command — it does not resolve a `--project-ref`, so the legacy
+`orgs list` is a user-level command — it does not resolve a `--project-ref`, so the
 linked-project cache (`~/.supabase/<workdir-hash>/linked-project.json`) is never written.
 
 ## API Routes
@@ -32,13 +32,13 @@ linked-project cache (`~/.supabase/<workdir-hash>/linked-project.json`) is never
 
 ## Exit Codes
 
-| Code | Condition                                                                   |
-| ---- | --------------------------------------------------------------------------- |
-| `0`  | success — organizations printed to stdout                                   |
-| `1`  | `LegacyPlatformAuthRequiredError` — no token in env/keyring/file            |
-| `1`  | `LegacyOrgsListUnexpectedStatusError` — non-2xx response from list endpoint |
-| `1`  | `LegacyOrgsListNetworkError` — transport-level network failure              |
-| `1`  | `LegacyOrgsEnvNotSupportedError` — `--output env` flag is rejected          |
+| Code | Condition                                                             |
+| ---- | --------------------------------------------------------------------- |
+| `0`  | success — organizations printed to stdout                             |
+| `1`  | `AccessTokenRequiredError` — no token in env/keyring/file             |
+| `1`  | `OrgsListUnexpectedStatusError` — non-2xx response from list endpoint |
+| `1`  | `OrgsListNetworkError` — transport-level network failure              |
+| `1`  | `OrgsEnvNotSupportedError` — `--output env` flag is rejected          |
 
 ## Telemetry Events Fired
 
@@ -71,7 +71,7 @@ TOML document wrapping the array as `[[organizations]]`.
 
 ### `--output env`
 
-Fails with `LegacyOrgsEnvNotSupportedError("--output env flag is not supported")`.
+Fails with `OrgsEnvNotSupportedError("--output env flag is not supported")`.
 
 ### `--output-format json`
 
@@ -92,6 +92,6 @@ One `result` NDJSON event with `{organizations: [...]}`.
   sanitization (inherited from the old Go CLI's rendering behavior). A malicious or
   compromised Management API could in principle return org names containing terminal
   escape sequences. If sanitization is added later it should land at the renderer
-  (`legacy-glamour-table.ts`) so both shells inherit the fix.
-- Error response bodies embedded in `LegacyOrgsListUnexpectedStatusError` are sanitized by
-  `mapLegacyHttpError` (control chars stripped, capped at 1024 bytes).
+  (`glamour-table.ts`) so every caller inherits the fix.
+- Error response bodies embedded in `OrgsListUnexpectedStatusError` are sanitized by
+  `mapHttpError` (control chars stripped, capped at 1024 bytes).

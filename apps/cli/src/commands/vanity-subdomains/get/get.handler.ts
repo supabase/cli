@@ -1,49 +1,49 @@
 import { Effect, Option } from "effect";
 
-import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { LegacyOutputFlag } from "../../../shared/legacy/global-flags.ts";
+import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
+import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { encodeEnv, encodeGoJson } from "../../../command-internal/legacy-go-output.encoders.ts";
+import { encodeEnv, encodeGoJson } from "../../../command-internal/go-output.encoders.ts";
 import {
-  encodeLegacyGoToml,
-  encodeLegacyGoYaml,
-  legacyGoPtr,
-  legacyGoString,
-  legacyGoStruct,
-} from "../../../command-internal/legacy-go-struct-output.encoders.ts";
-import { mapLegacyHttpError } from "../../../command-internal/legacy-http-errors.ts";
-import { legacyGateMapError } from "../../../command-internal/legacy-upgrade-suggest.ts";
+  encodeGoToml,
+  encodeGoYaml,
+  goPtr,
+  goString,
+  goStruct,
+} from "../../../command-internal/go-struct-output.encoders.ts";
+import { mapHttpError } from "../../../command-internal/http-errors.ts";
+import { gateMapError } from "../../../command-internal/upgrade-suggest.ts";
 import {
-  LegacyVanitySubdomainsGetNetworkError,
-  LegacyVanitySubdomainsGetUnexpectedStatusError,
+  VanitySubdomainsGetNetworkError,
+  VanitySubdomainsGetUnexpectedStatusError,
 } from "../vanity-subdomains.errors.ts";
-import type { LegacyVanitySubdomainsGetFlags } from "./get.command.ts";
+import type { VanitySubdomainsGetFlags } from "./get.command.ts";
 
 /** Type shape for `api.VanitySubdomainConfigResponse` (`types.gen.go`). */
-const LEGACY_GO_VANITY_CONFIG_RESPONSE = legacyGoStruct([
-  ["custom_domain", legacyGoPtr(legacyGoString)],
-  ["status", legacyGoString],
+const GO_VANITY_CONFIG_RESPONSE = goStruct([
+  ["custom_domain", goPtr(goString)],
+  ["status", goString],
 ]);
 
-const mapGetError = mapLegacyHttpError({
-  networkError: LegacyVanitySubdomainsGetNetworkError,
-  statusError: LegacyVanitySubdomainsGetUnexpectedStatusError,
+const mapGetError = mapHttpError({
+  networkError: VanitySubdomainsGetNetworkError,
+  statusError: VanitySubdomainsGetUnexpectedStatusError,
   networkMessage: (cause) => `failed to get vanity subdomain: ${cause}`,
   statusMessage: (status, body) => `unexpected vanity subdomain status ${status}: ${body}`,
 });
 
-export const legacyVanitySubdomainsGet = Effect.fn("legacy.vanity-subdomains.get")(function* (
-  flags: LegacyVanitySubdomainsGetFlags,
+export const vanitySubdomainsGet = Effect.fn("vanity-subdomains.get")(function* (
+  flags: VanitySubdomainsGetFlags,
 ) {
   const output = yield* Output;
-  const legacyOutputFlag = yield* LegacyOutputFlag;
-  const api = yield* LegacyPlatformApi;
-  const resolver = yield* LegacyProjectRefResolver;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
+  const outputFlag = yield* OutputFlag;
+  const api = yield* CommandPlatformApi;
+  const resolver = yield* ProjectRefResolver;
+  const linkedProjectCache = yield* LinkedProjectCache;
+  const telemetryState = yield* TelemetryState;
 
   yield* Effect.gen(function* () {
     const ref = yield* resolver.resolve(flags.projectRef);
@@ -53,25 +53,25 @@ export const legacyVanitySubdomainsGet = Effect.fn("legacy.vanity-subdomains.get
         output.format === "text" ? yield* output.task("Getting vanity subdomain...") : undefined;
       const response = yield* api.v1.getVanitySubdomainConfig({ ref }).pipe(
         Effect.tapError(() => fetching?.fail() ?? Effect.void),
-        Effect.catch(legacyGateMapError({ projectRef: ref }, mapGetError)),
+        Effect.catch(gateMapError({ projectRef: ref }, mapGetError)),
       );
       yield* fetching?.clear() ?? Effect.void;
 
-      const legacyOutput = Option.getOrUndefined(legacyOutputFlag);
+      const goOutput = Option.getOrUndefined(outputFlag);
 
-      if (legacyOutput === "json") {
+      if (goOutput === "json") {
         yield* output.raw(encodeGoJson(response));
         return;
       }
-      if (legacyOutput === "yaml") {
-        yield* output.raw(encodeLegacyGoYaml(response, LEGACY_GO_VANITY_CONFIG_RESPONSE));
+      if (goOutput === "yaml") {
+        yield* output.raw(encodeGoYaml(response, GO_VANITY_CONFIG_RESPONSE));
         return;
       }
-      if (legacyOutput === "toml") {
-        yield* output.raw(encodeLegacyGoToml(response, LEGACY_GO_VANITY_CONFIG_RESPONSE));
+      if (goOutput === "toml") {
+        yield* output.raw(encodeGoToml(response, GO_VANITY_CONFIG_RESPONSE));
         return;
       }
-      if (legacyOutput === "env") {
+      if (goOutput === "env") {
         yield* output.raw(encodeEnv(response) + "\n");
         return;
       }

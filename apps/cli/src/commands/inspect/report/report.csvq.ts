@@ -7,65 +7,31 @@ import {
 } from "../../../shared/telemetry/error-actionability.ts";
 
 /**
- * A bounded, hand-written evaluator for the subset of the csvq SQL dialect that
- * the `inspect report` validation rules use. There is no JS port of csvq
- * (`github.com/mithrandie/csvq`), and neither DuckDB (native addon) nor alasql
- * accepts csvq's dialect, so the report's rule queries are evaluated here.
- *
- * Supported grammar (anything outside it throws `LegacyInspectCsvqError`, which
- * the rule evaluator turns into the rule's STATUS cell — a per-rule
- * csvq error becomes the cell rather than failing the command):
- *
- *   SELECT <agg|expr> [AS <ident>]
- *   FROM `<file>.csv` [<alias>]
- *   [WHERE <condition>]
- *   [;]
- *
- *   agg       := LISTAGG '(' colRef ',' string ')'
- *              | COUNT '(' ('*' | colRef) ')'
- *              | (SUM|MIN|MAX|AVG) '(' colRef ')'
- *   condition := or
- *   or        := and (OR and)*
- *   and       := not (AND not)*
- *   not       := NOT not | predicate
- *   predicate := '(' condition ')' | comparison
- *   comparison:= arith ( (op arith) | (IS [NOT] NULL) )?
- *   expr      := concat
- *   concat    := arith ('||' arith)*
- *   arith     := term (('+'|'-') term)*
- *   term      := factor (('*'|'/') factor)*
- *   factor    := number | string | colRef | FLOAT '(' expr ')'
- *              | REPLACE '(' expr ',' string ',' string ')' | '(' expr ')'
- *   colRef    := ident ('.' ident)?    (the alias prefix is ignored — single table)
- *
- * csvq value semantics replicated for parity:
- * - Every CSV cell is a string (csvq reads an empty field as `""`, not NULL); the
- *   only NULL values are *computed* (an aggregate over zero rows, or arithmetic on
- *   a non-numeric operand).
- * - A comparison numerically compares its operands only when **both** convert to a
- *   number under strict numeric rules (no surrounding whitespace, no digit
- *   grouping); otherwise it compares them as strings. This mirrors csvq's type
- *   promotion, including the quirk that a thousands-grouped `to_char` value such as
- *   `" 2,000"` falls back to a string comparison.
- * - WHERE keeps a row only when the condition evaluates to TRUE (three-valued
- *   logic: NULL/false exclude the row).
+ * A hand-written evaluator for the csvq SQL subset (`github.com/mithrandie/csvq`) that `inspect
+ * report` rule queries use — no JS port exists, and neither DuckDB nor alasql speaks csvq's
+ * dialect. Every CSV cell is a string, so only computed values (an aggregate over zero rows, or
+ * arithmetic on a non-numeric operand) can be NULL. A comparison is numeric only when both sides
+ * parse under strict rules — no whitespace or digit grouping, so `" 2,000"` compares as a string.
  */
 
-/** Thrown for grammar or evaluation outside the supported csvq subset. */
-export class LegacyInspectCsvqError extends Error {
-  static readonly [ErrorActionabilityFingerprintId] = "LegacyInspectCsvqError";
-  override readonly name = "LegacyInspectCsvqError";
+/**
+ * Thrown for grammar or evaluation outside the supported csvq subset; the rule evaluator
+ * surfaces it as the rule's STATUS cell instead of failing the command.
+ */
+export class InspectCsvqError extends Error {
+  static readonly [ErrorActionabilityFingerprintId] = "InspectCsvqError";
+  override readonly name = "InspectCsvqError";
 
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.impossibleState;
   }
 }
 
-// CSV parsing (RFC 4180, the shape Postgres `COPY ... WITH CSV HEADER` emits).
-// Every field is a string; quoting only affects escaping, not value identity.
+// RFC 4180 CSV, the shape Postgres `COPY ... WITH CSV HEADER` emits. Every field is a string;
+// quoting only affects escaping, not value identity.
 
 /** A parsed CSV table: header → column index, plus the data rows as strings. */
-export interface LegacyCsvTable {
+export interface CsvTable {
   readonly columns: ReadonlyMap<string, number>;
   readonly rows: ReadonlyArray<ReadonlyArray<string>>;
 }
@@ -112,8 +78,8 @@ function parseCsvRecords(text: string): Array<Array<string>> {
       // `pushRow` resets `started`, so a trailing `\n` leaves no phantom row.
       pushRow();
     } else if (ch === "\r") {
-      // Swallow a bare/`\r\n` CR outside quotes WITHOUT marking the record started,
-      // so a stray trailing CR cannot synthesise an empty record at EOF.
+      // Swallows a bare or `\r\n` CR outside quotes without marking the record started, so a
+      // trailing CR can't synthesize an empty record at EOF.
     } else {
       field += ch;
       started = true;
@@ -127,7 +93,7 @@ function parseCsvRecords(text: string): Array<Array<string>> {
 }
 
 /** Parse CSV bytes/text into a header-indexed table. */
-export function legacyParseReportCsv(input: Uint8Array | string): LegacyCsvTable {
+export function parseReportCsv(input: Uint8Array | string): CsvTable {
   const text = typeof input === "string" ? input : new TextDecoder().decode(input);
   const records = parseCsvRecords(text);
   if (records.length === 0) {
@@ -140,8 +106,6 @@ export function legacyParseReportCsv(input: Uint8Array | string): LegacyCsvTable
   });
   return { columns, rows: records.slice(1) };
 }
-
-// Tokenizer
 
 type Token =
   | { readonly t: "ident"; readonly v: string }
@@ -191,7 +155,7 @@ function tokenize(sql: string): Array<Token> {
         value += sql[i];
         i++;
       }
-      i++; // closing backtick
+      i++;
       tokens.push({ t: "btick", v: value });
       continue;
     }
@@ -204,7 +168,7 @@ function tokenize(sql: string): Array<Token> {
         i++;
       }
       const n = Number(raw);
-      if (!Number.isFinite(n)) throw new LegacyInspectCsvqError(`invalid number literal: ${raw}`);
+      if (!Number.isFinite(n)) throw new InspectCsvqError(`invalid number literal: ${raw}`);
       tokens.push({ t: "num", v: n });
       continue;
     }
@@ -247,13 +211,11 @@ function tokenize(sql: string): Array<Token> {
       i++;
       continue;
     }
-    throw new LegacyInspectCsvqError(`unexpected character: ${ch}`);
+    throw new InspectCsvqError(`unexpected character: ${ch}`);
   }
   tokens.push({ t: "eof" });
   return tokens;
 }
-
-// AST
 
 type ValNode =
   | { readonly k: "num"; readonly n: number }
@@ -291,8 +253,6 @@ interface SelectStmt {
 
 const AGG_FNS = new Set(["LISTAGG", "COUNT", "SUM", "MIN", "MAX", "AVG"]);
 
-// Parser (recursive descent)
-
 class Parser {
   private pos = 0;
   constructor(private readonly tokens: ReadonlyArray<Token>) {}
@@ -316,13 +276,13 @@ class Parser {
   }
   private expectKeyword(word: string): void {
     if (!this.eatKeyword(word)) {
-      throw new LegacyInspectCsvqError(`expected ${word}`);
+      throw new InspectCsvqError(`expected ${word}`);
     }
   }
   private expectPunct(sym: string): void {
     const tok = this.next();
     if (tok.t !== "punct" || tok.v !== sym) {
-      throw new LegacyInspectCsvqError(`expected '${sym}'`);
+      throw new InspectCsvqError(`expected '${sym}'`);
     }
   }
   private isPunct(sym: string): boolean {
@@ -333,17 +293,16 @@ class Parser {
   parse(): SelectStmt {
     this.expectKeyword("SELECT");
     const { agg, expr } = this.parseSelectExpr();
-    // optional `AS <ident>`
     if (this.eatKeyword("AS")) {
       const tok = this.next();
-      if (tok.t !== "ident") throw new LegacyInspectCsvqError("expected alias after AS");
+      if (tok.t !== "ident") throw new InspectCsvqError("expected alias after AS");
     }
     this.expectKeyword("FROM");
     const tableTok = this.next();
     if (tableTok.t !== "btick") {
-      throw new LegacyInspectCsvqError("expected a backtick-quoted CSV table name");
+      throw new InspectCsvqError("expected a backtick-quoted CSV table name");
     }
-    // optional table alias (a bare ident that is not a clause keyword)
+    // A bare ident here is a table alias unless it's the WHERE keyword.
     if (this.peek().t === "ident" && !this.isKeyword("WHERE")) {
       this.pos++;
     }
@@ -353,7 +312,7 @@ class Parser {
     }
     if (this.isPunct(";")) this.pos++;
     if (this.peek().t !== "eof") {
-      throw new LegacyInspectCsvqError("unexpected trailing tokens");
+      throw new InspectCsvqError("unexpected trailing tokens");
     }
     return { agg, expr, table: tableTok.v, where };
   }
@@ -384,8 +343,7 @@ class Parser {
     if (fn === "LISTAGG") {
       this.expectPunct(",");
       const sepTok = this.next();
-      if (sepTok.t !== "str")
-        throw new LegacyInspectCsvqError("LISTAGG separator must be a string");
+      if (sepTok.t !== "str") throw new InspectCsvqError("LISTAGG separator must be a string");
       this.expectPunct(")");
       return { fn, col, sep: sepTok.v };
     }
@@ -395,11 +353,11 @@ class Parser {
 
   private parseColRef(): string {
     const tok = this.next();
-    if (tok.t !== "ident") throw new LegacyInspectCsvqError("expected a column reference");
+    if (tok.t !== "ident") throw new InspectCsvqError("expected a column reference");
     if (this.isPunct(".")) {
       this.pos++;
       const col = this.next();
-      if (col.t !== "ident") throw new LegacyInspectCsvqError("expected column after '.'");
+      if (col.t !== "ident") throw new InspectCsvqError("expected column after '.'");
       return col.v; // alias prefix ignored (single table)
     }
     return tok.v;
@@ -447,7 +405,7 @@ class Parser {
       const right = this.parseValueExpr();
       return { k: "cmp", op: opTok.v, l: left, r: right };
     }
-    throw new LegacyInspectCsvqError("expected a comparison operator");
+    throw new InspectCsvqError("expected a comparison operator");
   }
 
   private parseValueExpr(): ValNode {
@@ -514,12 +472,11 @@ class Parser {
           const e = this.parseValueExpr();
           this.expectPunct(",");
           const search = this.next();
-          if (search.t !== "str")
-            throw new LegacyInspectCsvqError("REPLACE search must be a string");
+          if (search.t !== "str") throw new InspectCsvqError("REPLACE search must be a string");
           this.expectPunct(",");
           const replacement = this.next();
           if (replacement.t !== "str") {
-            throw new LegacyInspectCsvqError("REPLACE replacement must be a string");
+            throw new InspectCsvqError("REPLACE replacement must be a string");
           }
           this.expectPunct(")");
           return { k: "replace", e, search: search.v, replacement: replacement.v };
@@ -527,11 +484,9 @@ class Parser {
       }
       return { k: "col", name: this.parseColRef() };
     }
-    throw new LegacyInspectCsvqError("expected a value");
+    throw new InspectCsvqError("expected a value");
   }
 }
-
-// Evaluation
 
 type EvalValue =
   | { readonly kind: "null" }
@@ -540,9 +495,6 @@ type EvalValue =
 
 const NULL_VALUE: EvalValue = { kind: "null" };
 
-// Strict numeric parsing accepts no surrounding whitespace and no digit grouping,
-// so a `to_char`-formatted value (e.g. `" 2,000"`) does NOT convert
-// to a number and falls back to a string comparison, exactly as csvq does.
 const STRICT_NUMERIC = /^[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?$/;
 
 function toNumber(value: EvalValue): number | undefined {
@@ -560,7 +512,7 @@ function toStringValue(value: EvalValue): string {
   return "";
 }
 
-function evalVal(node: ValNode, table: LegacyCsvTable, row: ReadonlyArray<string>): EvalValue {
+function evalVal(node: ValNode, table: CsvTable, row: ReadonlyArray<string>): EvalValue {
   switch (node.k) {
     case "num":
       return { kind: "num", n: node.n };
@@ -569,7 +521,7 @@ function evalVal(node: ValNode, table: LegacyCsvTable, row: ReadonlyArray<string
     case "col": {
       const index = table.columns.get(node.name.toLowerCase());
       if (index === undefined) {
-        throw new LegacyInspectCsvqError(`unknown column: ${node.name}`);
+        throw new InspectCsvqError(`unknown column: ${node.name}`);
       }
       return { kind: "str", s: row[index] ?? "" };
     }
@@ -594,7 +546,7 @@ function evalVal(node: ValNode, table: LegacyCsvTable, row: ReadonlyArray<string
         case "/":
           return r === 0 ? NULL_VALUE : { kind: "num", n: l / r };
         default:
-          throw new LegacyInspectCsvqError(`unsupported operator: ${node.op}`);
+          throw new InspectCsvqError(`unsupported operator: ${node.op}`);
       }
     }
     case "float": {
@@ -637,11 +589,11 @@ function compareValues(op: string, left: EvalValue, right: EvalValue): Tri {
     case ">=":
       return cmp >= 0;
     default:
-      throw new LegacyInspectCsvqError(`unsupported comparison: ${op}`);
+      throw new InspectCsvqError(`unsupported comparison: ${op}`);
   }
 }
 
-function evalCond(node: CondNode, table: LegacyCsvTable, row: ReadonlyArray<string>): Tri {
+function evalCond(node: CondNode, table: CsvTable, row: ReadonlyArray<string>): Tri {
   switch (node.k) {
     case "or": {
       const l = evalCond(node.l, table, row);
@@ -673,31 +625,28 @@ function evalCond(node: CondNode, table: LegacyCsvTable, row: ReadonlyArray<stri
   }
 }
 
-function matchedRows(stmt: SelectStmt, table: LegacyCsvTable): Array<ReadonlyArray<string>> {
+function matchedRows(stmt: SelectStmt, table: CsvTable): Array<ReadonlyArray<string>> {
   if (stmt.where === undefined) return [...table.rows];
   const where = stmt.where;
   return table.rows.filter((row) => evalCond(where, table, row) === true);
 }
 
-function columnIndex(table: LegacyCsvTable, name: string): number {
+function columnIndex(table: CsvTable, name: string): number {
   const index = table.columns.get(name.toLowerCase());
-  if (index === undefined) throw new LegacyInspectCsvqError(`unknown column: ${name}`);
+  if (index === undefined) throw new InspectCsvqError(`unknown column: ${name}`);
   return index;
 }
 
 function evalAggregate(
   agg: AggNode,
-  table: LegacyCsvTable,
+  table: CsvTable,
   rows: Array<ReadonlyArray<string>>,
 ): Option.Option<string> {
   if (agg.fn === "COUNT" && agg.star === true) {
     return Option.some(String(rows.length));
   }
-  // Resolve the aggregate's column up front, so an unknown column errors at
-  // "bind time" regardless of how many rows match — matching csvq, which validates
-  // referenced columns against the table schema before evaluating rows. (This is
-  // what surfaces default rule 6's `s.tbl` typo as a STATUS cell even when the
-  // matched set is empty.)
+  // Resolves the column before checking any rows, so an unknown column always errors —
+  // matching csvq's schema validation, even when the matched set would otherwise be empty.
   const index = columnIndex(table, agg.col!);
   if (agg.fn === "COUNT") {
     // CSV cells are never NULL, so COUNT(col) == COUNT(*) == the matched-row count.
@@ -729,32 +678,26 @@ function evalAggregate(
  * `locks.csv`). Returns `undefined` when the table does not exist, which the
  * evaluator surfaces as an error (→ the rule's STATUS cell).
  */
-export type LegacyCsvTableProvider = (name: string) => LegacyCsvTable | undefined;
+export type CsvTableProvider = (name: string) => CsvTable | undefined;
 
 /**
- * Evaluate a csvq rule query to its scalar first-column result.
+ * Evaluates a csvq rule query to its scalar first-column result.
  *
- * Returns `Option.none()` for the two cases that map to a passing rule with a `-`
- * matches cell: an aggregate over zero matched rows (csvq NULL) and a
- * non-aggregate select that matches no rows. Returns
- * `Option.some(value)` otherwise — including `Option.some("")` for a valid empty
- * string, which is also treated as a pass but renders as an empty matches cell.
+ * Returns `Option.none()` when an aggregate matches zero rows (csvq NULL) or a non-aggregate
+ * select matches no rows — both render as a passing rule with a `-` matches cell. Returns
+ * `Option.some(value)` otherwise, including `Option.some("")` for a valid empty string.
  *
- * Throws `LegacyInspectCsvqError` for unsupported grammar, an unknown table, or an
- * unknown column; the rule evaluator catches it and uses the message as the STATUS
- * cell, using csvq's own error text.
+ * Throws `InspectCsvqError` (using csvq's own error text) for unsupported grammar or an unknown
+ * table/column; the rule evaluator turns it into the STATUS cell.
  */
-export function legacyEvalCsvqScalar(
-  query: string,
-  provider: LegacyCsvTableProvider,
-): Option.Option<string> {
+export function evalCsvqScalar(query: string, provider: CsvTableProvider): Option.Option<string> {
   const duplicateIndexes = evalDuplicateIndexesQuery(query, provider);
   if (duplicateIndexes !== undefined) return duplicateIndexes;
 
   const stmt = new Parser(tokenize(query)).parse();
   const table = provider(stmt.table);
   if (table === undefined) {
-    throw new LegacyInspectCsvqError(`table not found: ${stmt.table}`);
+    throw new InspectCsvqError(`table not found: ${stmt.table}`);
   }
   const rows = matchedRows(stmt, table);
   if (stmt.agg !== undefined) {
@@ -772,12 +715,12 @@ const DUPLICATE_INDEXES_QUERY =
 
 function evalDuplicateIndexesQuery(
   query: string,
-  provider: LegacyCsvTableProvider,
+  provider: CsvTableProvider,
 ): Option.Option<string> | undefined {
   if (query.trim().replace(/;$/, "") !== DUPLICATE_INDEXES_QUERY) return undefined;
   const table = provider("index_stats.csv");
   if (table === undefined) {
-    throw new LegacyInspectCsvqError("table not found: index_stats.csv");
+    throw new InspectCsvqError("table not found: index_stats.csv");
   }
   const nameIndex = columnIndex(table, "name");
   const tableIndex = columnIndex(table, "table");

@@ -2,42 +2,42 @@ import { Option } from "effect";
 import { describe, expect, it } from "vitest";
 
 import {
-  type LegacyCsvTableProvider,
-  LegacyInspectCsvqError,
-  legacyEvalCsvqScalar,
-  legacyParseReportCsv,
+  type CsvTableProvider,
+  InspectCsvqError,
+  evalCsvqScalar,
+  parseReportCsv,
 } from "./report.csvq.ts";
-import { LEGACY_DEFAULT_INSPECT_RULES } from "./report.rules.ts";
+import { DEFAULT_INSPECT_RULES } from "./report.rules.ts";
 
-function provider(tables: Record<string, string>): LegacyCsvTableProvider {
-  return (name) => (name in tables ? legacyParseReportCsv(tables[name]!) : undefined);
+function provider(tables: Record<string, string>): CsvTableProvider {
+  return (name) => (name in tables ? parseReportCsv(tables[name]!) : undefined);
 }
 
 const rule = (name: string): string => {
-  const found = LEGACY_DEFAULT_INSPECT_RULES.find((r) => r.name === name);
+  const found = DEFAULT_INSPECT_RULES.find((r) => r.name === name);
   if (found === undefined) throw new Error(`no rule named ${name}`);
   return found.query;
 };
 
 function evalScalar(query: string, tables: Record<string, string>): Option.Option<string> {
-  return legacyEvalCsvqScalar(query, provider(tables));
+  return evalCsvqScalar(query, provider(tables));
 }
 
-describe("legacyParseReportCsv", () => {
+describe("parseReportCsv", () => {
   it("indexes headers case-insensitively and parses RFC4180 quoted fields", () => {
-    const table = legacyParseReportCsv('name,stmt\npublic.t,"SELECT a, b\nFROM t"\n');
+    const table = parseReportCsv('name,stmt\npublic.t,"SELECT a, b\nFROM t"\n');
     expect(table.columns.get("name")).toBe(0);
     expect(table.columns.get("stmt")).toBe(1);
     expect(table.rows).toEqual([["public.t", "SELECT a, b\nFROM t"]]);
   });
 
   it("reads a quoted empty field and an unquoted empty field both as empty strings", () => {
-    const table = legacyParseReportCsv('a,b,c\n"",,x\n');
+    const table = parseReportCsv('a,b,c\n"",,x\n');
     expect(table.rows).toEqual([["", "", "x"]]);
   });
 
   it("returns an empty table for header-only input", () => {
-    const table = legacyParseReportCsv("a,b\n");
+    const table = parseReportCsv("a,b\n");
     expect(table.rows).toEqual([]);
   });
 });
@@ -113,7 +113,6 @@ describe("default rules — pass and fail fixtures", () => {
         "table_stats.csv": "name,seq_scans,estimated_row_count\npublic.t,500,2000\n",
       }),
     ).toEqual(Option.some("public.t"));
-    // estimated_row_count <= 1000 → excluded by the second predicate.
     expect(
       evalScalar(q, {
         "table_stats.csv": "name,seq_scans,estimated_row_count\npublic.t,500,500\n",
@@ -136,8 +135,6 @@ describe("default rules — pass and fail fixtures", () => {
   });
 
   it("evaluator mechanics: alias-qualified string + numeric AND predicate", () => {
-    // Generic query (not a default rule) covering `s.col` alias refs, string `=`,
-    // numeric `>`, and AND against the real vacuum_stats columns.
     const q =
       "SELECT LISTAGG(s.name, ',') FROM `vacuum_stats.csv` s WHERE s.expect_autovacuum = 'yes' AND s.rowcount > 1000";
     expect(
@@ -232,9 +229,6 @@ describe("csvq value semantics", () => {
   });
 
   it("string-compares a thousands-grouped to_char value (csvq parity quirk)", () => {
-    // `" 2,000"` is not strictly numeric (leading space, comma), so `rowcount > 1000`
-    // falls back to a string comparison: `" 2,000"` < `"1000"` → the row is excluded,
-    // exactly as csvq behaves on a `to_char`-formatted column.
     expect(
       evalScalar("SELECT LISTAGG(tbl, ',') FROM `vacuum_stats.csv` WHERE rowcount > 1000", {
         "vacuum_stats.csv": 'tbl,rowcount\npublic.t," 2,000"\n',
@@ -260,7 +254,6 @@ describe("comparison operators", () => {
   });
 
   it("string-compares when one side is a non-numeric string", () => {
-    // `name = 'postgres'` is a pure string comparison.
     expect(
       evalScalar("SELECT COUNT(*) FROM `t.csv` WHERE name = 'postgres'", {
         "t.csv": "name\npostgres\nother\n",
@@ -281,11 +274,9 @@ describe("arithmetic", () => {
     expect(evalScalar("SELECT COUNT(*) FROM `t.csv` WHERE a / b > 2", data)).toEqual(
       Option.some("1"),
     );
-    // Division by zero → NULL → row excluded.
     expect(evalScalar("SELECT COUNT(*) FROM `t.csv` WHERE a / 0 > 0", data)).toEqual(
       Option.some("0"),
     );
-    // Arithmetic on a non-numeric column → NULL → row excluded.
     expect(
       evalScalar("SELECT COUNT(*) FROM `t.csv` WHERE c * 1 > 0", { "t.csv": "c\nabc\n" }),
     ).toEqual(Option.some("0"));
@@ -332,20 +323,18 @@ describe("plain column select", () => {
 
 describe("errors", () => {
   it("throws for an unknown table", () => {
-    expect(() => evalScalar("SELECT COUNT(*) FROM `missing.csv`", {})).toThrow(
-      LegacyInspectCsvqError,
-    );
+    expect(() => evalScalar("SELECT COUNT(*) FROM `missing.csv`", {})).toThrow(InspectCsvqError);
   });
 
   it("throws for an unknown column", () => {
     expect(() =>
       evalScalar("SELECT LISTAGG(nope, ',') FROM `locks.csv`", { "locks.csv": "stmt\nA\n" }),
-    ).toThrow(LegacyInspectCsvqError);
+    ).toThrow(InspectCsvqError);
   });
 
   it("throws for unsupported grammar", () => {
     expect(() =>
       evalScalar("UPDATE `locks.csv` SET stmt = 'x'", { "locks.csv": "stmt\nA\n" }),
-    ).toThrow(LegacyInspectCsvqError);
+    ).toThrow(InspectCsvqError);
   });
 });

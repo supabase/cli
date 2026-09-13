@@ -1,27 +1,27 @@
 import { Effect, Exit, FileSystem, Option, Path } from "effect";
-import { LegacyCliSettings } from "../../config/legacy-cli-settings.service.ts";
-import { LegacyCredentials } from "../../auth/legacy-credentials.service.ts";
+import { CommandSettings } from "../../config/command-settings.service.ts";
+import { CommandCredentials } from "../../auth/command-credentials.service.ts";
 import {
   INVALID_PROJECT_REF_MESSAGE,
   PROJECT_REF_PATTERN,
-} from "../../config/legacy-project-ref.service.ts";
-import { LegacyLinkedProjectCache } from "../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../telemetry/legacy-telemetry-state.service.ts";
-import { legacyReadDbToml } from "../../command-internal/legacy-db-config.toml-read.ts";
-import { legacyResolveDbImage } from "../../command-internal/legacy-db-image.ts";
-import { legacyResolveEdgeRuntimeImage } from "../../command-internal/legacy-edge-runtime-image.ts";
-import { legacyReadServiceVersionOverrides } from "../../command-internal/legacy-service-version-overrides.ts";
-import { LegacyOutputFlag } from "../../shared/legacy/global-flags.ts";
+} from "../../config/project-ref.service.ts";
+import { LinkedProjectCache } from "../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../telemetry/telemetry-state.service.ts";
+import { readDbToml } from "../../command-internal/db-config.toml-read.ts";
+import { resolveDbImage } from "../../command-internal/db-image.ts";
+import { resolveEdgeRuntimeImage } from "../../command-internal/edge-runtime-image.ts";
+import { readServiceVersionOverrides } from "../../command-internal/service-version-overrides.ts";
+import { OutputFlag } from "../../command-internal/global-flags.ts";
 import { Output } from "../../shared/output/output.service.ts";
-import { encodeGoJson } from "../../command-internal/legacy-go-output.encoders.ts";
+import { encodeGoJson } from "../../command-internal/go-output.encoders.ts";
 import {
-  encodeLegacyGoToml,
-  encodeLegacyGoYaml,
-  legacyGoSlice,
-  legacyGoString,
-  legacyGoStruct,
-  legacyGoTomlListWrapper,
-} from "../../command-internal/legacy-go-struct-output.encoders.ts";
+  encodeGoToml,
+  encodeGoYaml,
+  goSlice,
+  goString,
+  goStruct,
+  goTomlListWrapper,
+} from "../../command-internal/go-struct-output.encoders.ts";
 import {
   fetchLinkedServiceVersions,
   formatServicesWarning,
@@ -31,34 +31,30 @@ import {
   renderServicesTable,
   renderServicesWarning,
 } from "../../shared/services/services.shared.ts";
-import type { LegacyServicesFlags } from "./services.command.ts";
-import { LegacyServicesEnvNotSupportedError } from "./services.errors.ts";
+import type { ServicesFlags } from "./services.command.ts";
+import { ServicesEnvNotSupportedError } from "./services.errors.ts";
 
 /**
- * Type shape for the hand-written `imageVersion` struct — declaration order
- * is Name, Local, Remote (not alphabetical), and `Remote` is always emitted
- * even when empty (CLI-1975).
+ * Struct shape for `imageVersion`: field order is name, local, remote (not
+ * alphabetical), and `remote` is always emitted even when empty.
  */
-const LEGACY_GO_IMAGE_VERSION = legacyGoStruct([
-  ["name", legacyGoString],
-  ["local", legacyGoString],
-  ["remote", legacyGoString],
+const GO_IMAGE_VERSION = goStruct([
+  ["name", goString],
+  ["local", goString],
+  ["remote", goString],
 ]);
 
-const LEGACY_GO_SERVICES_LIST = legacyGoSlice(LEGACY_GO_IMAGE_VERSION);
+const GO_SERVICES_LIST = goSlice(GO_IMAGE_VERSION);
 
-const LEGACY_GO_SERVICES_TOML_WRAPPER = legacyGoTomlListWrapper(
-  "services",
-  LEGACY_GO_IMAGE_VERSION,
-);
+const GO_SERVICES_TOML_WRAPPER = goTomlListWrapper("services", GO_IMAGE_VERSION);
 
-export const legacyServices = Effect.fn("legacy.services")(function* (_flags: LegacyServicesFlags) {
+export const services = Effect.fn("services")(function* (_flags: ServicesFlags) {
   const output = yield* Output;
-  const legacyOutput = yield* LegacyOutputFlag;
-  const cliSettings = yield* LegacyCliSettings;
-  const credentials = yield* LegacyCredentials;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
+  const goOutputFlag = yield* OutputFlag;
+  const cliSettings = yield* CommandSettings;
+  const credentials = yield* CommandCredentials;
+  const linkedProjectCache = yield* LinkedProjectCache;
+  const telemetryState = yield* TelemetryState;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
@@ -73,14 +69,9 @@ export const legacyServices = Effect.fn("legacy.services")(function* (_flags: Le
       return Option.none<string>();
     }
 
-    // Warns on a ref-file READ error (as opposed to the file simply
-    // not existing) and keeps going as unlinked (`fmt.Fprintln(os.Stderr, err)`
-    // with `LoadProjectRef`'s `failed to load project ref: %w`,
-    // `project_ref.go:71-72`). A NotFound between the exists() check above and
-    // this read (TOCTOU) maps to the `os.ErrNotExist` → `ErrNotLinked` branch:
-    // silent, no warning. The warning's error suffix is Effect's description,
-    // not the reference implementation's `*PathError` text — the prefix is
-    // the compatibility-bearing part.
+    // Warns on a ref-file read error, but treats a NotFound race between the
+    // exists() check and this read as simply unlinked (silent, no warning).
+    // Only the "failed to load project ref: " prefix is compatibility-bearing.
     const content = yield* fs
       .readFileString(projectRefPath)
       .pipe(
@@ -110,19 +101,15 @@ export const legacyServices = Effect.fn("legacy.services")(function* (_flags: Le
 
     const validLinkedRef = Option.filter(linkedProjectRef, (ref) => PROJECT_REF_PATTERN.test(ref));
     if (Option.isSome(linkedProjectRef) && Option.isNone(validLinkedRef)) {
-      // `flags.LoadProjectRef` (project_ref.go:54-76) validates the ref but
-      // the reference `Run` only warns on the error and keeps going, still
-      // calling `listRemoteImages` with the malformed ref (services.go:61-62).
-      // TS matches the warning but deliberately skips the remote call instead of
-      // reproducing it: the ref is embedded unescaped into the tenant gateway
-      // hostname in `fetchLinkedServiceVersions`, so proceeding would let a
-      // malformed ref redirect the service-role key to an attacker-controlled host.
-      // Emitted before the config-load warning below to match the order these
-      // are printed in (services.go:18-24).
+      // A malformed linked ref still warns, but the remote call is skipped:
+      // `fetchLinkedServiceVersions` embeds the ref unescaped into the tenant
+      // gateway hostname, so proceeding could redirect the service-role key to
+      // an attacker-controlled host. Emitted before the config-load warning to
+      // preserve output order.
       yield* output.raw(`${INVALID_PROJECT_REF_MESSAGE}\n`, "stderr");
     }
 
-    const tomlValues = yield* legacyReadDbToml(
+    const tomlValues = yield* readDbToml(
       fs,
       path,
       cliSettings.workdir,
@@ -135,7 +122,7 @@ export const legacyServices = Effect.fn("legacy.services")(function* (_flags: Le
     const serviceVersions =
       tomlValues === null
         ? {}
-        : yield* legacyReadServiceVersionOverrides(
+        : yield* readServiceVersionOverrides(
             fs,
             path,
             cliSettings.workdir,
@@ -144,7 +131,7 @@ export const legacyServices = Effect.fn("legacy.services")(function* (_flags: Le
     const postgresImage =
       tomlValues === null
         ? undefined
-        : (yield* legacyResolveDbImage(
+        : (yield* resolveDbImage(
             fs,
             path,
             cliSettings.workdir,
@@ -154,12 +141,7 @@ export const legacyServices = Effect.fn("legacy.services")(function* (_flags: Le
     const edgeRuntimeImage =
       tomlValues === null
         ? undefined
-        : yield* legacyResolveEdgeRuntimeImage(
-            fs,
-            path,
-            cliSettings.workdir,
-            tomlValues.denoVersion,
-          );
+        : yield* resolveEdgeRuntimeImage(fs, path, cliSettings.workdir, tomlValues.denoVersion);
     const imageOverrides: LocalServiceImageOverrides = {};
     if (postgresImage !== undefined) {
       imageOverrides.postgres = postgresImage;
@@ -191,11 +173,11 @@ export const legacyServices = Effect.fn("legacy.services")(function* (_flags: Le
       yield* output.raw(formatServicesWarning(warning, output.format === "text"), "stderr");
     }
 
-    const goOutput = Option.getOrUndefined(legacyOutput);
+    const goOutput = Option.getOrUndefined(goOutputFlag);
 
     if (goOutput === "env") {
       return yield* Effect.fail(
-        new LegacyServicesEnvNotSupportedError({
+        new ServicesEnvNotSupportedError({
           message: "--output env flag is not supported",
         }),
       );
@@ -207,19 +189,18 @@ export const legacyServices = Effect.fn("legacy.services")(function* (_flags: Le
     }
 
     if (goOutput === "yaml") {
-      yield* output.raw(encodeLegacyGoYaml(rows, LEGACY_GO_SERVICES_LIST));
+      yield* output.raw(encodeGoYaml(rows, GO_SERVICES_LIST));
       return;
     }
 
     if (goOutput === "toml") {
-      yield* output.raw(encodeLegacyGoToml({ services: rows }, LEGACY_GO_SERVICES_TOML_WRAPPER));
+      yield* output.raw(encodeGoToml({ services: rows }, GO_SERVICES_TOML_WRAPPER));
       return;
     }
 
-    // goOutput is undefined or "pretty" — defer to the TS --output-format flag for
-    // machine output, otherwise render the `--output pretty` table. Guarding the
-    // table behind this (rather than treating "pretty" as force-table) keeps
-    // `--output pretty --output-format json` emitting JSON, per CLI-1546.
+    // goOutput is undefined or "pretty" — defer to --output-format for machine
+    // output, otherwise render the `--output pretty` table. This keeps
+    // `--output pretty --output-format json` emitting JSON.
     if (output.format === "json" || output.format === "stream-json") {
       yield* output.success("", { services: rows });
       return;

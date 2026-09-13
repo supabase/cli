@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, inject, test } from "vitest";
 import { createHarness, exec, type CLIResult } from "@supabase/cli-test-helpers";
 import { testBehaviour } from "./test-context.ts";
-import { ACCESS_TOKEN, TARGET } from "./env.ts";
+import { ACCESS_TOKEN } from "./env.ts";
 
 // A guaranteed-unreachable TCP address — connection is refused immediately.
 // Used to simulate Docker being unavailable without relying on any external state.
@@ -29,7 +29,7 @@ const testStack = testBehaviour.extend<StackFixtures>({
   stackRun: async ({ workspace }, use) => {
     const serverUrl = inject("replayServerUrl") as string;
     const dockerHostUrl = inject("dockerHostUrl") as string;
-    const harness = createHarness(TARGET, {
+    const harness = createHarness({
       apiUrl: serverUrl,
       accessToken: ACCESS_TOKEN,
       cwd: workspace.path,
@@ -40,12 +40,7 @@ const testStack = testBehaviour.extend<StackFixtures>({
   },
 });
 
-// ---------------------------------------------------------------------------
-// services
-// ---------------------------------------------------------------------------
-// `services` prints a baked-in Go-parity service matrix, so DOCKER_HOST is not
-// needed.
-
+// `services` prints a static service matrix, so DOCKER_HOST is not needed.
 describe("services", () => {
   testBehaviour("lists known service images", async ({ run }) => {
     const result = await run(["services"]);
@@ -57,14 +52,8 @@ describe("services", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// status
-// ---------------------------------------------------------------------------
-
-// CLI-2167: `status` (ts-legacy only) resolves and prints the current linked
-// project/branch on stdout, before any Docker/daemon work runs, in every
-// output mode — an adjudicated, deliberate TS-only extension with no Go
-// counterpart (Go's `status` never had a link-state concept). Go's stdout for
+// `status` resolves and prints the current linked project/branch on stdout
+// before any Docker/daemon work runs, in every output mode.
 describe("status", () => {
   testStack("exits 1 when stack is not running", async ({ workspace, stackRun }) => {
     setupStackWorkspace(workspace.path);
@@ -74,10 +63,6 @@ describe("status", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// stop
-// ---------------------------------------------------------------------------
-
 describe("stop", () => {
   testStack("succeeds when stack is not running", async ({ workspace, stackRun }) => {
     setupStackWorkspace(workspace.path);
@@ -85,8 +70,7 @@ describe("stop", () => {
     expect(result.exitCode).toBe(0);
   });
 
-  // cobra's MarkFlagsMutuallyExclusive validates this before the command runs —
-  // no Docker or API calls are made.
+  // Flag validation happens before the command runs, so no Docker or API calls are made.
   testStack(
     "exits 1 with mutual-exclusion error for --project-id and --all",
     async ({ workspace, stackRun }) => {
@@ -97,10 +81,6 @@ describe("stop", () => {
     },
   );
 });
-
-// ---------------------------------------------------------------------------
-// start
-// ---------------------------------------------------------------------------
 
 describe("start", () => {
   testStack(
@@ -115,21 +95,14 @@ describe("start", () => {
     },
   );
 
-  // start → status → status --override-name → stop lifecycle test.
-  // These must run in sequence in a single shared workspace so that status
-  // and stop see the stack that start brought up.
-  // TODO: record these in an environment where the full Supabase Docker stack starts
-  // cleanly through the TCP relay proxy (vector health check fails on this machine).
+  // Must run in sequence in a shared workspace so status/stop see the stack start brought up.
+  // TODO: record once the full stack starts cleanly through the relay proxy (vector health check fails here).
   test.todo("start → status → stop lifecycle");
   test.todo("starts with --exclude studio and stops cleanly");
 });
 
-// ---------------------------------------------------------------------------
-// seed buckets
-// ---------------------------------------------------------------------------
 // `seed buckets` makes storage HTTP calls (not Docker), so plain testBehaviour
 // with `run` is correct.
-
 describe("seed buckets", () => {
   testBehaviour("creates buckets defined in config", async ({ workspace, run, apiUrl }) => {
     mkdirSync(join(workspace.path, "supabase"), { recursive: true });

@@ -1,11 +1,11 @@
 import { Effect, Option } from "effect";
-import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
-import type { LegacyDbRemoteChangesFlags } from "./changes.command.ts";
+import { GoProxy } from "../../../../command-internal/go-proxy.service.ts";
+import type { DbRemoteChangesFlags } from "./changes.command.ts";
 
-export const legacyDbRemoteChanges = Effect.fn("legacy.db.remote.changes")(function* (
-  flags: LegacyDbRemoteChangesFlags,
+export const dbRemoteChanges = Effect.fn("db.remote.changes")(function* (
+  flags: DbRemoteChangesFlags,
 ) {
-  const proxy = yield* LegacyGoProxy;
+  const proxy = yield* GoProxy;
   const args: string[] = ["db", "remote", "changes"];
   for (const s of flags.schema) {
     args.push("--schema", s);

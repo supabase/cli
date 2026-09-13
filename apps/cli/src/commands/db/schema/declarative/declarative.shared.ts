@@ -1,16 +1,11 @@
 import { Command, Flag } from "effect/unstable/cli";
 
 /**
- * Base `db schema declarative` group command carrying the shared `--no-cache`
- * flag. Go registers `--no-cache` as a persistent flag on the group
- * (`apps/cli-go/cmd/db_schema_declarative.go:480-481`, deleted in CLI-1970;
- * last present at commit 7b469f5b3), so it is accepted both
- * before and after the `generate`/`sync` subcommand name. Subcommand handlers read
- * the resolved value via `yield* legacyDbSchemaDeclarativeSharedBase` — its context
- * tag is stable across `withSubcommands`, so this base (defined without subcommands
- * to avoid an import cycle) is the one the leaves import.
+ * Base `db schema declarative` group command carrying the shared `--no-cache`/`--strict-coverage`
+ * flags, accepted both before and after the `generate`/`sync` subcommand name. Defined without
+ * subcommands to avoid an import cycle; leaf handlers import this base directly.
  */
-export const legacyDbSchemaDeclarativeSharedBase = Command.make("declarative").pipe(
+export const dbSchemaDeclarativeSharedBase = Command.make("declarative").pipe(
   Command.withDescription("Manage declarative database schemas."),
   Command.withShortDescription("Manage declarative database schemas"),
   Command.withSharedFlags({

@@ -15,23 +15,23 @@ import {
   mockOutput,
 } from "../../../tests/helpers/mocks.ts";
 import {
-  LEGACY_VALID_REF,
-  buildLegacyTestRuntime,
-  legacyStatusCodeFailure,
-  legacyTransportFailure,
-  mockLegacyCliSettings,
-  mockLegacyLinkedProjectCacheTracked,
-  mockLegacyPlatformApiService,
-  mockLegacyTelemetryStateTracked,
-  useLegacyTempWorkdir,
-} from "../../../tests/helpers/legacy-mocks.ts";
-import { legacyLink } from "./link.handler.ts";
-import { legacyLinkHandler } from "./link.command.ts";
-import type { LegacyLinkFlags } from "./link.command.ts";
+  VALID_REF,
+  buildTestRuntime,
+  statusCodeFailure,
+  transportFailure,
+  mockCommandSettings,
+  mockLinkedProjectCacheTracked,
+  mockCommandPlatformApiService,
+  mockTelemetryStateTracked,
+  useTempWorkdir,
+} from "../../../tests/helpers/command-mocks.ts";
+import { link } from "./link.handler.ts";
+import { linkHandler } from "./link.command.ts";
+import type { LinkFlags } from "./link.command.ts";
 
 const HEALTHY_PROJECT = {
-  id: LEGACY_VALID_REF,
-  ref: LEGACY_VALID_REF,
+  id: VALID_REF,
+  ref: VALID_REF,
   name: "My Project",
   organization_id: "org_123",
   organization_slug: "acme",
@@ -72,11 +72,11 @@ const POOLER_PRIMARY = [
   },
 ];
 
-type LegacyLinkBranches = typeof V1ListAllBranchesOutput.Type;
-type LegacyLinkBranch = LegacyLinkBranches[number];
+type LinkBranches = typeof V1ListAllBranchesOutput.Type;
+type LinkBranch = LinkBranches[number];
 
-// The currently-linked PARENT project's ref (env / cache / temp-file candidate).
-const PARENT_REF = LEGACY_VALID_REF;
+// The currently-linked parent project's ref (env / cache / temp-file candidate).
+const PARENT_REF = VALID_REF;
 // Distinct 20-lowercase-letter refs used to disambiguate which parent
 // candidate (env / linked-project.json cache / project-ref file) won.
 const BRANCH_PROJECT_REF = "branchprojectrefabcd";
@@ -85,7 +85,7 @@ const CACHE_ONLY_REF = "cachecachecachecache";
 const FILE_ONLY_REF = "filefilefilefilefile";
 const POSITIONAL_REF = "positionalrefaaaaaaa";
 
-const LINK_BRANCH: LegacyLinkBranch = {
+const LINK_BRANCH: LinkBranch = {
   id: "11111111-2222-4333-8444-555555555555",
   name: "feature-branch",
   project_ref: BRANCH_PROJECT_REF,
@@ -98,17 +98,16 @@ const LINK_BRANCH: LegacyLinkBranch = {
   with_data: true,
 };
 
-const LINK_BRANCH_OTHER: LegacyLinkBranch = {
+const LINK_BRANCH_OTHER: LinkBranch = {
   ...LINK_BRANCH,
   id: "44444444-5555-4666-8777-888888888888",
   name: "other-branch",
   project_ref: OTHER_BRANCH_PROJECT_REF,
 };
 
-// A DEFAULT branch's `project_ref` IS the parent's own ref (PR #6168 review) —
-// `getProject(ref)` therefore returns 200 for it, routing telemetry into the
-// normal 200 arm rather than the 404 `else if (branchResolution)` arm.
-const LINK_BRANCH_DEFAULT: LegacyLinkBranch = {
+// A default branch's `project_ref` is the parent's own ref, so `getProject(ref)` returns 200
+// for it, routing telemetry into the normal 200 arm rather than the 404 branch arm.
+const LINK_BRANCH_DEFAULT: LinkBranch = {
   ...LINK_BRANCH,
   id: "77777777-8888-4999-8aaa-bbbbbbbbbbbb",
   name: "main",
@@ -116,44 +115,39 @@ const LINK_BRANCH_DEFAULT: LegacyLinkBranch = {
   is_default: true,
 };
 
-const LINK_BRANCH_ZETA: LegacyLinkBranch = {
+const LINK_BRANCH_ZETA: LinkBranch = {
   ...LINK_BRANCH,
   id: "22222222-3333-4444-8555-666666666666",
   name: "zeta",
 };
 
-const LINK_BRANCH_ALPHA: LegacyLinkBranch = {
+const LINK_BRANCH_ALPHA: LinkBranch = {
   ...LINK_BRANCH,
   id: "33333333-4444-4555-8666-777777777777",
   name: "alpha",
 };
 
-const LINK_BRANCH_STAGING: LegacyLinkBranch = {
+const LINK_BRANCH_STAGING: LinkBranch = {
   ...LINK_BRANCH,
   id: "55555555-6666-4777-8888-999999999999",
   name: "staging",
 };
 
-// `status: CREATING_PROJECT` with an empty `project_ref` — the branch exists
-// but hasn't finished provisioning yet.
-const LINK_BRANCH_NOT_READY: LegacyLinkBranch = {
+// `status: CREATING_PROJECT` with an empty `project_ref`: not finished provisioning yet.
+const LINK_BRANCH_NOT_READY: LinkBranch = {
   ...LINK_BRANCH,
   id: "66666666-7777-4888-8999-aaaaaaaaaaaa",
   project_ref: "",
   status: "CREATING_PROJECT",
 };
 
-function manyBranches(count: number): LegacyLinkBranches {
+function manyBranches(count: number): LinkBranches {
   return Array.from({ length: count }, (_, i) => ({
     ...LINK_BRANCH,
     id: `00000000-0000-4000-8000-${i.toString().padStart(12, "0")}`,
     name: `branch-${i.toString().padStart(2, "0")}`,
   }));
 }
-
-// ---------------------------------------------------------------------------
-// Setup
-// ---------------------------------------------------------------------------
 
 interface V1StubResult {
   readonly ok?: unknown;
@@ -175,7 +169,7 @@ interface SetupOpts {
   analytics?: ReturnType<typeof mockAnalytics>;
 }
 
-const tempRoot = useLegacyTempWorkdir("supabase-link-int-");
+const tempRoot = useTempWorkdir("supabase-link-int-");
 
 function stub(result: V1StubResult | undefined, defaultOk: unknown) {
   if (result?.fail !== undefined) return () => Effect.fail(result.fail);
@@ -188,7 +182,7 @@ function tenantHttpLayer(opts: SetupOpts): Layer.Layer<HttpClient.HttpClient> {
     HttpClient.make((request) =>
       Effect.gen(function* () {
         if (opts.tenant === "fail") {
-          return yield* Effect.fail(legacyTransportFailure(request));
+          return yield* Effect.fail(transportFailure(request));
         }
         const url = request.url;
         if (url.includes("/rest/v1/")) {
@@ -224,9 +218,9 @@ function tenantHttpLayer(opts: SetupOpts): Layer.Layer<HttpClient.HttpClient> {
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
   const analytics = opts.analytics ?? mockAnalytics();
-  const telemetry = mockLegacyTelemetryStateTracked();
-  const linkedCache = mockLegacyLinkedProjectCacheTracked();
-  const apiMock = mockLegacyPlatformApiService({
+  const telemetry = mockTelemetryStateTracked();
+  const linkedCache = mockLinkedProjectCacheTracked();
+  const apiMock = mockCommandPlatformApiService({
     v1: {
       getProject: stub(opts.project, HEALTHY_PROJECT),
       getProjectApiKeys: stub(opts.apiKeys, SERVICE_KEYS),
@@ -235,11 +229,11 @@ function setup(opts: SetupOpts = {}) {
       listAllBranches: stub(opts.branches, []),
     },
   });
-  const cliSettings = mockLegacyCliSettings({
+  const cliSettings = mockCommandSettings({
     workdir: tempRoot.current,
     projectId: opts.projectId ?? Option.none(),
   });
-  const layer = buildLegacyTestRuntime({
+  const layer = buildTestRuntime({
     out,
     api: { layer: apiMock.layer, httpClientLayer: tenantHttpLayer(opts) },
     cliSettings,
@@ -250,9 +244,9 @@ function setup(opts: SetupOpts = {}) {
   return { layer, out, analytics, telemetry, linkedCache, apiMock, workdir: tempRoot.current };
 }
 
-const flags = (overrides: Partial<LegacyLinkFlags> = {}): LegacyLinkFlags => ({
+const flags = (overrides: Partial<LinkFlags> = {}): LinkFlags => ({
   refOrBranch: Option.none(),
-  projectRef: Option.some(LEGACY_VALID_REF),
+  projectRef: Option.some(VALID_REF),
   password: Option.none(),
   skipPooler: false,
   ...overrides,
@@ -275,15 +269,13 @@ function writeTempContent(workdir: string, name: string, content: string): void 
   writeFileSync(tempFile(workdir, name), content);
 }
 
-// Seeds `<workdir>/supabase/.temp/project-ref` — the 3rd-priority parent
-// candidate for a branch-name lookup, and also the file `resolver.resolveForLink`
-// falls back to for a plain ref link.
+// Seeds the 3rd-priority parent candidate for a branch-name lookup, and the file
+// `resolver.resolveForLink` falls back to for a plain ref link.
 function writeLinkedParentRef(workdir: string, ref: string): void {
   writeTempContent(workdir, "project-ref", ref);
 }
 
-// Seeds `<workdir>/supabase/.temp/linked-project.json` — the 2nd-priority parent
-// candidate. Real content shape mirrors what `legacyLink`'s own success path writes.
+// Seeds the 2nd-priority parent candidate, in the shape `link`'s own success path writes.
 function writeLinkedProjectCacheFile(workdir: string, content: string): void {
   writeTempContent(workdir, "linked-project.json", content);
 }
@@ -297,27 +289,22 @@ function linkedProjectCacheJson(ref: string): string {
   });
 }
 
-function legacyTransportFailureForMock() {
-  return legacyTransportFailure(HttpClientRequestModule.get("https://api.supabase.com/mock"));
+function transportFailureForMock() {
+  return transportFailure(HttpClientRequestModule.get("https://api.supabase.com/mock"));
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
-describe("legacy link integration", () => {
+describe("link integration", () => {
   describe("plain project-ref linking", () => {
     it.live("links a project, writing the project-ref and version files", () => {
       const { layer, out, workdir } = setup();
       return Effect.gen(function* () {
-        yield* legacyLink(flags());
-        expect(readTemp(workdir, "project-ref")).toBe(LEGACY_VALID_REF);
+        yield* link(flags());
+        expect(readTemp(workdir, "project-ref")).toBe(VALID_REF);
         expect(readTemp(workdir, "postgres-version")).toBe("15.1.0.117");
         expect(readTemp(workdir, "storage-migration")).toBe("2026-01-01-000000");
         expect(readTemp(workdir, "rest-version")).toBe("v11.1.0");
         expect(readTemp(workdir, "gotrue-version")).toBe("v2.74.2");
         expect(readTemp(workdir, "storage-version")).toBe("v1.28.0");
-        // [YOUR-PASSWORD] stripped + transaction-mode port rewritten to 5432.
         expect(readTemp(workdir, "pooler-url")).toBe(
           "postgresql://postgres.ref@pooler.example.co:5432/postgres",
         );
@@ -328,10 +315,10 @@ describe("legacy link integration", () => {
     it.live("writes linked-project.json with ref/name/org metadata", () => {
       const { layer, workdir } = setup();
       return Effect.gen(function* () {
-        yield* legacyLink(flags());
+        yield* link(flags());
         const linked = JSON.parse(readTemp(workdir, "linked-project.json"));
         expect(linked).toEqual({
-          ref: LEGACY_VALID_REF,
+          ref: VALID_REF,
           name: "My Project",
           organization_id: "org_123",
           organization_slug: "acme",
@@ -342,7 +329,7 @@ describe("legacy link integration", () => {
     it.live("emits cli_project_linked + org/project groupIdentify keyed by org id", () => {
       const { layer, analytics } = setup();
       return Effect.gen(function* () {
-        yield* legacyLink(flags());
+        yield* link(flags());
         expect(analytics.captured.map((c) => c.event)).toContain("cli_project_linked");
         expect(analytics.groupIdentified).toEqual([
           {
@@ -352,12 +339,10 @@ describe("legacy link integration", () => {
           },
           {
             groupType: "project",
-            groupKey: LEGACY_VALID_REF,
+            groupKey: VALID_REF,
             properties: { name: "My Project", organization_slug: "acme" },
           },
         ]);
-        // A plain (non-branch) ref link never carries the CLI-2167 branch-link
-        // telemetry extension.
         const capture = analytics.captured.find((c) => c.event === "cli_project_linked");
         expect(capture?.properties).not.toHaveProperty("linked_via");
         expect(capture?.properties).not.toHaveProperty("parent_project_ref");
@@ -365,19 +350,17 @@ describe("legacy link integration", () => {
     });
 
     it.live("resolves the ref from SUPABASE_PROJECT_ID when no flag is given", () => {
-      const { layer, workdir } = setup({ projectId: Option.some(LEGACY_VALID_REF) });
+      const { layer, workdir } = setup({ projectId: Option.some(VALID_REF) });
       return Effect.gen(function* () {
-        yield* legacyLink(flags({ projectRef: Option.none() }));
-        expect(readTemp(workdir, "project-ref")).toBe(LEGACY_VALID_REF);
+        yield* link(flags({ projectRef: Option.none() }));
+        expect(readTemp(workdir, "project-ref")).toBe(VALID_REF);
       }).pipe(Effect.provide(layer));
     });
 
     it.live("positional valid ref beats SUPABASE_PROJECT_ID as the link target", () => {
-      const { layer, workdir } = setup({ projectId: Option.some(LEGACY_VALID_REF) });
+      const { layer, workdir } = setup({ projectId: Option.some(VALID_REF) });
       return Effect.gen(function* () {
-        yield* legacyLink(
-          flags({ refOrBranch: Option.some(POSITIONAL_REF), projectRef: Option.none() }),
-        );
+        yield* link(flags({ refOrBranch: Option.some(POSITIONAL_REF), projectRef: Option.none() }));
         expect(readTemp(workdir, "project-ref")).toBe(POSITIONAL_REF);
       }).pipe(Effect.provide(layer));
     });
@@ -385,25 +368,25 @@ describe("legacy link integration", () => {
     it.live("fails in non-TTY with no --project-ref and no PROJECT_ID", () => {
       const { layer } = setup();
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(legacyLink(flags({ projectRef: Option.none() })));
+        const exit = yield* Effect.exit(link(flags({ projectRef: Option.none() })));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const json = JSON.stringify(exit.cause);
-          expect(json).toContain("LegacyProjectRefRequiredError");
+          expect(json).toContain("ProjectRefRequiredError");
           expect(json).toContain(`required flag(s) \\"project-ref\\" not set`);
         }
       }).pipe(Effect.provide(layer));
     });
 
     it.live(
-      "fails with LegacyInvalidProjectRefError for a malformed ref from SUPABASE_PROJECT_ID (env stays strict)",
+      "fails with InvalidProjectRefError for a malformed ref from SUPABASE_PROJECT_ID (env stays strict)",
       () => {
         const { layer } = setup({ projectId: Option.some("BADREF") });
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(legacyLink(flags({ projectRef: Option.none() })));
+          const exit = yield* Effect.exit(link(flags({ projectRef: Option.none() })));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("LegacyInvalidProjectRefError");
+            expect(JSON.stringify(exit.cause)).toContain("InvalidProjectRefError");
           }
         }).pipe(Effect.provide(layer));
       },
@@ -411,19 +394,13 @@ describe("legacy link integration", () => {
 
     it.live("tolerates a 404 project (branch linking): writes project-ref, skips telemetry", () => {
       const { layer, workdir, analytics } = setup({
-        project: { fail: legacyStatusCodeFailure(404) },
+        project: { fail: statusCodeFailure(404) },
       });
       return Effect.gen(function* () {
-        yield* legacyLink(flags());
-        expect(readTemp(workdir, "project-ref")).toBe(LEGACY_VALID_REF);
-        // No postgres-version / linked-project.json and no telemetry for a 404.
+        yield* link(flags());
+        expect(readTemp(workdir, "project-ref")).toBe(VALID_REF);
         expect(existsSync(tempFile(workdir, "postgres-version"))).toBe(false);
         expect(existsSync(tempFile(workdir, "linked-project.json"))).toBe(false);
-        // This is a plain ref link that happens to 404 (assumed to be a branch),
-        // with NO name/UUID resolution — `branchResolution` never fired, so the
-        // CLI-2167 branch-link telemetry extension doesn't fire either. Emits
-        // nothing at all for `cli_project_linked`, unlike the resolved-branch
-        // case (see "branch-name resolution: telemetry" below).
         expect(analytics.captured.map((c) => c.event)).not.toContain("cli_project_linked");
         expect(analytics.groupIdentified).toHaveLength(0);
       }).pipe(Effect.provide(layer));
@@ -434,14 +411,14 @@ describe("legacy link integration", () => {
         project: { ok: { ...HEALTHY_PROJECT, status: "INACTIVE" } },
       });
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(legacyLink(flags()));
+        const exit = yield* Effect.exit(link(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const json = JSON.stringify(exit.cause);
-          expect(json).toContain("LegacyProjectPausedError");
+          expect(json).toContain("ProjectPausedError");
           expect(json).toContain("project is paused");
           expect(json).toContain(
-            `An admin must unpause it from the Supabase dashboard at https://supabase.com/dashboard/project/${LEGACY_VALID_REF}`,
+            `An admin must unpause it from the Supabase dashboard at https://supabase.com/dashboard/project/${VALID_REF}`,
           );
         }
       }).pipe(Effect.provide(layer));
@@ -452,35 +429,35 @@ describe("legacy link integration", () => {
         project: { ok: { ...HEALTHY_PROJECT, status: "COMING_UP" } },
       });
       return Effect.gen(function* () {
-        yield* legacyLink(flags());
+        yield* link(flags());
         expect(out.stderrText).toContain(
           "WARNING: Project status is COMING_UP instead of Active Healthy. Some operations might fail.",
         );
-        expect(readTemp(workdir, "project-ref")).toBe(LEGACY_VALID_REF);
+        expect(readTemp(workdir, "project-ref")).toBe(VALID_REF);
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("fails with LegacyLinkProjectStatusError on an unexpected status", () => {
-      const { layer } = setup({ project: { fail: legacyStatusCodeFailure(500) } });
+    it.live("fails with LinkProjectStatusError on an unexpected status", () => {
+      const { layer } = setup({ project: { fail: statusCodeFailure(500) } });
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(legacyLink(flags()));
+        const exit = yield* Effect.exit(link(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const json = JSON.stringify(exit.cause);
-          expect(json).toContain("LegacyLinkProjectStatusError");
+          expect(json).toContain("LinkProjectStatusError");
           expect(json).toContain("Unexpected error retrieving remote project status");
         }
       }).pipe(Effect.provide(layer));
     });
 
     it.live("fails with auth error when api-keys returns non-200", () => {
-      const { layer } = setup({ apiKeys: { fail: legacyStatusCodeFailure(401) } });
+      const { layer } = setup({ apiKeys: { fail: statusCodeFailure(401) } });
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(legacyLink(flags()));
+        const exit = yield* Effect.exit(link(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const json = JSON.stringify(exit.cause);
-          expect(json).toContain("LegacyLinkAuthTokenError");
+          expect(json).toContain("LinkAuthTokenError");
           expect(json).toContain("Authorization failed for the access token and project ref pair");
         }
       }).pipe(Effect.provide(layer));
@@ -489,18 +466,17 @@ describe("legacy link integration", () => {
     it.live("fails with missing-key error when api-keys are empty", () => {
       const { layer } = setup({ apiKeys: { ok: [] } });
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(legacyLink(flags()));
+        const exit = yield* Effect.exit(link(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const json = JSON.stringify(exit.cause);
-          expect(json).toContain("LegacyLinkMissingKeyError");
+          expect(json).toContain("LinkMissingKeyError");
           expect(json).toContain("Anon key not found.");
         }
       }).pipe(Effect.provide(layer));
     });
 
     it.live("resolves keys by legacy name when no type field is present", () => {
-      // Untyped keys exercise the `name`-based fallback in extractServiceKeys.
       const { layer, out, workdir } = setup({
         apiKeys: {
           ok: [
@@ -510,15 +486,13 @@ describe("legacy link integration", () => {
         },
       });
       return Effect.gen(function* () {
-        yield* legacyLink(flags());
-        expect(readTemp(workdir, "project-ref")).toBe(LEGACY_VALID_REF);
+        yield* link(flags());
+        expect(readTemp(workdir, "project-ref")).toBe(VALID_REF);
         expect(out.stdoutText).toContain("Finished supabase link.");
       }).pipe(Effect.provide(layer));
     });
 
     it.live("fails with missing-key error when the only secret key is not service_role", () => {
-      // A `secret` key whose JWT role is not `service_role` is skipped, leaving no
-      // usable key — exercises the secret-branch `continue` + missing-key path.
       const { layer } = setup({
         apiKeys: {
           ok: [
@@ -532,26 +506,24 @@ describe("legacy link integration", () => {
         },
       });
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(legacyLink(flags()));
+        const exit = yield* Effect.exit(link(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("LegacyLinkMissingKeyError");
+          expect(JSON.stringify(exit.cause)).toContain("LinkMissingKeyError");
         }
       }).pipe(Effect.provide(layer));
     });
 
     it.live("ignores best-effort service errors without failing the link", () => {
       const { layer, out, workdir } = setup({
-        storageConfig: { fail: legacyStatusCodeFailure(500) },
-        poolerConfig: { fail: legacyStatusCodeFailure(503) },
+        storageConfig: { fail: statusCodeFailure(500) },
+        poolerConfig: { fail: statusCodeFailure(503) },
         tenant: "fail",
       });
       return Effect.gen(function* () {
-        yield* legacyLink(flags());
-        // Link still succeeds and writes the project-ref.
-        expect(readTemp(workdir, "project-ref")).toBe(LEGACY_VALID_REF);
+        yield* link(flags());
+        expect(readTemp(workdir, "project-ref")).toBe(VALID_REF);
         expect(out.stdoutText).toContain("Finished supabase link.");
-        // The best-effort files are absent because their services errored.
         expect(existsSync(tempFile(workdir, "storage-migration"))).toBe(false);
         expect(existsSync(tempFile(workdir, "rest-version"))).toBe(false);
       }).pipe(Effect.provide(layer));
@@ -561,18 +533,17 @@ describe("legacy link integration", () => {
       const { layer, workdir, apiMock } = setup();
       writeTempContent(workdir, "pooler-url", "stale-pooler-url");
       return Effect.gen(function* () {
-        yield* legacyLink(flags({ skipPooler: true }));
+        yield* link(flags({ skipPooler: true }));
         expect(existsSync(tempFile(workdir, "pooler-url"))).toBe(false);
         expect(apiMock.requests.map((r) => r.method)).not.toContain("getPoolerConfig");
       }).pipe(Effect.provide(layer));
     });
 
     it.live("fails when writing the project-ref file errors", () => {
-      // Make `<workdir>/supabase` a file so creating supabase/.temp fails for every
-      // temp write. The project status carries no version, so the first mandatory
-      // write to hit the broken path is project-ref (mirrors Go's read-only FS test).
+      // Makes `<workdir>/supabase` a file so every temp write fails; with no version in the
+      // project status, project-ref is the first mandatory write to hit the broken path.
       const out = mockOutput({ format: "text" });
-      const apiMock = mockLegacyPlatformApiService({
+      const apiMock = mockCommandPlatformApiService({
         v1: {
           getProject: () =>
             Effect.succeed({
@@ -584,18 +555,18 @@ describe("legacy link integration", () => {
           getPoolerConfig: () => Effect.succeed(POOLER_PRIMARY),
         },
       });
-      const cliSettings = mockLegacyCliSettings({
+      const cliSettings = mockCommandSettings({
         workdir: tempRoot.current,
         projectId: Option.none(),
       });
-      const layer = buildLegacyTestRuntime({
+      const layer = buildTestRuntime({
         out,
         api: { layer: apiMock.layer, httpClientLayer: tenantHttpLayer({ tenant: "fail" }) },
         cliSettings,
       });
       writeFileSync(join(tempRoot.current, "supabase"), "not-a-dir");
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(legacyLink(flags()));
+        const exit = yield* Effect.exit(link(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         expect(existsSync(tempFile(tempRoot.current, "project-ref"))).toBe(false);
       }).pipe(Effect.provide(layer));
@@ -604,7 +575,7 @@ describe("legacy link integration", () => {
     it.live("flushes telemetry and runs the linked-project cache via ensuring", () => {
       const { layer, telemetry, linkedCache } = setup();
       return Effect.gen(function* () {
-        yield* legacyLink(flags());
+        yield* link(flags());
         expect(telemetry.flushed).toBe(true);
         expect(linkedCache.cached).toBe(true);
       }).pipe(Effect.provide(layer));
@@ -613,45 +584,40 @@ describe("legacy link integration", () => {
     it.live("json output: emits a structured success and suppresses the Finished line", () => {
       const { layer, out, workdir } = setup({ format: "json" });
       return Effect.gen(function* () {
-        yield* legacyLink(flags());
+        yield* link(flags());
         const success = out.messages.find((m) => m.type === "success");
-        expect(success?.data).toMatchObject({ project_ref: LEGACY_VALID_REF });
+        expect(success?.data).toMatchObject({ project_ref: VALID_REF });
         expect(success?.data).not.toHaveProperty("branch");
         expect(out.stdoutText).not.toContain("Finished supabase link.");
-        expect(readTemp(workdir, "project-ref")).toBe(LEGACY_VALID_REF);
+        expect(readTemp(workdir, "project-ref")).toBe(VALID_REF);
       }).pipe(Effect.provide(layer));
     });
 
     it.live("stream-json output: emits a structured success", () => {
       const { layer, out } = setup({ format: "stream-json" });
       return Effect.gen(function* () {
-        yield* legacyLink(flags());
+        yield* link(flags());
         const success = out.messages.find((m) => m.type === "success");
-        expect(success?.data).toMatchObject({ project_ref: LEGACY_VALID_REF });
+        expect(success?.data).toMatchObject({ project_ref: VALID_REF });
       }).pipe(Effect.provide(layer));
     });
   });
 
   describe("ref-or-branch argument conflicts", () => {
     it.live(
-      "fails with LegacyLinkRefArgConflictError when both the positional and --project-ref are set",
+      "fails with LinkRefArgConflictError when both the positional and --project-ref are set",
       () => {
         const { layer, telemetry, linkedCache } = setup();
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(
-            legacyLink(flags({ refOrBranch: Option.some(LEGACY_VALID_REF) })),
-          );
+          const exit = yield* Effect.exit(link(flags({ refOrBranch: Option.some(VALID_REF) })));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const json = JSON.stringify(exit.cause);
-            expect(json).toContain("LegacyLinkRefArgConflictError");
+            expect(json).toContain("LinkRefArgConflictError");
             expect(json).toContain(
               "Cannot use both the [ref-or-branch] argument and the --project-ref flag.",
             );
           }
-          // PR #6168 review: this check now sits INSIDE the `Effect.ensuring`
-          // wrapper too — previously the earliest possible failure in the
-          // handler, exiting before telemetry's finalizer was ever reached.
           expect(telemetry.flushed).toBe(true);
           expect(linkedCache.cached).toBe(false);
         }).pipe(Effect.provide(layer));
@@ -664,12 +630,12 @@ describe("legacy link integration", () => {
         const { layer } = setup();
         return Effect.gen(function* () {
           const exit = yield* Effect.exit(
-            legacyLink(flags({ refOrBranch: Option.some(""), projectRef: Option.none() })),
+            link(flags({ refOrBranch: Option.some(""), projectRef: Option.none() })),
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const json = JSON.stringify(exit.cause);
-            expect(json).toContain("LegacyProjectRefRequiredError");
+            expect(json).toContain("ProjectRefRequiredError");
             expect(json).toContain(`required flag(s) \\"project-ref\\" not set`);
           }
         }).pipe(Effect.provide(layer));
@@ -681,11 +647,11 @@ describe("legacy link integration", () => {
       () => {
         const { layer } = setup();
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(legacyLink(flags({ projectRef: Option.some("") })));
+          const exit = yield* Effect.exit(link(flags({ projectRef: Option.some("") })));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const json = JSON.stringify(exit.cause);
-            expect(json).toContain("LegacyProjectRefRequiredError");
+            expect(json).toContain("ProjectRefRequiredError");
             expect(json).toContain(`required flag(s) \\"project-ref\\" not set`);
           }
         }).pipe(Effect.provide(layer));
@@ -697,10 +663,8 @@ describe("legacy link integration", () => {
       () => {
         const { layer, workdir } = setup();
         return Effect.gen(function* () {
-          yield* legacyLink(
-            flags({ refOrBranch: Option.some(""), projectRef: Option.some(LEGACY_VALID_REF) }),
-          );
-          expect(readTemp(workdir, "project-ref")).toBe(LEGACY_VALID_REF);
+          yield* link(flags({ refOrBranch: Option.some(""), projectRef: Option.some(VALID_REF) }));
+          expect(readTemp(workdir, "project-ref")).toBe(VALID_REF);
         }).pipe(Effect.provide(layer));
       },
     );
@@ -710,10 +674,8 @@ describe("legacy link integration", () => {
       () => {
         const { layer, workdir, apiMock } = setup();
         return Effect.gen(function* () {
-          yield* legacyLink(
-            flags({ refOrBranch: Option.some(LEGACY_VALID_REF), projectRef: Option.none() }),
-          );
-          expect(readTemp(workdir, "project-ref")).toBe(LEGACY_VALID_REF);
+          yield* link(flags({ refOrBranch: Option.some(VALID_REF), projectRef: Option.none() }));
+          expect(readTemp(workdir, "project-ref")).toBe(VALID_REF);
           expect(apiMock.requests.map((r) => r.method)).not.toContain("listAllBranches");
         }).pipe(Effect.provide(layer));
       },
@@ -724,25 +686,22 @@ describe("legacy link integration", () => {
     it.live(
       "THE HEADLINE REGRESSION: relinking a different branch resolves via the cached real parent, not the previously-linked branch ref",
       () => {
-        // Simulate the state left behind by a PRIOR `supabase link feature-branch`:
-        // project-ref holds the branch's own ref, but linked-project.json still
-        // holds the real parent (untouched, since branch links 404 on getProject).
+        // Simulates the state left behind by a prior `supabase link feature-branch`:
+        // project-ref holds the branch's own ref, but linked-project.json still holds the
+        // real parent.
         const { layer, workdir, apiMock } = setup({
           branches: { ok: [LINK_BRANCH, LINK_BRANCH_OTHER] },
-          project: { fail: legacyStatusCodeFailure(404) },
+          project: { fail: statusCodeFailure(404) },
         });
         writeLinkedParentRef(workdir, BRANCH_PROJECT_REF);
         writeLinkedProjectCacheFile(workdir, linkedProjectCacheJson(PARENT_REF));
         return Effect.gen(function* () {
-          yield* legacyLink(
+          yield* link(
             flags({ refOrBranch: Option.some("other-branch"), projectRef: Option.none() }),
           );
           const branchCall = apiMock.requests.find((r) => r.method === "listAllBranches");
-          // The dealbreaker bug: this must be the PARENT ref, never BRANCH_PROJECT_REF.
           expect(branchCall?.input).toMatchObject({ ref: PARENT_REF });
           expect(readTemp(workdir, "project-ref")).toBe(OTHER_BRANCH_PROJECT_REF);
-          // The 404 branch-link path leaves the cache untouched — the invariant a
-          // THIRD relink still depends on.
           expect(readTemp(workdir, "linked-project.json")).toBe(linkedProjectCacheJson(PARENT_REF));
         }).pipe(Effect.provide(layer));
       },
@@ -759,7 +718,7 @@ describe("legacy link integration", () => {
         writeLinkedProjectCacheFile(workdir, linkedProjectCacheJson(CACHE_ONLY_REF));
         writeLinkedParentRef(workdir, FILE_ONLY_REF);
         return Effect.gen(function* () {
-          yield* legacyLink(
+          yield* link(
             flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() }),
           );
           const branchCall = apiMock.requests.find((r) => r.method === "listAllBranches");
@@ -770,12 +729,10 @@ describe("legacy link integration", () => {
     );
 
     it.live(
-      "a garbage SUPABASE_PROJECT_ID hard-fails the branch lookup with LegacyLinkParentRefInvalidError, never falling through to the cache (PR #6168 review)",
+      "a garbage SUPABASE_PROJECT_ID hard-fails the branch lookup with LinkParentRefInvalidError, never falling through to the cache (PR #6168 review)",
       () => {
-        // Superseded behavior: first-VALID-wins used to skip a malformed env
-        // in favor of the cache. The first PRESENT candidate now decides —
-        // an explicit-but-typo'd override must not silently resolve a
-        // different parent.
+        // The first present candidate decides, even if invalid — a typo'd override must not
+        // silently fall through to the cache.
         const { layer, apiMock, workdir } = setup({
           branches: { ok: [LINK_BRANCH] },
           projectId: Option.some("not-a-valid-ref"),
@@ -784,13 +741,11 @@ describe("legacy link integration", () => {
         writeLinkedParentRef(workdir, FILE_ONLY_REF);
         return Effect.gen(function* () {
           const exit = yield* Effect.exit(
-            legacyLink(
-              flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() }),
-            ),
+            link(flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() })),
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("LegacyLinkParentRefInvalidError");
+            expect(JSON.stringify(exit.cause)).toContain("LinkParentRefInvalidError");
           }
           expect(apiMock.requests.find((r) => r.method === "listAllBranches")).toBeUndefined();
         }).pipe(Effect.provide(layer));
@@ -810,12 +765,11 @@ describe("legacy link integration", () => {
         ];
         return Effect.gen(function* () {
           for (const content of corruptCacheContents) {
-            // Re-seed on every iteration: a successful link overwrites project-ref
-            // with the resolved branch ref, so the prior iteration's own write
-            // would otherwise clobber this fixture before the next check runs.
+            // Re-seeds every iteration: a successful link overwrites project-ref with the
+            // resolved branch ref, clobbering this fixture for the next iteration.
             writeLinkedParentRef(workdir, FILE_ONLY_REF);
             writeLinkedProjectCacheFile(workdir, content);
-            yield* legacyLink(
+            yield* link(
               flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() }),
             );
             const branchCall = apiMock.requests
@@ -828,75 +782,64 @@ describe("legacy link integration", () => {
     );
 
     it.live(
-      "fails with LegacyLinkParentRefInvalidError when a parent candidate exists but none is ref-shaped",
+      "fails with LinkParentRefInvalidError when a parent candidate exists but none is ref-shaped",
       () => {
         const { layer, workdir, apiMock } = setup();
         writeLinkedParentRef(workdir, "not-a-real-ref!!");
         return Effect.gen(function* () {
           const exit = yield* Effect.exit(
-            legacyLink(
-              flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() }),
-            ),
+            link(flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() })),
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const json = JSON.stringify(exit.cause);
-            expect(json).toContain("LegacyLinkParentRefInvalidError");
+            expect(json).toContain("LinkParentRefInvalidError");
             expect(json).toContain(
               `Cannot resolve branch \\"feature-branch\\": the linked project ref is invalid`,
             );
             expect(json).toContain("Relink the parent project first: supabase link --project-ref");
           }
-          // The invalid parent is rejected before any API call is attempted.
           expect(apiMock.requests).toHaveLength(0);
         }).pipe(Effect.provide(layer));
       },
     );
 
-    it.live(
-      "fails with LegacyLinkBranchNotLinkedError when no parent candidate exists anywhere",
-      () => {
-        const { layer, apiMock } = setup();
-        return Effect.gen(function* () {
-          const exit = yield* Effect.exit(
-            legacyLink(
-              flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() }),
-            ),
+    it.live("fails with LinkBranchNotLinkedError when no parent candidate exists anywhere", () => {
+      const { layer, apiMock } = setup();
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          link(flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() })),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const json = JSON.stringify(exit.cause);
+          expect(json).toContain("LinkBranchNotLinkedError");
+          expect(json).toContain(`Cannot resolve \\"feature-branch\\": it is not a project ref`);
+          expect(json).toContain(
+            "If it is a branch name, link the parent project first: supabase link --project-ref",
           );
-          expect(Exit.isFailure(exit)).toBe(true);
-          if (Exit.isFailure(exit)) {
-            const json = JSON.stringify(exit.cause);
-            expect(json).toContain("LegacyLinkBranchNotLinkedError");
-            expect(json).toContain(`Cannot resolve \\"feature-branch\\": it is not a project ref`);
-            expect(json).toContain(
-              "If it is a branch name, link the parent project first: supabase link --project-ref",
-            );
-          }
-          expect(apiMock.requests).toHaveLength(0);
-        }).pipe(Effect.provide(layer));
-      },
-    );
+        }
+        expect(apiMock.requests).toHaveLength(0);
+      }).pipe(Effect.provide(layer));
+    });
 
     it.live(
-      "cache alone (linked-project.json with no project-ref file) is never proof of a link: fails with LegacyLinkBranchNotLinkedError, no API call (PR #6168 review)",
+      "cache alone (linked-project.json with no project-ref file) is never proof of a link: fails with LinkBranchNotLinkedError, no API call (PR #6168 review)",
       () => {
         const { layer, apiMock, workdir } = setup();
-        // Simulates a FAILED prior `link --project-ref <parent>`: `getProject`
-        // returned 200 (so `linked-project.json` got written via the failure
-        // arm's `Effect.ensuring`) but a later step failed before `project-ref`
-        // itself was ever written. That stale cache entry must never be trusted
-        // as parent-resolution evidence for a NEW branch lookup.
+        // Simulates a failed prior `link --project-ref <parent>`: `getProject` returned 200
+        // (so `linked-project.json` got written) but a later step failed before `project-ref`
+        // itself was written. That stale cache entry must never be trusted as parent-resolution
+        // evidence for a new branch lookup.
         writeLinkedProjectCacheFile(workdir, linkedProjectCacheJson(PARENT_REF));
         return Effect.gen(function* () {
           const exit = yield* Effect.exit(
-            legacyLink(
-              flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() }),
-            ),
+            link(flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() })),
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const json = JSON.stringify(exit.cause);
-            expect(json).toContain("LegacyLinkBranchNotLinkedError");
+            expect(json).toContain("LinkBranchNotLinkedError");
             expect(json).toContain(`Cannot resolve \\"feature-branch\\": it is not a project ref`);
           }
           expect(apiMock.requests).toHaveLength(0);
@@ -908,19 +851,15 @@ describe("legacy link integration", () => {
       "treats an unreadable project-ref path (e.g. a directory) as no candidate rather than failing",
       () => {
         const { layer, workdir, apiMock } = setup();
-        // A directory at the project-ref path makes `fs.readFileString` fail with
-        // a real (non-not-exist) read error, exercising the defensive fallback
-        // distinct from the plain "file missing" case.
+        // A directory (not a missing file) makes `fs.readFileString` fail with a real read error.
         mkdirSync(tempFile(workdir, "project-ref"), { recursive: true });
         return Effect.gen(function* () {
           const exit = yield* Effect.exit(
-            legacyLink(
-              flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() }),
-            ),
+            link(flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() })),
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("LegacyLinkBranchNotLinkedError");
+            expect(JSON.stringify(exit.cause)).toContain("LinkBranchNotLinkedError");
           }
           expect(apiMock.requests).toHaveLength(0);
         }).pipe(Effect.provide(layer));
@@ -934,23 +873,21 @@ describe("legacy link integration", () => {
       () => {
         const { layer, workdir, apiMock } = setup({
           branches: { ok: [LINK_BRANCH, LINK_BRANCH_OTHER] },
-          project: { fail: legacyStatusCodeFailure(404) },
+          project: { fail: statusCodeFailure(404) },
         });
         writeLinkedParentRef(workdir, PARENT_REF);
         return Effect.gen(function* () {
-          yield* legacyLink(
+          yield* link(
             flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() }),
           );
           expect(readTemp(workdir, "linked-project.json")).toBe(
             JSON.stringify({ ref: PARENT_REF }),
           );
 
-          // Follow-up: a second branch-name link must still resolve via the
-          // parent this write just persisted — proving it's real parent-chain
-          // evidence, not a dead write. `project-ref` was overwritten to the
-          // first branch's own ref by the first call, so this also proves the
-          // cache (not the file) is what a second resolution actually used.
-          yield* legacyLink(
+          // A second branch-name link must resolve via the parent this write just persisted.
+          // project-ref was overwritten by the first call, so this also proves the cache (not
+          // the file) is what a second resolution uses.
+          yield* link(
             flags({ refOrBranch: Option.some("other-branch"), projectRef: Option.none() }),
           );
           const branchCalls = apiMock.requests.filter((r) => r.method === "listAllBranches");
@@ -965,13 +902,13 @@ describe("legacy link integration", () => {
       () => {
         const { layer, workdir } = setup({
           branches: { ok: [LINK_BRANCH] },
-          project: { fail: legacyStatusCodeFailure(404) },
+          project: { fail: statusCodeFailure(404) },
         });
         writeLinkedParentRef(workdir, PARENT_REF);
         const richCache = linkedProjectCacheJson(PARENT_REF);
         writeLinkedProjectCacheFile(workdir, richCache);
         return Effect.gen(function* () {
-          yield* legacyLink(
+          yield* link(
             flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() }),
           );
           expect(readTemp(workdir, "linked-project.json")).toBe(richCache);
@@ -983,13 +920,13 @@ describe("legacy link integration", () => {
       "raw ref-shaped 404 link whose ref IS among the stale cache's branches: keeps the cache, link still succeeds",
       () => {
         const { layer, workdir, apiMock } = setup({
-          project: { fail: legacyStatusCodeFailure(404) },
+          project: { fail: statusCodeFailure(404) },
           branches: { ok: [LINK_BRANCH] },
         });
         const cacheContent = linkedProjectCacheJson(CACHE_ONLY_REF);
         writeLinkedProjectCacheFile(workdir, cacheContent);
         return Effect.gen(function* () {
-          yield* legacyLink(flags({ projectRef: Option.some(BRANCH_PROJECT_REF) }));
+          yield* link(flags({ projectRef: Option.some(BRANCH_PROJECT_REF) }));
           expect(readTemp(workdir, "project-ref")).toBe(BRANCH_PROJECT_REF);
           expect(readTemp(workdir, "linked-project.json")).toBe(cacheContent);
           const branchCall = apiMock.requests.find((r) => r.method === "listAllBranches");
@@ -1002,12 +939,12 @@ describe("legacy link integration", () => {
       "raw ref-shaped 404 link whose ref is NOT among the stale cache's branches: deletes the cache, link still succeeds",
       () => {
         const { layer, workdir } = setup({
-          project: { fail: legacyStatusCodeFailure(404) },
+          project: { fail: statusCodeFailure(404) },
           branches: { ok: [LINK_BRANCH_OTHER] },
         });
         writeLinkedProjectCacheFile(workdir, linkedProjectCacheJson(CACHE_ONLY_REF));
         return Effect.gen(function* () {
-          yield* legacyLink(flags({ projectRef: Option.some(BRANCH_PROJECT_REF) }));
+          yield* link(flags({ projectRef: Option.some(BRANCH_PROJECT_REF) }));
           expect(readTemp(workdir, "project-ref")).toBe(BRANCH_PROJECT_REF);
           expect(existsSync(tempFile(workdir, "linked-project.json"))).toBe(false);
         }).pipe(Effect.provide(layer));
@@ -1017,18 +954,14 @@ describe("legacy link integration", () => {
     it.live(
       "raw ref-shaped 404 link where the correlation lookup itself fails: DELETES the unverified cache, link still succeeds (fail-safe, PR #6168 review)",
       () => {
-        // Superseded behavior: an unverifiable divergent cache used to be
-        // kept. Fail-safe wins — a wrong parent claim silently misdirects
-        // parent-scoped mutations, while deletion just downgrades later
-        // branches commands to a loud, recoverable not-linked error.
         const { layer, workdir } = setup({
-          project: { fail: legacyStatusCodeFailure(404) },
-          branches: { fail: legacyStatusCodeFailure(500) },
+          project: { fail: statusCodeFailure(404) },
+          branches: { fail: statusCodeFailure(500) },
         });
         const cacheContent = linkedProjectCacheJson(CACHE_ONLY_REF);
         writeLinkedProjectCacheFile(workdir, cacheContent);
         return Effect.gen(function* () {
-          yield* legacyLink(flags({ projectRef: Option.some(BRANCH_PROJECT_REF) }));
+          yield* link(flags({ projectRef: Option.some(BRANCH_PROJECT_REF) }));
           expect(readTemp(workdir, "project-ref")).toBe(BRANCH_PROJECT_REF);
           expect(existsTemp(workdir, "linked-project.json")).toBe(false);
         }).pipe(Effect.provide(layer));
@@ -1043,7 +976,7 @@ describe("legacy link integration", () => {
         const { layer, workdir, apiMock } = setup({ branches: { ok: [LINK_BRANCH] } });
         writeLinkedParentRef(workdir, PARENT_REF);
         return Effect.gen(function* () {
-          yield* legacyLink(
+          yield* link(
             flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() }),
           );
           expect(readTemp(workdir, "project-ref")).toBe(BRANCH_PROJECT_REF);
@@ -1059,7 +992,7 @@ describe("legacy link integration", () => {
         const { layer, workdir } = setup({ branches: { ok: [LINK_BRANCH] } });
         writeLinkedParentRef(workdir, PARENT_REF);
         return Effect.gen(function* () {
-          yield* legacyLink(flags({ projectRef: Option.some("feature-branch") }));
+          yield* link(flags({ projectRef: Option.some("feature-branch") }));
           expect(readTemp(workdir, "project-ref")).toBe(BRANCH_PROJECT_REF);
         }).pipe(Effect.provide(layer));
       },
@@ -1069,9 +1002,7 @@ describe("legacy link integration", () => {
       const { layer, workdir } = setup({ branches: { ok: [LINK_BRANCH] } });
       writeLinkedParentRef(workdir, PARENT_REF);
       return Effect.gen(function* () {
-        yield* legacyLink(
-          flags({ refOrBranch: Option.some(LINK_BRANCH.id), projectRef: Option.none() }),
-        );
+        yield* link(flags({ refOrBranch: Option.some(LINK_BRANCH.id), projectRef: Option.none() }));
         expect(readTemp(workdir, "project-ref")).toBe(BRANCH_PROJECT_REF);
       }).pipe(Effect.provide(layer));
     });
@@ -1080,7 +1011,7 @@ describe("legacy link integration", () => {
       const { layer, workdir } = setup({ branches: { ok: [LINK_BRANCH] } });
       writeLinkedParentRef(workdir, PARENT_REF);
       return Effect.gen(function* () {
-        yield* legacyLink(
+        yield* link(
           flags({
             refOrBranch: Option.some(LINK_BRANCH.id.toUpperCase()),
             projectRef: Option.none(),
@@ -1091,7 +1022,7 @@ describe("legacy link integration", () => {
     });
 
     it.live(
-      "fails with LegacyLinkBranchNotReadyError and never falls through to link the parent, even with SUPABASE_PROJECT_ID set",
+      "fails with LinkBranchNotReadyError and never falls through to link the parent, even with SUPABASE_PROJECT_ID set",
       () => {
         const { layer, workdir, apiMock } = setup({
           branches: { ok: [LINK_BRANCH_NOT_READY] },
@@ -1099,19 +1030,16 @@ describe("legacy link integration", () => {
         });
         return Effect.gen(function* () {
           const exit = yield* Effect.exit(
-            legacyLink(
-              flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() }),
-            ),
+            link(flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() })),
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const json = JSON.stringify(exit.cause);
-            expect(json).toContain("LegacyLinkBranchNotReadyError");
+            expect(json).toContain("LinkBranchNotReadyError");
             expect(json).toContain(
               `Branch \\"feature-branch\\" has no project ref yet (status: CREATING_PROJECT)`,
             );
           }
-          // No project-ref written, and no attempt to link the parent (env) ref instead.
           expect(existsSync(tempFile(workdir, "project-ref"))).toBe(false);
           expect(apiMock.requests).toEqual([
             { method: "listAllBranches", input: { ref: PARENT_REF } },
@@ -1122,14 +1050,11 @@ describe("legacy link integration", () => {
 
     it.live("a failed branch lookup leaves an existing project-ref file untouched", () => {
       const { layer, workdir } = setup({ branches: { ok: [LINK_BRANCH] } });
-      // The project-ref file doubles as both "the existing link" and the parent
-      // candidate for this lookup — a realistic prior-link state.
+      // The project-ref file doubles as the existing link and the parent candidate here.
       writeLinkedParentRef(workdir, PARENT_REF);
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
-          legacyLink(
-            flags({ refOrBranch: Option.some("does-not-exist"), projectRef: Option.none() }),
-          ),
+          link(flags({ refOrBranch: Option.some("does-not-exist"), projectRef: Option.none() })),
         );
         expect(Exit.isFailure(exit)).toBe(true);
         expect(readTemp(workdir, "project-ref")).toBe(PARENT_REF);
@@ -1143,14 +1068,12 @@ describe("legacy link integration", () => {
       writeLinkedParentRef(workdir, PARENT_REF);
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
-          legacyLink(
-            flags({ refOrBranch: Option.some("does-not-exist"), projectRef: Option.none() }),
-          ),
+          link(flags({ refOrBranch: Option.some("does-not-exist"), projectRef: Option.none() })),
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const json = JSON.stringify(exit.cause);
-          expect(json).toContain("LegacyLinkBranchNotFoundError");
+          expect(json).toContain("LinkBranchNotFoundError");
           expect(json).toContain("branch-00");
           expect(json).toContain("branch-19");
           expect(json).not.toContain("branch-20");
@@ -1166,13 +1089,12 @@ describe("legacy link integration", () => {
       writeLinkedParentRef(workdir, PARENT_REF);
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
-          legacyLink(flags({ refOrBranch: Option.some("Staging"), projectRef: Option.none() })),
+          link(flags({ refOrBranch: Option.some("Staging"), projectRef: Option.none() })),
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const json = JSON.stringify(exit.cause);
           expect(json).toContain(`Did you mean \\"staging\\"?`);
-          // "Staging" has an uppercase letter, so no ref-typo hint.
           expect(json).not.toContain("If you meant a project ref");
         }
       }).pipe(Effect.provide(layer));
@@ -1185,14 +1107,12 @@ describe("legacy link integration", () => {
         writeLinkedParentRef(workdir, PARENT_REF);
         return Effect.gen(function* () {
           const exit = yield* Effect.exit(
-            legacyLink(
-              flags({ refOrBranch: Option.some("missingbranch"), projectRef: Option.none() }),
-            ),
+            link(flags({ refOrBranch: Option.some("missingbranch"), projectRef: Option.none() })),
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const json = JSON.stringify(exit.cause);
-            expect(json).toContain("LegacyLinkBranchNotFoundError");
+            expect(json).toContain("LinkBranchNotFoundError");
             expect(json).toContain(
               `Branch \\"missingbranch\\" not found: project ${PARENT_REF} has no branches.`,
             );
@@ -1209,12 +1129,12 @@ describe("legacy link integration", () => {
       writeLinkedParentRef(workdir, PARENT_REF);
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
-          legacyLink(flags({ refOrBranch: Option.some("my-branch"), projectRef: Option.none() })),
+          link(flags({ refOrBranch: Option.some("my-branch"), projectRef: Option.none() })),
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const json = JSON.stringify(exit.cause);
-          expect(json).toContain("LegacyLinkBranchNotFoundError");
+          expect(json).toContain("LinkBranchNotFoundError");
           expect(json).toContain(`Branch \\"my-branch\\" not found for project ${PARENT_REF}.`);
           expect(json).not.toContain("If you meant a project ref");
         }
@@ -1228,24 +1148,16 @@ describe("legacy link integration", () => {
       writeLinkedParentRef(workdir, PARENT_REF);
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
-          legacyLink(
-            flags({ refOrBranch: Option.some("missing-branch"), projectRef: Option.none() }),
-          ),
+          link(flags({ refOrBranch: Option.some("missing-branch"), projectRef: Option.none() })),
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const json = JSON.stringify(exit.cause);
-          expect(json).toContain("LegacyLinkBranchNotFoundError");
+          expect(json).toContain("LinkBranchNotFoundError");
           expect(json).toContain(
             `Branch \\"missing-branch\\" not found for project ${PARENT_REF}. Available branches: alpha, zeta`,
           );
         }
-        // PR #6168 review: a branch-name resolution failure now sits INSIDE the
-        // `Effect.ensuring` wrapper, so telemetry still flushes even though the
-        // link itself never reached ref resolution — previously this failure
-        // exited before the wrapper was ever reached, and telemetry silently
-        // never flushed. `ref` itself never resolved, so the linked-project
-        // cache fill correctly stays a no-op.
         expect(telemetry.flushed).toBe(true);
         expect(linkedCache.cached).toBe(false);
       }).pipe(Effect.provide(layer));
@@ -1254,18 +1166,16 @@ describe("legacy link integration", () => {
     it.live(
       "surfaces a dedicated message when listing branches 404s (parent may itself be a branch)",
       () => {
-        const { layer, workdir } = setup({ branches: { fail: legacyStatusCodeFailure(404) } });
+        const { layer, workdir } = setup({ branches: { fail: statusCodeFailure(404) } });
         writeLinkedParentRef(workdir, PARENT_REF);
         return Effect.gen(function* () {
           const exit = yield* Effect.exit(
-            legacyLink(
-              flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() }),
-            ),
+            link(flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() })),
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const json = JSON.stringify(exit.cause);
-            expect(json).toContain("LegacyLinkBranchListStatusError");
+            expect(json).toContain("LinkBranchListStatusError");
             expect(json).toContain(`Cannot list branches for project ${PARENT_REF} (HTTP 404)`);
             expect(json).toContain(
               `If ${PARENT_REF} is itself a preview branch, link its parent project first: supabase link --project-ref`,
@@ -1276,20 +1186,18 @@ describe("legacy link integration", () => {
     );
 
     it.live(
-      "fails with LegacyLinkBranchListStatusError when listing branches returns a non-200, non-404 status",
+      "fails with LinkBranchListStatusError when listing branches returns a non-200, non-404 status",
       () => {
-        const { layer, workdir } = setup({ branches: { fail: legacyStatusCodeFailure(500) } });
+        const { layer, workdir } = setup({ branches: { fail: statusCodeFailure(500) } });
         writeLinkedParentRef(workdir, PARENT_REF);
         return Effect.gen(function* () {
           const exit = yield* Effect.exit(
-            legacyLink(
-              flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() }),
-            ),
+            link(flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() })),
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const json = JSON.stringify(exit.cause);
-            expect(json).toContain("LegacyLinkBranchListStatusError");
+            expect(json).toContain("LinkBranchListStatusError");
             expect(json).toContain("unexpected list branches status 500");
           }
         }).pipe(Effect.provide(layer));
@@ -1297,20 +1205,18 @@ describe("legacy link integration", () => {
     );
 
     it.live(
-      "fails with LegacyLinkBranchListNetworkError when listing branches fails at the transport layer",
+      "fails with LinkBranchListNetworkError when listing branches fails at the transport layer",
       () => {
-        const { layer, workdir } = setup({ branches: { fail: legacyTransportFailureForMock() } });
+        const { layer, workdir } = setup({ branches: { fail: transportFailureForMock() } });
         writeLinkedParentRef(workdir, PARENT_REF);
         return Effect.gen(function* () {
           const exit = yield* Effect.exit(
-            legacyLink(
-              flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() }),
-            ),
+            link(flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() })),
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const json = JSON.stringify(exit.cause);
-            expect(json).toContain("LegacyLinkBranchListNetworkError");
+            expect(json).toContain("LinkBranchListNetworkError");
             expect(json).toContain("failed to list branches:");
           }
         }).pipe(Effect.provide(layer));
@@ -1325,7 +1231,7 @@ describe("legacy link integration", () => {
         const { layer, out, workdir } = setup({ branches: { ok: [LINK_BRANCH] } });
         writeLinkedParentRef(workdir, PARENT_REF);
         return Effect.gen(function* () {
-          yield* legacyLink(
+          yield* link(
             flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() }),
           );
           expect(out.progressEvents).toContainEqual({
@@ -1349,7 +1255,7 @@ describe("legacy link integration", () => {
         });
         writeLinkedParentRef(workdir, PARENT_REF);
         return Effect.gen(function* () {
-          yield* legacyLink(
+          yield* link(
             flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() }),
           );
           expect(readTemp(workdir, "project-ref")).toBe(BRANCH_PROJECT_REF);
@@ -1369,19 +1275,17 @@ describe("legacy link integration", () => {
       () => {
         const { layer, out, workdir } = setup({
           format: "json",
-          branches: { fail: legacyStatusCodeFailure(500) },
+          branches: { fail: statusCodeFailure(500) },
         });
         writeLinkedParentRef(workdir, PARENT_REF);
         return Effect.gen(function* () {
           const exit = yield* Effect.exit(
-            legacyLink(
-              flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() }),
-            ),
+            link(flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() })),
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const json = JSON.stringify(exit.cause);
-            expect(json).toContain("LegacyLinkBranchListStatusError");
+            expect(json).toContain("LinkBranchListStatusError");
           }
           expect(out.progressEvents).toEqual([]);
         }).pipe(Effect.provide(layer));
@@ -1395,7 +1299,7 @@ describe("legacy link integration", () => {
       });
       writeLinkedParentRef(workdir, PARENT_REF);
       return Effect.gen(function* () {
-        yield* legacyLink(
+        yield* link(
           flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() }),
         );
         const success = out.messages.find((m) => m.type === "success");
@@ -1416,15 +1320,13 @@ describe("legacy link integration", () => {
         const { layer, workdir } = setup({
           branches: { ok: [LINK_BRANCH] },
           analytics,
-          // A branch's own project ref always 404s on `getProject` (it isn't a
-          // real top-level project) — this is what routes telemetry into the
-          // CLI-2167 `else if (branchResolution)` branch instead of the plain
-          // `if (project)` branch.
-          project: { fail: legacyStatusCodeFailure(404) },
+          // A branch's own project ref always 404s on `getProject`, routing telemetry into
+          // the branch-resolution arm instead of the plain project arm.
+          project: { fail: statusCodeFailure(404) },
         });
         writeLinkedParentRef(workdir, PARENT_REF);
         return Effect.gen(function* () {
-          yield* legacyLink(
+          yield* link(
             flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() }),
           );
           const capture = analytics.captured.find((c) => c.event === "cli_project_linked");
@@ -1435,8 +1337,6 @@ describe("legacy link integration", () => {
           });
           expect(properties?.groups).toEqual({ project: BRANCH_PROJECT_REF });
           expect(analytics.groupIdentified).toHaveLength(0);
-          // The branch NAME is user-created content and must never leave the
-          // machine in any captured analytics payload.
           expect(JSON.stringify(analytics.captured)).not.toContain("feature-branch");
         }).pipe(Effect.provide(layer));
       },
@@ -1450,12 +1350,11 @@ describe("legacy link integration", () => {
           branches: { ok: [LINK_BRANCH_DEFAULT] },
           analytics,
           // No `project` override — `HEALTHY_PROJECT.ref === PARENT_REF`, so
-          // `getProject(PARENT_REF)` returns 200 here, unlike the 404 test
-          // above: a default branch's own `project_ref` IS the parent's ref.
+          // `getProject(PARENT_REF)` returns 200 here, unlike the 404 test above.
         });
         writeLinkedParentRef(workdir, PARENT_REF);
         return Effect.gen(function* () {
-          yield* legacyLink(flags({ refOrBranch: Option.some("main"), projectRef: Option.none() }));
+          yield* link(flags({ refOrBranch: Option.some("main"), projectRef: Option.none() }));
           const captures = analytics.captured.filter((c) => c.event === "cli_project_linked");
           expect(captures).toHaveLength(1);
           const properties = captures[0]?.properties as { groups?: unknown } | undefined;
@@ -1464,7 +1363,6 @@ describe("legacy link integration", () => {
             parent_project_ref: PARENT_REF,
           });
           expect(properties?.groups).toEqual({ organization: "org_123", project: PARENT_REF });
-          // The normal 200 arm's usual richness is untouched by the extension.
           expect(analytics.groupIdentified).toEqual([
             {
               groupType: "organization",
@@ -1489,7 +1387,7 @@ describe("legacy link integration", () => {
       () => {
         const out = mockOutput({ format: "text" });
         const analytics = mockContextualAnalytics();
-        const apiMock = mockLegacyPlatformApiService({
+        const apiMock = mockCommandPlatformApiService({
           v1: {
             getProject: () => Effect.succeed(HEALTHY_PROJECT),
             getProjectApiKeys: () => Effect.succeed(SERVICE_KEYS),
@@ -1497,12 +1395,12 @@ describe("legacy link integration", () => {
             getPoolerConfig: () => Effect.succeed(POOLER_PRIMARY),
           },
         });
-        const cliSettings = mockLegacyCliSettings({
+        const cliSettings = mockCommandSettings({
           workdir: tempRoot.current,
           projectId: Option.none(),
         });
         const layer = Layer.mergeAll(
-          buildLegacyTestRuntime({
+          buildTestRuntime({
             out,
             api: { layer: apiMock.layer, httpClientLayer: tenantHttpLayer({}) },
             cliSettings,
@@ -1510,13 +1408,13 @@ describe("legacy link integration", () => {
           }),
           commandRuntimeLayer(["link"]),
           Stdio.layerTest({
-            args: Effect.succeed(["link", "--project-ref", LEGACY_VALID_REF]),
+            args: Effect.succeed(["link", "--project-ref", VALID_REF]),
           }),
         );
         return Effect.gen(function* () {
-          yield* legacyLinkHandler(flags({ projectRef: Option.some(LEGACY_VALID_REF) }));
+          yield* linkHandler(flags({ projectRef: Option.some(VALID_REF) }));
           const event = analytics.captured.find((c) => c.event === "cli_command_executed");
-          expect(event?.properties.flags).toEqual({ "project-ref": LEGACY_VALID_REF });
+          expect(event?.properties.flags).toEqual({ "project-ref": VALID_REF });
         }).pipe(Effect.provide(layer));
       },
     );
@@ -1526,13 +1424,13 @@ describe("legacy link integration", () => {
       () => {
         const out = mockOutput({ format: "text" });
         const analytics = mockContextualAnalytics();
-        const apiMock = mockLegacyPlatformApiService({ v1: {} });
-        const cliSettings = mockLegacyCliSettings({
+        const apiMock = mockCommandPlatformApiService({ v1: {} });
+        const cliSettings = mockCommandSettings({
           workdir: tempRoot.current,
           projectId: Option.none(),
         });
         const layer = Layer.mergeAll(
-          buildLegacyTestRuntime({
+          buildTestRuntime({
             out,
             api: { layer: apiMock.layer, httpClientLayer: tenantHttpLayer({}) },
             cliSettings,
@@ -1544,7 +1442,7 @@ describe("legacy link integration", () => {
           }),
         );
         return Effect.gen(function* () {
-          yield* Effect.exit(legacyLinkHandler(flags({ projectRef: Option.some("my-branch") })));
+          yield* Effect.exit(linkHandler(flags({ projectRef: Option.some("my-branch") })));
           const event = analytics.captured.find((c) => c.event === "cli_command_executed");
           expect(event?.properties.flags).toEqual({ "project-ref": "<redacted>" });
         }).pipe(Effect.provide(layer));

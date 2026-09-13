@@ -4,354 +4,301 @@ import { diffProjectConfig, findCliProjectRoot, type ConfigChange } from "@supab
 import { operationDefinitions } from "@supabase/api/effect";
 import { Clock, Effect, FileSystem, Option, Path } from "effect";
 
-import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { legacyResolveYesWithProjectEnv } from "../../../shared/legacy/global-flags.ts";
+import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
+import { CommandSettings } from "../../../config/command-settings.service.ts";
+import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
+import { resolveYesWithProjectEnv } from "../../../command-internal/global-flags.ts";
 import { CONTEXT_CANCELED_MESSAGE } from "../../../shared/output/errors.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { Stdin } from "../../../shared/runtime/stdin.service.ts";
 import { Tty } from "../../../shared/runtime/tty.service.ts";
 import {
-  legacyAssertDecryptableSecrets,
-  legacyLoadProjectEnv,
-} from "../../../command-internal/legacy-db-config.toml-read.ts";
-import { legacyResolveLinkedParentRef } from "../../../command-internal/legacy-parent-project-ref.ts";
-import { LEGACY_BRANCH_UUID_PATTERN } from "../../../command-internal/legacy-ref-patterns.ts";
+  assertDecryptableSecrets,
+  loadProjectEnv,
+} from "../../../command-internal/db-config.toml-read.ts";
+import { resolveLinkedParentRef } from "../../../command-internal/parent-project-ref.ts";
+import { BRANCH_UUID_PATTERN } from "../../../command-internal/ref-patterns.ts";
 import {
-  legacySanitizeInlineName,
-  mapLegacyHttpError,
-  sanitizeLegacyErrorBody,
-} from "../../../command-internal/legacy-http-errors.ts";
-import { legacyPromptYesNo } from "../../../shared/legacy/legacy-prompt-yes-no.ts";
-import { legacyCollectDotenvPrivateKeys } from "../../../command-internal/legacy-vault-decrypt.ts";
-import { legacyConfigApiScope, legacyConfigScopeLine } from "../config.format.ts";
-import { legacyLoadLocalConfig } from "../config.load.ts";
-import { legacyConfigProjectConfigTry } from "../config.project-config.ts";
+  sanitizeInlineName,
+  mapHttpError,
+  sanitizeErrorBody,
+  unexpectedStatusMessage,
+} from "../../../command-internal/http-errors.ts";
 import {
-  legacyConfigReadStatusMessage,
-  legacyUnexpectedStatusMessage,
-} from "../config.read-status.ts";
-import { legacyConfigTargetErrorsFor, legacyResolveConfigTarget } from "../config.target.ts";
-import { legacyLoadAuthEmailContent } from "./push.auth-email-content.ts";
-import {
-  type LegacyConfigPushKnownBranch,
-  legacyResolveConfigPushTarget,
-} from "./push.branch-target.ts";
+  configTargetErrorsFor,
+  resolveConfigTarget,
+} from "../../../command-internal/project-target.ts";
+import { requireExplicitWorkdirProject } from "../../../command-internal/workdir-project.ts";
+import { shouldSearchAncestors } from "../../../command-internal/workdir-search.ts";
+import { validateWorkdirIsDirectory } from "../../../command-internal/workdir-validation.ts";
+import { promptYesNo } from "../../../command-internal/prompt-yes-no.ts";
+import { collectDotenvPrivateKeys } from "../../../command-internal/vault-decrypt.ts";
+import { configApiScope, configScopeLine } from "../config.format.ts";
+import { loadLocalConfig } from "../config.load.ts";
+import { configProjectConfigTry } from "../config.project-config.ts";
+import { configReadStatusMessage } from "../config.read-status.ts";
+import { loadAuthEmailContent } from "./push.auth-email-content.ts";
+import { type ConfigPushKnownBranch, resolveConfigPushTarget } from "./push.branch-target.ts";
 import { getCostMatrix } from "./push.cost-matrix.ts";
 import {
-  legacyEncodeApiBody,
-  legacyEncodeAuthBody,
-  legacyEncodeDbSettingsBody,
-  legacyEncodeNetworkRestrictionsBody,
-  legacyEncodeSslEnforcementBody,
-  legacyEncodeStorageBody,
-  type LegacyPushEncoded,
+  encodeApiBody,
+  encodeAuthBody,
+  encodeDbSettingsBody,
+  encodeNetworkRestrictionsBody,
+  encodeSslEnforcementBody,
+  encodeStorageBody,
+  type PushEncoded,
 } from "./push.encoders.ts";
 import {
-  LegacyConfigPushApiUpdateNetworkError,
-  LegacyConfigPushApiUpdateStatusError,
-  LegacyConfigPushAuthUpdateNetworkError,
-  LegacyConfigPushAuthUpdateStatusError,
-  LegacyConfigPushBranchNotFoundError,
-  LegacyConfigPushBranchNotLinkedError,
-  LegacyConfigPushBranchNotReadyError,
-  LegacyConfigPushBranchResolveNetworkError,
-  LegacyConfigPushBranchResolveStatusError,
-  LegacyConfigPushCancelledError,
-  LegacyConfigPushConfigEmptyError,
-  LegacyConfigPushConfigReadNetworkError,
-  LegacyConfigPushConfigReadStatusError,
-  LegacyConfigPushDbUpdateNetworkError,
-  LegacyConfigPushDbUpdateStatusError,
-  LegacyConfigPushEnableWebhookNetworkError,
-  LegacyConfigPushEnableWebhookStatusError,
-  LegacyConfigPushLoadConfigError,
-  LegacyConfigPushNetworkRestrictionsUpdateNetworkError,
-  LegacyConfigPushNetworkRestrictionsUpdateStatusError,
-  LegacyConfigPushParentRefInvalidError,
-  LegacyConfigPushSslEnforcementUpdateNetworkError,
-  LegacyConfigPushSslEnforcementUpdateStatusError,
-  LegacyConfigPushStorageUpdateNetworkError,
-  LegacyConfigPushStorageUpdateStatusError,
+  ConfigPushApiUpdateNetworkError,
+  ConfigPushApiUpdateStatusError,
+  ConfigPushAuthUpdateNetworkError,
+  ConfigPushAuthUpdateStatusError,
+  ConfigPushBranchNotFoundError,
+  ConfigPushBranchNotLinkedError,
+  ConfigPushBranchNotReadyError,
+  ConfigPushBranchResolveNetworkError,
+  ConfigPushBranchResolveStatusError,
+  ConfigPushCancelledError,
+  ConfigPushConfigEmptyError,
+  ConfigPushConfigReadNetworkError,
+  ConfigPushConfigReadStatusError,
+  ConfigPushDbUpdateNetworkError,
+  ConfigPushDbUpdateStatusError,
+  ConfigPushEnableWebhookNetworkError,
+  ConfigPushEnableWebhookStatusError,
+  ConfigPushLoadConfigError,
+  ConfigPushNetworkRestrictionsUpdateNetworkError,
+  ConfigPushNetworkRestrictionsUpdateStatusError,
+  ConfigPushParentRefInvalidError,
+  ConfigPushSslEnforcementUpdateNetworkError,
+  ConfigPushSslEnforcementUpdateStatusError,
+  ConfigPushStorageUpdateNetworkError,
+  ConfigPushStorageUpdateStatusError,
+  ConfigPushWorkdirError,
 } from "./push.errors.ts";
 import {
-  legacyConfigPushBranchPromptLabel,
-  legacyConfigPushPayloadFields,
-  legacyConfigPushTargetLines,
-  legacyPushNotes,
-  legacyPushNotPushableLine,
-  legacyPushPayload,
-  legacyPushSummaryMessage,
-  legacyPushUpdatingLine,
-  legacyPushUpToDateLine,
-  type LegacyPushForced,
-  type LegacyPushUnencodable,
+  configPushBranchPromptLabel,
+  configPushPayloadFields,
+  configPushTargetLines,
+  pushNotes,
+  pushNotPushableLine,
+  pushPayload,
+  pushSummaryMessage,
+  pushUpdatingLine,
+  pushUpToDateLine,
+  type PushForced,
+  type PushUnencodable,
 } from "./push.format.ts";
-import { legacyComparePaths, legacyIsRecord } from "./push.paths.ts";
+import { comparePaths, isRecord } from "./push.paths.ts";
 import {
-  LEGACY_PUSH_ADDON_GATES,
-  LEGACY_PUSH_RESOURCES,
-  legacyApplyMfaAddonDecline,
-  legacyChangesCommunicated,
-  legacyPlanConfigPush,
-  legacyPushAddonPromptNeeded,
-  legacyPushPromptKey,
-  legacyPushResourceEnabled,
-  legacyPushResourceForPath,
-  legacyPushResponseBlock,
-  type LegacyPushResource,
+  PUSH_ADDON_GATES,
+  PUSH_RESOURCES,
+  applyMfaAddonDecline,
+  changesCommunicated,
+  planConfigPush,
+  pushAddonPromptNeeded,
+  pushPromptKey,
+  pushResourceEnabled,
+  pushResourceForPath,
+  pushResponseBlock,
+  type PushResource,
 } from "./push.plan.ts";
-import { legacyResolveAuthSecrets, type LegacyPushSecretDecision } from "./push.secrets.ts";
-import type { LegacyConfigPushFlags } from "./push.command.ts";
-import type { LegacyConfigPushServiceResult } from "./push.types.ts";
+import { resolveAuthSecrets, type PushSecretDecision } from "./push.secrets.ts";
+import type { ConfigPushFlags } from "./push.command.ts";
+import type { ConfigPushServiceResult } from "./push.types.ts";
 
-/** The `services[].changes` union (D8): encoded paths ∪ content extras ∪ secret paths the write
- * ACTUALLY sent, path-sorted. `sentSecretPaths` is `[]` for a declined/skipped write. */
-function legacyPushServiceChanges(
-  encoded: LegacyPushEncoded<unknown>,
+/** The `services[].changes` union: encoded paths ∪ content extras ∪ secret paths the write
+ *  actually sent, path-sorted. `sentSecretPaths` is `[]` for a declined/skipped write. */
+function pushServiceChanges(
+  encoded: PushEncoded<unknown>,
   sentSecretPaths: ReadonlyArray<ReadonlyArray<string>>,
 ): ReadonlyArray<ReadonlyArray<string>> {
   return [...encoded.encoded, ...encoded.extras.map((extra) => extra.path), ...sentSecretPaths]
     .slice()
-    .sort(legacyComparePaths);
+    .sort(comparePaths);
 }
 
-/** `services[].changes`, `secrets.sent`, and `secrets.skipped` must all read from the same
- * source: the encoder's own `secretsEncoded` — the container that carries a `send` decision can
- * still drop it as `unencodable`, so the raw decision list alone over-counts what a write actually
- * placed in the body. */
-function legacyPushSentSecretPaths(
-  encoded: LegacyPushEncoded<unknown>,
-): ReadonlyArray<ReadonlyArray<string>> {
+/** `services[].changes`, `secrets.sent`, and `secrets.skipped` must all read from the encoder's
+ *  own `secretsEncoded` — a container carrying a `send` decision can still drop it as
+ *  `unencodable`, so the raw decision list alone over-counts what was actually sent. */
+function pushSentSecretPaths(encoded: PushEncoded<unknown>): ReadonlyArray<ReadonlyArray<string>> {
   return encoded.secretsEncoded ?? [];
 }
 
 /** `push.format.ts` must never see a secret's plaintext. */
-function toSecretReport(decision: LegacyPushSecretDecision) {
+function toSecretReport(decision: PushSecretDecision) {
   const { plaintext: _plaintext, ...report } = decision;
   return report;
 }
 
-const mapPushBranchResolveError = mapLegacyHttpError({
-  networkError: LegacyConfigPushBranchResolveNetworkError,
-  statusError: LegacyConfigPushBranchResolveStatusError,
+const mapPushBranchResolveError = mapHttpError({
+  networkError: ConfigPushBranchResolveNetworkError,
+  statusError: ConfigPushBranchResolveStatusError,
   networkMessage: (cause) => `failed to resolve branch: ${cause}`,
-  statusMessage: legacyUnexpectedStatusMessage,
+  statusMessage: unexpectedStatusMessage,
 });
 
-/** Error construction for `legacyResolveConfigTarget` (`../config.target.ts`, shared with
- *  `config diff`/`config pull`), keeping `config push`'s own tagged error classes; the
- *  message wording is shared there. */
-const configTargetErrors = legacyConfigTargetErrorsFor({
-  notLinked: LegacyConfigPushBranchNotLinkedError,
-  parentRefInvalid: LegacyConfigPushParentRefInvalidError,
-  branchNotFound: LegacyConfigPushBranchNotFoundError,
-  branchNotReady: LegacyConfigPushBranchNotReadyError,
+/** Wires `resolveConfigTarget` (shared with `config diff`/`config pull`) to `config push`'s own
+ *  tagged error classes. */
+const configTargetErrors = configTargetErrorsFor({
+  notLinked: ConfigPushBranchNotLinkedError,
+  parentRefInvalid: ConfigPushParentRefInvalidError,
+  branchNotFound: ConfigPushBranchNotFoundError,
+  branchNotReady: ConfigPushBranchNotReadyError,
 });
 
-export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
-  flags: LegacyConfigPushFlags,
-) {
+export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushFlags) {
   const output = yield* Output;
-  const api = yield* LegacyPlatformApi;
-  const cliSettings = yield* LegacyCliSettings;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
+  const api = yield* CommandPlatformApi;
+  const cliSettings = yield* CommandSettings;
+  const linkedProjectCache = yield* LinkedProjectCache;
+  const telemetryState = yield* TelemetryState;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  // `--yes` OR `SUPABASE_YES`. `config push` imports `supabase/.env` before
-  // the confirmation prompt reads the yes flag, so a `SUPABASE_YES` set only
-  // in `supabase/.env` auto-confirms. Resolve against the project env, not
-  // just the flag + shell env. Load it from the resolved project root
-  // (walking up, same as `loadCliConfig` below and the workdir change
-  // before config load), so a push from a subdirectory still reads the
-  // project root's `supabase/.env`.
-  // Resolved against `cliSettings.workdir` — the same root the project-ref
-  // resolver and the linked-project cache use — so `--workdir ../other`
-  // pushes `../other`'s config.toml, never the invoking directory's file to
-  // another root's linked project.
-  const projectRoot = (yield* findCliProjectRoot(cliSettings.workdir)) ?? cliSettings.workdir;
-  const projectEnv = yield* legacyLoadProjectEnv(fs, path, projectRoot);
-  const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
-  // dotenvx private keys for decrypting `encrypted:` secrets, from the shell
-  // + project env — same source/precedence as `legacy-db-config.toml-read.ts`
-  // (`process.env` wins over `supabase/.env`).
-  const dotenvPrivateKeys = legacyCollectDotenvPrivateKeys({ ...projectEnv, ...process.env });
-  // Only reached by `legacyAssertDecryptableSecrets` below for an `env(VAR)` literal that
-  // survives `loaded.document`'s own (`@supabase/config`) interpolation pass unresolved — i.e.
-  // when this wider env source resolves `VAR` but `@supabase/config`'s
-  // narrower one (`supabase/.env`/`.env.local` only) didn't. Practically
-  // unreachable in the same narrow way the CLI-1489 comment below already documents for
-  // non-secret fields; kept for parity with the shared function's other caller
-  // (`legacy-db-config.toml-read.ts`, whose pre-interpolation document relies on this).
-  const secretEnvLookup = (name: string): string | undefined =>
-    process.env[name] ?? projectEnv[name];
 
-  // `--project-ref` accepts a project ref, or the name (or UUID) of a branch
-  // of the linked project — `link`'s/`config diff`'s settled vocabulary
-  // (CLI-2167/CLI-2289). An empty `--project-ref` value is absent, mirroring
-  // the resolver's own rule.
+  // `--project-ref` accepts a project ref, or the name (or UUID) of a branch of the linked
+  // project. An empty value is treated as absent, mirroring the resolver's own rule.
   const requestedRef = Option.filter(flags.projectRef, (value) => value.length > 0);
 
-  // Written once ref resolution succeeds, so the linked-project cache
-  // finalizer below only fires for invocations that got that far — mirrors
-  // `diff.handler.ts`'s `resolvedRef` pattern (Legacy Shell Invariant #1):
-  // every failure path from here on, including branch/UUID resolution,
-  // stays inside this file's single `Effect.ensuring`-wrapped block below.
+  // Set once ref resolution succeeds, so the linked-project cache write below only fires for
+  // invocations that got that far.
   let resolvedRef: string | undefined;
 
   yield* Effect.gen(function* () {
-    // 1. Resolve the push target. `--project-ref` accepts a project ref, or
-    // the name (or UUID) of a branch of the linked project (CLI-2167/CLI-2289) —
-    // `legacyResolveConfigTarget` (`../config.target.ts`, Hoist Before You
-    // Duplicate, shared with `config diff`/`config pull`). This is ALSO
-    // where `resolvedRef` is set, so every one of the shared resolver's
-    // failure paths (not linked, invalid parent, not found, not ready,
-    // network/status) still flushes telemetry and, once a ref is known,
-    // writes the linked-project cache.
+    // 0. The resolved `--workdir`/`SUPABASE_WORKDIR` must exist and be a directory before
+    // anything else touches it: a workdir naming a regular file makes `loadProjectEnv` throw
+    // ENOTDIR with a confusing "failed to read environment file" error instead of this one.
+    yield* validateWorkdirIsDirectory(cliSettings.workdir, fs).pipe(
+      Effect.mapError((error) => new ConfigPushWorkdirError({ message: error.message })),
+    );
+
+    // `--yes`/`SUPABASE_YES` resolves against the project env (not just the flag + shell env), so
+    // a `SUPABASE_YES` set only in `supabase/.env` auto-confirms. The project root climbs to find
+    // it only when `--workdir` was defaulted; an explicit `--workdir ../other` pushes that
+    // directory's own config.toml without climbing to another root's linked project.
+    const projectRoot =
+      (yield* findCliProjectRoot(cliSettings.workdir, {
+        search: shouldSearchAncestors(cliSettings),
+      })) ?? cliSettings.workdir;
+    const projectEnv = yield* loadProjectEnv(fs, path, projectRoot);
+    const yes = yield* resolveYesWithProjectEnv(projectEnv);
+    // dotenvx private keys for decrypting `encrypted:` secrets, from the shell + project env;
+    // `process.env` wins over `supabase/.env`, matching `db-config.toml-read.ts`.
+    const dotenvPrivateKeys = collectDotenvPrivateKeys({ ...projectEnv, ...process.env });
+    // Reached only when an `env(VAR)` literal survives `@supabase/config`'s own (narrower)
+    // interpolation pass unresolved but this wider shell+project-env lookup can still resolve it.
+    const secretEnvLookup = (name: string): string | undefined =>
+      process.env[name] ?? projectEnv[name];
+
+    // 0.5. An explicit `--workdir`/`SUPABASE_WORKDIR` with no project fails here, before a
+    // branch-name/UUID lookup burns a network round trip. A defaulted workdir is untouched: in a
+    // config-less directory with no linked project, it instead fails with step 1's not-linked
+    // error. Uses the same error message builder as the step-2 `loaded === null` branch.
+    yield* requireExplicitWorkdirProject(cliSettings).pipe(
+      Effect.mapError((error) => new ConfigPushLoadConfigError({ message: error.message })),
+    );
+
+    // 1. Resolve the push target. `resolvedRef` is set here so every failure path from the shared
+    // resolver still flushes telemetry and, once a ref is known, writes the linked-project cache.
     //
-    // Deliberately runs BEFORE the config load below: a `[remotes.<name>]`
-    // overlay is merged INSIDE `loadCliConfig` itself (driven by
-    // `projectRef`) before its one full schema decode, and only ONE decode
-    // may ever run — a base document that's schema-invalid without its
-    // overlay must never be evaluated on its own, or a config that's only
-    // valid once the matching remote applies would be wrongly rejected. A
-    // branch name/UUID resolution may therefore cost a network round trip
-    // before a malformed `config.toml` is caught — an accepted, narrow
-    // tradeoff (matches this command's own pre-CLI-2168 behavior, which
-    // always resolved before loading).
-    const { ref, branch } = yield* legacyResolveConfigTarget(
+    // Runs before the config load below: a `[remotes.<name>]` overlay is merged inside
+    // `loadCliConfig` before its one schema decode, so a base document that's invalid without its
+    // overlay must never be decoded on its own — this can cost a network round trip before a
+    // malformed `config.toml` is caught.
+    const { ref, branch } = yield* resolveConfigTarget(
       requestedRef,
       configTargetErrors,
       mapPushBranchResolveError,
     );
     resolvedRef = ref;
 
-    // 2. Load config.toml with the resolved ref (TOML parse error aborts
-    // before any network call). A matching `[remotes.<name>]` block's
-    // overlay is merged before decode in the SAME call — see the note
-    // above.
+    // 2. Load config.toml with the resolved ref (a TOML parse error aborts before any network
+    // call); a matching `[remotes.<name>]` overlay merges before decode in the same call.
     //
-    // NOTE (CLI-1489): `config push` needs the fully decoded config (every
-    // service subset), so it uses `legacyLoadLocalConfig` (`../config.load.ts`,
-    // shared with `config diff`/`config pull`) rather than the tolerant
-    // `legacy-db-config.toml-read.ts` subtree reader. The underlying
-    // `loadCliConfig` raises `CliConfigParseError` on `env(...)` refs over
-    // numeric/bool fields; `legacyLoadLocalConfig` catches it (and a
-    // duplicate-remote/missing-file failure) and converts it to this
-    // family's own tagged error via the shared message shapes.
-    const loaded = yield* legacyLoadLocalConfig(
-      cliSettings.workdir,
+    // Uses `loadLocalConfig` (needs the fully decoded config) rather than the tolerant
+    // `db-config.toml-read.ts` subtree reader, converting its parse/duplicate-remote/missing-file
+    // failures into this family's own tagged error.
+    const loaded = yield* loadLocalConfig(
+      cliSettings,
       ref,
-      (message) => new LegacyConfigPushLoadConfigError({ message }),
+      (message) => new ConfigPushLoadConfigError({ message }),
     );
     // Printed from inside config load, before any command output.
     if (loaded.appliedRemote !== undefined) {
       yield* output.raw(
-        `Loading config override: [remotes.${legacySanitizeInlineName(loaded.appliedRemote)}]\n`,
+        `Loading config override: [remotes.${sanitizeInlineName(loaded.appliedRemote)}]\n`,
         "stderr",
       );
     }
     const config = loaded.config;
 
-    // 3. Assert every `config.Secret`-typed `encrypted:` value in the
-    // document (not just auth.*) can be decrypted — this must run before the
-    // cost matrix is fetched or any service is touched. An undecryptable
-    // secret anywhere in the document (even one `config push` never itself
-    // pushes, e.g. `studio.openai_api_key`) aborts here with a
-    // `failed to parse config: <cause>` message, before any remote service
-    // is read or updated.
+    // 3. Assert every `encrypted:` value in the document can be decrypted, even fields `config
+    // push` never itself pushes — this must run before the cost matrix or any service is touched.
     //
-    // `loaded.document` has already had deprecated
-    // `auth.external.{linkedin,slack}` blocks stripped by `@supabase/config`
-    // (`normalizeDeprecatedExternalProviders`), but the decrypt hook runs at
-    // decode time — before the later `external.validate()` deletes those
-    // blocks — so an `encrypted:` secret hiding in one of them still aborts
-    // the load. Fold `removedDeprecatedExternalProviders` back into a
-    // synthetic `auth.external` view and scan that too, reusing the same
-    // path list rather than a second scanner. `loadCliConfig` always
-    // populates this field with a (possibly empty) record — never
-    // `undefined` — so no fallback is needed here.
+    // Deprecated `auth.external.{linkedin,slack}` blocks are stripped from `loaded.document`
+    // before this decode, so scan `removedDeprecatedExternalProviders` too, or a secret hiding in
+    // one of them would skip the check.
     const secretError =
-      legacyAssertDecryptableSecrets(loaded.document, secretEnvLookup, dotenvPrivateKeys) ??
-      legacyAssertDecryptableSecrets(
+      assertDecryptableSecrets(loaded.document, secretEnvLookup, dotenvPrivateKeys) ??
+      assertDecryptableSecrets(
         { auth: { external: loaded.removedDeprecatedExternalProviders } },
         secretEnvLookup,
         dotenvPrivateKeys,
       );
     if (secretError !== undefined) {
-      return yield* new LegacyConfigPushLoadConfigError({ message: secretError });
+      return yield* new ConfigPushLoadConfigError({ message: secretError });
     }
 
     // Config lives at <projectRoot>/supabase/config.{toml,json}.
     const configProjectRoot = dirname(dirname(loaded.path));
 
-    // 4. Email content validation runs during config load, before any network
-    // call. Unconditional regardless of `config.auth.enabled` (CLI-2314,
-    // review round): that flag is the local-only GoTrue Docker toggle and no
-    // longer gates whether the `auth` resource is pushed (`push.plan.ts`'s
-    // `legacyPushResourceEnabled`) — gating this load the same way it used
-    // to would silently push empty template/notification content over a
-    // real hosted customization whenever `auth.enabled = false`, even though
-    // every other declared `auth.*` field is pushed normally in that case.
+    // 4. Email content validation runs during config load, before any network call, and is
+    // unconditional regardless of `config.auth.enabled` — that flag only toggles the local GoTrue
+    // Docker service and doesn't gate whether `auth` is pushed, so gating this load too would
+    // silently push empty content over a real hosted customization.
     const authEmailContent = yield* Effect.try({
-      try: () => legacyLoadAuthEmailContent(configProjectRoot, config.auth.email),
+      try: () => loadAuthEmailContent(configProjectRoot, config.auth.email),
       catch: (cause) =>
-        new LegacyConfigPushLoadConfigError({
+        new ConfigPushLoadConfigError({
           message: cause instanceof Error ? cause.message : String(cause),
         }),
     });
 
-    // 5. Determine the push target (plain project vs. branch vs. unknown)
-    // and, for a CONFIRMED branch, gate the push behind an explicit
-    // confirmation before any further network call — including the cost
-    // matrix below (CLI-2168). A target resolved from an EXPLICIT
-    // `--project-ref <name-or-uuid>` this invocation (`branch`, from the
-    // shared resolver above) skips the prompt: the user already expressed
-    // same-invocation intent, so re-confirming the exact string they just
-    // typed is friction with no safety benefit. The target-echo line below
-    // always prints regardless of kind.
+    // 5. Determine the push target and, for a confirmed branch, gate the push behind an explicit
+    // confirmation before any further network call. A target resolved from an explicit
+    // `--project-ref <name-or-uuid>` this invocation skips the prompt, since the user already
+    // expressed same-invocation intent.
     //
-    // `legacyResolveConfigTarget` (shared with `config diff`/`config pull`,
-    // neither of which needs a branch's PARENT ref) returns only the raw
-    // `branch` string the user named, not its resolved parent. A UUID
-    // target genuinely has no parent to give (`GET /v1/branches/{id}`
-    // resolves it alone) — `{kind: "uuid"}`. A NAME target's parent WAS
-    // resolved internally to look it up, just not returned; re-deriving it
-    // here via `legacyResolveLinkedParentRef()` is a second LOCAL-ONLY read
-    // (env/cache/file, no network) of the exact same chain that just
-    // resolved moments ago, so it can only disagree if something rewrote
-    // the linked state mid-command — safe to treat as unreachable.
-    let knownBranch: LegacyConfigPushKnownBranch | undefined;
+    // `resolveConfigTarget` returns only the raw branch name, not its resolved parent, so a name
+    // target's parent is re-derived here via a second local-only read (env/cache/file, no
+    // network) of the same chain that just resolved.
+    let knownBranch: ConfigPushKnownBranch | undefined;
     if (branch !== undefined) {
-      if (LEGACY_BRANCH_UUID_PATTERN.test(branch)) {
+      if (BRANCH_UUID_PATTERN.test(branch)) {
         knownBranch = { kind: "uuid" };
       } else {
-        const parent = yield* legacyResolveLinkedParentRef();
+        const parent = yield* resolveLinkedParentRef();
         knownBranch =
           parent.kind === "resolved"
             ? { kind: "name", branchName: branch, parentRef: parent.ref }
             : { kind: "uuid" };
       }
     }
-    const target = yield* legacyResolveConfigPushTarget(ref, { knownBranch });
-    yield* output.raw(legacyConfigPushTargetLines(target), "stderr");
+    const target = yield* resolveConfigPushTarget(ref, { knownBranch });
+    yield* output.raw(configPushTargetLines(target), "stderr");
     if (target.kind === "branch" && knownBranch === undefined) {
-      const proceed = yield* legacyPromptYesNo(
+      const proceed = yield* promptYesNo(
         output,
         yes,
-        legacyConfigPushBranchPromptLabel(target),
-        // Deliberately `false` (unlike this file's other prompts, which
-        // default `true`): an unattended run (CI, an agent, a script)
-        // without `--yes` must safely decline a branch mutation rather than
-        // silently proceed. `--yes`/`SUPABASE_YES` (`yes`, resolved above)
-        // is the intended override.
+        configPushBranchPromptLabel(target),
+        // Defaults `false`, unlike this file's other prompts: an unattended run without `--yes`
+        // must decline a branch mutation rather than silently proceed.
         false,
       );
       if (!proceed) {
-        return yield* new LegacyConfigPushCancelledError({
+        return yield* new ConfigPushCancelledError({
           message: CONTEXT_CANCELED_MESSAGE,
           suggestion: "Pass --yes (or set SUPABASE_YES) to push to a branch without confirmation.",
         });
@@ -361,9 +308,7 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
     // 6. Cost matrix (drives cost-aware prompts).
     const cost = yield* getCostMatrix(ref);
 
-    // keep(name): the shared confirmation-prompt helper handles all modes,
-    // including scanning piped stdin on a non-TTY before falling back to
-    // the default.
+    // `promptYesNo` scans piped stdin on a non-TTY before falling back to the default.
     const keep = (name: string) =>
       Effect.gen(function* () {
         const item = cost.get(name);
@@ -371,86 +316,76 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
           item === undefined
             ? `Do you want to push ${name} config to remote?`
             : `Enabling ${item.name} will cost you ${item.price}. Keep it enabled?`;
-        return yield* legacyPromptYesNo(output, yes, title, true);
+        return yield* promptYesNo(output, yes, title, true);
       });
 
-    // 7. Read the project's effective configuration once — replaces the
-    // former five per-service `GET /v1/...` calls. No spinner (matches the
-    // rest of this command's stderr progress lines).
+    // 7. Read the project's effective configuration in one call. No spinner, matching the rest
+    // of this command's stderr progress lines.
     const response = yield* api.executeRaw(operationDefinitions.v2GetProjectConfig, { ref }).pipe(
       Effect.mapError(
         (cause) =>
-          new LegacyConfigPushConfigReadNetworkError({
+          new ConfigPushConfigReadNetworkError({
             message: `failed to read project config: ${cause}`,
           }),
       ),
     );
     if (response.status !== 200) {
-      const body = sanitizeLegacyErrorBody(
-        yield* response.text.pipe(Effect.orElseSucceed(() => "")),
-      );
-      return yield* new LegacyConfigPushConfigReadStatusError({
+      const body = sanitizeErrorBody(yield* response.text.pipe(Effect.orElseSucceed(() => "")));
+      return yield* new ConfigPushConfigReadStatusError({
         status: response.status,
         body,
-        message: legacyConfigReadStatusMessage(response.status, body, ref, cliSettings.apiUrl),
+        message: configReadStatusMessage(response.status, body, ref, cliSettings.apiUrl),
       });
     }
     const responseJson = yield* response.json.pipe(
       Effect.mapError(
         (cause) =>
-          new LegacyConfigPushConfigReadNetworkError({
+          new ConfigPushConfigReadNetworkError({
             message: `failed to read project config: ${cause}`,
             decode: true,
           }),
       ),
     );
-    // A 200 response whose body isn't even a JSON object is an API-response
-    // problem, not something `fromApiProjectConfig` should have to reject
-    // via its own typed error — checked once, up front, so every read below
-    // can index `responseJson` directly.
-    if (!legacyIsRecord(responseJson)) {
-      return yield* new LegacyConfigPushConfigReadNetworkError({
+    // A non-object body is an API-response problem, not something `fromApiProjectConfig` should
+    // reject via its own typed error — checked once so reads below can index directly.
+    if (!isRecord(responseJson)) {
+      return yield* new ConfigPushConfigReadNetworkError({
         message: "failed to read project config: response body is not a JSON object",
         decode: true,
       });
     }
 
-    // 8. Convert the response and classify against the local projection.
-    // A response the registry cannot narrow, or a local document it cannot
-    // canonicalize, is a typed `ProjectConfigParseError`; anything else is a
-    // defect (`legacyConfigProjectConfigTry`, shared with `config
-    // diff`/`config pull`).
-    const remote = yield* legacyConfigProjectConfigTry(() => fromApiProjectConfig(responseJson));
+    // 8. Convert the response and classify against the local projection. A response the registry
+    // cannot narrow, or a local document it cannot canonicalize, is a typed
+    // `ProjectConfigParseError`; anything else is a defect.
+    const remote = yield* configProjectConfigTry(() => fromApiProjectConfig(responseJson));
 
     const data = responseJson["data"];
-    const attributes =
-      legacyIsRecord(data) && legacyIsRecord(data["attributes"]) ? data["attributes"] : {};
-    const scope = legacyConfigApiScope(attributes);
+    const attributes = isRecord(data) && isRecord(data["attributes"]) ? data["attributes"] : {};
+    const scope = configApiScope(attributes);
     // Always echoed (family consistency with `config diff`/`config pull`),
     // not just when a block is missing.
-    yield* output.raw(legacyConfigScopeLine(scope), "stderr");
+    yield* output.raw(configScopeLine(scope), "stderr");
     if (scope.present.length === 0) {
-      return yield* new LegacyConfigPushConfigEmptyError({
-        message: `The API returned no configuration for project ${legacySanitizeInlineName(ref)}; nothing was pushed. Check that your access token can read the project's configuration.`,
+      return yield* new ConfigPushConfigEmptyError({
+        message: `The API returned no configuration for project ${sanitizeInlineName(ref)}; nothing was pushed. Check that your access token can read the project's configuration.`,
       });
     }
-    const remoteAuthAttributes = legacyIsRecord(attributes["auth"]) ? attributes["auth"] : {};
+    const remoteAuthAttributes = isRecord(attributes["auth"]) ? attributes["auth"] : {};
 
-    const local = yield* legacyConfigProjectConfigTry(() => fromConfigDocument(loaded));
-    const changeSet = yield* legacyConfigProjectConfigTry(() =>
+    const local = yield* configProjectConfigTry(() => fromConfigDocument(loaded));
+    const changeSet = yield* configProjectConfigTry(() =>
       diffProjectConfig({ local: loaded, remote }),
     );
 
     // 9. Route pushable changes to their v1 write endpoint and resolve every
     // declared secret's send/unchanged/not_set/gated status.
-    const plan = legacyPlanConfigPush(changeSet);
-    // Defensive: the document-wide decrypt-or-abort pre-check above (step 3)
-    // is expected to make this unreachable — kept as a typed failure, in the
-    // same `failed to parse config: <cause>` shape, rather than an uncaught
-    // throw, in case that invariant is ever violated (see push.secret.ts).
+    const plan = planConfigPush(changeSet);
+    // Defensive: step 3's decrypt-or-abort check is expected to make this unreachable, but stays
+    // a typed failure rather than an uncaught throw in case that invariant is ever violated.
     const secrets = yield* Effect.try({
       try: () =>
-        legacyResolveAuthSecrets({
+        resolveAuthSecrets({
           maskedPaths: changeSet.masked,
           config,
           local,
@@ -459,64 +394,54 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
           dotenvPrivateKeys,
         }),
       catch: (cause) =>
-        new LegacyConfigPushLoadConfigError({
+        new ConfigPushLoadConfigError({
           message: cause instanceof Error ? cause.message : String(cause),
         }),
     });
     const now = new Date(yield* Clock.currentTimeMillis);
 
-    // Whether each resource's local gate is on — computed once, both for the
-    // resource loop below and for excluding a gated-off resource's own
-    // `unmanaged` entries from the summary note (D5).
-    const resourceEnabled: Readonly<Record<LegacyPushResource, boolean>> = {
-      api: legacyPushResourceEnabled("api", config, local),
-      "db.settings": legacyPushResourceEnabled("db.settings", config, local),
-      "db.network_restrictions": legacyPushResourceEnabled(
-        "db.network_restrictions",
-        config,
-        local,
-      ),
-      "db.ssl_enforcement": legacyPushResourceEnabled("db.ssl_enforcement", config, local),
-      auth: legacyPushResourceEnabled("auth", config, local),
-      storage: legacyPushResourceEnabled("storage", config, local),
+    // Whether each resource's local gate is on, computed once for the resource loop below and
+    // for excluding a gated-off resource's own `unmanaged` entries from the summary note.
+    const resourceEnabled: Readonly<Record<PushResource, boolean>> = {
+      api: pushResourceEnabled("api", config, local),
+      "db.settings": pushResourceEnabled("db.settings", config, local),
+      "db.network_restrictions": pushResourceEnabled("db.network_restrictions", config, local),
+      "db.ssl_enforcement": pushResourceEnabled("db.ssl_enforcement", config, local),
+      auth: pushResourceEnabled("auth", config, local),
+      storage: pushResourceEnabled("storage", config, local),
     };
 
-    const services: Array<LegacyConfigPushServiceResult> = [];
+    const services: Array<ConfigPushServiceResult> = [];
     const unsupported: Array<ReadonlyArray<string>> = [...plan.unsupported];
-    const unencodable: Array<LegacyPushUnencodable> = [];
-    const forced: Array<LegacyPushForced> = [];
+    const unencodable: Array<PushUnencodable> = [];
+    const forced: Array<PushForced> = [];
     const declinedAddons: Array<string> = [];
     let authWriteRan = false;
     let secretsSent: ReadonlyArray<ReadonlyArray<string>> = [];
 
-    // 10. Prints the resource's `Updating ... with config:` block (or the
-    // up-to-date/not-pushable line), prompts, writes, and returns the
-    // service's result. `secretsForResource` is the resource's full
-    // (unfiltered) secret-decision list — `legacyPushUpdatingLine` renders
-    // only `send`/`not_set` entries, so non-auth resources simply pass `[]`.
+    // 10. Prints the resource's `Updating ...`/up-to-date/not-pushable line, prompts, writes, and
+    // returns the result. `secretsForResource` is the resource's full secret-decision list; only
+    // `auth` needs to pass anything besides `[]`.
     function applyResource<Body, E, R>(
-      resource: LegacyPushResource,
+      resource: PushResource,
       changes: ReadonlyArray<ConfigChange>,
-      encoded: LegacyPushEncoded<Body>,
-      secretsForResource: ReadonlyArray<LegacyPushSecretDecision>,
+      encoded: PushEncoded<Body>,
+      secretsForResource: ReadonlyArray<PushSecretDecision>,
       write: (body: Body) => Effect.Effect<unknown, E, R>,
-    ): Effect.Effect<LegacyConfigPushServiceResult, E, R | Tty | Stdin> {
+    ): Effect.Effect<ConfigPushServiceResult, E, R | Tty | Stdin> {
       return Effect.gen(function* () {
         if (encoded.body === undefined) {
           if (encoded.unencodable.length > 0) {
-            yield* output.raw(
-              legacyPushNotPushableLine(resource, encoded.unencodable.length),
-              "stderr",
-            );
+            yield* output.raw(pushNotPushableLine(resource, encoded.unencodable.length), "stderr");
             return { service: resource, status: "not_pushable", changes: [] };
           }
-          yield* output.raw(legacyPushUpToDateLine(resource), "stderr");
+          yield* output.raw(pushUpToDateLine(resource), "stderr");
           return { service: resource, status: "up_to_date", changes: [] };
         }
         const body = encoded.body;
-        const communicated = legacyChangesCommunicated(changes, encoded.encoded);
+        const communicated = changesCommunicated(changes, encoded.encoded);
         yield* output.raw(
-          legacyPushUpdatingLine({
+          pushUpdatingLine({
             resource,
             changes: communicated,
             secrets: secretsForResource.map(toSecretReport),
@@ -526,44 +451,30 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
           }),
           "stderr",
         );
-        if (yield* keep(legacyPushPromptKey(resource))) {
+        if (yield* keep(pushPromptKey(resource))) {
           yield* write(body);
-          const sentSecretPaths = legacyPushSentSecretPaths(encoded);
+          const sentSecretPaths = pushSentSecretPaths(encoded);
           return {
             service: resource,
             status: "updated",
-            changes: legacyPushServiceChanges(encoded, sentSecretPaths),
+            changes: pushServiceChanges(encoded, sentSecretPaths),
           };
         }
         return {
           service: resource,
           status: "skipped",
-          changes: legacyPushServiceChanges(encoded, []),
+          changes: pushServiceChanges(encoded, []),
         };
       });
     }
 
-    // 11. Six resources, in the established push order. A resource whose
-    // response block was omitted from the read is `unavailable` — nothing is
-    // compared, nothing is written (S5/D2); the `Comparison scope:` line
-    // above already explains why. Otherwise, a gated-off resource is
-    // `disabled` — today (CLI-2314) this can fire for two of the six:
-    // `db.network_restrictions`, whose own `enabled` flag is a genuine
-    // hosted-side management opt-out (the projection's disabled-sentinel
-    // prune still removes its `allowed_cidrs`/`allowed_cidrs_v6` siblings
-    // before diffing, so `plan.changesByResource` never has anything left to
-    // route to it while the flag is off); and `db.ssl_enforcement`, gated on
-    // simple presence (`legacyPushResourceEnabled`'s
-    // `local.db?.ssl_enforcement !== undefined` case) rather than a decoded
-    // `enabled` value — the stock `supabase init` template ships this block
-    // commented out, so a fresh project hits `disabled` here by default.
-    // `auth` and `storage` always return `true` from
-    // `legacyPushResourceEnabled` now — their local `enabled` toggle only
-    // controls a Docker service the Management API has no concept of, so
-    // this branch can no longer fire for either — and a gated-on resource
-    // dispatches to its own encoder/write pair.
-    for (const resource of LEGACY_PUSH_RESOURCES) {
-      if (scope.missing.includes(legacyPushResponseBlock(resource))) {
+    // 11. Six resources, in the established push order. A missing response block makes a
+    // resource `unavailable` (nothing compared or written); a gated-off local `enabled` flag
+    // makes it `disabled` — this can only happen for `db.network_restrictions` and
+    // `db.ssl_enforcement`, since `auth`/`storage`'s local `enabled` toggle only controls a
+    // Docker service the Management API has no concept of.
+    for (const resource of PUSH_RESOURCES) {
+      if (scope.missing.includes(pushResponseBlock(resource))) {
         services.push({ service: resource, status: "unavailable", changes: [] });
         continue;
       }
@@ -575,15 +486,15 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
       switch (resource) {
         case "api": {
           const changes = plan.changesByResource.api;
-          const encoded = legacyEncodeApiBody({ changes, local, remote });
+          const encoded = encodeApiBody({ changes, local, remote });
           const result = yield* applyResource("api", changes, encoded, [], (body) =>
             api.v1.updatePostgrestServiceConfig({ ref, ...body }).pipe(
               Effect.catch(
-                mapLegacyHttpError({
-                  networkError: LegacyConfigPushApiUpdateNetworkError,
-                  statusError: LegacyConfigPushApiUpdateStatusError,
+                mapHttpError({
+                  networkError: ConfigPushApiUpdateNetworkError,
+                  statusError: ConfigPushApiUpdateStatusError,
                   networkMessage: (cause) => `failed to update API config: ${cause}`,
-                  statusMessage: legacyUnexpectedStatusMessage,
+                  statusMessage: unexpectedStatusMessage,
                 }),
               ),
             ),
@@ -595,15 +506,15 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
         }
         case "db.settings": {
           const changes = plan.changesByResource["db.settings"];
-          const encoded = legacyEncodeDbSettingsBody({ changes, local, remote });
+          const encoded = encodeDbSettingsBody({ changes, local, remote });
           const result = yield* applyResource("db.settings", changes, encoded, [], (body) =>
             api.v1.updatePostgresConfig({ ref, ...body }).pipe(
               Effect.catch(
-                mapLegacyHttpError({
-                  networkError: LegacyConfigPushDbUpdateNetworkError,
-                  statusError: LegacyConfigPushDbUpdateStatusError,
+                mapHttpError({
+                  networkError: ConfigPushDbUpdateNetworkError,
+                  statusError: ConfigPushDbUpdateStatusError,
                   networkMessage: (cause) => `failed to update DB config: ${cause}`,
-                  statusMessage: legacyUnexpectedStatusMessage,
+                  statusMessage: unexpectedStatusMessage,
                 }),
               ),
             ),
@@ -615,7 +526,7 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
         }
         case "db.network_restrictions": {
           const changes = plan.changesByResource["db.network_restrictions"];
-          const encoded = legacyEncodeNetworkRestrictionsBody({ changes, local, remote });
+          const encoded = encodeNetworkRestrictionsBody({ changes, local, remote });
           const result = yield* applyResource(
             "db.network_restrictions",
             changes,
@@ -624,12 +535,12 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
             (body) =>
               api.v1.updateNetworkRestrictions({ ref, ...body }).pipe(
                 Effect.catch(
-                  mapLegacyHttpError({
-                    networkError: LegacyConfigPushNetworkRestrictionsUpdateNetworkError,
-                    statusError: LegacyConfigPushNetworkRestrictionsUpdateStatusError,
+                  mapHttpError({
+                    networkError: ConfigPushNetworkRestrictionsUpdateNetworkError,
+                    statusError: ConfigPushNetworkRestrictionsUpdateStatusError,
                     networkMessage: (cause) =>
                       `failed to update network restrictions config: ${cause}`,
-                    statusMessage: legacyUnexpectedStatusMessage,
+                    statusMessage: unexpectedStatusMessage,
                   }),
                 ),
               ),
@@ -641,15 +552,15 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
         }
         case "db.ssl_enforcement": {
           const changes = plan.changesByResource["db.ssl_enforcement"];
-          const encoded = legacyEncodeSslEnforcementBody({ changes, local, remote });
+          const encoded = encodeSslEnforcementBody({ changes, local, remote });
           const result = yield* applyResource("db.ssl_enforcement", changes, encoded, [], (body) =>
             api.v1.updateSslEnforcementConfig({ ref, ...body }).pipe(
               Effect.catch(
-                mapLegacyHttpError({
-                  networkError: LegacyConfigPushSslEnforcementUpdateNetworkError,
-                  statusError: LegacyConfigPushSslEnforcementUpdateStatusError,
+                mapHttpError({
+                  networkError: ConfigPushSslEnforcementUpdateNetworkError,
+                  statusError: ConfigPushSslEnforcementUpdateStatusError,
                   networkMessage: (cause) => `failed to update SSL enforcement config: ${cause}`,
-                  statusMessage: legacyUnexpectedStatusMessage,
+                  statusMessage: unexpectedStatusMessage,
                 }),
               ),
             ),
@@ -660,22 +571,17 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
           break;
         }
         case "auth": {
-          // MFA addon cost filter runs before anything about auth is
-          // printed: a declined paid addon carries an explicit disable when
-          // the remote currently has it on, or is simply dropped otherwise
-          // (`legacyApplyMfaAddonDecline`, D12).
+          // MFA addon cost filter runs before anything about auth is printed: a declined paid
+          // addon carries an explicit disable when the remote currently has it on, or is dropped.
           let changes = plan.changesByResource.auth;
-          for (const gate of LEGACY_PUSH_ADDON_GATES) {
-            if (
-              legacyPushAddonPromptNeeded(changes, gate, remote) &&
-              !(yield* keep(gate.costKey))
-            ) {
-              changes = legacyApplyMfaAddonDecline(changes, gate, remote);
+          for (const gate of PUSH_ADDON_GATES) {
+            if (pushAddonPromptNeeded(changes, gate, remote) && !(yield* keep(gate.costKey))) {
+              changes = applyMfaAddonDecline(changes, gate, remote);
               declinedAddons.push(gate.costKey);
             }
           }
 
-          const encoded = legacyEncodeAuthBody({
+          const encoded = encodeAuthBody({
             changes,
             local,
             remote,
@@ -687,11 +593,11 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
           const result = yield* applyResource("auth", changes, encoded, secrets, (body) =>
             api.v1.updateAuthServiceConfig({ ref, ...body }).pipe(
               Effect.catch(
-                mapLegacyHttpError({
-                  networkError: LegacyConfigPushAuthUpdateNetworkError,
-                  statusError: LegacyConfigPushAuthUpdateStatusError,
+                mapHttpError({
+                  networkError: ConfigPushAuthUpdateNetworkError,
+                  statusError: ConfigPushAuthUpdateStatusError,
                   networkMessage: (cause) => `failed to update Auth config: ${cause}`,
-                  statusMessage: legacyUnexpectedStatusMessage,
+                  statusMessage: unexpectedStatusMessage,
                 }),
               ),
             ),
@@ -699,21 +605,21 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
           services.push(result);
           unencodable.push(...encoded.unencodable);
           authWriteRan = result.status === "updated";
-          secretsSent = legacyPushSentSecretPaths(encoded);
+          secretsSent = pushSentSecretPaths(encoded);
           if (result.status === "updated") forced.push(...encoded.forced);
           break;
         }
         case "storage": {
           const changes = plan.changesByResource.storage;
-          const encoded = legacyEncodeStorageBody({ changes, local, remote, config });
+          const encoded = encodeStorageBody({ changes, local, remote, config });
           const result = yield* applyResource("storage", changes, encoded, [], (body) =>
             api.v1.updateStorageConfig({ ref, ...body }).pipe(
               Effect.catch(
-                mapLegacyHttpError({
-                  networkError: LegacyConfigPushStorageUpdateNetworkError,
-                  statusError: LegacyConfigPushStorageUpdateStatusError,
+                mapHttpError({
+                  networkError: ConfigPushStorageUpdateNetworkError,
+                  statusError: ConfigPushStorageUpdateStatusError,
                   networkMessage: (cause) => `failed to update Storage config: ${cause}`,
-                  statusMessage: legacyUnexpectedStatusMessage,
+                  statusMessage: unexpectedStatusMessage,
                 }),
               ),
             ),
@@ -730,16 +636,13 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
     if (config.experimental?.webhooks?.enabled !== true) {
       services.push({ service: "experimental.webhooks", status: "disabled", changes: [] });
     } else {
-      yield* output.raw(
-        `Enabling webhooks for project: ${legacySanitizeInlineName(ref)}\n`,
-        "stderr",
-      );
+      yield* output.raw(`Enabling webhooks for project: ${sanitizeInlineName(ref)}\n`, "stderr");
       if (yield* keep("webhooks")) {
         yield* api.v1.enableDatabaseWebhook({ ref }).pipe(
           Effect.catch(
-            mapLegacyHttpError({
-              networkError: LegacyConfigPushEnableWebhookNetworkError,
-              statusError: LegacyConfigPushEnableWebhookStatusError,
+            mapHttpError({
+              networkError: ConfigPushEnableWebhookNetworkError,
+              statusError: ConfigPushEnableWebhookStatusError,
               networkMessage: (cause) => `failed to enable webhooks: ${cause}`,
               statusMessage: (status, body) =>
                 `unexpected enable webhook status ${status}: ${body}`,
@@ -749,8 +652,8 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
         services.push({
           service: "experimental.webhooks",
           status: "updated",
-          // No registry-comparable path backs this write, but the summary's property
-          // count (and a JSON consumer inspecting `changes`) must still see it (finding 5).
+          // No registry path backs this write, but the summary's property count (and a JSON
+          // consumer inspecting `changes`) must still see it.
           changes: [["experimental", "webhooks", "enabled"]],
         });
       } else {
@@ -758,22 +661,18 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
       }
     }
 
-    // 12. Notes (stderr, after the resource loop) — declared properties with
-    // no API field, declared-but-unencodable properties, declared-but-
-    // unmanaged properties (count only, excluding a gated-off resource's own
-    // entries), forced companion defaults, empty/unresolved credentials, and
-    // the hands-off remote-only count.
+    // 12. Notes (stderr, after the resource loop): unsupported, unencodable, and unmanaged
+    // (count only, excluding a gated-off resource's own entries) declared properties, forced
+    // companion defaults, empty/unresolved credentials, and the hands-off remote-only count.
     const unmanagedCount = changeSet.unmanaged.filter((changePath) => {
-      const resourceForPath = legacyPushResourceForPath(changePath);
+      const resourceForPath = pushResourceForPath(changePath);
       return resourceForPath === "unsupported" || resourceEnabled[resourceForPath];
     }).length;
-    // An `unavailable` auth resource never read (or wrote) any credential —
-    // the "not pushed" framing this note carries is specific to a credential
-    // whose OWN value was empty/unresolved, which doesn't apply when the
-    // whole resource was never compared to begin with.
+    // An `unavailable` auth resource never read any credential, so the "not pushed" framing
+    // below doesn't apply — that's specific to a credential whose own value was unresolved.
     const authUnavailable =
       services.find((service) => service.service === "auth")?.status === "unavailable";
-    const notes = legacyPushNotes({
+    const notes = pushNotes({
       unsupported,
       unencodable,
       unmanagedCount,
@@ -804,9 +703,9 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
         remoteOnly: plan.remoteOnly,
         scope,
       };
-      yield* output.success(legacyPushSummaryMessage(payloadInput), {
-        ...legacyPushPayload(payloadInput),
-        ...legacyConfigPushPayloadFields(target),
+      yield* output.success(pushSummaryMessage(payloadInput), {
+        ...pushPayload(payloadInput),
+        ...configPushPayloadFields(target),
       });
     }
   }).pipe(

@@ -1,13 +1,21 @@
-/**
- * Unit tests for push.auth-email-content.ts.
- */
-
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { legacyLoadAuthEmailContent } from "./push.auth-email-content.ts";
+import { loadAuthEmailContent } from "./push.auth-email-content.ts";
+
+/**
+ * Builds the anchored containment-rejection regex for a given declared `content_path` — the
+ * thrown message echoes that declared value (quoted), not the fully-canonicalized target,
+ * avoiding a recon leak.
+ */
+function containmentRejectionPattern(fieldPath: string, declaredContentPath: string): RegExp {
+  const escaped = declaredContentPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(
+    `^Invalid config for ${fieldPath}: "${escaped}" resolves outside the project root`,
+  );
+}
 
 const emptyEmail = {
   enable_signup: true,
@@ -21,7 +29,7 @@ const emptyEmail = {
   notification: {},
 };
 
-describe("legacyLoadAuthEmailContent", () => {
+describe("loadAuthEmailContent", () => {
   let workdir = "";
   let outsideDir = "";
 
@@ -61,7 +69,7 @@ describe("legacyLoadAuthEmailContent", () => {
     writeFileSync(join(templateDir, "invite.html"), "<h1>Invite</h1>");
     writeFileSync(join(templateDir, "password_changed.html"), "<p>Changed</p>");
 
-    const content = legacyLoadAuthEmailContent(cwd, {
+    const content = loadAuthEmailContent(cwd, {
       ...emptyEmail,
       template: {
         invite: {
@@ -88,7 +96,7 @@ describe("legacyLoadAuthEmailContent", () => {
     mkdirSync(templateDir, { recursive: true });
     writeFileSync(join(templateDir, "password_changed.html"), "<p>Legacy location</p>");
 
-    const content = legacyLoadAuthEmailContent(cwd, {
+    const content = loadAuthEmailContent(cwd, {
       ...emptyEmail,
       notification: {
         password_changed: {
@@ -108,7 +116,7 @@ describe("legacyLoadAuthEmailContent", () => {
     mkdirSync(join(supabaseDir, "templates"), { recursive: true });
     writeFileSync(join(supabaseDir, "templates", "n.html"), "<p>Legacy file</p>");
 
-    const content = legacyLoadAuthEmailContent(cwd, {
+    const content = loadAuthEmailContent(cwd, {
       ...emptyEmail,
       notification: {
         password_changed: {
@@ -129,7 +137,7 @@ describe("legacyLoadAuthEmailContent", () => {
     writeFileSync(join(cwd, "templates", "n.html"), "<p>Root</p>");
     writeFileSync(join(supabaseDir, "templates", "n.html"), "<p>Legacy</p>");
 
-    const content = legacyLoadAuthEmailContent(cwd, {
+    const content = loadAuthEmailContent(cwd, {
       ...emptyEmail,
       notification: {
         password_changed: {
@@ -146,7 +154,7 @@ describe("legacyLoadAuthEmailContent", () => {
   it("skips notification templates when disabled", () => {
     const { cwd } = setup();
 
-    const content = legacyLoadAuthEmailContent(cwd, {
+    const content = loadAuthEmailContent(cwd, {
       ...emptyEmail,
       notification: {
         password_changed: {
@@ -163,7 +171,7 @@ describe("legacyLoadAuthEmailContent", () => {
   it("skips entries with an empty content_path", () => {
     const { cwd } = setup();
 
-    const content = legacyLoadAuthEmailContent(cwd, {
+    const content = loadAuthEmailContent(cwd, {
       ...emptyEmail,
       template: {
         invite: {
@@ -180,8 +188,9 @@ describe("legacyLoadAuthEmailContent", () => {
   it("throws a descriptive error when a template file is missing", () => {
     const { cwd } = setup();
 
-    expect(() =>
-      legacyLoadAuthEmailContent(cwd, {
+    let thrown: unknown;
+    try {
+      loadAuthEmailContent(cwd, {
         ...emptyEmail,
         template: {
           invite: {
@@ -189,8 +198,52 @@ describe("legacyLoadAuthEmailContent", () => {
             content_path: "./templates/missing.html",
           },
         },
-      }),
-    ).toThrow(/^Invalid config for auth\.email\.template\.invite\.content_path:/);
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    const message = (thrown as Error).message;
+    // A genuinely missing in-root file must surface the normal read-failure message, never the
+    // containment message, guarding against over-rejecting a missing file as "outside the
+    // project root".
+    expect(message).not.toMatch(/resolves outside the project root/);
+    expect(message).toMatch(/^Invalid config for auth\.email\.template\.invite\.content_path:/);
+  });
+
+  it("does not raise the containment error for a template file missing behind a symlinked project root", () => {
+    // The project root itself is reached through a symlink (mirroring macOS's /tmp ->
+    // /private/tmp), and the configured template file doesn't exist.
+    const realDir = mkdtempSync(join(tmpdir(), "auth-email-content-real-"));
+    const linkContainer = mkdtempSync(join(tmpdir(), "auth-email-content-link-"));
+    const symlinkedRoot = join(linkContainer, "project-root");
+    symlinkSync(realDir, symlinkedRoot, "dir");
+
+    try {
+      let thrown: unknown;
+      try {
+        loadAuthEmailContent(symlinkedRoot, {
+          ...emptyEmail,
+          template: {
+            invite: {
+              subject: "You are invited",
+              content_path: "./missing-invite.html",
+            },
+          },
+        });
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown).toBeInstanceOf(Error);
+      const message = (thrown as Error).message;
+      expect(message).not.toMatch(/resolves outside the project root/);
+      expect(message).toMatch(/^Invalid config for auth\.email\.template\.invite\.content_path:/);
+    } finally {
+      rmSync(linkContainer, { recursive: true, force: true });
+      rmSync(realDir, { recursive: true, force: true });
+    }
   });
 
   it("rejects an absolute template content_path outside the project root", () => {
@@ -198,7 +251,7 @@ describe("legacyLoadAuthEmailContent", () => {
     const outsideFile = setupOutsideFile();
 
     expect(() =>
-      legacyLoadAuthEmailContent(cwd, {
+      loadAuthEmailContent(cwd, {
         ...emptyEmail,
         template: {
           invite: {
@@ -207,9 +260,7 @@ describe("legacyLoadAuthEmailContent", () => {
           },
         },
       }),
-    ).toThrow(
-      /^Invalid config for auth\.email\.template\.invite\.content_path: resolves outside the project root/,
-    );
+    ).toThrow(containmentRejectionPattern("auth.email.template.invite.content_path", outsideFile));
   });
 
   it("rejects an absolute notification content_path outside the project root", () => {
@@ -217,7 +268,7 @@ describe("legacyLoadAuthEmailContent", () => {
     const outsideFile = setupOutsideFile();
 
     expect(() =>
-      legacyLoadAuthEmailContent(cwd, {
+      loadAuthEmailContent(cwd, {
         ...emptyEmail,
         notification: {
           password_changed: {
@@ -228,7 +279,10 @@ describe("legacyLoadAuthEmailContent", () => {
         },
       }),
     ).toThrow(
-      /^Invalid config for auth\.email\.notification\.password_changed\.content_path: resolves outside the project root/,
+      containmentRejectionPattern(
+        "auth.email.notification.password_changed.content_path",
+        outsideFile,
+      ),
     );
   });
 
@@ -238,7 +292,7 @@ describe("legacyLoadAuthEmailContent", () => {
     const escapePath = relative(cwd, outsideFile);
 
     expect(() =>
-      legacyLoadAuthEmailContent(cwd, {
+      loadAuthEmailContent(cwd, {
         ...emptyEmail,
         template: {
           invite: {
@@ -247,9 +301,7 @@ describe("legacyLoadAuthEmailContent", () => {
           },
         },
       }),
-    ).toThrow(
-      /^Invalid config for auth\.email\.template\.invite\.content_path: resolves outside the project root/,
-    );
+    ).toThrow(containmentRejectionPattern("auth.email.template.invite.content_path", escapePath));
   });
 
   it("rejects a relative notification content_path that escapes the project root via ..", () => {
@@ -258,7 +310,7 @@ describe("legacyLoadAuthEmailContent", () => {
     const escapePath = relative(cwd, outsideFile);
 
     expect(() =>
-      legacyLoadAuthEmailContent(cwd, {
+      loadAuthEmailContent(cwd, {
         ...emptyEmail,
         notification: {
           password_changed: {
@@ -269,7 +321,10 @@ describe("legacyLoadAuthEmailContent", () => {
         },
       }),
     ).toThrow(
-      /^Invalid config for auth\.email\.notification\.password_changed\.content_path: resolves outside the project root/,
+      containmentRejectionPattern(
+        "auth.email.notification.password_changed.content_path",
+        escapePath,
+      ),
     );
   });
 
@@ -280,7 +335,7 @@ describe("legacyLoadAuthEmailContent", () => {
     symlinkSync(outsideFile, symlinkPath);
 
     expect(() =>
-      legacyLoadAuthEmailContent(cwd, {
+      loadAuthEmailContent(cwd, {
         ...emptyEmail,
         template: {
           invite: {
@@ -290,7 +345,10 @@ describe("legacyLoadAuthEmailContent", () => {
         },
       }),
     ).toThrow(
-      /^Invalid config for auth\.email\.template\.invite\.content_path: resolves outside the project root/,
+      containmentRejectionPattern(
+        "auth.email.template.invite.content_path",
+        "./evil-template.html",
+      ),
     );
   });
 
@@ -301,7 +359,7 @@ describe("legacyLoadAuthEmailContent", () => {
     symlinkSync(outsideFile, symlinkPath);
 
     expect(() =>
-      legacyLoadAuthEmailContent(cwd, {
+      loadAuthEmailContent(cwd, {
         ...emptyEmail,
         notification: {
           password_changed: {
@@ -312,7 +370,10 @@ describe("legacyLoadAuthEmailContent", () => {
         },
       }),
     ).toThrow(
-      /^Invalid config for auth\.email\.notification\.password_changed\.content_path: resolves outside the project root/,
+      containmentRejectionPattern(
+        "auth.email.notification.password_changed.content_path",
+        "./evil-notification.html",
+      ),
     );
   });
 
@@ -321,7 +382,7 @@ describe("legacyLoadAuthEmailContent", () => {
 
     let thrown: unknown;
     try {
-      legacyLoadAuthEmailContent(cwd, {
+      loadAuthEmailContent(cwd, {
         ...emptyEmail,
         template: {
           invite: {

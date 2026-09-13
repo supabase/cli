@@ -4,17 +4,11 @@ import { describe, expect } from "vitest";
 import { PROJECT_REF } from "./env.ts";
 import { testBehaviour } from "./test-context.ts";
 
-// CLI-1489: v2.99.0 introduced a TypeScript config loader in the Bun shell
-// that strictly decoded supabase/config.toml through an Effect schema. Any
-// non-string field written as env(VAR) — e.g. a port — was rejected before
-// env-resolution could run, crashing the CLI at boot with
-// CliConfigParseError. This test runs against every CLI_HARNESS_TARGET
-// (ts-legacy, ts-next) so the regression cannot return on any shell.
+// Regression guard: a non-string field written as `env(VAR)` (e.g.
+// a port) must not crash config decoding before env resolution runs.
 //
-// A 401 is injected so the test does not need a real API fixture: pre-fix the
-// TS shells crashed before any API call, post-fix they reach the (faked) API
-// and get the injected error. Either way we only assert that the CLI got
-// past config decode.
+// A 401 is injected so the test doesn't need a real API fixture; it only
+// asserts that the CLI got past config decode.
 
 function writeConfigWithEnvPorts(dir: string): void {
   mkdirSync(join(dir, "supabase"), { recursive: true });

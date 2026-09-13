@@ -4,46 +4,40 @@ import { CliOutput, Command } from "effect/unstable/cli";
 
 import { normalizeCause } from "../../shared/output/normalize-error.ts";
 import { textCliOutputFormatter } from "../../shared/output/text-formatter.ts";
-import { LEGACY_GLOBAL_FLAGS } from "../../shared/legacy/global-flags.ts";
+import { GLOBAL_FLAGS } from "../../command-internal/global-flags.ts";
 import { TelemetryRuntime } from "../../shared/telemetry/runtime.service.ts";
 import { makeTelemetryIdentity } from "../../shared/telemetry/identity.ts";
 import { mockOutput, mockRuntimeInfo, processEnvLayer } from "../../../tests/helpers/mocks.ts";
 import {
-  buildLegacyTestRuntime,
-  mockLegacyCliSettings,
-  mockLegacyPlatformApi,
-  useLegacyTempWorkdir,
-} from "../../../tests/helpers/legacy-mocks.ts";
-import { legacyStatusCommand } from "./status.command.ts";
+  buildTestRuntime,
+  mockCommandSettings,
+  mockCommandPlatformApi,
+  useTempWorkdir,
+} from "../../../tests/helpers/command-mocks.ts";
+import { statusCommand } from "./status.command.ts";
 
-// `--override-name` and `--exclude` are string-slice flags (CLI-2005), so
-// malformed CSV aborts flag parsing before the handler runs — before any Docker
-// interaction — with the exact `invalid argument %q for %q flag: %v` line on
-// stderr. These scenarios
-// run the whole command tree (`Command.runWith`), mirroring the network-bans/
-// network-restrictions prior art from CLI-1983.
+// `--override-name` and `--exclude` are string-slice flags, so malformed CSV aborts flag parsing
+// before the handler runs, with the exact `invalid argument %q for %q flag: %v` line on stderr.
+// These run the whole command tree (`Command.runWith`), not just the flag parser.
 
-const tempRoot = useLegacyTempWorkdir("supabase-status-string-slice-int-");
+const tempRoot = useTempWorkdir("supabase-status-string-slice-int-");
 
-// `withGlobalFlags` must come AFTER `withSubcommands`: it only excludes each
-// global flag's context requirement from the R accumulated on the command
-// SO FAR, and `withSubcommands` unions in every subcommand's own requirements
-// (including `status`'s handler-chain reads of `LegacyDebugFlag`/
-// `LegacyProfileFlag`/`LegacyWorkdirFlag`). Reversing the order leaves those
-// context tags in `Command.runWith`'s Environment type even though this
-// parse-failure path never reaches the handler at runtime.
+// `withGlobalFlags` must come after `withSubcommands`: it excludes each global flag's context
+// requirement only from what's already accumulated, so subcommand requirements need to be unioned
+// in first. Reversing the order would leave those context tags in `Command.runWith`'s Environment
+// type, even though this parse-failure path never reaches the handler.
 const testRoot = Command.make("supabase").pipe(
-  Command.withSubcommands([legacyStatusCommand]),
-  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
+  Command.withSubcommands([statusCommand]),
+  Command.withGlobalFlags(GLOBAL_FLAGS),
 );
 
 function setup() {
   const out = mockOutput({ format: "text" });
-  const api = mockLegacyPlatformApi({ response: { status: 200, body: {} } });
-  const runtime = buildLegacyTestRuntime({
+  const api = mockCommandPlatformApi({ response: { status: 200, body: {} } });
+  const runtime = buildTestRuntime({
     out,
     api,
-    cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+    cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
     runtimeInfo: mockRuntimeInfo({ homeDir: tempRoot.current }),
   });
   const layer = Layer.mergeAll(
@@ -72,9 +66,7 @@ function setup() {
   return { layer };
 }
 
-describe("legacy status StringSlice flags (pflag CSV parity)", () => {
-  // Every rendered line below was verified against pflag's actual output
-  // (pflag v1.0.10 → encoding/csv).
+describe("status StringSlice flags (pflag CSV parity)", () => {
   const cases: ReadonlyArray<{
     readonly name: string;
     readonly args: ReadonlyArray<string>;

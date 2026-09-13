@@ -1,63 +1,60 @@
 import type { V1ListAllBackupsOutput } from "@supabase/api/effect";
 import { Effect, Option } from "effect";
 
-import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { LegacyOutputFlag } from "../../../shared/legacy/global-flags.ts";
+import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
+import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { renderGlamourTable } from "../../../output/legacy-glamour-table.ts";
+import { renderGlamourTable } from "../../../output/glamour-table.ts";
+import { BackupListNetworkError, BackupListUnexpectedStatusError } from "../backups.errors.ts";
+import { encodeEnv, encodeGoJson } from "../../../command-internal/go-output.encoders.ts";
 import {
-  LegacyBackupListNetworkError,
-  LegacyBackupListUnexpectedStatusError,
-} from "../backups.errors.ts";
-import { encodeEnv, encodeGoJson } from "../../../command-internal/legacy-go-output.encoders.ts";
-import {
-  encodeLegacyGoToml,
-  encodeLegacyGoYaml,
-  legacyGoBool,
-  legacyGoInt,
-  legacyGoPtr,
-  legacyGoSlice,
-  legacyGoString,
-  legacyGoStruct,
-} from "../../../command-internal/legacy-go-struct-output.encoders.ts";
-import { mapLegacyHttpError } from "../../../command-internal/legacy-http-errors.ts";
-import { formatLegacyTimestamp } from "../../../command-internal/legacy-timestamp.format.ts";
+  encodeGoToml,
+  encodeGoYaml,
+  goBool,
+  goInt,
+  goPtr,
+  goSlice,
+  goString,
+  goStruct,
+} from "../../../command-internal/go-struct-output.encoders.ts";
+import { mapHttpError } from "../../../command-internal/http-errors.ts";
+import { formatTimestamp } from "../../../command-internal/timestamp.format.ts";
 import { formatRegion } from "../backups.format.ts";
-import type { LegacyBackupsListFlags } from "./list.command.ts";
+import type { BackupsListFlags } from "./list.command.ts";
 
-/** Type shape for `api.V1BackupsResponse` (`apps/cli-go/pkg/api/types.gen.go`). */
-const LEGACY_GO_BACKUPS_RESPONSE = legacyGoStruct([
+/** Struct shape for `-o yaml|toml` encoding of the backups response. */
+const GO_BACKUPS_RESPONSE = goStruct([
   [
     "backups",
-    legacyGoSlice(
-      legacyGoStruct([
-        ["id", legacyGoInt],
-        ["inserted_at", legacyGoString],
-        ["is_physical_backup", legacyGoBool],
-        ["status", legacyGoString],
+    goSlice(
+      goStruct([
+        ["id", goInt],
+        ["inserted_at", goString],
+        ["is_physical_backup", goBool],
+        ["status", goString],
       ]),
     ),
   ],
   [
     "physical_backup_data",
-    legacyGoStruct([
-      ["earliest_physical_backup_date_unix", legacyGoPtr(legacyGoInt)],
-      ["latest_physical_backup_date_unix", legacyGoPtr(legacyGoInt)],
+    goStruct([
+      ["earliest_physical_backup_date_unix", goPtr(goInt)],
+      ["latest_physical_backup_date_unix", goPtr(goInt)],
     ]),
   ],
-  ["pitr_enabled", legacyGoBool],
-  ["region", legacyGoString],
-  ["walg_enabled", legacyGoBool],
+  ["pitr_enabled", goBool],
+  ["region", goString],
+  ["walg_enabled", goBool],
 ]);
 
 type BackupsResponse = typeof V1ListAllBackupsOutput.Type;
 
-const mapListError = mapLegacyHttpError({
-  networkError: LegacyBackupListNetworkError,
-  statusError: LegacyBackupListUnexpectedStatusError,
+const mapListError = mapHttpError({
+  networkError: BackupListNetworkError,
+  statusError: BackupListUnexpectedStatusError,
   networkMessage: (cause) => `failed to list physical backups: ${cause}`,
   statusMessage: (status, body) => `unexpected list backup status ${status}: ${body}`,
 });
@@ -87,28 +84,24 @@ function renderLogicalTable(response: BackupsResponse): string {
     region,
     backup.is_physical_backup ? "PHYSICAL" : "LOGICAL",
     backup.status,
-    formatLegacyTimestamp(backup.inserted_at),
+    formatTimestamp(backup.inserted_at),
   ]);
   return renderGlamourTable(LOGICAL_HEADERS, rows);
 }
 
-export const legacyBackupsList = Effect.fn("legacy.backups.list")(function* (
-  flags: LegacyBackupsListFlags,
-) {
+export const backupsList = Effect.fn("backups.list")(function* (flags: BackupsListFlags) {
   const output = yield* Output;
-  const goOutputFlag = yield* LegacyOutputFlag;
-  const api = yield* LegacyPlatformApi;
-  const resolver = yield* LegacyProjectRefResolver;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
+  const goOutputFlag = yield* OutputFlag;
+  const api = yield* CommandPlatformApi;
+  const resolver = yield* ProjectRefResolver;
+  const linkedProjectCache = yield* LinkedProjectCache;
+  const telemetryState = yield* TelemetryState;
 
   const ref = yield* resolver.resolve(flags.projectRef);
 
-  // Write the linked-project cache and persist the telemetry state file
-  // whether the main API call succeeds or fails.
   yield* Effect.gen(function* () {
-    // The fetching spinner is only meaningful in human-facing text mode — in JSON / stream-json
-    // it would surface dangling `[task] start:` lines on stderr with no completion message.
+    // Spinner is text-mode only; in JSON/stream-json it would leave a dangling `[task] start:`
+    // line on stderr with no completion message.
     const fetching =
       output.format === "text" ? yield* output.task("Fetching backups...") : undefined;
     const response = yield* api.v1.listAllBackups({ ref }).pipe(
@@ -124,20 +117,19 @@ export const legacyBackupsList = Effect.fn("legacy.backups.list")(function* (
       return;
     }
     if (goFmt === "yaml") {
-      yield* output.raw(encodeLegacyGoYaml(response, LEGACY_GO_BACKUPS_RESPONSE));
+      yield* output.raw(encodeGoYaml(response, GO_BACKUPS_RESPONSE));
       return;
     }
     if (goFmt === "toml") {
-      // The schema decodes the PITR-only `"backups": null` to `[]` (see the
-      // `nullForEmptyArrays` JSON hint above); mirror that by treating an
-      // empty list as a nil slice, which BurntSushi omits entirely.
+      // Treats an empty backups list as absent, matching the nullForEmptyArrays JSON handling
+      // above.
       yield* output.raw(
-        encodeLegacyGoToml(
+        encodeGoToml(
           {
             ...response,
             backups: response.backups.length > 0 ? response.backups : undefined,
           },
-          LEGACY_GO_BACKUPS_RESPONSE,
+          GO_BACKUPS_RESPONSE,
         ),
       );
       return;
@@ -147,8 +139,6 @@ export const legacyBackupsList = Effect.fn("legacy.backups.list")(function* (
       return;
     }
 
-    // goFmt is undefined or "pretty" — defer to TS --output-format for JSON/stream-json,
-    // otherwise render the Glamour-styled table (Go --output pretty parity).
     if (output.format === "json" || output.format === "stream-json") {
       yield* output.success("", response);
       return;

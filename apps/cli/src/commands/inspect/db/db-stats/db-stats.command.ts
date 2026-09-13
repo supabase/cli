@@ -1,14 +1,11 @@
 import { Command } from "effect/unstable/cli";
-import { legacyInspectDbDbStats } from "./db-stats.handler.ts";
-import {
-  LEGACY_INSPECT_DB_FLAGS,
-  legacyInspectDbCommandHandler,
-} from "../legacy-inspect-db-command.ts";
-import { legacyInspectDbRuntimeLayer } from "../db.layers.ts";
+import { inspectDbDbStats } from "./db-stats.handler.ts";
+import { INSPECT_DB_FLAGS, inspectDbCommandHandler } from "../inspect-db-command.ts";
+import { inspectDbRuntimeLayer } from "../db.layers.ts";
 
-export const legacyInspectDbDbStatsCommand = Command.make("db-stats", LEGACY_INSPECT_DB_FLAGS).pipe(
+export const inspectDbDbStatsCommand = Command.make("db-stats", INSPECT_DB_FLAGS).pipe(
   Command.withDescription("Show stats such as cache hit rates, total sizes, and WAL size."),
   Command.withShortDescription("Show database stats"),
-  Command.withHandler(legacyInspectDbCommandHandler(legacyInspectDbDbStats)),
-  Command.provide(legacyInspectDbRuntimeLayer("db-stats")),
+  Command.withHandler(inspectDbCommandHandler(inspectDbDbStats)),
+  Command.provide(inspectDbRuntimeLayer("db-stats")),
 );

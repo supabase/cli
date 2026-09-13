@@ -2,15 +2,14 @@ import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { legacyManagementApiRuntimeLayer } from "../../../command-internal/legacy-management-api-runtime.layer.ts";
-import { legacyStringSliceFlag } from "../../../command-internal/legacy-string-slice-flag.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { LEGACY_SSO_NAME_ID_FORMATS } from "../sso.saml.ts";
-import { legacySsoAdd } from "./add.handler.ts";
+import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
+import { stringSliceFlag } from "../../../command-internal/string-slice-flag.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { SSO_NAME_ID_FORMATS } from "../sso.saml.ts";
+import { ssoAdd } from "./add.handler.ts";
 
-// `--domains` is a CSV string-slice flag; malformed CSV fails at parse time
-// with pflag's exact diagnostic (see `legacyStringSliceFlag`).
-export const legacySsoAddDomainsFlag = legacyStringSliceFlag(
+// `--domains` is a CSV string-slice flag; malformed CSV reports pflag's diagnostic (see `stringSliceFlag`).
+export const ssoAddDomainsFlag = stringSliceFlag(
   "domains",
   "Comma separated list of email domains to associate with the added identity provider.",
 );
@@ -20,13 +19,12 @@ const config = {
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
-  // `--type` is required — leave off `Flag.optional` so the CLI parser
-  // enforces presence at parse time.
+  // No `Flag.optional`: `--type` is required, enforced by the CLI parser.
   type: Flag.choice("type", ["saml"] as const).pipe(
     Flag.withAlias("t"),
     Flag.withDescription("Type of identity provider (according to supported protocol)."),
   ),
-  domains: legacySsoAddDomainsFlag,
+  domains: ssoAddDomainsFlag,
   metadataFile: Flag.string("metadata-file").pipe(
     Flag.withDescription(
       "File containing a SAML 2.0 Metadata XML document describing the identity provider.",
@@ -51,16 +49,16 @@ const config = {
     ),
     Flag.optional,
   ),
-  nameIdFormat: Flag.choice("name-id-format", LEGACY_SSO_NAME_ID_FORMATS).pipe(
+  nameIdFormat: Flag.choice("name-id-format", SSO_NAME_ID_FORMATS).pipe(
     Flag.withDescription(
       "URI reference representing the classification of string-based identifier information.",
     ),
     Flag.optional,
   ),
 };
-export type LegacySsoAddFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type SsoAddFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacySsoAddCommand = Command.make("add", config).pipe(
+export const ssoAddCommand = Command.make("add", config).pipe(
   Command.withDescription(
     "Add and configure a new connection to a SSO identity provider to your Supabase project.",
   ),
@@ -73,19 +71,16 @@ export const legacySsoAddCommand = Command.make("add", config).pipe(
     },
   ]),
   Command.withHandler((flags) =>
-    legacySsoAdd(flags).pipe(
-      withLegacyCommandInstrumentation({
+    ssoAdd(flags).pipe(
+      withCommandTelemetry({
         flags,
         safeFlags: ["project-ref"],
         config,
-        // `--type` registers `-t` (Flag.withAlias above); without this, `-t saml`
-        // never resolves to the canonical `type` name in extractChangedFlagNames,
-        // so it wouldn't appear in telemetry at all — the canonical name must be
-        // reported regardless of shorthand.
+        // Maps the `-t` alias back to `type` so telemetry records it as changed.
         aliases: { t: "type" },
       }),
       withJsonErrorHandling,
     ),
   ),
-  Command.provide(legacyManagementApiRuntimeLayer(["sso", "add"])),
+  Command.provide(managementApiRuntimeLayer(["sso", "add"])),
 );

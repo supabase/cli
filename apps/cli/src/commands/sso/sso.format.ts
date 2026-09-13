@@ -1,10 +1,8 @@
 import { Result } from "effect";
 
-import { renderGlamourTable } from "../../output/legacy-glamour-table.ts";
-import { LegacySsoInvalidUuidError } from "./sso.errors.ts";
+import { renderGlamourTable } from "../../output/glamour-table.ts";
+import { SsoInvalidUuidError } from "./sso.errors.ts";
 
-// UUIDs are matched case-insensitively so callers passing
-// `B5AE62F9-…` (mixed- or upper-case) succeed.
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
@@ -13,7 +11,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
  * raw POST/PUT path. `attribute_mapping` is left as `unknown` so we can render
  * provider responses that carry user-defined keys.
  */
-export interface LegacySsoProviderView {
+export interface SsoProviderView {
   readonly id: string;
   readonly saml?: {
     readonly entity_id?: string;
@@ -37,7 +35,7 @@ export interface LegacySsoProviderView {
  * so the formatter coerces an arbitrary object into the provider view shape
  * without throwing on missing fields.
  */
-export function toLegacySsoProviderView(value: unknown): LegacySsoProviderView {
+export function toSsoProviderView(value: unknown): SsoProviderView {
   if (typeof value !== "object" || value === null) {
     return { id: "" };
   }
@@ -84,12 +82,12 @@ export function toLegacySsoProviderView(value: unknown): LegacySsoProviderView {
  * Validates a positional provider-id argument as a canonical UUID.
  * Failure message uses `%q`-style quoting (JSON.stringify wraps the raw input).
  */
-export function validateUuid(input: string): Result.Result<string, LegacySsoInvalidUuidError> {
+export function validateUuid(input: string): Result.Result<string, SsoInvalidUuidError> {
   if (UUID_PATTERN.test(input)) {
     return Result.succeed(input);
   }
   return Result.fail(
-    new LegacySsoInvalidUuidError({
+    new SsoInvalidUuidError({
       providerId: input,
       message: `identity provider ID ${JSON.stringify(input)} is not a UUID`,
     }),
@@ -111,11 +109,11 @@ export function formatSsoTimestamp(input?: string): string {
   );
 }
 
-export function formatProtocol(saml: LegacySsoProviderView["saml"]): string {
+export function formatProtocol(saml: SsoProviderView["saml"]): string {
   return saml === undefined ? "unknown" : "SAML 2.0";
 }
 
-export function formatDomains(domains: LegacySsoProviderView["domains"]): string {
+export function formatDomains(domains: SsoProviderView["domains"]): string {
   if (domains === undefined) return "-";
   const list = domains
     .map((d) => d.domain)
@@ -123,47 +121,42 @@ export function formatDomains(domains: LegacySsoProviderView["domains"]): string
   return list.length === 0 ? "-" : list.join(", ");
 }
 
-export function formatEntityId(saml: LegacySsoProviderView["saml"]): string {
+export function formatEntityId(saml: SsoProviderView["saml"]): string {
   if (saml === undefined) return "-";
   return saml.entity_id !== undefined && saml.entity_id !== "" ? saml.entity_id : "-";
 }
 
-export function formatNameIdFormat(saml: LegacySsoProviderView["saml"]): string {
+export function formatNameIdFormat(saml: SsoProviderView["saml"]): string {
   if (saml === undefined) return "-";
   return saml.name_id_format !== undefined && saml.name_id_format !== ""
     ? saml.name_id_format
     : "-";
 }
 
-export function formatMetadataSource(saml: LegacySsoProviderView["saml"]): string {
+export function formatMetadataSource(saml: SsoProviderView["saml"]): string {
   if (saml === undefined) return "FILE";
   return saml.metadata_url !== undefined && saml.metadata_url !== "" ? saml.metadata_url : "FILE";
 }
 
-// Tag matcher mirroring go-xmlfmt's `reg`: captures opening, closing, comment,
-// declaration, and self-closing tags. Non-greedy inner body so we don't span
-// across consecutive `<…>` clusters.
+// Matches opening, closing, comment, declaration, and self-closing tags;
+// non-greedy so it doesn't span across consecutive `<…>` clusters.
 const XMLFMT_TAG_RE = /<([/!]?)([^>]+?)(\/?)>/g;
 const XMLFMT_INTERTAG_SPACES_RE = />\s+</g;
 
 /**
  * Pretty-prints an XML document by inserting newlines and indentation between
- * tags. Behaviour-compatible port of `github.com/go-xmlfmt/xmlfmt@v1.1.3`
- * `FormatXML(xml, prefix, indent)` (without the nested-tags-in-comments
- * branch, which the SSO render call site never enables). Each tag boundary
- * becomes `\n + prefix + indent.repeat(depth) + <tag>`; opening tags increment
- * depth after emission, closing tags decrement before. Text content between
- * adjacent open/close tags (e.g. `<b>text</b>`) is preserved inline so the
- * close tag rides the same line.
+ * tags, matching `go-xmlfmt/xmlfmt@v1.1.3`'s output byte-for-byte (excluding
+ * its unused nested-tags-in-comments branch). Text between adjacent
+ * open/close tags (e.g. `<b>text</b>`) stays inline; other tags start a new,
+ * indented line.
  */
 export function formatSsoMetadataXml(xml: string, prefix = "  ", indent = "  "): string {
   // Collapse whitespace between adjacent tags so we control the layout.
   const src = xml.replace(XMLFMT_INTERTAG_SPACES_RE, "><");
 
   let depth = 0;
-  // Tracks whether the previous tag was a closing or self-closing tag.
-  // Used to decide whether a closing tag rides the same line as adjacent
-  // content (lastEndElem=false → inline close, e.g. `<b>text</b>`).
+  // Tracks whether the previous tag was closing/self-closing; when false, a
+  // closing tag stays inline (e.g. `<b>text</b>`).
   let lastEndElem = true;
 
   const replaced = src.replace(XMLFMT_TAG_RE, (match) => {
@@ -185,7 +178,6 @@ export function formatSsoMetadataXml(xml: string, prefix = "  ", indent = "  "):
       lastEndElem = true;
       return match;
     }
-    // Opening tag: emit at the current depth, then descend for children.
     lastEndElem = false;
     const result = "\n" + prefix + indent.repeat(depth) + match;
     depth++;
@@ -195,11 +187,9 @@ export function formatSsoMetadataXml(xml: string, prefix = "  ", indent = "  "):
   return prefix + replaced;
 }
 
-// The markdown header is `SAML 2.0 \`EntityID\``; Glamour renders the
-// backticks as an inline-code span which is stripped to plain text under
-// AsciiStyle. `renderGlamourTable` is a flat ASCII renderer with no markdown
-// awareness, so we drop the backticks here at the source for byte parity
-// with the established rendered output.
+// Backticks stripped: Glamour renders `SAML 2.0 \`EntityID\`` as an
+// inline-code span (plain text under AsciiStyle), but `renderGlamourTable`
+// has no markdown awareness, so we drop them here for byte parity.
 const LIST_HEADERS = [
   "TYPE",
   "IDENTITY PROVIDER ID",
@@ -212,7 +202,7 @@ const LIST_HEADERS = [
 /**
  * Renders the list table.
  */
-export function renderListProviders(items: ReadonlyArray<LegacySsoProviderView>): string {
+export function renderListProviders(items: ReadonlyArray<SsoProviderView>): string {
   const rows = items.map(
     (item) =>
       [
@@ -229,15 +219,12 @@ export function renderListProviders(items: ReadonlyArray<LegacySsoProviderView>)
 
 /**
  * Renders the single-provider view: property/value table plus optional
- * `## Attribute Mapping` (JSON-indented) and `## SAML 2.0 Metadata XML`
- * sections.
+ * `## Attribute Mapping` and `## SAML 2.0 Metadata XML` sections.
  *
- * The optional sections are emitted as plain markdown (heading + fenced code
- * block); we don't run them through Glamour, so visual styling differs from
- * the table above. Tests assert on substring presence (`toContain`) rather
- * than full byte equality. Documented in each subcommand's `SIDE_EFFECTS.md`.
+ * The optional sections are plain markdown, not run through Glamour, so their
+ * styling differs from the table above. See each subcommand's `SIDE_EFFECTS.md`.
  */
-export function renderSingleProvider(provider: LegacySsoProviderView): string {
+export function renderSingleProvider(provider: SsoProviderView): string {
   const rows: Array<readonly [string, string]> = [
     ["IDENTITY PROVIDER ID", provider.id],
     ["TYPE", formatProtocol(provider.saml)],
@@ -250,8 +237,7 @@ export function renderSingleProvider(provider: LegacySsoProviderView): string {
     rows.push(["NAMEID FORMAT", formatNameIdFormat(provider.saml)]);
   }
   rows.push(["CREATED AT (UTC)", formatSsoTimestamp(provider.created_at)]);
-  // Both CREATED AT and UPDATED AT rows use provider.created_at — an
-  // established output contract documented in SIDE_EFFECTS.md.
+  // Both rows read provider.created_at — see SIDE_EFFECTS.md.
   rows.push(["UPDATED AT (UTC)", formatSsoTimestamp(provider.created_at)]);
 
   const table = renderGlamourTable(["PROPERTY", "VALUE"], rows);
@@ -285,13 +271,13 @@ function hasAtLeastOneKey(value: unknown): boolean {
   return Object.keys(keys).length > 0;
 }
 
-export interface LegacySsoInfoPayload {
+export interface SsoInfoPayload {
   readonly acs_url: string;
   readonly entity_id: string;
   readonly relay_state: string;
 }
 
-export function buildInfoPayload(ref: string): LegacySsoInfoPayload {
+export function buildInfoPayload(ref: string): SsoInfoPayload {
   return {
     acs_url: `https://${ref}.supabase.co/auth/v1/sso/saml/acs`,
     entity_id: `https://${ref}.supabase.co/auth/v1/sso/saml/metadata`,
@@ -304,12 +290,9 @@ export function renderInfoMarkdown(ref: string): string {
   return renderGlamourTable(
     ["PROPERTY", "VALUE"],
     [
-      // The markdown label is "Single sign-on URL (ACS URL) " (trailing
-      // space), but Glamour collapses it when computing column widths so the
-      // rendered output has a single space between the label and the column
-      // separator. Our flat ASCII renderer would preserve the trailing space
-      // and double it up against the cell padding — so we drop it here to
-      // match the established rendered output.
+      // Glamour collapses the label's trailing space when computing column
+      // widths; our flat renderer would double it against cell padding, so
+      // it's dropped here to match the established output.
       ["Single sign-on URL (ACS URL)", payload.acs_url],
       ["Audience URI (SP Entity ID)", payload.entity_id],
       ["Default Relay State", payload.relay_state],

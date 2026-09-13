@@ -2,10 +2,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
 import { BunServices } from "@effect/platform-bun";
-import { Deferred, Effect, Layer, Option, PubSub, Redacted, Stream } from "effect";
+import { Deferred, Effect, Layer, Option, Redacted, Stream } from "effect";
 import type { CliProjectEnvironment, CliProjectPaths } from "@supabase/config";
-import { Stack, StackServiceState, type StackInfo } from "@supabase/stack/effect";
-import { HttpTransportClient } from "@supabase/stack/testing";
 import { Api } from "../../src/shared/auth/api.service.ts";
 import type { LoginSessionResponse, ProfileResponse } from "../../src/shared/auth/api.service.ts";
 import { Credentials } from "../../src/shared/auth/credentials.service.ts";
@@ -39,10 +37,6 @@ import { CurrentAnalyticsContext } from "../../src/shared/telemetry/analytics-co
 import { TelemetryRuntime } from "../../src/shared/telemetry/runtime.service.ts";
 import { makeTelemetryIdentity } from "../../src/shared/telemetry/identity.ts";
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
 type OutputMessage = {
   type: "intro" | "outro" | "info" | "warn" | "error" | "success" | "fail";
   message: string;
@@ -61,21 +55,14 @@ type OutputEvent = {
   [key: string]: unknown;
 };
 
-// Default home for mocks that need *some* path value. Unique per process (never
-// created on disk here) so a test that accidentally combines this default with a
-// real FileSystem layer can never pick up stale files written by earlier test
-// runs or manual CLI invocations — the failure mode the previous fixed literal
-// `/tmp/supabase-cli-test-home` allowed. Tests that really read or write files
-// under homeDir must pass their own per-test temp dir instead (see
-// `useLegacyTempWorkdir` in `legacy-mocks.ts`).
+// Default home for mocks that need *some* path value; unique per process and never
+// created on disk, so a test combining it with a real FileSystem layer can't collide
+// with another run's files. Tests that read/write real files under homeDir should use
+// `useTempWorkdir` in `command-mocks.ts` instead.
 const defaultTestHomeDir = join(
   tmpdir(),
   `supabase-cli-test-home-${process.pid.toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
 );
-
-// ---------------------------------------------------------------------------
-// Stateless mocks
-// ---------------------------------------------------------------------------
 
 export function mockBrowser(): Layer.Layer<Browser> {
   return Layer.succeed(Browser, {
@@ -107,9 +94,8 @@ export function mockStdin(isTTY: boolean, pipedInput?: string | Uint8Array): Lay
     ? Option.some(new TextDecoder().decode(pipedBytes.value))
     : Option.none<string>();
 
-  // Split the piped input into lines, dropping the trailing empty element left by a
-  // final newline (production `Stream.splitLines` emits no line after the terminating
-  // newline); interior blank lines are preserved.
+  // Drops the trailing empty element a final newline leaves behind, matching
+  // production `Stream.splitLines`; interior blank lines are preserved.
   const lines = Option.isSome(pipedText) ? pipedText.value.split(/\r?\n/u) : [];
   if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
   let lineIndex = 0;
@@ -121,9 +107,8 @@ export function mockStdin(isTTY: boolean, pipedInput?: string | Uint8Array): Lay
       ? Stream.fromIterable([pipedBytes.value])
       : Stream.empty,
     readPipedText: Effect.succeed(pipedText),
-    // Dispenses the piped lines one per call (trimmed), then None once exhausted —
-    // the timeout is irrelevant to a fixed mock. Mirrors the production persistent
-    // reader so a command issuing several prompts reads successive lines.
+    // Ignores any timeout argument; dispenses piped lines one per call (trimmed),
+    // then None once exhausted.
     readLine: () =>
       Effect.sync(() => {
         if (lineIndex >= lines.length) {
@@ -215,10 +200,6 @@ export function mockProcessControl(
   };
 }
 
-// ---------------------------------------------------------------------------
-// Stateful mock factories
-// ---------------------------------------------------------------------------
-
 export function mockCredentials(opts: { existingToken?: string } = {}) {
   let savedToken: string | undefined;
   let deleteWasCalled = false;
@@ -261,6 +242,7 @@ export function mockOutput(
   } = {},
 ) {
   const messages: OutputMessage[] = [];
+  const failures: Array<Parameters<ReturnType<typeof Output.of>["fail"]>[0]> = [];
   const progressEvents: ProgressEvent[] = [];
   const events: OutputEvent[] = [];
   const rawChunks: Array<{ text: string; stream: "stdout" | "stderr" }> = [];
@@ -362,6 +344,18 @@ export function mockOutput(
                 : JSON.stringify(event),
           });
         }),
+      result: (data: unknown) =>
+        Effect.sync(() => {
+          if (opts.format === "json") {
+            rawChunks.push({ text: `${JSON.stringify(data)}\n`, stream: "stdout" });
+          } else if (opts.format === "stream-json") {
+            events.push({
+              type: "result",
+              data,
+              timestamp: new Date().toISOString(),
+            });
+          }
+        }),
       success: (message: string, data?: Record<string, unknown>) =>
         Effect.sync(() => {
           messages.push({ type: "success", message, data });
@@ -369,6 +363,7 @@ export function mockOutput(
       fail: (err: { code: string; message: string; detail?: string; suggestion?: string }) =>
         Effect.sync(() => {
           messages.push({ type: "fail", message: err.message });
+          failures.push(err);
         }),
       progress: (opts: { max: number }) =>
         Effect.sync(() => ({
@@ -397,12 +392,12 @@ export function mockOutput(
         ) => {
           callCount++;
           promptTextCalls.push({ message, opts: options });
-          // Exercise the validate callback to cover both branches (line 140)
+          // Runs the validate callback so both branches get coverage.
           if (options?.validate) {
-            options.validate(""); // truthy branch: returns error message
-            options.validate("123456"); // falsy branch: returns undefined
+            options.validate(""); // returns an error message
+            options.validate("123456"); // returns undefined
           }
-          // Fail on the verification prompt (2nd call), not the "Press Enter" prompt (1st call)
+          // Fails the verification prompt (2nd call), not the "Press Enter" prompt (1st call).
           if (opts.promptTextFail && callCount > 1) {
             return Effect.fail(
               new NonInteractiveError({
@@ -453,6 +448,7 @@ export function mockOutput(
         }),
     }),
     messages,
+    failures,
     progressEvents,
     events,
     promptConfirmCalls,
@@ -525,13 +521,8 @@ export function mockApi(
 }
 
 /**
- * `withLegacyCommandInstrumentation` threads `flags`/`command`/etc. through
- * `CurrentAnalyticsContext`, not the direct `capture()` call args. The plain
- * `mockAnalytics()` below deliberately doesn't merge that context (most
- * callers don't need it); tests asserting on context-carried properties
- * (telemetry `flags` maps, `groups`) use this variant instead.
- * Shape-compatible with `mockAnalytics()`'s return so it's a drop-in
- * override wherever a setup helper accepts one.
+ * Like `mockAnalytics()`, but merges `CurrentAnalyticsContext` into captured event
+ * properties. Use it when asserting on context-carried fields (`flags`, `groups`).
  */
 export function mockContextualAnalytics(): ReturnType<typeof mockAnalytics> {
   const captured: Array<{ event: string; properties: Record<string, unknown> }> = [];
@@ -659,173 +650,6 @@ export function mockTelemetryRuntime(
     }),
   );
 }
-
-export function mockStack(
-  opts: {
-    info?: Partial<StackInfo>;
-    stateChanges?: Array<{ name: string; status: StackServiceState["status"] }>;
-    startError?: unknown;
-    startPending?: boolean;
-    stopPending?: boolean;
-    liveStateChanges?: boolean;
-  } = {},
-) {
-  let started = false;
-  let stopped = false;
-  const startDeferred = Deferred.makeUnsafe<void>();
-  const stopDeferred = Deferred.makeUnsafe<void>();
-  const stateHistory = [...(opts.stateChanges ?? [])];
-  const statePubSub = Effect.runSync(
-    PubSub.unbounded<StackServiceState>({
-      replay: Math.max(stateHistory.length, 1) + 8,
-    }),
-  );
-  for (const change of stateHistory) {
-    PubSub.publishUnsafe(
-      statePubSub,
-      new StackServiceState({
-        name: change.name,
-        status: change.status,
-        pid: null,
-        exitCode: null,
-        restartCount: 0,
-        startedAt: null,
-        error: null,
-      }),
-    );
-  }
-  const info: StackInfo = {
-    url: "http://127.0.0.1:54321",
-    dbUrl: "postgresql://postgres:postgres@127.0.0.1:54322/postgres",
-    publishableKey: "test-publishable-key",
-    secretKey: "test-secret-key",
-    anonJwt: "test-anon-jwt",
-    serviceRoleJwt: "test-service-role-jwt",
-    serviceEndpoints: {},
-    ...opts.info,
-  };
-
-  return {
-    layer: Layer.succeed(Stack, {
-      getInfo: Effect.succeed(info),
-      start: Effect.gen(function* () {
-        started = true;
-        if (opts.startError !== undefined) {
-          return yield* Effect.fail(opts.startError as never);
-        }
-        if (opts.startPending) {
-          yield* Deferred.await(startDeferred);
-        }
-      }),
-      stop: Effect.gen(function* () {
-        stopped = true;
-        if (opts.stopPending) {
-          yield* Deferred.await(stopDeferred);
-        }
-      }),
-      dispose: Effect.gen(function* () {
-        stopped = true;
-        if (opts.stopPending) {
-          yield* Deferred.await(stopDeferred);
-        }
-      }),
-      startService: () => Effect.void,
-      stopService: () => Effect.void,
-      restartService: () => Effect.void,
-      reloadFunctions: () => Effect.void,
-      reloadEdgeRuntime: () => Effect.void,
-      getState: () =>
-        Effect.succeed(
-          new StackServiceState({
-            name: "postgres",
-            status: "Healthy",
-            pid: null,
-            exitCode: null,
-            restartCount: 0,
-            startedAt: null,
-            error: null,
-          }),
-        ),
-      getAllStates: Effect.sync(() => {
-        const latestStates = new Map(
-          (stateHistory.length > 0
-            ? stateHistory
-            : [{ name: "postgres", status: "Pending" as const }]
-          ).map((state) => [state.name, state] as const),
-        );
-        return [...latestStates.values()].map(
-          (state) =>
-            new StackServiceState({
-              name: state.name,
-              status: state.status,
-              pid: null,
-              exitCode: null,
-              restartCount: 0,
-              startedAt: null,
-              error: null,
-            }),
-        );
-      }),
-      stateChanges: () => Effect.succeed(Stream.empty),
-      allStateChanges: opts.liveStateChanges
-        ? Stream.fromPubSub(statePubSub)
-        : opts.stateChanges
-          ? Stream.fromIterable(
-              opts.stateChanges.map(
-                (change) =>
-                  new StackServiceState({
-                    name: change.name,
-                    status: change.status,
-                    pid: null,
-                    exitCode: null,
-                    restartCount: 0,
-                    startedAt: null,
-                    error: null,
-                  }),
-              ),
-            )
-          : Stream.empty,
-      waitReady: () => Effect.void,
-      waitAllReady: () => Effect.void,
-      subscribeLogs: () => Stream.empty,
-      subscribeAllLogs: () => Stream.empty,
-      logHistory: () => Effect.succeed([]),
-      logHistoryAll: () => Effect.succeed([]),
-    }),
-    get started() {
-      return started;
-    },
-    get stopped() {
-      return stopped;
-    },
-    emitStateChange(change: { name: string; status: StackServiceState["status"] }) {
-      stateHistory.push(change);
-      PubSub.publishUnsafe(
-        statePubSub,
-        new StackServiceState({
-          name: change.name,
-          status: change.status,
-          pid: null,
-          exitCode: null,
-          restartCount: 0,
-          startedAt: null,
-          error: null,
-        }),
-      );
-    },
-    resolveStart() {
-      Effect.runSync(Deferred.succeed(startDeferred, void 0));
-    },
-    resolveStop() {
-      Effect.runSync(Deferred.succeed(stopDeferred, void 0));
-    },
-    info,
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Environment helpers
-// ---------------------------------------------------------------------------
 
 function applyProcessEnv(values: Readonly<Record<string, string | undefined>>) {
   const snapshot = { ...process.env };
@@ -1017,9 +841,6 @@ export function emptyEnv() {
     mockTty(),
     mockProcessControl().layer,
     cliSettingsLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(cliProjectContextLayer)),
-    Layer.succeed(HttpTransportClient, {
-      request: () => Effect.die("unexpected HttpTransportClient access in tests"),
-    }),
   );
 }
 

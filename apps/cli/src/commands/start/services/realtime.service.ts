@@ -1,38 +1,30 @@
 /**
- * Builds the Realtime container spec.
- *
- * Enabled gate: `config.realtime.enabled` — independent of
- * `config.api.enabled` (PostgREST's own gate); the two are never conflated.
- * Gating (this field, plus `!isContainerExcluded`) is the caller's
- * responsibility — see `start.services.ts`'s `realtime` catalog entry
- * (`enabledGate: "realtime.enabled"`) — this module only builds the
- * container spec once called.
+ * Builds the `docker create` spec for the Realtime container. Gated on `config.realtime.enabled`
+ * by the caller, independent of PostgREST's `config.api.enabled`.
  */
 
 import type { CliConfig } from "@supabase/config";
 
-import { legacyServiceContainerName } from "../../../command-internal/legacy-docker-ids.ts";
+import { serviceContainerName } from "../../../command-internal/docker-ids.ts";
 import {
-  LEGACY_REALTIME_TENANT_ID,
-  legacyBuildRealtimeEnv,
+  REALTIME_TENANT_ID,
+  buildRealtimeEnv,
 } from "../../../command-internal/db-bootstrap/realtime-env.ts";
-import type { LegacyStartContainerSpec } from "../../../command-internal/db-bootstrap/docker-create-args.ts";
-import {
-  legacySlimWgetHealthcheck,
-  legacyUsesSlimRuntime,
-} from "../../../command-internal/db-bootstrap/slim-runtime.ts";
-import { legacyStartInternalDbPassword } from "../../../command-internal/db-bootstrap/internal-db-connection.ts";
+import type { StartContainerSpec } from "../../../command-internal/db-bootstrap/docker-create-args.ts";
+import { slimWgetHealthcheck } from "../../../command-internal/db-bootstrap/slim-runtime.ts";
+import { usesSlimImageRuntime } from "../../../shared/services/slim-images.ts";
+import { startInternalDbPassword } from "../../../command-internal/db-bootstrap/internal-db-connection.ts";
 
-export interface LegacyRealtimeContainerSpecInput {
-  /** The sanitized project id — see `legacyServiceContainerName`'s callers. */
+export interface RealtimeContainerSpecInput {
+  /** The sanitized project id. */
   readonly projectId: string;
-  /** `container.HostConfig.NetworkMode`/`network.NetworkingConfig` target — the `--network-id` override or `utils.NetId`. */
+  /** `container.HostConfig.NetworkMode`'s target; resolved once per `start` run, not per-container. */
   readonly networkId: string;
-  /** `utils.Config.Realtime.Image`, already resolved/pulled by the caller (`image-prepull.ts`). */
+  /** `config.realtime.image`, already resolved/pulled by the caller. */
   readonly image: string;
   readonly ipVersion: CliConfig["realtime"]["ip_version"];
   readonly maxHeaderLength: CliConfig["realtime"]["max_header_length"];
-  /** `LegacyLocalConfigValues.dbUrl` — reused, not recomputed, to derive the internal DB password. */
+  /** `LocalConfigValues.dbUrl` — reused, not recomputed, to derive the internal DB password. */
   readonly dbUrl: string;
   readonly jwtSecret: string;
   readonly jwks: string;
@@ -43,27 +35,25 @@ export interface LegacyRealtimeContainerSpecInput {
  * (host-published) entry — Realtime, like GoTrue, only ever exposes its port
  * on the Docker network.
  */
-export function legacyBuildRealtimeContainerSpec(
-  input: LegacyRealtimeContainerSpecInput,
-): LegacyStartContainerSpec {
-  const env = legacyBuildRealtimeEnv({
+export function buildRealtimeContainerSpec(input: RealtimeContainerSpecInput): StartContainerSpec {
+  const env = buildRealtimeEnv({
     ipVersion: input.ipVersion,
     maxHeaderLength: input.maxHeaderLength,
-    dbHost: legacyServiceContainerName("db", input.projectId),
-    dbPassword: legacyStartInternalDbPassword(input.dbUrl),
+    dbHost: serviceContainerName("db", input.projectId),
+    dbPassword: startInternalDbPassword(input.dbUrl),
     jwtSecret: input.jwtSecret,
     jwks: input.jwks,
   });
 
   return {
     image: input.image,
-    containerName: legacyServiceContainerName("realtime", input.projectId),
+    containerName: serviceContainerName("realtime", input.projectId),
     env,
     binds: [],
     exposedPorts: [{ containerPort: "4000" }],
-    healthcheck: legacyUsesSlimRuntime(input.image)
-      ? legacySlimWgetHealthcheck("http://127.0.0.1:4000/api/ping", {
-          header: `Host:${LEGACY_REALTIME_TENANT_ID}`,
+    healthcheck: usesSlimImageRuntime(input.image)
+      ? slimWgetHealthcheck("http://127.0.0.1:4000/api/ping", {
+          header: `Host:${REALTIME_TENANT_ID}`,
         })
       : {
           // Podman splits command by spaces unless quoted, but curl's header can't be
@@ -76,7 +66,7 @@ export function legacyBuildRealtimeContainerSpec(
             "-o",
             "/dev/null",
             "-H",
-            `Host:${LEGACY_REALTIME_TENANT_ID}`,
+            `Host:${REALTIME_TENANT_ID}`,
             "http://127.0.0.1:4000/api/ping",
           ],
           intervalSeconds: 10,
@@ -85,8 +75,7 @@ export function legacyBuildRealtimeContainerSpec(
         },
     restartPolicy: "unless-stopped",
     networkId: input.networkId,
-    // Network aliases: `realtime` plus the tenant id.
-    networkAliases: ["realtime", LEGACY_REALTIME_TENANT_ID],
+    networkAliases: ["realtime", REALTIME_TENANT_ID],
     labels: {},
   };
 }

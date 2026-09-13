@@ -1,9 +1,9 @@
 import { Argument, Command, Flag } from "effect/unstable/cli";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyMigrationDbRuntimeLayer } from "../migration.layers.ts";
-import { legacyMigrationRepair } from "./repair.handler.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { migrationDbRuntimeLayer } from "../migration.layers.ts";
+import { migrationRepair } from "./repair.handler.ts";
 
 const config = {
   versions: Argument.string("version").pipe(
@@ -39,11 +39,11 @@ const config = {
   ),
 } as const;
 
-export const legacyMigrationRepairCommand = Command.make("repair", config).pipe(
+export const migrationRepairCommand = Command.make("repair", config).pipe(
   Command.withDescription("Repair the migration history table."),
   Command.withShortDescription("Repair the migration history table"),
   Command.withHandler((flags) =>
-    legacyMigrationRepair({
+    migrationRepair({
       versions: flags.versions.map(String),
       status: flags.status,
       dbUrl: flags.dbUrl,
@@ -52,7 +52,7 @@ export const legacyMigrationRepairCommand = Command.make("repair", config).pipe(
       projectRef: flags.projectRef,
       password: flags.password,
     }).pipe(
-      withLegacyCommandInstrumentation({
+      withCommandTelemetry({
         flags: {
           status: flags.status,
           "db-url": flags.dbUrl,
@@ -62,14 +62,13 @@ export const legacyMigrationRepairCommand = Command.make("repair", config).pipe(
           // `password` is a credential — always reaches telemetry as `<redacted>`.
           password: flags.password,
         },
-        // --status is Flag.choice and is auto-detected as safe via `config`
-        // below; password stays redacted. --project-ref has no established
-        // telemetry-safety baseline either, so it stays redacted too.
+        // --status is auto-detected as safe via config below; password and
+        // --project-ref stay redacted.
         config,
         aliases: { p: "password" },
       }),
       withJsonErrorHandling,
     ),
   ),
-  Command.provide(legacyMigrationDbRuntimeLayer(["migration", "repair"])),
+  Command.provide(migrationDbRuntimeLayer(["migration", "repair"])),
 );

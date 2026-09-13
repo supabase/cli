@@ -17,39 +17,18 @@ import {
 } from "./registry-row.ts";
 
 /**
- * The non-auth half of the API↔`CliConfig` mapping table (CLI-2230). Rows are
- * mined from the legacy push-direction sync mappers
- * (`apps/cli/src/commands/config/push/config-sync/*.sync.ts`), which
- * already encode which API fields correspond to which config fields for
- * `config push`'s diff/apply flow — this registry repurposes that same
- * correspondence for the pull direction. Every `configPath` below was
- * verified against the live config schema (`../api.ts`, `../db.ts`,
- * `../storage.ts`) before being written; see the per-section comments for
- * fields that exist on the API side but have no config-side counterpart
- * (deliberately unmapped, not an oversight).
+ * The non-auth half of the API↔`CliConfig` mapping table. See the per-section comments for
+ * fields that exist on the API side but have no config-side counterpart.
  */
-
-// === api =====================================================================
-// Sync precedent: config-sync/api.sync.ts:84-96 (`applyRemoteApiConfig`),
-// :130-145 (`apiToUpdateBody`).
 
 const apiDbSchemaPath = ["api", "db_schema"];
 const apiExtraSearchPathPath = ["api", "db_extra_search_path"];
 const apiMaxRowsPath = ["api", "max_rows"];
 
 /**
- * Whether the remote explicitly reports the Data API as disabled:
- * api.sync.ts:84-87 (`applyRemoteApiConfig`) treats an empty remote
- * `db_schema` as "Data API disabled" and early-returns without applying
- * anything else from the section. The schemas/extra_search_path/max_rows rows
- * below gate on this so a disabled remote maps to exactly
- * `{ api: { enabled: false } }` — the other fields' remote values are
- * meaningless while the service is off, and reporting them (e.g.
- * `schemas: []`) would fabricate drift the legacy apply never saw. Only the
- * explicit `""` sentinel disables: an *absent* `db_schema` means the (sparse)
- * input didn't speak about it, so the sibling fields still map. (The legacy
- * apply conflated missing with `""` via `valOrDefault`, but it only ever saw
- * complete v1 responses, where the distinction cannot arise.)
+ * True when the remote reports the Data API disabled: an explicit `""` `db_schema`, not an
+ * absent one (which means the sparse input simply didn't mention it). The rows below gate on
+ * this so a disabled remote maps to exactly `{ api: { enabled: false } }`.
  */
 function remoteDataApiDisabled(attributes: Record<string, unknown>): boolean {
   const api = attributes["api"];
@@ -57,39 +36,20 @@ function remoteDataApiDisabled(attributes: Record<string, unknown>): boolean {
 }
 
 /**
- * DOCUMENT-side counterpart of `clampToUint` (same convergence rule as the
- * auth `uintRow`s): the config schema accepts a negative number and the push
- * mappers send it unchanged, but every pull-direction transform below clamps
- * what the API reports — so a pushed negative projects back as `0`, and the
- * document spelling must converge on that reading. Non-numbers stay verbatim.
+ * Document-side counterpart of `clampToUint`: the config schema accepts a negative number,
+ * but every pull-direction transform clamps what the API reports, so the document spelling
+ * must converge on the same reading. Non-numbers pass through unchanged.
  */
 function clampDocumentUint(value: unknown): unknown {
   return typeof value === "number" ? clampToUint(value) : value;
 }
 
 /**
- * DOCUMENT-side counterpart for `api.max_rows` specifically — NOT
- * `clampDocumentUint` (human review round on PR #6339, thread 2): the push
- * mapper only sends `max_rows` when it is strictly positive
- * (`apiToUpdateBody`, api.sync.ts:141, `if (local.max_rows > 0)`), so a
- * non-positive document value (`0` included, not just negative) is
- * unmanaged — push never communicates it, and projecting it (even clamped to
- * `0`) would assert a value that survives push as drift. Omit rather than
- * clamp; a positive value stays verbatim (this row's `configPath` is the
- * same one `clampToUint`/`expectInteger` narrow on the API arm, so a
- * document-side fractional value is already an edge case neither arm
- * canonicalizes further here). CLI-2266 item 3 tracks flipping this back to
- * a plain clamp once push starts sending `max_rows` explicitly regardless of
- * sign (e.g. as an explicit "unset" value).
- *
- * `!(value > 0)`, not `value <= 0` (engineer review round on PR #6339): the
- * two are NOT equivalent for `NaN` — `NaN <= 0` is `false` (NaN keeps, push
- * omits) while `!(NaN > 0)` is `true` (both omit) — and TOML can genuinely
- * produce a NaN document value (`max_rows = nan`, which `smol-toml` parses
- * to `Number.NaN`). An unfiltered NaN would ride into `ProjectConfig` and
- * poison every downstream comparison (`NaN !== NaN`, permanent phantom
- * drift). `!(value > 0)` is the exact negation of push's own `value > 0`
- * gate, so it agrees with push on every float, NaN included.
+ * Omits (rather than clamps) `api.max_rows` when the document value is non-positive
+ * (including `0` and `NaN`): push only ever sends `max_rows` when it is strictly positive,
+ * so any other value never round-trips and asserting it would be drift. Uses `!(value > 0)`
+ * rather than `value <= 0` specifically because `NaN <= 0` is `false` — a TOML `nan` value
+ * would otherwise ride through and poison every downstream comparison.
  */
 function normalizeDocumentMaxRows(value: unknown): unknown {
   return typeof value === "number" && !(value > 0) ? undefined : value;
@@ -99,20 +59,15 @@ const apiSectionRows: ReadonlyArray<ProjectConfigMappingRow> = [
   {
     configPath: ["api", "schemas"],
     apiPath: apiDbSchemaPath,
-    // Validation runs BEFORE the disabled gate: a malformed value alongside
-    // the disabled sentinel must still throw, not vanish behind the gate
-    // while its (consumed) path also disappears from unmappedApiFields.
+    // Validated before the disabled gate: a malformed value must still throw, even when the
+    // disabled sentinel would otherwise suppress this field.
     transform: (value, attributes) => {
       const schemas = splitCommaSeparated(expectString(value, apiDbSchemaPath));
       return remoteDataApiDisabled(attributes) ? undefined : schemas;
     },
-    // Beyond the comma round-trip: an explicitly EMPTY schemas array is
-    // unmanaged absence — the push only sends db_schema when the array is
-    // non-empty (api.sync.ts:137-139, with "" reserved for the disable
-    // path), and the pull side reads "" as the disabled sentinel, so the
-    // API arm can never project `[]`; keeping it would fabricate permanent
-    // drift. (extra_search_path differs: its push join is unconditional,
-    // so its empty array round-trips and stays.)
+    // An explicitly empty schemas array is unmanaged absence: push never sends `db_schema`
+    // for an empty array (`""` is reserved for the disabled sentinel), so the API side can
+    // never project `[]`. Unlike `extra_search_path`, whose empty array does round-trip.
     normalizeDocument: (value) => {
       const canonical = canonicalizeCommaJoinedArray(value);
       return Array.isArray(canonical) && canonical.length === 0 ? undefined : canonical;
@@ -120,10 +75,8 @@ const apiSectionRows: ReadonlyArray<ProjectConfigMappingRow> = [
     unit: "csv → string[]",
   },
   {
-    // Derived, not a distinct API field: api.sync.ts:85 treats an empty
-    // remote `db_schema` as "Data API disabled" (`applyRemoteApiConfig`).
-    // Shares `apiDbSchemaPath` with the row above — multiple rows may read
-    // the same `apiPath` (registry-row.ts's docstring).
+    // Derived from the same `db_schema` field as the row above; multiple rows may share an
+    // `apiPath` (see registry-row.ts).
     configPath: ["api", "enabled"],
     apiPath: apiDbSchemaPath,
     transform: (value) => expectString(value, apiDbSchemaPath).length > 0,
@@ -147,16 +100,10 @@ const apiSectionRows: ReadonlyArray<ProjectConfigMappingRow> = [
     },
     normalizeDocument: normalizeDocumentMaxRows,
   },
-  // Deliberately unmapped (no config counterpart): api.db_pool,
-  // api.db_pool_acquisition_timeout.
+  // Unmapped (no config counterpart): api.db_pool, api.db_pool_acquisition_timeout.
 ];
 
-// === db ======================================================================
-
-/**
- * Settings fields whose remote value is a signed int clamped to uint
- * (db.sync.ts:18 `SETTINGS_UINT_KEYS`, applied at :77-79).
- */
+/** Settings fields whose remote value is a signed int, clamped to uint. */
 const DB_SETTINGS_UINT_KEYS: ReadonlyArray<string> = [
   "max_connections",
   "max_locks_per_transaction",
@@ -169,9 +116,8 @@ const DB_SETTINGS_UINT_KEYS: ReadonlyArray<string> = [
 ];
 
 /**
- * The remaining string-passthrough `db.settings` keys, verified against
- * `../db.ts:40-67`. `session_replication_role` is excluded — see
- * {@link sessionReplicationRoleRow}, below.
+ * The remaining string-passthrough `db.settings` keys. `session_replication_role` is
+ * excluded — see {@link sessionReplicationRoleRow}, below.
  */
 const DB_SETTINGS_STRING_KEYS: ReadonlyArray<string> = [
   "effective_cache_size",
@@ -192,15 +138,10 @@ const DB_SETTINGS_STRING_KEYS: ReadonlyArray<string> = [
 const sessionReplicationRolePath = ["database", "postgres_settings", "session_replication_role"];
 
 /**
- * `session_replication_role` is a closed enum on the config side
- * (`"origin" | "replica" | "local"`, `../db.ts:55-60`), but the lenient API
- * mirror (`./api-attributes.ts`) deliberately widens it to a plain string
- * (ADR 0019 rule 2) so a new enum member the platform starts returning
- * doesn't fail decode. Left in the generic `DB_SETTINGS_STRING_KEYS` loop,
- * such a value would land in the typed output unguarded and be type-invalid
- * against the config schema, so this row special-cases it out with the same
- * enum guard as `poolerPoolModePath`, below: an unrecognized value omits the
- * field rather than throwing — it stays reachable via `_apiResponse`.
+ * `session_replication_role` is a closed enum on the config side, but the lenient API
+ * mirror widens it to a plain string (see `docs/adr/0019-config-api-response-passthrough.md`)
+ * so a new enum value doesn't fail decode. This row guards it back to the enum, omitting an
+ * unrecognized value rather than throwing — it stays reachable via `_apiResponse`.
  */
 const sessionReplicationRoleRow: ProjectConfigMappingRow = {
   configPath: ["db", "settings", "session_replication_role"],
@@ -238,19 +179,13 @@ const dbSettingsRows: ReadonlyArray<ProjectConfigMappingRow> = [
 const networkRestrictionsAllowedCidrsPath = ["database", "network_restrictions", "allowed_cidrs"];
 
 /**
- * v2 reports allowed CIDRs as one array with a `type` tag (`{address, type:
- * "v4"|"v6"}[]`), where v1 (and this registry's config-side counterpart)
- * split them into two pre-filtered arrays — `db.sync.ts:153-154` reads
- * `remote.config.dbAllowedCidrs`/`dbAllowedCidrsV6` directly from a v1
- * response shaped that way already. Both `allowed_cidrs`/`allowed_cidrs_v6`
- * rows below read this same `apiPath` and filter by `type` to reconstruct
- * that split.
+ * v2 reports allowed CIDRs as one array with a `type` tag (`{address, type: "v4"|"v6"}[]`),
+ * where the config side splits them into two arrays; the `allowed_cidrs`/`allowed_cidrs_v6`
+ * rows below both read this `apiPath` and filter by `type` to reconstruct that split.
  *
- * Throws rather than silently dropping a malformed entry: this field is a
- * security allowlist, so a partially-filtered result (e.g. one malformed
- * entry silently excluded from `allowed_cidrs`) would misreport "the remote
- * removed your restrictions" — loud beats silent here, unlike the rest of
- * this registry's lenient-toward-unknown-shapes default.
+ * Throws rather than silently dropping a malformed entry, since this is a security
+ * allowlist: a partially-filtered result would misreport "the remote removed your
+ * restrictions."
  */
 function filterCidrAddresses(
   value: unknown,
@@ -297,17 +232,14 @@ const poolerDefaultPoolSizePath = ["pooler", "default_pool_size"];
 const poolerMaxClientConnPath = ["pooler", "max_client_conn"];
 
 const dbSectionRows: ReadonlyArray<ProjectConfigMappingRow> = [
-  // No sync precedent — exact name+type match against `../db.ts:88-94`.
-  // `null` has no counterpart row, so it's already omitted before this
-  // narrows; narrowing here guards a non-`null` non-number value.
+  // `null` already has no counterpart row and is omitted before this narrows.
   {
     configPath: ["db", "major_version"],
     apiPath: dbMajorVersionPath,
     transform: (value) => (value === null ? undefined : expectInteger(value, dbMajorVersionPath)),
     dualScope: true,
   },
-  // v2 flattens what v1 nested under `currentConfig.database`
-  // (db.sync.ts:241 `applyRemoteSslEnforcement`).
+  // v2 flattens what v1 nested under `currentConfig.database`.
   {
     configPath: ["db", "ssl_enforcement", "enabled"],
     apiPath: ["database", "ssl_enforced"],
@@ -329,21 +261,14 @@ const dbSectionRows: ReadonlyArray<ProjectConfigMappingRow> = [
     arrayEquality: "sequence",
     unit: "type-tagged {address,type}[] → filtered string[] (v6)",
   },
-  // Deliberately unmapped (no faithful counterpart): database.
-  // network_restrictions.{entitlement,status,updated_at,applied_at}. (There
-  // is no `network_restrictions.enabled` on the v2 contract at all — the
-  // config-side `db.network_restrictions.enabled` toggle, `../db.ts:167-172`,
-  // is a purely local management switch with no API-side counterpart to
-  // read from, not an unmapped API field.)
-  //
-  // Pooler — no sync precedent, name-matched to `../db.ts:95-126`.
+  // Unmapped (no faithful counterpart): database.network_restrictions.{entitlement,status,
+  // updated_at,applied_at}. `db.network_restrictions.enabled` has no API-side counterpart at
+  // all — it's a purely local management switch, not an unmapped API field.
   {
     configPath: ["db", "pooler", "pool_mode"],
     apiPath: poolerPoolModePath,
-    // The API also allows `"statement"` (`packages/api/src/generated/
-    // contracts.ts:11056`); the config schema's `pool_mode` literal only
-    // accepts `"transaction"`/`"session"`, so that third value is omitted
-    // here — it stays reachable via `_apiResponse`.
+    // The API also allows `"statement"`; the config schema only accepts `"transaction"` or
+    // `"session"`, so that value is omitted here — it stays reachable via `_apiResponse`.
     transform: (value) => {
       const mode = expectString(value, poolerPoolModePath);
       return mode === "transaction" || mode === "session" ? mode : undefined;
@@ -364,22 +289,15 @@ const dbSectionRows: ReadonlyArray<ProjectConfigMappingRow> = [
       value === null ? undefined : expectInteger(value, poolerMaxClientConnPath),
     dualScope: true,
   },
-  // Deliberately unmapped (no faithful counterpart): pooler.
-  // ignore_startup_parameters, server_idle_timeout, server_lifetime,
-  // query_wait_timeout, reserve_pool_size.
+  // Unmapped (no faithful counterpart): pooler.ignore_startup_parameters,
+  // server_idle_timeout, server_lifetime, query_wait_timeout, reserve_pool_size.
 ];
-
-// === storage =================================================================
-// Sync precedent: config-sync/storage.sync.ts:178-209
-// (`applyRemoteStorageConfig`), :282-306 (`storageToUpdateBody`).
 
 const BINARY_ABBRS = ["B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB", "ZiB", "YiB"] as const;
 
 /**
- * Port of Go's `fmt`-style `%.4g`: at most 4 significant digits, trailing
- * zeros removed, no exponent for the magnitudes `bytesSize` below produces
- * (scaled to `[0, 1024)`). Mirrors the legacy shell's `formatG4`
- * (`apps/cli/src/command-internal/legacy-size-units.ts:109-119`).
+ * At most 4 significant digits with trailing zeros removed — printf's `%.4g` format. The
+ * magnitudes {@link bytesSize} produces (scaled to `[0, 1024)`) never need the exponent form.
  */
 function formatSignificantDigits(value: number): string {
   if (value === 0) {
@@ -396,24 +314,11 @@ function formatSignificantDigits(value: number): string {
 }
 
 /**
- * Formats a byte count as a `"<n><unit>"` string — `docker/go-units`'
- * `BytesSize`, ported at `apps/cli/src/command-internal/
- * legacy-size-units.ts:127-136` and used by the legacy shell's remote-apply
- * (`storage.sync.ts:214,223` via `bytesSize()`, kept numeric internally and
- * formatted only at TOML-render time — the legacy precedent for reproducing
- * this formatting here rather than just stringifying the byte count) to
- * re-serialise the API's int64 byte count into the human-readable form
- * `storage.file_size_limit` holds in a config document.
+ * Formats a byte count as a `"<n><unit>"` string (e.g. `"50MiB"`).
  *
- * This formatting round-trips textually against the *dominant* local
- * spelling: a `BytesSize` string, including the schema default `"50MiB"`
- * (`../storage.ts:13,42-47`'s `fileSizeLimit` union accepts either spelling
- * on decode). It does NOT round-trip against a local document that spells
- * the same limit as a bare number — `../storage.ts:42-47` normalizes a
- * numeric local value to its *decimal* string (`52428800`, not `"50MiB"`) on
- * decode, so the two spellings compare unequal textually even though they
- * denote the same limit. Reconciling that comparison-granularity gap is the
- * diff consumer's job (CLI-2156), not this mapping's.
+ * Round-trips textually against a document that already spells the limit as a `BytesSize`
+ * string, but not against one that spells it as a bare number (which normalizes to a decimal
+ * string on decode) — reconciling that comparison gap is the diff consumer's job.
  */
 function bytesSize(size: number): string {
   let value = size;
@@ -437,13 +342,9 @@ const BINARY_MAP: Readonly<Record<string, number>> = {
 const DIGIT_OR_DOT_OR_SPACE = "0123456789. ";
 
 /**
- * Port of `units.RAMInBytes`, replicated verbatim from
- * `apps/cli/src/command-internal/legacy-size-units.ts:32-102` — parses a
- * human-readable RAM size (1024-based, case-insensitive, optional trailing
- * `b`) OR a bare decimal byte count (both spellings `../storage.ts:35-46`'s
- * `fileSizeLimit` schema accepts) into bytes. Throws on an unparseable
- * string; used only by {@link canonicalizeFileSizeLimit}, which never lets
- * this throw escape.
+ * Parses a human-readable RAM size (1024-based, case-insensitive, optional trailing `b`) or
+ * a bare decimal byte count into bytes. Throws on an unparseable string; used only by
+ * {@link canonicalizeFileSizeLimit}, which never lets this throw escape.
  */
 function ramInBytes(sizeStr: string): number {
   let sep = -1;
@@ -498,9 +399,8 @@ function ramInBytes(sizeStr: string): number {
     throw new Error(`invalid suffix: '${sfx}'`);
   }
   const bytes = size * mul;
-  // A finite numeric component can still overflow through the suffix
-  // multiplier (e.g. "1e308KiB") — bytesSize(Infinity) would render
-  // "InfinityYiB" instead of leaving the unrepresentable input verbatim.
+  // A finite numeric component can still overflow through the suffix multiplier (e.g.
+  // "1e308KiB"); without this check the result would render as "InfinityYiB".
   if (!Number.isFinite(bytes)) {
     throw new Error(`invalid size: '${sizeStr}'`);
   }
@@ -508,26 +408,11 @@ function ramInBytes(sizeStr: string): number {
 }
 
 /**
- * DOCUMENT-side byte-size canonicalization (CLI-2230's duration/byte-size
- * finding): a document spells `storage.file_size_limit` as either a
- * `BytesSize` string (`"50MiB"`) or a bare decimal byte count
- * (`"52428800"`, `../storage.ts:35-46`), while {@link bytesSize} always
- * emits the `BytesSize` spelling. Reparsing via `ramInBytes` and
- * re-formatting via `bytesSize` makes both sides converge on one spelling
- * for one logical limit. Never throws: a document value has already passed
- * schema validation, so an unparsable value (which should not occur) is
- * returned verbatim rather than failing `fromConfigDocument`.
- *
- * Deliberately quantized, not exact: both this function and the API-side row
- * below format their byte count through {@link bytesSize}, which rounds to 4
- * significant digits ({@link formatSignificantDigits}). Two limits within
- * ~0.1% of each other therefore compare equal as `BytesSize` strings even
- * though their raw byte counts differ. This is accepted, not a bug to fix by
- * comparing raw bytes instead: every value a user actually writes in
- * `storage.file_size_limit` (`"50MiB"`, `"1GB"`, …) is exact at 4 significant
- * digits, and the config schema models the field as a string
- * (`../storage.ts`), so the comparison this canonicalization feeds is
- * textual by construction either way.
+ * Canonicalizes a document's `storage.file_size_limit` to the `BytesSize` spelling
+ * {@link bytesSize} emits, so both sides of a diff converge on one spelling. Never throws —
+ * an unparsable value returns verbatim. Quantized to 4 significant digits like
+ * {@link bytesSize}, so two limits within ~0.1% of each other compare equal as strings; every
+ * value a user actually writes is already exact at that precision.
  */
 function canonicalizeFileSizeLimit(value: unknown): unknown {
   if (typeof value !== "string") {
@@ -546,9 +431,8 @@ const storageSectionRows: ReadonlyArray<ProjectConfigMappingRow> = [
   {
     configPath: ["storage", "file_size_limit"],
     apiPath: storageFileSizeLimitPath,
-    // Non-negative: ramInBytes above rejects negative sizes, so formatting a
-    // negative API byte count (e.g. "-1B") would persist a value config
-    // loading cannot read back.
+    // Non-negative: ramInBytes rejects negative sizes, so a negative API byte count would
+    // persist a value config loading can't read back.
     transform: (value) =>
       bytesSize(
         expectNumberBetween(
@@ -614,27 +498,18 @@ const storageSectionRows: ReadonlyArray<ProjectConfigMappingRow> = [
       clampToUint(expectInteger(value, ["storage", "features", "vector_buckets", "max_indexes"])),
     normalizeDocument: clampDocumentUint,
   },
-  // Deliberately unmapped: storage.features.purge_cache.enabled,
-  // storage.capabilities.{list_v2,iceberg_catalog}, storage.upstream_target,
-  // storage.migration_version, storage.database_pool_mode.
+  // Unmapped: storage.features.purge_cache.enabled, storage.capabilities.{list_v2,
+  // iceberg_catalog}, storage.upstream_target, storage.migration_version,
+  // storage.database_pool_mode.
 ];
 
-// === realtime ================================================================
-//
-// Zero rows, intentionally. `../realtime.ts`'s config section (`enabled`,
-// `ip_version`, `max_header_length`) is entirely local dev-server tuning with
-// no hosted-project counterpart; all 12 API `realtime.*` fields
-// (`private_only`, `max_concurrent_users`, `max_events_per_second`,
-// `max_bytes_per_second`, `max_channels_per_client`, `max_joins_per_second`,
-// `max_presence_events_per_second`, `max_payload_size_in_kb`,
-// `presence_enabled`, `suspend`, `connection_pool`, `postgres_changes_pool`)
-// stay unmapped. Do not add rows here to "fix" `unmappedApiFields` reporting
-// them — that report is correct.
+// Zero rows here, intentionally: `../realtime.ts`'s config section is entirely local
+// dev-server tuning with no hosted-project counterpart. Do not add rows to "fix"
+// `unmappedApiFields` reporting the API's `realtime.*` fields — that report is correct.
 
 /**
  * The full API↔`CliConfig` mapping table: this file's non-auth rows plus
- * `./registry-auth.ts`'s auth rows. `fromApiProjectConfig`/
- * `unmappedApiFields` (`./project-config.ts`) are the only consumers.
+ * `./registry-auth.ts`'s auth rows.
  */
 export const projectConfigMappingRows: ReadonlyArray<ProjectConfigMappingRow> = [
   ...apiSectionRows,

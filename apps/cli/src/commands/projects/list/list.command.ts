@@ -2,14 +2,14 @@ import { Command } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { legacyManagementApiRuntimeLayer } from "../../../command-internal/legacy-management-api-runtime.layer.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyProjectsList } from "./list.handler.ts";
+import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { projectsList } from "./list.handler.ts";
 
 const config = {};
-export type LegacyProjectsListFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type ProjectsListFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyProjectsListCommand = Command.make("list", config).pipe(
+export const projectsListCommand = Command.make("list", config).pipe(
   Command.withDescription("List all Supabase projects the logged-in user can access."),
   Command.withShortDescription("List all projects"),
   Command.withExamples([
@@ -23,10 +23,7 @@ export const legacyProjectsListCommand = Command.make("list", config).pipe(
     },
   ]),
   Command.withHandler((flags) =>
-    legacyProjectsList(flags).pipe(
-      withLegacyCommandInstrumentation({ flags, safeFlags: [] }),
-      withJsonErrorHandling,
-    ),
+    projectsList(flags).pipe(withCommandTelemetry({ flags, safeFlags: [] }), withJsonErrorHandling),
   ),
-  Command.provide(legacyManagementApiRuntimeLayer(["projects", "list"])),
+  Command.provide(managementApiRuntimeLayer(["projects", "list"])),
 );

@@ -19,70 +19,53 @@ import {
   mockTty,
 } from "../../../tests/helpers/mocks.ts";
 import {
-  mockLegacyCliSettings,
-  mockLegacyTelemetryStateTracked,
-  useLegacyTempWorkdir,
-  legacySequentialExecBatch,
-} from "../../../tests/helpers/legacy-mocks.ts";
+  mockCommandSettings,
+  mockTelemetryStateTracked,
+  useTempWorkdir,
+  sequentialExecBatch,
+} from "../../../tests/helpers/command-mocks.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { classifyCliCauseActionability } from "../../shared/telemetry/error-actionability.ts";
 import {
-  LegacyDebugFlag,
-  LegacyExperimentalFlag,
-  LegacyNetworkIdFlag,
-  LegacyYesFlag,
-} from "../../shared/legacy/global-flags.ts";
-import { LegacyPlatformApiFactory } from "../../auth/legacy-platform-api-factory.service.ts";
-import {
-  legacyServiceContainerIds,
-  legacyServiceContainerName,
-} from "../../command-internal/legacy-docker-ids.ts";
-import {
-  LegacyDbConnection,
-  type LegacyDbSession,
-} from "../../command-internal/legacy-db-connection.service.ts";
-import { legacyDockerRunLayer } from "../../command-internal/legacy-docker-run.layer.ts";
-import { LEGACY_START_EXCLUDABLE_KEYS } from "./start.exclude.ts";
-import type { LegacyStartFlags } from "./start.command.ts";
-import { legacyStart } from "./start.handler.ts";
-import {
-  LEGACY_KONG_LOCAL_TLS_CERT,
-  LEGACY_KONG_LOCAL_TLS_KEY,
-} from "./templates/kong-local-tls.ts";
+  DebugFlag,
+  ExperimentalFlag,
+  NetworkIdFlag,
+  YesFlag,
+} from "../../command-internal/global-flags.ts";
+import { CommandPlatformApiFactory } from "../../auth/command-platform-api-factory.service.ts";
+import { serviceContainerIds, serviceContainerName } from "../../command-internal/docker-ids.ts";
+import { DbConnection, type DbSession } from "../../command-internal/db-connection.service.ts";
+import { dockerRunLayer } from "../../command-internal/docker-run.layer.ts";
+import { START_EXCLUDABLE_KEYS } from "./start.exclude.ts";
+import type { StartFlags } from "./start.command.ts";
+import { start } from "./start.handler.ts";
+import { KONG_LOCAL_TLS_CERT, KONG_LOCAL_TLS_KEY } from "./templates/kong-local-tls.ts";
 
 /**
- * Counts real invocations of `legacyResolveLocalConfigValues` across this
- * whole file — every test transparently delegates to the real
- * implementation, so this is purely an observation point. It exists for the
- * "resolved once, reused everywhere" regression test below (CLI-1323's
- * status-print/bring-up JWT divergence): `start`'s success-path status print
- * must reuse the SAME resolved `values` bring-up already used to build every
- * container spec, not call this a second time — a second call re-signs
- * `auth.signing_keys_path` JWTs with a different `exp` claim
- * ({@link legacyGenerateAsymmetricGoJwt}), producing a byte-different
- * anon/service-role key than the one already baked into the running
- * containers.
+ * Counts real invocations of `resolveLocalConfigValues` across this file (every test delegates
+ * to the real implementation). `start`'s success-path status print must reuse the same resolved
+ * `values` bring-up already used to build every container spec — calling it again re-signs
+ * `auth.signing_keys_path` JWTs with a different `exp`, producing a byte-different key than the
+ * one already baked into the running containers.
  */
-const legacyResolveLocalConfigValuesCalls = vi.hoisted(() => ({ count: 0 }));
+const resolveLocalConfigValuesCalls = vi.hoisted(() => ({ count: 0 }));
 
-vi.mock("../../command-internal/legacy-local-config-values.ts", async () => {
+vi.mock("../../command-internal/local-config-values.ts", async () => {
   const actual = await vi.importActual<
-    typeof import("../../command-internal/legacy-local-config-values.ts")
-  >("../../command-internal/legacy-local-config-values.ts");
+    typeof import("../../command-internal/local-config-values.ts")
+  >("../../command-internal/local-config-values.ts");
   return {
     ...actual,
-    legacyResolveLocalConfigValues: (
-      ...args: Parameters<typeof actual.legacyResolveLocalConfigValues>
-    ) => {
-      legacyResolveLocalConfigValuesCalls.count++;
-      return actual.legacyResolveLocalConfigValues(...args);
+    resolveLocalConfigValues: (...args: Parameters<typeof actual.resolveLocalConfigValues>) => {
+      resolveLocalConfigValuesCalls.count++;
+      return actual.resolveLocalConfigValues(...args);
     },
   };
 });
 
-const tempRoot = useLegacyTempWorkdir("supabase-start-int-");
+const tempRoot = useTempWorkdir("supabase-start-int-");
 
-function flags(overrides: Partial<LegacyStartFlags> = {}): LegacyStartFlags {
+function flags(overrides: Partial<StartFlags> = {}): StartFlags {
   return {
     exclude: overrides.exclude ?? [],
     ignoreHealthCheck: overrides.ignoreHealthCheck ?? false,
@@ -220,7 +203,7 @@ function containerNameFromCreateArgs(args: ReadonlyArray<string>): string {
   return nameIndex !== -1 ? (args[nameIndex + 1] ?? "unknown") : "unknown";
 }
 
-/** Edge Runtime's own create/cp/start bring-up sits outside `legacyCreateContainer`; its create is recognized by the `_edge_runtime_` container name. */
+/** Edge Runtime's own create/cp/start bring-up sits outside `createContainer`; its create is recognized by the `_edge_runtime_` container name. */
 function isEdgeRuntimeCreate(args: ReadonlyArray<string>): boolean {
   return args[0] === "create" && containerNameFromCreateArgs(args).includes("_edge_runtime_");
 }
@@ -240,7 +223,7 @@ function fakeContainerId(name: string): string {
 
 function createdContainerNames(spawned: ReadonlyArray<SpawnRecord>): ReadonlyArray<string> {
   // Excludes Edge Runtime's create so this keeps meaning "which services
-  // `legacyCreateContainer` brought up", the premise of the exact-equality assertions below.
+  // `createContainer` brought up", the premise of the exact-equality assertions below.
   return spawned
     .filter((s) => s.args[0] === "create" && !isEdgeRuntimeCreate(s.args))
     .map((s) => containerNameFromCreateArgs(s.args));
@@ -301,10 +284,7 @@ function freshVolumeRoute(
   base: (args: ReadonlyArray<string>) => RouteResult,
 ): (args: ReadonlyArray<string>) => RouteResult {
   return (args) => {
-    // `legacyVolumeExists` distinguishes a confirmed "not found" from any
-    // other inspect error — the stderr text is what makes this simulate a
-    // genuinely fresh/non-existent volume rather than an ambiguous inspect
-    // failure.
+    // This stderr text is what `volumeExists` treats as a confirmed missing volume.
     if (args[0] === "volume" && args[1] === "inspect") {
       return { exitCode: 1, stderr: [`Error: No such volume: ${args[2] ?? ""}`] };
     }
@@ -363,17 +343,14 @@ function mockStorageBucketHttpClient() {
 }
 
 /**
- * A fake `LegacyDbSession` recording every `exec`/`query` call — the fresh-volume
- * `SetupLocalDatabase`-equivalent path (`legacyStartSetupLocalDatabase`) needs an
- * open session for PG<=14's schema SQL / `ApplyApiPrivileges`; PG15+ (this suite's
- * default) never calls `exec`/`query` at all (its schema init is three one-shot
- * `LegacyDockerRun` jobs instead — see `db-setup.ts`'s header), so this mostly just
- * needs to exist and satisfy the type. Mirrors `db-setup.unit.test.ts`'s own
- * `fakeSession()`.
+ * A fake `DbSession` recording every `exec`/`query` call — needed for PG<=14's schema SQL /
+ * `ApplyApiPrivileges` path; PG15+ (this suite's default) never calls `exec`/`query` at all (its
+ * schema init is three one-shot `DockerRun` jobs instead), so this mostly just needs to exist
+ * and satisfy the type.
  */
 function fakeDbSession() {
   const calls: Array<{ kind: "exec" | "query"; sql: string }> = [];
-  const session: LegacyDbSession = {
+  const session: DbSession = {
     exec: (sql) =>
       Effect.sync(() => {
         calls.push({ kind: "exec", sql });
@@ -383,7 +360,7 @@ function fakeDbSession() {
         calls.push({ kind: "query", sql });
         return [];
       }),
-    execBatch: (statements) => legacySequentialExecBatch(session)(statements),
+    execBatch: (statements) => sequentialExecBatch(session)(statements),
     extensionExists: () => Effect.succeed(false),
     copyToCsv: () => Effect.succeed(new Uint8Array()),
     queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
@@ -402,7 +379,7 @@ interface SetupOpts {
   readonly configContents?: string;
   /** Skip writing `config.toml` entirely — the test writes its own (e.g. a malformed file). */
   readonly skipConfig?: boolean;
-  /** Every spawn attempt (docker AND its podman fallback) fails outright — neither runtime found. */
+  /** Every spawn attempt (docker and its podman fallback) fails outright — neither runtime found. */
   readonly failSpawn?: boolean;
   /** Defaults to `tempRoot.current` — override for `--workdir`-resolution failure tests. */
   readonly workdir?: string;
@@ -421,9 +398,9 @@ function setup(opts: SetupOpts = {}) {
     );
   }
   const out = mockOutput({ format: opts.format ?? "text" });
-  const telemetry = mockLegacyTelemetryStateTracked();
+  const telemetry = mockTelemetryStateTracked();
   const analytics = mockAnalytics();
-  const cliSettings = mockLegacyCliSettings({ workdir });
+  const cliSettings = mockCommandSettings({ workdir });
   const child = mockStartContainerCliSpawner(opts.route ?? defaultRoute(), {
     failSpawn: opts.failSpawn,
     onSecretCopy: opts.onSecretCopy,
@@ -438,31 +415,24 @@ function setup(opts: SetupOpts = {}) {
     analytics.layer,
     child.layer,
     opts.httpClientLayer ?? alwaysReadyHttpClientLayer,
-    // Only ever exercised by a fresh-volume scenario (`volume inspect` exiting
-    // non-zero) — every other scenario's default "volume already exists" route
-    // never reaches `legacyStartSetupLocalDatabase`/`legacySeedBucketsRun`, but
-    // both are still part of `legacyStart`'s aggregate Effect type, so every
-    // scenario needs these satisfied regardless of whether it exercises them.
-    Layer.succeed(LegacyDbConnection, { connect: () => Effect.succeed(dbSession.session) }),
-    // `Layer.mergeAll` never cross-wires sibling requirements (see
-    // `apps/cli/CLAUDE.md`'s "Layer.provide does not share to siblings"
-    // note) — `legacyDockerRunLayer` needs `ChildProcessSpawner`/
-    // `ProcessControl` provided to IT explicitly, not just present elsewhere
-    // in this same merge.
-    legacyDockerRunLayer.pipe(
-      Layer.provide(child.layer),
-      Layer.provide(mockProcessControl().layer),
-    ),
+    // Only exercised by a fresh-volume scenario; every other scenario's default route never
+    // reaches `startSetupLocalDatabase`/`seedBucketsRun`, but both are part of `start`'s
+    // aggregate Effect type, so every scenario still needs this satisfied.
+    Layer.succeed(DbConnection, { connect: () => Effect.succeed(dbSession.session) }),
+    // `Layer.mergeAll` never cross-wires sibling requirements, so `dockerRunLayer` needs
+    // `ChildProcessSpawner`/`ProcessControl` provided to it explicitly, not just present
+    // elsewhere in this merge.
+    dockerRunLayer.pipe(Layer.provide(child.layer), Layer.provide(mockProcessControl().layer)),
     mockProcessControl().layer,
     mockRuntimeInfo({ platform: "linux" }),
-    Layer.succeed(LegacyPlatformApiFactory, {
-      make: Effect.die("LegacyPlatformApiFactory should not be used by a local start"),
+    Layer.succeed(CommandPlatformApiFactory, {
+      make: Effect.die("CommandPlatformApiFactory should not be used by a local start"),
     }),
     Layer.succeed(CliArgs, { args: ["start"] }),
-    Layer.succeed(LegacyDebugFlag, false),
-    Layer.succeed(LegacyYesFlag, false),
-    Layer.succeed(LegacyExperimentalFlag, opts.experimental ?? false),
-    Layer.succeed(LegacyNetworkIdFlag, opts.networkId ?? Option.none()),
+    Layer.succeed(DebugFlag, false),
+    Layer.succeed(YesFlag, false),
+    Layer.succeed(ExperimentalFlag, opts.experimental ?? false),
+    Layer.succeed(NetworkIdFlag, opts.networkId ?? Option.none()),
     mockTty({ stdinIsTty: false }),
     mockStdin(false),
   );
@@ -471,16 +441,11 @@ function setup(opts: SetupOpts = {}) {
 }
 
 /**
- * Maps each of the 13 valid `--exclude` keys (`start.exclude.ts`) to the
- * container-name suffix(es) that key skips, for the parameterized exclusion
- * matrix test below. `storage-api` is compound: excluding it also disables
- * ImgProxy (`start.gates.ts`'s `imgproxy: storage && ...` dependency).
- * `edge-runtime` maps to no suffix at all here — it DOES really start now
- * (`legacyStartEdgeRuntimeContainer`, its own create/cp/start bring-up outside
- * `legacyCreateContainer`, which `createdContainerNames` excludes), so
- * `--exclude edge-runtime` is exercised by its own
- * dedicated scenarios below rather than through this `docker create`-based
- * matrix.
+ * Maps each of the 13 valid `--exclude` keys to the container-name suffix(es) that key skips,
+ * for the parameterized exclusion matrix test below. `storage-api` is compound: excluding it
+ * also disables ImgProxy. `edge-runtime` maps to no suffix here — it still starts via its own
+ * create/cp/start bring-up outside `createContainer` (which `createdContainerNames` excludes),
+ * so it's covered by its own dedicated scenarios below instead of this `docker create`-based matrix.
  */
 const CONTAINER_SUFFIX_BY_EXCLUDE_KEY: Readonly<Record<string, string>> = {
   gotrue: "auth",
@@ -525,17 +490,13 @@ function missingSuffixesForExcludeKey(excludeKey: string): ReadonlyArray<string>
   return [CONTAINER_SUFFIX_BY_EXCLUDE_KEY[excludeKey]!];
 }
 
-// A known test vector: this ciphertext decrypts to "value" under the keypair
-// below — same fixture used by `legacy-local-config-values.unit.test.ts`'s
-// "encrypted auth secrets" suite. Hoisted to file scope so both the GoTrue-secret suite and the
-// Edge-Runtime-secret suite below reuse the exact same known-good dotenvx ciphertext instead of
-// each needing to produce their own (that requires the real ECIES encryption this fixture already
-// captures).
+// This ciphertext decrypts to "value" under the keypair below (same fixture as
+// `local-config-values.unit.test.ts`'s "encrypted auth secrets" suite).
 const VAULT_PRIVATE_KEY = "7fd7210cef8f331ee8c55897996aaaafd853a2b20a4dc73d6d75759f65d2a7eb";
 const VAULT_ENCRYPTED =
   "encrypted:BKiXH15AyRzeohGyUrmB6cGjSklCrrBjdesQlX1VcXo/Xp20Bi2gGZ3AlIqxPQDmjVAALnhZamKnuY73l8Dz1P+BYiZUgxTSLzdCvdYUyVbNekj2UudbdUizBViERtZkuQwZHIv/";
 
-describe("legacy start integration", () => {
+describe("start integration", () => {
   beforeEach(() => {
     vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", undefined);
   });
@@ -555,7 +516,7 @@ describe("legacy start integration", () => {
         },
       });
       return Effect.gen(function* () {
-        yield* legacyStart(flags({ exclude: ["not-a-real-service"] }));
+        yield* start(flags({ exclude: ["not-a-real-service"] }));
         expect(out.stderrText).toContain("WARNING:");
         expect(out.stderrText).toContain("not-a-real-service");
         expect(out.stderrText).toContain("not valid to exclude");
@@ -567,11 +528,10 @@ describe("legacy start integration", () => {
       () => {
         const { layer, out, child } = setup();
         return Effect.gen(function* () {
-          yield* legacyStart(flags({ exclude: ["db", "postgres"] }));
+          yield* start(flags({ exclude: ["db", "postgres"] }));
           expect(out.stderrText).toContain("WARNING:");
           expect(out.stderrText).toContain("db, postgres");
           expect(out.stderrText).toContain("not valid to exclude");
-          // An invalid --exclude value must never silently skip Postgres itself.
           expect(createdContainerNames(child.spawned).some((name) => name.includes("_db_"))).toBe(
             true,
           );
@@ -594,7 +554,7 @@ describe("legacy start integration", () => {
           },
         });
         return Effect.gen(function* () {
-          yield* legacyStart(flags());
+          yield* start(flags());
           expect(out.stderrText).toContain("supabase start");
           expect(out.stderrText).toContain("is already running");
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -614,7 +574,7 @@ describe("legacy start integration", () => {
         },
       });
       return Effect.gen(function* () {
-        yield* legacyStart(flags());
+        yield* start(flags());
         const success = out.messages.find((m) => m.type === "success");
         expect(success?.data).toMatchObject({ DB_URL: expect.any(String) });
         expect(out.stderrText).not.toContain("is already running");
@@ -635,7 +595,7 @@ describe("legacy start integration", () => {
           },
         });
         return Effect.gen(function* () {
-          yield* legacyStart(flags());
+          yield* start(flags());
           const success = out.messages.find((m) => m.type === "success");
           expect(success?.data).toMatchObject({ DB_URL: expect.any(String) });
           expect(out.stderrText).not.toContain("is already running");
@@ -658,10 +618,10 @@ describe("legacy start integration", () => {
           },
         });
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(legacyStart(flags()));
+          const exit = yield* Effect.exit(start(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("LegacyStatusDbNotRunningError");
+            expect(JSON.stringify(exit.cause)).toContain("StatusDbNotRunningError");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
         }).pipe(Effect.provide(layer));
@@ -683,10 +643,10 @@ describe("legacy start integration", () => {
           },
         });
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(legacyStart(flags()));
+          const exit = yield* Effect.exit(start(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("LegacyStatusDbNotReadyError");
+            expect(JSON.stringify(exit.cause)).toContain("StatusDbNotReadyError");
           }
         }).pipe(Effect.provide(layer));
       },
@@ -707,11 +667,11 @@ describe("legacy start integration", () => {
           },
         });
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(legacyStart(flags()));
+          const exit = yield* Effect.exit(start(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const serialized = JSON.stringify(exit.cause);
-            expect(serialized).toContain("LegacyStatusDbInspectError");
+            expect(serialized).toContain("StatusDbInspectError");
             expect(serialized).toContain("permission denied");
           }
         }).pipe(Effect.provide(layer));
@@ -729,10 +689,10 @@ describe("legacy start integration", () => {
         },
       });
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(legacyStart(flags()));
+        const exit = yield* Effect.exit(start(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("LegacyStatusListError");
+          expect(JSON.stringify(exit.cause)).toContain("StatusListError");
         }
       }).pipe(Effect.provide(layer));
     });
@@ -743,8 +703,6 @@ describe("legacy start integration", () => {
         route: (args) => {
           if (args[0] === "container" && args[1] === "inspect") {
             inspectCalls += 1;
-            // Only the FIRST inspect (`AssertSupabaseDbIsRunning`) should ever fire — a second
-            // call here would mean the health re-check ran despite the flag.
             if (inspectCalls === 1) return { stdout: [HEALTHY_STATE] };
             return { exitCode: 1, stderr: ["should not be called"] };
           }
@@ -753,7 +711,7 @@ describe("legacy start integration", () => {
         },
       });
       return Effect.gen(function* () {
-        yield* legacyStart(flags({ ignoreHealthCheck: true }));
+        yield* start(flags({ ignoreHealthCheck: true }));
         expect(inspectCalls).toBe(1);
         expect(child.spawned.some((s) => s.args[0] === "ps")).toBe(true);
       }).pipe(Effect.provide(layer));
@@ -765,12 +723,12 @@ describe("legacy start integration", () => {
           if (args[0] === "container" && args[1] === "inspect") {
             return { stdout: [HEALTHY_STATE] };
           }
-          if (args[0] === "ps") return { stdout: [...legacyServiceContainerIds("demo")] };
+          if (args[0] === "ps") return { stdout: [...serviceContainerIds("demo")] };
           return { exitCode: 0 };
         },
       });
       return Effect.gen(function* () {
-        yield* legacyStart(flags());
+        yield* start(flags());
         expect(out.stderrText).not.toContain("Stopped services");
       }).pipe(Effect.provide(layer));
     });
@@ -778,13 +736,8 @@ describe("legacy start integration", () => {
     it.live(
       "fails on a bucket's invalid file_size_limit even when already running, matching Go's Config.Load",
       () => {
-        // `legacyCheckDbToml` runs unconditionally at the very top of this handler, before
-        // `dbContainerId`/the already-running short-circuit are even computed — unlike the later
-        // wrapConfigOverride checks (e.g. storage.analytics.enabled), which sit AFTER the
-        // already-running early return and therefore never run in this branch. A malformed
-        // per-bucket file_size_limit must still fail here, before the already-running banner ever
-        // prints — config decrypting/decoding happens unconditionally regardless of
-        // whether the stack is already up.
+        // `checkDbToml` runs unconditionally before the already-running short-circuit; later
+        // checks (e.g. storage.analytics.enabled) sit after that early return and never run here.
         const { layer, child } = setup({
           configContents:
             'project_id = "demo"\n[storage.buckets.avatars]\nfile_size_limit = "bogus"\n',
@@ -797,11 +750,11 @@ describe("legacy start integration", () => {
           },
         });
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(legacyStart(flags()));
+          const exit = yield* Effect.exit(start(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const serialized = JSON.stringify(exit.cause);
-            expect(serialized).toContain("LegacyDbConfigLoadError");
+            expect(serialized).toContain("DbConfigLoadError");
             expect(serialized).toContain(
               "failed to parse config: invalid storage.buckets.avatars.file_size_limit.",
             );
@@ -841,7 +794,7 @@ describe("legacy start integration", () => {
       });
 
       return Effect.gen(function* () {
-        yield* legacyStart(flags());
+        yield* start(flags());
 
         expect(out.stderrText).not.toContain("is already running");
         expect(createdContainerNames(child.spawned)).toContain("supabase_db_demo");
@@ -893,10 +846,10 @@ describe("legacy start integration", () => {
       });
 
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(legacyStart(flags()));
+        const exit = yield* Effect.exit(start(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("LegacyStartInvalidConfigError");
+          expect(JSON.stringify(exit.cause)).toContain("StartInvalidConfigError");
         }
         expect(
           child.spawned.some(
@@ -920,10 +873,10 @@ describe("legacy start integration", () => {
       });
 
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(legacyStart(flags()));
+        const exit = yield* Effect.exit(start(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("LegacyStatusDbNotRunningError");
+          expect(JSON.stringify(exit.cause)).toContain("StatusDbNotRunningError");
         }
         expect(
           child.spawned.some(
@@ -958,7 +911,7 @@ describe("legacy start integration", () => {
       });
 
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(legacyStart(flags()));
+        const exit = yield* Effect.exit(start(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         expect(
           child.spawned.some(
@@ -980,11 +933,11 @@ describe("legacy start integration", () => {
       });
 
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(legacyStart(flags()));
+        const exit = yield* Effect.exit(start(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const serialized = JSON.stringify(exit.cause);
-          expect(serialized).toContain("LegacyStatusDbNotRunningError");
+          expect(serialized).toContain("StatusDbNotRunningError");
           expect(serialized).toContain("container is not running: created");
         }
         expect(
@@ -1020,11 +973,11 @@ describe("legacy start integration", () => {
       });
 
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(legacyStart(flags()));
+        const exit = yield* Effect.exit(start(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const serialized = JSON.stringify(exit.cause);
-          expect(serialized).toContain("LegacyStartInvalidConfigError");
+          expect(serialized).toContain("StartInvalidConfigError");
           expect(serialized).toContain("failed to read TLS cert");
         }
         expect(
@@ -1058,7 +1011,7 @@ describe("legacy start integration", () => {
       });
 
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(legacyStart(flags()));
+        const exit = yield* Effect.exit(start(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         expect(
           child.spawned.some(
@@ -1096,7 +1049,7 @@ describe("legacy start integration", () => {
       });
 
       return Effect.gen(function* () {
-        yield* legacyStart(flags());
+        yield* start(flags());
 
         expect(createdContainerNames(child.spawned)).toContain("supabase_db_demo");
         expect(
@@ -1169,10 +1122,10 @@ describe("legacy start integration", () => {
       });
 
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(legacyStart(flags()));
+        const exit = yield* Effect.exit(start(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("LegacyDockerRemoveAllNetworkPruneError");
+          expect(JSON.stringify(exit.cause)).toContain("DockerRemoveAllNetworkPruneError");
         }
         expect(existsSync(staleSecret)).toBe(false);
         expect(existsSync(foreignSecret)).toBe(true);
@@ -1192,10 +1145,10 @@ describe("legacy start integration", () => {
       });
 
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(legacyStart(flags()));
+        const exit = yield* Effect.exit(start(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("LegacyStartInvalidConfigError");
+          expect(JSON.stringify(exit.cause)).toContain("StartInvalidConfigError");
         }
         expect(
           child.spawned.some(
@@ -1229,7 +1182,7 @@ describe("legacy start integration", () => {
         });
 
         return Effect.gen(function* () {
-          yield* legacyStart(flags());
+          yield* start(flags());
 
           expect(out.stderrText).toContain("is already running");
           expect(
@@ -1248,16 +1201,14 @@ describe("legacy start integration", () => {
 
   describe("config load / validation failures", () => {
     it.live("fails when --workdir/SUPABASE_WORKDIR points at a missing path", () => {
-      // The explicit workdir is `chdir`'d into before config load or any Docker call — a
-      // missing path must fail immediately, matching `status`/`stop`'s own equivalent test.
       const missingWorkdir = join(tempRoot.current, "does-not-exist");
       const { layer, child } = setup({ workdir: missingWorkdir, skipConfig: true });
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(legacyStart(flags()));
+        const exit = yield* Effect.exit(start(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const serialized = JSON.stringify(exit.cause);
-          expect(serialized).toContain("LegacyStartWorkdirError");
+          expect(serialized).toContain("StartWorkdirError");
           expect(serialized).toContain(
             `failed to change workdir: chdir ${missingWorkdir}: no such file or directory`,
           );
@@ -1276,11 +1227,11 @@ describe("legacy start integration", () => {
         },
       });
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(legacyStart(flags()));
+        const exit = yield* Effect.exit(start(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const serialized = JSON.stringify(exit.cause);
-          expect(serialized).toContain("LegacyDockerLifecycleInspectError");
+          expect(serialized).toContain("DockerLifecycleInspectError");
           expect(serialized).toContain("permission denied");
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1292,16 +1243,16 @@ describe("legacy start integration", () => {
       () => {
         const { layer } = setup({ failSpawn: true });
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(legacyStart(flags()));
+          const exit = yield* Effect.exit(start(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const serialized = JSON.stringify(exit.cause);
-            expect(serialized).toContain("LegacyDockerLifecycleInspectError");
+            expect(serialized).toContain("DockerLifecycleInspectError");
             expect(serialized).toContain("docker: command not found (podman also not found)");
             expect(classifyCliCauseActionability(exit.cause)).toMatchObject({
               error_kind: "user_actionable",
               error_category: "docker_not_running",
-              error_fingerprint: "tag:LegacyDockerLifecycleInspectError:docker_not_running",
+              error_fingerprint: "tag:DockerLifecycleInspectError:docker_not_running",
             });
           }
         }).pipe(Effect.provide(layer));
@@ -1314,10 +1265,10 @@ describe("legacy start integration", () => {
       writeFileSync(join(workdir, "supabase", "config.toml"), "not valid toml =====");
       const { layer, child } = setup({ skipConfig: true });
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(legacyStart(flags()));
+        const exit = yield* Effect.exit(start(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("LegacyStartConfigLoadError");
+          expect(JSON.stringify(exit.cause)).toContain("StartConfigLoadError");
         }
         expect(child.spawned).toEqual([]);
       }).pipe(Effect.provide(layer));
@@ -1328,11 +1279,11 @@ describe("legacy start integration", () => {
         configContents: 'project_id = "demo"\n[auth]\njwt_secret = "too-short"\n',
       });
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(legacyStart(flags()));
+        const exit = yield* Effect.exit(start(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const serialized = JSON.stringify(exit.cause);
-          expect(serialized).toContain("LegacyStartInvalidConfigError");
+          expect(serialized).toContain("StartInvalidConfigError");
           expect(serialized).toContain(
             "Invalid config for auth.jwt_secret. Must be at least 16 characters",
           );
@@ -1340,6 +1291,63 @@ describe("legacy start integration", () => {
         expect(child.spawned).toEqual([]);
       }).pipe(Effect.provide(layer));
     });
+
+    it.live(
+      "rejects an out-of-root auth.email.template content_path before any Docker work, even with auth disabled",
+      () => {
+        // `auth.enabled = false` skips `readAuthEmailTemplateContent`'s own gate, but Kong
+        // mounts every configured template unconditionally — an eager pre-Docker containment
+        // pass in `start.handler.ts` checks every content_path before `create` is ever spawned.
+        const { layer, child } = setup({
+          configContents:
+            'project_id = "demo"\n[auth]\nenabled = false\n[auth.email.template.invite]\ncontent_path = "/etc/hosts"\n',
+        });
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(start(flags()));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const serialized = JSON.stringify(exit.cause);
+            expect(serialized).toContain("StartInvalidConfigError");
+            // The message echoes the declared content_path (quoted), not the canonicalized
+            // target — a recon-leak mitigation; see `resolveEmailTemplateContentPath`'s doc comment.
+            expect(serialized).toContain(
+              'Invalid config for auth.email.template.invite.content_path: \\"/etc/hosts\\" resolves outside the project root',
+            );
+          }
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "fails on a missing (but in-root) auth.email.template content_path before any Docker work, even with auth disabled",
+      () => {
+        // `auth.enabled = false` skips the gated read entirely, and this content_path resolves
+        // in-root (passes containment), so only the read-verification Kong-mount check can still
+        // catch a missing file here — otherwise this would reach `docker create` with a
+        // bind-mount source that doesn't exist on disk.
+        const { layer, workdir, child } = setup({
+          configContents:
+            'project_id = "demo"\n[auth]\nenabled = false\n[auth.email.template.invite]\ncontent_path = "./templates/missing.html"\n',
+        });
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(start(flags()));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const serialized = JSON.stringify(exit.cause);
+            expect(serialized).toContain("StartInvalidConfigError");
+            expect(serialized).toContain(
+              "Invalid config for auth.email.template.invite.content_path:",
+            );
+            // This content_path never escapes the project root, so a regression back to "no
+            // read-verification" would make this succeed instead of fail.
+            expect(serialized).not.toContain("resolves outside the project root");
+          }
+          expect(existsSync(join(workdir, "templates", "missing.html"))).toBe(false);
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+        }).pipe(Effect.provide(layer));
+      },
+    );
   });
 
   describe("happy path", () => {
@@ -1348,7 +1356,7 @@ describe("legacy start integration", () => {
       () => {
         const { layer, out, child, analytics } = setup();
         return Effect.gen(function* () {
-          yield* legacyStart(flags());
+          yield* start(flags());
 
           const createdNames = createdContainerNames(child.spawned);
           // Postgres + the 10 excludable services enabled by default
@@ -1382,7 +1390,7 @@ describe("legacy start integration", () => {
     it.live("emits a machine status payload in json mode instead of the pretty table", () => {
       const { layer, out } = setup({ format: "json" });
       return Effect.gen(function* () {
-        yield* legacyStart(flags());
+        yield* start(flags());
         const success = out.messages.find((m) => m.type === "success");
         expect(success?.data).toMatchObject({ DB_URL: expect.any(String) });
         expect(out.stderrText).not.toContain("Started");
@@ -1394,7 +1402,7 @@ describe("legacy start integration", () => {
       () => {
         const { layer, out } = setup({ format: "stream-json" });
         return Effect.gen(function* () {
-          yield* legacyStart(flags());
+          yield* start(flags());
           const success = out.messages.find((m) => m.type === "success");
           expect(success?.data).toMatchObject({ DB_URL: expect.any(String) });
           expect(out.stderrText).not.toContain("Started");
@@ -1405,7 +1413,7 @@ describe("legacy start integration", () => {
     it.live("fires cli_stack_started exactly once on a successful start", () => {
       const { layer, analytics } = setup();
       return Effect.gen(function* () {
-        yield* legacyStart(flags());
+        yield* start(flags());
         const stackStartedEvents = analytics.captured.filter(
           (c) => c.event === "cli_stack_started",
         );
@@ -1428,7 +1436,7 @@ describe("legacy start integration", () => {
         },
       });
       return Effect.gen(function* () {
-        yield* legacyStart(flags());
+        yield* start(flags());
         expect(analytics.captured.some((c) => c.event === "cli_stack_started")).toBe(true);
       }).pipe(Effect.provide(layer));
     });
@@ -1436,19 +1444,11 @@ describe("legacy start integration", () => {
     it.live(
       "reuses the bring-up-resolved local config values for the final status print instead of re-deriving them",
       () => {
-        // Regression test for the CLI-1323 status-print/bring-up divergence:
-        // `legacyResolveLocalConfigValues` embeds a fresh `exp` claim
-        // (`Date.now()`-derived) into the anon/service-role key every time it
-        // asymmetrically signs them via `auth.signing_keys_path`
-        // (`legacyGenerateAsymmetricGoJwt`, `legacy-go-jwt.ts:212`). A second,
-        // independent resolution for the final status print — rather than
-        // reusing the SAME `values` already used to build every container
-        // spec — would mint a byte-different key than the one baked into the
-        // already-running containers. Asserting a single resolution call is
-        // both the most direct way to pin this invariant and immune to the
-        // test itself racing real wall-clock time (unlike comparing two
-        // independently-generated JWTs, which could coincidentally still
-        // match if both calls land within the same clock second).
+        // `resolveLocalConfigValues` embeds a fresh `exp` claim into the anon/service-role key
+        // each time it signs them, so a second independent resolution would mint a
+        // byte-different key than the one baked into the running containers. Asserting a single
+        // resolution call pins this without racing wall-clock time, unlike comparing two
+        // independently-generated JWTs that could coincidentally match within the same second.
         const { layer, workdir } = setup({
           format: "json",
           configContents: 'project_id = "demo"\n[auth]\nsigning_keys_path = "signing_keys.json"\n',
@@ -1456,11 +1456,11 @@ describe("legacy start integration", () => {
         const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
         const jwk = { ...privateKey.export({ format: "jwk" }), alg: "RS256", kid: "test-kid" };
         writeFileSync(join(workdir, "supabase", "signing_keys.json"), JSON.stringify([jwk]));
-        legacyResolveLocalConfigValuesCalls.count = 0;
+        resolveLocalConfigValuesCalls.count = 0;
 
         return Effect.gen(function* () {
-          yield* legacyStart(flags());
-          expect(legacyResolveLocalConfigValuesCalls.count).toBe(1);
+          yield* start(flags());
+          expect(resolveLocalConfigValuesCalls.count).toBe(1);
         }).pipe(Effect.provide(layer));
       },
     );
@@ -1470,11 +1470,9 @@ describe("legacy start integration", () => {
     it.live(
       "fails when a configured third-party auth issuer's JWKS endpoint is unreachable",
       () => {
-        // `legacyResolveLocalJwks` (step 6, unconditional) fetches the third-party issuer's own
-        // JWKS document via a raw `fetch` — a real network boundary, not the `HttpClient` service
-        // this suite otherwise mocks, so it needs its own `globalThis.fetch` stub. A valid
-        // firebase config passes config load/validation cleanly (step 2 never performs this
-        // fetch), so this is the only way this specific failure surfaces.
+        // `resolveLocalJwks` fetches the JWKS document via a raw `fetch`, not the `HttpClient`
+        // service this suite otherwise mocks, so it needs its own `globalThis.fetch` stub — the
+        // only way this failure surfaces.
         const previousFetch = globalThis.fetch;
         globalThis.fetch = Object.assign(() => Promise.reject(new Error("ECONNREFUSED")), {
           preconnect: previousFetch.preconnect,
@@ -1484,10 +1482,10 @@ describe("legacy start integration", () => {
             'project_id = "demo"\n[auth.third_party.firebase]\nenabled = true\nproject_id = "fb-project"\n',
         });
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(legacyStart(flags()));
+          const exit = yield* Effect.exit(start(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("LegacyStartInvalidConfigError");
+            expect(JSON.stringify(exit.cause)).toContain("StartInvalidConfigError");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
         }).pipe(
@@ -1516,7 +1514,7 @@ describe("legacy start integration", () => {
         "-----BEGIN PRIVATE KEY-----",
       );
       return Effect.gen(function* () {
-        yield* legacyStart(flags());
+        yield* start(flags());
         expect(createdContainerNames(child.spawned).some((name) => name.includes("_kong_"))).toBe(
           true,
         );
@@ -1534,11 +1532,11 @@ describe("legacy start integration", () => {
         "-----BEGIN PRIVATE KEY-----",
       );
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(legacyStart(flags()));
+        const exit = yield* Effect.exit(start(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const serialized = JSON.stringify(exit.cause);
-          expect(serialized).toContain("LegacyStartInvalidConfigError");
+          expect(serialized).toContain("StartInvalidConfigError");
           expect(serialized).toContain("failed to read TLS cert");
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1556,11 +1554,11 @@ describe("legacy start integration", () => {
         "-----BEGIN CERTIFICATE-----",
       );
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(legacyStart(flags()));
+        const exit = yield* Effect.exit(start(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const serialized = JSON.stringify(exit.cause);
-          expect(serialized).toContain("LegacyStartInvalidConfigError");
+          expect(serialized).toContain("StartInvalidConfigError");
           expect(serialized).toContain("failed to read TLS key");
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1570,12 +1568,10 @@ describe("legacy start integration", () => {
     it.live(
       "brings up the stack with every optional config.toml section populated (bigquery analytics, session pool mode, passkey/webauthn, external provider, SMTP, email templates)",
       () => {
-        // Exercises the config-document-shape branches `start.handler.ts` itself owns
-        // (`legacyResolveGotruePasskeyWebauthn`, `resolveGotrueExternalProviders`,
-        // `buildKongEmailTemplateMounts`, `values.analyticsBackend`) in one pass, none of
-        // which interact with each other. A malformed `db.health_timeout` is exercised
-        // separately below (it now hard-fails the whole command, so it can't
-        // be bundled into this "successful bring-up" scenario anymore).
+        // Exercises the config-document-shape branches `start.handler.ts` owns
+        // (`resolveGotruePasskeyWebauthn`, `resolveGotrueExternalProviders`,
+        // `buildKongEmailTemplateMounts`, `values.analyticsBackend`) in one pass; a malformed
+        // `db.health_timeout` hard-fails the whole command, so it's exercised separately below.
         const { layer, workdir, child } = setup({
           configContents: `project_id = "demo"
 
@@ -1627,7 +1623,7 @@ content_path = "./supabase/templates/custom_notice.html"
           "<html></html>",
         );
         return Effect.gen(function* () {
-          yield* legacyStart(flags());
+          yield* start(flags());
           const createdNames = createdContainerNames(child.spawned);
           expect(createdNames.some((name) => name.includes("_pooler_"))).toBe(true);
           expect(createdNames.some((name) => name.includes("_auth_"))).toBe(true);
@@ -1648,17 +1644,16 @@ content_path = "./supabase/templates/custom_notice.html"
     );
 
     it.live(
-      // The backoff policy for "0s" performs exactly one immediate health
-      // probe with no retries — this is NOT a 30s fallback. The mock's default route
-      // heals on the very first check either way, so this only proves "0s" is
-      // accepted and doesn't hang/fail, not the exact retry count.
+      // "0s" performs exactly one immediate health probe with no retries, not a 30s fallback.
+      // The mock heals on the first check either way, so this only proves "0s" doesn't hang,
+      // not the retry count.
       "accepts a zero db.health_timeout without hanging, and blanks webauthn fields on an empty [auth.webauthn] section",
       () => {
         const { layer } = setup({
           configContents: 'project_id = "demo"\n[db]\nhealth_timeout = "0s"\n[auth.webauthn]\n',
         });
         return Effect.gen(function* () {
-          yield* legacyStart(flags());
+          yield* start(flags());
         }).pipe(Effect.provide(layer));
       },
     );
@@ -1666,20 +1661,17 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails config loading on an unparseable db.health_timeout before any Docker work, matching Go's Config.Load",
       () => {
-        // db.health_timeout decodes in the same unconditional pass as every other
-        // duration field, before any Docker work — a malformed value fails before
-        // network/image/Postgres work, so rollback (only reached on a genuine run
-        // failure) never even runs. Resolved eagerly here, alongside the other
-        // config-override fields, for the same reason — no containers should ever be created.
+        // Decodes in the same unconditional pass as every other duration field, before any
+        // Docker work, so rollback never even runs.
         const { layer, child } = setup({
           configContents: 'project_id = "demo"\n[db]\nhealth_timeout = "not-a-duration"\n',
         });
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(legacyStart(flags()));
+          const exit = yield* Effect.exit(start(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const serialized = JSON.stringify(exit.cause);
-            expect(serialized).toContain("LegacyStartInvalidConfigError");
+            expect(serialized).toContain("StartInvalidConfigError");
             expect(serialized).toContain("failed to parse config");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1690,19 +1682,15 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails on an invalid storage.file_size_limit even when storage is excluded, matching Go's Config.Load",
       () => {
-        // The size decoder rejects a malformed file_size_limit unconditionally at
-        // config load, regardless of --exclude — this proves the eager validation in
-        // start.handler.ts really is unconditional, not merely earlier-but-still-gated on
-        // Storage actually running.
         const { layer, child } = setup({
           configContents: 'project_id = "demo"\n[storage]\nfile_size_limit = "not-a-size"\n',
         });
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(legacyStart(flags({ exclude: ["storage"] })));
+          const exit = yield* Effect.exit(start(flags({ exclude: ["storage"] })));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const serialized = JSON.stringify(exit.cause);
-            expect(serialized).toContain("LegacyStartInvalidConfigError");
+            expect(serialized).toContain("StartInvalidConfigError");
             expect(serialized).toContain("invalid config for storage.file_size_limit");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1713,18 +1701,15 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails on an invalid SUPABASE_STORAGE_S3_PROTOCOL_ENABLED even when storage is excluded, matching Go's Config.Load",
       () => {
-        // `storage.s3_protocol.enabled` is a plain bool decoded unconditionally at
-        // config load — same class of gap as storage.file_size_limit above,
-        // now fixed the same way (hoisted eager wrapConfigOverride in start.handler.ts).
         const previous = process.env["SUPABASE_STORAGE_S3_PROTOCOL_ENABLED"];
         process.env["SUPABASE_STORAGE_S3_PROTOCOL_ENABLED"] = "not-a-bool";
         const { layer, child } = setup();
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(legacyStart(flags({ exclude: ["storage"] })));
+          const exit = yield* Effect.exit(start(flags({ exclude: ["storage"] })));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const serialized = JSON.stringify(exit.cause);
-            expect(serialized).toContain("LegacyStartInvalidConfigError");
+            expect(serialized).toContain("StartInvalidConfigError");
             expect(serialized).toContain("invalid config for storage.s3_protocol.enabled");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1744,20 +1729,15 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails on an invalid SUPABASE_STORAGE_ANALYTICS_ENABLED even when storage is excluded, matching Go's Config.Load",
       () => {
-        // `storage.analytics.enabled` is the bool sibling of the
-        // max_namespaces/max_tables/max_catalogs uint fields below, decoded
-        // unconditionally at config load — same class of gap as
-        // storage.s3_protocol.enabled above, now fixed the same way (hoisted eager
-        // wrapConfigOverride in start.handler.ts).
         const previous = process.env["SUPABASE_STORAGE_ANALYTICS_ENABLED"];
         process.env["SUPABASE_STORAGE_ANALYTICS_ENABLED"] = "not-a-bool";
         const { layer, child } = setup();
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(legacyStart(flags({ exclude: ["storage"] })));
+          const exit = yield* Effect.exit(start(flags({ exclude: ["storage"] })));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const serialized = JSON.stringify(exit.cause);
-            expect(serialized).toContain("LegacyStartInvalidConfigError");
+            expect(serialized).toContain("StartInvalidConfigError");
             expect(serialized).toContain("invalid config for storage.analytics.enabled");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1776,19 +1756,15 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails on an invalid SUPABASE_STORAGE_ANALYTICS_MAX_NAMESPACES even when storage is excluded, matching Go's Config.Load",
       () => {
-        // `storage.analytics.max_namespaces` is a plain uint decoded
-        // unconditionally at config load — same class of gap as
-        // storage.s3_protocol.enabled above, now fixed the same way
-        // (hoisted eager wrapConfigOverride in start.handler.ts).
         const previous = process.env["SUPABASE_STORAGE_ANALYTICS_MAX_NAMESPACES"];
         process.env["SUPABASE_STORAGE_ANALYTICS_MAX_NAMESPACES"] = "not-a-uint";
         const { layer, child } = setup();
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(legacyStart(flags({ exclude: ["storage"] })));
+          const exit = yield* Effect.exit(start(flags({ exclude: ["storage"] })));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const serialized = JSON.stringify(exit.cause);
-            expect(serialized).toContain("LegacyStartInvalidConfigError");
+            expect(serialized).toContain("StartInvalidConfigError");
             expect(serialized).toContain("invalid config for storage.analytics.max_namespaces");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1808,17 +1784,15 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails on an invalid SUPABASE_STORAGE_ANALYTICS_MAX_TABLES even when storage is excluded, matching Go's Config.Load",
       () => {
-        // Same gap as storage.analytics.max_namespaces above — `storage.analytics.max_tables`
-        // decodes in the same config-load pass.
         const previous = process.env["SUPABASE_STORAGE_ANALYTICS_MAX_TABLES"];
         process.env["SUPABASE_STORAGE_ANALYTICS_MAX_TABLES"] = "not-a-uint";
         const { layer, child } = setup();
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(legacyStart(flags({ exclude: ["storage"] })));
+          const exit = yield* Effect.exit(start(flags({ exclude: ["storage"] })));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const serialized = JSON.stringify(exit.cause);
-            expect(serialized).toContain("LegacyStartInvalidConfigError");
+            expect(serialized).toContain("StartInvalidConfigError");
             expect(serialized).toContain("invalid config for storage.analytics.max_tables");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1838,17 +1812,15 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails on an invalid SUPABASE_STORAGE_ANALYTICS_MAX_CATALOGS even when storage is excluded, matching Go's Config.Load",
       () => {
-        // Same gap as storage.analytics.max_namespaces above — `storage.analytics.max_catalogs`
-        // decodes in the same config-load pass.
         const previous = process.env["SUPABASE_STORAGE_ANALYTICS_MAX_CATALOGS"];
         process.env["SUPABASE_STORAGE_ANALYTICS_MAX_CATALOGS"] = "not-a-uint";
         const { layer, child } = setup();
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(legacyStart(flags({ exclude: ["storage"] })));
+          const exit = yield* Effect.exit(start(flags({ exclude: ["storage"] })));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const serialized = JSON.stringify(exit.cause);
-            expect(serialized).toContain("LegacyStartInvalidConfigError");
+            expect(serialized).toContain("StartInvalidConfigError");
             expect(serialized).toContain("invalid config for storage.analytics.max_catalogs");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1868,17 +1840,15 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails on an invalid SUPABASE_STORAGE_VECTOR_MAX_BUCKETS even when storage is excluded, matching Go's Config.Load",
       () => {
-        // `storage.vector.max_buckets` is a plain uint decoded in the same config-load pass as
-        // storage.analytics.* above, unconditionally.
         const previous = process.env["SUPABASE_STORAGE_VECTOR_MAX_BUCKETS"];
         process.env["SUPABASE_STORAGE_VECTOR_MAX_BUCKETS"] = "not-a-uint";
         const { layer, child } = setup();
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(legacyStart(flags({ exclude: ["storage"] })));
+          const exit = yield* Effect.exit(start(flags({ exclude: ["storage"] })));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const serialized = JSON.stringify(exit.cause);
-            expect(serialized).toContain("LegacyStartInvalidConfigError");
+            expect(serialized).toContain("StartInvalidConfigError");
             expect(serialized).toContain("invalid config for storage.vector.max_buckets");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1897,17 +1867,15 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails on an invalid SUPABASE_STORAGE_VECTOR_MAX_INDEXES even when storage is excluded, matching Go's Config.Load",
       () => {
-        // `storage.vector.max_indexes` is a plain uint decoded in the same config-load pass as
-        // storage.vector.max_buckets above, unconditionally.
         const previous = process.env["SUPABASE_STORAGE_VECTOR_MAX_INDEXES"];
         process.env["SUPABASE_STORAGE_VECTOR_MAX_INDEXES"] = "not-a-uint";
         const { layer, child } = setup();
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(legacyStart(flags({ exclude: ["storage"] })));
+          const exit = yield* Effect.exit(start(flags({ exclude: ["storage"] })));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const serialized = JSON.stringify(exit.cause);
-            expect(serialized).toContain("LegacyStartInvalidConfigError");
+            expect(serialized).toContain("StartInvalidConfigError");
             expect(serialized).toContain("invalid config for storage.vector.max_indexes");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1926,19 +1894,16 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails on an invalid auth.sms.max_frequency even when auth is disabled, matching Go's Config.Load",
       () => {
-        // Every GoTrue duration field decodes unconditionally, regardless of
-        // auth.enabled — proving the eager validation covers fields beyond auth.email.max_frequency
-        // and really is independent of whether GoTrue's own spec builder ever runs.
         const { layer, child } = setup({
           configContents:
             'project_id = "demo"\n[auth]\nenabled = false\n[auth.sms]\nmax_frequency = "not-a-duration"\n',
         });
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(legacyStart(flags()));
+          const exit = yield* Effect.exit(start(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const serialized = JSON.stringify(exit.cause);
-            expect(serialized).toContain("LegacyStartInvalidConfigError");
+            expect(serialized).toContain("StartInvalidConfigError");
             expect(serialized).toContain("invalid config for auth.sms.max_frequency");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1949,21 +1914,17 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails on an invalid SUPABASE_AUTH_RATE_LIMIT_ANONYMOUS_USERS even when auth is disabled, matching Go's Config.Load",
       () => {
-        // `auth.rate_limit.*` are plain uints decoded unconditionally at config
-        // load — `resolveGotrueRateLimit` only throws via an env var
-        // override (a bad TOML value is caught by @supabase/config's own schema first), so this
-        // models the override directly, same as the storage.s3_protocol.enabled test above.
         const previous = process.env["SUPABASE_AUTH_RATE_LIMIT_ANONYMOUS_USERS"];
         process.env["SUPABASE_AUTH_RATE_LIMIT_ANONYMOUS_USERS"] = "not-a-uint";
         const { layer, child } = setup({
           configContents: 'project_id = "demo"\n[auth]\nenabled = false\n',
         });
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(legacyStart(flags()));
+          const exit = yield* Effect.exit(start(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const serialized = JSON.stringify(exit.cause);
-            expect(serialized).toContain("LegacyStartInvalidConfigError");
+            expect(serialized).toContain("StartInvalidConfigError");
             expect(serialized).toContain("invalid config for auth.rate_limit");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -1983,20 +1944,17 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails on an invalid SUPABASE_AUTH_WEB3_SOLANA_ENABLED even when auth is disabled, matching Go's Config.Load",
       () => {
-        // `auth.web3.*.enabled` are plain bools decoded unconditionally at
-        // config load — same override-only-throw reasoning as the rate_limit
-        // test above.
         const previous = process.env["SUPABASE_AUTH_WEB3_SOLANA_ENABLED"];
         process.env["SUPABASE_AUTH_WEB3_SOLANA_ENABLED"] = "not-a-bool";
         const { layer, child } = setup({
           configContents: 'project_id = "demo"\n[auth]\nenabled = false\n',
         });
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(legacyStart(flags()));
+          const exit = yield* Effect.exit(start(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const serialized = JSON.stringify(exit.cause);
-            expect(serialized).toContain("LegacyStartInvalidConfigError");
+            expect(serialized).toContain("StartInvalidConfigError");
             expect(serialized).toContain("invalid config for auth.web3");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -2015,20 +1973,17 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails on an invalid SUPABASE_AUTH_OAUTH_SERVER_ENABLED even when auth is disabled, matching Go's Config.Load",
       () => {
-        // `auth.oauth_server.enabled`/`allow_dynamic_registration` are plain bools decoded
-        // unconditionally at config load — same
-        // override-only-throw reasoning as the two tests above.
         const previous = process.env["SUPABASE_AUTH_OAUTH_SERVER_ENABLED"];
         process.env["SUPABASE_AUTH_OAUTH_SERVER_ENABLED"] = "not-a-bool";
         const { layer, child } = setup({
           configContents: 'project_id = "demo"\n[auth]\nenabled = false\n',
         });
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(legacyStart(flags()));
+          const exit = yield* Effect.exit(start(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const serialized = JSON.stringify(exit.cause);
-            expect(serialized).toContain("LegacyStartInvalidConfigError");
+            expect(serialized).toContain("StartInvalidConfigError");
             expect(serialized).toContain("invalid config for auth.oauth_server");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -2047,20 +2002,17 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails on an invalid SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED even when auth is disabled, matching Go's Config.Load",
       () => {
-        // `auth.third_party.<provider>.enabled` are plain bools decoded unconditionally at
-        // config load, same override-only-throw reasoning as the
-        // web3/oauth_server tests above (review: PRRT_kwDOErm0O86WXFqj).
         const previous = process.env["SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED"];
         process.env["SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED"] = "not-a-bool";
         const { layer, child } = setup({
           configContents: 'project_id = "demo"\n[auth]\nenabled = false\n',
         });
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(legacyStart(flags()));
+          const exit = yield* Effect.exit(start(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const serialized = JSON.stringify(exit.cause);
-            expect(serialized).toContain("LegacyStartInvalidConfigError");
+            expect(serialized).toContain("StartInvalidConfigError");
             expect(serialized).toContain("invalid config for auth.third_party");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -2080,22 +2032,19 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails on an invalid auth.passkey.enabled even when auth is disabled, matching Go's Config.Load",
       () => {
-        // `auth.passkey`/`auth.webauthn` have no `@supabase/config` schema at all —
-        // `auth.passkey.enabled` decodes unconditionally at config load via
-        // `legacyResolveGotruePasskeyWebauthn`'s raw-document read, same override-only-throw
-        // reasoning as the web3/oauth_server tests above, except the malformed value lives directly in
-        // config.toml here since `@supabase/config` never sees (or rejects) this unmodeled field —
-        // there's no schema-level bool coercion to catch it first.
+        // `auth.passkey`/`auth.webauthn` have no `@supabase/config` schema, so the malformed
+        // value lives directly in config.toml here — there's no schema-level bool coercion to
+        // catch it first, unlike the modeled fields above.
         const { layer, child } = setup({
           configContents:
             'project_id = "demo"\n[auth]\nenabled = false\n[auth.passkey]\nenabled = "bad"\n',
         });
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(legacyStart(flags()));
+          const exit = yield* Effect.exit(start(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const serialized = JSON.stringify(exit.cause);
-            expect(serialized).toContain("LegacyStartInvalidConfigError");
+            expect(serialized).toContain("StartInvalidConfigError");
             expect(serialized).toContain("invalid config for auth.passkey");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -2110,18 +2059,18 @@ content_path = "./supabase/templates/custom_notice.html"
         // custom provider name like `custom` is a legitimate config shape `@supabase/config`'s
         // schema silently drops at decode time (see the "custom auth.external providers" describe
         // block below for the accepted-value counterpart), so
-        // `legacyResolveAuthExternalProviders`'s raw-document read is the only place this malformed
+        // `resolveAuthExternalProviders`'s raw-document read is the only place this malformed
         // value is ever seen — same override-only-throw reasoning as the passkey test above.
         const { layer, child } = setup({
           configContents:
             'project_id = "demo"\n[auth]\nenabled = false\n[auth.external.custom]\nenabled = "bad"\n',
         });
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(legacyStart(flags()));
+          const exit = yield* Effect.exit(start(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const serialized = JSON.stringify(exit.cause);
-            expect(serialized).toContain("LegacyStartInvalidConfigError");
+            expect(serialized).toContain("StartInvalidConfigError");
             expect(serialized).toContain("invalid config for auth.external");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -2136,17 +2085,17 @@ content_path = "./supabase/templates/custom_notice.html"
         // load, before any Docker work — the established error is
         // `'functions[foo]' has invalid keys: env`. `@supabase/config`'s own schema DOES model
         // `[functions.<slug>.env]` (a legitimate next/-only feature), so this must be a
-        // legacy-only rejection.
+        // CLI-side rejection.
         const { layer, child } = setup({
           configContents:
             'project_id = "demo"\n[functions.foo]\nenabled = true\n[functions.foo.env]\nFOO = "env(SOME_VAR)"\n',
         });
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(legacyStart(flags()));
+          const exit = yield* Effect.exit(start(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const serialized = JSON.stringify(exit.cause);
-            expect(serialized).toContain("LegacyStartInvalidConfigError");
+            expect(serialized).toContain("StartInvalidConfigError");
             expect(serialized).toContain("'functions[foo]' has invalid keys: env");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -2157,20 +2106,15 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails on an invalid SUPABASE_EDGE_RUNTIME_POLICY even when edge-runtime is excluded, matching Go's Config.Load",
       () => {
-        // `edge_runtime.policy` is a strict enum in @supabase/config's schema, so a bad TOML
-        // value is already rejected at config load, before start.handler.ts runs — only the env
-        // var override path (a plain string, unchecked by the schema) can reach
-        // `legacyEnvOverrideEdgeRuntimePolicy`'s own throw, same reasoning as the GoTrue
-        // override-only tests above.
         const previous = process.env["SUPABASE_EDGE_RUNTIME_POLICY"];
         process.env["SUPABASE_EDGE_RUNTIME_POLICY"] = "not-a-policy";
         const { layer, child } = setup();
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(legacyStart(flags({ exclude: ["edge-runtime"] })));
+          const exit = yield* Effect.exit(start(flags({ exclude: ["edge-runtime"] })));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const serialized = JSON.stringify(exit.cause);
-            expect(serialized).toContain("LegacyStartInvalidConfigError");
+            expect(serialized).toContain("StartInvalidConfigError");
             expect(serialized).toContain("invalid config for edge_runtime.policy");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -2189,19 +2133,15 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails on an invalid SUPABASE_EDGE_RUNTIME_INSPECTOR_PORT even when edge-runtime is excluded, matching Go's Config.Load",
       () => {
-        // `edge_runtime.inspector_port` is a plain number in @supabase/config's schema, so a bad
-        // TOML value is already rejected at config load — only the env var override path (a
-        // string parsed by `envOverridePort`) can throw here, same reasoning as the policy test
-        // above.
         const previous = process.env["SUPABASE_EDGE_RUNTIME_INSPECTOR_PORT"];
         process.env["SUPABASE_EDGE_RUNTIME_INSPECTOR_PORT"] = "not-a-port";
         const { layer, child } = setup();
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(legacyStart(flags({ exclude: ["edge-runtime"] })));
+          const exit = yield* Effect.exit(start(flags({ exclude: ["edge-runtime"] })));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const serialized = JSON.stringify(exit.cause);
-            expect(serialized).toContain("LegacyStartInvalidConfigError");
+            expect(serialized).toContain("StartInvalidConfigError");
             expect(serialized).toContain("invalid config for edge_runtime.inspector_port");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -2221,14 +2161,14 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "warns about a Windows npipe Docker daemon before starting Vector, in text mode, and excludes it from the health watch list",
       () => {
-        // `legacyResolveDockerDaemonHost` checks `DOCKER_HOST` before ever shelling out to
-        // `docker context inspect`, so setting it directly is a reliable way to force the
-        // npipe branch without needing a real Windows Docker Desktop context.
+        // `resolveDockerDaemonHost` checks `DOCKER_HOST` before shelling out to `docker context
+        // inspect`, so setting it directly forces the npipe branch without a real Windows
+        // Docker Desktop context.
         const previousDockerHost = process.env["DOCKER_HOST"];
         process.env["DOCKER_HOST"] = "npipe:////./pipe/docker_engine";
         const { layer, out } = setup();
         return Effect.gen(function* () {
-          yield* legacyStart(flags());
+          yield* start(flags());
           expect(out.stderrText).toContain(
             "Analytics on Windows requires Docker daemon exposed on tcp://localhost:2375.",
           );
@@ -2254,7 +2194,7 @@ content_path = "./supabase/templates/custom_notice.html"
           configContents: 'project_id = "demo"\n[analytics]\nenabled = false\n',
         });
         return Effect.gen(function* () {
-          yield* legacyStart(flags());
+          yield* start(flags());
           const createdNames = createdContainerNames(child.spawned);
           expect(createdNames.some((name) => name.includes("_analytics_"))).toBe(false);
           expect(createdNames.some((name) => name.includes("_vector_"))).toBe(false);
@@ -2269,15 +2209,14 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "skips storage and imgproxy together when storage.enabled = false, even with image_transformation on",
       () => {
-        // ImgProxy mounts Storage's own volumes (`start.gates.ts`'s `imgproxy: storage && ...`
-        // dependency) — disabling storage must take ImgProxy down with it, even though
-        // `storage.image_transformation.enabled` on its own would otherwise turn ImgProxy on.
+        // ImgProxy mounts Storage's own volumes, so disabling storage takes ImgProxy down with
+        // it even though `storage.image_transformation.enabled` alone would otherwise turn it on.
         const { layer, child } = setup({
           configContents:
             'project_id = "demo"\n[storage]\nenabled = false\n[storage.image_transformation]\nenabled = true\n',
         });
         return Effect.gen(function* () {
-          yield* legacyStart(flags());
+          yield* start(flags());
           const createdNames = createdContainerNames(child.spawned);
           expect(createdNames.some((name) => name.includes("_storage_"))).toBe(false);
           expect(createdNames.some((name) => name.includes("_imgproxy_"))).toBe(false);
@@ -2289,15 +2228,13 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "ignores SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED when [storage.image_transformation] is absent from config.toml",
       () => {
-        // `storage.image_transformation` is a nil-unless-declared field —
-        // with no `[storage.image_transformation]` table, the env var is
-        // never even looked up, so ImgProxy must stay off even though
-        // storage itself is enabled.
+        // `storage.image_transformation` is a nil-unless-declared field: with no
+        // `[storage.image_transformation]` table, the env var is never looked up.
         const previous = process.env["SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED"];
         process.env["SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED"] = "true";
         const { layer, child } = setup();
         return Effect.gen(function* () {
-          yield* legacyStart(flags());
+          yield* start(flags());
           const createdNames = createdContainerNames(child.spawned);
           expect(createdNames.some((name) => name.includes("_storage_"))).toBe(true);
           expect(createdNames.some((name) => name.includes("_imgproxy_"))).toBe(false);
@@ -2325,9 +2262,9 @@ content_path = "./supabase/templates/custom_notice.html"
         });
         return Effect.gen(function* () {
           // `edge-runtime` excluded so its own HTTP readiness probe never reaches
-          // `unusedHttpClientLayer` — this scenario is only about Postgrest/Kong/
-          // Realtime's `api.enabled` independence.
-          yield* legacyStart(flags({ exclude: ["edge-runtime"] }));
+          // `unusedHttpClientLayer` — this scenario is only about Postgrest/Kong/Realtime's
+          // `api.enabled` independence.
+          yield* start(flags({ exclude: ["edge-runtime"] }));
           const createdNames = createdContainerNames(child.spawned);
           expect(createdNames.some((name) => name.includes("_kong_"))).toBe(true);
           expect(createdNames.some((name) => name.includes("_realtime_"))).toBe(true);
@@ -2339,17 +2276,17 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "excluding a single --exclude key skips exactly that container and starts every other excludable service",
       () => {
-        expect(new Set(LEGACY_START_EXCLUDABLE_KEYS)).toEqual(
+        expect(new Set(START_EXCLUDABLE_KEYS)).toEqual(
           new Set(Object.keys(CONTAINER_SUFFIX_BY_EXCLUDE_KEY)),
         );
 
         return Effect.gen(function* () {
-          for (const excludeKey of LEGACY_START_EXCLUDABLE_KEYS) {
+          for (const excludeKey of START_EXCLUDABLE_KEYS) {
             const { layer, child } = setup({
               configContents:
                 'project_id = "demo"\n[storage.image_transformation]\nenabled = true\n[db.pooler]\nenabled = true\n',
             });
-            yield* legacyStart(flags({ exclude: [excludeKey] })).pipe(Effect.provide(layer));
+            yield* start(flags({ exclude: [excludeKey] })).pipe(Effect.provide(layer));
 
             const createdNames = createdContainerNames(child.spawned);
             expect(
@@ -2370,7 +2307,7 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   describe("fresh volume: DB setup + bucket seeding", () => {
-    /** The three PG15+ one-shot migrate jobs (`legacyStartSetupLocalDatabase`'s `LegacyDockerRun` calls) — a plain `docker run --rm ...`, distinct from Edge Runtime's own create/cp/start bring-up. */
+    /** The three PG15+ one-shot migrate jobs (`startSetupLocalDatabase`'s `DockerRun` calls) — a plain `docker run --rm ...`, distinct from Edge Runtime's own create/cp/start bring-up. */
     function dbSetupJobCalls(spawned: ReadonlyArray<SpawnRecord>): ReadonlyArray<SpawnRecord> {
       return spawned.filter((s) => s.args[0] === "run" && s.args[1] === "--rm");
     }
@@ -2382,7 +2319,7 @@ content_path = "./supabase/templates/custom_notice.html"
         return Effect.gen(function* () {
           // Excludes edge-runtime to keep this scenario focused on the fresh-volume
           // DB-setup path only.
-          yield* legacyStart(flags({ exclude: ["edge-runtime"] }));
+          yield* start(flags({ exclude: ["edge-runtime"] }));
           expect(out.stderrText).toContain("Initialising schema...");
           // Default config: realtime, storage, and auth are all enabled.
           expect(dbSetupJobCalls(child.spawned)).toHaveLength(3);
@@ -2393,21 +2330,17 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "resolves an excluded service's migrate-job image through a project-dotenv-only registry override",
       () => {
-        // The auth/realtime/storage migrate jobs run regardless of `--exclude`, but
-        // `--exclude gotrue` removes the gotrue image from `imagePlan`, which used to
-        // make its migrate-job image fall back to `LegacyDockerRun`'s
-        // ambient-`process.env`-only registry resolver — invisible to a
-        // registry override that only exists in the project's own `.env` file.
+        // `--exclude gotrue` removes the gotrue image from `imagePlan`; its migrate-job image
+        // must still resolve a registry override that only exists in the project's own `.env` file.
         const workdir = tempRoot.current;
         const { layer, child } = setup({ route: freshVolumeRoute(defaultRoute()) });
-        // `loadCliProjectEnvironment`'s `envPath` is `<workdir>/supabase/.env` (`findCliProjectPaths`),
-        // written after `setup()` so the `supabase/` dir (created by `writeConfig`) already exists.
+        // Written after `setup()` so the `supabase/` dir (created by `writeConfig`) already exists.
         writeFileSync(
           join(workdir, "supabase", ".env"),
           "SUPABASE_INTERNAL_IMAGE_REGISTRY=registry.example.com\n",
         );
         return Effect.gen(function* () {
-          yield* legacyStart(flags({ exclude: ["gotrue"] }));
+          yield* start(flags({ exclude: ["gotrue"] }));
           expect(dbSetupJobCalls(child.spawned)).toHaveLength(3);
           const authMigrateJob = dbSetupJobCalls(child.spawned).find((s) =>
             s.args.some((arg) => arg.includes("gotrue")),
@@ -2422,13 +2355,10 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "does not attempt to resolve an excluded service's migrate-job image on a non-fresh-volume restart",
       () => {
-        // The pre-pull step only ever touches non-excluded services, and the
-        // one-shot setup-job images are resolved lazily, only from inside
-        // `initSchema15` when it actually runs — a fresh volume AND
-        // PG15+. On an ordinary restart (this test's default, non-fresh-volume setup),
-        // `--exclude storage-api` must not even attempt to resolve Storage's image, or an
-        // unavailable/rate-limited Storage image would fail `start` even though nothing
-        // in this run needs it.
+        // Image resolution for the one-shot setup jobs only happens lazily inside
+        // `initSchema15` on a fresh volume; on an ordinary restart, `--exclude storage-api`
+        // must not attempt to resolve Storage's image at all, or an unavailable/rate-limited
+        // image would fail `start` even though nothing in this run needs it.
         const base = defaultRoute();
         const route = (args: ReadonlyArray<string>): RouteResult => {
           const targetsStorageImage =
@@ -2442,7 +2372,7 @@ content_path = "./supabase/templates/custom_notice.html"
         };
         const { layer, child } = setup({ route });
         return Effect.gen(function* () {
-          yield* legacyStart(flags({ exclude: ["storage-api"] }));
+          yield* start(flags({ exclude: ["storage-api"] }));
           const createdNames = createdContainerNames(child.spawned);
           expect(createdNames.some((name) => name.includes("_storage_"))).toBe(false);
           expect(createdNames.some((name) => name.includes("_kong_"))).toBe(true);
@@ -2453,7 +2383,7 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live("skips the SetupLocalDatabase-equivalent pipeline on a non-fresh volume", () => {
       const { layer, out, child } = setup();
       return Effect.gen(function* () {
-        yield* legacyStart(flags({ exclude: ["edge-runtime"] }));
+        yield* start(flags({ exclude: ["edge-runtime"] }));
         expect(out.stderrText).not.toContain("Initialising schema...");
         expect(dbSetupJobCalls(child.spawned)).toHaveLength(0);
       }).pipe(Effect.provide(layer));
@@ -2462,12 +2392,9 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails on an undecryptable [db.vault] secret even on a non-fresh volume, matching Go's Config.Load",
       () => {
-        // `legacyCheckDbToml`'s own internal call inside `legacyStartSetupLocalDatabase` only
-        // runs on a fresh volume — an undecryptable `[db.vault]`
-        // secret (a DB-specific field `@supabase/config`'s own schema never decrypts, only
-        // `legacyCheckDbToml`'s pipeline does) must still fail eagerly, before any Docker work,
-        // on an ordinary restart against an existing (non-fresh) volume: every `encrypted:`
-        // value decrypts unconditionally regardless of volume state.
+        // `checkDbToml`'s internal call inside `startSetupLocalDatabase` only runs on a fresh
+        // volume, but every `encrypted:` value decrypts unconditionally regardless of volume
+        // state, so an undecryptable `[db.vault]` secret must still fail eagerly here.
         const previous = process.env["DOTENV_PRIVATE_KEY"];
         delete process.env["DOTENV_PRIVATE_KEY"];
         const encrypted =
@@ -2476,7 +2403,7 @@ content_path = "./supabase/templates/custom_notice.html"
           configContents: `project_id = "demo"\n[db.vault]\nmy_secret = "${encrypted}"\n`,
         });
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(legacyStart(flags()));
+          const exit = yield* Effect.exit(start(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const serialized = JSON.stringify(exit.cause);
@@ -2498,22 +2425,16 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails on a bucket's invalid file_size_limit even on a non-fresh volume, matching Go's Config.Load",
       () => {
-        // Same class of gap as the `[db.vault]` test above: the per-bucket `file_size_limit`
-        // (the same size decode hook as the storage-level default) was previously only
-        // parsed deep inside `legacySeedBucketsRun`, reached only on a fresh volume with Storage
-        // actually seeding — a malformed value on an ordinary restart against an existing
-        // (non-fresh) volume went completely unvalidated. `legacyCheckDbToml` now catches it
-        // eagerly, before any Docker work, regardless of volume state.
         const { layer, child } = setup({
           configContents:
             'project_id = "demo"\n[storage.buckets.avatars]\nfile_size_limit = "bogus"\n',
         });
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(legacyStart(flags()));
+          const exit = yield* Effect.exit(start(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const serialized = JSON.stringify(exit.cause);
-            expect(serialized).toContain("LegacyDbConfigLoadError");
+            expect(serialized).toContain("DbConfigLoadError");
             expect(serialized).toContain(
               "failed to parse config: invalid storage.buckets.avatars.file_size_limit.",
             );
@@ -2526,7 +2447,7 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live('prints "Starting database..." on a fresh volume, before Postgres is created', () => {
       const { layer, out } = setup({ route: freshVolumeRoute(defaultRoute()) });
       return Effect.gen(function* () {
-        yield* legacyStart(flags({ exclude: ["edge-runtime"] }));
+        yield* start(flags({ exclude: ["edge-runtime"] }));
         expect(out.stderrText).toContain("Starting database...\n");
         expect(out.stderrText).not.toContain("Starting database from backup...");
         expect(out.stderrText.indexOf("Starting database...\n")).toBeLessThan(
@@ -2540,7 +2461,7 @@ content_path = "./supabase/templates/custom_notice.html"
       () => {
         const { layer, out } = setup();
         return Effect.gen(function* () {
-          yield* legacyStart(flags({ exclude: ["edge-runtime"] }));
+          yield* start(flags({ exclude: ["edge-runtime"] }));
           expect(out.stderrText).toContain("Starting database from backup...\n");
           expect(out.stderrText).not.toContain("Starting database...\n");
         }).pipe(Effect.provide(layer));
@@ -2552,7 +2473,7 @@ content_path = "./supabase/templates/custom_notice.html"
       () => {
         const { layer, workdir } = setup();
         return Effect.gen(function* () {
-          yield* legacyStart(flags({ exclude: ["edge-runtime"] }));
+          yield* start(flags({ exclude: ["edge-runtime"] }));
           const content = readFileSync(
             join(workdir, "supabase", ".branches", "_current_branch"),
             "utf8",
@@ -2570,7 +2491,7 @@ content_path = "./supabase/templates/custom_notice.html"
         httpClientLayer: http.layer,
       });
       return Effect.gen(function* () {
-        yield* legacyStart(flags({ exclude: ["edge-runtime"] }));
+        yield* start(flags({ exclude: ["edge-runtime"] }));
         expect(http.createdBucketRequests).toHaveLength(1);
         // docker.io Storage carries its own Docker healthcheck, so readiness
         // never goes through the gateway.
@@ -2587,7 +2508,7 @@ content_path = "./supabase/templates/custom_notice.html"
           httpClientLayer: http.layer,
         });
         return Effect.gen(function* () {
-          yield* legacyStart(flags({ exclude: ["edge-runtime"] }));
+          yield* start(flags({ exclude: ["edge-runtime"] }));
           expect(http.createdBucketRequests).toHaveLength(0);
         }).pipe(Effect.provide(layer));
       },
@@ -2596,10 +2517,8 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "seeds against the env-overridden SUPABASE_API_PORT, not config.toml's raw port",
       () => {
-        // legacySeedBucketsRun previously reloaded config.toml independently instead of
-        // reusing start's own already env-overridden config, so a SUPABASE_API_PORT
-        // override that actually brought Kong up on a different port never reached
-        // the bucket-seeding gateway's base URL.
+        // `seedBucketsRun` must reuse `start`'s own already env-overridden config, so a
+        // `SUPABASE_API_PORT` override reaches the bucket-seeding gateway's base URL too.
         const previous = process.env["SUPABASE_API_PORT"];
         process.env["SUPABASE_API_PORT"] = "65432";
         const http = mockStorageBucketHttpClient();
@@ -2609,7 +2528,7 @@ content_path = "./supabase/templates/custom_notice.html"
           httpClientLayer: http.layer,
         });
         return Effect.gen(function* () {
-          yield* legacyStart(flags({ exclude: ["edge-runtime"] }));
+          yield* start(flags({ exclude: ["edge-runtime"] }));
           expect(http.createdBucketRequests).toHaveLength(1);
           expect(http.createdBucketRequests[0]).toContain(":65432/");
         }).pipe(
@@ -2627,10 +2546,8 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "seeds against the env-overridden SUPABASE_API_EXTERNAL_URL, not config.toml's raw value",
       () => {
-        // `effectiveLocalStorageConfig` previously left `api.external_url` as the raw,
-        // un-overridden config value, so a `SUPABASE_API_EXTERNAL_URL` override that
-        // actually brought Kong/GoTrue up under a different external URL never reached
-        // the bucket-seeding gateway's base URL.
+        // `effectiveLocalStorageConfig` must use the overridden `api.external_url`, not the raw
+        // config value, so it reaches the bucket-seeding gateway's base URL too.
         const previous = process.env["SUPABASE_API_EXTERNAL_URL"];
         process.env["SUPABASE_API_EXTERNAL_URL"] = "http://override.example.com:9999";
         const http = mockStorageBucketHttpClient();
@@ -2640,7 +2557,7 @@ content_path = "./supabase/templates/custom_notice.html"
           httpClientLayer: http.layer,
         });
         return Effect.gen(function* () {
-          yield* legacyStart(flags({ exclude: ["edge-runtime"] }));
+          yield* start(flags({ exclude: ["edge-runtime"] }));
           expect(http.createdBucketRequests).toHaveLength(1);
           expect(http.createdBucketRequests[0]).toContain("override.example.com:9999");
         }).pipe(
@@ -2659,7 +2576,7 @@ content_path = "./supabase/templates/custom_notice.html"
       "seeds a bucket's default file_size_limit from the env-overridden SUPABASE_STORAGE_FILE_SIZE_LIMIT",
       () => {
         // `effectiveLocalStorageConfig` previously left `storage.file_size_limit` as the
-        // raw, un-overridden config value, so `legacySeedBucketsRun`'s per-bucket default
+        // raw, un-overridden config value, so `seedBucketsRun`'s per-bucket default
         // (for a bucket with no explicit `file_size_limit` of its own) never reflected an
         // env/dotenv-only `SUPABASE_STORAGE_FILE_SIZE_LIMIT` override.
         const previous = process.env["SUPABASE_STORAGE_FILE_SIZE_LIMIT"];
@@ -2671,7 +2588,7 @@ content_path = "./supabase/templates/custom_notice.html"
           httpClientLayer: http.layer,
         });
         return Effect.gen(function* () {
-          yield* legacyStart(flags({ exclude: ["edge-runtime"] }));
+          yield* start(flags({ exclude: ["edge-runtime"] }));
           expect(http.createdBucketBodies).toHaveLength(1);
           expect(
             (http.createdBucketBodies[0] as { file_size_limit?: number })?.file_size_limit,
@@ -2690,7 +2607,7 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   describe("edge runtime", () => {
-    /** Edge Runtime's own bring-up (`legacyStartEdgeRuntimeContainer`) is a `docker create` → `docker cp` (main-service archive) → `docker start` sequence; its create is the one naming the `_edge_runtime_` container, distinguishing it from every other service's `legacyCreateContainer` create. */
+    /** Edge Runtime's own bring-up (`startStackEdgeRuntimeContainer`) is a `docker create` → `docker cp` (main-service archive) → `docker start` sequence; its create is the one naming the `_edge_runtime_` container, distinguishing it from every other service's `createContainer` create. */
     function edgeRuntimeRunCalls(spawned: ReadonlyArray<SpawnRecord>): ReadonlyArray<SpawnRecord> {
       return spawned.filter((s) => isEdgeRuntimeCreate(s.args));
     }
@@ -2698,7 +2615,7 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live("creates and starts a real container when enabled and not excluded", () => {
       const { layer, child } = setup();
       return Effect.gen(function* () {
-        yield* legacyStart(flags());
+        yield* start(flags());
         const runCalls = edgeRuntimeRunCalls(child.spawned);
         expect(runCalls).toHaveLength(1);
         const nameIndex = runCalls[0]?.args.indexOf("--name") ?? -1;
@@ -2721,7 +2638,7 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live("--exclude edge-runtime skips its container entirely", () => {
       const { layer, child } = setup();
       return Effect.gen(function* () {
-        yield* legacyStart(flags({ exclude: ["edge-runtime"] }));
+        yield* start(flags({ exclude: ["edge-runtime"] }));
         expect(edgeRuntimeRunCalls(child.spawned)).toHaveLength(0);
       }).pipe(Effect.provide(layer));
     });
@@ -2730,10 +2647,10 @@ content_path = "./supabase/templates/custom_notice.html"
       "keeps the host-side staged env artifacts after a successful bring-up (no eager cleanup)",
       () => {
         // Staged under `<workdir>/supabase/.temp/start-secrets/<container>/` so a later
-        // `stop`/rollback can reclaim it; the bootstrap template is no longer part of it.
+        // `stop`/rollback can reclaim it.
         const { layer, child, workdir } = setup();
         return Effect.gen(function* () {
-          yield* legacyStart(flags());
+          yield* start(flags());
           const runArgs = edgeRuntimeRunCalls(child.spawned)[0]?.args ?? [];
           const envFileIndex = runArgs.indexOf("--env-file");
           const envFilePath = envFileIndex === -1 ? undefined : runArgs[envFileIndex + 1];
@@ -2755,10 +2672,8 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "logs 'Skipped serving Function' for a disabled function via Studio's bind mounts, even with Edge Runtime excluded",
       () => {
-        // `resolveFunctionBindMounts` backs Studio's function bind mounts
-        // unconditionally of Edge Runtime being enabled (see
-        // `start.handler.ts`'s "studio" case doc comment) — the skip line still
-        // logs via that path alone here, since Edge Runtime itself never runs to log it too.
+        // `resolveFunctionBindMounts` backs Studio's function bind mounts regardless of Edge
+        // Runtime; see `start.handler.ts`'s "studio" case doc comment.
         const workdir = tempRoot.current;
         mkdirSync(join(workdir, "supabase", "functions", "foo"), { recursive: true });
         writeFileSync(join(workdir, "supabase", "functions", "foo", "index.ts"), "export {};\n");
@@ -2766,7 +2681,7 @@ content_path = "./supabase/templates/custom_notice.html"
           configContents: 'project_id = "demo"\n[functions.foo]\nenabled = false\n',
         });
         return Effect.gen(function* () {
-          yield* legacyStart(flags({ exclude: ["edge-runtime"] }));
+          yield* start(flags({ exclude: ["edge-runtime"] }));
           expect(out.stderrText).toContain("Skipped serving Function: foo");
         }).pipe(
           Effect.provide(layer),
@@ -2782,14 +2697,9 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "does not pick up an unrelated ancestor project's functions for a config-less --workdir subdirectory",
       () => {
-        // `--workdir`/`SUPABASE_WORKDIR` pointing at a subdirectory with no
-        // `supabase/config.toml` of its own is a legitimate, reachable state
-        // (see `start.e2e.test.ts`'s "absent config" comment) — `start` still
-        // proceeds, resolving the main config with `search: false`
-        // (`legacy-local-project-context.ts`). `inferFunctionsManifest`'s own
-        // `search: false` here (CLI-1323 functions-manifest fix) must keep an
-        // UNRELATED ancestor project's `supabase/functions` from silently
-        // winning for this workdir, mirroring that same `search: false`.
+        // A subdirectory with no `supabase/config.toml` of its own is a legitimate state;
+        // `start` still proceeds with `search: false`. `inferFunctionsManifest` needs its own
+        // `search: false` too, so an unrelated ancestor project's `supabase/functions` never wins.
         const ancestorRoot = tempRoot.current;
         mkdirSync(join(ancestorRoot, "supabase", "functions", "foo"), { recursive: true });
         writeFileSync(
@@ -2805,7 +2715,7 @@ content_path = "./supabase/templates/custom_notice.html"
 
         const { layer, out, child } = setup({ workdir, skipConfig: true });
         return Effect.gen(function* () {
-          yield* legacyStart(flags());
+          yield* start(flags());
           const runArgs = edgeRuntimeRunCalls(child.spawned)[0]?.args ?? [];
           const bindValues = runArgs.flatMap((arg, i) => (runArgs[i - 1] === "-v" ? [arg] : []));
           expect(bindValues.some((bind) => bind.includes(join("functions", "foo")))).toBe(false);
@@ -2829,10 +2739,8 @@ content_path = "./supabase/templates/custom_notice.html"
         const pullAttempts = new Map<string, number>();
         const base = defaultRoute();
         const route = (args: ReadonlyArray<string>): RouteResult => {
-          // Force every image through the pull path instead of the "already cached" shortcut —
-          // a confirmed "no such image" (not merely a non-zero exit) is what tells
-          // `hasLocalImage` this is a genuine cache miss rather than some other inspect
-          // failure, which now fails fast instead of falling through to a pull.
+          // A confirmed "no such image" (not merely a non-zero exit) is what tells
+          // `hasLocalImage` this is a genuine cache miss, forcing every image through the pull path.
           if (args[0] === "image" && args[1] === "inspect") {
             return {
               exitCode: 1,
@@ -2857,7 +2765,7 @@ content_path = "./supabase/templates/custom_notice.html"
         };
         const { layer, out, child } = setup({ route });
         return Effect.gen(function* () {
-          yield* legacyStart(flags());
+          yield* start(flags());
           const kongPulls = child.spawned.filter(
             (s) => s.args[0] === "pull" && (s.args[1] ?? "").includes("kong"),
           );
@@ -2871,9 +2779,8 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails with a pull error once all registry candidates are exhausted, without a rollback (nothing was created yet)",
       () => {
-        // Image pre-pull (`legacyEnsureImagesCached`) runs entirely before `bringUp` creates
-        // the network or any container, so a pull failure here has nothing to roll back —
-        // unlike a failure inside `bringUp` itself (see the "rollback" describe block below).
+        // Pre-pull runs entirely before `bringUp` creates anything, unlike a failure inside
+        // `bringUp` itself (see the "rollback" describe block below).
         const base = defaultRoute();
         const route = (args: ReadonlyArray<string>): RouteResult => {
           if (args[0] === "image" && args[1] === "inspect") {
@@ -2893,10 +2800,10 @@ content_path = "./supabase/templates/custom_notice.html"
         };
         const { layer, child } = setup({ route });
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(legacyStart(flags()));
+          const exit = yield* Effect.exit(start(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("LegacyImagePrepullError");
+            expect(JSON.stringify(exit.cause)).toContain("ImagePrepullError");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
           expect(rollbackWasAttempted(child.spawned)).toBe(false);
@@ -2908,22 +2815,11 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "still fails when the daemon dies mid-pre-pull under --ignore-health-check — Go's exit-0 swallow is an unintended quirk this port deliberately does not reproduce (CLI-1987)",
       () => {
-        // Historically, matching any `errors.Join`-shaped error — which
-        // accidentally includes `ensureImagesCached`'s joined pull errors — meant
-        // `--ignore-health-check` swallowed a total pre-pull failure, printing
-        // "Started supabase local development setup." + the status table, and
-        // exiting 0 with no container running. Ruled an unintended quirk
-        // (CLI-1987): this port keeps the failure fatal regardless of the flag —
-        // no success banner, no status table on stdout, and no rollback (nothing
-        // was created yet). This scenario models the daemon-becoming-unreachable
-        // trigger: `hasLocalImage` (`legacy-docker-image-resolve.ts`) fails
-        // IMMEDIATELY on a daemon-unreachable `image inspect` stderr — no
-        // registry-candidate retries, no real 4s/8s backoff sleeps (review
-        // r3689619133) — while the flagless test above already pins the other
-        // trigger, pull-retry exhaustion. Both funnel into the same joined
-        // `LegacyImagePrepullError` (`lib/image-prepull.ts`). See
-        // `legacyIsUnhealthyStartError`'s doc comment (`start.rollback.ts`) and
-        // `SIDE_EFFECTS.md`'s "Notes" before changing this behavior.
+        // Models the daemon-becoming-unreachable trigger: `hasLocalImage` fails immediately on
+        // a daemon-unreachable `image inspect` stderr, with no registry-candidate retries or
+        // real backoff sleeps — the flagless test above already covers the other trigger,
+        // pull-retry exhaustion. Both funnel into the same joined `ImagePrepullError`. See
+        // `isUnhealthyStartError`'s doc comment and `SIDE_EFFECTS.md`'s "Notes" before changing this.
         const base = defaultRoute();
         const route = (args: ReadonlyArray<string>): RouteResult => {
           if (args[0] === "image" && args[1] === "inspect") {
@@ -2943,10 +2839,10 @@ content_path = "./supabase/templates/custom_notice.html"
         };
         const { layer, out, child } = setup({ route });
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(legacyStart(flags({ ignoreHealthCheck: true })));
+          const exit = yield* Effect.exit(start(flags({ ignoreHealthCheck: true })));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("LegacyImagePrepullError");
+            expect(JSON.stringify(exit.cause)).toContain("ImagePrepullError");
           }
           expect(out.stderrText).not.toContain("Started");
           expect(out.stderrText).not.toContain("Local dev security notice");
@@ -2971,15 +2867,10 @@ content_path = "./supabase/templates/custom_notice.html"
         // rollback being wired via `Effect.onError` (not `Effect.tapError`, which never sees a
         // pure interrupt's `Cause`).
         //
-        // Marking the `db` container never-healthy (mirroring the neighboring "post-bring-up
-        // bulk health-check" test below) keeps `bringUp`'s own Postgres health-check wait
-        // genuinely retrying on its real 1-second `Schedule.spaced` backoff, rather than relying
-        // on merely observing a `create` call: `mockStartContainerCliSpawner`'s synchronous,
-        // zero-delay mock lets a whole bring-up (10+ containers, no real waits of its own) run to
-        // full completion inside `Effect.forkChild({ startImmediately: true })`'s synchronous
-        // startup window, before this test's own polling loop ever gets scheduled — making
-        // `Fiber.interrupt` a no-op on an already-succeeded fiber and `rollbackWasAttempted`
-        // flakily `false`.
+        // Marking `db` never-healthy keeps `bringUp`'s Postgres health-check wait genuinely
+        // retrying on its real backoff, rather than the whole synchronous mock bring-up
+        // completing before this test's polling loop is even scheduled — which would make
+        // `Fiber.interrupt` a no-op on an already-succeeded fiber.
         const neverHealthy = new Set<string>();
         const route = defaultRoute({ neverHealthy });
         let dbContainerId: string | undefined;
@@ -2996,13 +2887,12 @@ content_path = "./supabase/templates/custom_notice.html"
           },
         });
         return Effect.gen(function* () {
-          const fiber = yield* legacyStart(flags()).pipe(
+          const fiber = yield* start(flags()).pipe(
             Effect.provide(layer),
             Effect.forkChild({ startImmediately: true }),
           );
-          // Wait until Postgres's own health check has actually probed the never-healthy `db`
-          // container at least once — proving the fiber is genuinely suspended inside
-          // `bringUp`'s health-check retry loop, not merely past the `create` call.
+          // Wait until the health check has actually probed the never-healthy `db` container,
+          // proving the fiber is suspended inside the retry loop, not merely past `create`.
           while (
             dbContainerId === undefined ||
             !child.spawned.some(
@@ -3023,19 +2913,12 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "rolls back on a SIGINT-style interruption during the post-bring-up bulk health-check wait",
       () => {
-        // Regression test for the post-bring-up tail rollback fix: before it, the ONLY
-        // `Effect.onError` rollback wrapper covered `bringUp` itself (see the test above),
-        // which already resolves the instant every container has been created — a fiber
-        // interrupt landing anywhere in the tail that follows (the bulk health-check wait
-        // below, the `--ignore-health-check` storage-only recheck-and-seed, the success-path
-        // bucket seed, or the `cli_stack_started` capture) would slip past that earlier
-        // wrapper entirely and never call `legacyRollbackStart`. Marking `auth` as
-        // never-healthy (mirroring the "non-Postgres service never becomes healthy" scenario
-        // below) keeps `legacyWaitForHealthyServices` genuinely retrying on its real 1-second
-        // `Schedule.spaced` backoff — not hung on `Effect.never` — so interrupting the fiber
-        // right after its first `container inspect` of that container lands the interrupt
-        // while still inside this exact step, not before "Waiting for health checks..." prints
-        // and not after the step has already failed/timed out on its own.
+        // The `Effect.onError` rollback wrapper around `bringUp` alone resolves the instant
+        // every container is created, so an interrupt landing anywhere in the tail that follows
+        // (health-check wait, storage recheck-and-seed, bucket seed, analytics capture) must
+        // still trigger `rollbackStart`. Marking `auth` never-healthy keeps
+        // `waitForHealthyServices` genuinely retrying so the interrupt lands inside this step,
+        // not before or after it.
         const neverHealthy = new Set<string>();
         const route = defaultRoute({ neverHealthy });
         let authContainerId: string | undefined;
@@ -3050,20 +2933,18 @@ content_path = "./supabase/templates/custom_notice.html"
             }
             return route(args);
           },
-          // Sidesteps the PostgREST/Edge Runtime HTTP-HEAD readiness probes entirely, so this
-          // scenario only exercises the Docker-inspect health path (mirrors the
-          // non-interrupt-based scenario below).
+          // Sidesteps the PostgREST/Edge Runtime HTTP-HEAD readiness probes, so this only
+          // exercises the Docker-inspect health path.
           httpClientLayer: unusedHttpClientLayer,
         });
         return Effect.gen(function* () {
-          const fiber = yield* legacyStart(flags({ exclude: ["postgrest", "edge-runtime"] })).pipe(
+          const fiber = yield* start(flags({ exclude: ["postgrest", "edge-runtime"] })).pipe(
             Effect.provide(layer),
             Effect.forkChild({ startImmediately: true }),
           );
-          // Wait until the bulk health check has actually probed the never-healthy auth
-          // container at least once — proving the fiber is genuinely suspended inside
-          // `legacyWaitForHealthyServices`'s retry loop, not merely past the "Waiting for
-          // health checks..." message that precedes it.
+          // Wait until the bulk health check has probed the never-healthy `auth` container,
+          // proving the fiber is suspended inside the retry loop, not merely past the "Waiting
+          // for health checks..." message.
           while (
             authContainerId === undefined ||
             !child.spawned.some(
@@ -3096,11 +2977,11 @@ content_path = "./supabase/templates/custom_notice.html"
       };
       const { layer, child } = setup({ route });
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(legacyStart(flags()));
+        const exit = yield* Effect.exit(start(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const serialized = JSON.stringify(exit.cause);
-          expect(serialized).toContain("LegacyNetworkCreateError");
+          expect(serialized).toContain("NetworkCreateError");
           expect(serialized).toContain("failed to create docker network");
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -3121,11 +3002,11 @@ content_path = "./supabase/templates/custom_notice.html"
       };
       const { layer, child } = setup({ route });
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(legacyStart(flags()));
+        const exit = yield* Effect.exit(start(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const serialized = JSON.stringify(exit.cause);
-          expect(serialized).toContain("LegacyContainerCreateError");
+          expect(serialized).toContain("ContainerCreateError");
           expect(serialized).toContain("failed to create docker container");
         }
         expect(rollbackWasAttempted(child.spawned)).toBe(true);
@@ -3147,11 +3028,11 @@ content_path = "./supabase/templates/custom_notice.html"
         };
         const { layer, child } = setup({ route });
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(legacyStart(flags()));
+          const exit = yield* Effect.exit(start(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const serialized = JSON.stringify(exit.cause);
-            expect(serialized).toContain("LegacyContainerStartError");
+            expect(serialized).toContain("ContainerStartError");
             expect(serialized).toContain("port is already allocated");
             expect(serialized).toContain(
               "Try stopping the project or container already using 0.0.0.0:54322",
@@ -3165,21 +3046,17 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails on a malformed auth.email.max_frequency before any Docker work, matching Go's Config.Load",
       () => {
-        // `auth.email.max_frequency` is a plain, unvalidated string in `@supabase/config`'s
-        // schema. It decodes in the same unconditional config-load pass as every
-        // other duration field, before any Docker work — this is now validated
-        // eagerly here too (see the `resolvedEmail` validation in start.handler.ts), so a
-        // malformed value fails before the network/Postgres/Kong/GoTrue sequence ever begins,
-        // not partway through it.
+        // Decodes in the same unconditional config-load pass as every other duration field,
+        // before any Docker work.
         const { layer, child } = setup({
           configContents: 'project_id = "demo"\n[auth.email]\nmax_frequency = "not-a-duration"\n',
         });
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(legacyStart(flags()));
+          const exit = yield* Effect.exit(start(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const serialized = JSON.stringify(exit.cause);
-            expect(serialized).toContain("LegacyStartInvalidConfigError");
+            expect(serialized).toContain("StartInvalidConfigError");
             expect(serialized).toContain("invalid config for auth.email.max_frequency");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -3190,25 +3067,21 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails with a typed config error on a malformed auth.email override even when auth itself is disabled",
       () => {
-        // `legacyResolveLocalConfigValues` only validates `auth.email.*` overrides inside its
-        // own `authEnabled` branch, so with auth disabled the unwrapped `legacyResolveAuthEmail`
-        // call in `start.handler.ts` (used unconditionally for Kong's template mounts) becomes
-        // the FIRST place `SUPABASE_AUTH_EMAIL_OTP_LENGTH` gets parsed — a synchronous throw
-        // there would surface as an uncaught Effect defect instead. Unlike the max_frequency
-        // case above, this override is read before any network/container work starts, so
-        // there is nothing yet for rollback to prune — the point of this test is solely that
-        // the typed LegacyStartInvalidConfigError surfaces instead of a defect.
+        // With auth disabled, `resolveAuthEmail`'s unconditional call in `start.handler.ts`
+        // (for Kong's template mounts) becomes the first place this override is parsed — a
+        // synchronous throw there would otherwise surface as an uncaught defect instead of this
+        // typed error. Nothing has been created yet, so there's nothing for rollback to prune.
         const previous = process.env["SUPABASE_AUTH_EMAIL_OTP_LENGTH"];
         process.env["SUPABASE_AUTH_EMAIL_OTP_LENGTH"] = "abc";
         const { layer, child } = setup({
           configContents: 'project_id = "demo"\n[auth]\nenabled = false\n',
         });
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(legacyStart(flags()));
+          const exit = yield* Effect.exit(start(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const serialized = JSON.stringify(exit.cause);
-            expect(serialized).toContain("LegacyStartInvalidConfigError");
+            expect(serialized).toContain("StartInvalidConfigError");
           }
           expect(child.spawned).toHaveLength(0);
         }).pipe(
@@ -3226,26 +3099,20 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails with a typed config error on a malformed auth.sms override even when auth itself is disabled",
       () => {
-        // `legacyResolveLocalConfigValues` only validates `auth.sms.*` overrides inside its
-        // own `authEnabled` branch, so with auth disabled the unwrapped `legacyResolveAuthSms`
-        // call in `start.handler.ts` (used to detect the "no SMS provider enabled" warning)
-        // becomes the FIRST place `SUPABASE_AUTH_SMS_ENABLE_SIGNUP` gets parsed — a synchronous
-        // throw there would surface as an uncaught Effect defect instead. Same shape as the
-        // auth.email override regression test above, this override is read before any
-        // network/container work starts, so there is nothing yet for rollback to prune — the
-        // point of this test is solely that the typed LegacyStartInvalidConfigError surfaces
-        // instead of a defect.
+        // Same shape as the auth.email override test above: with auth disabled,
+        // `resolveAuthSms`'s unconditional call becomes the first place this override is
+        // parsed, so a synchronous throw must surface as this typed error, not an uncaught defect.
         const previous = process.env["SUPABASE_AUTH_SMS_ENABLE_SIGNUP"];
         process.env["SUPABASE_AUTH_SMS_ENABLE_SIGNUP"] = "bad";
         const { layer, child } = setup({
           configContents: 'project_id = "demo"\n[auth]\nenabled = false\n',
         });
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(legacyStart(flags()));
+          const exit = yield* Effect.exit(start(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const serialized = JSON.stringify(exit.cause);
-            expect(serialized).toContain("LegacyStartInvalidConfigError");
+            expect(serialized).toContain("StartInvalidConfigError");
           }
           expect(child.spawned).toHaveLength(0);
         }).pipe(
@@ -3263,9 +3130,8 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails and rolls back when Postgres itself never becomes healthy within its configured health_timeout",
       () => {
-        // `db.health_timeout` (unlike the generic 30s `serviceTimeout` every other service
-        // waits on) is a real config.toml-configurable seam — this keeps the scenario fast
-        // instead of waiting out a real default.
+        // `db.health_timeout` is config.toml-configurable, unlike the generic 30s
+        // `serviceTimeout` other services wait on, so this keeps the scenario fast.
         const neverHealthy = new Set<string>();
         const base = defaultRoute({ neverHealthy });
         const route = (args: ReadonlyArray<string>): RouteResult => {
@@ -3280,10 +3146,10 @@ content_path = "./supabase/templates/custom_notice.html"
           route,
         });
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(legacyStart(flags()));
+          const exit = yield* Effect.exit(start(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("LegacyHealthCheckTimeoutError");
+            expect(JSON.stringify(exit.cause)).toContain("HealthCheckTimeoutError");
           }
           expect(rollbackWasAttempted(child.spawned)).toBe(true);
           // Postgres's own health wait fails before any other service is ever created.
@@ -3296,11 +3162,9 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "exits 0 on --ignore-health-check when Postgres itself never becomes healthy, without rolling back and without starting any other service",
       () => {
-        // Mirrors the regression test above, but with `--ignore-health-check` set — the
-        // `ignoreHealthCheck && legacyIsUnhealthyStartError(err)` downgrade applies
-        // uniformly to whatever the run returns, including Postgres's own health-wait
-        // failure, which propagates immediately before any
-        // other service is even created.
+        // `ignoreHealthCheck && isUnhealthyStartError(err)` downgrades uniformly to whatever the
+        // run returns, including Postgres's own health-wait failure, which propagates before
+        // any other service is even created.
         const neverHealthy = new Set<string>();
         const base = defaultRoute({ neverHealthy });
         const route = (args: ReadonlyArray<string>): RouteResult => {
@@ -3308,9 +3172,8 @@ content_path = "./supabase/templates/custom_notice.html"
             const name = containerNameFromCreateArgs(args);
             if (name.includes("_db_")) neverHealthy.add(name);
           }
-          // Postgres's own health wait builds its `images` map separately from the
-          // bulk one, so this scripts the marker here too rather than assuming the
-          // two call sites are wired the same way.
+          // Postgres's own health wait builds its `images` map separately from the bulk one,
+          // so this scripts the marker here too.
           if (args[0] === "logs" && (args[1] ?? "").includes("_db_")) {
             return { stdout: ["exec /usr/local/bin/docker-entrypoint.sh: exec format error\n"] };
           }
@@ -3321,38 +3184,30 @@ content_path = "./supabase/templates/custom_notice.html"
           route,
         });
         return Effect.gen(function* () {
-          yield* legacyStart(flags({ ignoreHealthCheck: true }));
+          yield* start(flags({ ignoreHealthCheck: true }));
           expect(out.stderrText).toContain("is not ready");
           expect(out.stderrText).toContain("Started");
           expect(rollbackWasAttempted(child.spawned)).toBe(false);
-          // Reported by container name, with the recovery advice naming the image
-          // Postgres's own health wait resolved for it.
           expect(out.stderrText).toContain("supabase_db_demo container is not ready");
           expect(out.stderrText).toContain("supabase_db_demo's image");
           expect(out.stderrText).toContain("image rm -f public.ecr.aws/supabase/postgres:");
           // `--ignore-health-check` leaves the stack up, so a bare restart would be a
           // no-op — the sequence must stop first.
           expect(out.stderrText).toContain("supabase stop");
-          // No other service's container is ever created — the database bring-up
-          // returns before the "Starting containers..." message or any other
-          // service's bring-up even begins.
+          // The database bring-up returns before any other service's bring-up begins.
           expect(createdContainerNames(child.spawned)).toEqual([expect.stringContaining("_db_")]);
-          // `cli_stack_started` never fires on this fallthrough either — the
-          // capture sits after the entire bring-up + bulk health check, neither of
-          // which is reached once Postgres's own wait is downgraded to a warning.
+          // `cli_stack_started`'s capture sits after the entire bring-up + bulk health check,
+          // neither of which is reached once Postgres's wait is downgraded to a warning.
           expect(analytics.captured.some((c) => c.event === "cli_stack_started")).toBe(false);
         }).pipe(Effect.provide(layer));
       },
       10_000,
     );
 
-    // Real time, not `it.effect`/`TestClock`: same constraint as the `--ignore-health-check`
-    // scenario below — `legacyStart` performs genuine async I/O that never resolves under a
-    // virtualized clock. Unlike Postgres's own wait above, this second bulk health check has no
-    // config-configurable timeout seam in `start.handler.ts` (`legacyWaitForHealthyServices`
-    // is called with no `timeoutSeconds` override, so it falls back to the hardcoded 30s
-    // default) — there is no way to shorten this without editing production code, which is out
-    // of scope for this task, so this reuses the same generous real-time budget instead.
+    // Real time, not `it.effect`/`TestClock`: `start` performs genuine async I/O that never
+    // resolves under a virtualized clock. `waitForHealthyServices` has no config-configurable
+    // timeout seam here (it falls back to the hardcoded 30s default), hence the generous
+    // real-time budget.
     it.live(
       "fails and rolls back when a non-Postgres service never becomes healthy within the timeout (no --ignore-health-check)",
       () => {
@@ -3370,15 +3225,12 @@ content_path = "./supabase/templates/custom_notice.html"
         });
 
         return Effect.gen(function* () {
-          // `edge-runtime` also excluded so its own HTTP readiness probe never
-          // reaches `unusedHttpClientLayer` — this scenario is only about the
-          // Docker-inspect health path.
-          const exit = yield* Effect.exit(
-            legacyStart(flags({ exclude: ["postgrest", "edge-runtime"] })),
-          );
+          // `edge-runtime` also excluded so its own HTTP readiness probe never reaches
+          // `unusedHttpClientLayer` — this scenario is only about the Docker-inspect health path.
+          const exit = yield* Effect.exit(start(flags({ exclude: ["postgrest", "edge-runtime"] })));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("LegacyHealthCheckTimeoutError");
+            expect(JSON.stringify(exit.cause)).toContain("HealthCheckTimeoutError");
           }
           expect(out.stderrText).not.toContain("Started");
           expect(rollbackWasAttempted(child.spawned)).toBe(true);
@@ -3388,20 +3240,16 @@ content_path = "./supabase/templates/custom_notice.html"
     );
   });
 
-  // Real time, not `it.effect`/`TestClock`: `legacyStart` performs genuine
-  // async I/O deep inside the forked effect (`legacyResolveLocalJwks`'s
-  // `Effect.tryPromise`, `legacyResolveDbImage`'s file read) that needs real
-  // Node event-loop turns to settle — under a virtualized `TestClock` those
-  // never resolve, so the forked fiber never even reaches the health-check
-  // phase. This exercises the real 30s `serviceTimeout` bulk health-check
-  // wait (`../../shared/db-bootstrap/health-check.ts`'s default), hence the generous timeout.
+  // Real time, not `it.effect`/`TestClock`: genuine async I/O deep inside the forked effect
+  // (`resolveLocalJwks`'s `Effect.tryPromise`, `resolveDbImage`'s file read) needs real Node
+  // event-loop turns to settle, so a virtualized clock would never let the fiber reach the
+  // health-check phase. Exercises the real 30s `serviceTimeout` bulk health-check wait, hence
+  // the generous timeout.
   it.live(
     "exits 0 on --ignore-health-check when a non-Postgres container never turns healthy, without rolling back",
     () => {
-      // GoTrue's own (post-create) container name is only known once `docker
-      // create` reports it — wrap `defaultRoute` to capture it into
-      // `neverHealthy` the moment it's created, so every later `container
-      // inspect` call on that same id reports "starting", never "healthy".
+      // The container name is only known once `docker create` reports it, so this wraps
+      // `defaultRoute` to capture it into `neverHealthy` the moment it's created.
       const neverHealthy = new Set<string>();
       const route = defaultRoute({ neverHealthy });
       const { layer, out, child, analytics } = setup({
@@ -3418,25 +3266,20 @@ content_path = "./supabase/templates/custom_notice.html"
           }
           return route(args);
         },
-        // Sidesteps the PostgREST/Edge Runtime HTTP-HEAD readiness probes
-        // entirely, so this scenario only exercises the Docker-inspect health
-        // path.
+        // Sidesteps the PostgREST/Edge Runtime HTTP-HEAD readiness probes, so this only
+        // exercises the Docker-inspect health path.
         httpClientLayer: unusedHttpClientLayer,
       });
 
       return Effect.gen(function* () {
-        yield* legacyStart(
-          flags({ exclude: ["postgrest", "edge-runtime"], ignoreHealthCheck: true }),
-        );
+        yield* start(flags({ exclude: ["postgrest", "edge-runtime"], ignoreHealthCheck: true }));
         expect(out.stderrText).toContain("is not ready");
         expect(out.stderrText).toContain("Started");
         expect(rollbackWasAttempted(child.spawned)).toBe(false);
-        // Reported by container name, not `docker create`'s opaque id, and the
-        // advice names the image actually resolved for that container.
         expect(out.stderrText).toContain("supabase_auth_demo container is not ready");
         expect(out.stderrText).toContain("docker image rm -f public.ecr.aws/supabase/gotrue:");
-        // `cli_stack_started` never fires on the ignored-unhealthy
-        // fallthrough — only a genuine bulk health-check SUCCESS reaches that capture.
+        // `cli_stack_started` never fires on the ignored-unhealthy fallthrough — only a genuine
+        // bulk health-check success reaches that capture.
         expect(analytics.captured.some((c) => c.event === "cli_stack_started")).toBe(false);
       }).pipe(Effect.provide(layer));
     },
@@ -3462,9 +3305,7 @@ content_path = "./supabase/templates/custom_notice.html"
           httpClientLayer: http.layer,
         });
         return Effect.gen(function* () {
-          yield* legacyStart(
-            flags({ exclude: ["postgrest", "edge-runtime"], ignoreHealthCheck: true }),
-          );
+          yield* start(flags({ exclude: ["postgrest", "edge-runtime"], ignoreHealthCheck: true }));
           expect(http.createdBucketRequests).toHaveLength(1);
           expect(out.stderrText).toContain("is not ready");
           expect(out.stderrText).toContain("Started");
@@ -3478,11 +3319,9 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "a bucket-seed failure during the recheck becomes a hard failure with rollback, replacing the original health error",
       () => {
-        // A non-200 bucket-create response fails `legacySeedBucketsRun` deep inside
-        // its Storage-gateway call (`LegacyStorageGatewayStatusError`) — unlike an
-        // invalid bucket NAME, which `legacyResolveLocalConfigValues`'s own
-        // `legacyValidateResolvedConfig` call (step 2 of `legacyStart`, long before
-        // any container exists) would already reject before ever reaching Docker.
+        // A non-200 bucket-create response fails `seedBucketsRun` deep inside its
+        // Storage-gateway call — unlike an invalid bucket name, which config validation would
+        // already reject before reaching Docker.
         const failingBucketCreateHttpClientLayer = Layer.succeed(
           HttpClient.HttpClient,
           HttpClient.make((request) => {
@@ -3525,14 +3364,14 @@ content_path = "./supabase/templates/custom_notice.html"
         });
         return Effect.gen(function* () {
           const exit = yield* Effect.exit(
-            legacyStart(flags({ exclude: ["postgrest", "edge-runtime"], ignoreHealthCheck: true })),
+            start(flags({ exclude: ["postgrest", "edge-runtime"], ignoreHealthCheck: true })),
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const serialized = JSON.stringify(exit.cause);
-            expect(serialized).toContain("LegacyStorageGatewayStatusError");
-            // The seed error REPLACES the original health-check timeout entirely.
-            expect(serialized).not.toContain("LegacyHealthCheckTimeoutError");
+            expect(serialized).toContain("StorageGatewayStatusError");
+            // The seed error replaces the original health-check timeout entirely.
+            expect(serialized).not.toContain("HealthCheckTimeoutError");
           }
           expect(rollbackWasAttempted(child.spawned)).toBe(true);
           expect(analytics.captured.some((c) => c.event === "cli_stack_started")).toBe(false);
@@ -3541,10 +3380,9 @@ content_path = "./supabase/templates/custom_notice.html"
       45_000,
     );
 
-    // Both the main bulk health check (auth) and this storage-only recheck run
-    // out their own full ~30s real-time retry budget in this scenario — hence
-    // the doubled timeout relative to every other real-time health-check test
-    // in this file.
+    // Both the main bulk health check (auth) and this storage-only recheck run out their own
+    // full ~30s real-time retry budget here, hence the doubled timeout relative to every other
+    // real-time health-check test in this file.
     it.live(
       "falls through to the original warning without attempting to seed when the storage recheck itself never turns healthy",
       () => {
@@ -3565,9 +3403,7 @@ content_path = "./supabase/templates/custom_notice.html"
           httpClientLayer: http.layer,
         });
         return Effect.gen(function* () {
-          yield* legacyStart(
-            flags({ exclude: ["postgrest", "edge-runtime"], ignoreHealthCheck: true }),
-          );
+          yield* start(flags({ exclude: ["postgrest", "edge-runtime"], ignoreHealthCheck: true }));
           expect(http.createdBucketRequests).toHaveLength(0);
           expect(out.stderrText).toContain("is not ready");
           expect(out.stderrText).toContain("Started");
@@ -3583,7 +3419,7 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live("overrides the generated network name and every container's --network flag", () => {
       const { layer, child } = setup({ networkId: Option.some("custom-net") });
       return Effect.gen(function* () {
-        yield* legacyStart(flags());
+        yield* start(flags());
         const networkCreate = child.spawned.find(
           (s) => s.args[0] === "network" && s.args[1] === "create",
         );
@@ -3607,7 +3443,7 @@ content_path = "./supabase/templates/custom_notice.html"
       };
       const { layer, child } = setup({ networkId: Option.some("custom-net"), route });
       return Effect.gen(function* () {
-        yield* legacyStart(flags());
+        yield* start(flags());
         expect(child.spawned.some((s) => s.args[0] === "network" && s.args[1] === "create")).toBe(
           false,
         );
@@ -3620,14 +3456,12 @@ content_path = "./supabase/templates/custom_notice.html"
     });
 
     it.live("falls back to SUPABASE_NETWORK_ID when the flag itself is omitted", () => {
-      // `--network-id` falls back to the `SUPABASE_NETWORK_ID` shell/project-dotenv env var
-      // ONLY when the flag was never passed (review: PRRT_kwDOErm0O86VlqIL) — see
-      // `start.handler.ts`'s own comment on this resolution for the full precedence.
+      // See `start.handler.ts`'s doc comment on this resolution for the full precedence.
       const previous = process.env["SUPABASE_NETWORK_ID"];
       process.env["SUPABASE_NETWORK_ID"] = "env-net";
       const { layer, child } = setup();
       return Effect.gen(function* () {
-        yield* legacyStart(flags());
+        yield* start(flags());
         const networkCreate = child.spawned.find(
           (s) => s.args[0] === "network" && s.args[1] === "create",
         );
@@ -3650,7 +3484,7 @@ content_path = "./supabase/templates/custom_notice.html"
       process.env["SUPABASE_API_PORT"] = "61234";
       const { layer, child } = setup();
       return Effect.gen(function* () {
-        yield* legacyStart(flags());
+        yield* start(flags());
         const kongCreate = child.spawned.find(
           (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_kong_"),
         );
@@ -3676,7 +3510,7 @@ content_path = "./supabase/templates/custom_notice.html"
         mkdirSync(join(workdir, "supabase", ".temp"), { recursive: true });
         writeFileSync(join(workdir, "supabase", ".temp", "storage-migration"), "20240102030405\n");
         return Effect.gen(function* () {
-          yield* legacyStart(flags());
+          yield* start(flags());
           const storageCreate = child.spawned.find(
             (s) =>
               s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_storage_"),
@@ -3689,7 +3523,7 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live('resolves to "" when no pin file exists', () => {
       const { layer, child } = setup();
       return Effect.gen(function* () {
-        yield* legacyStart(flags());
+        yield* start(flags());
         const storageCreate = child.spawned.find(
           (s) =>
             s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_storage_"),
@@ -3707,7 +3541,7 @@ content_path = "./supabase/templates/custom_notice.html"
         mkdirSync(join(workdir, "supabase", ".temp"), { recursive: true });
         writeFileSync(join(workdir, "supabase", ".temp", "storage-version"), "1.2.3\n");
         return Effect.gen(function* () {
-          yield* legacyStart(flags());
+          yield* start(flags());
           const storageImageInspect = child.spawned.find(
             (s) =>
               s.args[0] === "image" &&
@@ -3732,8 +3566,8 @@ content_path = "./supabase/templates/custom_notice.html"
           },
         });
         return Effect.gen(function* () {
-          yield* legacyStart(flags());
-          const containerName = legacyServiceContainerName("db", "demo");
+          yield* start(flags());
+          const containerName = serviceContainerName("db", "demo");
           expect(copied.get("/etc/postgresql-custom/pgsodium_root.key")).toBe(
             "custom-root-key-value",
           );
@@ -3753,9 +3587,7 @@ content_path = "./supabase/templates/custom_notice.html"
       "brings up the stack when the DB container's inspect reports 'No such object' instead of 'No such container'",
       () => {
         // Docker/Podman report a missing container as either "No such container" or "No such
-        // object" depending on daemon version/CLI path — `legacyIsContainerNotFoundMessage`
-        // must recognize both, or `legacyStart`'s "not running, bring up the stack" branch
-        // never fires and the inspect failure propagates instead.
+        // object" depending on daemon version — `isContainerNotFoundMessage` must recognize both.
         const created = new Set<string>();
         const route = (args: ReadonlyArray<string>): RouteResult => {
           if (args[0] === "container" && args[1] === "inspect") {
@@ -3781,7 +3613,7 @@ content_path = "./supabase/templates/custom_notice.html"
         };
         const { layer, child } = setup({ route });
         return Effect.gen(function* () {
-          yield* legacyStart(flags());
+          yield* start(flags());
           const createdNames = createdContainerNames(child.spawned);
           expect(createdNames.some((name) => name.includes("_db_"))).toBe(true);
         }).pipe(Effect.provide(layer));
@@ -3793,7 +3625,7 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live("adds --add-host host.docker.internal:host-gateway on Linux", () => {
       const { layer, child } = setup();
       return Effect.gen(function* () {
-        yield* legacyStart(flags());
+        yield* start(flags());
         const kongCreate = child.spawned.find(
           (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_kong_"),
         );
@@ -3812,7 +3644,7 @@ content_path = "./supabase/templates/custom_notice.html"
             'project_id = "demo"\n[auth.email.smtp]\nhost = "smtp.example.com"\nport = 587\nuser = "smtp-user"\npass = "smtp-pass"\nadmin_email = "admin@example.com"\n',
         });
         return Effect.gen(function* () {
-          yield* legacyStart(flags());
+          yield* start(flags());
           const gotrueCreate = child.spawned.find(
             (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
           );
@@ -3830,7 +3662,7 @@ content_path = "./supabase/templates/custom_notice.html"
           'project_id = "demo"\n[auth.external.my_oidc]\nenabled = true\nclient_id = "custom-client-id"\nsecret = "custom-secret"\n',
       });
       return Effect.gen(function* () {
-        yield* legacyStart(flags());
+        yield* start(flags());
         const gotrueCreate = child.spawned.find(
           (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
         );
@@ -3848,7 +3680,7 @@ content_path = "./supabase/templates/custom_notice.html"
       process.env["SUPABASE_LOCAL_SMTP_SENDER_NAME"] = "Override Sender";
       const { layer, child } = setup();
       return Effect.gen(function* () {
-        yield* legacyStart(flags());
+        yield* start(flags());
         const gotrueCreate = child.spawned.find(
           (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
         );
@@ -3882,10 +3714,10 @@ content_path = "./supabase/templates/custom_notice.html"
         process.env["SUPABASE_LOCAL_SMTP_SMTP_PORT"] = "not-a-port";
         const { layer, child } = setup();
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(legacyStart(flags()));
+          const exit = yield* Effect.exit(start(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("LegacyStartInvalidConfigError");
+            expect(JSON.stringify(exit.cause)).toContain("StartInvalidConfigError");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
         }).pipe(
@@ -3921,7 +3753,7 @@ content_path = "./supabase/templates/custom_notice.html"
           configContents: 'project_id = "demo"\n[auth.sms.twilio]\nenabled = false\n',
         });
         return Effect.gen(function* () {
-          yield* legacyStart(flags());
+          yield* start(flags());
           const gotrueCreate = child.spawned.find(
             (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
           );
@@ -3961,7 +3793,7 @@ content_path = "./supabase/templates/custom_notice.html"
             'project_id = "demo"\n[auth.sms.twilio]\nenabled = true\naccount_sid = "AC123"\nauth_token = "test-auth-token"\nmessage_service_sid = "MG123"\n',
         });
         return Effect.gen(function* () {
-          yield* legacyStart(flags());
+          yield* start(flags());
           const gotrueCreate = child.spawned.find(
             (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
           );
@@ -3991,13 +3823,13 @@ content_path = "./supabase/templates/custom_notice.html"
       "disables phone login and warns when enable_signup is true with no SMS provider enabled",
       () => {
         // SMS validation downgrades `enable_signup` to `false` (plus a stderr warning) —
-        // reached only when every named provider is disabled — before `legacyBuildGotrueEnv`
+        // reached only when every named provider is disabled — before `buildGotrueEnv`
         // ever reads it.
         const previous = process.env["SUPABASE_AUTH_SMS_ENABLE_SIGNUP"];
         process.env["SUPABASE_AUTH_SMS_ENABLE_SIGNUP"] = "true";
         const { layer, child, out } = setup();
         return Effect.gen(function* () {
-          yield* legacyStart(flags());
+          yield* start(flags());
           const gotrueCreate = child.spawned.find(
             (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
           );
@@ -4028,7 +3860,7 @@ content_path = "./supabase/templates/custom_notice.html"
         process.env["SUPABASE_AUTH_EMAIL_OTP_LENGTH"] = "8";
         const { layer, child } = setup();
         return Effect.gen(function* () {
-          yield* legacyStart(flags());
+          yield* start(flags());
           const gotrueCreate = child.spawned.find(
             (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
           );
@@ -4066,7 +3898,7 @@ content_path = "./supabase/templates/custom_notice.html"
         mkdirSync(join(workdir, "templates"), { recursive: true });
         writeFileSync(join(workdir, "templates", "confirmation.html"), "<html></html>");
         return Effect.gen(function* () {
-          yield* legacyStart(flags());
+          yield* start(flags());
           const gotrueCreate = child.spawned.find(
             (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
           );
@@ -4098,11 +3930,11 @@ content_path = "./supabase/templates/custom_notice.html"
           configContents: 'project_id = "demo"\n[auth.email.template.confirmation]\n',
         });
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(legacyStart(flags()));
+          const exit = yield* Effect.exit(start(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const serialized = JSON.stringify(exit.cause);
-            expect(serialized).toContain("LegacyStartInvalidConfigError");
+            expect(serialized).toContain("StartInvalidConfigError");
             expect(serialized).toContain(
               "Invalid config for auth.email.template.confirmation.content: please use content_path instead",
             );
@@ -4130,7 +3962,7 @@ content_path = "./supabase/templates/custom_notice.html"
       process.env["SUPABASE_DB_PORT"] = "54329";
       const { layer, child } = setup();
       return Effect.gen(function* () {
-        yield* legacyStart(flags());
+        yield* start(flags());
         const dbCreate = child.spawned.find(
           (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_db_"),
         );
@@ -4154,7 +3986,7 @@ content_path = "./supabase/templates/custom_notice.html"
       process.env["SUPABASE_DB_SETTINGS_SHARED_BUFFERS"] = "256MB";
       const { layer, child } = setup();
       return Effect.gen(function* () {
-        yield* legacyStart(flags());
+        yield* start(flags());
         const dbCreate = child.spawned.find(
           (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_db_"),
         );
@@ -4181,7 +4013,7 @@ content_path = "./supabase/templates/custom_notice.html"
         process.env["SUPABASE_STORAGE_VECTOR_ENABLED"] = "false";
         const { layer, child } = setup();
         return Effect.gen(function* () {
-          yield* legacyStart(flags());
+          yield* start(flags());
           const storageCreate = child.spawned.find(
             (s) =>
               s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_storage_"),
@@ -4216,7 +4048,7 @@ content_path = "./supabase/templates/custom_notice.html"
       process.env["SUPABASE_ANALYTICS_GCP_JWT_PATH"] = "gcp-key.json";
       const { layer, child } = setup();
       return Effect.gen(function* () {
-        yield* legacyStart(flags());
+        yield* start(flags());
         const logflareCreate = child.spawned.find(
           (s) =>
             s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_analytics_"),
@@ -4254,7 +4086,7 @@ content_path = "./supabase/templates/custom_notice.html"
       process.env["SUPABASE_AUTH_ENABLE_SIGNUP"] = "false";
       const { layer, child } = setup();
       return Effect.gen(function* () {
-        yield* legacyStart(flags());
+        yield* start(flags());
         const gotrueCreate = child.spawned.find(
           (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
         );
@@ -4277,7 +4109,7 @@ content_path = "./supabase/templates/custom_notice.html"
       process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = "1";
       const { layer, child } = setup();
       return Effect.gen(function* () {
-        yield* legacyStart(flags());
+        yield* start(flags());
         const edgeRuntimeImageInspect = child.spawned.find(
           (s) =>
             s.args[0] === "image" &&
@@ -4309,7 +4141,7 @@ content_path = "./supabase/templates/custom_notice.html"
         process.env["SUPABASE_REALTIME_MAX_HEADER_LENGTH"] = "8192";
         const { layer, child } = setup({ route: freshVolumeRoute(defaultRoute()) });
         return Effect.gen(function* () {
-          yield* legacyStart(flags({ exclude: ["edge-runtime"] }));
+          yield* start(flags({ exclude: ["edge-runtime"] }));
           const realtimeCreate = child.spawned.find(
             (s) =>
               s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_realtime_"),
@@ -4348,10 +4180,10 @@ content_path = "./supabase/templates/custom_notice.html"
         process.env["SUPABASE_REALTIME_IP_VERSION"] = "IPv5";
         const { layer, child } = setup();
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(legacyStart(flags()));
+          const exit = yield* Effect.exit(start(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("LegacyStartInvalidConfigError");
+            expect(JSON.stringify(exit.cause)).toContain("StartInvalidConfigError");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
         }).pipe(
@@ -4373,7 +4205,7 @@ content_path = "./supabase/templates/custom_notice.html"
       () => {
         const { layer, child } = setup();
         return Effect.gen(function* () {
-          yield* legacyStart(flags());
+          yield* start(flags());
           const studioCreate = child.spawned.find(
             (s) =>
               s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_studio_"),
@@ -4393,7 +4225,7 @@ content_path = "./supabase/templates/custom_notice.html"
         process.env["SUPABASE_STORAGE_FILE_SIZE_LIMIT"] = "5MiB";
         const { layer, child } = setup({ route: freshVolumeRoute(defaultRoute()) });
         return Effect.gen(function* () {
-          yield* legacyStart(flags({ exclude: ["edge-runtime"] }));
+          yield* start(flags({ exclude: ["edge-runtime"] }));
           const storageCreate = child.spawned.find(
             (s) =>
               s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_storage_"),
@@ -4426,7 +4258,7 @@ content_path = "./supabase/templates/custom_notice.html"
         process.env["SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION"] = "16.0.0.1";
         const { layer, child } = setup();
         return Effect.gen(function* () {
-          yield* legacyStart(flags());
+          yield* start(flags());
           const dbImageInspect = child.spawned.find(
             (s) =>
               s.args[0] === "image" &&
@@ -4465,7 +4297,7 @@ content_path = "./supabase/templates/custom_notice.html"
       process.env["SUPABASE_EXPERIMENTAL_S3_SECRET_KEY"] = "env-s3-secret-key";
       const { layer, child } = setup();
       return Effect.gen(function* () {
-        yield* legacyStart(flags());
+        yield* start(flags());
         const dbCreate = child.spawned.find(
           (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_db_"),
         );
@@ -4507,16 +4339,16 @@ content_path = "./supabase/templates/custom_notice.html"
           },
         });
         return Effect.gen(function* () {
-          yield* legacyStart(flags());
+          yield* start(flags());
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(true);
-          expect(copied.get("/home/kong/localhost.crt")).toBe(LEGACY_KONG_LOCAL_TLS_CERT);
-          expect(copied.get("/home/kong/localhost.key")).toBe(LEGACY_KONG_LOCAL_TLS_KEY);
+          expect(copied.get("/home/kong/localhost.crt")).toBe(KONG_LOCAL_TLS_CERT);
+          expect(copied.get("/home/kong/localhost.key")).toBe(KONG_LOCAL_TLS_KEY);
         }).pipe(Effect.provide(layer));
       },
     );
 
-    // An empty but present `cert_path`/`key_path` is treated the same as
-    // absent — it must NOT attempt a disk read.
+    // An empty but present `cert_path`/`key_path` is treated the same as absent — it must not
+    // attempt a disk read.
     it.live(
       "falls back to the embedded default cert/key when cert_path/key_path are present but empty",
       () => {
@@ -4529,10 +4361,10 @@ content_path = "./supabase/templates/custom_notice.html"
           },
         });
         return Effect.gen(function* () {
-          yield* legacyStart(flags());
+          yield* start(flags());
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(true);
-          expect(copied.get("/home/kong/localhost.crt")).toBe(LEGACY_KONG_LOCAL_TLS_CERT);
-          expect(copied.get("/home/kong/localhost.key")).toBe(LEGACY_KONG_LOCAL_TLS_KEY);
+          expect(copied.get("/home/kong/localhost.crt")).toBe(KONG_LOCAL_TLS_CERT);
+          expect(copied.get("/home/kong/localhost.key")).toBe(KONG_LOCAL_TLS_KEY);
         }).pipe(Effect.provide(layer));
       },
     );
@@ -4563,7 +4395,7 @@ content_path = "./supabase/templates/custom_notice.html"
         process.env["SUPABASE_API_TLS_CERT_PATH"] = "certs/env-server.crt";
         process.env["SUPABASE_API_TLS_KEY_PATH"] = "certs/env-server.key";
         return Effect.gen(function* () {
-          yield* legacyStart(flags());
+          yield* start(flags());
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(true);
           expect(copied.get("/home/kong/localhost.crt")).toBe(
             "-----BEGIN CERTIFICATE-----env-cert",
@@ -4585,9 +4417,9 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   describe("SUPABASE_API_ENABLED override", () => {
-    // The entire TLS cert/key disk read is nested inside the API-enabled check —
-    // when API is disabled (however that happened), Kong
-    // keeps its embedded default cert/key regardless of `api.tls.enabled`/cert_path/key_path.
+    // The entire TLS cert/key disk read is nested inside the API-enabled check, so when API is
+    // disabled, Kong keeps its embedded default cert/key regardless of
+    // `api.tls.enabled`/cert_path/key_path.
     it.live(
       "skips the configured cert/key read for Kong when API is disabled only via env override",
       () => {
@@ -4610,10 +4442,10 @@ content_path = "./supabase/templates/custom_notice.html"
           "-----BEGIN PRIVATE KEY-----custom-key",
         );
         return Effect.gen(function* () {
-          yield* legacyStart(flags());
+          yield* start(flags());
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(true);
-          expect(copied.get("/home/kong/localhost.crt")).toBe(LEGACY_KONG_LOCAL_TLS_CERT);
-          expect(copied.get("/home/kong/localhost.key")).toBe(LEGACY_KONG_LOCAL_TLS_KEY);
+          expect(copied.get("/home/kong/localhost.crt")).toBe(KONG_LOCAL_TLS_CERT);
+          expect(copied.get("/home/kong/localhost.key")).toBe(KONG_LOCAL_TLS_KEY);
         }).pipe(
           Effect.provide(layer),
           Effect.ensuring(
@@ -4633,10 +4465,10 @@ content_path = "./supabase/templates/custom_notice.html"
         process.env["SUPABASE_API_ENABLED"] = "not-a-bool";
         const { layer, child } = setup();
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(legacyStart(flags()));
+          const exit = yield* Effect.exit(start(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("LegacyStartInvalidConfigError");
+            expect(JSON.stringify(exit.cause)).toContain("StartInvalidConfigError");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
         }).pipe(
@@ -4658,7 +4490,7 @@ content_path = "./supabase/templates/custom_notice.html"
       process.env["SUPABASE_AUTH_JWT_EXPIRY"] = "7200";
       const { layer, child } = setup();
       return Effect.gen(function* () {
-        yield* legacyStart(flags());
+        yield* start(flags());
         const dbCreate = child.spawned.find(
           (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_db_"),
         );
@@ -4687,7 +4519,7 @@ content_path = "./supabase/templates/custom_notice.html"
         configContents: `project_id = "demo"\n[auth.external.github]\nenabled = true\nclient_id = "gh-client-id"\nsecret = "${VAULT_ENCRYPTED}"\n`,
       });
       return Effect.gen(function* () {
-        yield* legacyStart(flags());
+        yield* start(flags());
         const gotrueCreate = child.spawned.find(
           (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
         );
@@ -4712,7 +4544,7 @@ content_path = "./supabase/templates/custom_notice.html"
           configContents: `project_id = "demo"\n[auth.external.my_oidc]\nenabled = true\nclient_id = "custom-client-id"\nsecret = "${VAULT_ENCRYPTED}"\n`,
         });
         return Effect.gen(function* () {
-          yield* legacyStart(flags());
+          yield* start(flags());
           const gotrueCreate = child.spawned.find(
             (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
           );
@@ -4736,7 +4568,7 @@ content_path = "./supabase/templates/custom_notice.html"
         configContents: `project_id = "demo"\n[auth.sms.twilio]\nenabled = true\naccount_sid = "AC123"\nauth_token = "${VAULT_ENCRYPTED}"\nmessage_service_sid = "MG123"\n`,
       });
       return Effect.gen(function* () {
-        yield* legacyStart(flags());
+        yield* start(flags());
         const gotrueCreate = child.spawned.find(
           (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
         );
@@ -4762,7 +4594,7 @@ content_path = "./supabase/templates/custom_notice.html"
             'project_id = "demo"\n[edge_runtime.secrets]\nMY_SECRET = "shh-do-not-tell"\nmy_lower_secret = "keep-me"\nEMPTY_SECRET = ""\n',
         });
         return Effect.gen(function* () {
-          yield* legacyStart(flags());
+          yield* start(flags());
           const edgeRuntimeRunCall = child.spawned.find((s) => isEdgeRuntimeCreate(s.args));
           const args = edgeRuntimeRunCall?.args ?? [];
           const envFileIndex = args.indexOf("--env-file");
@@ -4770,8 +4602,7 @@ content_path = "./supabase/templates/custom_notice.html"
           expect(envFilePath).toBeDefined();
           const envFileContent = readFileSync(envFilePath ?? "", "utf-8");
           expect(envFileContent).toContain("MY_SECRET=shh-do-not-tell");
-          // Names reach the container UPPERCASED — every secret key is uppercased
-          // — and empty values are skipped, shared with
+          // Names reach the container uppercased, and empty values are skipped — shared with
           // `functions serve` via `toPlainEdgeRuntimeConfig`.
           expect(envFileContent).toContain("MY_LOWER_SECRET=keep-me");
           expect(envFileContent).not.toContain("my_lower_secret=");
@@ -4783,17 +4614,14 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "decrypts an encrypted [edge_runtime.secrets] entry into plaintext, not the raw ciphertext",
       () => {
-        // Mirrors "encrypted secrets reach GoTrue's container" above, but for
-        // `edge_runtime.secrets` — this field decrypts during config load too, so the real
-        // Edge Runtime container's env file must contain the decrypted "value", never the
-        // literal `encrypted:...` string.
+        // Mirrors "encrypted secrets reach GoTrue's container" above, for `edge_runtime.secrets`.
         const previous = process.env["DOTENV_PRIVATE_KEY"];
         process.env["DOTENV_PRIVATE_KEY"] = VAULT_PRIVATE_KEY;
         const { layer, child } = setup({
           configContents: `project_id = "demo"\n[edge_runtime.secrets]\nMY_SECRET = "${VAULT_ENCRYPTED}"\n`,
         });
         return Effect.gen(function* () {
-          yield* legacyStart(flags());
+          yield* start(flags());
           const edgeRuntimeRunCall = child.spawned.find((s) => isEdgeRuntimeCreate(s.args));
           const args = edgeRuntimeRunCall?.args ?? [];
           const envFileIndex = args.indexOf("--env-file");
@@ -4817,21 +4645,19 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails with a typed config error, before any container is created, on an undecryptable [edge_runtime.secrets] entry",
       () => {
-        // Caught eagerly by `legacyCheckDbToml`'s `legacyAssertDecryptableSecrets` pre-check
-        // (`edge_runtime.secrets.*` is one of `LEGACY_SECRET_PATHS`), well before the bring-up
-        // loop's own edge-runtime-specific decrypt — same shape as the sibling `[db.vault]`
-        // "even on a non-fresh volume" test above.
+        // Caught eagerly by `checkDbToml`'s `assertDecryptableSecrets` pre-check, before the
+        // bring-up loop's own edge-runtime-specific decrypt.
         const previous = process.env["DOTENV_PRIVATE_KEY"];
         delete process.env["DOTENV_PRIVATE_KEY"];
         const { layer, child } = setup({
           configContents: `project_id = "demo"\n[edge_runtime.secrets]\nMY_SECRET = "${VAULT_ENCRYPTED}"\n`,
         });
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(legacyStart(flags()));
+          const exit = yield* Effect.exit(start(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const serialized = JSON.stringify(exit.cause);
-            expect(serialized).toContain("LegacyDbConfigLoadError");
+            expect(serialized).toContain("DbConfigLoadError");
             expect(serialized).toContain("failed to parse config: missing private key");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -4858,7 +4684,7 @@ content_path = "./supabase/templates/custom_notice.html"
       process.env["SUPABASE_API_MAX_ROWS"] = "500";
       const { layer, child } = setup();
       return Effect.gen(function* () {
-        yield* legacyStart(flags());
+        yield* start(flags());
         const restCreate = child.spawned.find(
           (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_rest_"),
         );
@@ -4894,10 +4720,10 @@ content_path = "./supabase/templates/custom_notice.html"
         process.env["SUPABASE_API_MAX_ROWS"] = "not-a-number";
         const { layer, child } = setup();
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(legacyStart(flags()));
+          const exit = yield* Effect.exit(start(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("LegacyStartInvalidConfigError");
+            expect(JSON.stringify(exit.cause)).toContain("StartInvalidConfigError");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
         }).pipe(
@@ -4921,14 +4747,12 @@ content_path = "./supabase/templates/custom_notice.html"
         configContents: 'project_id = "demo"\n[db.pooler]\nenabled = true\n',
       });
       return Effect.gen(function* () {
-        yield* legacyStart(flags());
+        yield* start(flags());
         const poolerCreate = child.spawned.find(
           (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_pooler_"),
         );
-        // `db.pooler.port` defaults to 54329 (`packages/config/src/db.ts`) —
-        // the published `-p <hostPort>:<containerPort>` mapping is what
-        // changes with pool mode; the exposed-ports list always lists both
-        // 5432 and 6543 regardless, so assert on the specific mapping string.
+        // `db.pooler.port` defaults to 54329; the exposed-ports list always contains both 5432
+        // and 6543, so assert on the specific `hostPort:containerPort` mapping instead.
         expect(poolerCreate?.args).toContain("54329:5432");
         expect(poolerCreate?.args).not.toContain("54329:6543");
       }).pipe(
@@ -4951,10 +4775,10 @@ content_path = "./supabase/templates/custom_notice.html"
           configContents: 'project_id = "demo"\n[db.pooler]\nenabled = true\n',
         });
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(legacyStart(flags()));
+          const exit = yield* Effect.exit(start(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("LegacyStartInvalidConfigError");
+            expect(JSON.stringify(exit.cause)).toContain("StartInvalidConfigError");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
         }).pipe(
@@ -4976,10 +4800,10 @@ content_path = "./supabase/templates/custom_notice.html"
         process.env["SUPABASE_REALTIME_ENABLED"] = "maybe";
         const { layer, child } = setup({ configContents: 'project_id = "demo"\n' });
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(legacyStart(flags()));
+          const exit = yield* Effect.exit(start(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("LegacyStartInvalidConfigError");
+            expect(JSON.stringify(exit.cause)).toContain("StartInvalidConfigError");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
         }).pipe(
@@ -5001,7 +4825,7 @@ content_path = "./supabase/templates/custom_notice.html"
         configContents: 'project_id = "demo"\n[db.pooler]\nenabled = true\n',
       });
       return Effect.gen(function* () {
-        yield* legacyStart(flags());
+        yield* start(flags());
         const poolerCreate = child.spawned.find(
           (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_pooler_"),
         );
@@ -5027,7 +4851,7 @@ content_path = "./supabase/templates/custom_notice.html"
       process.env["SUPABASE_ANALYTICS_PORT"] = "60002";
       const { layer, child } = setup();
       return Effect.gen(function* () {
-        yield* legacyStart(flags());
+        yield* start(flags());
         const logflareCreate = child.spawned.find(
           (s) =>
             s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_analytics_"),
@@ -5048,20 +4872,18 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails with a typed config error, before any container is created, on an invalid SUPABASE_ANALYTICS_VECTOR_PORT",
       () => {
-        // `analytics.vector_port` (Logflare's deprecated Vector port) is decoded in the same
-        // Config.Load pass as `analytics.port` above — nothing downstream in `start` reads the
-        // resolved value, but a malformed override must still fail eagerly, same reasoning as
-        // the SUPABASE_LOCAL_SMTP_SMTP_PORT/SUPABASE_EDGE_RUNTIME_INSPECTOR_PORT tests elsewhere
-        // in this file.
+        // `analytics.vector_port` decodes in the same Config.Load pass as `analytics.port`
+        // above; nothing downstream reads the resolved value, but a malformed override must
+        // still fail eagerly.
         const previous = process.env["SUPABASE_ANALYTICS_VECTOR_PORT"];
         process.env["SUPABASE_ANALYTICS_VECTOR_PORT"] = "not-a-port";
         const { layer, child } = setup();
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(legacyStart(flags()));
+          const exit = yield* Effect.exit(start(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const serialized = JSON.stringify(exit.cause);
-            expect(serialized).toContain("LegacyStartInvalidConfigError");
+            expect(serialized).toContain("StartInvalidConfigError");
             expect(serialized).toContain("invalid config for analytics.vector_port");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -5095,10 +4917,10 @@ content_path = "./supabase/templates/custom_notice.html"
         };
         const { layer, child } = setup({ route });
         return Effect.gen(function* () {
-          const exit = yield* Effect.exit(legacyStart(flags()));
+          const exit = yield* Effect.exit(start(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("LegacyHealthCheckTimeoutError");
+            expect(JSON.stringify(exit.cause)).toContain("HealthCheckTimeoutError");
           }
           // Postgres's own health wait fails before any other service is ever created —
           // proving the short env-overridden timeout took effect (the default is much longer).
@@ -5123,7 +4945,7 @@ content_path = "./supabase/templates/custom_notice.html"
       const previousUri = process.env["SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_URI"];
       process.env["SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED"] = "true";
       // A pg-functions URI needs no `secrets` (unlike http/https, validated by
-      // `legacyValidateResolvedConfig`), keeping this scenario focused on the
+      // `validateResolvedConfig`), keeping this scenario focused on the
       // enabled/uri override reaching GoTrue.
       process.env["SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_URI"] =
         "pg-functions://postgres/auth/custom-access-token-hook";
@@ -5131,7 +4953,7 @@ content_path = "./supabase/templates/custom_notice.html"
         configContents: 'project_id = "demo"\n[auth.hook.custom_access_token]\nenabled = false\n',
       });
       return Effect.gen(function* () {
-        yield* legacyStart(flags());
+        yield* start(flags());
         const gotrueCreate = child.spawned.find(
           (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
         );
@@ -5166,7 +4988,7 @@ content_path = "./supabase/templates/custom_notice.html"
           'project_id = "demo"\n[auth.captcha]\nenabled = false\nprovider = "hcaptcha"\nsecret = "test-secret"\n',
       });
       return Effect.gen(function* () {
-        yield* legacyStart(flags());
+        yield* start(flags());
         const gotrueCreate = child.spawned.find(
           (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
         );
@@ -5193,7 +5015,7 @@ content_path = "./supabase/templates/custom_notice.html"
       process.env["SUPABASE_AUTH_SESSIONS_TIMEBOX"] = "24h";
       const { layer, child } = setup({ configContents: 'project_id = "demo"\n' });
       return Effect.gen(function* () {
-        yield* legacyStart(flags());
+        yield* start(flags());
         const gotrueCreate = child.spawned.find(
           (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
         );
@@ -5218,7 +5040,7 @@ content_path = "./supabase/templates/custom_notice.html"
         configContents: 'project_id = "demo"\n[auth.mfa.totp]\nenroll_enabled = false\n',
       });
       return Effect.gen(function* () {
-        yield* legacyStart(flags());
+        yield* start(flags());
         const gotrueCreate = child.spawned.find(
           (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
         );
@@ -5244,7 +5066,7 @@ content_path = "./supabase/templates/custom_notice.html"
       process.env["SUPABASE_AUTH_RATE_LIMIT_SMS_SENT"] = "99";
       const { layer, child } = setup({ configContents: 'project_id = "demo"\n' });
       return Effect.gen(function* () {
-        yield* legacyStart(flags());
+        yield* start(flags());
         const gotrueCreate = child.spawned.find(
           (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
         );
@@ -5265,7 +5087,7 @@ content_path = "./supabase/templates/custom_notice.html"
       process.env["SUPABASE_AUTH_WEB3_SOLANA_ENABLED"] = "true";
       const { layer, child } = setup({ configContents: 'project_id = "demo"\n' });
       return Effect.gen(function* () {
-        yield* legacyStart(flags());
+        yield* start(flags());
         const gotrueCreate = child.spawned.find(
           (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
         );
@@ -5286,7 +5108,7 @@ content_path = "./supabase/templates/custom_notice.html"
       process.env["SUPABASE_AUTH_OAUTH_SERVER_ENABLED"] = "true";
       const { layer, child } = setup({ configContents: 'project_id = "demo"\n' });
       return Effect.gen(function* () {
-        yield* legacyStart(flags());
+        yield* start(flags());
         const gotrueCreate = child.spawned.find(
           (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
         );
@@ -5312,7 +5134,7 @@ content_path = "./supabase/templates/custom_notice.html"
           'project_id = "demo"\n[auth.passkey]\nenabled = false\n[auth.webauthn]\nrp_id = "localhost"\nrp_origins = ["http://localhost:3000"]\n',
       });
       return Effect.gen(function* () {
-        yield* legacyStart(flags());
+        yield* start(flags());
         const gotrueCreate = child.spawned.find(
           (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
         );
@@ -5340,7 +5162,7 @@ content_path = "./supabase/templates/custom_notice.html"
           'project_id = "demo"\n[auth.webauthn]\nrp_id = "toml-rp-id"\nrp_display_name = "TOML Display Name"\nrp_origins = ["http://toml.example"]\n',
       });
       return Effect.gen(function* () {
-        yield* legacyStart(flags());
+        yield* start(flags());
         const gotrueCreate = child.spawned.find(
           (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
         );
@@ -5380,7 +5202,7 @@ content_path = "./supabase/templates/custom_notice.html"
             'project_id = "demo"\n[auth.passkey]\nenabled = "env(PASSKEY_ENABLED)"\n[auth.webauthn]\nrp_id = "localhost"\nrp_origins = ["http://localhost:3000"]\n',
         });
         return Effect.gen(function* () {
-          yield* legacyStart(flags());
+          yield* start(flags());
           const gotrueCreate = child.spawned.find(
             (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
           );
@@ -5407,7 +5229,7 @@ content_path = "./supabase/templates/custom_notice.html"
             'project_id = "demo"\n[auth.passkey]\nenabled = true\n[auth.webauthn]\nrp_id = "localhost"\nrp_origins = "env(RP_ORIGINS)"\n',
         });
         return Effect.gen(function* () {
-          yield* legacyStart(flags());
+          yield* start(flags());
           const gotrueCreate = child.spawned.find(
             (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
           );
@@ -5435,7 +5257,7 @@ content_path = "./supabase/templates/custom_notice.html"
         configContents: 'project_id = "demo"\n[edge_runtime]\npolicy = "oneshot"\n',
       });
       return Effect.gen(function* () {
-        yield* legacyStart(flags());
+        yield* start(flags());
         const runCalls = child.spawned.filter((s) => isEdgeRuntimeCreate(s.args));
         const entrypointCommand = runCalls[0]?.args.at(-1) ?? "";
         expect(entrypointCommand).toContain("--policy=per_worker");

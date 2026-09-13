@@ -2,10 +2,6 @@ import { describe, expect, it } from "vitest";
 import { Command } from "effect/unstable/cli";
 import { collectCommands, findCommand } from "./command-docs.ts";
 
-// ---------------------------------------------------------------------------
-// Test fixtures
-// ---------------------------------------------------------------------------
-
 function makeTree() {
   const login = Command.make("login").pipe(Command.withDescription("Log in to Supabase"));
   const logout = Command.make("logout").pipe(Command.withDescription("Log out of Supabase"));
@@ -28,10 +24,6 @@ function makeDeepTree() {
   );
   return { root, mid, child };
 }
-
-// ---------------------------------------------------------------------------
-// findCommand
-// ---------------------------------------------------------------------------
 
 describe("findCommand", () => {
   it("returns the root command when path is empty", () => {
@@ -66,10 +58,6 @@ describe("findCommand", () => {
     expect(result).toBeUndefined();
   });
 });
-
-// ---------------------------------------------------------------------------
-// collectCommands
-// ---------------------------------------------------------------------------
 
 describe("collectCommands", () => {
   it("includes the root command itself", () => {

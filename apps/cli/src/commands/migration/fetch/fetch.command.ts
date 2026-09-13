@@ -2,9 +2,9 @@ import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyMigrationDbRuntimeLayer } from "../migration.layers.ts";
-import { legacyMigrationFetch } from "./fetch.handler.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { migrationDbRuntimeLayer } from "../migration.layers.ts";
+import { migrationFetch } from "./fetch.handler.ts";
 
 const config = {
   dbUrl: Flag.string("db-url").pipe(
@@ -28,26 +28,24 @@ const config = {
   ),
 } as const;
 
-export type LegacyMigrationFetchFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type MigrationFetchFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyMigrationFetchCommand = Command.make("fetch", config).pipe(
+export const migrationFetchCommand = Command.make("fetch", config).pipe(
   Command.withDescription("Fetch migration files from history table."),
   Command.withShortDescription("Fetch migration files from history table"),
   Command.withHandler((flags) =>
-    legacyMigrationFetch(flags).pipe(
-      withLegacyCommandInstrumentation({
+    migrationFetch(flags).pipe(
+      withCommandTelemetry({
         flags: {
           "db-url": flags.dbUrl,
           linked: flags.linked,
           local: flags.local,
           "project-ref": flags.projectRef,
         },
-        // TS-only flag with no Go telemetry-safety baseline; Go's nearest
-        // --project-ref registrations (cmd/pgdelta_catalog.go:44 and most
-        // others) are unmarked, so it stays redacted.
+        // `--project-ref` has no telemetry-safety baseline, so it stays redacted.
       }),
       withJsonErrorHandling,
     ),
   ),
-  Command.provide(legacyMigrationDbRuntimeLayer(["migration", "fetch"])),
+  Command.provide(migrationDbRuntimeLayer(["migration", "fetch"])),
 );

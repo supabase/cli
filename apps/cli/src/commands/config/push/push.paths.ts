@@ -1,41 +1,37 @@
 /**
  * Generic config-path helpers shared by `config push`'s pure modules
- * (push.encoders.ts, push.plan.ts, push.secrets.ts) and its handler. Kept in
- * one place so every module compares/looks up paths the same way — see the
- * architecture review's A4.
+ * (push.encoders.ts, push.plan.ts, push.secrets.ts) and its handler, so every module
+ * compares/looks up paths the same way.
  */
 
 import type { ProjectConfig } from "@supabase/config";
 
-import { legacyConfigIsRecord } from "../config.paths.ts";
+import { configIsRecord } from "../config.paths.ts";
 
-export const legacyIsRecord = legacyConfigIsRecord;
+export const isRecord = configIsRecord;
 
-export function legacyValueAtPath(root: unknown, path: ReadonlyArray<string>): unknown {
+export function valueAtPath(root: unknown, path: ReadonlyArray<string>): unknown {
   let current: unknown = root;
   for (const segment of path) {
-    if (!legacyConfigIsRecord(current)) return undefined;
+    if (!configIsRecord(current)) return undefined;
     current = current[segment];
   }
   return current;
 }
 
-export function legacySamePath(a: ReadonlyArray<string>, b: ReadonlyArray<string>): boolean {
+export function samePath(a: ReadonlyArray<string>, b: ReadonlyArray<string>): boolean {
   return a.length === b.length && a.every((segment, index) => segment === b[index]);
 }
 
-export function legacyIsPrefixOf(
-  prefix: ReadonlyArray<string>,
-  path: ReadonlyArray<string>,
-): boolean {
+export function isPrefixOf(prefix: ReadonlyArray<string>, path: ReadonlyArray<string>): boolean {
   return prefix.length <= path.length && prefix.every((segment, index) => path[index] === segment);
 }
 
-export function legacyPathIn(
+export function pathIn(
   path: ReadonlyArray<string>,
   paths: ReadonlyArray<ReadonlyArray<string>>,
 ): boolean {
-  return paths.some((candidate) => legacySamePath(candidate, path));
+  return paths.some((candidate) => samePath(candidate, path));
 }
 
 /**
@@ -44,7 +40,7 @@ export function legacyPathIn(
  * no delimiter (and can't collide on one, since a segment may itself
  * contain a `.`).
  */
-export function legacyComparePaths(a: ReadonlyArray<string>, b: ReadonlyArray<string>): number {
+export function comparePaths(a: ReadonlyArray<string>, b: ReadonlyArray<string>): number {
   const length = Math.min(a.length, b.length);
   for (let index = 0; index < length; index += 1) {
     const left = a[index] ?? "";
@@ -57,21 +53,16 @@ export function legacyComparePaths(a: ReadonlyArray<string>, b: ReadonlyArray<st
 }
 
 /**
- * A container's own enabled state, read from the LOCAL (declared) projection
- * only — never `remote`, since gating decides whether `config push` even
- * attempts to write a container's fields at all, independently of the
- * project's current state (mirrors `fromConfigDocument`'s own raw-presence
- * mask and disabled-sentinel pruning). `undefined` means the container's
- * enabled state cannot be determined — it is absent from `local`, or present
- * without a boolean `enabled` field — and callers must never coerce that
- * into `false`/`""`.
+ * A container's own enabled state, read from the local (declared) projection only, never
+ * `remote` — gating decides whether `config push` attempts to write a container's fields at all.
+ * `undefined` means the state can't be determined; callers must never coerce that into `false`.
  */
-export function legacyContainerEnabled(
+export function containerEnabled(
   local: ProjectConfig,
   path: ReadonlyArray<string>,
 ): boolean | undefined {
-  const container = legacyValueAtPath(local, path);
-  if (!legacyConfigIsRecord(container)) {
+  const container = valueAtPath(local, path);
+  if (!configIsRecord(container)) {
     return undefined;
   }
   const enabled = container["enabled"];

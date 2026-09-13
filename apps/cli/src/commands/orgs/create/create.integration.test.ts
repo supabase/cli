@@ -4,13 +4,13 @@ import { Effect, Exit, Option } from "effect";
 
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
-  buildLegacyTestRuntime,
-  mockLegacyCliSettings,
-  mockLegacyPlatformApi,
-  mockLegacyTelemetryStateTracked,
-  useLegacyTempWorkdir,
-} from "../../../../tests/helpers/legacy-mocks.ts";
-import { legacyOrgsCreate } from "./create.handler.ts";
+  buildTestRuntime,
+  mockCommandSettings,
+  mockCommandPlatformApi,
+  mockTelemetryStateTracked,
+  useTempWorkdir,
+} from "../../../../tests/helpers/command-mocks.ts";
+import { orgsCreate } from "./create.handler.ts";
 
 type CreatedOrganization = typeof V1CreateAnOrganizationOutput.Type;
 
@@ -20,7 +20,7 @@ const CREATED: CreatedOrganization = {
   name: "Acme",
 };
 
-const tempRoot = useLegacyTempWorkdir("supabase-orgs-create-int-");
+const tempRoot = useTempWorkdir("supabase-orgs-create-int-");
 
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
@@ -32,12 +32,12 @@ interface SetupOpts {
 
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
-  const api = mockLegacyPlatformApi({
+  const api = mockCommandPlatformApi({
     response: { status: opts.status ?? 201, body: opts.response ?? CREATED },
     network: opts.network,
   });
-  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
-  const layer = buildLegacyTestRuntime({
+  const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
+  const layer = buildTestRuntime({
     out,
     api,
     cliSettings,
@@ -48,13 +48,13 @@ function setup(opts: SetupOpts = {}) {
 
 function setupTracked(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
-  const api = mockLegacyPlatformApi({
+  const api = mockCommandPlatformApi({
     response: { status: opts.status ?? 201, body: opts.response ?? CREATED },
     network: opts.network,
   });
-  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
-  const telemetry = mockLegacyTelemetryStateTracked();
-  const layer = buildLegacyTestRuntime({
+  const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
+  const telemetry = mockTelemetryStateTracked();
+  const layer = buildTestRuntime({
     out,
     api,
     cliSettings,
@@ -63,11 +63,11 @@ function setupTracked(opts: SetupOpts = {}) {
   return { layer, out, api, telemetry };
 }
 
-describe("legacy orgs create integration", () => {
+describe("orgs create integration", () => {
   it.live('prints "Created organization: <id>" then a Glamour table in text mode', () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
-      yield* legacyOrgsCreate({ name: "Acme" });
+      yield* orgsCreate({ name: "Acme" });
       expect(out.stdoutText).toContain("Created organization: combined-fuchsia-lion");
       expect(out.stdoutText).toContain("NAME");
       expect(out.stdoutText).toContain("Acme");
@@ -77,7 +77,7 @@ describe("legacy orgs create integration", () => {
   it.live("sends POST /v1/organizations with { name } body", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
-      yield* legacyOrgsCreate({ name: "Acme" });
+      yield* orgsCreate({ name: "Acme" });
       expect(api.requests).toHaveLength(1);
       expect(api.requests[0]?.method).toBe("POST");
       expect(api.requests[0]?.url).toContain("/v1/organizations");
@@ -88,7 +88,7 @@ describe("legacy orgs create integration", () => {
   it.live("emits Go-byte-exact preamble + indented JSON for --output json", () => {
     const { layer, out } = setup({ goOutput: "json" });
     return Effect.gen(function* () {
-      yield* legacyOrgsCreate({ name: "Acme" });
+      yield* orgsCreate({ name: "Acme" });
       expect(out.stdoutText).toContain("Created organization: combined-fuchsia-lion\n");
       expect(out.stdoutText).toContain('"name": "Acme"');
       expect(out.stdoutText.endsWith("}\n")).toBe(true);
@@ -98,7 +98,7 @@ describe("legacy orgs create integration", () => {
   it.live("emits preamble + YAML object for --output yaml", () => {
     const { layer, out } = setup({ goOutput: "yaml" });
     return Effect.gen(function* () {
-      yield* legacyOrgsCreate({ name: "Acme" });
+      yield* orgsCreate({ name: "Acme" });
       expect(out.stdoutText).toContain("Created organization: combined-fuchsia-lion\n");
       expect(out.stdoutText).toContain("name: Acme");
     }).pipe(Effect.provide(layer));
@@ -107,9 +107,9 @@ describe("legacy orgs create integration", () => {
   it.live("emits preamble + TOML for --output toml", () => {
     const { layer, out } = setup({ goOutput: "toml" });
     return Effect.gen(function* () {
-      yield* legacyOrgsCreate({ name: "Acme" });
+      yield* orgsCreate({ name: "Acme" });
       expect(out.stdoutText).toContain("Created organization: combined-fuchsia-lion\n");
-      // PascalCase field names at the top level — no table header (CLI-1975).
+      // PascalCase field names at the top level — no table header.
       expect(out.stdoutText).toContain('Name = "Acme"');
     }).pipe(Effect.provide(layer));
   });
@@ -117,7 +117,7 @@ describe("legacy orgs create integration", () => {
   it.live("emits preamble + env vars for --output env (create-only branch)", () => {
     const { layer, out } = setup({ goOutput: "env" });
     return Effect.gen(function* () {
-      yield* legacyOrgsCreate({ name: "Acme" });
+      yield* orgsCreate({ name: "Acme" });
       expect(out.stdoutText).toContain("Created organization: combined-fuchsia-lion\n");
       expect(out.stdoutText).toContain("NAME=");
       expect(out.stdoutText).toContain("Acme");
@@ -127,7 +127,7 @@ describe("legacy orgs create integration", () => {
   it.live("emits a success event with org fields for --output-format=json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
-      yield* legacyOrgsCreate({ name: "Acme" });
+      yield* orgsCreate({ name: "Acme" });
       const success = out.messages.find((m) => m.type === "success");
       expect(success).toBeDefined();
       expect(success?.data).toMatchObject({ id: "combined-fuchsia-lion", name: "Acme" });
@@ -137,7 +137,7 @@ describe("legacy orgs create integration", () => {
   it.live("emits a success event for --output-format=stream-json", () => {
     const { layer, out } = setup({ format: "stream-json" });
     return Effect.gen(function* () {
-      yield* legacyOrgsCreate({ name: "Acme" });
+      yield* orgsCreate({ name: "Acme" });
       expect(out.messages.find((m) => m.type === "success")).toBeDefined();
     }).pipe(Effect.provide(layer));
   });
@@ -145,7 +145,7 @@ describe("legacy orgs create integration", () => {
   it.live("treats --output pretty as identical to text mode (preamble + table)", () => {
     const { layer, out } = setup({ goOutput: "pretty" });
     return Effect.gen(function* () {
-      yield* legacyOrgsCreate({ name: "Acme" });
+      yield* orgsCreate({ name: "Acme" });
       expect(out.stdoutText).toContain("Created organization: combined-fuchsia-lion");
       expect(out.stdoutText).toContain("NAME");
       expect(out.stdoutText).toContain("Acme");
@@ -155,32 +155,32 @@ describe("legacy orgs create integration", () => {
   it.live("--output flag wins over --output-format", () => {
     const { layer, out } = setup({ format: "json", goOutput: "yaml" });
     return Effect.gen(function* () {
-      yield* legacyOrgsCreate({ name: "Acme" });
+      yield* orgsCreate({ name: "Acme" });
       expect(out.stdoutText).toContain("name: Acme");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with LegacyOrgsCreateUnexpectedStatusError on HTTP 503", () => {
+  it.live("fails with OrgsCreateUnexpectedStatusError on HTTP 503", () => {
     const { layer } = setup({ status: 503 });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyOrgsCreate({ name: "Acme" }));
+      const exit = yield* Effect.exit(orgsCreate({ name: "Acme" }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const json = JSON.stringify(exit.cause);
-        expect(json).toContain("LegacyOrgsCreateUnexpectedStatusError");
+        expect(json).toContain("OrgsCreateUnexpectedStatusError");
         expect(json).toContain("unexpected create organization status 503");
       }
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with LegacyOrgsCreateNetworkError on transport failure", () => {
+  it.live("fails with OrgsCreateNetworkError on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyOrgsCreate({ name: "Acme" }));
+      const exit = yield* Effect.exit(orgsCreate({ name: "Acme" }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const json = JSON.stringify(exit.cause);
-        expect(json).toContain("LegacyOrgsCreateNetworkError");
+        expect(json).toContain("OrgsCreateNetworkError");
         expect(json).toContain("failed to create organization");
       }
     }).pipe(Effect.provide(layer));
@@ -191,11 +191,11 @@ describe("legacy orgs create integration", () => {
   it.live("propagates a transport failure when --output-format=json suppresses the spinner", () => {
     const { layer } = setup({ format: "json", network: "fail" });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyOrgsCreate({ name: "Acme" }));
+      const exit = yield* Effect.exit(orgsCreate({ name: "Acme" }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const json = JSON.stringify(exit.cause);
-        expect(json).toContain("LegacyOrgsCreateNetworkError");
+        expect(json).toContain("OrgsCreateNetworkError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -203,7 +203,7 @@ describe("legacy orgs create integration", () => {
   it.live("flushes telemetry state on success", () => {
     const { layer, telemetry } = setupTracked();
     return Effect.gen(function* () {
-      yield* legacyOrgsCreate({ name: "Acme" });
+      yield* orgsCreate({ name: "Acme" });
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -211,7 +211,7 @@ describe("legacy orgs create integration", () => {
   it.live("flushes telemetry state on failure", () => {
     const { layer, telemetry } = setupTracked({ status: 503 });
     return Effect.gen(function* () {
-      yield* Effect.exit(legacyOrgsCreate({ name: "Acme" }));
+      yield* Effect.exit(orgsCreate({ name: "Acme" }));
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
   });

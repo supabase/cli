@@ -9,12 +9,8 @@ export interface CliProjectPaths {
   readonly envLocalPath: string;
 }
 
-// A stat failure (e.g. ENOTDIR when this root has a FILE named `supabase`)
-// means "no config here" — Go's getProjectRoot keeps climbing on any stat
-// error (apps/cli-go/internal/utils/misc.go:216-231). The failed probe is
-// logged at Debug as a structured hook for future diagnostics — the CLI does
-// not currently lower its minimum log level for `--debug`, so this is not
-// yet Go-parity debug visibility.
+// Any stat failure (e.g. ENOTDIR when this root has a file named `supabase`) means "no config
+// here", not a fatal error — log it at Debug and keep searching.
 const probeExists = (self: Effect.Effect<boolean, PlatformError>) =>
   self.pipe(
     Effect.tapError((error) => Effect.logDebug("config probe failed", error)),
@@ -46,23 +42,9 @@ const findConfigInRoot = Effect.fnUntraced(function* (root: string) {
 
 export interface FindCliProjectPathsOptions {
   /**
-   * When `false`, only `cwd` itself is checked for `supabase/config.{json,toml}` —
-   * no ancestor climb. Go's own resolution never searches twice: an explicit
-   * `--workdir`/`SUPABASE_WORKDIR` is used exactly as given (`ChangeWorkDir`,
-   * `apps/cli-go/internal/utils/misc.go:238-257`), and once `os.Chdir`'d there,
-   * `config.toml` is read as a plain relative path with no further ancestor
-   * search (`NewPathBuilder`, `pkg/config/utils.go:43-48`). Ancestor climbing in
-   * Go only ever happens once, as the *default* when workdir is unset
-   * (`getProjectRoot`, `internal/utils/misc.go:216-231`).
-   *
-   * Callers that already hold an authoritative, Go-equivalent project root
-   * (e.g. the legacy `stop`/`status` ports' `cliSettings.workdir`, which mirrors
-   * `ChangeWorkDir`'s own explicit-vs-default resolution) should pass `false`
-   * here to avoid a second, un-Go-like ancestor search that could otherwise
-   * pick up an unrelated ancestor project's config.
-   *
-   * Defaults to `true` (the original ancestor-search behavior), so existing
-   * callers are unaffected.
+   * When `false`, only `cwd` itself is checked — no ancestor climb. Pass `false` when the
+   * caller already holds an authoritative project root, to avoid picking up an unrelated
+   * ancestor's config. Defaults to `true`.
    */
   readonly search?: boolean;
 }
@@ -96,7 +78,10 @@ export const findCliProjectPaths = Effect.fnUntraced(function* (
   }
 });
 
-export const findCliProjectRoot = Effect.fnUntraced(function* (cwd: string) {
-  const paths = yield* findCliProjectPaths(cwd);
+export const findCliProjectRoot = Effect.fnUntraced(function* (
+  cwd: string,
+  options?: FindCliProjectPathsOptions,
+) {
+  const paths = yield* findCliProjectPaths(cwd, options);
   return paths?.projectRoot ?? null;
 });

@@ -84,6 +84,7 @@ describe("config io", () => {
           db: {
             major_version: 16,
           },
+          experimental: { stack: true },
         }),
       );
 
@@ -91,6 +92,7 @@ describe("config io", () => {
       expect(loaded.format).toBe("json");
       expect(loaded.config.project_id).toBe("abc123");
       expect(loaded.config.db.major_version).toBe(16);
+      expect(loaded.config.experimental.stack).toBe(true);
       expect(loaded.config.api.enabled).toBe(true);
     } finally {
       await rm(cwd, { recursive: true, force: true });
@@ -239,10 +241,8 @@ describe("config io", () => {
   });
 
   test("only validates the highest-priority enabled sms provider during decode (Go switch parity)", () => {
-    // Go's `(s *sms) validate()` (`apps/cli-go/pkg/config/config.go:1348-1410`) is a boolean
-    // `switch` that inspects providers in a fixed priority order (twilio, twilio_verify,
-    // messagebird, textlocal, vonage) and validates ONLY the first enabled one — a later
-    // enabled-but-incomplete provider is never even looked at. A complete, higher-priority
+    // Providers are validated in a fixed priority order (twilio, twilio_verify, messagebird,
+    // textlocal, vonage); only the first enabled one is checked, so a complete, higher-priority
     // `twilio` block plus an incomplete, lower-priority `messagebird` block must decode fine.
     const config = decodeCliConfig({
       auth: {
@@ -292,11 +292,9 @@ describe("config io", () => {
   });
 
   test("decodes an unmodeled email template/notification name (Go map[string] parity)", () => {
-    // Go's `Auth.Email.Template`/`Notification` are genuine `map[string]emailTemplate`/
-    // `map[string]notification` (`apps/cli-go/pkg/config/auth.go:247-248`) — open maps with no
-    // key restriction; `(e *email) validate(fsys)` (`pkg/config/config.go:1293-1313`) iterates
-    // every entry regardless of name. An unrecognized key like `[auth.email.template.custom]`
-    // is a legitimate config shape Go accepts, not a decode error.
+    // `auth.email.template`/`notification` are open maps with no key restriction, and every
+    // entry is validated regardless of name — an unrecognized key like
+    // `[auth.email.template.custom]` is a legitimate config shape, not a decode error.
     const config = decodeCliConfig({
       auth: {
         email: {
@@ -433,6 +431,9 @@ describe("config io", () => {
 
 [db]
 major_version = 16
+
+[experimental]
+stack = true
 `,
       );
 
@@ -445,10 +446,8 @@ major_version = 16
     }
   });
 
-  // Go's `NewPathBuilder`/`Config.Load` (`apps/cli-go/pkg/config/utils.go:
-  // 43-48`) only ever resolves `supabase/config.toml` — it has no concept of a
-  // JSON project config file. Go-parity callers (legacy `status`/`stop`) pass
-  // `tomlOnly: true` so a stray `config.json` never wins over `config.toml`.
+  // Go-parity callers (legacy `status`/`stop`) pass `tomlOnly: true` so a stray `config.json`
+  // never wins over `config.toml`.
   test("loads TOML instead of JSON when tomlOnly is set, even if JSON exists", async () => {
     const cwd = makeTempProject();
     const jsonPath = await runConfigEffect(configJsonPath(cwd));
@@ -463,6 +462,9 @@ major_version = 16
 
 [db]
 major_version = 16
+
+[experimental]
+stack = true
 `,
       );
 
@@ -501,6 +503,9 @@ major_version = 16
 
 [db]
 major_version = 16
+
+[experimental]
+stack = true
 `,
       );
 
@@ -508,12 +513,13 @@ major_version = 16
       expect(loaded?.format).toBe("toml");
       expect(loaded?.config.project_id).toBe("toml-ref");
       expect(loaded?.config.db.major_version).toBe(16);
+      expect(loaded?.config.experimental.stack).toBe(true);
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
   });
 
-  test("loads the legacy CLI fixture", async () => {
+  test("loads the CLI fixture", async () => {
     const loaded = await runConfigEffect(loadCliConfigFile(legacyFixturePath));
     const production = loaded.config.remotes.production;
     const staging = loaded.config.remotes.staging;
@@ -602,12 +608,9 @@ major_version = 16
 
     try {
       await mkdir(join(cwd, "supabase"), { recursive: true });
-      // `analytics.port` fails schema decode (expects a number), which is
-      // enough to fail the whole `Schema.decodeUnknownSync` call while
-      // `edge_runtime.secrets` parses fine on its own — the scenario
-      // `recoverEdgeRuntimeConfig` (apps/cli's `secrets set`) exists to
-      // recover from. `MY_SUPER_SECRET_VALUE` stands in for a real secret so
-      // the assertion below can confirm it never appears in plaintext.
+      // `analytics.port` fails schema decode, which fails the whole `Schema.decodeUnknownSync`
+      // call while `edge_runtime.secrets` parses fine on its own. `MY_SUPER_SECRET_VALUE` stands
+      // in for a real secret so the assertion below can confirm it never appears in plaintext.
       await writeFile(
         tomlPath,
         `[analytics]
@@ -641,8 +644,7 @@ FOO = "MY_SUPER_SECRET_VALUE"
       const foo = (secrets as Record<string, unknown>).FOO;
       expect(Redacted.isRedacted(foo)).toBe(true);
       expect(Redacted.value(foo as Redacted.Redacted<string>)).toBe("MY_SUPER_SECRET_VALUE");
-      // The whole point: a caller that doesn't know to unwrap `Redacted`
-      // (e.g. an uncaught error serialized into a log) never sees the raw
+      // The whole point: a caller that doesn't know to unwrap `Redacted` never sees the raw
       // secret, even via JSON.stringify.
       expect(JSON.stringify(error.value.document)).not.toContain("MY_SUPER_SECRET_VALUE");
     } finally {
@@ -656,10 +658,9 @@ FOO = "MY_SUPER_SECRET_VALUE"
 
     try {
       await mkdir(join(cwd, "supabase"), { recursive: true });
-      // `FOO` is a TOML array, not a string — the schema decode for this
-      // entry fails, but the raw pre-decode value still carries
-      // `MY_SUPER_SECRET_VALUE` in plaintext. `redactEdgeRuntimeSecrets` must
-      // wrap the entry regardless of its shape, not just string entries.
+      // `FOO` is a TOML array, not a string, so its own schema decode fails, but the raw
+      // pre-decode value still carries `MY_SUPER_SECRET_VALUE` in plaintext —
+      // `redactEdgeRuntimeSecrets` must wrap it regardless of shape.
       await writeFile(
         tomlPath,
         `[analytics]
@@ -705,10 +706,9 @@ FOO = ["MY_SUPER_SECRET_VALUE"]
 
     try {
       await mkdir(join(cwd, "supabase"), { recursive: true });
-      // `secrets` itself is a TOML array here, not a table — the whole field
-      // is malformed rather than a single entry inside it. `isObject` rejects
-      // arrays, so `redactEdgeRuntimeSecrets` must wrap the field as one unit
-      // instead of falling through its early-return and leaving it raw.
+      // `secrets` itself is a TOML array here, not a table, so the whole field is malformed
+      // rather than a single bad entry — `redactEdgeRuntimeSecrets` must wrap the field as one
+      // unit instead of leaving it raw.
       await writeFile(
         tomlPath,
         `[analytics]
@@ -1089,10 +1089,8 @@ enabled = "env(SUPABASE_ANALYTICS_ENABLED)"
   );
 
   test("splits a comma-separated string literal into a slice (Go's StringToSliceHookFunc)", async () => {
-    // Go's `newDecodeHook` (`apps/cli-go/pkg/config/config.go:775-784`) wires
-    // `mapstructure.StringToSliceHookFunc(",")` unconditionally, so a plain
-    // string value for a `[]string` field like `additional_redirect_urls`
-    // decodes fine in Go — not just via `env(...)`.
+    // A plain string value for a `[]string` field like `additional_redirect_urls` decodes fine
+    // when `goViperCompat` is set, not just via `env(...)`.
     const cwd = makeTempProject();
 
     try {
@@ -1279,10 +1277,8 @@ port = "env(SUPABASE_DB_PORT_TEST)"
     }
   });
 
-  // Regression coverage for the default-off (`goViperCompat` omitted) path —
-  // these pin pre-PR-#5765 behavior so `next/`, `packages/stack`, and the
-  // functions manifest (none of which pass `goViperCompat`) don't inherit the
-  // Go-parity legacy shell's stricter/wider semantics.
+  // Pins pre-Go-parity default behavior, so `packages/stack` and the functions manifest (which
+  // don't pass `goViperCompat`) don't inherit the Go-parity CLI's stricter/wider semantics.
   test("loads successfully with a duplicate [remotes.*] project_id when goViperCompat is omitted", async () => {
     const cwd = makeTempProject();
 
@@ -1308,7 +1304,7 @@ project_id = "dupref"
     }
   });
 
-  test("loads a [remotes.*.workers] section alongside the project's own", async () => {
+  test("loads a [remotes.*.compute] section alongside the project's own", async () => {
     const cwd = makeTempProject();
 
     try {
@@ -1317,20 +1313,20 @@ project_id = "dupref"
         join(cwd, "supabase", "config.toml"),
         `project_id = "baseref"
 
-[workers.api]
+[compute.api]
 runtime = "node"
 
 [remotes.staging]
 project_id = "abcdefghijklmnopqrst"
 
-[remotes.staging.workers.api]
+[remotes.staging.compute.api]
 runtime = "deno"
 `,
       );
 
       const loaded = await runConfigEffect(loadCliConfig(cwd));
       expect(loaded).not.toBeNull();
-      expect(loaded!.config.workers).toEqual({ api: { runtime: "node" } });
+      expect(loaded!.config.compute).toEqual({ api: { runtime: "node" } });
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
@@ -1473,11 +1469,9 @@ describe("config io [remotes.*] merge", () => {
     return cwd;
   }
 
-  // Remote `project_id`s below are valid 20-lowercase-letter refs (Go's
-  // `refPattern`, `config.go:558`) — `Config.Validate` rejects every
-  // `[remotes.*].project_id` against that pattern unconditionally on every
-  // config load (`config.go:996-1001`), so test fixtures must satisfy it too,
-  // even for scenarios that don't care about the ref's specific value.
+  // Remote `project_id`s below are valid 20-lowercase-letter refs, since `Config.Validate`
+  // rejects every `[remotes.*].project_id` against that pattern on every config load, so test
+  // fixtures must satisfy it too, even when a scenario doesn't care about the ref's value.
   const PREVIEW_REF = "previewrefaaaaaaaaaa";
   const STAGING_REF = "stagingrefaaaaaaaaaa";
 
@@ -1623,17 +1617,12 @@ schemas = ["env(REMOTE_SCHEMA)"]
     try {
       const loaded = await runConfigEffect(loadCliConfig(cwd, { projectRef: PREVIEW_REF }));
       expect(loaded!.appliedRemote).toBe("preview");
-      // remote block's project_id overrides the base
       expect(loaded!.config.project_id).toBe(PREVIEW_REF);
-      // remote scalar wins
       expect(loaded!.config.api.max_rows).toBe(999);
-      // array replaced wholesale (not element-merged)
+      // Array replaced wholesale, not element-merged.
       expect(loaded!.config.api.schemas).toEqual(["remote_only"]);
-      // base-only sibling under the same table survives
       expect(loaded!.config.api.enabled).toBe(true);
-      // a non-matching remote ([remotes.staging]) is not applied
       expect(loaded!.config.db.major_version).toBe(15);
-      // remotes are stripped from the merged document before decode
       expect(loaded!.document?.remotes).toBeUndefined();
     } finally {
       await rm(cwd, { recursive: true, force: true });
@@ -1656,11 +1645,9 @@ max_rows = 999
     try {
       const loaded = await runConfigEffect(loadCliConfig(cwd, { projectRef: PREVIEW_REF }));
 
-      // document: env() resolved, the matching remote merged in, remotes stripped.
       expect(loaded!.config.api.max_rows).toBe(999);
       expect(loaded!.document?.remotes).toBeUndefined();
 
-      // rawDocument: still the literal env() string, remotes table intact.
       const rawApi = loaded!.rawDocument?.api;
       expect(isObject(rawApi) ? rawApi.max_rows : undefined).toBe(
         "env(SUPABASE_RAW_DOCUMENT_MAX_ROWS_TEST)",
@@ -1679,13 +1666,8 @@ max_rows = 999
     }
   });
 
-  // Unlike the matched case above (where `applyRemoteOverride` strips
-  // `remotes` from `document`), an UNSELECTED `remotes` table survives on
-  // `document` — interpolated, since interpolation runs over the whole
-  // post-merge document regardless of whether anything was selected. Callers
-  // that need to inspect the remaining (non-target) remotes' effective values
-  // can read `document.remotes`; callers deciding WHERE to write must still
-  // use `rawDocument` (see `remoteNameForProjectRef`'s doc comment).
+  // An unselected `remotes` table survives on `document` (interpolated), unlike the matched case
+  // above where it's stripped; callers deciding where to write must still use `rawDocument`.
   test("keeps an interpolated remotes table on document when no remote matches", async () => {
     const previous = process.env.SUPABASE_UNMATCHED_REMOTE_REF_TEST;
     process.env.SUPABASE_UNMATCHED_REMOTE_REF_TEST = STAGING_REF;
@@ -1749,11 +1731,8 @@ project_id = "env(SUPABASE_INTERPOLATED_REMOTES_TEST)"
   });
 
   test("carries appliedRemote on CliConfigParseError when the matched remote's decode fails", async () => {
-    // Go prints `Loading config override: [remotes.<name>]` unconditionally
-    // as soon as the `project_id` match is found, *before* `mapstructure`
-    // decode runs (`apps/cli-go/pkg/config/config.go:604-609`) — so the notice
-    // is still owed even when the decode that follows fails. `db.major_version`
-    // is an unrelated schema-decode error; the remote merge must still have
+    // The remote match/merge notice is owed even when the subsequent decode fails.
+    // `db.major_version` is an unrelated schema-decode error; the merge must still have
     // happened (and be reported) ahead of it.
     const cwd = await writeTomlProject(
       `${BASE_WITH_REMOTES}
@@ -1794,9 +1773,8 @@ major_version = "not-a-number"
   });
 
   test("does not merge remotes when no projectRef is requested and none has an empty project_id", async () => {
-    // `projectRef` defaults to "" (Go's own `Config.ProjectId` default for
-    // commands with no `--project-ref` flag), so this only stays unmerged
-    // because neither remote's `project_id` is empty.
+    // `projectRef` defaults to `""`, so this only stays unmerged because neither remote's
+    // `project_id` is empty.
     const cwd = await writeTomlProject(BASE_WITH_REMOTES);
     try {
       const loaded = await runConfigEffect(loadCliConfig(cwd));
@@ -1809,12 +1787,9 @@ major_version = "not-a-number"
   });
 
   test("rejects duplicate project_id across remotes even when no projectRef is requested", async () => {
-    // Go's duplicate-project_id check (config.go:594-602) runs unconditionally
-    // on every config load, inside the same loop that resolves the [remotes.*]
-    // override — it is not gated on a caller actually selecting a remote.
-    // status/stop (internal/utils/flags/config_path.go:11) never bind a
-    // `--project-ref` flag, so they hit this check with `Config.ProjectId == ""`,
-    // and it must still fail on a config-wide duplicate.
+    // The duplicate-project_id check runs unconditionally on every config load, in the same
+    // loop that resolves the `[remotes.*]` override — it is not gated on a caller actually
+    // selecting a remote.
     const cwd = await writeTomlProject(`project_id = "baseref"
 
 [remotes.a]
@@ -1838,12 +1813,8 @@ project_id = "dupref"
     }
   });
 
-  // `goViperCompat` is required even though a `projectRef` is passed: the
-  // duplicate/format checks in `applyRemoteOverride` are gated solely on
-  // `goViperCompat`, not on whether a remote is being selected — the remote
-  // match/merge itself stays unconditional, but pre-PR-#5765 callers that
-  // pass a `projectRef` without opting into Go parity no longer get these
-  // checks for free.
+  // `goViperCompat` is required even though `projectRef` is passed: the duplicate/format checks
+  // are gated solely on `goViperCompat`, not on whether a remote is being selected.
   test("rejects duplicate project_id across remotes with Go's message", async () => {
     const cwd = await writeTomlProject(`project_id = "baseref"
 
@@ -1869,9 +1840,8 @@ project_id = "dupref"
   });
 
   test("rejects duplicate project_id among remotes that do not match projectRef", async () => {
-    // Go builds the duplicate map across all [remotes.*] blocks before applying the
-    // matching override, so a clash between two non-target remotes still fails even
-    // though neither shares projectRef (config.go:503-518).
+    // The duplicate map is built across all `[remotes.*]` blocks before applying the matching
+    // override, so a clash between two non-target remotes still fails.
     const cwd = await writeTomlProject(`project_id = "baseref"
 
 [remotes.target]
@@ -1899,8 +1869,8 @@ project_id = "dupref"
   });
 
   test("rejects two remotes that both omit project_id", async () => {
-    // A missing project_id reads as "" (Go's viper.GetString), so two remotes that
-    // both omit it collide on the empty key.
+    // A missing project_id reads as "", so two remotes that both omit it collide on the empty
+    // key.
     const cwd = await writeTomlProject(`project_id = "baseref"
 
 [remotes.a]
@@ -1927,10 +1897,9 @@ max_rows = 2
   });
 
   test("rejects a remote project_id that is not a valid 20-letter ref, even with no projectRef requested", async () => {
-    // Go's Config.Validate (config.go:996-1001) checks every [remotes.*].project_id
-    // against refPattern unconditionally on every config load — not only the one
-    // that ends up selected — so this must fail closed before status/stop reach
-    // Docker, exactly like Go, even when the caller never selects a remote.
+    // Every `[remotes.*].project_id` is checked against the ref pattern on every config load,
+    // not only the one that ends up selected, so this must fail closed even when the caller
+    // never selects a remote.
     const cwd = await writeTomlProject(`project_id = "baseref"
 
 [remotes.bad]
@@ -1961,7 +1930,7 @@ enabled = true
 `);
     try {
       const loaded = await runConfigEffect(loadCliConfig(cwd, { projectRef: PREVIEW_REF }));
-      // `legacyPresenceIn` reads `document` to detect optional pointer sections;
+      // `presenceIn` reads `document` to detect optional pointer sections;
       // a remote-introduced `db.ssl_enforcement` must be present there.
       const db = loaded!.document?.db;
       expect(typeof db === "object" && db !== null && "ssl_enforcement" in db).toBe(true);
@@ -2006,14 +1975,8 @@ enabled = true
   });
 
   test("resolves env() on a lowercase-named variable, matching Go's case-agnostic matcher", async () => {
-    // Go's `LoadEnvHook` (`apps/cli-go/pkg/config/decode_hooks.go:11`) is
-    // `^env\((.*)\)$` — it doesn't restrict the captured name's case, so
-    // `project_id = "env(project_id)"` resolves against a same-case env var
-    // in the Go CLI. This isn't specific to `project_id`; any string field
-    // goes through the same pre-decode walk. This case-agnostic matching is
-    // itself one of the four Go-viper-parity behaviors gated by
-    // `goViperCompat` — without it, the strict SCREAMING_SNAKE_CASE matcher
-    // wouldn't match this lowercase name at all.
+    // Env-var matching is case-agnostic when `goViperCompat` is set; without it, the strict
+    // SCREAMING_SNAKE_CASE matcher wouldn't match this lowercase name at all.
     const previous = process.env.project_id;
     process.env.project_id = "lowercase-ref";
     const cwd = await writeTomlProject(`project_id = "env(project_id)"\n`);
@@ -2031,12 +1994,8 @@ enabled = true
   });
 
   test("does not match a remote whose project_id is env(REF) against the resolved ref (Go parity)", async () => {
-    // Go's `loadFromFile` duplicate-check/selection loop reads viper's RAW
-    // string values (`config.go:596-610`) and only calls `c.load(v)` — which
-    // resolves `env(...)` via `LoadEnvHook` — afterward (`config.go:611`,
-    // `decode_hooks.go:13-26`). So a `[remotes.x] project_id = "env(REF)"`
-    // never matches a caller-supplied, already-resolved `REF`: Go compares the
-    // literal `env(REF)` string, not what it resolves to.
+    // A `[remotes.x] project_id = "env(REF)"` never matches a caller-supplied, already-resolved
+    // `REF`: matching compares the literal `env(REF)` string, not what it resolves to.
     const previous = process.env.SUPABASE_REMOTE_ENV_REF_TEST;
     process.env.SUPABASE_REMOTE_ENV_REF_TEST = PREVIEW_REF;
     const cwd = await writeTomlProject(`project_id = "baseref"
@@ -2064,11 +2023,8 @@ max_rows = 999
   });
 
   test("validates a remote's env(REF) project_id format against its resolved value, not the literal", async () => {
-    // Go's `Config.Validate` (`config.go:989-1001`) runs entirely after the
-    // struct decode, by which point `LoadEnvHook` has already resolved
-    // `env(...)` — so it validates the RESOLVED project_id against the
-    // 20-lowercase-letter pattern, not the literal `env(REF)` string (which
-    // would never match the pattern itself).
+    // Format validation runs after `env(...)` resolution, so it validates the resolved
+    // project_id against the pattern, not the literal `env(REF)` string.
     const previous = process.env.SUPABASE_REMOTE_ENV_REF_FORMAT_TEST;
     process.env.SUPABASE_REMOTE_ENV_REF_FORMAT_TEST = PREVIEW_REF;
     const cwd = await writeTomlProject(`project_id = "baseref"
@@ -2116,13 +2072,9 @@ max_rows = "env(SUPABASE_REMOTE_MAX_ROWS_TEST)"
     }
   });
 
-  // Go's `Config.Validate` only checks `remotes.*.project_id` format for
-  // every remote (`config.go:996-1001`, "Since remote config is merged to
-  // base, we only need to validate the project_id field") — every other
-  // business-rule check (`Auth.External.validate()`, etc.) runs exactly once,
-  // against the merged effective config (`config.go:1136-1152`), never
-  // iterated over `c.Remotes[*]`. A non-selected `[remotes.*]` block's own
-  // business-rule violations must not fail the whole config load.
+  // Business-rule checks (`Auth.External.validate()`, etc.) run exactly once, against the
+  // merged effective config, never iterated over every remote — a non-selected `[remotes.*]`
+  // block's own business-rule violations must not fail the whole config load.
   test("loads an unselected remote whose external provider is enabled without a secret", async () => {
     const cwd = await writeTomlProject(
       `project_id = "baseref"
@@ -2135,9 +2087,8 @@ enabled = true
 `,
     );
     try {
-      // No projectRef requested, so [remotes.staging] is never selected/merged —
-      // Go would never business-rule-validate it, even though it decodes fine
-      // structurally.
+      // [remotes.staging] is never selected/merged, so it's never business-rule-validated,
+      // even though it decodes fine structurally.
       const loaded = await runConfigEffect(loadCliConfig(cwd));
       expect(loaded!.appliedRemote).toBeUndefined();
       expect(loaded!.config.remotes.staging?.auth.external.github.enabled).toBe(true);
@@ -2158,9 +2109,9 @@ enabled = true
 `,
     );
     try {
-      // Selecting [remotes.staging] merges it into the effective config, which
-      // Go DOES business-rule-validate (config.go:1136-1152) — a required
-      // `client_id`/`secret` is missing, so this must still fail.
+      // Selecting [remotes.staging] merges it into the effective config, which is
+      // business-rule-validated — a required `client_id`/`secret` is missing, so this must
+      // still fail.
       const exit = await Effect.runPromiseExit(
         loadCliConfig(cwd, { projectRef: STAGING_REF }).pipe(Effect.provide(BunServices.layer)),
       );
@@ -2171,10 +2122,9 @@ enabled = true
   });
 
   test("still fails on a structurally malformed value inside an unselected remote", async () => {
-    // Go's `UnmarshalExact` always structurally decodes every remote
-    // (`config.go:246,749-756`) regardless of selection — only the
-    // merged-config-only business rules are skipped for a non-selected
-    // remote, not type/shape decoding.
+    // Every remote is structurally decoded regardless of selection — only the
+    // merged-config-only business rules are skipped for a non-selected remote, not type/shape
+    // decoding.
     const cwd = await writeTomlProject(
       `${BASE_WITH_REMOTES}
 [remotes.staging.db]
@@ -2457,11 +2407,8 @@ describe("remoteNameForProjectRef / remoteProjectIdEntries", () => {
   });
 
   test("does not match a block whose project_id is still the literal env(REF) form, even when REF resolves to the queried ref", () => {
-    // No interpolation happens inside this function — it compares the RAW
-    // string, mirroring Go's raw-viper selection loop (see
-    // `applyRemoteOverride`'s doc comment in `io.ts`). A block whose
-    // `project_id` is the literal `env(...)` form must never match an
-    // already-resolved ref, even when that's exactly what it would resolve to.
+    // Compares the raw string, not the interpolated value: a block whose `project_id` is the
+    // literal `env(...)` form must never match an already-resolved ref.
     const remotes = {
       staging: { project_id: "env(SUPABASE_REMOTE_REF)" },
     };
@@ -2595,11 +2542,9 @@ describe("writeCliConfigDocumentText", () => {
     }
   });
 
-  // The directory-missing case above fails at the `writeFileString` step, before any temp file
-  // ever exists — so it never actually exercises `Effect.ensuring`'s cleanup removing a real
-  // survivor. Making the destination an existing directory instead lets the temp file get
-  // created successfully, so the RENAME step is what fails (`fs.rename` refuses to replace a
-  // directory with a file), which is the one path that does exercise that cleanup.
+  // The directory-missing case above fails before any temp file exists, so it never exercises
+  // `Effect.ensuring`'s cleanup removing a real survivor. An existing directory as the
+  // destination lets the temp file get created, so the rename step is what fails instead.
   test("fails with a typed CliConfigWriteError when rename fails, and still cleans up the temp file it already created", async () => {
     const { cwd, filePath } = await tempFileTargets();
 
@@ -2666,10 +2611,9 @@ describe("decodeCliConfigDocumentForValidationEffect", () => {
   });
 
   test("does not apply business-rule checks to a [remotes.*] block when no remoteName is given (checks disabled)", async () => {
-    // The SAME `enabled: true` + empty `account_sid`/`message_service_sid` shape that fails at
-    // the root above decodes fine inside a `[remotes.*]` block — `RemotesSchema` decodes with
-    // `disableChecks: true` (mirrors Go, which only applies these business rules to the merged
-    // effective config, never an unselected remote override).
+    // The same `enabled: true` + empty `account_sid`/`message_service_sid` shape that fails at
+    // the root above decodes fine inside a `[remotes.*]` block, which decodes with
+    // `disableChecks: true` since business rules only apply to the merged effective config.
     const document = {
       project_id: "abc123",
       remotes: {
@@ -2690,10 +2634,8 @@ describe("decodeCliConfigDocumentForValidationEffect", () => {
   });
 
   test("resolves env(VAR) from the project's own .env file, not just the ambient process environment", async () => {
-    // Unlike the deleted pure `decodeCliConfigDocumentForValidation` (which only ever resolved
-    // against a caller-supplied env map, never `.env`/`.env.local`), this Effect variant resolves
-    // `env(VAR)` exactly like `loadCliConfigFile` — including a var that ONLY exists in the
-    // project's own `.env` file, never in `process.env`.
+    // Resolves `env(VAR)` exactly like `loadCliConfigFile` — including a var that only exists
+    // in the project's own `.env` file, never in `process.env`.
     const cwd = makeTempProject();
     const path = await runConfigEffect(configTomlPath(cwd));
 
@@ -2718,10 +2660,9 @@ describe("decodeCliConfigDocumentForValidationEffect", () => {
   });
 
   test("leaves an unresolved env(VAR) literal in place rather than failing the field's own required-non-empty check", async () => {
-    // A required STRING field spelled as `env(VAR)` with `VAR` unset decodes as the literal
-    // `env(VAR)` string, matching `loadCliConfigFile`'s own tolerance for an unset var — non-empty,
-    // so it still satisfies a bare `!== undefined && !== ""` required-field check even though it
-    // never actually resolved.
+    // A required string field spelled as `env(VAR)` with `VAR` unset decodes as the literal
+    // `env(VAR)` string, which is non-empty, so it still satisfies a required-field check even
+    // though it never actually resolved.
     const document = {
       project_id: "abc123",
       auth: {

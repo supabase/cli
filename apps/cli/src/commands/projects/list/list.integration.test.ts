@@ -7,21 +7,21 @@ import { Effect, Exit, Option } from "effect";
 
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
-  LEGACY_VALID_REF,
-  buildLegacyTestRuntime,
-  mockLegacyCliSettings,
-  mockLegacyLinkedProjectCacheTracked,
-  mockLegacyPlatformApi,
-  mockLegacyTelemetryStateTracked,
-  useLegacyTempWorkdir,
-} from "../../../../tests/helpers/legacy-mocks.ts";
-import { legacyProjectsList } from "./list.handler.ts";
+  VALID_REF,
+  buildTestRuntime,
+  mockCommandSettings,
+  mockLinkedProjectCacheTracked,
+  mockCommandPlatformApi,
+  mockTelemetryStateTracked,
+  useTempWorkdir,
+} from "../../../../tests/helpers/command-mocks.ts";
+import { projectsList } from "./list.handler.ts";
 
 type Projects = typeof V1ListAllProjectsOutput.Type;
 
 const SAMPLE_PROJECT: Projects[number] = {
-  id: LEGACY_VALID_REF,
-  ref: LEGACY_VALID_REF,
+  id: VALID_REF,
+  ref: VALID_REF,
   organization_id: "org-123",
   organization_slug: "acme",
   name: "alpha",
@@ -44,8 +44,7 @@ const OTHER_PROJECT: Projects[number] = {
   region: "eu-west-1",
 };
 
-// A project whose `id` is the parent-fallback ref used below (CLI-2167
-// follow-up) — distinct from `SAMPLE_PROJECT`/`OTHER_PROJECT`.
+// Distinct fixture for the parent-fallback marker tests below.
 const PARENT_PROJECT: Projects[number] = {
   ...SAMPLE_PROJECT,
   id: "parentprojectrefxxxx",
@@ -54,10 +53,9 @@ const PARENT_PROJECT: Projects[number] = {
   region: "us-west-1",
 };
 
-const tempRoot = useLegacyTempWorkdir("supabase-projects-list-int-");
+const tempRoot = useTempWorkdir("supabase-projects-list-int-");
 
-// Distinct 20-lowercase-letter refs for the parent-fallback marker tests
-// below (CLI-2167 follow-up).
+// Distinct 20-lowercase-letter refs used by the parent-fallback marker tests below.
 const BRANCH_OWN_REF = "branchownrefyyyyyyyy";
 const OTHER_CACHE_REF = "othercacherefzzzzzzz";
 
@@ -95,24 +93,22 @@ interface SetupOpts {
   readonly network?: "fail";
   // When `false`, the linked project ref is unset so no bullet renders.
   readonly linked?: boolean;
-  // Explicit override — takes precedence over `linked` when provided, for
-  // tests that need to seed `SUPABASE_PROJECT_ID` to something other than
-  // the `linked: true` default (CLI-2167 follow-up parent-fallback tests).
+  // Explicit override — takes precedence over `linked` when provided, for tests that seed a
+  // project ref other than the `linked: true` default.
   readonly projectId?: Option.Option<string>;
 }
 
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
-  const api = mockLegacyPlatformApi({
+  const api = mockCommandPlatformApi({
     response: { status: opts.status ?? 200, body: opts.response ?? [SAMPLE_PROJECT] },
     network: opts.network,
   });
-  const cliSettings = mockLegacyCliSettings({
+  const cliSettings = mockCommandSettings({
     workdir: tempRoot.current,
-    projectId:
-      opts.projectId ?? (opts.linked === false ? Option.none() : Option.some(LEGACY_VALID_REF)),
+    projectId: opts.projectId ?? (opts.linked === false ? Option.none() : Option.some(VALID_REF)),
   });
-  const layer = buildLegacyTestRuntime({
+  const layer = buildTestRuntime({
     out,
     api,
     cliSettings,
@@ -123,17 +119,17 @@ function setup(opts: SetupOpts = {}) {
 
 function setupTracked(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
-  const api = mockLegacyPlatformApi({
+  const api = mockCommandPlatformApi({
     response: { status: opts.status ?? 200, body: opts.response ?? [SAMPLE_PROJECT] },
     network: opts.network,
   });
-  const cliSettings = mockLegacyCliSettings({
+  const cliSettings = mockCommandSettings({
     workdir: tempRoot.current,
-    projectId: opts.linked === false ? Option.none() : Option.some(LEGACY_VALID_REF),
+    projectId: opts.linked === false ? Option.none() : Option.some(VALID_REF),
   });
-  const telemetry = mockLegacyTelemetryStateTracked();
-  const cache = mockLegacyLinkedProjectCacheTracked();
-  const layer = buildLegacyTestRuntime({
+  const telemetry = mockTelemetryStateTracked();
+  const cache = mockLinkedProjectCacheTracked();
+  const layer = buildTestRuntime({
     out,
     api,
     cliSettings,
@@ -143,11 +139,11 @@ function setupTracked(opts: SetupOpts = {}) {
   return { layer, out, telemetry, cache };
 }
 
-describe("legacy projects list integration", () => {
+describe("projects list integration", () => {
   it.live("renders a Glamour table with all six columns in text mode", () => {
     const { layer, out } = setup({ response: [SAMPLE_PROJECT, OTHER_PROJECT] });
     return Effect.gen(function* () {
-      yield* legacyProjectsList({});
+      yield* projectsList({});
       expect(out.stdoutText).toContain("LINKED");
       expect(out.stdoutText).toContain("ORG ID");
       expect(out.stdoutText).toContain("REFERENCE ID");
@@ -163,7 +159,7 @@ describe("legacy projects list integration", () => {
   it.live("marks the linked project with a bullet", () => {
     const { layer, out } = setup({ response: [SAMPLE_PROJECT], linked: true });
     return Effect.gen(function* () {
-      yield* legacyProjectsList({});
+      yield* projectsList({});
       expect(out.stdoutText).toContain("●");
     }).pipe(Effect.provide(layer));
   });
@@ -171,7 +167,7 @@ describe("legacy projects list integration", () => {
   it.live("renders no bullet when nothing is linked", () => {
     const { layer, out } = setup({ response: [SAMPLE_PROJECT], linked: false });
     return Effect.gen(function* () {
-      yield* legacyProjectsList({});
+      yield* projectsList({});
       expect(out.stdoutText).not.toContain("●");
     }).pipe(Effect.provide(layer));
   });
@@ -179,7 +175,7 @@ describe("legacy projects list integration", () => {
   it.live("warns on stderr when no project is linked (Go parity)", () => {
     const { layer, out } = setup({ response: [SAMPLE_PROJECT], linked: false });
     return Effect.gen(function* () {
-      yield* legacyProjectsList({});
+      yield* projectsList({});
       expect(out.stderrText).toContain("Cannot find project ref. Have you run supabase link?");
     }).pipe(Effect.provide(layer));
   });
@@ -187,7 +183,7 @@ describe("legacy projects list integration", () => {
   it.live("does not warn on stderr when a project is linked", () => {
     const { layer, out } = setup({ response: [SAMPLE_PROJECT], linked: true });
     return Effect.gen(function* () {
-      yield* legacyProjectsList({});
+      yield* projectsList({});
       expect(out.stderrText).not.toContain("Cannot find project ref");
     }).pipe(Effect.provide(layer));
   });
@@ -203,7 +199,7 @@ describe("legacy projects list integration", () => {
         writeProjectRefFile(workdir, BRANCH_OWN_REF);
         writeLinkedProjectCacheFile(workdir, PARENT_PROJECT.id);
         return Effect.gen(function* () {
-          yield* legacyProjectsList({});
+          yield* projectsList({});
           expect(out.stdoutText).toContain("●");
           expect(out.stdoutText).toContain("parent");
         }).pipe(Effect.provide(layer));
@@ -219,7 +215,7 @@ describe("legacy projects list integration", () => {
       writeProjectRefFile(workdir, BRANCH_OWN_REF);
       writeLinkedProjectCacheFile(workdir, PARENT_PROJECT.id);
       return Effect.gen(function* () {
-        yield* legacyProjectsList({});
+        yield* projectsList({});
         const success = out.messages.find((m) => m.type === "success");
         const projects = success?.data?.projects as ReadonlyArray<{
           id: string;
@@ -237,12 +233,11 @@ describe("legacy projects list integration", () => {
           projectId: Option.none(),
           response: [SAMPLE_PROJECT, PARENT_PROJECT],
         });
-        // Directly linked to SAMPLE_PROJECT (a real row) — the cache pointing
-        // elsewhere must be irrelevant since the exact match short-circuits.
+        // Cache points elsewhere; the exact match on SAMPLE_PROJECT must still win outright.
         writeProjectRefFile(workdir, SAMPLE_PROJECT.id);
         writeLinkedProjectCacheFile(workdir, OTHER_CACHE_REF);
         return Effect.gen(function* () {
-          yield* legacyProjectsList({});
+          yield* projectsList({});
           expect(out.stdoutText).toContain("●");
         }).pipe(Effect.provide(layer));
       },
@@ -252,15 +247,14 @@ describe("legacy projects list integration", () => {
       "no marker when the linked ref matches no row and the parent chain yields nothing usable",
       () => {
         const { layer, out } = setup({
-          // Present but not ref-shaped: `resolveOptional` returns it unvalidated
-          // (so `linkedRef` is Some, matching no row), while the parent chain's
-          // only candidate is this same invalid value — kind "invalid", not
-          // "resolved" — so the fallback also yields nothing.
+          // `resolveOptional` returns this unvalidated ref as Some (matching no row); the
+          // parent chain's only candidate is the same invalid value, so the fallback also
+          // yields nothing.
           projectId: Option.some("not-a-valid-ref"),
           response: [SAMPLE_PROJECT, PARENT_PROJECT],
         });
         return Effect.gen(function* () {
-          yield* legacyProjectsList({});
+          yield* projectsList({});
           expect(out.stdoutText).not.toContain("●");
         }).pipe(Effect.provide(layer));
       },
@@ -270,7 +264,7 @@ describe("legacy projects list integration", () => {
   it.live("emits a success event with { projects } for --output-format json", () => {
     const { layer, out } = setup({ format: "json", response: [SAMPLE_PROJECT], linked: true });
     return Effect.gen(function* () {
-      yield* legacyProjectsList({});
+      yield* projectsList({});
       const success = out.messages.find((m) => m.type === "success");
       expect(success).toBeDefined();
       expect(success?.data).toMatchObject({ projects: [{ linked: true }] });
@@ -280,7 +274,7 @@ describe("legacy projects list integration", () => {
   it.live("emits a success event for --output-format stream-json", () => {
     const { layer, out } = setup({ format: "stream-json", response: [SAMPLE_PROJECT] });
     return Effect.gen(function* () {
-      yield* legacyProjectsList({});
+      yield* projectsList({});
       expect(out.messages.find((m) => m.type === "success")).toBeDefined();
     }).pipe(Effect.provide(layer));
   });
@@ -288,7 +282,7 @@ describe("legacy projects list integration", () => {
   it.live("emits Go-byte-exact indented JSON including `linked` for --output json", () => {
     const { layer, out } = setup({ goOutput: "json", response: [SAMPLE_PROJECT], linked: true });
     return Effect.gen(function* () {
-      yield* legacyProjectsList({});
+      yield* projectsList({});
       expect(out.stdoutText.startsWith("[\n  {\n")).toBe(true);
       expect(out.stdoutText.endsWith("]\n")).toBe(true);
       expect(out.stdoutText).toContain('"linked": true');
@@ -298,7 +292,7 @@ describe("legacy projects list integration", () => {
   it.live("emits a YAML array for --output yaml", () => {
     const { layer, out } = setup({ goOutput: "yaml", response: [SAMPLE_PROJECT] });
     return Effect.gen(function* () {
-      yield* legacyProjectsList({});
+      yield* projectsList({});
       expect(out.stdoutText).toContain("name: alpha");
       expect(out.stdoutText).toContain("linked:");
     }).pipe(Effect.provide(layer));
@@ -307,49 +301,47 @@ describe("legacy projects list integration", () => {
   it.live("wraps the result as { projects = [...] } for --output toml", () => {
     const { layer, out } = setup({ goOutput: "toml", response: [SAMPLE_PROJECT] });
     return Effect.gen(function* () {
-      yield* legacyProjectsList({});
+      yield* projectsList({});
       expect(out.stdoutText).toContain("[[projects]]");
-      // PascalCase field names, embedded fields first, `Linked` last, and
-      // the Database sub-table after the primitives.
       expect(out.stdoutText).toContain('  Name = "alpha"');
       expect(out.stdoutText).toContain("  Linked = true");
       expect(out.stdoutText).toContain("  [projects.Database]");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with LegacyProjectsEnvNotSupportedError for --output env", () => {
+  it.live("fails with ProjectsEnvNotSupportedError for --output env", () => {
     const { layer } = setup({ goOutput: "env", response: [SAMPLE_PROJECT] });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyProjectsList({}));
+      const exit = yield* Effect.exit(projectsList({}));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const json = JSON.stringify(exit.cause);
-        expect(json).toContain("LegacyProjectsEnvNotSupportedError");
+        expect(json).toContain("ProjectsEnvNotSupportedError");
         expect(json).toContain("--output env flag is not supported");
       }
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with LegacyProjectsListNetworkError on transport failure", () => {
+  it.live("fails with ProjectsListNetworkError on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyProjectsList({}));
+      const exit = yield* Effect.exit(projectsList({}));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const json = JSON.stringify(exit.cause);
-        expect(json).toContain("LegacyProjectsListNetworkError");
+        expect(json).toContain("ProjectsListNetworkError");
         expect(json).toContain("failed to list projects");
       }
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with LegacyProjectsListUnexpectedStatusError on HTTP 500", () => {
+  it.live("fails with ProjectsListUnexpectedStatusError on HTTP 500", () => {
     const { layer } = setup({ status: 500, response: [] });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyProjectsList({}));
+      const exit = yield* Effect.exit(projectsList({}));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyProjectsListUnexpectedStatusError");
+        expect(JSON.stringify(exit.cause)).toContain("ProjectsListUnexpectedStatusError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -357,21 +349,21 @@ describe("legacy projects list integration", () => {
   it.live("fails with an unexpected-status error when the body is not an array", () => {
     const { layer } = setup({ response: {} as unknown as Projects });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyProjectsList({}));
+      const exit = yield* Effect.exit(projectsList({}));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyProjectsListUnexpectedStatusError");
+        expect(JSON.stringify(exit.cause)).toContain("ProjectsListUnexpectedStatusError");
       }
     }).pipe(Effect.provide(layer));
   });
 
   it.live("tolerates placeholder/short refs in the response (lenient parse)", () => {
-    // The typed client rejects refs shorter than 20 chars; the raw-HTTP path
-    // must render them verbatim (cli-e2e fixtures embed `__PROJECT_REF__`).
+    // The typed client rejects refs under 20 chars; the raw-HTTP path renders them verbatim
+    // so placeholder fixtures still work.
     const placeholder = { ...SAMPLE_PROJECT, id: "__PROJECT_REF__", ref: "__PROJECT_REF__" };
     const { layer, out } = setup({ response: [placeholder as unknown as Projects[number]] });
     return Effect.gen(function* () {
-      yield* legacyProjectsList({});
+      yield* projectsList({});
       expect(out.stdoutText).toContain("__PROJECT_REF__");
     }).pipe(Effect.provide(layer));
   });
@@ -379,7 +371,7 @@ describe("legacy projects list integration", () => {
   it.live("writes linked-project cache + telemetry state on success", () => {
     const { layer, telemetry, cache } = setupTracked({ linked: true });
     return Effect.gen(function* () {
-      yield* legacyProjectsList({});
+      yield* projectsList({});
       expect(telemetry.flushed).toBe(true);
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -388,7 +380,7 @@ describe("legacy projects list integration", () => {
   it.live("flushes telemetry but skips the cache write when nothing is linked", () => {
     const { layer, telemetry, cache } = setupTracked({ linked: false });
     return Effect.gen(function* () {
-      yield* legacyProjectsList({});
+      yield* projectsList({});
       expect(telemetry.flushed).toBe(true);
       expect(cache.cached).toBe(false);
     }).pipe(Effect.provide(layer));

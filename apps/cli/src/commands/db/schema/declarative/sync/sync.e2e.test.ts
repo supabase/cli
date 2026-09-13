@@ -4,7 +4,7 @@ import { afterAll, beforeAll, expect, test } from "vitest";
 
 import { describe } from "vitest";
 import {
-  makeTempLegacyStackProject,
+  makeTempCliStackProject,
   overrideStackPorts,
   requireCliSuccess,
   runSupabase,
@@ -45,14 +45,13 @@ function migrationFiles(projectDir: string): ReadonlyArray<string> {
 }
 
 describe("db schema declarative sync (e2e)", () => {
-  let project: Awaited<ReturnType<typeof makeTempLegacyStackProject>> | undefined;
+  let project: Awaited<ReturnType<typeof makeTempCliStackProject>> | undefined;
 
   beforeAll(async () => {
-    project = await makeTempLegacyStackProject("sb-pgdelta-next-e2e-");
+    project = await makeTempCliStackProject("sb-pgdelta-next-e2e-");
     const projectDir = project.dir;
 
     const init = await runSupabase(["init"], {
-      entrypoint: "legacy",
       cwd: projectDir,
       exitTimeoutMs: CLI_COMMAND_TIMEOUT_MS,
     });
@@ -107,7 +106,7 @@ describe("db schema declarative sync (e2e)", () => {
         "--exclude",
         "storage-api",
       ],
-      { entrypoint: "legacy", cwd: projectDir, exitTimeoutMs: STACK_START_TIMEOUT_MS },
+      { cwd: projectDir, exitTimeoutMs: STACK_START_TIMEOUT_MS },
     );
     requireCliSuccess(start, "start setup");
   }, BEFORE_ALL_TIMEOUT_MS);
@@ -136,7 +135,6 @@ describe("db schema declarative sync (e2e)", () => {
           "--experimental",
         ],
         {
-          entrypoint: "legacy",
           cwd: projectDir,
           exitTimeoutMs: SCENARIO_COMMAND_TIMEOUT_MS,
         },
@@ -157,7 +155,6 @@ describe("db schema declarative sync (e2e)", () => {
       );
 
       const reset = await runSupabase(["db", "reset", "--local", "--no-seed"], {
-        entrypoint: "legacy",
         cwd: projectDir,
         exitTimeoutMs: SCENARIO_COMMAND_TIMEOUT_MS,
       });
@@ -166,7 +163,6 @@ describe("db schema declarative sync (e2e)", () => {
       const converged = await runSupabase(
         ["db", "schema", "declarative", "sync", "--no-apply", "--experimental"],
         {
-          entrypoint: "legacy",
           cwd: projectDir,
           exitTimeoutMs: SCENARIO_COMMAND_TIMEOUT_MS,
         },
@@ -174,15 +170,13 @@ describe("db schema declarative sync (e2e)", () => {
       expect(converged.exitCode, commandFailure(converged)).toBe(0);
       expect(`${converged.stdout}${converged.stderr}`).toContain("No schema changes found");
 
-      // Extension-managed objects on the converged tree (CLI-2282). The global
-      // e2e afterEach tears the stack project down after every test, so this
-      // continues in the same test rather than a second one.
+      // Extension-managed objects on the converged tree. The stack teardown after every test
+      // means this continues in the same test rather than a second one.
       const jobsPath = path.join(projectDir, "supabase", "schemas", "jobs.sql");
       const runSync = (name: string) =>
         runSupabase(
           ["db", "schema", "declarative", "sync", "--no-apply", "--name", name, "--experimental"],
           {
-            entrypoint: "legacy",
             cwd: projectDir,
             exitTimeoutMs: SCENARIO_COMMAND_TIMEOUT_MS,
           },
@@ -218,7 +212,7 @@ describe("db schema declarative sync (e2e)", () => {
       expect(added.sql).toMatch(/cron\.schedule(?:_in_database)?\('nightly_cleanup'/);
       expect(added.sql).toContain("pgmq.create('emails')");
 
-      // Rename the job and drop the queue: previously refused as a legacy export.
+      // Rename the job and drop the queue — this must not be refused as a legacy export.
       writeFileSync(
         jobsPath,
         "select cron.schedule('weekly_cleanup', '0 3 * * 0', $$delete from public.disposable_note$$);\n",

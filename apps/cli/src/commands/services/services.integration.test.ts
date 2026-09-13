@@ -7,11 +7,11 @@ import { CliOutput, Command } from "effect/unstable/cli";
 import { Stdio } from "effect";
 import { Cause, Effect, Exit, Layer, Option, Redacted } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
-import { LegacyCredentials } from "../../auth/legacy-credentials.service.ts";
-import { LegacyCliSettings } from "../../config/legacy-cli-settings.service.ts";
-import { INVALID_PROJECT_REF_MESSAGE } from "../../config/legacy-project-ref.service.ts";
-import { LegacyLinkedProjectCache } from "../../telemetry/legacy-linked-project-cache.service.ts";
-import { LEGACY_GLOBAL_FLAGS, LegacyOutputFlag } from "../../shared/legacy/global-flags.ts";
+import { CommandCredentials } from "../../auth/command-credentials.service.ts";
+import { CommandSettings } from "../../config/command-settings.service.ts";
+import { INVALID_PROJECT_REF_MESSAGE } from "../../config/project-ref.service.ts";
+import { LinkedProjectCache } from "../../telemetry/linked-project-cache.service.ts";
+import { GLOBAL_FLAGS, OutputFlag } from "../../command-internal/global-flags.ts";
 import {
   mockAnalytics,
   mockOutput,
@@ -19,17 +19,22 @@ import {
   mockTty,
   processEnvLayer,
 } from "../../../tests/helpers/mocks.ts";
-import { mockLegacyTelemetryStateTracked } from "../../../tests/helpers/legacy-mocks.ts";
+import { mockTelemetryStateTracked, useTempWorkdir } from "../../../tests/helpers/command-mocks.ts";
 import { dockerfileServiceImageRaw } from "../../shared/services/dockerfile-images.ts";
 import { postgresImageForDbMajorVersion } from "../../shared/services/services.shared.ts";
 import { textCliOutputFormatter } from "../../shared/output/text-formatter.ts";
 import { processControlLayer } from "../../shared/runtime/process-control.layer.ts";
 import { TelemetryRuntime } from "../../shared/telemetry/runtime.service.ts";
 import { makeTelemetryIdentity } from "../../shared/telemetry/identity.ts";
-import { legacyServicesCommand } from "./services.command.ts";
-import { legacyServices } from "./services.handler.ts";
+import { servicesCommand } from "./services.command.ts";
+import { services } from "./services.handler.ts";
 
 const LOCAL_POSTGRES_VERSION = dockerfileServiceImageRaw("pg").split(":")[1] ?? "";
+
+// Isolated default workdir: `process.cwd()` would read the developer's real
+// `apps/cli/supabase/.temp/` state (e.g. the pinned `postgres-version` written
+// by a local `supabase start`), making these tests machine-dependent.
+const defaultWorkdir = useTempWorkdir("supabase-services-");
 
 function setup(
   opts: {
@@ -44,7 +49,7 @@ function setup(
     format: opts.format ?? "text",
     interactive: (opts.format ?? "text") === "text",
   });
-  const telemetry = mockLegacyTelemetryStateTracked();
+  const telemetry = mockTelemetryStateTracked();
   const cachedRefs: string[] = [];
 
   return {
@@ -56,10 +61,10 @@ function setup(
       FetchHttpClient.layer,
       out.layer,
       telemetry.layer,
-      Layer.succeed(LegacyOutputFlag, opts.goOutput ?? Option.none()),
+      Layer.succeed(OutputFlag, opts.goOutput ?? Option.none()),
       Layer.succeed(
-        LegacyCliSettings,
-        LegacyCliSettings.of({
+        CommandSettings,
+        CommandSettings.of({
           profile: "supabase",
           apiUrl: opts.apiUrl ?? "https://api.supabase.com",
           projectHost: "supabase.co",
@@ -67,17 +72,18 @@ function setup(
           dashboardUrl: "https://supabase.com/dashboard",
           accessToken: Option.none(),
           projectId: Option.none(),
-          workdir: opts.workdir ?? process.cwd(),
+          workdir: opts.workdir ?? defaultWorkdir.current,
+          explicitWorkdir: false,
           userAgent: "SupabaseCLI/test",
         }),
       ),
       Layer.succeed(
-        LegacyCredentials,
-        LegacyCredentials.of(legacyCredentialsMock(opts.accessToken)),
+        CommandCredentials,
+        CommandCredentials.of(commandCredentialsMock(opts.accessToken)),
       ),
       Layer.succeed(
-        LegacyLinkedProjectCache,
-        LegacyLinkedProjectCache.of({
+        LinkedProjectCache,
+        LinkedProjectCache.of({
           cache: (ref) =>
             Effect.sync(() => {
               cachedRefs.push(ref);
@@ -88,7 +94,7 @@ function setup(
   };
 }
 
-function legacyCredentialsMock(accessToken?: string) {
+function commandCredentialsMock(accessToken?: string) {
   return {
     getAccessToken: Effect.succeed(
       accessToken === undefined
@@ -102,9 +108,9 @@ function legacyCredentialsMock(accessToken?: string) {
   };
 }
 
-const legacyTestRoot = Command.make("supabase").pipe(
-  Command.withSubcommands([legacyServicesCommand]),
-  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
+const testRoot = Command.make("supabase").pipe(
+  Command.withSubcommands([servicesCommand]),
+  Command.withGlobalFlags(GLOBAL_FLAGS),
 );
 
 function makeProjectWithConfig(config: string): string {
@@ -152,7 +158,7 @@ function expectFailureTag(exit: Exit.Exit<unknown, unknown>, tag: string) {
   }
 }
 
-describe("legacy services", () => {
+describe("services", () => {
   it.effect("runs tokenless local service listing through command wiring", () =>
     Effect.tryPromise({
       try: async () => {
@@ -191,7 +197,7 @@ describe("legacy services", () => {
         );
 
         await Effect.runPromise(
-          Command.runWith(legacyTestRoot, { version: "0.0.0-test" })(args).pipe(
+          Command.runWith(testRoot, { version: "0.0.0-test" })(args).pipe(
             Effect.provide(layer),
           ) as Effect.Effect<void>,
         );
@@ -208,7 +214,7 @@ describe("legacy services", () => {
     const { layer, out } = setup();
 
     return Effect.gen(function* () {
-      yield* legacyServices({}).pipe(Effect.provide(layer));
+      yield* services({}).pipe(Effect.provide(layer));
 
       expect(out.stdoutText).toContain("supabase/postgres");
       expect(out.stdoutText).toContain("supabase/gotrue");
@@ -221,7 +227,7 @@ describe("legacy services", () => {
     const { layer, out } = setup({ goOutput: Option.some("json") });
 
     return Effect.gen(function* () {
-      yield* legacyServices({}).pipe(Effect.provide(layer));
+      yield* services({}).pipe(Effect.provide(layer));
 
       const rows = JSON.parse(out.stdoutText) as Array<{
         name: string;
@@ -241,7 +247,7 @@ describe("legacy services", () => {
     const { layer, out } = setup({ goOutput: Option.some("json"), workdir });
 
     return Effect.gen(function* () {
-      yield* legacyServices({}).pipe(Effect.provide(layer));
+      yield* services({}).pipe(Effect.provide(layer));
 
       const rows = JSON.parse(out.stdoutText) as Array<{
         name: string;
@@ -265,7 +271,7 @@ describe("legacy services", () => {
     const { layer, out } = setup({ goOutput: Option.some("json"), workdir });
 
     return Effect.gen(function* () {
-      yield* legacyServices({}).pipe(Effect.provide(layer));
+      yield* services({}).pipe(Effect.provide(layer));
 
       const rows = JSON.parse(out.stdoutText) as Array<{
         name: string;
@@ -296,7 +302,7 @@ major_version = 15
     const { layer, out } = setup({ goOutput: Option.some("json"), workdir });
 
     return Effect.gen(function* () {
-      yield* legacyServices({}).pipe(Effect.provide(layer));
+      yield* services({}).pipe(Effect.provide(layer));
 
       const rows = JSON.parse(out.stdoutText) as Array<{
         name: string;
@@ -318,7 +324,7 @@ major_version = 15
     const { layer, out } = setup({ workdir });
 
     return Effect.gen(function* () {
-      yield* legacyServices({}).pipe(Effect.provide(layer));
+      yield* services({}).pipe(Effect.provide(layer));
 
       expect(out.stderrText).toContain(INVALID_PROJECT_REF_MESSAGE);
       expect(out.stdoutText).toContain("supabase/postgres");
@@ -334,7 +340,7 @@ major_version = 15
     const { layer, out } = setup({ workdir, accessToken: "sbp_test-token" });
 
     return Effect.gen(function* () {
-      yield* legacyServices({}).pipe(Effect.provide(layer));
+      yield* services({}).pipe(Effect.provide(layer));
 
       expect(out.stderrText).toContain(INVALID_PROJECT_REF_MESSAGE);
       expect(out.stdoutText).toContain("supabase/postgres");
@@ -369,12 +375,9 @@ major_version = 15
         }
 
         if (url.pathname === "/v1/projects/abcdefghijklmnopqrst/api-keys") {
-          // Deliberately no service-role key: this test only needs to prove the
-          // handler wires the fetch+merge branch through, not re-test
-          // `fetchLinkedServiceVersions`'s own tenant-probe logic (already
-          // covered in services.shared.unit.test.ts). Omitting the
-          // service-role key keeps this test free of a second, tenant-gateway
-          // mock without weakening the assertion below.
+          // No service-role key: this test only proves the handler wires the
+          // fetch+merge branch through, not `fetchLinkedServiceVersions`'s own
+          // tenant-probe logic (covered in services.shared.unit.test.ts).
           return Response.json([
             {
               name: "anon",
@@ -398,7 +401,7 @@ major_version = 15
     });
 
     return Effect.gen(function* () {
-      yield* legacyServices({}).pipe(Effect.provide(layer));
+      yield* services({}).pipe(Effect.provide(layer));
 
       expect(out.stderrText).not.toContain(INVALID_PROJECT_REF_MESSAGE);
       const rows = JSON.parse(out.stdoutText) as Array<{
@@ -426,7 +429,7 @@ major_version = 15
     const { layer, out } = setup({ goOutput: Option.some("json"), workdir });
 
     return Effect.gen(function* () {
-      yield* legacyServices({}).pipe(Effect.provide(layer));
+      yield* services({}).pipe(Effect.provide(layer));
 
       const rows = JSON.parse(out.stdoutText) as Array<{
         name: string;
@@ -449,7 +452,7 @@ major_version = 15
     const { layer, out } = setup({ goOutput: Option.some("json"), workdir });
 
     return Effect.gen(function* () {
-      yield* legacyServices({}).pipe(Effect.provide(layer));
+      yield* services({}).pipe(Effect.provide(layer));
 
       const rows = JSON.parse(out.stdoutText) as Array<{
         name: string;
@@ -471,7 +474,7 @@ major_version = 15
     const { layer, out } = setup({ workdir });
 
     return Effect.gen(function* () {
-      yield* legacyServices({}).pipe(Effect.provide(layer));
+      yield* services({}).pipe(Effect.provide(layer));
 
       expect(out.stdoutText).toContain("supabase/postgres");
       expect(out.stdoutText).not.toContain("v9.9.9");
@@ -480,12 +483,12 @@ major_version = 15
   });
 
   it.live("emits structured JSON for --output pretty combined with --output-format json", () => {
-    // Regression guard (CLI-1546): a Go `--output pretty` must defer to the TS
-    // `--output-format json` flag instead of forcing the human-readable table.
+    // --output pretty defers to --output-format json instead of forcing the
+    // human-readable table.
     const { layer, out } = setup({ format: "json", goOutput: Option.some("pretty") });
 
     return Effect.gen(function* () {
-      yield* legacyServices({}).pipe(Effect.provide(layer));
+      yield* services({}).pipe(Effect.provide(layer));
 
       const success = out.messages.find((message) => message.type === "success");
       expect(success?.data).toMatchObject({
@@ -503,7 +506,7 @@ major_version = 15
     const { layer, out } = setup({ format: "stream-json" });
 
     return Effect.gen(function* () {
-      yield* legacyServices({}).pipe(Effect.provide(layer));
+      yield* services({}).pipe(Effect.provide(layer));
 
       const success = out.messages.find((message) => message.type === "success");
       expect(success?.data).toMatchObject({
@@ -521,11 +524,11 @@ major_version = 15
     const { layer, out } = setup({ goOutput: Option.some("toml") });
 
     return Effect.gen(function* () {
-      yield* legacyServices({}).pipe(Effect.provide(layer));
+      yield* services({}).pipe(Effect.provide(layer));
 
       expect(out.stdoutText).toContain("[[services]]");
       // The hand-written imageVersion struct emits PascalCase field names in
-      // declaration order (Name, Local, Remote) with 2-space indent (CLI-1975).
+      // declaration order (Name, Local, Remote) with 2-space indent.
       expect(out.stdoutText).toContain('  Name = "supabase/postgres"');
     });
   });
@@ -534,7 +537,7 @@ major_version = 15
     const { layer, out } = setup({ goOutput: Option.some("yaml") });
 
     return Effect.gen(function* () {
-      yield* legacyServices({}).pipe(Effect.provide(layer));
+      yield* services({}).pipe(Effect.provide(layer));
 
       expect(out.stdoutText).toContain("- name: supabase/postgres");
       expect(out.stdoutText).toContain(`local: ${LOCAL_POSTGRES_VERSION}`);
@@ -545,20 +548,20 @@ major_version = 15
     const { layer } = setup({ goOutput: Option.some("env") });
 
     return Effect.gen(function* () {
-      const exit = yield* legacyServices({}).pipe(Effect.provide(layer), Effect.exit);
-      expectFailureTag(exit, "LegacyServicesEnvNotSupportedError");
+      const exit = yield* services({}).pipe(Effect.provide(layer), Effect.exit);
+      expectFailureTag(exit, "ServicesEnvNotSupportedError");
     });
   });
 
   it.live("warns to stderr when the project-ref file exists but cannot be read", () => {
-    // A directory at the ref path makes `exists()` true but `readFileString()` fail
-    // (EISDIR), exercising the READ-error branch distinct from "file absent".
+    // A directory at the ref path makes `exists()` true but `readFileString()`
+    // fail (EISDIR), exercising the read-error branch distinct from "file absent".
     const workdir = mkdtempSync(join(tmpdir(), "supabase-services-"));
     mkdirSync(join(workdir, "supabase", ".temp", "project-ref"), { recursive: true });
     const { layer, out } = setup({ workdir });
 
     return Effect.gen(function* () {
-      yield* legacyServices({}).pipe(Effect.provide(layer));
+      yield* services({}).pipe(Effect.provide(layer));
 
       expect(out.stderrText).toContain("failed to load project ref: ");
       expect(out.stdoutText).toContain("supabase/postgres");
@@ -569,7 +572,7 @@ major_version = 15
     const { layer, telemetry } = setup();
 
     return Effect.gen(function* () {
-      yield* legacyServices({}).pipe(Effect.provide(layer));
+      yield* services({}).pipe(Effect.provide(layer));
       expect(telemetry.flushed).toBe(true);
     });
   });

@@ -3,24 +3,21 @@ import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { withJsonErrorHandling } from "../../../../../shared/output/json-error-handling.ts";
-import { legacyParseSchemaFlags } from "../../../../../command-internal/legacy-schema-flags.ts";
-import { withLegacyCommandInstrumentation } from "../../../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyDbSchemaDeclarativeSharedBase } from "../declarative.shared.ts";
-import { legacyDbSchemaDeclarativeSync } from "./sync.handler.ts";
-import { legacyDbSchemaDeclarativeSyncRuntimeLayer } from "./sync.layers.ts";
+import { parseSchemaFlags } from "../../../../../command-internal/schema-flags.ts";
+import { withCommandTelemetry } from "../../../../../telemetry/command-telemetry.ts";
+import { dbSchemaDeclarativeSharedBase } from "../declarative.shared.ts";
+import { dbSchemaDeclarativeSync } from "./sync.handler.ts";
+import { dbSchemaDeclarativeSyncRuntimeLayer } from "./sync.layers.ts";
 
 const config = {
   schema: Flag.string("schema").pipe(
     Flag.withAlias("s"),
     Flag.withDescription("Comma separated list of schema to include."),
     Flag.atLeast(0),
-    // Go registers `--schema` as a cobra `StringSliceVarP`
-    // (`apps/cli-go/cmd/db_schema_declarative.go:484`, deleted in CLI-1970;
-    // last present at commit 7b469f5b3), which CSV-splits each
-    // occurrence so `-s public,auth` includes the two schemas separately. Mirror
-    // the `gen types` / `db lint` parsing so quoted commas are handled the same way.
+    // CSV-splits each occurrence so `-s public,auth` includes the two schemas separately, same
+    // as `gen types`/`db lint`'s quoted-comma parsing.
     Flag.mapTryCatch(
-      (rawValues) => legacyParseSchemaFlags(rawValues),
+      (rawValues) => parseSchemaFlags(rawValues),
       (err) => (err instanceof Error ? err.message : String(err)),
     ),
   ),
@@ -33,10 +30,8 @@ const config = {
     Flag.withDescription("Name for the generated migration file."),
     Flag.optional,
   ),
-  // cobra's `MarkFlagsMutuallyExclusive("apply", "no-apply")` keys off `flag.Changed`,
-  // not the value (`cmd/db_schema_declarative.go:561`), so model presence with `Option`
-  // so `--apply=false --no-apply` still trips the conflict. The apply decision below
-  // reads the resolved value via `Option.getOrElse`.
+  // Mutually exclusive with `--no-apply`, keyed off presence not value, so model with `Option`
+  // so `--apply=false --no-apply` still trips the conflict.
   apply: Flag.boolean("apply").pipe(
     Flag.withDescription("Apply the generated migration to the local database without prompting."),
     Flag.optional,
@@ -51,12 +46,12 @@ const config = {
 
 // `--no-cache` is a shared flag on the `declarative` group (read from the parent),
 // so the handler input merges it in alongside the leaf's own flags.
-export type LegacyDbSchemaDeclarativeSyncFlags = CliCommand.Command.Config.Infer<typeof config> & {
+export type DbSchemaDeclarativeSyncFlags = CliCommand.Command.Config.Infer<typeof config> & {
   readonly noCache: boolean;
   readonly strictCoverage: boolean;
 };
 
-export const legacyDbSchemaDeclarativeSyncCommand = Command.make("sync", config).pipe(
+export const dbSchemaDeclarativeSyncCommand = Command.make("sync", config).pipe(
   Command.withDescription(
     "Compares the supabase/migrations baseline with the complete declarative schema tree and writes the difference as migration files. When a legacy export omits known implicit extensions, interactive sync can add declarations and re-plan before writing. Use --no-apply for non-interactive generation without changing the local database; --apply or global --yes applies locally and updates local migration history.",
   ),
@@ -64,14 +59,14 @@ export const legacyDbSchemaDeclarativeSyncCommand = Command.make("sync", config)
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       // `--no-cache` is shared on the parent group; read the resolved value there.
-      const shared = yield* legacyDbSchemaDeclarativeSharedBase;
-      const merged: LegacyDbSchemaDeclarativeSyncFlags = {
+      const shared = yield* dbSchemaDeclarativeSharedBase;
+      const merged: DbSchemaDeclarativeSyncFlags = {
         ...flags,
         noCache: shared.noCache,
         strictCoverage: shared.strictCoverage,
       };
-      return yield* legacyDbSchemaDeclarativeSync(merged).pipe(
-        withLegacyCommandInstrumentation({
+      return yield* dbSchemaDeclarativeSync(merged).pipe(
+        withCommandTelemetry({
           flags: {
             "no-cache": merged.noCache,
             "strict-coverage": merged.strictCoverage,
@@ -81,15 +76,13 @@ export const legacyDbSchemaDeclarativeSyncCommand = Command.make("sync", config)
             apply: merged.apply,
             "no-apply": merged.noApply,
           },
-          // Go registers `--schema`/`-s` (StringSliceVarP) and `--file`/`-f`
-          // (StringVarP) (`cmd/db_schema_declarative.go:484-485`); telemetry reports
-          // changed flags by canonical `flag.Name` via `pflag.Visit`, so map the
-          // shorthands so `sync -s public -f out.sql` logs `schema`/`file`.
+          // Telemetry reports changed flags by canonical name, so map the shorthands: `sync
+          // -s public -f out.sql` must log `schema`/`file`.
           aliases: { s: "schema", f: "file" },
         }),
         withJsonErrorHandling,
       );
     }),
   ),
-  Command.provide(legacyDbSchemaDeclarativeSyncRuntimeLayer),
+  Command.provide(dbSchemaDeclarativeSyncRuntimeLayer),
 );

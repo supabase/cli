@@ -7,15 +7,15 @@ import { Browser } from "../../shared/runtime/browser.service.ts";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import { TelemetryRuntime } from "../../shared/telemetry/runtime.service.ts";
 import { makeTelemetryIdentity } from "../../shared/telemetry/identity.ts";
-import { legacyIssueBug, legacyIssueDocs, legacyIssueFeature } from "./issue.handler.ts";
+import { issueBug, issueDocs, issueFeature } from "./issue.handler.ts";
 
-type LegacyIssueOutputMessage = {
+type IssueOutputMessage = {
   readonly type: "info" | "success";
   readonly message: string;
   readonly data?: Record<string, unknown>;
 };
 
-function legacyIssueProcessEnvLayer(values: Readonly<Record<string, string | undefined>> = {}) {
+function issueProcessEnvLayer(values: Readonly<Record<string, string | undefined>> = {}) {
   return Layer.effectDiscard(
     Effect.acquireRelease(
       Effect.sync(() => {
@@ -41,8 +41,8 @@ function legacyIssueProcessEnvLayer(values: Readonly<Record<string, string | und
   );
 }
 
-function legacyIssueMockOutput(opts: { readonly format?: OutputFormat } = {}) {
-  const messages: LegacyIssueOutputMessage[] = [];
+function issueMockOutput(opts: { readonly format?: OutputFormat } = {}) {
+  const messages: IssueOutputMessage[] = [];
   const rawChunks: string[] = [];
   return {
     layer: Layer.succeed(Output, {
@@ -79,6 +79,7 @@ function legacyIssueMockOutput(opts: { readonly format?: OutputFormat } = {}) {
           message: () => Effect.void,
           stop: () => Effect.void,
         }),
+      result: () => Effect.void,
       success: (message: string, data?: Record<string, unknown>) =>
         Effect.sync(() => {
           messages.push({ type: "success", message, data });
@@ -100,7 +101,7 @@ function legacyIssueMockOutput(opts: { readonly format?: OutputFormat } = {}) {
   };
 }
 
-function legacyIssueCaptureBrowser() {
+function issueCaptureBrowser() {
   const openedUrls: string[] = [];
   return {
     layer: Layer.succeed(Browser, {
@@ -113,18 +114,18 @@ function legacyIssueCaptureBrowser() {
   };
 }
 
-function legacyIssueParams(url: string) {
+function issueParams(url: string) {
   return new URL(url).searchParams;
 }
 
-function legacyIssueSetup(
+function issueSetup(
   opts: {
     readonly env?: Record<string, string>;
     readonly execPath?: string;
   } = {},
 ) {
-  const out = legacyIssueMockOutput();
-  const browser = legacyIssueCaptureBrowser();
+  const out = issueMockOutput();
+  const browser = issueCaptureBrowser();
   const runtimeInfo = Layer.succeed(RuntimeInfo, {
     cwd: "/test/project",
     platform: "darwin",
@@ -156,17 +157,17 @@ function legacyIssueSetup(
     browser.layer,
     runtimeInfo,
     telemetryRuntime,
-    legacyIssueProcessEnvLayer(opts.env ?? {}),
+    issueProcessEnvLayer(opts.env ?? {}),
   );
   return { layer, out, browser };
 }
 
-describe("legacy issue", () => {
+describe("issue", () => {
   it.live("opens bug form with runtime fields and user-provided context", () => {
-    const { layer, out, browser } = legacyIssueSetup();
+    const { layer, out, browser } = issueSetup();
 
     return Effect.gen(function* () {
-      yield* legacyIssueBug({
+      yield* issueBug({
         area: Option.some("Local development"),
         command: Option.some("supabase start"),
         actualOutput: Option.some("database failed to start"),
@@ -179,7 +180,7 @@ describe("legacy issue", () => {
       });
 
       expect(browser.openedUrls).toHaveLength(1);
-      const params = legacyIssueParams(browser.openedUrls[0]!);
+      const params = issueParams(browser.openedUrls[0]!);
       expect(params.get("template")).toBe("bug-report.yml");
       expect(params.get("affected-area")).toBe("Local development");
       expect(params.get("cli-version")).toBe("1.2.3-test");
@@ -197,12 +198,12 @@ describe("legacy issue", () => {
   });
 
   it.live("prints the bug URL without opening a browser when requested", () => {
-    const { layer, out, browser } = legacyIssueSetup({
+    const { layer, out, browser } = issueSetup({
       env: { SUPABASE_INSTALL_METHOD: "asdf" },
     });
 
     return Effect.gen(function* () {
-      yield* legacyIssueBug({
+      yield* issueBug({
         area: Option.none(),
         command: Option.none(),
         actualOutput: Option.none(),
@@ -215,7 +216,7 @@ describe("legacy issue", () => {
       });
 
       expect(browser.openedUrls).toEqual([]);
-      const params = legacyIssueParams(out.stdoutText.trim());
+      const params = issueParams(out.stdoutText.trim());
       expect(params.get("install-method")).toBe("Other");
       expect(out.messages).toContainEqual(
         expect.objectContaining({ type: "info", message: "GitHub issue form URL:" }),
@@ -224,10 +225,10 @@ describe("legacy issue", () => {
   });
 
   it.live("opens feature form with matching issue form field IDs", () => {
-    const { layer, browser } = legacyIssueSetup();
+    const { layer, browser } = issueSetup();
 
     return Effect.gen(function* () {
-      yield* legacyIssueFeature({
+      yield* issueFeature({
         existingIssues: true,
         area: Option.some("Auth"),
         problem: Option.some("I need to rotate credentials"),
@@ -237,7 +238,7 @@ describe("legacy issue", () => {
         noBrowser: false,
       });
 
-      const params = legacyIssueParams(browser.openedUrls[0]!);
+      const params = issueParams(browser.openedUrls[0]!);
       expect(params.get("template")).toBe("feature-request.yml");
       expect(params.get("existing-issues")).toBe("I have searched the existing issues.");
       expect(params.get("affected-area")).toBe("Auth");
@@ -248,10 +249,10 @@ describe("legacy issue", () => {
   });
 
   it.live("opens docs form with matching issue form field IDs", () => {
-    const { layer, browser } = legacyIssueSetup();
+    const { layer, browser } = issueSetup();
 
     return Effect.gen(function* () {
-      yield* legacyIssueDocs({
+      yield* issueDocs({
         link: Option.some("https://supabase.com/docs/guides/cli"),
         issueType: Option.some("Incorrect documentation"),
         problem: Option.some("The output example is stale"),
@@ -260,7 +261,7 @@ describe("legacy issue", () => {
         noBrowser: false,
       });
 
-      const params = legacyIssueParams(browser.openedUrls[0]!);
+      const params = issueParams(browser.openedUrls[0]!);
       expect(params.get("template")).toBe("docs.yml");
       expect(params.get("link")).toBe("https://supabase.com/docs/guides/cli");
       expect(params.get("issue-type")).toBe("Incorrect documentation");
@@ -272,7 +273,7 @@ describe("legacy issue", () => {
 
   it("truncates long fields before encoding the issue URL", () => {
     const longOutput = "x".repeat(2_000);
-    const params = legacyIssueParams(
+    const params = issueParams(
       buildIssueUrl({
         template: "bug-report.yml",
         fields: {

@@ -1,0 +1,60 @@
+import type { Path } from "effect";
+
+import { splitAndTrim } from "./sql-split.ts";
+
+export type MigrationTransactionMode = "transactional" | "none";
+
+export interface ParsedMigrationContent {
+  readonly statements: ReadonlyArray<string>;
+  readonly transactionMode: MigrationTransactionMode;
+}
+
+const PG_DELTA_NO_TRANSACTION_DIRECTIVE = "-- pg-delta: transaction=false";
+
+/**
+ * Parses the durable execution metadata and SQL statements in a migration file.
+ * Pg-delta writes its no-transaction directive as the first line because migration
+ * apply commands only retain the generated file, not the in-memory plan metadata.
+ * The exact directive may follow a UTF-8 BOM and may end with LF or CRLF. Marker-like
+ * comments anywhere else remain ordinary SQL comments and preserve the established
+ * transactional default.
+ */
+export function parseMigrationContent(content: string): ParsedMigrationContent {
+  const withoutBom = content.charCodeAt(0) === 0xfeff ? content.slice(1) : content;
+  const firstNewline = withoutBom.indexOf("\n");
+  const rawFirstLine = firstNewline < 0 ? withoutBom : withoutBom.slice(0, firstNewline);
+  const firstLine = rawFirstLine.endsWith("\r") ? rawFirstLine.slice(0, -1) : rawFirstLine;
+
+  if (firstLine === PG_DELTA_NO_TRANSACTION_DIRECTIVE) {
+    return {
+      statements: splitAndTrim(withoutBom),
+      transactionMode: "none",
+    };
+  }
+
+  return {
+    statements: splitAndTrim(content),
+    transactionMode: "transactional",
+  };
+}
+
+/**
+ * Formats the current time as `YYYYMMDDHHMMSS` in UTC. Takes epoch millis (from
+ * `Clock.currentTimeMillis`) so it stays deterministic under test.
+ */
+export function formatMigrationTimestamp(millis: number): string {
+  return new Date(millis).toISOString().replace(/\D/gu, "").slice(0, 14);
+}
+
+/**
+ * Builds `<workdir>/supabase/migrations/<timestamp>_<name>.sql`. Returned absolute so callers
+ * can write it regardless of the process's current working directory.
+ */
+export function getMigrationPath(
+  path: Path.Path,
+  workdir: string,
+  timestamp: string,
+  name: string,
+): string {
+  return path.join(workdir, "supabase", "migrations", `${timestamp}_${name}.sql`);
+}

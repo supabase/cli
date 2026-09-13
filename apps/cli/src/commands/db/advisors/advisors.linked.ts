@@ -4,17 +4,17 @@ import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
-import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
-import { sanitizeLegacyErrorBody } from "../../../command-internal/legacy-http-errors.ts";
-import { requestWithAuth } from "../../../command-internal/legacy-raw-http.ts";
-import { resolveLegacyAccessToken } from "../../../command-internal/legacy-resolve-token.ts";
+import { CommandSettings } from "../../../config/command-settings.service.ts";
+import { sanitizeErrorBody } from "../../../command-internal/http-errors.ts";
+import { requestWithAuth } from "../../../command-internal/raw-http.ts";
+import { resolveAccessToken } from "../../../command-internal/resolve-token.ts";
 import {
-  LegacyDbAdvisorsPerformanceNetworkError,
-  LegacyDbAdvisorsPerformanceStatusError,
-  LegacyDbAdvisorsSecurityNetworkError,
-  LegacyDbAdvisorsSecurityStatusError,
+  DbAdvisorsPerformanceNetworkError,
+  DbAdvisorsPerformanceStatusError,
+  DbAdvisorsSecurityNetworkError,
+  DbAdvisorsSecurityStatusError,
 } from "./advisors.errors.ts";
-import { apiResponseToLegacyAdvisorLints } from "./advisors.format.ts";
+import { apiResponseToAdvisorLints } from "./advisors.format.ts";
 
 interface AdvisorEndpoint {
   readonly path: "security" | "performance";
@@ -23,20 +23,13 @@ interface AdvisorEndpoint {
    * `decode: true` marks a 200-response body decode failure rather than a
    * transport failure, even though both fold into the same message path.
    */
-  readonly network: (
-    message: string,
-    opts?: { readonly decode?: boolean },
-  ) => LegacyAdvisorNetworkError;
+  readonly network: (message: string, opts?: { readonly decode?: boolean }) => AdvisorNetworkError;
   /** Builds the non-200 failure (`unexpected … advisors status %d: %s`). */
-  readonly status: (status: number, body: string) => LegacyAdvisorStatusError;
+  readonly status: (status: number, body: string) => AdvisorStatusError;
 }
 
-type LegacyAdvisorNetworkError =
-  | LegacyDbAdvisorsSecurityNetworkError
-  | LegacyDbAdvisorsPerformanceNetworkError;
-type LegacyAdvisorStatusError =
-  | LegacyDbAdvisorsSecurityStatusError
-  | LegacyDbAdvisorsPerformanceStatusError;
+type AdvisorNetworkError = DbAdvisorsSecurityNetworkError | DbAdvisorsPerformanceNetworkError;
+type AdvisorStatusError = DbAdvisorsSecurityStatusError | DbAdvisorsPerformanceStatusError;
 
 const describeHttpError = (cause: unknown): string =>
   HttpClientError.isHttpClientError(cause)
@@ -45,7 +38,7 @@ const describeHttpError = (cause: unknown): string =>
 
 /** Identity stitcher: every Management API response is wrapped in identity
  *  stitching; the raw-HTTP advisor path runs it explicitly. */
-type LegacyStitchFn = (response: HttpClientResponse.HttpClientResponse) => Effect.Effect<void>;
+type StitchFn = (response: HttpClientResponse.HttpClientResponse) => Effect.Effect<void>;
 
 /**
  * Shared GET for an advisors endpoint. Uses raw HTTP + a tolerant parse rather
@@ -56,11 +49,11 @@ type LegacyStitchFn = (response: HttpClientResponse.HttpClientResponse) => Effec
 const fetchAdvisors = Effect.fnUntraced(function* (
   ref: string,
   endpoint: AdvisorEndpoint,
-  stitch: LegacyStitchFn,
+  stitch: StitchFn,
 ) {
   const httpClient = yield* HttpClient.HttpClient;
-  const cliSettings = yield* LegacyCliSettings;
-  const tokenOpt = yield* resolveLegacyAccessToken;
+  const cliSettings = yield* CommandSettings;
+  const tokenOpt = yield* resolveAccessToken;
 
   const request = requestWithAuth(
     HttpClientRequest.get(`${cliSettings.apiUrl}/v1/projects/${ref}/advisors/${endpoint.path}`),
@@ -78,7 +71,7 @@ const fetchAdvisors = Effect.fnUntraced(function* (
 
   if (response.status !== 200) {
     const rawBody = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
-    return yield* Effect.fail(endpoint.status(response.status, sanitizeLegacyErrorBody(rawBody)));
+    return yield* Effect.fail(endpoint.status(response.status, sanitizeErrorBody(rawBody)));
   }
 
   // The 200 body is only decoded when the Content-Type header contains "json";
@@ -87,31 +80,31 @@ const fetchAdvisors = Effect.fnUntraced(function* (
   const contentType = response.headers["content-type"] ?? "";
   if (!contentType.toLowerCase().includes("json")) {
     const rawBody = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
-    return yield* Effect.fail(endpoint.status(200, sanitizeLegacyErrorBody(rawBody)));
+    return yield* Effect.fail(endpoint.status(200, sanitizeErrorBody(rawBody)));
   }
 
   const rawBody = yield* response.text;
   // A decode error folds into the same `failed to fetch … advisors: %w` path,
   // so map both JSON syntax errors and structural-shape rejections (thrown by
-  // `apiResponseToLegacyAdvisorLints`) to the endpoint's network error.
+  // `apiResponseToAdvisorLints`) to the endpoint's network error.
   return yield* Effect.try({
-    try: () => apiResponseToLegacyAdvisorLints(JSON.parse(rawBody) as unknown),
+    try: () => apiResponseToAdvisorLints(JSON.parse(rawBody) as unknown),
     catch: (cause) => endpoint.network(String(cause), { decode: true }),
   });
 });
 
-export const legacyFetchSecurityAdvisors = (ref: string, stitch: LegacyStitchFn) =>
+export const fetchSecurityAdvisors = (ref: string, stitch: StitchFn) =>
   fetchAdvisors(
     ref,
     {
       path: "security",
       network: (message, opts) =>
-        new LegacyDbAdvisorsSecurityNetworkError({
+        new DbAdvisorsSecurityNetworkError({
           message: `failed to fetch security advisors: ${message}`,
           decode: opts?.decode,
         }),
       status: (status, body) =>
-        new LegacyDbAdvisorsSecurityStatusError({
+        new DbAdvisorsSecurityStatusError({
           status,
           body,
           message: `unexpected security advisors status ${status}: ${body}`,
@@ -120,18 +113,18 @@ export const legacyFetchSecurityAdvisors = (ref: string, stitch: LegacyStitchFn)
     stitch,
   );
 
-export const legacyFetchPerformanceAdvisors = (ref: string, stitch: LegacyStitchFn) =>
+export const fetchPerformanceAdvisors = (ref: string, stitch: StitchFn) =>
   fetchAdvisors(
     ref,
     {
       path: "performance",
       network: (message, opts) =>
-        new LegacyDbAdvisorsPerformanceNetworkError({
+        new DbAdvisorsPerformanceNetworkError({
           message: `failed to fetch performance advisors: ${message}`,
           decode: opts?.decode,
         }),
       status: (status, body) =>
-        new LegacyDbAdvisorsPerformanceStatusError({
+        new DbAdvisorsPerformanceStatusError({
           status,
           body,
           message: `unexpected performance advisors status ${status}: ${body}`,

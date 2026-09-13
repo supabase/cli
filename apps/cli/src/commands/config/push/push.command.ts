@@ -1,19 +1,18 @@
 import { Layer, Option } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 
-import { PROJECT_REF_PATTERN } from "../../../config/legacy-project-ref.service.ts";
+import { PROJECT_REF_PATTERN } from "../../../config/project-ref.service.ts";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
-import { legacyManagementApiRuntimeLayer } from "../../../command-internal/legacy-management-api-runtime.layer.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyConfigPush } from "./push.handler.ts";
+import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { configPush } from "./push.handler.ts";
 
 const config = {
-  // `link`'s settled vocabulary (CLI-2167/CLI-2289): one flag that accepts
-  // either a project ref or a branch of the linked project — no separate
-  // `--target`.
+  // Accepts either a project ref or a branch name/UUID of the linked project; there's no
+  // separate --target flag.
   projectRef: Flag.string("project-ref").pipe(
     Flag.withDescription(
       "Project ref of the Supabase project, or the name (or UUID) of one of its branches. Values that are exactly 20 lowercase letters are always treated as project refs.",
@@ -22,18 +21,15 @@ const config = {
   ),
 } as const;
 
-export type LegacyConfigPushFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type ConfigPushFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 // Exported so integration tests can drive the exact wiring
-// `Command.withHandler` uses below (same precedent as `legacyLinkHandler`).
-export const legacyConfigPushHandler = (flags: LegacyConfigPushFlags) =>
-  legacyConfigPush(flags).pipe(
-    // Nothing validates `--project-ref` before the instrumentation fires, so
-    // its value is only safe to log verbatim when it is actually ref-shaped —
-    // an arbitrary string (a typo, a value pasted from the wrong clipboard)
-    // must reach PostHog as "<redacted>". Same guard as `link`/`config diff`
-    // (documented safe list in apps/cli/CLAUDE.md).
-    withLegacyCommandInstrumentation({
+// `Command.withHandler` uses below (same precedent as `linkHandler`).
+export const configPushHandler = (flags: ConfigPushFlags) =>
+  configPush(flags).pipe(
+    // --project-ref is only safe to log verbatim when ref-shaped; an arbitrary string (a typo,
+    // a bad paste) must reach PostHog as "<redacted>".
+    withCommandTelemetry({
       flags,
       safeFlags:
         Option.isSome(flags.projectRef) && PROJECT_REF_PATTERN.test(flags.projectRef.value)
@@ -43,7 +39,7 @@ export const legacyConfigPushHandler = (flags: LegacyConfigPushFlags) =>
     withJsonErrorHandling,
   );
 
-export const legacyConfigPushCommand = Command.make("push", config).pipe(
+export const configPushCommand = Command.make("push", config).pipe(
   Command.withDescription(
     "Pushes the properties your local config.toml declares to the linked project or one of its branches. Properties the file does not declare are left unchanged; run `supabase config diff` to preview. Prompts for confirmation before writing each changed resource, showing the exact diff — but a non-interactive run (no TTY, --yes, or piped stdin with no answer) defaults to proceeding, so a value your file declares only because `supabase init`'s own template wrote it (e.g. a disabled storage.analytics/auth.oauth_server toggle, or a local development site_url) can silently overwrite a real, intentionally-customized hosted setting. Scripts and agents driving this command non-interactively should run `supabase config diff` first and review it, rather than relying on the prompt.",
   ),
@@ -62,6 +58,6 @@ export const legacyConfigPushCommand = Command.make("push", config).pipe(
       description: "Push local config to the 'staging' branch",
     },
   ]),
-  Command.withHandler(legacyConfigPushHandler),
-  Command.provide(Layer.mergeAll(legacyManagementApiRuntimeLayer(["config", "push"]), stdinLayer)),
+  Command.withHandler(configPushHandler),
+  Command.provide(Layer.mergeAll(managementApiRuntimeLayer(["config", "push"]), stdinLayer)),
 );

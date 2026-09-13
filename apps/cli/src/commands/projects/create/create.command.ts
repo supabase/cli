@@ -2,9 +2,9 @@ import { V1CreateAProjectInput } from "@supabase/api/effect";
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { legacyManagementApiRuntimeLayer } from "../../../command-internal/legacy-management-api-runtime.layer.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyProjectsCreate } from "./create.handler.ts";
+import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { projectsCreate } from "./create.handler.ts";
 
 const AWS_REGIONS = [
   "ap-east-1",
@@ -27,9 +27,8 @@ const AWS_REGIONS = [
   "us-west-2",
 ] as const;
 
-// Derived from the generated Management API schema so these choices can't
-// drift from `POST /v1/projects`'s `release_channel`/`postgres_engine` fields
-// on regen.
+// Read from the generated schema so these choices track the `release_channel`/`postgres_engine`
+// fields on regen.
 const RELEASE_CHANNELS = V1CreateAProjectInput.fields.release_channel.schema.literals;
 const POSTGRES_ENGINES = V1CreateAProjectInput.fields.postgres_engine.schema.literals;
 
@@ -75,19 +74,12 @@ const config = {
     Flag.withDescription("Select a desired instance size for your project."),
     Flag.optional,
   ),
-  // TS-only flag with no historical equivalent, even though the API field
-  // exists — disclosed in SIDE_EFFECTS.md, matching how `--reveal` is
-  // disclosed on `projects api-keys`.
   highAvailability: Flag.boolean("high-availability").pipe(
     Flag.withDescription("Enable high availability for the project."),
     Flag.optional,
   ),
-  // TS-only, no Go CLI equivalent: these target the `release_channel` /
-  // `postgres_engine` fields on `POST /v1/projects`, which the upstream OpenAPI
-  // spec intentionally hides (typed as `{"deprecated": true, "type": "null"}`)
-  // even though the Management API accepts them — restored via
-  // `packages/api/scripts/openapi-overrides.json`. Hidden + gated behind
-  // `--experimental` until PROD-548 exposes them officially (CLI-2180).
+  // Hidden and `--experimental`-gated: the upstream OpenAPI spec marks these fields deprecated
+  // even though the API accepts them, restored via `packages/api/scripts/openapi-overrides.json`.
   releaseChannel: Flag.choice("release-channel", RELEASE_CHANNELS).pipe(
     Flag.withDescription("Select a release channel for the project."),
     Flag.optional,
@@ -110,9 +102,9 @@ const config = {
     Flag.withHidden,
   ),
 };
-export type LegacyProjectsCreateFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type ProjectsCreateFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyProjectsCreateCommand = Command.make("create", config).pipe(
+export const projectsCreateCommand = Command.make("create", config).pipe(
   Command.withDescription("Create a project on Supabase."),
   Command.withShortDescription("Create a project"),
   Command.withExamples([
@@ -123,16 +115,13 @@ export const legacyProjectsCreateCommand = Command.make("create", config).pipe(
     },
   ]),
   Command.withHandler((flags) =>
-    legacyProjectsCreate(flags).pipe(
-      // `high-availability` is intentionally not in `safeFlags`: Go marks only
-      // `org-id` telemetry-safe (`markFlagTelemetrySafe`), and it's a boolean flag
-      // anyway — boolean values are always logged verbatim by the instrumentation
-      // regardless of `safeFlags`. See the same pattern on `projects api-keys`'s
-      // `--reveal`. `config` is passed so `region`/`size`/`release-channel`/
-      // `postgres-engine` (all `Flag.choice`) are auto-detected as telemetry-safe.
-      withLegacyCommandInstrumentation({ flags, safeFlags: ["org-id"], config }),
+    projectsCreate(flags).pipe(
+      // `high-availability` is omitted from `safeFlags` since boolean flags are always logged
+      // verbatim regardless of that list. `config` auto-detects `region`/`size`/`release-channel`/
+      // `postgres-engine` as safe since they're `Flag.choice`.
+      withCommandTelemetry({ flags, safeFlags: ["org-id"], config }),
       withJsonErrorHandling,
     ),
   ),
-  Command.provide(legacyManagementApiRuntimeLayer(["projects", "create"])),
+  Command.provide(managementApiRuntimeLayer(["projects", "create"])),
 );

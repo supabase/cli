@@ -145,10 +145,8 @@ export const textOutputLayer = Layer.effect(
               ? "autocomplete"
               : "select"
             : mode;
-        // clack itself defaults every one of these to `process.stdout` (verified against
-        // the installed `@clack/prompts` source) — only override when a caller explicitly
-        // asks for stderr (e.g. a command whose own stdout is a machine-readable payload
-        // even in text mode).
+        // clack defaults these to `process.stdout`; only override when a
+        // caller explicitly asks for stderr.
         const clackOutput = behavior.stream === "stderr" ? process.stderr : undefined;
         const value = yield* Effect.promise(() =>
           effectiveMode === "autocomplete"
@@ -366,13 +364,12 @@ export const textOutputLayer = Layer.effect(
             stop: (msg: string) => Effect.sync(() => bar.stop(msg)),
           };
         }),
+      result: () => Effect.void,
       success: (message: string) => Effect.sync(() => log.success(message)),
       fail: (err: { code: string; message: string; detail?: string; suggestion?: string }) =>
         Effect.sync(() => {
-          // Matches Go's `recoverAndExit` (apps/cli-go/cmd/root.go:300-303): a
+          // Bypasses clack's `log.error` framing (`│` guide + `■` icon): a
           // red-styled message on stderr, optionally followed by a suggestion.
-          // Bypasses clack's `log.error` framing (`│` guide + `■` icon) so the
-          // output byte-matches the Go CLI for parity tests.
           process.stderr.write(styleText("red", err.message) + "\n");
           if (err.detail !== undefined && err.detail !== err.message) {
             process.stderr.write(styleText("gray", err.detail) + "\n");
@@ -383,11 +380,8 @@ export const textOutputLayer = Layer.effect(
             err.message !== CONTEXT_CANCELED_MESSAGE &&
             !process.argv.includes("--debug")
           ) {
-            // Go's `utils.SuggestDebugFlag` (apps/cli-go/internal/utils/misc.go:41),
-            // withheld for the canceled sentinel exactly like `recoverAndExit`'s
-            // `!errors.Is(err, context.Canceled)` guard (apps/cli-go/cmd/root.go:287-292):
-            // a declined confirmation prompt is a user decision, so Go prints only
-            // the red `context canceled` line with no troubleshooting hint (CLI-1973).
+            // Withheld for the canceled sentinel: declining a prompt is a
+            // user decision, not something to troubleshoot.
             process.stderr.write(
               "Try rerunning the command with --debug to troubleshoot the error.\n",
             );
@@ -414,6 +408,7 @@ export const jsonOutputLayer = Layer.effect(
           suggestion: "Provide all required values via flags",
         }),
       );
+    const result = (data: unknown) => writeStdout(`${JSON.stringify(data)}\n`);
 
     return Output.of({
       format: "json" as const,
@@ -455,15 +450,13 @@ export const jsonOutputLayer = Layer.effect(
             stop: (msg: string) => writeStderr(`[progress] done: ${msg}\n`),
           };
         }),
-      success: (message: string, data?: Record<string, unknown>) =>
-        writeStdout(JSON.stringify({ ...data, message }) + "\n"),
+      result,
+      success: (message: string, data?: Record<string, unknown>) => result({ ...data, message }),
       fail: (err: { code: string; message: string; detail?: string; suggestion?: string }) =>
         Effect.gen(function* () {
           const extra = yield* readMachineErrorContext();
-          // `extra` spreads FIRST so the envelope's own `_tag`/`error` can
-          // never be clobbered by a context field of the same name (PR #6168
-          // review) — this is opt-in, command-contributed data; the envelope
-          // shape it's decorating always wins.
+          // `extra` spreads first so the envelope's own `_tag`/`error` can't
+          // be clobbered by a same-named context field.
           yield* writeStdout(JSON.stringify({ ...extra, _tag: "Error", error: err }) + "\n");
         }),
       raw: (text: string, stream: "stdout" | "stderr" = "stdout") => write(text, stream),
@@ -495,6 +488,14 @@ export const streamJsonOutputLayer = Layer.effect(
           suggestion: "Provide all required values via flags",
         }),
       );
+    const result = (data: unknown) => {
+      const event: StreamEvent = {
+        type: "result",
+        data,
+        timestamp: new Date().toISOString(),
+      };
+      return writeStdout(`${JSON.stringify(event)}\n`);
+    };
 
     return Output.of({
       format: "stream-json" as const,
@@ -544,14 +545,8 @@ export const streamJsonOutputLayer = Layer.effect(
             stop: (msg: string) => emit("done", msg),
           };
         }),
-      success: (message: string, data?: Record<string, unknown>) =>
-        writeStdout(
-          JSON.stringify({
-            type: "result",
-            data: { ...data, message },
-            timestamp: new Date().toISOString(),
-          }) + "\n",
-        ),
+      result,
+      success: (message: string, data?: Record<string, unknown>) => result({ ...data, message }),
       fail: (err: { code: string; message: string; detail?: string; suggestion?: string }) =>
         Effect.gen(function* () {
           const extra = yield* readMachineErrorContext();
@@ -560,9 +555,8 @@ export const streamJsonOutputLayer = Layer.effect(
             error: err,
             timestamp: new Date().toISOString(),
           };
-          // `extra` spreads FIRST — same reasoning as the json layer's `fail`
-          // above: the event's own `type`/`error`/`timestamp` must always win
-          // over an opt-in context field of the same name (PR #6168 review).
+          // `extra` spreads first so the event's own `type`/`error`/`timestamp`
+          // can't be clobbered by a same-named context field.
           yield* writeStdout(JSON.stringify({ ...extra, ...event }) + "\n");
         }),
       raw: (text: string, stream: "stdout" | "stderr" = "stdout") => write(text, stream),
@@ -571,7 +565,6 @@ export const streamJsonOutputLayer = Layer.effect(
   }),
 );
 
-// Select the concrete output policy from the parsed global flag.
 export function outputLayerFor(
   format: OutputFormat,
 ): Layer.Layer<Output, never, Stdio.Stdio | Tty> {

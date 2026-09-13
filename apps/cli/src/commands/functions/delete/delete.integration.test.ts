@@ -2,66 +2,40 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option, Stdio } from "effect";
 
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
-import { CurrentAnalyticsContext } from "../../../shared/telemetry/analytics-context.ts";
-import { Analytics } from "../../../shared/telemetry/analytics.service.ts";
 import {
-  buildLegacyTestRuntime,
-  mockLegacyCliSettings,
-  mockLegacyLinkedProjectCacheTracked,
-  mockLegacyPlatformApi,
-  mockLegacyTelemetryStateTracked,
-  useLegacyTempWorkdir,
-} from "../../../../tests/helpers/legacy-mocks.ts";
-import { mockOutput } from "../../../../tests/helpers/mocks.ts";
-import { legacyFunctionsDeleteHandler } from "./delete.command.ts";
-import { legacyFunctionsDelete } from "./delete.handler.ts";
+  buildTestRuntime,
+  mockCommandSettings,
+  mockLinkedProjectCacheTracked,
+  mockCommandPlatformApi,
+  mockTelemetryStateTracked,
+  useTempWorkdir,
+} from "../../../../tests/helpers/command-mocks.ts";
+import { mockContextualAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { functionsDeleteHandler } from "./delete.command.ts";
+import { functionsDelete } from "./delete.handler.ts";
 
-const tempRoot = useLegacyTempWorkdir("supabase-functions-delete-legacy-");
+const tempRoot = useTempWorkdir("supabase-functions-delete-");
 
-// `withLegacyCommandInstrumentation` threads `flags`/`command`/etc. through
-// `CurrentAnalyticsContext`, not the direct `capture()` call args — mirrors
-// the identical local helper in `legacy-command-instrumentation.unit.test.ts`.
-// The shared `mockAnalytics()` in tests/helpers/mocks.ts deliberately doesn't
-// merge this context (most callers don't need it).
-function mockContextualAnalytics() {
-  const captured: Array<{ event: string; properties: Record<string, unknown> }> = [];
-  const layer = Layer.succeed(
-    Analytics,
-    Analytics.of({
-      capture: (event: string, properties: Record<string, unknown> = {}) =>
-        Effect.gen(function* () {
-          const context = yield* CurrentAnalyticsContext;
-          captured.push({ event, properties: { ...context, ...properties } });
-        }),
-      identify: () => Effect.void,
-      alias: () => Effect.void,
-      groupIdentify: () => Effect.void,
-    }),
-  );
-  return { layer, captured };
-}
-
-// Strip ANSI SGR (aqua slug/ref via `legacyAqua`) so byte-assertions are
-// stable whether or not the test stdout supports color.
+// Strips ANSI color codes so assertions are stable regardless of color support.
 // eslint-disable-next-line no-control-regex
 const stripSgr = (text: string) => text.replace(/\x1b\[[0-9;]*m/gu, "");
 
-describe("legacy functions delete", () => {
+describe("functions delete", () => {
   it.live("deletes a function natively through the Management API", () => {
     const out = mockOutput({ format: "text" });
-    const api = mockLegacyPlatformApi({ response: { status: 200, body: null } });
-    const linkedProjectCache = mockLegacyLinkedProjectCacheTracked();
-    const telemetry = mockLegacyTelemetryStateTracked();
-    const layer = buildLegacyTestRuntime({
+    const api = mockCommandPlatformApi({ response: { status: 200, body: null } });
+    const linkedProjectCache = mockLinkedProjectCacheTracked();
+    const telemetry = mockTelemetryStateTracked();
+    const layer = buildTestRuntime({
       out,
       api,
-      cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+      cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
       linkedProjectCache: linkedProjectCache.layer,
       telemetry: telemetry.layer,
     });
 
     return Effect.gen(function* () {
-      yield* legacyFunctionsDelete({
+      yield* functionsDelete({
         functionName: "hello-world",
         projectRef: Option.none(),
       });
@@ -71,8 +45,6 @@ describe("legacy functions delete", () => {
       expect(api.requests[0]?.url).toBe(
         "https://api.supabase.com/v1/projects/abcdefghijklmnopqrst/functions/hello-world",
       );
-      // The slug and ref are wrapped in ANSI (legacyAqua) in colour-capable
-      // environments — strip SGR so the byte assertion stays stable.
       expect(stripSgr(out.stdoutText)).toBe(
         "Deleted Function hello-world from project abcdefghijklmnopqrst.\n",
       );
@@ -83,18 +55,18 @@ describe("legacy functions delete", () => {
 
   it.live("uses an explicit project ref", () => {
     const out = mockOutput({ format: "text" });
-    const api = mockLegacyPlatformApi({ response: { status: 200, body: null } });
-    const layer = buildLegacyTestRuntime({
+    const api = mockCommandPlatformApi({ response: { status: 200, body: null } });
+    const layer = buildTestRuntime({
       out,
       api,
-      cliSettings: mockLegacyCliSettings({
+      cliSettings: mockCommandSettings({
         workdir: tempRoot.current,
         projectId: Option.none(),
       }),
     });
 
     return Effect.gen(function* () {
-      yield* legacyFunctionsDelete({
+      yield* functionsDelete({
         functionName: "hello-world",
         projectRef: Option.some("qrstuvwxyzabcdefghij"),
       });
@@ -107,13 +79,13 @@ describe("legacy functions delete", () => {
     "does not redact --project-ref in cli_command_executed (Go parity: cmd/functions.go:153)",
     () => {
       const out = mockOutput({ format: "text" });
-      const api = mockLegacyPlatformApi({ response: { status: 200, body: null } });
+      const api = mockCommandPlatformApi({ response: { status: 200, body: null } });
       const analytics = mockContextualAnalytics();
       const layer = Layer.mergeAll(
-        buildLegacyTestRuntime({
+        buildTestRuntime({
           out,
           api,
-          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
           analytics,
         }),
         commandRuntimeLayer(["functions", "delete"]),
@@ -129,7 +101,7 @@ describe("legacy functions delete", () => {
       );
 
       return Effect.gen(function* () {
-        yield* legacyFunctionsDeleteHandler({
+        yield* functionsDeleteHandler({
           functionName: "hello-world",
           projectRef: Option.some("abcdefghijklmnopqrst"),
         });

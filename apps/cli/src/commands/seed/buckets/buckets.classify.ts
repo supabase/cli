@@ -1,23 +1,19 @@
 /**
- * Vector-bucket error classifiers — ports of `isVectorBucketsFeatureNotEnabled`
- * and `isLocalVectorBucketsUnavailable` (`apps/cli-go/internal/seed/buckets/buckets.go:71-84`).
- *
- * Both inspect the error message string. The Storage gateway client raises
- * status errors whose message reproduces `Error status <d>: <body>`, so the
- * same substring checks apply.
+ * Vector-bucket error classifiers based on the Storage gateway's error message text, which
+ * reproduces `Error status <d>: <body>`.
  */
 
-/** Remote region has not enabled vector buckets yet (`buckets.go:71-73`). */
-export function legacyIsVectorBucketsFeatureNotEnabled(message: string): boolean {
+/** True when the remote region has not enabled vector buckets yet. */
+export function isVectorBucketsFeatureNotEnabled(message: string): boolean {
   return message.includes("FeatureNotEnabled");
 }
 
 /**
- * The local Storage service does not expose the vector routes (`buckets.go:75-84`):
- * either it reports the vector service is not configured, or the `ListVectorBuckets`
- * route returns 404 (older local image without vector support).
+ * True when the local Storage service does not expose the vector routes: either it reports the
+ * vector service is not configured, or `ListVectorBuckets` returns 404 (older local image without
+ * vector support).
  */
-export function legacyIsLocalVectorBucketsUnavailable(message: string): boolean {
+export function isLocalVectorBucketsUnavailable(message: string): boolean {
   return (
     message.includes("Vector service not configured") ||
     (message.includes("Error status 404:") &&

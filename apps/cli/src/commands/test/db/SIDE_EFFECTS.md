@@ -28,7 +28,7 @@
 
 ## Docker
 
-One-shot `docker run --rm <pg_prove image>`, where the image is `supabase/pg_prove:3.36` resolved through the registry (`legacyGetRegistryImageUrl`): `SUPABASE_INTERNAL_IMAGE_REGISTRY` overrides the registry, `docker.io` pulls from Docker Hub unchanged, and the default is `public.ecr.aws/supabase/pg_prove:3.36`.
+One-shot `docker run --rm <pg_prove image>`, where the image is `supabase/pg_prove:3.36` resolved through the registry (`getRegistryImageUrl`): `SUPABASE_INTERNAL_IMAGE_REGISTRY` overrides the registry, `docker.io` pulls from Docker Hub unchanged, and the default is `public.ecr.aws/supabase/pg_prove:3.36`.
 
 - `-v <hostpath>:<dockerpath>:ro` for each test path. A path that is a **file** is mounted via its **containing directory** (not the lone file) so that psql `\ir`/`\i` includes — which resolve relative to the test file's own directory — find their sibling files inside the container (CLI-1139). Directory paths are mounted as-is. Mounts are deduped by container target, so multiple files in the same directory produce a single `-v`. The full file path is still passed to `pg_prove`, so only the requested file runs.
 - `--security-opt label:disable`
@@ -76,8 +76,8 @@ One-shot `docker run --rm <pg_prove image>`, where the image is `supabase/pg_pro
 command's flag config and handler verbatim, but records `command: "db test"`
 instead, since each command's own telemetry wrapper records its own invocation
 path even though the underlying handler is the same function. Driven by
-`commandPath` in `../../../shared/legacy-test-db.layers.ts`'s
-`legacyTestDbRuntimeLayer` factory — each `.command.ts` passes its own actual
+`commandPath` in `../../../shared/test-db.layers.ts`'s
+`testDbRuntimeLayer` factory — each `.command.ts` passes its own actual
 invocation path.
 
 ## Output
@@ -103,7 +103,7 @@ command (exit 1).
 
 - Native TypeScript port (Phase 1+); no Go proxy. Hidden command.
 - **`--project-ref`** (TS-only, no Go equivalent on any user-facing command;
-  shared verbatim by `db test` via `legacyTestDbConfig`) overrides ONLY the
+  shared verbatim by `db test` via `testDbConfig`) overrides ONLY the
   linked-ref resolution used for the connection (flag > `SUPABASE_PROJECT_ID` >
   `.temp/project-ref`). It never implies `--linked`: passing it with a
   resolved `--local`/`--db-url` target is a hard error rather than a silently

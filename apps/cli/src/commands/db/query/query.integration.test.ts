@@ -9,42 +9,38 @@ import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import {
-  LEGACY_VALID_TOKEN,
-  mockLegacyCliSettings,
-  mockLegacyLinkedProjectCacheTracked,
-  mockLegacyTelemetryStateTracked,
-} from "../../../../tests/helpers/legacy-mocks.ts";
+  VALID_TOKEN,
+  mockCommandSettings,
+  mockLinkedProjectCacheTracked,
+  mockTelemetryStateTracked,
+} from "../../../../tests/helpers/command-mocks.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
-import {
-  LegacyAgentFlag,
-  LegacyDnsResolverFlag,
-  LegacyOutputFlag,
-} from "../../../shared/legacy/global-flags.ts";
+import { AgentFlag, DnsResolverFlag, OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Random } from "../../../shared/runtime/random.service.ts";
 import { Stdin } from "../../../shared/runtime/stdin.service.ts";
 import { AiTool } from "../../../shared/telemetry/ai-tool.service.ts";
-import { LegacyCredentials } from "../../../auth/legacy-credentials.service.ts";
-import { validateLegacyAccessToken } from "../../../auth/legacy-access-token.ts";
+import { CommandCredentials } from "../../../auth/command-credentials.service.ts";
+import { validateAccessToken } from "../../../auth/access-token.ts";
 import {
-  LegacyProjectRefResolver,
+  ProjectRefResolver,
   PROJECT_NOT_LINKED_MESSAGE,
-} from "../../../config/legacy-project-ref.service.ts";
-import { LegacyProjectNotLinkedError } from "../../../config/legacy-project-ref.errors.ts";
-import { LegacyProjectRefReadError } from "../../../command-internal/legacy-temp-paths.ts";
-import { LegacyTelemetryOutputFormat } from "../../../telemetry/legacy-telemetry-output-format.service.ts";
-import { LegacyDbConfigParseUrlError } from "../../../command-internal/legacy-db-config.errors.ts";
-import { LegacyDbConfigResolver } from "../../../command-internal/legacy-db-config.service.ts";
-import { LegacyDbExecError } from "../../../command-internal/legacy-db-connection.errors.ts";
+} from "../../../config/project-ref.service.ts";
+import { ProjectRefNotLinkedError } from "../../../config/project-ref.errors.ts";
+import { ProjectRefReadError } from "../../../command-internal/temp-paths.ts";
+import { TelemetryOutputFormat } from "../../../telemetry/telemetry-output-format.service.ts";
+import { DbConfigParseUrlError } from "../../../command-internal/db-config.errors.ts";
+import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
+import { DbExecError } from "../../../command-internal/db-connection.errors.ts";
 import {
-  LegacyDbConnection,
-  type LegacyPgConnInput,
-  type LegacyQueryResult,
-} from "../../../command-internal/legacy-db-connection.service.ts";
-import { LEGACY_RLS_CHECK_SQL } from "./query.advisory.ts";
-import type { LegacyDbQueryFlags } from "./query.command.ts";
-import { legacyDbQuery } from "./query.handler.ts";
+  DbConnection,
+  type PgConnInput,
+  type QueryResult,
+} from "../../../command-internal/db-connection.service.ts";
+import { RLS_CHECK_SQL } from "./query.advisory.ts";
+import type { DbQueryFlags } from "./query.command.ts";
+import { dbQuery } from "./query.handler.ts";
 
-const LOCAL_CONN: LegacyPgConnInput = {
+const LOCAL_CONN: PgConnInput = {
   host: "127.0.0.1",
   port: 54322,
   user: "postgres",
@@ -58,11 +54,11 @@ const failMessage = (exit: Exit.Exit<unknown, { readonly message: string }>): st
   Exit.isFailure(exit) ? exit.cause.reasons.find(Cause.isFailReason)?.error.message : undefined;
 
 function mockResolver(isLocal = true, resolveFails = false) {
-  return Layer.succeed(LegacyDbConfigResolver, {
+  return Layer.succeed(DbConfigResolver, {
     resolve: () =>
       resolveFails
         ? Effect.fail(
-            new LegacyDbConfigParseUrlError({
+            new DbConfigParseUrlError({
               message: "failed to parse connection string: invalid dsn",
             }),
           )
@@ -72,12 +68,12 @@ function mockResolver(isLocal = true, resolveFails = false) {
 }
 
 function mockDbConnection(opts: {
-  result?: LegacyQueryResult;
+  result?: QueryResult;
   rlsTables?: ReadonlyArray<string>;
   rlsFails?: boolean;
   queryFails?: boolean;
 }) {
-  return Layer.succeed(LegacyDbConnection, {
+  return Layer.succeed(DbConnection, {
     connect: () =>
       Effect.succeed({
         exec: () => Effect.void,
@@ -86,9 +82,9 @@ function mockDbConnection(opts: {
         extensionExists: () => Effect.succeed(false),
         copyToCsv: () => Effect.succeed(new Uint8Array()),
         queryRaw: (sql: string) => {
-          if (sql === LEGACY_RLS_CHECK_SQL) {
+          if (sql === RLS_CHECK_SQL) {
             return opts.rlsFails === true
-              ? Effect.fail(new LegacyDbExecError({ message: "advisory failed" }))
+              ? Effect.fail(new DbExecError({ message: "advisory failed" }))
               : Effect.succeed({
                   fields: ["format"],
                   rows: (opts.rlsTables ?? []).map((table) => [table]),
@@ -96,7 +92,7 @@ function mockDbConnection(opts: {
                 });
           }
           return opts.queryFails === true
-            ? Effect.fail(new LegacyDbExecError({ message: "failed to execute query: boom" }))
+            ? Effect.fail(new DbExecError({ message: "failed to execute query: boom" }))
             : Effect.succeed(opts.result ?? { fields: [], rows: [], commandTag: "CREATE TABLE" });
         },
       }),
@@ -106,7 +102,7 @@ function mockDbConnection(opts: {
 function mockTelemetryOutputFormat() {
   let format: string | undefined;
   return {
-    layer: Layer.succeed(LegacyTelemetryOutputFormat, {
+    layer: Layer.succeed(TelemetryOutputFormat, {
       set: (f: string) =>
         Effect.sync(() => {
           format = f;
@@ -120,25 +116,21 @@ function mockTelemetryOutputFormat() {
 }
 
 function mockProjectRef(unlinked = false, refReadFails = false) {
-  // The linked query preflight uses the hard `loadProjectRef`: it fails with
-  // ErrNotLinked when absent and surfaces a `failed to load project ref` read error
-  // (LegacyProjectRefReadError) on an unreadable ref file, rather than masking it.
-  // An explicit `--project-ref` flag gets top precedence, same as Go's
-  // `flags.LoadProjectRef` — short-circuiting BEFORE either failure mode, so a
-  // test can prove the flag resolves a ref even for an "unlinked" workdir.
+  // `loadProjectRef` mirrors the real preflight: an explicit `--project-ref` flag wins first,
+  // then ErrNotLinked when absent, or a read error (ProjectRefReadError) for an unreadable file.
   const loadProjectRef = (flagValue: Option.Option<string>) =>
     Option.isSome(flagValue) && flagValue.value.length > 0
       ? Effect.succeed(flagValue.value)
       : refReadFails
         ? Effect.fail(
-            new LegacyProjectRefReadError({
+            new ProjectRefReadError({
               message: "failed to load project ref: permission denied",
             }),
           )
         : unlinked
-          ? Effect.fail(new LegacyProjectNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE }))
+          ? Effect.fail(new ProjectRefNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE }))
           : Effect.succeed(REF);
-  return Layer.succeed(LegacyProjectRefResolver, {
+  return Layer.succeed(ProjectRefResolver, {
     resolve: () => Effect.succeed(REF),
     resolveForLink: () => Effect.succeed(REF),
     resolveOptional: () => Effect.succeed(unlinked ? Option.none() : Option.some(REF)),
@@ -210,7 +202,7 @@ interface SetupOpts {
   aiTool?: string;
   stdinTTY?: boolean;
   piped?: string;
-  result?: LegacyQueryResult;
+  result?: QueryResult;
   rlsTables?: ReadonlyArray<string>;
   rlsFails?: boolean;
   queryFails?: boolean;
@@ -227,8 +219,8 @@ interface SetupOpts {
 
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
-  const telemetry = mockLegacyTelemetryStateTracked();
-  const cache = mockLegacyLinkedProjectCacheTracked();
+  const telemetry = mockTelemetryStateTracked();
+  const cache = mockLinkedProjectCacheTracked();
   const telemetryOutputFormat = mockTelemetryOutputFormat();
   const httpClient = mockHttpClient({
     status: opts.linkedStatus,
@@ -248,31 +240,26 @@ function setup(opts: SetupOpts = {}) {
     Layer.succeed(AiTool, {
       name: opts.aiTool === undefined ? Option.none() : Option.some(opts.aiTool),
     }),
-    Layer.succeed(LegacyAgentFlag, opts.agent ?? "auto"),
+    Layer.succeed(AgentFlag, opts.agent ?? "auto"),
     Layer.succeed(
-      LegacyOutputFlag,
+      OutputFlag,
       opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
     ),
-    Layer.succeed(LegacyDnsResolverFlag, "native"),
-    mockLegacyCliSettings({
+    Layer.succeed(DnsResolverFlag, "native"),
+    mockCommandSettings({
       workdir: opts.workdir ?? "/work/project",
       accessToken: opts.accessToken,
     }),
-    // The linked token check routes through `credentials.getAccessToken`,
-    // which validates the resolved token (env/keyring/file) against `sbp_`.
-    // `accessTokenInvalid` exercises that via the real validator.
-    Layer.succeed(LegacyCredentials, {
+    // `accessTokenInvalid` exercises the real `sbp_` token validator via `getAccessToken`.
+    Layer.succeed(CommandCredentials, {
       getAccessToken:
         opts.accessTokenInvalid === true
-          ? validateLegacyAccessToken("not_sbp").pipe(
-              Effect.map((t) => Option.some(Redacted.make(t))),
-            )
-          : Effect.succeed(opts.accessToken ?? Option.some(Redacted.make(LEGACY_VALID_TOKEN))),
-      saveAccessToken: () => Effect.die("unexpected legacy credentials write in test"),
-      deleteAccessToken: Effect.die("unexpected legacy credentials delete in test"),
-      deleteAllProjectCredentials: Effect.die("unexpected legacy project-credential sweep in test"),
-      deleteProjectCredential: () =>
-        Effect.die("unexpected legacy project-credential delete in test"),
+          ? validateAccessToken("not_sbp").pipe(Effect.map((t) => Option.some(Redacted.make(t))))
+          : Effect.succeed(opts.accessToken ?? Option.some(Redacted.make(VALID_TOKEN))),
+      saveAccessToken: () => Effect.die("unexpected credentials write in test"),
+      deleteAccessToken: Effect.die("unexpected credentials delete in test"),
+      deleteAllProjectCredentials: Effect.die("unexpected project-credential sweep in test"),
+      deleteProjectCredential: () => Effect.die("unexpected project-credential delete in test"),
     }),
     httpClient.layer,
     BunServices.layer,
@@ -280,7 +267,7 @@ function setup(opts: SetupOpts = {}) {
   return { layer, out, telemetry, cache, telemetryOutputFormat, httpClient };
 }
 
-const flags = (over: Partial<LegacyDbQueryFlags> = {}): LegacyDbQueryFlags => ({
+const flags = (over: Partial<DbQueryFlags> = {}): DbQueryFlags => ({
   sql: over.sql ?? Option.none(),
   dbUrl: over.dbUrl ?? Option.none(),
   linked: over.linked ?? Option.none(),
@@ -289,7 +276,7 @@ const flags = (over: Partial<LegacyDbQueryFlags> = {}): LegacyDbQueryFlags => ({
   file: over.file ?? Option.none(),
 });
 
-const SELECT_RESULT: LegacyQueryResult = {
+const SELECT_RESULT: QueryResult = {
   fields: ["id", "name"],
   rows: [
     [1, "alice"],
@@ -298,17 +285,14 @@ const SELECT_RESULT: LegacyQueryResult = {
   commandTag: "SELECT 2",
 };
 
-describe("legacy db query integration", () => {
+describe("db query integration", () => {
   it.live("runs SQL passed as a positional argument and renders a table for humans", () => {
     const { layer, out, cache } = setup({ result: SELECT_RESULT });
     return Effect.gen(function* () {
-      yield* legacyDbQuery(
-        flags({ sql: Option.some("select * from users"), local: Option.some(true) }),
-      );
+      yield* dbQuery(flags({ sql: Option.some("select * from users"), local: Option.some(true) }));
       expect(out.stderrText).toContain("Connecting to local database...");
       expect(out.stdoutText).toContain("│ id │ name  │");
       expect(out.stdoutText).toContain("│ 1  │ alice │");
-      // The local path never resolves a project ref, so no linked-project cache write.
       expect(cache.cached).toBe(false);
     }).pipe(Effect.provide(layer));
   });
@@ -324,7 +308,7 @@ describe("legacy db query integration", () => {
       },
     });
     return Effect.gen(function* () {
-      yield* legacyDbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
+      yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
       expect(out.stdoutText).toContain("│ 1000000 │ 1e+06 │");
     }).pipe(Effect.provide(layer));
   });
@@ -332,9 +316,7 @@ describe("legacy db query integration", () => {
   it.live("reports connecting to the remote database for a --db-url target", () => {
     const { layer, out } = setup({ result: SELECT_RESULT, isLocal: false });
     return Effect.gen(function* () {
-      yield* legacyDbQuery(
-        flags({ sql: Option.some("select 1"), dbUrl: Option.some("postgres://x/y") }),
-      );
+      yield* dbQuery(flags({ sql: Option.some("select 1"), dbUrl: Option.some("postgres://x/y") }));
       expect(out.stderrText).toContain("Connecting to remote database...");
     }).pipe(Effect.provide(layer));
   });
@@ -342,7 +324,7 @@ describe("legacy db query integration", () => {
   it.live("errors when no SQL is provided on a TTY", () => {
     const { layer } = setup({ stdinTTY: true });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbQuery(flags({ local: Option.some(true) })).pipe(Effect.exit);
+      const exit = yield* dbQuery(flags({ local: Option.some(true) })).pipe(Effect.exit);
       expect(failMessage(exit)).toBe(
         "no SQL query provided. Pass SQL as an argument, via --file, or pipe to stdin",
       );
@@ -352,7 +334,7 @@ describe("legacy db query integration", () => {
   it.live("reads SQL piped via stdin", () => {
     const { layer, out } = setup({ result: SELECT_RESULT, stdinTTY: false, piped: "select 1\n" });
     return Effect.gen(function* () {
-      yield* legacyDbQuery(flags({ local: Option.some(true) }));
+      yield* dbQuery(flags({ local: Option.some(true) }));
       expect(out.stdoutText).toContain("alice");
     }).pipe(Effect.provide(layer));
   });
@@ -362,7 +344,7 @@ describe("legacy db query integration", () => {
     const filePath = join(mkdtempSync(join(tmpdir(), "supabase-query-")), "q.sql");
     writeFileSync(filePath, "select * from users");
     return Effect.gen(function* () {
-      yield* legacyDbQuery(flags({ local: Option.some(true), file: Option.some(filePath) }));
+      yield* dbQuery(flags({ local: Option.some(true), file: Option.some(filePath) }));
       expect(out.stdoutText).toContain("alice");
     }).pipe(
       Effect.provide(layer),
@@ -371,13 +353,11 @@ describe("legacy db query integration", () => {
   });
 
   it.live("resolves a relative --file against the workdir", () => {
-    // A relative `--file` path resolves against the workdir, not the
-    // original process cwd.
     const dir = mkdtempSync(join(tmpdir(), "supabase-query-wd-"));
     writeFileSync(join(dir, "q.sql"), "select * from users");
     const { layer, out } = setup({ result: SELECT_RESULT, workdir: dir });
     return Effect.gen(function* () {
-      yield* legacyDbQuery(flags({ local: Option.some(true), file: Option.some("q.sql") }));
+      yield* dbQuery(flags({ local: Option.some(true), file: Option.some("q.sql") }));
       expect(out.stdoutText).toContain("alice");
     }).pipe(
       Effect.provide(layer),
@@ -388,7 +368,7 @@ describe("legacy db query integration", () => {
   it.live("errors when --file cannot be read", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
-      const exit = yield* legacyDbQuery(
+      const exit = yield* dbQuery(
         flags({ local: Option.some(true), file: Option.some("/no/such/file.sql") }),
       ).pipe(Effect.exit);
       expect(failMessage(exit)).toContain("failed to read SQL file");
@@ -398,7 +378,7 @@ describe("legacy db query integration", () => {
   it.live("errors on empty stdin", () => {
     const { layer } = setup({ stdinTTY: false, piped: "   " });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbQuery(flags({ local: Option.some(true) })).pipe(Effect.exit);
+      const exit = yield* dbQuery(flags({ local: Option.some(true) })).pipe(Effect.exit);
       expect(failMessage(exit)).toBe("no SQL provided via stdin");
     }).pipe(Effect.provide(layer));
   });
@@ -406,9 +386,7 @@ describe("legacy db query integration", () => {
   it.live("prints the command tag for DDL with no result columns", () => {
     const { layer, out } = setup({ result: { fields: [], rows: [], commandTag: "CREATE TABLE" } });
     return Effect.gen(function* () {
-      yield* legacyDbQuery(
-        flags({ sql: Option.some("create table t()"), local: Option.some(true) }),
-      );
+      yield* dbQuery(flags({ sql: Option.some("create table t()"), local: Option.some(true) }));
       expect(out.stdoutText).toBe("CREATE TABLE\n");
     }).pipe(Effect.provide(layer));
   });
@@ -416,7 +394,7 @@ describe("legacy db query integration", () => {
   it.live("renders JSON for agents by default with the untrusted-data envelope", () => {
     const { layer, out } = setup({ result: SELECT_RESULT, agent: "yes" });
     return Effect.gen(function* () {
-      yield* legacyDbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
+      yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
       const parsed = JSON.parse(out.stdoutText);
       expect(parsed.boundary).toBe(BOUNDARY);
       expect(parsed.rows).toEqual([
@@ -430,7 +408,7 @@ describe("legacy db query integration", () => {
   it.live("auto-detects an agent from AiTool and defaults to JSON", () => {
     const { layer, out } = setup({ result: SELECT_RESULT, agent: "auto", aiTool: "cursor" });
     return Effect.gen(function* () {
-      yield* legacyDbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
+      yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
       expect(JSON.parse(out.stdoutText).boundary).toBe(BOUNDARY);
     }).pipe(Effect.provide(layer));
   });
@@ -438,7 +416,7 @@ describe("legacy db query integration", () => {
   it.live("renders plain JSON (no envelope) for a human with -o json", () => {
     const { layer, out } = setup({ result: SELECT_RESULT, agent: "no", goOutput: "json" });
     return Effect.gen(function* () {
-      yield* legacyDbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
+      yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
       const parsed = JSON.parse(out.stdoutText);
       expect(Array.isArray(parsed)).toBe(true);
       expect(parsed).toEqual([
@@ -451,7 +429,7 @@ describe("legacy db query integration", () => {
   it.live("renders plain JSON for --output-format json with --agent no", () => {
     const { layer, out } = setup({ result: SELECT_RESULT, agent: "no", format: "json" });
     return Effect.gen(function* () {
-      yield* legacyDbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
+      yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
       expect(JSON.parse(out.stdoutText)).toEqual([
         { id: 1, name: "alice" },
         { id: 2, name: "bob" },
@@ -462,7 +440,7 @@ describe("legacy db query integration", () => {
   it.live("emits a result event for --output-format stream-json with --agent no", () => {
     const { layer, out } = setup({ result: SELECT_RESULT, agent: "no", format: "stream-json" });
     return Effect.gen(function* () {
-      yield* legacyDbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
+      yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
       expect(out.stdoutText.trimEnd().split("\n")).toHaveLength(1);
       expect(JSON.parse(out.stdoutText)).toEqual(
         expect.objectContaining({
@@ -488,7 +466,7 @@ describe("legacy db query integration", () => {
       format: "stream-json",
     });
     return Effect.gen(function* () {
-      yield* legacyDbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
+      yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
       expect(out.stdoutText.trimEnd().split("\n")).toHaveLength(1);
       expect(out.stdoutText).toContain('"n": 9223372036854775807');
     }).pipe(Effect.provide(layer));
@@ -502,22 +480,20 @@ describe("legacy db query integration", () => {
       goOutput: "pretty",
     });
     return Effect.gen(function* () {
-      yield* legacyDbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
+      yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
       expect(out.stdoutText).toContain("│ id │ name  │");
       expect(out.messages.find((message) => message.type === "success")).toBeUndefined();
     }).pipe(Effect.provide(layer));
   });
 
   it.live("fails JSON output on a non-finite float (Go's json.Encoder error), no stdout", () => {
-    // select 'NaN'::float8 -o json — encoding fails and exits non-zero with
-    // empty stdout, rather than emitting `null` like JSON.stringify.
     const { layer, out } = setup({
       result: { fields: ["f"], fieldTypeIds: [701], rows: [[Number.NaN]], commandTag: "SELECT 1" },
       agent: "no",
       goOutput: "json",
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbQuery(
+      const exit = yield* dbQuery(
         flags({ sql: Option.some("select 'NaN'::float8"), local: Option.some(true) }),
       ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
@@ -527,21 +503,19 @@ describe("legacy db query integration", () => {
   });
 
   it.live("records the resolved -o as the telemetry output_format (Go parity)", () => {
-    // db query's resolved local -o mirrors onto the telemetry global: table
-    // for humans, json for agents, and the explicit -o otherwise.
     const human = setup({ result: SELECT_RESULT, agent: "no" });
     const agent = setup({ result: SELECT_RESULT, agent: "yes" });
     const csv = setup({ result: SELECT_RESULT, agent: "no", goOutput: "csv" });
     return Effect.gen(function* () {
-      yield* legacyDbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) })).pipe(
+      yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) })).pipe(
         Effect.provide(human.layer),
       );
       expect(human.telemetryOutputFormat.format).toBe("table");
-      yield* legacyDbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) })).pipe(
+      yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) })).pipe(
         Effect.provide(agent.layer),
       );
       expect(agent.telemetryOutputFormat.format).toBe("json");
-      yield* legacyDbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) })).pipe(
+      yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) })).pipe(
         Effect.provide(csv.layer),
       );
       expect(csv.telemetryOutputFormat.format).toBe("csv");
@@ -551,7 +525,7 @@ describe("legacy db query integration", () => {
   it.live("renders CSV with -o csv", () => {
     const { layer, out } = setup({ result: SELECT_RESULT, agent: "no", goOutput: "csv" });
     return Effect.gen(function* () {
-      yield* legacyDbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
+      yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
       expect(out.stdoutText).toBe("id,name\n1,alice\n2,bob\n");
     }).pipe(Effect.provide(layer));
   });
@@ -559,7 +533,7 @@ describe("legacy db query integration", () => {
   it.live("honors an explicit -o table over the agent JSON default", () => {
     const { layer, out } = setup({ result: SELECT_RESULT, agent: "yes", goOutput: "table" });
     return Effect.gen(function* () {
-      yield* legacyDbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
+      yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
       expect(out.stdoutText).toContain("│ id │ name  │");
       expect(out.stdoutText).not.toContain("boundary");
     }).pipe(Effect.provide(layer));
@@ -568,7 +542,7 @@ describe("legacy db query integration", () => {
   it.live("honors an explicit -o csv over the agent JSON default", () => {
     const { layer, out } = setup({ result: SELECT_RESULT, agent: "yes", goOutput: "csv" });
     return Effect.gen(function* () {
-      yield* legacyDbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
+      yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
       expect(out.stdoutText).toBe("id,name\n1,alice\n2,bob\n");
     }).pipe(Effect.provide(layer));
   });
@@ -580,7 +554,7 @@ describe("legacy db query integration", () => {
       rlsTables: ["public.users"],
     });
     return Effect.gen(function* () {
-      yield* legacyDbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
+      yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
       expect(JSON.parse(out.stdoutText).advisory.id).toBe("rls_disabled");
     }).pipe(Effect.provide(layer));
   });
@@ -588,18 +562,15 @@ describe("legacy db query integration", () => {
   it.live("omits the advisory when the RLS check fails", () => {
     const { layer, out } = setup({ result: SELECT_RESULT, agent: "yes", rlsFails: true });
     return Effect.gen(function* () {
-      yield* legacyDbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
+      yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
       expect(JSON.parse(out.stdoutText).advisory).toBeUndefined();
     }).pipe(Effect.provide(layer));
   });
 
   it.live("resolves the --db-url/config before reading SQL (Go root PreRun order)", () => {
-    // db query --db-url 'bad' -f missing.sql: the connection string is parsed
-    // before SQL is resolved, so the connection-string error wins over the
-    // missing-file error.
     const { layer } = setup({ resolveFails: true });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbQuery(
+      const exit = yield* dbQuery(
         flags({ dbUrl: Option.some("bad"), file: Option.some("/nope/missing.sql") }),
       ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
@@ -607,10 +578,10 @@ describe("legacy db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with LegacyDbQueryExecError when the query errors", () => {
+  it.live("fails with DbQueryExecError when the query errors", () => {
     const { layer } = setup({ queryFails: true });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbQuery(
+      const exit = yield* dbQuery(
         flags({ sql: Option.some("bad"), local: Option.some(true) }),
       ).pipe(Effect.exit);
       expect(failMessage(exit)).toContain("failed to execute query");
@@ -618,10 +589,9 @@ describe("legacy db query integration", () => {
   });
 
   it.live("rejects conflicting targets (--linked --local) before running any SQL", () => {
-    // Mutually-exclusive db-url/linked/local group fails before the query runs.
     const { layer, cache } = setup();
     return Effect.gen(function* () {
-      const exit = yield* legacyDbQuery(
+      const exit = yield* dbQuery(
         flags({
           sql: Option.some("select 1"),
           linked: Option.some(true),
@@ -632,17 +602,14 @@ describe("legacy db query integration", () => {
       expect(failMessage(exit)).toBe(
         "if any flags in the group [db-url linked local] are set none of the others can be; [linked local] were all set",
       );
-      // Failure precedes target resolution, so no linked-project cache write.
       expect(cache.cached).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 
   it.live("rejects --local=false --linked=false as a target conflict (Go flag.Changed)", () => {
-    // The mutex keys off explicit presence, so the explicit-false forms
-    // still count as set and conflict — even though both values are false.
     const { layer } = setup();
     return Effect.gen(function* () {
-      const exit = yield* legacyDbQuery(
+      const exit = yield* dbQuery(
         flags({
           sql: Option.some("select 1"),
           linked: Option.some(false),
@@ -657,10 +624,9 @@ describe("legacy db query integration", () => {
   });
 
   it.live("fails an unlinked --linked query without prompting for a project", () => {
-    // The --linked preflight loads the ref or fails; it never prompts.
     const { layer } = setup({ unlinked: true });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbQuery(
+      const exit = yield* dbQuery(
         flags({ sql: Option.some("select 1"), linked: Option.some(true) }),
       ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
@@ -669,12 +635,9 @@ describe("legacy db query integration", () => {
   });
 
   it.live("surfaces a project-ref read failure instead of reporting not-linked", () => {
-    // The --linked preflight uses the hard `loadProjectRef`, which returns
-    // `failed to load project ref` on an unreadable .temp/project-ref rather
-    // than the not-linked message. The handler must surface that, not mask it.
     const { layer } = setup({ refReadFails: true });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbQuery(
+      const exit = yield* dbQuery(
         flags({ sql: Option.some("select 1"), linked: Option.some(true) }),
       ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
@@ -683,24 +646,19 @@ describe("legacy db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // ---- linked path -------------------------------------------------------
-
   it.live("queries the linked project over HTTP and writes the linked-project cache", () => {
     const { layer, out, cache } = setup({
       linkedStatus: 201,
       linkedBody: '[{"name":"alice","id":1}]',
     });
     return Effect.gen(function* () {
-      yield* legacyDbQuery(flags({ sql: Option.some("select 1"), linked: Option.some(true) }));
+      yield* dbQuery(flags({ sql: Option.some("select 1"), linked: Option.some(true) }));
       expect(out.stdoutText).toContain("│ name  │ id │");
-      // The linked-project cache is refreshed after a --linked run.
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
   it.live("queries the project given via --project-ref without a linked workdir", () => {
-    // The fake resolver would otherwise fail as "unlinked" (`ErrNotLinked`) —
-    // only the flag can resolve a ref here.
     const FLAG_REF = "flagflagflagflagflag";
     const { layer, out, cache, httpClient } = setup({
       linkedStatus: 201,
@@ -708,7 +666,7 @@ describe("legacy db query integration", () => {
       unlinked: true,
     });
     return Effect.gen(function* () {
-      yield* legacyDbQuery(
+      yield* dbQuery(
         flags({
           sql: Option.some("select 1"),
           linked: Option.some(true),
@@ -716,9 +674,6 @@ describe("legacy db query integration", () => {
         }),
       );
       expect(out.stdoutText).toContain("│ name  │ id │");
-      // The request path itself must be scoped to the FLAG ref, not merely
-      // any successful query — proving the flag (not a fallback) drove the
-      // API call the same way it drove the cache below.
       expect(
         httpClient.requests.some((url) => url.includes(`/v1/projects/${FLAG_REF}/database/query`)),
       ).toBe(true);
@@ -729,14 +684,12 @@ describe("legacy db query integration", () => {
 
   it.live("--project-ref overrides an already-linked workdir's project ref", () => {
     const FLAG_REF = "flagflagflagflagflag";
-    // The workdir already resolves to REF (e.g. via .temp/project-ref) — the
-    // flag must win over it.
     const { layer, cache, httpClient } = setup({
       linkedStatus: 201,
       linkedBody: '[{"name":"alice","id":1}]',
     });
     return Effect.gen(function* () {
-      yield* legacyDbQuery(
+      yield* dbQuery(
         flags({
           sql: Option.some("select 1"),
           linked: Option.some(true),
@@ -756,7 +709,7 @@ describe("legacy db query integration", () => {
     const FLAG_REF = "flagflagflagflagflag";
     const { layer, out, cache, httpClient } = setup({ result: SELECT_RESULT });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbQuery(
+      const exit = yield* dbQuery(
         flags({ sql: Option.some("select 1"), projectRef: Option.some(FLAG_REF) }),
       ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
@@ -770,55 +723,38 @@ describe("legacy db query integration", () => {
   });
 
   it.live("treats --linked=false as an explicit linked target (Go gates on flag.Changed)", () => {
-    // `--linked=false` counts as explicitly set, and the preflight/handler
-    // gate the linked path on that (not the value), so this still runs the
-    // linked HTTP path rather than falling through to local.
     const { layer, out, cache } = setup({
       linkedStatus: 201,
       linkedBody: '[{"name":"alice","id":1}]',
     });
     return Effect.gen(function* () {
-      yield* legacyDbQuery(flags({ sql: Option.some("select 1"), linked: Option.some(false) }));
+      yield* dbQuery(flags({ sql: Option.some("select 1"), linked: Option.some(false) }));
       expect(out.stdoutText).toContain("│ name  │ id │");
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
   it.live("resolves the linked DB config before the API call (Go root PreRun order)", () => {
-    // For --linked, the DB config is resolved before SQL is resolved / the
-    // Management API call: it loads+validates the remote-merged config AND
-    // resolves the live DB connection (TCP probe / pooler / temp login-role),
-    // any of which can fail early. A resolver failure must stop the query
-    // before the API. (The config-validation-before-network behavior is
-    // covered at the resolver level in legacy-db-config.integration.test.ts.)
     const { layer, out, cache } = setup({
       resolveFails: true,
       linkedStatus: 201,
       linkedBody: '[{"id":1}]',
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbQuery(
+      const exit = yield* dbQuery(
         flags({ sql: Option.some("select 1"), linked: Option.some(true) }),
       ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toContain("failed to parse connection string");
-      expect(out.stdoutText).toBe(""); // failed before emitting any query result
-      // The ref is loaded before the DB config, and the cache refresh runs on
-      // failure too, so a resolve-step failure still refreshes the
-      // linked-project cache.
+      expect(out.stdoutText).toBe("");
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
   it.live("caches the linked project even when SQL resolution fails (Go PostRun)", () => {
-    // The ref resolves and the DB config validates, but no SQL is provided on
-    // a TTY (no --file / no stdin), so the query fails while resolving SQL —
-    // before runLinked. The ref is recorded in the pre-run and the cache
-    // refresh runs after the command returns even on a failure, so the
-    // linked-project cache must still refresh.
     const { layer, cache } = setup({ stdinTTY: true });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbQuery(flags({ linked: Option.some(true) })).pipe(Effect.exit);
+      const exit = yield* dbQuery(flags({ linked: Option.some(true) })).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toContain("no SQL query provided");
       expect(cache.cached).toBe(true);
@@ -833,11 +769,10 @@ describe("legacy db query integration", () => {
         linkedBody: '{"message":"syntax error"}',
       });
       return Effect.gen(function* () {
-        const exit = yield* legacyDbQuery(
+        const exit = yield* dbQuery(
           flags({ sql: Option.some("bad"), linked: Option.some(true) }),
         ).pipe(Effect.exit);
         expect(failMessage(exit)).toContain("unexpected status 400");
-        // The cache write runs unconditionally, so it fires on failure too.
         expect(cache.cached).toBe(true);
       }).pipe(Effect.provide(layer));
     },
@@ -846,7 +781,7 @@ describe("legacy db query integration", () => {
   it.live("handles an empty linked result array", () => {
     const { layer, out } = setup({ linkedStatus: 201, linkedBody: "[]" });
     return Effect.gen(function* () {
-      yield* legacyDbQuery(
+      yield* dbQuery(
         flags({ sql: Option.some("select 1 where false"), linked: Option.some(true) }),
       );
       expect(out.stdoutText).toBe("");
@@ -856,7 +791,7 @@ describe("legacy db query integration", () => {
   it.live("prints the raw body when the linked response is not a JSON array", () => {
     const { layer, out } = setup({ linkedStatus: 201, linkedBody: '{"command":"INSERT"}' });
     return Effect.gen(function* () {
-      yield* legacyDbQuery(flags({ sql: Option.some("insert ..."), linked: Option.some(true) }));
+      yield* dbQuery(flags({ sql: Option.some("insert ..."), linked: Option.some(true) }));
       expect(out.stdoutText).toBe('{"command":"INSERT"}\n');
     }).pipe(Effect.provide(layer));
   });
@@ -864,7 +799,7 @@ describe("legacy db query integration", () => {
   it.live("prints the raw body when the linked response is not valid JSON", () => {
     const { layer, out } = setup({ linkedStatus: 201, linkedBody: "CREATE TABLE" });
     return Effect.gen(function* () {
-      yield* legacyDbQuery(flags({ sql: Option.some("create ..."), linked: Option.some(true) }));
+      yield* dbQuery(flags({ sql: Option.some("create ..."), linked: Option.some(true) }));
       expect(out.stdoutText).toBe("CREATE TABLE\n");
     }).pipe(Effect.provide(layer));
   });
@@ -876,7 +811,7 @@ describe("legacy db query integration", () => {
       linkedBody: '[{"id":1}]',
     });
     return Effect.gen(function* () {
-      yield* legacyDbQuery(flags({ sql: Option.some("select 1"), linked: Option.some(true) }));
+      yield* dbQuery(flags({ sql: Option.some("select 1"), linked: Option.some(true) }));
       const parsed = JSON.parse(out.stdoutText);
       expect(parsed.boundary).toBe(BOUNDARY);
       expect(parsed.rows).toEqual([{ id: 1 }]);
@@ -885,11 +820,9 @@ describe("legacy db query integration", () => {
   });
 
   it.live("falls back to map keys when the first linked row has no orderable keys", () => {
-    // A leading null row makes `orderedKeys` return [] → the handler falls back to
-    // the first row's own keys (here also empty), rendering an empty table.
     const { layer, out } = setup({ linkedStatus: 201, linkedBody: "[null]" });
     return Effect.gen(function* () {
-      yield* legacyDbQuery(flags({ sql: Option.some("select 1"), linked: Option.some(true) }));
+      yield* dbQuery(flags({ sql: Option.some("select 1"), linked: Option.some(true) }));
       expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(layer));
   });
@@ -897,7 +830,7 @@ describe("legacy db query integration", () => {
   it.live("renders NULL for a null row object in a linked result", () => {
     const { layer, out } = setup({ linkedStatus: 201, linkedBody: '[{"a":1},null]' });
     return Effect.gen(function* () {
-      yield* legacyDbQuery(flags({ sql: Option.some("select 1"), linked: Option.some(true) }));
+      yield* dbQuery(flags({ sql: Option.some("select 1"), linked: Option.some(true) }));
       expect(out.stdoutText).toContain("NULL");
       expect(out.stdoutText).toContain("│ 1");
     }).pipe(Effect.provide(layer));
@@ -906,7 +839,7 @@ describe("legacy db query integration", () => {
   it.live("maps a linked HTTP transport failure to an exec error", () => {
     const { layer } = setup({ networkFail: true });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbQuery(
+      const exit = yield* dbQuery(
         flags({ sql: Option.some("select 1"), linked: Option.some(true) }),
       ).pipe(Effect.exit);
       expect(failMessage(exit)).toContain("failed to execute query");
@@ -916,7 +849,7 @@ describe("legacy db query integration", () => {
   it.live("requires login before querying --linked", () => {
     const { layer } = setup({ accessToken: Option.none() });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbQuery(
+      const exit = yield* dbQuery(
         flags({ sql: Option.some("select 1"), linked: Option.some(true) }),
       ).pipe(Effect.exit);
       expect(failMessage(exit)).toContain("Access token not provided");
@@ -926,30 +859,22 @@ describe("legacy db query integration", () => {
   it.live(
     "rejects an invalid env access token before the linked query (Go LoadAccessTokenFS)",
     () => {
-      // The linked preflight validates the resolved token (env/keyring/file)
-      // against `sbp_...` and fails before any API request. So an invalid
-      // env token must fail with the invalid-token error, not make the
-      // query and surface unexpected status.
       const { layer, out } = setup({ accessTokenInvalid: true, linkedStatus: 201 });
       return Effect.gen(function* () {
-        const exit = yield* legacyDbQuery(
+        const exit = yield* dbQuery(
           flags({ sql: Option.some("select 1"), linked: Option.some(true) }),
         ).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         expect(failMessage(exit)).toContain("Invalid access token format");
-        // Failed at the token check → no query result emitted.
         expect(out.stdoutText).toBe("");
       }).pipe(Effect.provide(layer));
     },
   );
 
   it.live("runs the --linked login preflight before reading --file (Go PreRun order)", () => {
-    // `db query --linked -f missing.sql` without a token must surface the
-    // login error, not a file-read failure — the token is checked in the
-    // preflight, before SQL is resolved.
     const { layer } = setup({ accessToken: Option.none() });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbQuery(
+      const exit = yield* dbQuery(
         flags({ linked: Option.some(true), file: Option.some("/no/such/file.sql") }),
       ).pipe(Effect.exit);
       expect(failMessage(exit)).toContain("Access token not provided");
@@ -958,12 +883,9 @@ describe("legacy db query integration", () => {
   });
 
   it.live("surfaces a linked config/connection failure before the missing-token error", () => {
-    // The linked config (config + ref + DB config) is resolved before the
-    // query command's token check, so an unresolvable linked config must
-    // surface ahead of the generic "supabase login" error — not be masked by it.
     const { layer } = setup({ accessToken: Option.none(), resolveFails: true });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbQuery(
+      const exit = yield* dbQuery(
         flags({ sql: Option.some("select 1"), linked: Option.some(true) }),
       ).pipe(Effect.exit);
       expect(failMessage(exit)).toContain("failed to parse connection string");

@@ -2,51 +2,45 @@ import { Clock, Effect, FileSystem, Path, Stream } from "effect";
 
 import { Output } from "../../../shared/output/output.service.ts";
 import { Stdin } from "../../../shared/runtime/stdin.service.ts";
-import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
-import { legacyBold } from "../../../command-internal/legacy-colors.ts";
+import { CommandSettings } from "../../../config/command-settings.service.ts";
+import { bold } from "../../../command-internal/colors.ts";
 import {
-  legacyFormatMigrationTimestamp,
-  legacyGetMigrationPath,
-} from "../../../command-internal/legacy-migration-file.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import type { LegacyMigrationNewFlags } from "./new.command.ts";
-import { LegacyMigrationNewWriteError } from "./new.errors.ts";
+  formatMigrationTimestamp,
+  getMigrationPath,
+} from "../../../command-internal/migration-file.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
+import type { MigrationNewFlags } from "./new.command.ts";
+import { MigrationNewWriteError } from "./new.errors.ts";
 
 /**
  * `supabase migration new`:
  * write `supabase/migrations/<UTC timestamp>_<name>.sql` (mode 0644), seeding it
  * from piped stdin when present, then print the created path. No DB / API / prompt.
  */
-export const legacyMigrationNew = Effect.fn("legacy.migration.new")(function* (
-  flags: LegacyMigrationNewFlags,
-) {
+export const migrationNew = Effect.fn("migration.new")(function* (flags: MigrationNewFlags) {
   const output = yield* Output;
-  const cliSettings = yield* LegacyCliSettings;
+  const cliSettings = yield* CommandSettings;
   const stdin = yield* Stdin;
-  const telemetryState = yield* LegacyTelemetryState;
+  const telemetryState = yield* TelemetryState;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
   yield* Effect.gen(function* () {
-    const timestamp = legacyFormatMigrationTimestamp(yield* Clock.currentTimeMillis);
-    const migrationPath = legacyGetMigrationPath(
+    const timestamp = formatMigrationTimestamp(yield* Clock.currentTimeMillis);
+    const migrationPath = getMigrationPath(
       path,
       cliSettings.workdir,
       timestamp,
       flags.migrationName,
     );
 
-    // The name is a positional CLI arg; `path.join` collapses `..` segments, so a
-    // name like `../../../foo` resolves OUTSIDE the migrations directory and lets
-    // `migration new` write an arbitrary file (CWE-22) — reachable when the name
-    // comes from an agent/CI template rather than a human. Real names are simple
-    // identifiers, so containing the write to `supabase/migrations` is
-    // parity-neutral for legitimate input while closing the arbitrary-write
-    // vector — the same TS-only hardening `migration fetch` applies to remote rows.
+    // `path.join` collapses ".." segments, so a name like "../../../foo" would
+    // resolve outside the migrations dir (CWE-22); reject it, since real names are
+    // simple identifiers.
     const migrationsDir = path.join(cliSettings.workdir, "supabase", "migrations");
     if (!migrationPath.startsWith(migrationsDir + path.sep)) {
       return yield* Effect.fail(
-        new LegacyMigrationNewWriteError({
+        new MigrationNewWriteError({
           message: `invalid migration name: "${flags.migrationName}" must not escape the ${path.join("supabase", "migrations")} directory`,
         }),
       );
@@ -54,32 +48,28 @@ export const legacyMigrationNew = Effect.fn("legacy.migration.new")(function* (
 
     yield* fs
       .makeDirectory(path.dirname(migrationPath), { recursive: true })
-      .pipe(
-        Effect.mapError((cause) => new LegacyMigrationNewWriteError({ message: cause.message })),
-      );
+      .pipe(Effect.mapError((cause) => new MigrationNewWriteError({ message: cause.message })));
 
-    // The RELATIVE path prints: `supabase/migrations`
-    // is workdir-independent regardless of the invoking cwd. Reproduce that exactly
-    // while still writing to the absolute `migrationPath`.
+    // The printed path is workdir-relative, independent of the invoking cwd, while
+    // the write itself uses the absolute `migrationPath`.
     const relativePath = path.join(
       "supabase",
       "migrations",
       `${timestamp}_${flags.migrationName}.sql`,
     );
-    // stdout-bound line, so the colour TTY gate must check stdout (see
-    // `legacy-colors.ts`'s doc comment — the CLI-1546 bug class).
+    // This line prints to stdout, so the color gate must check stdout; see
+    // `colors.ts`'s doc comment.
     const printCreated =
       output.format === "text"
-        ? output.raw(`Created new migration at ${legacyBold(relativePath, process.stdout)}\n`)
+        ? output.raw(`Created new migration at ${bold(relativePath, process.stdout)}\n`)
         : Effect.void;
 
-    // Materialize the empty migration before reporting success instead of relying on an
-    // otherwise-unused open handle. This is the same create-then-append pattern used by
-    // db dump and db pull.
+    // Materializes the empty migration up front rather than relying on an otherwise-unused
+    // open handle; the same create-then-append pattern used by db dump and db pull.
     yield* fs.writeFile(migrationPath, new Uint8Array(0), { mode: 0o644 }).pipe(
       Effect.mapError(
         (cause) =>
-          new LegacyMigrationNewWriteError({
+          new MigrationNewWriteError({
             message: `failed to open migration file: ${cause.message}`,
           }),
       ),
@@ -92,7 +82,7 @@ export const legacyMigrationNew = Effect.fn("legacy.migration.new")(function* (
           const handle = yield* fs.open(migrationPath, { flag: "a" }).pipe(
             Effect.mapError(
               (cause) =>
-                new LegacyMigrationNewWriteError({
+                new MigrationNewWriteError({
                   message: `failed to open migration file: ${cause.message}`,
                 }),
             ),
@@ -101,7 +91,7 @@ export const legacyMigrationNew = Effect.fn("legacy.migration.new")(function* (
             Stream.runForEach((chunk) => handle.writeAll(chunk)),
             Effect.mapError(
               (cause) =>
-                new LegacyMigrationNewWriteError({
+                new MigrationNewWriteError({
                   message: `failed to copy from stdin: ${cause.message}`,
                 }),
             ),
@@ -111,12 +101,12 @@ export const legacyMigrationNew = Effect.fn("legacy.migration.new")(function* (
       );
     }
 
-    // Do not emit success solely because a runtime write reported success. This command's
-    // contract is that the returned path exists when it exits zero.
+    // The command's contract is that the returned path exists when it exits zero, not
+    // merely that the write call reported success.
     yield* fs.stat(migrationPath).pipe(
       Effect.mapError(
         (cause) =>
-          new LegacyMigrationNewWriteError({
+          new MigrationNewWriteError({
             message: `failed to verify migration file: ${cause.message}`,
           }),
       ),
