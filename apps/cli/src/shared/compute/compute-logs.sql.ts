@@ -44,8 +44,14 @@ export const ALL_COMPUTE_LOG_STREAMS: ReadonlyArray<string> = Object.values(COMP
  */
 const COMPUTE_LOG_NAME_ATTRIBUTE = "worker";
 
-/** Which key carries the stream name. See {@link computeLogsQuery} for why. */
-const COMPUTE_LOG_STREAM_ATTRIBUTE = "source";
+/**
+ * Which top-level column carries the stream name.
+ *
+ * The writer publishes it beside `project` rather than inside `metadata`, so it is a column
+ * here rather than a `log_attributes` key. `metadata.source` carries the same value for
+ * readers that have not moved across; this is the one to filter on.
+ */
+const COMPUTE_LOG_STREAM_COLUMN = "subservice";
 
 /**
  * The server clamps a span of more than 24 hours, so the default window sits just under the
@@ -127,13 +133,11 @@ function quote(value: string): string {
 }
 
 /**
- * The logs query for one compute. Two things about the projection are load-bearing: the filter
- * is `log_attributes`, not the `source` column, since compute rows carry an empty top-level
- * `source` (the stream survives only in `log_attributes['source']`); and the `in (...)` list
- * is a tenancy guard, not a convenience — with `source` empty, it's the only thing keeping a
- * non-compute row with a `worker` attribute out of the result. `toUnixTimestamp64Milli` rather
- * than a formatter, since ClickHouse's `%M` is the month name and bare `toString(timestamp)`
- * has no zone.
+ * The logs query for one compute. Two things about the projection are load-bearing: the
+ * `in (...)` list is a tenancy guard, not a convenience — compute rows carry an empty
+ * top-level `source`, so the stream list is the only thing keeping a non-compute row with a
+ * `worker` attribute out of the result; and `toUnixTimestamp64Milli` rather than a formatter,
+ * since ClickHouse's `%M` is the month name and bare `toString(timestamp)` has no zone.
  */
 export function computeLogsQuery(options: {
   readonly name: string;
@@ -144,12 +148,12 @@ export function computeLogsQuery(options: {
   return (
     `select id, ` +
     `toUnixTimestamp64Milli(timestamp) as ts_ms, ` +
-    `log_attributes['${COMPUTE_LOG_STREAM_ATTRIBUTE}'] as stream, ` +
+    `${COMPUTE_LOG_STREAM_COLUMN} as stream, ` +
     `event_message, ` +
     `log_attributes ` +
     `from logs ` +
     `where log_attributes['${COMPUTE_LOG_NAME_ATTRIBUTE}'] = ${quote(options.name)} ` +
-    `and log_attributes['${COMPUTE_LOG_STREAM_ATTRIBUTE}'] in (${streams}) ` +
+    `and ${COMPUTE_LOG_STREAM_COLUMN} in (${streams}) ` +
     `order by timestamp desc ` +
     `limit ${options.tail}`
   );
