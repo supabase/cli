@@ -98,6 +98,11 @@ interface SpawnedSupabase {
   readonly exitEffect: (timeoutMs?: number) => Effect.Effect<RunResult>;
   /** The deferred stdin write failure, if the CLI closed stdin early. */
   readonly stdinFailure: (result: RunResult) => Error | undefined;
+  /**
+   * Effect-path scope release: kills the group once (unless the caller opted out on a
+   * successful run), then disposes the owned temp home. Idempotent across the close path.
+   */
+  readonly releaseOwned: (opts: { readonly successOptOut: boolean }) => void;
 }
 
 export function makeTempHome() {
@@ -477,7 +482,11 @@ export function spawnSupabase(
         clearTimeout(timeout);
         closeWaiters.delete(onClose);
         cleanupProcessGroupOnClose();
-        disposeOwnHome();
+        // The home may still be in use when the opt-out kept the child alive here; in
+        // that case `releaseOwned` disposes it after the outer release kills the group.
+        if (closeResult !== undefined || cleanedUpProcessGroup) {
+          disposeOwnHome();
+        }
       });
     });
 
@@ -571,6 +580,21 @@ export function spawnSupabase(
     waitForExit,
     exitEffect,
     stdinFailure: (result) => (stdinError === undefined ? undefined : stdinFailure(result)),
+    releaseOwned: ({ successOptOut }) => {
+      // `closeResult === undefined` is the honest liveness test: the pid is still owned,
+      // so signaling is safe and necessary; once the child has closed, signaling again
+      // would only race pid reuse. The group flag alone cannot carry this — on Windows
+      // the group signal is a swallowed no-op, and the direct kill below is the only one
+      // that works there.
+      if (!successOptOut && closeResult === undefined) {
+        cleanedUpProcessGroup = true;
+        killProcessGroup(proc.pid!, "SIGKILL");
+        try {
+          proc.kill("SIGKILL");
+        } catch {}
+      }
+      disposeOwnHome();
+    },
   };
 }
 
@@ -628,17 +652,15 @@ export const runSupabaseEffect = (
       Effect.orDie,
     ),
     // Scope teardown owns the spawned group: an interrupted run always kills it so the
-    // child is never orphaned. On successful completion the caller's
-    // `cleanupProcessGroupOnClose: false` opt-out is honoured, matching the Promise path.
+    // child is never orphaned, without re-signaling a group the close path already
+    // cleaned. On successful completion the caller's `cleanupProcessGroupOnClose: false`
+    // opt-out is honoured, matching the Promise path.
     (spawned, exit) =>
-      Effect.sync(() => {
-        if (Exit.isSuccess(exit) && options?.cleanupProcessGroupOnClose === false) {
-          return;
-        }
-        try {
-          spawned.kill("SIGKILL");
-        } catch {}
-      }),
+      Effect.sync(() =>
+        spawned.releaseOwned({
+          successOptOut: Exit.isSuccess(exit) && options?.cleanupProcessGroupOnClose === false,
+        }),
+      ),
   ).pipe(
     Effect.flatMap((spawned) =>
       spawned.exitEffect().pipe(
