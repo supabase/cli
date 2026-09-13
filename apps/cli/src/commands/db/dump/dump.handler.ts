@@ -393,8 +393,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
           Effect.fail(
             new DbDumpRunError({
               message: error.message,
-              suggestion:
-                "Install Docker Desktop (or Git Bash) to dump a native stack on Windows.",
+              suggestion: "Install Docker Desktop (or Git Bash) to dump a native stack on Windows.",
             }),
           ),
       ),

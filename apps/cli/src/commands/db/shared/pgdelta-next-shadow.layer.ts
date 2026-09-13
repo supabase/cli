@@ -50,7 +50,10 @@ import {
 } from "./pgdelta-next-shadow.service.ts";
 import { DeclarativeShadowDbError } from "./pgdelta.errors.ts";
 import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
-import { stackAcquireShadowDatabase, stackMigrateShadow } from "../../../command-internal/stack-shadow.ts";
+import {
+  stackAcquireShadowDatabase,
+  stackMigrateShadow,
+} from "../../../command-internal/stack-shadow.ts";
 import { stackCatalogSetupLayer } from "../../../command-internal/stack-catalog-setup.ts";
 
 const allocateFreeHostPort = Effect.callback<Option.Option<number>>((resume) => {

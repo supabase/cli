@@ -22,10 +22,7 @@ import {
 } from "./test-db.errors.ts";
 import { buildPgProveArgs } from "./test-db.pg-prove-args.ts";
 import { currentStackBackend } from "./stack-backend.ts";
-import {
-  stackProjectDatabaseMajor,
-  stackRequireProjectRuntime,
-} from "./stack-local-database.ts";
+import { stackProjectDatabaseMajor, stackRequireProjectRuntime } from "./stack-local-database.ts";
 import {
   rewriteDumpHostForToolContainer,
   requireHostPgProve,

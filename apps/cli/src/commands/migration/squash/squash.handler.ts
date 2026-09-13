@@ -136,8 +136,7 @@ const squashMigrations = Effect.fnUntraced(function* (
           const networkIdFlag = yield* NetworkIdFlag;
           const networkId = Option.getOrUndefined(networkIdFlag);
           const dumpUsesHostNetwork = networkId === undefined || networkId.length === 0;
-          const nativeShadow =
-            handle.runtime.kind === "native" && runtimeInfo.platform !== "win32";
+          const nativeShadow = handle.runtime.kind === "native" && runtimeInfo.platform !== "win32";
           const expectedMajor =
             parsePostgresServerMajor(handle.ephemeral.version) ?? toml.majorVersion;
           const release = yield* resolveEphemeralPostgresRelease(handle.ephemeral.version).pipe(

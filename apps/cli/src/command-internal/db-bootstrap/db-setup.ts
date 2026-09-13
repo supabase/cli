@@ -727,17 +727,15 @@ export const applyDatabaseOverlay = (
   Effect.gen(function* () {
     yield* Effect.scoped(
       Effect.gen(function* () {
-        const tmpDir = yield* fs
-          .makeTempDirectoryScoped({ prefix: "supabase-db-overlay-" })
-          .pipe(
-            Effect.mapError(
-              (error) =>
-                new DbSetupError({
-                  message: `failed to create temp directory: ${errMessage(error)}`,
-                  reason: "filesystem",
-                }),
-            ),
-          );
+        const tmpDir = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-db-overlay-" }).pipe(
+          Effect.mapError(
+            (error) =>
+              new DbSetupError({
+                message: `failed to create temp directory: ${errMessage(error)}`,
+                reason: "filesystem",
+              }),
+          ),
+        );
         yield* applyDatabaseWebhooks(
           session,
           fs,

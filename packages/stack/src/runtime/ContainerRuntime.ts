@@ -246,7 +246,11 @@ export const runContainerStartupProcess = (input: {
   readonly runtimeScope?: Scope.Scope;
 }): Effect.Effect<void, RuntimeDriverError> => {
   let logFiber: Fiber.Fiber<void, RuntimeDriverError> | undefined;
-  const acquire = withEngine(input.engine, input.key, input.engine.createContainer(input.specification));
+  const acquire = withEngine(
+    input.engine,
+    input.key,
+    input.engine.createContainer(input.specification),
+  );
   const use = (container: ContainerResource): Effect.Effect<void, RuntimeDriverError> =>
     Effect.gen(function* () {
       yield* withEngine(input.engine, input.key, input.engine.startContainer(container.id));
@@ -558,9 +562,7 @@ export const makeContainerRuntime = (
           network: context.network.id,
           mounts: context.resolution.mounts ?? [],
           volumeMounts:
-            context.volumeRequest === undefined
-              ? []
-              : [volumeMountFor(key, context.volumeRequest)],
+            context.volumeRequest === undefined ? [] : [volumeMountFor(key, context.volumeRequest)],
           publications: [],
           role: "workload",
           entrypoint: startupProcess.entrypoint,

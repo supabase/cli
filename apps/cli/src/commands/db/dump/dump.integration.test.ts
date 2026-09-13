@@ -1201,11 +1201,7 @@ describe("db dump integration", () => {
       expect(docker.lastOpts?.network).toEqual({ _tag: "host" });
     }).pipe(
       Effect.provide(
-        Layer.mergeAll(
-          layer,
-          stackBackendLayer("stack"),
-          dumpStackApi({ kind: "native" }),
-        ),
+        Layer.mergeAll(layer, stackBackendLayer("stack"), dumpStackApi({ kind: "native" })),
       ),
     );
   });
@@ -1225,58 +1221,57 @@ describe("db dump integration", () => {
         expect(failSuggestion(exit)).toContain("Docker Desktop");
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(
-            layer,
-            stackBackendLayer("stack"),
-            dumpStackApi({ kind: "native" }),
-          ),
+          Layer.mergeAll(layer, stackBackendLayer("stack"), dumpStackApi({ kind: "native" })),
         ),
       );
     },
   );
 
-  it.live("dump --local on the stack backend uses status().versions.database for the client major", () => {
-    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-    writeFileSync(
-      join(tmp.current, "supabase", "config.toml"),
-      'project_id = "test"\n[db]\nmajor_version = 17\n',
-    );
-    const spawner = ChildProcessSpawner.make((command) =>
-      Effect.sync(() => {
-        const name = command._tag === "StandardCommand" ? command.command : "";
-        const stdoutText = name === "pg_dump" ? "pg_dump (PostgreSQL) 17.4\n" : "-- schema\n";
-        return ChildProcessSpawner.makeHandle({
-          pid: ChildProcessSpawner.ProcessId(1),
-          stdout: Stream.fromIterable([new TextEncoder().encode(stdoutText)]),
-          stderr: Stream.empty,
-          all: Stream.empty,
-          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
-          isRunning: Effect.succeed(false),
-          stdin: Sink.drain,
-          kill: () => Effect.void,
-          unref: Effect.succeed(Effect.void),
-          getInputFd: () => Sink.drain,
-          getOutputFd: () => Stream.empty,
-        });
-      }),
-    );
-    const { layer } = setup({
-      isLocal: true,
-      workdir: tmp.current,
-    });
-    return Effect.gen(function* () {
-      const exit = yield* dbDump(flags({ local: Option.some(true) })).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(failMessage(exit)).toContain("does not match stack Postgres 16");
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          layer,
-          stackBackendLayer("stack"),
-          dumpStackApi({ kind: "native" }, "16.6.1"),
-          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+  it.live(
+    "dump --local on the stack backend uses status().versions.database for the client major",
+    () => {
+      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+      writeFileSync(
+        join(tmp.current, "supabase", "config.toml"),
+        'project_id = "test"\n[db]\nmajor_version = 17\n',
+      );
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.sync(() => {
+          const name = command._tag === "StandardCommand" ? command.command : "";
+          const stdoutText = name === "pg_dump" ? "pg_dump (PostgreSQL) 17.4\n" : "-- schema\n";
+          return ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(1),
+            stdout: Stream.fromIterable([new TextEncoder().encode(stdoutText)]),
+            stderr: Stream.empty,
+            all: Stream.empty,
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+            isRunning: Effect.succeed(false),
+            stdin: Sink.drain,
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          });
+        }),
+      );
+      const { layer } = setup({
+        isLocal: true,
+        workdir: tmp.current,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* dbDump(flags({ local: Option.some(true) })).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(failMessage(exit)).toContain("does not match stack Postgres 16");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layer,
+            stackBackendLayer("stack"),
+            dumpStackApi({ kind: "native" }, "16.6.1"),
+            Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          ),
         ),
-      ),
-    );
-  });
+      );
+    },
+  );
 });
