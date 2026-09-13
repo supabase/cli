@@ -34,7 +34,7 @@ export class StackCatalogSetupError extends Data.TaggedError("StackCatalogSetupE
   readonly cause?: unknown;
 }> {}
 
-export interface StackCatalogOverlay {
+interface StackCatalogOverlay {
   readonly webhooks?: SetupDatabaseOptions["webhooks"];
   readonly webhooksEnabled: boolean;
   readonly apiAutoExposeNewTables: ApplyDatabaseOverlayInput["apiAutoExposeNewTables"];
@@ -43,14 +43,14 @@ export interface StackCatalogOverlay {
   readonly announceRoles?: boolean;
 }
 
-export interface LiveStackCatalogInput {
+interface LiveStackCatalogInput {
   readonly kind: "live";
   readonly stack: EffectStack;
   readonly projectRoot: string;
   readonly config: StackConfig;
 }
 
-export interface EphemeralStackCatalogInput {
+interface EphemeralStackCatalogInput {
   readonly kind: "ephemeral";
   readonly projectRoot: string;
   readonly runtime: StackRuntime;
