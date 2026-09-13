@@ -6,7 +6,7 @@ import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import { Data, Effect } from "effect";
+import { Data, Effect, Exit } from "effect";
 import {
   noteStackCliProjectHome,
   registerTempHome,
@@ -612,22 +612,32 @@ export async function runSupabase(
 
 /**
  * Effect-native CLI run. The spawned process group is owned by the calling scope, so an
- * interrupted test kills the child instead of orphaning it. `runSupabase` is the Promise
- * facade over the same exit path.
+ * interrupted test kills the child instead of orphaning it; `cleanupProcessGroupOnClose:
+ * false` is honoured only on successful completion. `runSupabase` is the Promise facade
+ * over the same exit path.
  */
 export const runSupabaseEffect = (
   args: string[],
   options?: Parameters<typeof spawnSupabase>[1],
 ): Effect.Effect<RunResult, CliStdinWriteError> =>
   Effect.acquireRelease(
-    Effect.sync(() => spawnSupabase(args, options)),
-    (spawned) =>
+    // spawnSupabase throws when build artifacts or stdio pipes are missing — a violated
+    // harness precondition. The identity catch keeps the original error as the defect, so
+    // the "run pnpm build" instruction stays the failure headline.
+    Effect.try({ try: () => spawnSupabase(args, options), catch: (error) => error }).pipe(
+      Effect.orDie,
+    ),
+    // Scope teardown owns the spawned group: an interrupted run always kills it so the
+    // child is never orphaned. On successful completion the caller's
+    // `cleanupProcessGroupOnClose: false` opt-out is honoured, matching the Promise path.
+    (spawned, exit) =>
       Effect.sync(() => {
-        if (options?.cleanupProcessGroupOnClose ?? true) {
-          try {
-            spawned.kill("SIGKILL");
-          } catch {}
+        if (Exit.isSuccess(exit) && options?.cleanupProcessGroupOnClose === false) {
+          return;
         }
+        try {
+          spawned.kill("SIGKILL");
+        } catch {}
       }),
   ).pipe(
     Effect.flatMap((spawned) =>

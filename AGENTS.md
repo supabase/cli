@@ -15,11 +15,10 @@ Bun monorepo with workspaces under `apps/` and `packages/`. `pnpm` is the packag
 Use an existing TypeScript/Bun workspace, especially `packages/api`, as the package-structure
 reference. Published `apps/cli` and `packages/config` are not private; `apps/docs` and
 `packages/cli-*` have their own shapes. Generic lint, format, and unused-code tooling is
-root-owned. Effect lint covers `packages/stack`, all files under
-`apps/cli/src/commands/experimental/stack` and `apps/cli/src/commands/experimental/compute`, the
-shared `apps/cli/src/shared/compute` runtime helpers (excluding embedded starter templates), the
-Compute test fixture helper, and `apps/cli/src/command-internal/experimental-feature.ts`; use the
-root scripts for it.
+root-owned. Effect lint covers a growing allow list of areas, defined by the `!` entries in
+`.oxlintrc.effect.json` (the source of truth) and enforced through the root scripts; it
+currently spans `packages/stack`, the experimental and smaller `apps/cli/src/commands`
+families and most of the shared compute runtime, and expands area by area.
 
 ### Config Naming Vocabulary
 

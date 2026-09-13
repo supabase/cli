@@ -184,6 +184,9 @@ describe("snippets download integration", () => {
         // scan below covers payload fields only. Keep both assertions.
         expect(causeText).not.toContain(WRONG_FORMAT_ID);
         const failure = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
+        // Guard against a vacuous pass: the failure must be a typed error, not a defect
+        // or interruption, for the value scan below to mean anything.
+        expect(failure).toBeDefined();
         expect(stringLeaves(failure).some((leaf) => leaf.includes(WRONG_FORMAT_ID))).toBe(false);
       }
     }).pipe(Effect.provide(layer));
