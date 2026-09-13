@@ -81,7 +81,9 @@ describe("config pull CLI surface", () => {
       );
 
       expect(exitCode, `${stdout}\n${stderr}`).toBe(0);
-      expect(stderr).toContain(`Apply 1 change(s) to supabase/config.toml? [Y/n] n\n`);
+      expect(stderr).toContain(
+        `Apply 1 change(s) to ${join("supabase", "config.toml")}? [Y/n] n\n`,
+      );
       expect(stdout).toContain("not written (declined)");
       expect(await readFile(configPath, "utf8")).toBe(before);
     } finally {
