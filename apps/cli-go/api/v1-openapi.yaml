@@ -4837,7 +4837,6 @@ paths:
       x-internal: true
   /v1/projects/{ref}/advisors/performance:
     get:
-      deprecated: true
       description: >-
         This is an **experimental** endpoint. It is subject to change or removal
         in future versions. Use it with caution, as it may not remain supported
@@ -4880,9 +4879,9 @@ paths:
       x-fga-permissions:
         - - advisors_read
       x-oauth-scope: database:read
+      x-scalar-stability: experimental
   /v1/projects/{ref}/advisors/security:
     get:
-      deprecated: true
       description: >-
         This is an **experimental** endpoint. It is subject to change or removal
         in future versions. Use it with caution, as it may not remain supported
@@ -4933,6 +4932,7 @@ paths:
       x-fga-permissions:
         - - advisors_read
       x-oauth-scope: database:read
+      x-scalar-stability: experimental
   /v1/projects/{ref}/analytics/endpoints/logs.all:
     get:
       deprecated: true
@@ -5815,7 +5815,6 @@ paths:
       x-oauth-scope: database:write
   /v1/projects/{ref}/database/context:
     get:
-      deprecated: true
       description: >-
         This is an **experimental** endpoint. It is subject to change or removal
         in future versions. Use it with caution, as it may not remain supported
@@ -5858,6 +5857,7 @@ paths:
       x-fga-permissions:
         - - database_read
       x-oauth-scope: projects:read
+      x-scalar-stability: experimental
   /v1/projects/{ref}/database/password:
     patch:
       operationId: v1-update-database-password
