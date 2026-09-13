@@ -3,6 +3,7 @@ import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
+import { stdinLayer } from "../../shared/runtime/stdin.layer.ts";
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
 import { httpClientLayer } from "../../auth/http-debug.layer.ts";
 import { commandSettingsLayer } from "../../config/command-settings.layer.ts";
@@ -63,4 +64,5 @@ export const startCommand = Command.make("start", config).pipe(
     start(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
   Command.provide(startRuntimeLayer),
+  Command.provide(stdinLayer),
 );
