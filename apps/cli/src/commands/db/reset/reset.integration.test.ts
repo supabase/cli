@@ -44,7 +44,7 @@ import type { OutputFormat } from "../../../shared/output/types.ts";
 import { dockerRunLayer } from "../../../command-internal/docker-run.layer.ts";
 import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
 import { StackApi } from "../../../command-internal/stack-api.ts";
-import { StackCatalogSetup } from "../../../command-internal/stack-catalog-setup.ts";
+import { recordingStackCatalogSetup } from "../../../command-internal/stack-catalog-setup.ts";
 import { CAPABILITY_NAMES, StackIdSchema, type EffectStack } from "@supabase/stack/effect";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
@@ -64,19 +64,6 @@ const LIST_MIGRATIONS =
 const SELECT_SEEDS = "SELECT path, hash FROM supabase_migrations.seed_files";
 const COUNT_REPLICATION_SLOTS =
   "SELECT COUNT(*) FROM pg_replication_slots WHERE database IN ('postgres', '_supabase')";
-
-const recordingCatalog = () => {
-  const applied: Array<string> = [];
-  return {
-    applied,
-    layer: Layer.succeed(StackCatalogSetup, {
-      apply: (input) =>
-        Effect.sync(() => {
-          applied.push(input.target.kind);
-        }),
-    }),
-  };
-};
 
 const CONN: PgConnInput = {
   host: "db.example.supabase.co",
@@ -551,7 +538,10 @@ function setup(
     workdir,
     ready: opts.stackDatabaseReady !== false,
   });
-  const catalog = opts.stackBackend === true ? recordingCatalog() : undefined;
+  const catalog =
+    opts.stackBackend === true
+      ? recordingStackCatalogSetup((input) => input.target.kind)
+      : undefined;
   const layer = Layer.mergeAll(
     out.layer,
     conn.layer,

@@ -24,7 +24,11 @@ import {
   stackShadowCacheKey,
 } from "./stack-shadow.ts";
 import type { ShadowSetupInput } from "./db-bootstrap/shadow-database.ts";
-import { noopStackCatalogSetupLayer, StackCatalogSetup } from "./stack-catalog-setup.ts";
+import {
+  noopStackCatalogSetupLayer,
+  recordingStackCatalogSetup,
+  StackCatalogSetup,
+} from "./stack-catalog-setup.ts";
 
 const tmp = useTempWorkdir("stack-shadow-");
 const defaultConfig: CliConfig = Schema.decodeSync(CliConfigSchema)({});
@@ -155,13 +159,7 @@ describe("stackAcquireShadowDatabase", () => {
     () => {
       const ephemeral = mockEphemeral();
       const out = mockOutput();
-      const applied: Array<string> = [];
-      const catalog = Layer.succeed(StackCatalogSetup, {
-        apply: (setup) =>
-          Effect.sync(() => {
-            applied.push(setup.target.kind);
-          }),
-      });
+      const catalog = recordingStackCatalogSetup((input) => input.target.kind);
       return Effect.scoped(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
@@ -173,7 +171,7 @@ describe("stackAcquireShadowDatabase", () => {
             Effect.gen(function* () {
               const first = yield* stackAcquireShadowDatabase(input(fs, path));
               expect(first.baselinePresent).toBe(false);
-              expect(applied).toEqual(["ephemeral"]);
+              expect(catalog.applied).toEqual(["ephemeral"]);
               expect(first.artifactIdentity).toBe("native:17.6.1");
               expect(ephemeral.restores).toEqual([undefined]);
               expect(ephemeral.exports).toHaveLength(1);
@@ -190,7 +188,7 @@ describe("stackAcquireShadowDatabase", () => {
               const warm = yield* stackAcquireShadowDatabase(input(fs, path));
               expect(warm.baselinePresent).toBe(true);
               expect(ephemeral.restores[1]?.endsWith(names[0] ?? "")).toBe(true);
-              expect(applied).toEqual(["ephemeral"]);
+              expect(catalog.applied).toEqual(["ephemeral"]);
             }),
           );
         }),
@@ -203,7 +201,7 @@ describe("stackAcquireShadowDatabase", () => {
             mockCommandSettings({ workdir: tmp.current }),
             stackBackendLayer("stack"),
             ephemeral.layer,
-            catalog,
+            catalog.layer,
           ),
         ),
       );

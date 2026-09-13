@@ -204,3 +204,16 @@ export const stackCatalogSetupLayer = Layer.effect(
 export const noopStackCatalogSetupLayer = Layer.succeed(StackCatalogSetup, {
   apply: () => Effect.void,
 });
+
+export const recordingStackCatalogSetup = <A>(record: (input: StackCatalogSetupInput) => A) => {
+  const applied: Array<A> = [];
+  return {
+    applied,
+    layer: Layer.succeed(StackCatalogSetup, {
+      apply: (input) =>
+        Effect.sync(() => {
+          applied.push(record(input));
+        }),
+    }),
+  };
+};

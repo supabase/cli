@@ -38,7 +38,7 @@ import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
 import { StackApi } from "../../../command-internal/stack-api.ts";
 import {
   noopStackCatalogSetupLayer,
-  StackCatalogSetup,
+  recordingStackCatalogSetup,
 } from "../../../command-internal/stack-catalog-setup.ts";
 import { CAPABILITY_NAMES, StackIdSchema, type EffectStack } from "@supabase/stack/effect";
 
@@ -50,19 +50,6 @@ const GLOBALS_FINGERPRINT = "CREATE ROLE anon";
 function flags(fromBackup?: string): DbStartFlags {
   return { fromBackup: fromBackup === undefined ? Option.none() : Option.some(fromBackup) };
 }
-
-const recordingCatalog = () => {
-  const applied: Array<string> = [];
-  return {
-    applied,
-    layer: Layer.succeed(StackCatalogSetup, {
-      apply: (input) =>
-        Effect.sync(() => {
-          applied.push(input.target.kind);
-        }),
-    }),
-  };
-};
 
 interface SpawnRecord {
   readonly args: ReadonlyArray<string>;
@@ -300,7 +287,10 @@ interface SetupOpts {
 }
 
 function setup(opts: SetupOpts = {}) {
-  const catalog = opts.recordCatalog === true ? recordingCatalog() : undefined;
+  const catalog =
+    opts.recordCatalog === true
+      ? recordingStackCatalogSetup((input) => input.target.kind)
+      : undefined;
   const workdir = opts.workdir ?? tempRoot.current;
   if (opts.skipConfig !== true) {
     writeConfig(workdir, opts.configContents ?? 'project_id = "test"\n');

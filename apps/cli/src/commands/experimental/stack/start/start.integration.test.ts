@@ -46,7 +46,7 @@ import {
 } from "../../../../shared/telemetry/error-actionability.ts";
 import {
   noopStackCatalogSetupLayer,
-  StackCatalogSetup,
+  recordingStackCatalogSetup,
 } from "../../../../command-internal/stack-catalog-setup.ts";
 
 const project = (): string => {
@@ -248,23 +248,17 @@ describe("stack start targeting", () => {
 
   it.live("applies catalog setup from pre-exclude config after start returns", () => {
     const root = project();
-    const applied: Array<{ kind: string; authEnabled: boolean | undefined }> = [];
-    const catalog = Layer.succeed(StackCatalogSetup, {
-      apply: (input) =>
-        Effect.sync(() => {
-          applied.push({
-            kind: input.target.kind,
-            authEnabled: input.target.config.capabilities?.auth?.enabled,
-          });
-        }),
-    });
+    const catalog = recordingStackCatalogSetup((input) => ({
+      kind: input.target.kind,
+      authEnabled: input.target.config.capabilities?.auth?.enabled,
+    }));
     const stack = fakeStack("f".repeat(64), () => Effect.succeed(status("f".repeat(64))));
     const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
     return Effect.gen(function* () {
       yield* stackStart(flags({ exclude: ["auth"] }));
-      expect(applied).toEqual([{ kind: "live", authEnabled: undefined }]);
+      expect(catalog.applied).toEqual([{ kind: "live", authEnabled: undefined }]);
     }).pipe(
-      Effect.provide(Layer.mergeAll(setup.layer, catalog)),
+      Effect.provide(Layer.mergeAll(setup.layer, catalog.layer)),
       Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
     );
   });
