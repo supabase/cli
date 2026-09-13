@@ -25,11 +25,12 @@
     "apps/cli/src/shared/compute/stacks/**",
     "!apps/cli/tests/helpers/compute.ts",
     "!apps/cli/src/command-internal/experimental-feature.ts",
-    "!apps/cli/src/command-internal/stack-backend.ts",
-    "!apps/cli/src/command-internal/stack-api.ts",
-    "!apps/cli/src/command-internal/stack-local-database.ts",
-    "!apps/cli/src/command-internal/stack-shadow.ts",
     "!apps/cli/src/command-internal/postgres-client.run.ts",
-    "!apps/cli/src/command-internal/stack-catalog-setup.ts"
+    "!apps/cli/src/command-internal/stack-api.ts",
+    "!apps/cli/src/command-internal/stack-backend.ts",
+    "!apps/cli/src/command-internal/stack-catalog-setup.ts",
+    "!apps/cli/src/command-internal/stack-config.ts",
+    "!apps/cli/src/command-internal/stack-local-database.ts",
+    "!apps/cli/src/command-internal/stack-shadow.ts"
   ]
 }

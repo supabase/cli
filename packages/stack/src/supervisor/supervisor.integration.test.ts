@@ -1343,17 +1343,18 @@ describe("Supervisor composition", () => {
     ),
   );
 
-  it.live(
-    "returns database credentials when Auth is disabled and fails closed for missing secrets",
-    () =>
-      run(
-        Effect.gen(function* () {
-          const { fixture } = yield* makeCredentialsFixture({ authEnabled: false });
-          const authDisabled = yield* invokeCredentials(fixture.supervisor);
-          expect(authDisabled.database.url).toEqual(expect.anything());
-          expect(authDisabled.api).toBeUndefined();
-        }),
-      ),
+  it.live("returns database credentials when Auth is disabled", () =>
+    run(
+      Effect.gen(function* () {
+        const { fixture } = yield* makeCredentialsFixture({ authEnabled: false });
+        const credentials = yield* invokeCredentials(fixture.supervisor);
+        expect(credentials.database.url).toEqual(expect.anything());
+        expect(Redacted.value(credentials.database.url)).toMatch(
+          /^postgresql:\/\/postgres:.+@127\.0\.0\.1:\d+\/postgres$/,
+        );
+        expect(credentials.api).toBeUndefined();
+      }),
+    ),
   );
 
   it.live("fails closed when an enabled Auth secret slot is absent", () =>

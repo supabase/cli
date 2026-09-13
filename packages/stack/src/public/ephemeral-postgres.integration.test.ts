@@ -24,6 +24,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EphemeralPostgresError } from "./Errors.ts";
 import { createEphemeralPostgres } from "./EphemeralPostgres.ts";
+import { schemaInit } from "./SchemaInit.ts";
 import { listStacks } from "./EffectStack.ts";
 import { defaultRuntimeEnvironment, StackRuntimeEnvironment } from "../supervisor/Launcher.ts";
 import { checkHostPort } from "../supervisor/HostListener.ts";
@@ -236,6 +237,7 @@ describe.sequential("ephemeral Postgres", () => {
           const first = yield* createEphemeralPostgres({ runtime, ...secrets });
           yield* query(first.url, "SELECT 1");
           expect(first.runtime.kind).toBe("container");
+          expect(first.networkId).toEqual(expect.any(String));
           expect(first.artifactIdentity.startsWith("container:docker:")).toBe(true);
           yield* first.stop;
           yield* first.exportPgData(tarPath);
@@ -246,6 +248,40 @@ describe.sequential("ephemeral Postgres", () => {
           });
           yield* query(restored.url, "SELECT 1");
           expect(restored.port).not.toBe(first.port);
+        }),
+      ).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    NATIVE_TIMEOUT_MS,
+  );
+
+  it.live.skipIf(process.platform !== "linux" || !dockerAvailable())(
+    "schema-init one-shots join the cluster network and reach Postgres",
+    () =>
+      withIsolatedRoot(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const projectRoot = yield* fs.makeTempDirectoryScoped({ prefix: "schema-init-linux-" });
+          const runtime: StackRuntimePreference = { kind: "container", engine: "docker" };
+          const cluster = yield* createEphemeralPostgres({ runtime, ...secrets });
+          expect(cluster.networkId).toEqual(expect.any(String));
+          yield* schemaInit(["auth"], {
+            kind: "ephemeral",
+            projectRoot,
+            runtime: cluster.runtime,
+            config: {
+              capabilities: {
+                studio: { enabled: true },
+                analytics: { enabled: false },
+              },
+            },
+            databaseUrl: Redacted.value(cluster.url),
+            secrets,
+            ...(cluster.networkId === undefined ? {} : { networkId: cluster.networkId }),
+          });
+          const rows = yield* query(
+            cluster.url,
+            "SELECT nspname FROM pg_namespace WHERE nspname = 'auth'",
+          );
+          expect(rows.length).toBeGreaterThan(0);
         }),
       ).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     NATIVE_TIMEOUT_MS,

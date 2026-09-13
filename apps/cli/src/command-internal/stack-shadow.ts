@@ -41,6 +41,7 @@ import {
   SHADOW_BASELINE_MAX_AGE_MS,
   SHADOW_CACHE_ENV,
   canonicalJson,
+  shadowBaselineEmbeddedDigest,
   shadowBaselineTarsToEvict,
   touchShadowBaselineTar,
 } from "./db-bootstrap/shadow-cache.ts";
@@ -54,7 +55,7 @@ import {
 import { listLocalMigrationPaths } from "./migration-history.ts";
 import { applyMigrations } from "./migration-apply.ts";
 import { stackProjectRuntime } from "./stack-local-database.ts";
-import { loadStackConfig } from "../commands/experimental/stack/stack-config.ts";
+import { loadStackConfig } from "./stack-config.ts";
 import { StackCatalogSetup } from "./stack-catalog-setup.ts";
 import { resolveSetupWebhooksEnabled, type SetupDatabaseOptions } from "./db-bootstrap/db-setup.ts";
 import type { VaultSecret } from "./vault.ts";
@@ -125,6 +126,7 @@ export const stackShadowCacheKey = (inputs: StackShadowCacheKeyInputs): string =
     `bootstrap=${quoted(inputs.bootstrapIdentity)}`,
     `api_grants_kept=${inputs.apiGrantsKept}`,
     `webhooks_enabled=${inputs.webhooksEnabled}`,
+    `baseline_embedded_digest=${shadowBaselineEmbeddedDigest()}`,
     `schema_init=auth=${inputs.authEnabled},storage=${inputs.storageEnabled},realtime=${inputs.realtimeEnabled}`,
     inputs.authEnabled ? `auth_artifact=${quoted(inputs.authArtifact)}` : "auth_artifact=excluded",
     inputs.storageEnabled
@@ -288,6 +290,7 @@ const applyColdCatalog = (
           databaseUrl: Redacted.value(handle.url),
           databasePassword: Redacted.make(input.password),
           jwtSecret: Redacted.make(input.jwtSecret),
+          ...(handle.networkId === undefined ? {} : { networkId: handle.networkId }),
         },
         overlay: {
           webhooks,

@@ -25,8 +25,8 @@ PostgreSQL by default; capabilities configured as eager join its startup depende
 The remaining lazy capabilities activate through the stack's listeners on demand for the current
 running session.
 The Effect API's `excludeStackCapabilities` helper disables requested optional capabilities and
-their dependents in an in-memory config. Excluding `rest` or `analytics` also disables `studio`,
-while the database remains required. The project config is unchanged, and runtime listeners are
+their dependents in an in-memory config. Excluding `rest` also disables `studio`; excluding
+`analytics` does not. The database remains required. The project config is unchanged, and runtime listeners are
 created only for enabled capability routes.
 Native workloads have a two-minute readiness budget to allow cold starts to load shared libraries;
 container workloads retain a 30-second budget, and PostgreSQL uses its configured `health_timeout`.

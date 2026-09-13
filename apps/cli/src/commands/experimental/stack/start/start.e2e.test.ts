@@ -62,12 +62,16 @@ async function inspectStackState(home: string, stackId: string) {
     const inspection = await inspectStack(id);
     const stack = await openStack(id);
     const status = await stack.status();
+    const credentials =
+      status.lifecycle === "running" ? await stack.credentials() : undefined;
     console.log(JSON.stringify({
       owner: inspection.owner,
       projectRoot: inspection.descriptor.projectRoot,
       runtime: status.runtime,
       lifecycle: status.lifecycle,
       database: status.capabilities.find(({ name }) => name === "database")?.state,
+      databaseUrl: credentials?.database.url,
+      hasApi: credentials?.api !== undefined,
     }));
   `;
   const result = await execFile("bun", ["--bun", "-e", script, stackId], {
@@ -88,6 +92,8 @@ async function inspectStackState(home: string, stackId: string) {
     readonly runtime: { readonly kind: string };
     readonly lifecycle: string;
     readonly database: string | undefined;
+    readonly databaseUrl: string | undefined;
+    readonly hasApi: boolean;
   };
 }
 
@@ -174,6 +180,10 @@ describe("stack start (compiled e2e)", () => {
       expect(running.runtime).toEqual({ kind: "native" });
       expect(running.lifecycle).toBe("running");
       expect(running.database).toBe("ready");
+      expect(running.hasApi).toBe(false);
+      expect(running.databaseUrl).toMatch(
+        /^postgresql:\/\/postgres:.+@127\.0\.0\.1:\d+\/postgres$/,
+      );
       const databasePath = path.join(homeDir.dir, "managed", "stacks", idText, "data", "database");
       await access(path.join(databasePath, "PG_VERSION"));
 

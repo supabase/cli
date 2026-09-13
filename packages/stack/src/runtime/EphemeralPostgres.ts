@@ -55,6 +55,7 @@ import {
 } from "./ContainerEngineResolver.ts";
 import type { ContainerEngine } from "./ContainerEngine.ts";
 import { encodeRuntimeEnvFile } from "./RuntimeEnvFile.ts";
+import { containerAliasFor } from "../model/WorkloadCatalog.ts";
 
 const DATABASE_WORKLOAD_ID = "database:database";
 const PGDATA_DIR_NAME = "data";
@@ -724,6 +725,7 @@ const startContainer = (
               role: "workload",
               command: postgresArgs(5432, cluster.runtime, options.postgresSettings),
               envFile,
+              networkAliases: [containerAliasFor("database:database")],
             }),
           ).pipe(
             Effect.mapError((cause) =>
@@ -895,6 +897,9 @@ const clusterHandle = (
     runtime: cluster.runtime,
     artifactIdentity: cluster.artifactIdentity,
     url: Redacted.make(databaseUrl(cluster.port, password)),
+    ...(cluster.resources.kind === "container" && cluster.resources.networkId !== undefined
+      ? { networkId: cluster.resources.networkId }
+      : {}),
     start: Effect.suspend(() =>
       cluster.lifecycle.withPermit(
         Effect.gen(function* () {

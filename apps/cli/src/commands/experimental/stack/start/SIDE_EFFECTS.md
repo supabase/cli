@@ -62,7 +62,8 @@ activated before the command returns.
 `storage`, `functions`, `studio`, `mail`, `analytics`, and `pooler`) and disables those services
 in the effective start configuration. The database cannot be excluded. Exclusions are applied in
 memory and persisted with the stack state; the project configuration file is unchanged. A capability
-and its dependents are disabled together, so excluding `rest` or `analytics` also disables `studio`.
+and its dependents are disabled together, so excluding `rest` also disables `studio`. Excluding
+`analytics` does not.
 Listeners are derived by the runtime from enabled capability routes; route-less listeners are therefore omitted.
 Eager activation never re-enables an excluded capability.
 

@@ -18,7 +18,7 @@ import { CommandSettings } from "../config/command-settings.service.ts";
 import { LocalDbRunningError } from "./db-bootstrap/local-db-running.ts";
 import { currentStackBackend } from "./stack-backend.ts";
 import { StackApi } from "./stack-api.ts";
-import { loadStackConfig } from "../commands/experimental/stack/stack-config.ts";
+import { loadStackConfig } from "./stack-config.ts";
 import { readDbToml } from "./db-config.toml-read.ts";
 import { StackCatalogSetup } from "./stack-catalog-setup.ts";
 
@@ -122,26 +122,23 @@ export const parsePostgresServerMajor = (version: string): number | undefined =>
 };
 
 /** Running stack Postgres major, or undefined when status is missing. */
-export const stackProjectDatabaseMajor: Effect.Effect<
-  number | undefined,
-  never,
-  CommandSettings
-> = Effect.gen(function* () {
-  const api = yield* Effect.serviceOption(StackApi);
-  if (Option.isNone(api)) return undefined;
-  const cliSettings = yield* CommandSettings;
-  const descriptor = yield* api.value
-    .findStack({ projectRoot: cliSettings.workdir })
-    .pipe(Effect.orElseSucceed(() => Option.none()));
-  if (Option.isNone(descriptor)) return undefined;
-  const stack = yield* api.value
-    .openStack(descriptor.value.id)
-    .pipe(Effect.orElseSucceed(() => undefined));
-  if (stack === undefined) return undefined;
-  const status = yield* stack.status.pipe(Effect.orElseSucceed(() => undefined));
-  if (status === undefined || typeof status.versions.database !== "string") return undefined;
-  return parsePostgresServerMajor(status.versions.database);
-});
+export const stackProjectDatabaseMajor: Effect.Effect<number | undefined, never, CommandSettings> =
+  Effect.gen(function* () {
+    const api = yield* Effect.serviceOption(StackApi);
+    if (Option.isNone(api)) return undefined;
+    const cliSettings = yield* CommandSettings;
+    const descriptor = yield* api.value
+      .findStack({ projectRoot: cliSettings.workdir })
+      .pipe(Effect.orElseSucceed(() => Option.none()));
+    if (Option.isNone(descriptor)) return undefined;
+    const stack = yield* api.value
+      .openStack(descriptor.value.id)
+      .pipe(Effect.orElseSucceed(() => undefined));
+    if (stack === undefined) return undefined;
+    const status = yield* stack.status.pipe(Effect.orElseSucceed(() => undefined));
+    if (status === undefined || typeof status.versions.database !== "string") return undefined;
+    return parsePostgresServerMajor(status.versions.database);
+  });
 
 const STACK_NATIVE_ENGINE_MESSAGE =
   "The stack backend only supports the pg-delta engine. Do not pass --use-migra, --use-pgadmin, --use-pg-schema, or --diff-engine migra.";
@@ -204,7 +201,9 @@ export const stackEnsurePostgresOnlyStarted: Effect.Effect<
       const catalog = yield* Effect.serviceOption(StackCatalogSetup);
       if (Option.isNone(catalog))
         return yield* startFailed({ message: "stack catalog setup is unavailable" });
-      const toml = yield* readDbToml(fs, path, cliSettings.workdir).pipe(Effect.mapError(startFailed));
+      const toml = yield* readDbToml(fs, path, cliSettings.workdir).pipe(
+        Effect.mapError(startFailed),
+      );
       yield* catalog.value
         .apply({
           target: {

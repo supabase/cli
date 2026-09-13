@@ -45,6 +45,8 @@ export interface EffectEphemeralPostgres {
   /** Catalog identity hashed into CLI shadow-cache keys. */
   readonly artifactIdentity: string;
   readonly url: Redacted.Redacted<string>;
+  /** Container network id so schema-init one-shots can join and dial `supabase-database:5432`. */
+  readonly networkId?: string;
   readonly start: Effect.Effect<void, EphemeralPostgresError, EphemeralPostgresServices>;
   readonly stop: Effect.Effect<void, EphemeralPostgresError>;
   readonly exportPgData: (

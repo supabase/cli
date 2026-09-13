@@ -8,7 +8,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Option, Path, Redacted } from "effect";
 import { renderCliConfigTemplate } from "../../../shared/init/project-init.templates.ts";
 
-import { StackConfigError, loadStackConfig } from "./stack-config.ts";
+import { StackConfigError, loadStackConfig } from "../../../command-internal/stack-config.ts";
 import {
   createStackConfigProject,
   stackConfigTempRoot,

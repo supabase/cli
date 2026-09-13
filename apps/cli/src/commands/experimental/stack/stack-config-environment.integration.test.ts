@@ -7,7 +7,7 @@ import { Cause, Effect, Exit, Option, Redacted } from "effect";
 import { compileStack } from "../../../../../../packages/stack/src/model/Compiler.ts";
 
 import { withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
-import { StackConfigError, loadStackConfig } from "./stack-config.ts";
+import { StackConfigError, loadStackConfig } from "../../../command-internal/stack-config.ts";
 import { createStackConfigProject } from "../../../../tests/helpers/stack-config.ts";
 
 function withEnvironment<A, E, R>(

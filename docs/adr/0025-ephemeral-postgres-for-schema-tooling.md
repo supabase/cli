@@ -24,7 +24,9 @@ snapshot.
 
 - **Schema init**: the one-shot that mutates Postgres for an enabled capability that already has
   a prepare/migrate process, without starting that capability’s long-running process. Not
-  activation, and not the CLI overlay.
+  activation, and not the CLI overlay. The throwaway compile is `database` plus the requested
+  one-shot names (live: auth, storage, realtime; analytics and pooler only when those one-shots
+  run). It never includes studio, mail, or functions. CLI `--exclude` does not change this set.
 - **Overlay**: CLI session SQL after schema init: webhooks (`pg_net`), API default grants, vault
   upsert, and `roles.sql`.
 - **Activation**: starting a capability’s long-running process and listeners. Not schema init.
@@ -60,7 +62,8 @@ not switched.
 
 Shadow baseline for the stack backend is slim-init, stack bootstrap, schema init for the
 platform trio (auth, storage, realtime), and the CLI overlay. Cache files use a distinct
-`stack-shadow-baseline-*` namespace. Analytics and pooler stay off the shadow baseline.
+`stack-shadow-baseline-*` namespace. Analytics and pooler stay off the shadow baseline. Schema
+init never compiles studio, mail, or functions (those are not Postgres catalog one-shots).
 
 The stack backend requires the in-process pg-delta engine. Migra, pgAdmin, and
 `--use-pg-schema` assume Docker networks or differ containers and are rejected for every
@@ -73,6 +76,13 @@ stacks they use PATH PostgreSQL clients except on Windows, where those commands 
 Docker `pg_dump` / `pg_prove` client against the published URL (`host.docker.internal`). The stack
 stays native. If Docker is missing on that Windows path, the command fails and tells the user to
 install Docker Desktop (or Git Bash).
+
+### (e) Studio does not require analytics
+
+Compose runs Studio when `[analytics] enabled = false`. Stack compile allows that pairing so
+bare `stack start` matches Compose. Studio’s capability and workload graphs do not list analytics
+as a hard dependency; logs UI stays off when analytics is off. This is independent of schema
+init, which never compiles Studio.
 
 ## Rationale
 
@@ -87,6 +97,9 @@ leaving schema policy in the CLI.
 
 - Native and Docker/Podman shadows share one API and the same slim baseline as `stack start`.
 - Schema commands can target a running project stack through `credentials()` when the flag is on.
+  `credentials().database` is available whenever the database listener is assigned, including when
+  Auth is disabled. `credentials().api` is absent when Auth is off. Overlay and `--local` keep
+  calling `credentials()`. There is no second RPC, and the CLI does not read secret slots.
 - `resetDatabase` wipes Postgres without destroying the stack identity, so `db reset --local` and declarative `--apply` stay on the stack backend.
 - Legacy Docker behavior is unchanged when the flag is off.
 - Windows native stacks can dump and squash without PostgreSQL client tools on PATH.

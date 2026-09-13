@@ -44,7 +44,10 @@ import {
   actionability,
   ErrorActionabilityId,
 } from "../../../../shared/telemetry/error-actionability.ts";
-import { noopStackCatalogSetupLayer, StackCatalogSetup } from "../../../../command-internal/stack-catalog-setup.ts";
+import {
+  noopStackCatalogSetupLayer,
+  StackCatalogSetup,
+} from "../../../../command-internal/stack-catalog-setup.ts";
 
 const project = (): string => {
   const root = mkdtempSync(join(tmpdir(), "supabase-experimental-stack-start-"));
@@ -170,8 +173,11 @@ function handlerLayer(opts: {
 }
 
 describe("stack start targeting", () => {
-  for (const exclusion of ["rest", "analytics"] as const) {
-    it.live(`compiles ${exclusion} exclusion and dependent Studio`, () => {
+  for (const { exclusion, studioEnabled } of [
+    { exclusion: "rest" as const, studioEnabled: false },
+    { exclusion: "analytics" as const, studioEnabled: true },
+  ]) {
+    it.live(`compiles ${exclusion} exclusion with Studio ${studioEnabled ? "on" : "off"}`, () => {
       const root = project();
       const configBefore = readFileSync(join(root, "supabase", "config.toml"), "utf8");
       const stack = fakeStack("c".repeat(64), (input) =>
@@ -190,7 +196,7 @@ describe("stack start targeting", () => {
             Effect.provide(BunServices.layer),
           );
           expect(compiled.definition.capabilities[exclusion].enabled).toBe(false);
-          expect(compiled.definition.capabilities.studio.enabled).toBe(false);
+          expect(compiled.definition.capabilities.studio.enabled).toBe(studioEnabled);
           expect(compiled.definition.capabilities.auth.enabled).toBe(true);
           return status("c".repeat(64));
         }),

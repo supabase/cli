@@ -195,7 +195,7 @@ describe("schemaInit", () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.live("rewrites ephemeral docker database endpoints to the published URL", () =>
+  it.live("joins the ephemeral Postgres network and dials supabase-database:5432", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -216,6 +216,7 @@ describe("schemaInit", () => {
             config: {},
             databaseUrl: "postgresql://postgres:s3cret@127.0.0.1:54322/postgres",
             secrets: { databasePassword: password, jwtSecret },
+            networkId: "net-eph",
           },
           {
             containerEngine: fakeContainerEngine(state),
@@ -223,7 +224,7 @@ describe("schemaInit", () => {
             platform: "linux",
           },
         );
-        expect(state.calls).toContain("create-network");
+        expect(state.calls).not.toContain("create-network");
         const spec = state.createdSpecs[0];
         expect(spec).toBeDefined();
         if (spec === undefined) return;
@@ -233,15 +234,61 @@ describe("schemaInit", () => {
             workloadId: "auth:auth",
           }),
         );
-        expect(spec.network).not.toBe("net-live");
+        expect(spec.network).toBe("net-eph");
         expect(spec.extraHosts).toEqual(["host.docker.internal:host-gateway"]);
         expect(spec.envFile).toBeDefined();
         if (spec.envFile === undefined) return;
         const env = envFromFile(state.envFiles.get(spec.envFile) ?? "");
-        expect(env.GOTRUE_DB_DATABASE_URL).toContain("@host.docker.internal:54322/postgres");
+        expect(env.GOTRUE_DB_DATABASE_URL).toContain("@supabase-database:5432/postgres");
         expect(env.GOTRUE_DB_DATABASE_URL).toContain("supabase_auth_admin");
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live(
+    "rewrites ephemeral docker endpoints to the published URL without a cluster network",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const projectRoot = yield* fs.makeTempDirectoryScoped({
+            prefix: "schema-init-eph-rewrite-",
+          });
+          const state: FakeContainerState = {
+            resources: [],
+            calls: [],
+            createdSpecs: [],
+            envFiles: new Map(),
+            nextId: 1,
+          };
+          yield* schemaInitWorkloads(
+            ["auth"],
+            {
+              kind: "ephemeral",
+              projectRoot,
+              runtime: { kind: "container", engine: "docker" },
+              config: {},
+              databaseUrl: "postgresql://postgres:s3cret@127.0.0.1:54322/postgres",
+              secrets: { databasePassword: password, jwtSecret },
+            },
+            {
+              containerEngine: fakeContainerEngine(state),
+              artifactPreparer: fakePreparer,
+              platform: "linux",
+            },
+          );
+          expect(state.calls).toContain("create-network");
+          const spec = state.createdSpecs[0];
+          expect(spec).toBeDefined();
+          if (spec === undefined) return;
+          expect(spec.network).not.toBe("net-eph");
+          expect(spec.extraHosts).toEqual(["host.docker.internal:host-gateway"]);
+          expect(spec.envFile).toBeDefined();
+          if (spec.envFile === undefined) return;
+          const env = envFromFile(state.envFiles.get(spec.envFile) ?? "");
+          expect(env.GOTRUE_DB_DATABASE_URL).toContain("@host.docker.internal:54322/postgres");
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("resolves pooler env without an activated pooler process", () =>
@@ -351,7 +398,6 @@ describe("schemaInit", () => {
             config: {
               capabilities: {
                 analytics: { enabled: false },
-                studio: { enabled: false },
               },
             },
             databaseUrl: "postgresql://postgres:s3cret@127.0.0.1:54322/postgres",
@@ -361,6 +407,46 @@ describe("schemaInit", () => {
         );
         expect(state.createdSpecs).toEqual([]);
         expect(state.calls.filter((call) => call === "create-container")).toEqual([]);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("schema-inits the trio when Studio is on and analytics is off", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const projectRoot = yield* fs.makeTempDirectoryScoped({ prefix: "schema-init-trio-" });
+        const state: FakeContainerState = {
+          resources: [],
+          calls: [],
+          createdSpecs: [],
+          envFiles: new Map(),
+          nextId: 1,
+        };
+        yield* schemaInitWorkloads(
+          ["auth", "storage", "realtime"],
+          {
+            kind: "ephemeral",
+            projectRoot,
+            runtime: { kind: "container", engine: "docker" },
+            config: {
+              capabilities: {
+                studio: { enabled: true },
+                analytics: { enabled: false },
+              },
+            },
+            databaseUrl: "postgresql://postgres:s3cret@127.0.0.1:54322/postgres",
+            secrets: { databasePassword: password, jwtSecret },
+          },
+          { containerEngine: fakeContainerEngine(state), artifactPreparer: fakePreparer },
+        );
+        const workloads = new Set(state.createdSpecs.map((spec) => spec.labels.workloadId));
+        expect(workloads.has("auth:auth")).toBe(true);
+        expect(workloads.has("storage:storage")).toBe(true);
+        expect(workloads.has("realtime:realtime")).toBe(true);
+        expect(workloads.has("studio:studio")).toBe(false);
+        expect(workloads.has("mail:mail")).toBe(false);
+        expect(workloads.has("functions:edge-runtime")).toBe(false);
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );

@@ -148,7 +148,7 @@ export interface ShadowCacheKeyInputs {
  * PG<=14 setup SQL is excluded because that major is cache-ineligible.
  */
 let shadowBaselineEmbeddedDigestMemo: string | undefined;
-const shadowBaselineEmbeddedDigest = (): string =>
+export const shadowBaselineEmbeddedDigest = (): string =>
   (shadowBaselineEmbeddedDigestMemo ??= createHash("sha256")
     .update(
       [

@@ -39,6 +39,8 @@ export interface SchemaInitLiveTarget extends SchemaInitTargetBase {
 
 export interface SchemaInitEphemeralTarget extends SchemaInitTargetBase {
   readonly kind: "ephemeral";
+  /** Container network of the throwaway Postgres cluster; one-shots join it and dial `supabase-database:5432`. */
+  readonly networkId?: string;
 }
 
 export type SchemaInitTarget = SchemaInitLiveTarget | SchemaInitEphemeralTarget;
@@ -46,7 +48,7 @@ export type SchemaInitTarget = SchemaInitLiveTarget | SchemaInitEphemeralTarget;
 export interface SchemaInitOptions {
   readonly containerEngine?: ContainerEngine;
   readonly artifactPreparer?: RuntimeArtifactPreparer;
-  /** Host OS used for Linux `host.docker.internal:host-gateway` extra hosts. */
+  /** Host OS for Linux extra hosts so `host.docker.internal` resolves; DNS only, not URL rewrite. */
   readonly platform?: string;
 }
 

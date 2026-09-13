@@ -19,10 +19,15 @@ import {
 } from "./db-bootstrap/db-setup.ts";
 import type { VaultSecret } from "./vault.ts";
 
-const PLATFORM_TRIO = ["auth", "storage", "realtime"] as const satisfies ReadonlyArray<
-  SchemaInitCapabilityName
->;
-const OPTIONAL_CAPS = ["analytics", "pooler"] as const satisfies ReadonlyArray<SchemaInitCapabilityName>;
+const PLATFORM_TRIO = [
+  "auth",
+  "storage",
+  "realtime",
+] as const satisfies ReadonlyArray<SchemaInitCapabilityName>;
+const OPTIONAL_CAPS = [
+  "analytics",
+  "pooler",
+] as const satisfies ReadonlyArray<SchemaInitCapabilityName>;
 
 export class StackCatalogSetupError extends Data.TaggedError("StackCatalogSetupError")<{
   readonly message: string;
@@ -53,6 +58,7 @@ export interface EphemeralStackCatalogInput {
   readonly databaseUrl: string;
   readonly databasePassword: Redacted.Redacted<string>;
   readonly jwtSecret?: Redacted.Redacted<string>;
+  readonly networkId?: string;
 }
 
 export interface StackCatalogSetupInput {
@@ -73,10 +79,7 @@ const jwtSecretFromConfig = (config: StackConfig): Redacted.Redacted<string> | u
 const catalogError = (error: { readonly message: string }): StackCatalogSetupError =>
   new StackCatalogSetupError({ message: error.message, cause: error });
 
-const runSchemaInit = (
-  names: ReadonlyArray<SchemaInitCapabilityName>,
-  target: SchemaInitTarget,
-) =>
+const runSchemaInit = (names: ReadonlyArray<SchemaInitCapabilityName>, target: SchemaInitTarget) =>
   names.length === 0 ? Effect.void : schemaInit(names, target).pipe(Effect.mapError(catalogError));
 
 const targetConnection = (target: LiveStackCatalogInput | EphemeralStackCatalogInput) =>
@@ -88,15 +91,15 @@ const targetConnection = (target: LiveStackCatalogInput | EphemeralStackCatalogI
         runtime: target.runtime,
       })
     : Effect.gen(function* () {
-        const credentials = yield* target.stack.credentials.pipe(Effect.mapError(catalogError));
-        const status = yield* target.stack.status.pipe(Effect.mapError(catalogError));
+        const credentials = yield* target.stack.credentials;
+        const status = yield* target.stack.status;
         return {
           databaseUrl: Redacted.value(credentials.database.url),
           databasePassword: credentials.database.password,
           jwtSecret: jwtSecretFromConfig(target.config),
           runtime: status.runtime,
         };
-      });
+      }).pipe(Effect.mapError(catalogError));
 
 const applyCatalog = (input: StackCatalogSetupInput) =>
   Effect.gen(function* () {
@@ -129,6 +132,7 @@ const applyCatalog = (input: StackCatalogSetupInput) =>
               databasePassword: connection.databasePassword,
               ...(connection.jwtSecret === undefined ? {} : { jwtSecret: connection.jwtSecret }),
             },
+            ...(input.target.networkId === undefined ? {} : { networkId: input.target.networkId }),
           };
     const config = input.target.config;
     const failClosed = PLATFORM_TRIO.filter((name) => capabilityEnabled(config, name));
@@ -152,24 +156,21 @@ const applyCatalog = (input: StackCatalogSetupInput) =>
     }
     const conn = parseConnectionString(connection.databaseUrl);
     if (conn === undefined) {
-      yield* new StackCatalogSetupError({
+      return yield* new StackCatalogSetupError({
         message: "failed to parse database URL for catalog overlay",
       });
-      return;
     }
     yield* Effect.scoped(
       Effect.gen(function* () {
-        const session = yield* dbConn
-          .connect(conn, { isLocal: true, dnsResolver: "native" })
-          .pipe(Effect.mapError(catalogError));
+        const session = yield* dbConn.connect(conn, { isLocal: true, dnsResolver: "native" });
         yield* applyDatabaseOverlay(session, fs, path, input.overlay.workdir, {
           webhooksEnabled: input.overlay.webhooksEnabled,
           apiAutoExposeNewTables: input.overlay.apiAutoExposeNewTables,
           vault: input.overlay.vault,
           webhooks: input.overlay.webhooks,
           announceRoles: input.overlay.announceRoles,
-        }).pipe(Effect.mapError(catalogError));
-      }),
+        });
+      }).pipe(Effect.mapError(catalogError)),
     );
   });
 

@@ -2,8 +2,8 @@ import { type CliConfig, validateCliConfig } from "@supabase/config/effect";
 import { Effect, Data, FileSystem, Option, Path, Redacted, Schema, SchemaIssue } from "effect";
 import { StackConfigSchema, type StackConfig } from "@supabase/stack/effect";
 
-import { loadLocalProjectContext } from "../../../command-internal/local-project-context.ts";
-import { parseDotEnv } from "../../../command-internal/dotenv.ts";
+import { loadLocalProjectContext } from "./local-project-context.ts";
+import { parseDotEnv } from "./dotenv.ts";
 import {
   envOverride,
   envOverrideApiMaxRows,
@@ -33,17 +33,13 @@ import {
   resolveGotrueSessions,
   resolveGotrueWeb3,
   strToArr,
-} from "../../../command-internal/local-config-values.ts";
-import {
-  collectDotenvPrivateKeys,
-  decryptSecret,
-  isEncryptedSecret,
-} from "../../../command-internal/vault-decrypt.ts";
+} from "./local-config-values.ts";
+import { collectDotenvPrivateKeys, decryptSecret, isEncryptedSecret } from "./vault-decrypt.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
-} from "../../../shared/telemetry/error-actionability.ts";
+} from "../shared/telemetry/error-actionability.ts";
 
 /** A config error suitable for a stack command's user-facing boundary. */
 export class StackConfigError extends Data.TaggedError("StackConfigError")<{

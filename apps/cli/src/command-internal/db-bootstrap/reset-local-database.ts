@@ -40,7 +40,7 @@ import { isLocalDbRunning } from "./local-db-running.ts";
 import { recreateLocalDatabase } from "./recreate-local-database.ts";
 import { currentStackBackend } from "../stack-backend.ts";
 import { stackLocalDatabaseConn, stackOpenReadyProject } from "../stack-local-database.ts";
-import { loadStackConfig } from "../../commands/experimental/stack/stack-config.ts";
+import { loadStackConfig } from "../stack-config.ts";
 import { StackCatalogSetup } from "../stack-catalog-setup.ts";
 
 /** The local database container is not running. */
@@ -114,8 +114,7 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
       Effect.mapError((cause) => resetFailed(`failed to reset local database: ${cause.message}`)),
     );
     const catalog = yield* Effect.serviceOption(StackCatalogSetup);
-    if (Option.isNone(catalog))
-      return yield* resetFailed("stack catalog setup is unavailable");
+    if (Option.isNone(catalog)) return yield* resetFailed("stack catalog setup is unavailable");
     const stackConfig = yield* loadStackConfig(workdir).pipe(
       Effect.mapError((cause) => resetFailed(cause.message)),
     );

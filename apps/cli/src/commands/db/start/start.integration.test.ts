@@ -51,6 +51,19 @@ function flags(fromBackup?: string): DbStartFlags {
   return { fromBackup: fromBackup === undefined ? Option.none() : Option.some(fromBackup) };
 }
 
+const recordingCatalog = () => {
+  const applied: Array<string> = [];
+  return {
+    applied,
+    layer: Layer.succeed(StackCatalogSetup, {
+      apply: (input) =>
+        Effect.sync(() => {
+          applied.push(input.target.kind);
+        }),
+    }),
+  };
+};
+
 interface SpawnRecord {
   readonly args: ReadonlyArray<string>;
 }
@@ -282,9 +295,12 @@ interface SetupOpts {
   readonly connectFailures?: number;
   /** Whether the mocked connect failures are dial-level (`retryable`). Defaults to `true`. */
   readonly connectFailuresRetryable?: boolean;
+  /** Record catalog apply targets instead of the default noop. */
+  readonly recordCatalog?: boolean;
 }
 
 function setup(opts: SetupOpts = {}) {
+  const catalog = opts.recordCatalog === true ? recordingCatalog() : undefined;
   const workdir = opts.workdir ?? tempRoot.current;
   if (opts.skipConfig !== true) {
     writeConfig(workdir, opts.configContents ?? 'project_id = "test"\n');
@@ -343,7 +359,7 @@ function setup(opts: SetupOpts = {}) {
     Layer.succeed(CliArgs, { args: ["db", "start"] }),
     Layer.succeed(ExperimentalFlag, opts.experimental ?? false),
     Layer.succeed(DebugFlag, opts.debug ?? false),
-    noopStackCatalogSetupLayer,
+    catalog?.layer ?? noopStackCatalogSetupLayer,
   );
   return {
     layer,
@@ -351,6 +367,7 @@ function setup(opts: SetupOpts = {}) {
     telemetry,
     child,
     dbSession,
+    catalogApplied: catalog?.applied ?? [],
     get connectAttempts() {
       return connectAttempts;
     },
@@ -1616,13 +1633,11 @@ describe("db start stack backend", () => {
   }
 
   it.live("starts a postgres-only stack when none exists", () => {
-    const { layer } = setup();
+    const { layer, catalogApplied } = setup({ recordCatalog: true });
     const stack = mockStackApi({});
     return Effect.gen(function* () {
       yield* dbStart(DEFAULT_FLAGS).pipe(
-        Effect.provide(
-          Layer.mergeAll(layer, stackBackendLayer("stack"), stack.api, noopStackCatalogSetupLayer),
-        ),
+        Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"), stack.api)),
       );
       expect(stack.startConfigs).toHaveLength(1);
       expect(stack.startConfigs[0]).toMatchObject({
@@ -1630,30 +1645,28 @@ describe("db start stack backend", () => {
           rest: { enabled: false },
         },
       });
+      expect(catalogApplied).toEqual(["live"]);
     });
   });
 
   it.live("does not persist exclusions when a stack already exists", () => {
-    const { layer } = setup();
+    const { layer, catalogApplied } = setup({ recordCatalog: true });
     const stack = mockStackApi({ existing: true });
     return Effect.gen(function* () {
       yield* dbStart(DEFAULT_FLAGS).pipe(
-        Effect.provide(
-          Layer.mergeAll(layer, stackBackendLayer("stack"), stack.api, noopStackCatalogSetupLayer),
-        ),
+        Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"), stack.api)),
       );
       expect(stack.startConfigs).toEqual([undefined]);
+      expect(catalogApplied).toEqual(["live"]);
     });
   });
 
   it.live("applies the postgres-only overlay when an unconfigured identity already exists", () => {
-    const { layer } = setup();
+    const { layer, catalogApplied } = setup({ recordCatalog: true });
     const stack = mockStackApi({ existing: true, unconfigured: true });
     return Effect.gen(function* () {
       yield* dbStart(DEFAULT_FLAGS).pipe(
-        Effect.provide(
-          Layer.mergeAll(layer, stackBackendLayer("stack"), stack.api, noopStackCatalogSetupLayer),
-        ),
+        Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"), stack.api)),
       );
       expect(stack.startConfigs).toHaveLength(1);
       expect(stack.startConfigs[0]).toMatchObject({
@@ -1661,28 +1674,20 @@ describe("db start stack backend", () => {
           rest: { enabled: false },
         },
       });
+      expect(catalogApplied).toEqual(["live"]);
     });
   });
 
   it.live("reports an already-running stack database without starting", () => {
-    const { layer, out } = setup();
+    const { layer, out, catalogApplied } = setup({ recordCatalog: true });
     const stack = mockStackApi({ existing: true, databaseReady: true });
-    const applied: Array<string> = [];
-    const catalog = Layer.succeed(StackCatalogSetup, {
-      apply: (input) =>
-        Effect.sync(() => {
-          applied.push(input.target.kind);
-        }),
-    });
     return Effect.gen(function* () {
       yield* dbStart(DEFAULT_FLAGS).pipe(
-        Effect.provide(
-          Layer.mergeAll(layer, stackBackendLayer("stack"), stack.api, catalog),
-        ),
+        Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"), stack.api)),
       );
       expect(out.stderrText).toContain("Postgres database is already running.");
       expect(stack.startConfigs).toEqual([]);
-      expect(applied).toEqual(["live"]);
+      expect(catalogApplied).toEqual(["live"]);
     });
   });
 
@@ -1691,9 +1696,7 @@ describe("db start stack backend", () => {
     const stack = mockStackApi({});
     return Effect.gen(function* () {
       const exit = yield* dbStart(flags("backup.sql")).pipe(
-        Effect.provide(
-          Layer.mergeAll(layer, stackBackendLayer("stack"), stack.api, noopStackCatalogSetupLayer),
-        ),
+        Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"), stack.api)),
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);

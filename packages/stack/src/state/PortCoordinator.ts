@@ -104,21 +104,17 @@ const readAuthoritativeStates = (options: PortCoordinatorOptions) =>
     const ids = entries.filter((entry) => idPattern.test(entry));
     const values = yield* Effect.forEach(ids, (id) =>
       options.store.read(id).pipe(
-        Effect.mapError((error) =>
-          error instanceof StackStateFormatUnsupportedError
-            ? new StackStateFormatUnsupportedError({
-                ...error,
-                message: `Unable to read sibling stack state ${id}: ${error.message}`,
-              })
-            : error instanceof StackStateInvalidError
-              ? new StackStateInvalidError({
-                  ...error,
-                  message: `Unable to read sibling stack state ${id}: ${error.message}`,
-                  path: path.join(root, id, "state.json"),
-                })
-              : error,
+        Effect.catchIf(
+          (error): error is StackStateInvalidError | StackStateFormatUnsupportedError =>
+            error instanceof StackStateFormatUnsupportedError ||
+            error instanceof StackStateInvalidError,
+          (error) =>
+            isMissingStateRemnantError(error)
+              ? Effect.void
+              : Effect.logWarning(
+                  `Skipping unreadable sibling stack state ${id}: ${error.message}`,
+                ).pipe(Effect.as(undefined)),
         ),
-        Effect.catchIf(isMissingStateRemnantError, () => Effect.void),
         Effect.map((state) => (state === undefined ? undefined : { stackId: id, state })),
       ),
     );

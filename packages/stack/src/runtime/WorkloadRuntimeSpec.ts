@@ -1109,8 +1109,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
             ? `http://${containerAliasFor("analytics:analytics")}:4000`
             : `http://127.0.0.1:${workloadPort(state, "analytics:analytics", "primary", runtime, 4000)}`,
         LOGFLARE_PRIVATE_ACCESS_TOKEN: valueAt(state, "analytics", "api_key"),
-        NEXT_PUBLIC_ENABLE_LOGS:
-          valueAt(state, "analytics", "backend").length > 0 ? "true" : "false",
+        NEXT_PUBLIC_ENABLE_LOGS: capabilityEnabled(state, "analytics") ? "true" : "false",
         NEXT_ANALYTICS_BACKEND_PROVIDER: valueAt(state, "analytics", "backend"),
         SUPABASE_URL: apiGatewayUrl(state, runtime === "container" ? inputs : undefined),
         SUPABASE_PUBLIC_URL: apiListenerUrl(state),

@@ -19,7 +19,7 @@ import {
   stackStatusPayload,
   validateStackTarget,
 } from "../stack.shared.ts";
-import { loadStackConfig } from "../stack-config.ts";
+import { loadStackConfig } from "../../../../command-internal/stack-config.ts";
 import type { StackStartFlags } from "./start.command.ts";
 import { StackCommandStartError } from "./start.errors.ts";
 import { STACK_START_EXCLUDABLE_CAPABILITIES } from "./start.options.ts";

@@ -199,7 +199,7 @@ An unconfigured stack must be initialized with `supabase stack start` before it 
 `supabase stack start --exclude studio,analytics -x mail` disables those services in the effective
 start configuration without changing the project file. Valid names are `rest`, `auth`, `realtime`,
 `storage`, `functions`, `studio`, `mail`, `analytics`, and `pooler`; the database is required.
-Excluding `rest` or `analytics` also disables Studio. The effective configuration is
+Excluding `rest` also disables Studio; excluding `analytics` does not. The effective configuration is
 retained in stack state, so starting without `--exclude` restores the project's configured services.
 
 `supabase stack stop --all` stops every readable managed stack while preserving data. It continues

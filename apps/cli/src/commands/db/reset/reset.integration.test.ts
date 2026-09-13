@@ -44,6 +44,7 @@ import type { OutputFormat } from "../../../shared/output/types.ts";
 import { dockerRunLayer } from "../../../command-internal/docker-run.layer.ts";
 import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
 import { StackApi } from "../../../command-internal/stack-api.ts";
+import { StackCatalogSetup } from "../../../command-internal/stack-catalog-setup.ts";
 import { CAPABILITY_NAMES, StackIdSchema, type EffectStack } from "@supabase/stack/effect";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
@@ -63,6 +64,19 @@ const LIST_MIGRATIONS =
 const SELECT_SEEDS = "SELECT path, hash FROM supabase_migrations.seed_files";
 const COUNT_REPLICATION_SLOTS =
   "SELECT COUNT(*) FROM pg_replication_slots WHERE database IN ('postgres', '_supabase')";
+
+const recordingCatalog = () => {
+  const applied: Array<string> = [];
+  return {
+    applied,
+    layer: Layer.succeed(StackCatalogSetup, {
+      apply: (input) =>
+        Effect.sync(() => {
+          applied.push(input.target.kind);
+        }),
+    }),
+  };
+};
 
 const CONN: PgConnInput = {
   host: "db.example.supabase.co",
@@ -537,6 +551,7 @@ function setup(
     workdir,
     ready: opts.stackDatabaseReady !== false,
   });
+  const catalog = opts.stackBackend === true ? recordingCatalog() : undefined;
   const layer = Layer.mergeAll(
     out.layer,
     conn.layer,
@@ -578,7 +593,9 @@ function setup(
     Layer.succeed(DebugFlag, opts.debug ?? false),
     telemetry.layer,
     linkedCache.layer,
-    ...(opts.stackBackend === true ? [stackBackendLayer("stack"), stackApi.layer] : []),
+    ...(opts.stackBackend === true && catalog !== undefined
+      ? [stackBackendLayer("stack"), stackApi.layer, catalog.layer]
+      : []),
   );
   return {
     layer,
@@ -589,6 +606,7 @@ function setup(
     resolver,
     child,
     stackApi,
+    catalogApplied: catalog?.applied ?? [],
   };
 }
 
@@ -762,7 +780,7 @@ describe("db reset", () => {
     );
 
     it.live("resets the stack database without Compose volume recreate", () => {
-      const { layer, child, stackApi } = setup(tmp.current, {
+      const { layer, child, stackApi, catalogApplied } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
         args: ["db", "reset", "--local"],
         isLocal: true,
@@ -771,6 +789,7 @@ describe("db reset", () => {
       return Effect.gen(function* () {
         yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         expect(stackApi.resetCalls).toBe(1);
+        expect(catalogApplied).toEqual(["live"]);
         expect(child.spawned.some((s) => s.args[0] === "container" && s.args[1] === "rm")).toBe(
           false,
         );

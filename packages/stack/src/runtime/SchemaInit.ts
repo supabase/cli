@@ -3,6 +3,7 @@ import {
   Duration,
   Effect,
   FileSystem,
+  Option,
   Path,
   Redacted,
   Schema,
@@ -11,6 +12,8 @@ import {
 } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { compileStack } from "../model/Compiler.ts";
+import { excludeStackCapabilities, type ExcludableCapabilityName } from "../model/Exclusions.ts";
+import { CAPABILITY_NAMES } from "../public/Capability.ts";
 import type {
   SchemaInitCapabilityName,
   SchemaInitOptions,
@@ -67,6 +70,19 @@ const PRIMARY_WORKLOAD: Record<SchemaInitCapabilityName, string> = {
 
 const SCHEMA_INIT_BINDINGS = ["primary", "admin", "ui", "smtp", "pop3", "inspector"] as const;
 
+const schemaInitCompileConfig = (
+  config: SchemaInitTarget["config"],
+  names: ReadonlyArray<SchemaInitCapabilityName>,
+) => {
+  const requested = new Set<string>(names);
+  return excludeStackCapabilities(
+    config,
+    CAPABILITY_NAMES.filter(
+      (name): name is ExcludableCapabilityName => name !== "database" && !requested.has(name),
+    ),
+  );
+};
+
 /** Catalog version and image for a schema-init one-shot; undefined when the pin is unknown. */
 export const schemaInitArtifactIdentity = (
   name: SchemaInitCapabilityName,
@@ -88,7 +104,7 @@ const schemaInitPrivatePorts = (
   }),
 ];
 
-/** Linux Engine extra hosts so rewritten `host.docker.internal` URLs resolve. */
+/** Linux Engine extra hosts so `host.docker.internal` resolves (DNS even when URLs stay on the alias). */
 export const schemaInitHostGatewayExtraHosts = (
   platform: string,
   host: string,
@@ -232,14 +248,16 @@ const resolveEngine = (
   target: SchemaInitTarget,
   options: SchemaInitOptions,
 ): Effect.Effect<
-  ContainerEngine | undefined,
+  Option.Option<ContainerEngine>,
   ContainerEngineError,
   ChildProcessSpawner.ChildProcessSpawner
 > => {
-  if (target.runtime.kind !== "container") return Effect.succeed(undefined);
-  if (options.containerEngine !== undefined) return Effect.succeed(options.containerEngine);
+  if (target.runtime.kind !== "container") return Effect.succeed(Option.none());
+  if (options.containerEngine !== undefined)
+    return Effect.succeed(Option.some(options.containerEngine));
   const runtime = target.runtime;
   return resolveContainerEngine(runtime.engine).pipe(
+    Effect.map(Option.some),
     Effect.mapError((cause) =>
       mapContainerEngineError(
         runtime,
@@ -320,11 +338,9 @@ const runNativeStartup = (
         }),
       );
       if (exitCode !== 0)
-        return yield* Effect.fail(
-          runtimeError(
-            key,
-            `Native schema init exited with code ${String(exitCode)} for ${key.workloadId}`,
-          ),
+        return yield* runtimeError(
+          key,
+          `Native schema init exited with code ${String(exitCode)} for ${key.workloadId}`,
         );
     }),
   );
@@ -366,7 +382,7 @@ export const schemaInitWorkloads = (
       const compiled = yield* compileStack({
         projectRoot: target.projectRoot,
         runtime: target.runtime,
-        config: target.config,
+        config: schemaInitCompileConfig(target.config, names),
       });
       const declarations = compiled.secrets.map((entry) => {
         if (entry.slot === DATABASE_INTERNAL_PASSWORD_SLOT)
@@ -390,7 +406,7 @@ export const schemaInitWorkloads = (
         ),
       );
       const shared = yield* defaultRuntimeEnvironment;
-      const engine = yield* resolveEngine(target, options);
+      const engine = Option.getOrUndefined(yield* resolveEngine(target, options));
       const preparer =
         options.artifactPreparer ??
         (yield* makeProductionRuntimeArtifactPreparer({
@@ -406,8 +422,11 @@ export const schemaInitWorkloads = (
         stackId: schemaInitId,
       });
       yield* Effect.addFinalizer(() => inputOwner.cleanupAll.pipe(Effect.ignore));
+      const joinPostgresNetwork = target.kind === "ephemeral" && target.networkId !== undefined;
       const envKind =
-        target.runtime.kind === "container" && target.kind === "live" ? "container" : "native";
+        target.runtime.kind === "container" && (target.kind === "live" || joinPostgresNetwork)
+          ? "container"
+          : "native";
       const privatePorts: PersistedStackState["privatePorts"] = [
         { workloadId: "database:database", binding: "primary", port: connection.port },
       ];
@@ -442,10 +461,12 @@ export const schemaInitWorkloads = (
         networkId =
           target.kind === "live"
             ? yield* resolveLiveNetwork(engine, target.stackId, runtime)
-            : yield* acquireEphemeralNetwork(engine, schemaInitId, runtime);
+            : target.networkId !== undefined
+              ? target.networkId
+              : yield* acquireEphemeralNetwork(engine, schemaInitId, runtime);
       }
       const rewriteTarget =
-        target.runtime.kind === "container" && target.kind === "ephemeral"
+        target.runtime.kind === "container" && target.kind === "ephemeral" && !joinPostgresNetwork
           ? {
               host:
                 hostRoute !== undefined && loopbackHost(connection.host)
@@ -456,27 +477,28 @@ export const schemaInitWorkloads = (
             }
           : undefined;
       const extraHosts =
-        rewriteTarget === undefined
-          ? []
-          : schemaInitHostGatewayExtraHosts(
+        target.runtime.kind === "container" && target.kind === "ephemeral"
+          ? schemaInitHostGatewayExtraHosts(
               options.platform ?? process.platform,
-              rewriteTarget.host,
-            );
+              hostRoute?.host ?? "host.docker.internal",
+            )
+          : [];
       yield* Effect.forEach(
         names,
         (name) =>
           Effect.gen(function* () {
-            if (compiled.definition.capabilities[name].enabled !== true) return;
+            if (compiled.definition.capabilities[name].enabled !== true) {
+              yield* Effect.logWarning(`Skipping schema init for disabled capability ${name}`);
+              return;
+            }
             const workloadId = PRIMARY_WORKLOAD[name];
             const workload = compiled.executionPlan.workloads.find(
               (entry) => entry.id === workloadId,
             );
             if (workload === undefined)
-              return yield* Effect.fail(
-                runtimeError(
-                  { stackId: schemaInitId, workloadId },
-                  `Missing planned workload for ${name} schema init`,
-                ),
+              return yield* runtimeError(
+                { stackId: schemaInitId, workloadId },
+                `Missing planned workload for ${name} schema init`,
               );
             const spec = runtimeSpecFor(workload);
             if (spec === undefined)
@@ -517,8 +539,9 @@ export const schemaInitWorkloads = (
                 });
               const prepared = yield* preparer.prepare(target.runtime, workload);
               if (prepared.artifactRoot === undefined)
-                return yield* Effect.fail(
-                  runtimeError(key, `Native artifact root is unavailable for ${workload.id}`),
+                return yield* runtimeError(
+                  key,
+                  `Native artifact root is unavailable for ${workload.id}`,
                 );
               const startups = spec.nativeStartupProcesses(
                 prepared.artifactRoot,
@@ -555,9 +578,7 @@ export const schemaInitWorkloads = (
               });
             const prepared = yield* preparer.prepare(target.runtime, workload);
             if (prepared.image === undefined)
-              return yield* Effect.fail(
-                runtimeError(key, `Container image is unavailable for ${workload.id}`),
-              );
+              return yield* runtimeError(key, `Container image is unavailable for ${workload.id}`);
             const encoded = yield* encodeRuntimeEnvFile(env);
             const envFile = path.join(tempRoot, `${encodeURIComponent(workload.id)}.env`);
             yield* fs.writeFileString(envFile, encoded).pipe(
