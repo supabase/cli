@@ -7,10 +7,21 @@
   "ignorePatterns": [
     "**",
     "!packages/stack/**",
-    "!apps/cli/src/commands/experimental/stack/**",
-    "!apps/cli/src/commands/experimental/compute/**",
+    "!apps/cli/src/commands/backups/**",
+    "!apps/cli/src/commands/completion/**",
+    "!apps/cli/src/commands/encryption/**",
+    "!apps/cli/src/commands/experimental/**",
+    "!apps/cli/src/commands/init/**",
+    "!apps/cli/src/commands/issue/**",
+    "!apps/cli/src/commands/network-bans/**",
+    "!apps/cli/src/commands/orgs/**",
+    "!apps/cli/src/commands/snippets/**",
+    "!apps/cli/src/commands/telemetry/**",
+    "!apps/cli/src/commands/vanity-subdomains/**",
+    "!apps/cli/src/commands/whoami/**",
     "!apps/cli/src/shared/compute/**",
-    // Last match wins, so this stays after the entry above.
+    // Last match wins across the whole list: keep bare re-exclusions after every
+    // `!` entry that would otherwise re-include them.
     "apps/cli/src/shared/compute/stacks/**",
     "!apps/cli/tests/helpers/compute.ts",
     "!apps/cli/src/command-internal/experimental-feature.ts"
