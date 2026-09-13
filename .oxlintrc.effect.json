@@ -29,6 +29,7 @@
     "!apps/cli/src/command-internal/stack-api.ts",
     "!apps/cli/src/command-internal/stack-local-database.ts",
     "!apps/cli/src/command-internal/stack-shadow.ts",
-    "!apps/cli/src/command-internal/postgres-client.run.ts"
+    "!apps/cli/src/command-internal/postgres-client.run.ts",
+    "!apps/cli/src/command-internal/stack-catalog-setup.ts"
   ]
 }

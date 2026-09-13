@@ -21,10 +21,13 @@ import {
   createEphemeralPostgres,
   databaseBootstrapIdentity,
   resolveEphemeralPostgresRelease,
+  schemaInitArtifactIdentity,
   type CreateEphemeralPostgresOptions,
   type EffectEphemeralPostgres,
   type EphemeralPostgresRelease,
   type EphemeralPostgresSettings,
+  type SchemaInitCapabilityName,
+  type StackConfig,
   type StackRuntime,
   type StackRuntimePreference,
   type StackVersionUnsupportedError,
@@ -49,8 +52,12 @@ import {
   type ShadowSourceResult,
 } from "./db-bootstrap/shadow-database.ts";
 import { listLocalMigrationPaths } from "./migration-history.ts";
-import { applyMigrations, seedGlobals } from "./migration-apply.ts";
+import { applyMigrations } from "./migration-apply.ts";
 import { stackProjectRuntime } from "./stack-local-database.ts";
+import { loadStackConfig } from "../commands/experimental/stack/stack-config.ts";
+import { StackCatalogSetup } from "./stack-catalog-setup.ts";
+import { resolveSetupWebhooksEnabled, type SetupDatabaseOptions } from "./db-bootstrap/db-setup.ts";
+import type { VaultSecret } from "./vault.ts";
 
 /** Optional factory so CLI tests can `Layer.succeed` a fake cluster. */
 export class StackEphemeralPostgres extends Context.Service<
@@ -92,11 +99,22 @@ export interface StackShadowCacheKeyInputs {
   readonly dbSettings: unknown;
   readonly rolesSql: string;
   readonly bootstrapIdentity: string;
+  readonly webhooksEnabled: boolean;
+  readonly apiGrantsKept: boolean;
+  readonly vault: ReadonlyArray<VaultSecret>;
+  readonly jwks: string;
+  readonly storageTargetMigration: string;
+  readonly authEnabled: boolean;
+  readonly storageEnabled: boolean;
+  readonly realtimeEnabled: boolean;
+  readonly authArtifact: string;
+  readonly storageArtifact: string;
+  readonly realtimeArtifact: string;
 }
 
 export const stackShadowCacheKey = (inputs: StackShadowCacheKeyInputs): string => {
   const quoted = (value: string) => JSON.stringify(value);
-  const payload = [
+  const lines: Array<string> = [
     `artifact=${quoted(inputs.artifactIdentity)}`,
     `major_version=${inputs.majorVersion}`,
     `runtime=${quoted(inputs.runtimeKind)}`,
@@ -105,14 +123,51 @@ export const stackShadowCacheKey = (inputs: StackShadowCacheKeyInputs): string =
     `db_password=${quoted(inputs.dbPassword)}`,
     `db_settings=${canonicalJson(inputs.dbSettings ?? {})}`,
     `bootstrap=${quoted(inputs.bootstrapIdentity)}`,
-  ].join("\n");
+    `api_grants_kept=${inputs.apiGrantsKept}`,
+    `webhooks_enabled=${inputs.webhooksEnabled}`,
+    `schema_init=auth=${inputs.authEnabled},storage=${inputs.storageEnabled},realtime=${inputs.realtimeEnabled}`,
+    inputs.authEnabled ? `auth_artifact=${quoted(inputs.authArtifact)}` : "auth_artifact=excluded",
+    inputs.storageEnabled
+      ? `storage_artifact=${quoted(inputs.storageArtifact)}`
+      : "storage_artifact=excluded",
+    inputs.realtimeEnabled
+      ? `realtime_artifact=${quoted(inputs.realtimeArtifact)}`
+      : "realtime_artifact=excluded",
+    inputs.realtimeEnabled && inputs.majorVersion >= 15
+      ? `realtime_jwks=${quoted(inputs.jwks)}`
+      : "realtime_jwks=excluded",
+    inputs.storageEnabled && inputs.majorVersion >= 15
+      ? `storage_target_migration=${quoted(inputs.storageTargetMigration)}`
+      : "storage_target_migration=excluded",
+  ];
+  for (const secret of inputs.vault
+    .filter((secret) => secret.resolved)
+    .sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0))) {
+    lines.push(`vault=${JSON.stringify([secret.name, secret.value])}`);
+  }
   return scryptSync(
-    `${payload}\nroles_sql=\n${inputs.rolesSql}`,
+    `${lines.join("\n")}\nroles_sql=\n${inputs.rolesSql}`,
     "supabase-stack-shadow-cache-key",
     32,
   )
     .toString("hex")
     .slice(0, 16);
+};
+
+const capabilityPinVersion = (
+  cap: { readonly enabled?: boolean; readonly version?: string } | undefined,
+): string | undefined => (cap === undefined || cap.enabled === false ? undefined : cap.version);
+
+const trioSchemaInitArtifact = (
+  enabled: boolean,
+  name: Extract<SchemaInitCapabilityName, "auth" | "storage" | "realtime">,
+  config: StackConfig | undefined,
+): string => {
+  if (!enabled) return "";
+  return (
+    schemaInitArtifactIdentity(name, capabilityPinVersion(config?.capabilities?.[name])) ??
+    "missing"
+  );
 };
 
 export interface StackShadowAcquiredHandle {
@@ -130,6 +185,7 @@ export interface StackShadowAcquireOpts {
   readonly bypassCache?: boolean;
   readonly port?: number;
   readonly runtime?: StackRuntimePreference;
+  readonly webhooks?: SetupDatabaseOptions["webhooks"];
 }
 
 const cacheEnabled = (projectEnv: Record<string, string> | undefined, bypass: boolean): boolean =>
@@ -205,28 +261,49 @@ const connFrom = (handle: EffectEphemeralPostgres, password: string) => ({
   database: "postgres",
 });
 
-const applyRoles = (
+const applyColdCatalog = (
   handle: EffectEphemeralPostgres,
   input: ShadowSetupInput<unknown>,
-  rolesSql: string,
-): Effect.Effect<void, ShadowDbError, DbConnection | Output | Scope.Scope> =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      if (rolesSql.length === 0) return;
-      const session = yield* connectShadowDatabase(connFrom(handle, input.password));
-      yield* seedGlobals(
-        session,
-        input.fs,
-        input.path,
-        [input.path.join(input.workdir, "supabase", "roles.sql")],
-        (message) => new ShadowDbError({ message, reason: "database" }),
-      ).pipe(
-        Effect.catchTag("DbConnectError", (cause) =>
-          Effect.fail(new ShadowDbError({ message: cause.message, reason: "connect" })),
+  webhooks: SetupDatabaseOptions["webhooks"],
+): Effect.Effect<void, ShadowDbError, FileSystem.FileSystem | Path.Path | Output> =>
+  Effect.gen(function* () {
+    const catalog = yield* Effect.serviceOption(StackCatalogSetup);
+    if (Option.isNone(catalog))
+      return yield* new ShadowDbError({
+        message: "stack catalog setup is unavailable",
+        reason: "database",
+      });
+    const config = yield* loadStackConfig(input.workdir).pipe(
+      Effect.mapError(
+        (cause) => new ShadowDbError({ message: cause.message, reason: "filesystem" }),
+      ),
+    );
+    yield* catalog.value
+      .apply({
+        target: {
+          kind: "ephemeral",
+          projectRoot: input.workdir,
+          runtime: handle.runtime,
+          config,
+          databaseUrl: Redacted.value(handle.url),
+          databasePassword: Redacted.make(input.password),
+          jwtSecret: Redacted.make(input.jwtSecret),
+        },
+        overlay: {
+          webhooks,
+          webhooksEnabled: input.setup.webhooksEnabled,
+          apiAutoExposeNewTables: input.setup.apiAutoExposeNewTables,
+          vault: input.setup.vault,
+          workdir: input.workdir,
+          announceRoles: false,
+        },
+      })
+      .pipe(
+        Effect.mapError(
+          (cause) => new ShadowDbError({ message: cause.message, reason: "database" }),
         ),
       );
-    }),
-  );
+  });
 
 const artifactIdentityFor = (
   runtime: StackRuntimePreference | undefined,
@@ -378,6 +455,9 @@ const ephemeralApis = (): Effect.Effect<{
     ),
   );
 
+const ownCluster = (ephemeral: EffectEphemeralPostgres) =>
+  Effect.addFinalizer(() => ephemeral.stop.pipe(Effect.ignore));
+
 export const stackAcquireShadowDatabase = <E>(
   input: ShadowSetupInput<E>,
   opts: StackShadowAcquireOpts = {},
@@ -385,7 +465,6 @@ export const stackAcquireShadowDatabase = <E>(
   StackShadowAcquiredHandle,
   ShadowDbError | E,
   | Output
-  | DbConnection
   | FileSystem.FileSystem
   | Path.Path
   | Crypto.Crypto
@@ -402,6 +481,7 @@ export const stackAcquireShadowDatabase = <E>(
     const rolesSql = yield* readRolesSql(input.fs, input.path, input.workdir);
     const cacheOn = cacheEnabled(input.setup.projectEnvValues, opts.bypassCache === true);
     const cacheDir = shadowBaselineCacheDir(path);
+    const webhooks = opts.webhooks;
     yield* fs.makeDirectory(cacheDir, { recursive: true, mode: 0o700 }).pipe(Effect.ignore);
 
     const startEmpty = () =>
@@ -411,7 +491,8 @@ export const stackAcquireShadowDatabase = <E>(
 
     if (!cacheOn) {
       const ephemeral = yield* startEmpty();
-      yield* applyRoles(ephemeral, input, rolesSql);
+      yield* ownCluster(ephemeral);
+      yield* applyColdCatalog(ephemeral, input, webhooks);
       return {
         url: Redacted.value(ephemeral.url),
         host: ephemeral.host,
@@ -423,10 +504,25 @@ export const stackAcquireShadowDatabase = <E>(
       };
     }
 
+    const jwks =
+      input.setup.realtimeEnabledForSetup && input.setup.majorVersion >= 15
+        ? yield* input.setup.jwks
+        : "";
     const release = yield* apis
       .resolveRelease(String(input.setup.majorVersion))
       .pipe(Effect.mapError(mapCreateError));
     const identity = artifactIdentityFor(runtime, release.version, release.image);
+    const trioEnabled =
+      input.setup.authEnabledForSetup ||
+      input.setup.storageEnabledForSetup ||
+      input.setup.realtimeEnabledForSetup;
+    const stackConfig = trioEnabled
+      ? yield* loadStackConfig(input.workdir).pipe(
+          Effect.mapError(
+            (cause) => new ShadowDbError({ message: cause.message, reason: "filesystem" }),
+          ),
+        )
+      : undefined;
     const key = stackShadowCacheKey({
       artifactIdentity: identity,
       majorVersion: input.setup.majorVersion,
@@ -437,6 +533,25 @@ export const stackAcquireShadowDatabase = <E>(
       dbSettings: input.db.settings,
       rolesSql,
       bootstrapIdentity: databaseBootstrapIdentity,
+      webhooksEnabled: resolveSetupWebhooksEnabled(webhooks, input.setup.webhooksEnabled),
+      apiGrantsKept: Option.getOrElse(input.setup.apiAutoExposeNewTables, () => true),
+      vault: input.setup.vault,
+      jwks,
+      storageTargetMigration: input.setup.storageTargetMigration,
+      authEnabled: input.setup.authEnabledForSetup,
+      storageEnabled: input.setup.storageEnabledForSetup,
+      realtimeEnabled: input.setup.realtimeEnabledForSetup,
+      authArtifact: trioSchemaInitArtifact(input.setup.authEnabledForSetup, "auth", stackConfig),
+      storageArtifact: trioSchemaInitArtifact(
+        input.setup.storageEnabledForSetup,
+        "storage",
+        stackConfig,
+      ),
+      realtimeArtifact: trioSchemaInitArtifact(
+        input.setup.realtimeEnabledForSetup,
+        "realtime",
+        stackConfig,
+      ),
     });
     const tarName = stackShadowBaselineTarFileName(key);
     const tarPath = path.join(cacheDir, tarName);
@@ -449,6 +564,7 @@ export const stackAcquireShadowDatabase = <E>(
         apis.create(createOptions(input, runtime, tarPath, opts.port)),
       );
       if (Result.isSuccess(restored)) {
+        yield* ownCluster(restored.success);
         yield* touchShadowBaselineTar(fs, tarPath);
         return {
           url: Redacted.value(restored.success.url),
@@ -469,7 +585,8 @@ export const stackAcquireShadowDatabase = <E>(
     }
 
     const probe = yield* startEmpty();
-    yield* applyRoles(probe, input, rolesSql);
+    yield* ownCluster(probe);
+    yield* applyColdCatalog(probe, input, webhooks);
     const exported = yield* Effect.result(
       Effect.gen(function* () {
         const rolesSqlNow = yield* readRolesSql(input.fs, input.path, input.workdir);
@@ -510,10 +627,6 @@ export const stackAcquireShadowDatabase = <E>(
     };
   });
 
-export const stackReleaseShadowDatabase = (
-  handle: StackShadowAcquiredHandle,
-): Effect.Effect<void> => handle.ephemeral.stop.pipe(Effect.ignore);
-
 export const stackWithShadowDatabase = <E, A, E2, R2>(
   input: ShadowSetupInput<E>,
   use: (handle: StackShadowAcquiredHandle) => Effect.Effect<A, E2, R2>,
@@ -523,16 +636,17 @@ export const stackWithShadowDatabase = <E, A, E2, R2>(
   E2 | ShadowDbError | E,
   | R2
   | Output
-  | DbConnection
   | FileSystem.FileSystem
   | Path.Path
   | Crypto.Crypto
   | ChildProcessSpawner.ChildProcessSpawner
-  | Scope.Scope
   | CommandSettings
 > =>
-  Effect.acquireUseRelease(stackAcquireShadowDatabase(input, opts), use, (handle) =>
-    stackReleaseShadowDatabase(handle),
+  Effect.scoped(
+    Effect.gen(function* () {
+      const handle = yield* stackAcquireShadowDatabase(input, opts);
+      return yield* use(handle);
+    }),
   );
 
 export const stackPrepareShadowSource = (

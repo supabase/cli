@@ -149,6 +149,8 @@ export interface ContainerContainerSpec {
   /** Path to an owned 0600 env file. Secret values must never be argv. */
   readonly envFile?: string;
   readonly networkAliases?: ReadonlyArray<string>;
+  /** Linux Engine needs `host.docker.internal:host-gateway` to reach published loopback. */
+  readonly extraHosts?: ReadonlyArray<string>;
 }
 
 export type ContainerCommand =
@@ -224,6 +226,7 @@ export const serializeCommonContainerCommand = (
         command.spec.networkAliases === undefined
           ? []
           : command.spec.networkAliases.flatMap((alias) => ["--network-alias", alias]);
+      const extraHosts = (command.spec.extraHosts ?? []).flatMap((host) => ["--add-host", host]);
       const entrypoint =
         command.spec.entrypoint === undefined ? [] : ["--entrypoint", command.spec.entrypoint];
       return {
@@ -234,6 +237,7 @@ export const serializeCommonContainerCommand = (
           "--network",
           command.spec.network,
           ...networkAliases,
+          ...extraHosts,
           ...containerLabels(command.spec.labels),
           ...bindMounts,
           ...volumeMounts,

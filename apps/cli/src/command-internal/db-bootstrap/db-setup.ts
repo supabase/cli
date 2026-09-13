@@ -705,6 +705,77 @@ export const startInitCurrentBranch = Effect.fnUntraced(function* (
   );
 });
 
+export interface ApplyDatabaseOverlayInput {
+  readonly webhooksEnabled: boolean;
+  readonly apiAutoExposeNewTables: Option.Option<boolean>;
+  readonly vault: ReadonlyArray<VaultSecret>;
+  readonly webhooks?: SetupDatabaseOptions["webhooks"];
+  /** When false, skip the roles.sql stderr banner used by live setup. */
+  readonly announceRoles?: boolean;
+}
+
+/**
+ * Session SQL after schema init: webhooks (`pg_net`), API default grants, vault upsert, `roles.sql`.
+ */
+export const applyDatabaseOverlay = (
+  session: DbSession,
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  workdir: string,
+  overlay: ApplyDatabaseOverlayInput,
+): Effect.Effect<void, DbSetupError | MigrationVaultError | DbConnectError, Output> =>
+  Effect.gen(function* () {
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const tmpDir = yield* fs
+          .makeTempDirectoryScoped({ prefix: "supabase-db-overlay-" })
+          .pipe(
+            Effect.mapError(
+              (error) =>
+                new DbSetupError({
+                  message: `failed to create temp directory: ${errMessage(error)}`,
+                  reason: "filesystem",
+                }),
+            ),
+          );
+        yield* applyDatabaseWebhooks(
+          session,
+          fs,
+          path,
+          tmpDir,
+          resolveSetupWebhooksEnabled(overlay.webhooks, overlay.webhooksEnabled),
+        );
+        yield* applyApiPrivileges(session, fs, path, tmpDir, overlay.apiAutoExposeNewTables);
+      }),
+    );
+
+    yield* upsertVaultSecrets(session, overlay.vault);
+
+    const customRolesPath = path.join(workdir, "supabase", "roles.sql");
+    if (overlay.announceRoles !== false) {
+      const output = yield* Output;
+      yield* output.raw(`Seeding globals from ${path.basename(customRolesPath)}...\n`, "stderr");
+    }
+    const rolesExist = yield* fs.exists(customRolesPath).pipe(
+      Effect.mapError(
+        (error) =>
+          new DbSetupError({
+            message: `failed to check roles.sql: ${errMessage(error)}`,
+            reason: "filesystem",
+          }),
+      ),
+    );
+    if (rolesExist) {
+      yield* execSqlFile(
+        session,
+        fs,
+        path,
+        customRolesPath,
+        (message) => new DbSetupError({ message, reason: "database" }),
+      );
+    }
+  });
+
 /**
  * Runs schema init through the custom-roles seed; see {@link SetupDatabaseInput} for exactly
  * what's in and out of scope. Extracted from {@link startSetupLocalDatabase} so shadow-database
@@ -745,44 +816,15 @@ export const setupDatabase = (
         if (requiresPg14WebhooksCleanup) {
           yield* removeDatabaseWebhooks(session, fs, path, tmpDir);
         }
-        yield* applyDatabaseWebhooks(
-          session,
-          fs,
-          path,
-          tmpDir,
-          resolveSetupWebhooksEnabled(options.webhooks, input.webhooksEnabled),
-        );
-        yield* applyApiPrivileges(session, fs, path, tmpDir, input.apiAutoExposeNewTables);
       }),
     );
 
-    // Runs before the roles seed so `roles.sql` can reference these secrets.
-    yield* upsertVaultSecrets(session, input.vault);
-
-    // Prints unconditionally, before checking whether the file exists. A missing file is
-    // tolerated; any other read/exec error propagates. Checked via an existence check ahead of
-    // the read rather than a caught not-found error — no meaningful TOCTOU concern here.
-    const customRolesPath = path.join(workdir, "supabase", "roles.sql");
-    const output = yield* Output;
-    yield* output.raw(`Seeding globals from ${path.basename(customRolesPath)}...\n`, "stderr");
-    const rolesExist = yield* fs.exists(customRolesPath).pipe(
-      Effect.mapError(
-        (error) =>
-          new DbSetupError({
-            message: `failed to check roles.sql: ${errMessage(error)}`,
-            reason: "filesystem",
-          }),
-      ),
-    );
-    if (rolesExist) {
-      yield* execSqlFile(
-        session,
-        fs,
-        path,
-        customRolesPath,
-        (message) => new DbSetupError({ message, reason: "database" }),
-      );
-    }
+    yield* applyDatabaseOverlay(session, fs, path, workdir, {
+      webhooksEnabled: input.webhooksEnabled,
+      apiAutoExposeNewTables: input.apiAutoExposeNewTables,
+      vault: input.vault,
+      webhooks: options.webhooks,
+    });
   });
 
 /**

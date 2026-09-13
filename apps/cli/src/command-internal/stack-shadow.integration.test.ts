@@ -1,7 +1,7 @@
 import { CliConfigSchema, type CliConfig } from "@supabase/config";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Option, Path, Redacted, Schema } from "effect";
+import { Deferred, Effect, Fiber, FileSystem, Layer, Option, Path, Redacted, Schema } from "effect";
 import {
   EphemeralPostgresError,
   databaseBootstrapIdentity,
@@ -24,6 +24,7 @@ import {
   stackShadowCacheKey,
 } from "./stack-shadow.ts";
 import type { ShadowSetupInput } from "./db-bootstrap/shadow-database.ts";
+import { noopStackCatalogSetupLayer, StackCatalogSetup } from "./stack-catalog-setup.ts";
 
 const tmp = useTempWorkdir("stack-shadow-");
 const defaultConfig: CliConfig = Schema.decodeSync(CliConfigSchema)({});
@@ -124,12 +125,43 @@ const withShadowCacheHome = <A, E, R>(
 ): Effect.Effect<A, E, R> =>
   withEnvVar("SUPABASE_HOME", home, withEnvVar(SHADOW_CACHE_ENV, value, body));
 
+const expectedCacheKey = () =>
+  stackShadowCacheKey({
+    artifactIdentity: "native:17.6.1",
+    majorVersion: 17,
+    runtimeKind: "native",
+    jwtSecret: "super-secret-jwt-token-with-at-least-32-characters-long",
+    jwtExpiry: 3600,
+    dbPassword: "postgres",
+    dbSettings: {},
+    rolesSql: "",
+    bootstrapIdentity: databaseBootstrapIdentity,
+    webhooksEnabled: false,
+    apiGrantsKept: true,
+    vault: [],
+    jwks: "",
+    storageTargetMigration: "",
+    authEnabled: false,
+    storageEnabled: false,
+    realtimeEnabled: false,
+    authArtifact: "",
+    storageArtifact: "",
+    realtimeArtifact: "",
+  });
+
 describe("stackAcquireShadowDatabase", () => {
   it.live(
     "exports a stack-shadow-baseline tar on a cold miss and restores it on a warm hit",
     () => {
       const ephemeral = mockEphemeral();
       const out = mockOutput();
+      const applied: Array<string> = [];
+      const catalog = Layer.succeed(StackCatalogSetup, {
+        apply: (setup) =>
+          Effect.sync(() => {
+            applied.push(setup.target.kind);
+          }),
+      });
       return Effect.scoped(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
@@ -141,6 +173,7 @@ describe("stackAcquireShadowDatabase", () => {
             Effect.gen(function* () {
               const first = yield* stackAcquireShadowDatabase(input(fs, path));
               expect(first.baselinePresent).toBe(false);
+              expect(applied).toEqual(["ephemeral"]);
               expect(first.artifactIdentity).toBe("native:17.6.1");
               expect(ephemeral.restores).toEqual([undefined]);
               expect(ephemeral.exports).toHaveLength(1);
@@ -152,25 +185,12 @@ describe("stackAcquireShadowDatabase", () => {
               const info = yield* fs.stat(path.join(home, "cache", "shadow-baseline", names[0]!));
               expect((Number(info.mode) & 0o777).toString(8)).toBe("600");
               expect(names[0]?.startsWith("stack-shadow-baseline-")).toBe(true);
-              expect(names[0]).toBe(
-                stackShadowBaselineTarFileName(
-                  stackShadowCacheKey({
-                    artifactIdentity: "native:17.6.1",
-                    majorVersion: 17,
-                    runtimeKind: "native",
-                    jwtSecret: "super-secret-jwt-token-with-at-least-32-characters-long",
-                    jwtExpiry: 3600,
-                    dbPassword: "postgres",
-                    dbSettings: {},
-                    rolesSql: "",
-                    bootstrapIdentity: databaseBootstrapIdentity,
-                  }),
-                ),
-              );
+              expect(names[0]).toBe(stackShadowBaselineTarFileName(expectedCacheKey()));
 
               const warm = yield* stackAcquireShadowDatabase(input(fs, path));
               expect(warm.baselinePresent).toBe(true);
               expect(ephemeral.restores[1]?.endsWith(names[0] ?? "")).toBe(true);
+              expect(applied).toEqual(["ephemeral"]);
             }),
           );
         }),
@@ -183,6 +203,7 @@ describe("stackAcquireShadowDatabase", () => {
             mockCommandSettings({ workdir: tmp.current }),
             stackBackendLayer("stack"),
             ephemeral.layer,
+            catalog,
           ),
         ),
       );
@@ -220,6 +241,7 @@ describe("stackAcquireShadowDatabase", () => {
           mockCommandSettings({ workdir: tmp.current }),
           stackBackendLayer("stack"),
           ephemeral.layer,
+          noopStackCatalogSetupLayer,
         ),
       ),
     );
@@ -281,6 +303,7 @@ describe("stackAcquireShadowDatabase", () => {
           mockCommandSettings({ workdir: tmp.current }),
           stackBackendLayer("stack"),
           layer,
+          noopStackCatalogSetupLayer,
         ),
       ),
     );
@@ -320,19 +343,7 @@ describe("stackAcquireShadowDatabase", () => {
         const home = yield* fs.makeTempDirectoryScoped();
         const cacheDir = path.join(home, "cache", "shadow-baseline");
         yield* fs.makeDirectory(cacheDir, { recursive: true });
-        const tarName = stackShadowBaselineTarFileName(
-          stackShadowCacheKey({
-            artifactIdentity: "native:17.6.1",
-            majorVersion: 17,
-            runtimeKind: "native",
-            jwtSecret: "super-secret-jwt-token-with-at-least-32-characters-long",
-            jwtExpiry: 3600,
-            dbPassword: "postgres",
-            dbSettings: {},
-            rolesSql: "",
-            bootstrapIdentity: databaseBootstrapIdentity,
-          }),
-        );
+        const tarName = stackShadowBaselineTarFileName(expectedCacheKey());
         yield* fs.writeFileString(path.join(cacheDir, tarName), "corrupt");
         return yield* withShadowCacheHome(
           home,
@@ -356,8 +367,65 @@ describe("stackAcquireShadowDatabase", () => {
           mockCommandSettings({ workdir: tmp.current }),
           stackBackendLayer("stack"),
           layer,
+          noopStackCatalogSetupLayer,
         ),
       ),
     );
+  });
+
+  it.live("stops the cluster when acquire is interrupted during catalog overlay", () => {
+    const out = mockOutput();
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        let stopped = false;
+        const ephemeral = Layer.succeed(StackEphemeralPostgres, {
+          create: () =>
+            Effect.sync(() => ({
+              host: "127.0.0.1",
+              port: 59999,
+              version: "17.6.1",
+              runtime: { kind: "native" as const },
+              artifactIdentity: "native:17.6.1",
+              url: Redacted.make("postgresql://postgres:postgres@127.0.0.1:59999/postgres"),
+              start: Effect.void,
+              stop: Effect.sync(() => {
+                stopped = true;
+              }),
+              exportPgData: () => Effect.die("export should not run"),
+            })),
+          resolveRelease: () => Effect.succeed({ version: "17.6.1", image: "postgres:17.6.1" }),
+        });
+        const catalog = Layer.succeed(StackCatalogSetup, {
+          apply: () =>
+            Effect.gen(function* () {
+              yield* Deferred.succeed(started, undefined);
+              return yield* Effect.never;
+            }),
+        });
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.makeTempDirectoryScoped();
+        const fiber = yield* Effect.forkChild(
+          withShadowCacheHome(home, "0", stackAcquireShadowDatabase(input(fs, path))).pipe(
+            Effect.scoped,
+            Effect.provide(
+              Layer.mergeAll(
+                BunServices.layer,
+                out.layer,
+                db,
+                mockCommandSettings({ workdir: tmp.current }),
+                stackBackendLayer("stack"),
+                ephemeral,
+                catalog,
+              ),
+            ),
+          ),
+        );
+        yield* Deferred.await(started);
+        yield* Fiber.interrupt(fiber);
+        expect(stopped).toBe(true);
+      }),
+    ).pipe(Effect.provide(BunServices.layer));
   });
 });

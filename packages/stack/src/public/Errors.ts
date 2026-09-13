@@ -149,6 +149,9 @@ export class EphemeralPostgresError extends Data.TaggedError("EphemeralPostgresE
     readonly version?: string;
   }
 > {}
+export class RequiresActivatedProcessError extends Data.TaggedError(
+  "RequiresActivatedProcessError",
+)<ErrorFields & { readonly capability: string }> {}
 
 /** Stable wire tags for errors produced by the managed stack runtime. */
 export const STACK_ERROR_TAGS = [
@@ -179,6 +182,7 @@ export const STACK_ERROR_TAGS = [
   "ContainerEngineError",
   "StackDestructionError",
   "EphemeralPostgresError",
+  "RequiresActivatedProcessError",
 ] as const;
 
 export type StackErrorTag = (typeof STACK_ERROR_TAGS)[number];
@@ -213,7 +217,8 @@ export type StackError =
   | StackCleanupError
   | ContainerEngineError
   | StackDestructionError
-  | EphemeralPostgresError;
+  | EphemeralPostgresError
+  | RequiresActivatedProcessError;
 
 export const isStackError = (value: unknown): value is StackError =>
   Predicate.hasProperty(value, "_tag") &&
@@ -359,3 +364,21 @@ export const EPHEMERAL_POSTGRES_ERROR_TAGS = [
 export type EphemeralPostgresCreateError = ErrorByTag<
   (typeof EPHEMERAL_POSTGRES_ERROR_TAGS)[number]
 >;
+
+export const SCHEMA_INIT_ERROR_TAGS = [
+  "RequiresActivatedProcessError",
+  "InvalidStackConfigError",
+  "StackVersionUnsupportedError",
+  "InvalidProjectRootError",
+  "InvalidStackIdentityError",
+  "StackPreparationError",
+  "ArtifactIntegrityError",
+  "ContainerPullError",
+  "ContainerEngineError",
+  "StackSecretMismatchError",
+  "InvalidJwtSigningMaterialError",
+  "StackRuntimeError",
+  "StackMustBeStoppedError",
+  "StackStateInvalidError",
+] as const satisfies ReadonlyArray<StackErrorTag>;
+export type SchemaInitError = ErrorByTag<(typeof SCHEMA_INIT_ERROR_TAGS)[number]>;

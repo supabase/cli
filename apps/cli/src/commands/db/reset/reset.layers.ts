@@ -16,6 +16,8 @@ import { identityStitchLayer } from "../../../command-internal/identity-stitch.t
 import { linkedProjectCacheLayer } from "../../../telemetry/linked-project-cache.layer.ts";
 import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts";
 import { stackApiLayer } from "../../../command-internal/stack-api.ts";
+import { stackCatalogSetupLayer } from "../../../command-internal/stack-catalog-setup.ts";
+
 /**
  * Runtime layer for `supabase db reset`: the Postgres connection, the db-config resolver,
  * project-ref resolution, and the linked-project cache, all over the lazy management-API factory
@@ -80,5 +82,6 @@ export const dbResetRuntimeLayer = Layer.mergeAll(
   localDockerEngineLayer.pipe(Layer.provide(debugLoggerLayer)),
   // Exposed so `db reset --local` can open the project stack and call `resetDatabase`.
   stackApiLayer,
+  stackCatalogSetupLayer,
   commandRuntimeLayer(["db", "reset"]),
 );

@@ -13,6 +13,7 @@ import { linkedDbResolverRuntimeLayer } from "../../command-internal/management-
 import { telemetryStateLayer } from "../../telemetry/telemetry-state.layer.ts";
 import { stackApiLayer } from "../../command-internal/stack-api.ts";
 import { ephemeralPostgresLayer } from "../../command-internal/stack-shadow.ts";
+import { stackCatalogSetupLayer } from "../../command-internal/stack-catalog-setup.ts";
 
 const cliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
 
@@ -68,4 +69,5 @@ export const migrationSquashRuntimeLayer = Layer.mergeAll(
   debugLoggerLayer,
   stackApiLayer,
   ephemeralPostgresLayer,
+  stackCatalogSetupLayer,
 );

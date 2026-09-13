@@ -22,7 +22,10 @@ import {
 } from "./test-db.errors.ts";
 import { buildPgProveArgs } from "./test-db.pg-prove-args.ts";
 import { currentStackBackend } from "./stack-backend.ts";
-import { stackRequireProjectRuntime } from "./stack-local-database.ts";
+import {
+  stackProjectDatabaseMajor,
+  stackRequireProjectRuntime,
+} from "./stack-local-database.ts";
 import {
   rewriteDumpHostForToolContainer,
   requireHostPgProve,
@@ -111,7 +114,7 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
     const backend = yield* currentStackBackend;
     const stackRuntime =
       backend.kind === "stack" && isLocal ? yield* stackRequireProjectRuntime : undefined;
-    const useHostProve = stackRuntime?.kind === "native";
+    const useHostProve = stackRuntime?.kind === "native" && runtimeInfo.platform !== "win32";
     const stackContainerProve = backend.kind === "stack" && isLocal && !useHostProve;
 
     const networkId = Option.getOrUndefined(networkIdFlag);
@@ -212,7 +215,10 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
           });
         if (useHostProve) {
           const toml = yield* readDbToml(fs, path, cliSettings.workdir);
-          yield* requireHostPgProve(toml.majorVersion);
+          const expectedMajor =
+            (backend.kind === "stack" ? yield* stackProjectDatabaseMajor : undefined) ??
+            toml.majorVersion;
+          yield* requireHostPgProve(expectedMajor);
           const hostPath = args.hostPaths[0];
           const hostWorkingDir =
             hostPath === undefined

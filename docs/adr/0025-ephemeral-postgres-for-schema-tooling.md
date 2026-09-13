@@ -20,6 +20,15 @@ A second Postgres **instance** is required. `CREATE DATABASE` on the live cluste
 equivalent: declarative sync needs two independent servers, and the cache is a full PGDATA
 snapshot.
 
+## Domain language
+
+- **Schema init**: the one-shot that mutates Postgres for an enabled capability that already has
+  a prepare/migrate process, without starting that capability’s long-running process. Not
+  activation, and not the CLI overlay.
+- **Overlay**: CLI session SQL after schema init: webhooks (`pg_net`), API default grants, vault
+  upsert, and `roles.sql`.
+- **Activation**: starting a capability’s long-running process and listeners. Not schema init.
+
 ## Decision
 
 ### (a) Public `EphemeralPostgres` on `@supabase/stack`
@@ -49,12 +58,21 @@ through the catalog Postgres image.
 `supabase_db_*` local target. Linked / `--db-url` targets are unchanged. Top-level `status` is
 not switched.
 
-Shadow baseline for the stack backend is slim-init plus stack bootstrap, not the legacy SQL
-templates. Cache files use a distinct `stack-shadow-baseline-*` namespace.
+Shadow baseline for the stack backend is slim-init, stack bootstrap, schema init for the
+platform trio (auth, storage, realtime), and the CLI overlay. Cache files use a distinct
+`stack-shadow-baseline-*` namespace. Analytics and pooler stay off the shadow baseline.
 
 The stack backend requires the in-process pg-delta engine. Migra, pgAdmin, and
 `--use-pg-schema` assume Docker networks or differ containers and are rejected for every
 stack runtime.
+
+### (d) Native dump, test, and squash clients
+
+`db dump`, `db test`, and `migration squash` talk to published loopback credentials. On native
+stacks they use PATH PostgreSQL clients except on Windows, where those commands run a one-shot
+Docker `pg_dump` / `pg_prove` client against the published URL (`host.docker.internal`). The stack
+stays native. If Docker is missing on that Windows path, the command fails and tells the user to
+install Docker Desktop (or Git Bash).
 
 ## Rationale
 
@@ -71,12 +89,13 @@ leaving schema policy in the CLI.
 - Schema commands can target a running project stack through `credentials()` when the flag is on.
 - `resetDatabase` wipes Postgres without destroying the stack identity, so `db reset --local` and declarative `--apply` stay on the stack backend.
 - Legacy Docker behavior is unchanged when the flag is off.
+- Windows native stacks can dump and squash without PostgreSQL client tools on PATH.
 
 ### Negative
 
 - Cache tars cannot be shared across native and container runtimes.
 - Migra/pgAdmin remain unavailable on stack backends.
-- Native-engine dump, test, and squash require matching PostgreSQL client tools on PATH.
+- Windows native dump/test/squash need a working Docker client even though Postgres itself is native.
 
 ## Alternatives Considered
 

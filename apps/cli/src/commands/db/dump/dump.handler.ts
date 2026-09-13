@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Effect, FileSystem, Option, Path, Predicate } from "effect";
 
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
@@ -44,8 +44,12 @@ import {
   rewriteDumpHostForToolContainer,
 } from "../../../command-internal/postgres-client.run.ts";
 import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
-import { stackRequireProjectRuntime } from "../../../command-internal/stack-local-database.ts";
+import {
+  stackProjectDatabaseMajor,
+  stackRequireProjectRuntime,
+} from "../../../command-internal/stack-local-database.ts";
 import { viperEnvStringWithProjectFallback } from "../../../command-internal/viper-env.ts";
+import { DockerRunError } from "../../../command-internal/docker-run.errors.ts";
 import { runWithPoolerFallback } from "../shared/pooler-fallback.ts";
 import {
   dumpDataScript,
@@ -197,7 +201,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
     const backend = yield* currentStackBackend;
     const stackRuntime =
       backend.kind === "stack" && isLocal ? yield* stackRequireProjectRuntime : undefined;
-    const useHostClient = stackRuntime?.kind === "native";
+    const useHostClient = stackRuntime?.kind === "native" && runtimeInfo.platform !== "win32";
     const networkId = Option.getOrUndefined(networkIdFlag);
     const envNetworkId = viperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", projectEnv);
     const dumpUsesHostNetwork =
@@ -215,11 +219,14 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
             }),
           }
         : conn;
+    const serverMajor =
+      backend.kind === "stack" && isLocal ? yield* stackProjectDatabaseMajor : undefined;
+    const dumpMajor = serverMajor ?? tomlValues.majorVersion;
     const dumpClient = useHostClient
       ? {
           kind: "host" as const,
           command: roleOnly ? ("pg_dumpall" as const) : ("pg_dump" as const),
-          expectedMajor: tomlValues.majorVersion,
+          expectedMajor: dumpMajor,
         }
       : { kind: "container" as const };
 
@@ -271,7 +278,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
       fs,
       path,
       cliSettings.workdir,
-      tomlValues.majorVersion,
+      dumpMajor,
       Option.getOrUndefined(tomlValues.orioledbVersion),
     );
 
@@ -355,25 +362,43 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
     //     direct host from the CLI process yet fail inside the container on an
     //     IPv6-only Docker network. Falls back to `None` on any resolution error so the
     //     original pg_dump failure surfaces instead of a fallback-setup error.
-    const result = yield* runWithPoolerFallback({
-      result: yield* runContainer(modeEnv),
-      connType,
-      host: conn.host,
-      isLocal,
-      projectHost: cliSettings.projectHost,
-      resolvePooler: () =>
-        resolver
-          .resolvePoolerFallback({
-            dbUrl: flags.dbUrl,
-            connType: "linked",
-            dnsResolver,
-            password: flags.password,
-            linkedProjectRef: flags.projectRef,
-          })
-          .pipe(Effect.orElseSucceed(() => Option.none())),
-      runWithConn: (c) => runContainer(mode.buildEnv(c, opt)),
-      reprintOnRetry: output.raw(`Dumping ${mode.verb} from ${db} database...\n`, "stderr"),
-    });
+    const result = yield* runContainer(modeEnv).pipe(
+      Effect.flatMap((dumped) =>
+        runWithPoolerFallback({
+          result: dumped,
+          connType,
+          host: conn.host,
+          isLocal,
+          projectHost: cliSettings.projectHost,
+          resolvePooler: () =>
+            resolver
+              .resolvePoolerFallback({
+                dbUrl: flags.dbUrl,
+                connType: "linked",
+                dnsResolver,
+                password: flags.password,
+                linkedProjectRef: flags.projectRef,
+              })
+              .pipe(Effect.orElseSucceed(() => Option.none())),
+          runWithConn: (c) => runContainer(mode.buildEnv(c, opt)),
+          reprintOnRetry: output.raw(`Dumping ${mode.verb} from ${db} database...\n`, "stderr"),
+        }),
+      ),
+      Effect.catchIf(
+        (error): error is DockerRunError =>
+          Predicate.isTagged(error, "DockerRunError") &&
+          stackRuntime?.kind === "native" &&
+          runtimeInfo.platform === "win32",
+        (error) =>
+          Effect.fail(
+            new DbDumpRunError({
+              message: error.message,
+              suggestion:
+                "Install Docker Desktop (or Git Bash) to dump a native stack on Windows.",
+            }),
+          ),
+      ),
+    );
 
     // 8. The dump has already been streamed to the destination by `runContainer`
     //    (to `--file` or stdout) as pg_dump produced it.
