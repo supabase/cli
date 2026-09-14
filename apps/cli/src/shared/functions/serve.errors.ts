@@ -31,8 +31,17 @@ export class DockerLogsStreamError extends Data.TaggedError("DockerLogsStreamErr
   readonly containerId: string;
   readonly exitCode: number;
   readonly stderr: string;
+  /**
+   * Whether the stream died because the container daemon itself is
+   * unreachable, decided where docker's output is produced so consumers never
+   * inspect `message` text.
+   */
+  readonly daemonDown: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    if (this.daemonDown) {
+      return { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" };
+    }
     return actionability.unknown;
   }
 }

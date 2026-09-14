@@ -1350,6 +1350,7 @@ const streamContainerLogs = Effect.fnUntraced(function* (containerId: string) {
           containerId,
           exitCode,
           stderr: trimmedStderr,
+          daemonDown: isDockerDaemonUnreachable(trimmedStderr),
         }),
       );
     }

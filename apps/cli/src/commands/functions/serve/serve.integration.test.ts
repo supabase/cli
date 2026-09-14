@@ -41,7 +41,14 @@ import {
 } from "../../../shared/runtime/process-control.service.ts";
 import { dockerfileServiceImage } from "../../../shared/services/dockerfile-images.ts";
 import { getRegistryImageUrl } from "../../../command-internal/docker-registry.ts";
-import { EdgeRuntimeContainerCrashedError } from "../../../shared/functions/serve.errors.ts";
+import {
+  DockerLogsStreamError,
+  EdgeRuntimeContainerCrashedError,
+} from "../../../shared/functions/serve.errors.ts";
+import {
+  actionability,
+  ErrorActionabilityId,
+} from "../../../shared/telemetry/error-actionability.ts";
 import type { FunctionsServeFlags } from "../../../shared/functions/serve.ts";
 
 const deployMockState = vi.hoisted(() => ({
@@ -2147,6 +2154,35 @@ describe("functions serve integration", () => {
         expect(out.stdoutText).toContain("Stopped serving");
       });
     });
+
+    it.live(
+      "classifies an unreachable docker daemon as user-actionable rather than unknown",
+      () => {
+        deployMockState.runHandler = baseDockerRunHandler();
+        const childSpawner = mockDockerLogSpawner([
+          {
+            exitCode: 1,
+            stderr: "Cannot connect to the Docker daemon at unix:///var/run/docker.sock",
+          },
+        ]);
+
+        return Effect.gen(function* () {
+          yield* Effect.promise(writeHelloFunction);
+
+          const { layer } = setupServe({ childSpawner });
+          const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
+
+          expect(error).toBeInstanceOf(DockerLogsStreamError);
+          if (error instanceof DockerLogsStreamError) {
+            expect(error.daemonDown).toBe(true);
+            expect(error[ErrorActionabilityId]).toEqual({
+              ...actionability.dockerNotRunning,
+              fingerprint_suffix: "docker_not_running",
+            });
+          }
+        });
+      },
+    );
 
     it.live("still fails when the edge runtime container never comes up", () => {
       deployMockState.runHandler = (command, args) => {
