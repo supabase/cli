@@ -6,7 +6,20 @@ import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { CliOutput, Command } from "effect/unstable/cli";
-import { Deferred, Effect, Fiber, Layer, Option, Schema, Sink, Stdio, Stream } from "effect";
+import {
+  Cause,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Option,
+  Result,
+  Schema,
+  Sink,
+  Stdio,
+  Stream,
+} from "effect";
 import {
   StackIdSchema,
   StackPreparationError,
@@ -25,6 +38,7 @@ import { stackPrepareCommand, type StackPrepareFlags } from "./prepare.command.t
 import { StackCommandPrepareError } from "./prepare.errors.ts";
 import { jsonOutputLayer, streamJsonOutputLayer } from "../../../../shared/output/output.layer.ts";
 import { textCliOutputFormatter } from "../../../../shared/output/text-formatter.ts";
+import { Output } from "../../../../shared/output/output.service.ts";
 import {
   actionability,
   ErrorActionabilityId,
@@ -119,6 +133,62 @@ const captureStdio = (stdout: string[], stderr: string[]) => {
       stderr: () => capture(stderr),
     }),
   );
+};
+
+const statefulTaskOutput = () => {
+  const state = { active: false, settled: false, failed: false, canceled: false, cleared: false };
+  const layer = Layer.succeed(
+    Output,
+    Output.of({
+      format: "text" as const,
+      interactive: false,
+      intro: () => Effect.void,
+      outro: () => Effect.void,
+      info: () => Effect.void,
+      warn: () => Effect.void,
+      error: () => Effect.void,
+      event: () => Effect.void,
+      task: () =>
+        Effect.sync(() => {
+          state.active = true;
+          return {
+            message: () => Effect.void,
+            succeed: () =>
+              Effect.sync(() => {
+                state.settled = true;
+              }),
+            fail: () =>
+              Effect.sync(() => {
+                state.failed = true;
+                state.settled = true;
+              }),
+            info: () => Effect.void,
+            cancel: () =>
+              Effect.sync(() => {
+                state.canceled = true;
+                state.settled = true;
+              }),
+            clear: () =>
+              Effect.sync(() => {
+                state.cleared = true;
+                state.settled = true;
+              }),
+          };
+        }),
+      promptText: () => Effect.die("unused"),
+      promptPassword: () => Effect.die("unused"),
+      promptConfirm: () => Effect.die("unused"),
+      promptSelect: () => Effect.die("unused"),
+      promptMultiSelect: () => Effect.die("unused"),
+      progress: () => Effect.die("unused"),
+      result: () => Effect.void,
+      success: () => Effect.void,
+      fail: () => Effect.void,
+      raw: () => Effect.void,
+      rawBytes: () => Effect.void,
+    }),
+  );
+  return { layer, state };
 };
 
 describe("stack prepare", () => {
@@ -492,14 +562,42 @@ describe("stack prepare", () => {
         calls,
       );
       const fixture = handlerLayer({ root, stack, telemetry });
+      const taskOutput = statefulTaskOutput();
       return Effect.gen(function* () {
-        const fiber = yield* Effect.forkChild(Effect.provide(stackPrepare(flags()), fixture.layer));
+        const fiber = yield* Effect.forkChild(
+          Effect.provide(stackPrepare(flags()), Layer.mergeAll(fixture.layer, taskOutput.layer)),
+        );
         yield* Deferred.await(started);
         yield* Fiber.interrupt(fiber);
         expect(canceled).toBe(true);
+        expect(taskOutput.state.active).toBe(true);
+        expect(taskOutput.state.settled).toBe(true);
+        expect(taskOutput.state.failed).toBe(false);
+        expect(taskOutput.state.canceled || taskOutput.state.cleared).toBe(true);
         expect(calls).toEqual({ start: 0, stop: 0, destroy: 0 });
         expect(telemetry.flushed).toBe(true);
       }).pipe(Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))));
     },
   );
+
+  it.live("settles the task on a preparation defect while preserving the defect", () => {
+    const root = makeProject();
+    const stack = makeStack("3".repeat(64), () => Effect.die("preparation defect"));
+    const fixture = handlerLayer({ root, stack });
+    const taskOutput = statefulTaskOutput();
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        Effect.provide(stackPrepare(flags()), Layer.mergeAll(fixture.layer, taskOutput.layer)),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const defect = Cause.findDefect(exit.cause);
+        expect(Result.isSuccess(defect)).toBe(true);
+        if (Result.isSuccess(defect)) expect(defect.success).toBe("preparation defect");
+      }
+      expect(taskOutput.state.settled).toBe(true);
+      expect(taskOutput.state.canceled).toBe(true);
+      expect(taskOutput.state.failed).toBe(false);
+    }).pipe(Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))));
+  });
 });

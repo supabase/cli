@@ -1,4 +1,4 @@
-import { Effect, Option } from "effect";
+import { Cause, Effect, Exit, Option } from "effect";
 import type { PrepareStackResult, StackRuntimePreference } from "@supabase/stack/effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { OutputFlag } from "../../../../command-internal/global-flags.ts";
@@ -99,8 +99,14 @@ export const stackPrepare = Effect.fn("experimental.stack.prepare")(function* (
         ...(flags.capability.length === 0 ? {} : { capabilities: flags.capability }),
       })
       .pipe(
-        Effect.tapError((error) => task.fail(error.message)),
-        Effect.tap(() => task.clear()),
+        Effect.onExit((exit) =>
+          Exit.isSuccess(exit)
+            ? task.clear()
+            : Option.match(Cause.findErrorOption(exit.cause), {
+                onNone: () => task.cancel(),
+                onSome: (error) => task.fail(error.message),
+              }),
+        ),
         Effect.mapError(stackPrepareError),
       );
     if (output.format === "text") yield* output.raw(render(stack.id, result));
