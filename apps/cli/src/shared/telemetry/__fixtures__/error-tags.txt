@@ -233,6 +233,7 @@ ExperimentalFeatureFlagError
 ExperimentalRequiredError
 ExperimentalStackDestroyError
 ExperimentalStackStartError
+ExperimentalStackStatusError
 ExperimentalStackStopError
 ExperimentalStackTargetError
 FeedbackBackendError

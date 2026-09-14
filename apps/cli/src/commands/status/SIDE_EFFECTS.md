@@ -1,5 +1,15 @@
 # `supabase status`
 
+This document describes the legacy backend. With `SUPABASE_EXPERIMENTAL_STACK=1`, or
+`[experimental] stack = true` when the environment override is unset or empty, `supabase status`
+uses the new [`supabase stack status` implementation](../experimental/stack/status/SIDE_EFFECTS.md).
+`SUPABASE_EXPERIMENTAL_STACK=0` forces the legacy backend. See [backend selection](../../../docs/stack-commands.md).
+
+Backend routing reads `supabase/config.json` when present, otherwise `supabase/config.toml`; the
+legacy handler reads TOML only. Backend selection happens before command parsing. When the
+environment override is unset or empty, an unreadable, malformed, or invalid project configuration
+falls back to the legacy backend; an invalid environment override remains an error.
+
 TS-only divergence (CLI-2167 follow-up, no Go counterpart): `status` additionally resolves and
 surfaces the current linked project/branch — a "Linked Project:" block on stdout in human text
 mode, and additive fields in every machine-readable output — so an agent (or a human who forgot

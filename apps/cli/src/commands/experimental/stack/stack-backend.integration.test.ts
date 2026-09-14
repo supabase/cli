@@ -34,7 +34,7 @@ describe("resolveStackBackend", () => {
     }),
   );
 
-  it.effect("selects the configured backend for top-level start and stop", () => {
+  it.effect("selects the configured backend for top-level start, stop, and status", () => {
     const root = project(`project_id = "stack-routing-test"
 [api]
 port = 55421
@@ -50,7 +50,7 @@ stack = true
     return Effect.gen(function* () {
       expect(yield* resolve({ args: ["start"], cwd: join(root, "nested"), env: {} })).toBe("stack");
       expect(yield* resolve({ args: ["stop"], cwd: root, env: {} })).toBe("stack");
-      expect(yield* resolve({ args: ["status"], cwd: root, env: {} })).toBe("legacy");
+      expect(yield* resolve({ args: ["status"], cwd: root, env: {} })).toBe("stack");
     }).pipe(Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))));
   });
 
@@ -220,11 +220,13 @@ stack = true
         [],
         ["--help"],
         ["help", "start"],
+        ["help", "status"],
         ["help", "stop"],
         ["help", "stack"],
         ["stack", "--help"],
         ["__complete", "st"],
         ["__complete", "start", "--"],
+        ["__complete", "status", "--"],
       ]) {
         expect(yield* resolve({ args, cwd: root, env: {} })).toBe("stack");
       }
@@ -283,9 +285,14 @@ stack = true
         "stack",
         "",
       ])?.candidates.map(({ name }) => name);
-      expect(stackCommands).toEqual(backend === "stack" ? ["destroy", "start", "stop"] : []);
-
-      expect(completionFlags(backend, "status")).toContain("--override-name");
+      expect(stackCommands).toEqual(
+        backend === "stack" ? ["destroy", "start", "status", "stop"] : [],
+      );
     }
+    expect(completionFlags("stack", "status")).toContain("--override-name");
+    expect(completionFlags("stack", "status")).toContain("--env");
+    expect(completionFlags("stack", "status")).toContain("--stack-id");
+    expect(completionFlags("legacy", "status")).not.toContain("--stack-id");
+    expect(completionFlags("legacy", "status")).not.toContain("--env");
   });
 });

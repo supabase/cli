@@ -5,19 +5,41 @@ command interface may change, and it is excluded from the CLI compatibility prom
 available when the `experimental.stack` feature flag is enabled and supports both Docker and
 native runtimes.
 
-| Command                  | Purpose                                    |
-| ------------------------ | ------------------------------------------ |
-| `supabase stack start`   | Create or resume the project's stack.      |
-| `supabase stack destroy` | Permanently delete one stack and its data. |
-| `supabase stack stop`    | Stop a stack while retaining its data.     |
+| Command                  | Purpose                                                                           |
+| ------------------------ | --------------------------------------------------------------------------------- |
+| `supabase stack start`   | Create or resume the project's stack.                                             |
+| `supabase stack status`  | Show identity, readiness, and drift, or export connection variables with `--env`. |
+| `supabase stack stop`    | Stop a stack while retaining its data.                                            |
+| `supabase stack destroy` | Permanently delete one stack and its data.                                        |
 
 Use each command's `--help` for its available targeting and runtime options.
 
+## Exporting environment variables
+
+```sh
+supabase stack status --env --output-format text > .env.local
+supabase status --env --override-name API_URL=NEXT_PUBLIC_SUPABASE_URL,ANON_KEY=NEXT_PUBLIC_SUPABASE_ANON_KEY
+supabase stack status --env --output-format json
+```
+
+Each example requires the stack backend flag described below. `--env` exports the connection URLs
+and credentials of the running stack; text mode emits dotenv assignments, and JSON
+or stream-JSON mode emits a variable map. Add `--output-format text` for an explicit dotenv file
+regardless of automatic agent output detection; this is dotenv data, not a shell script, and values
+are quoted so that sourcing the file performs no shell expansion. Only this
+explicit export reveals credentials. Ordinary status remains free of secrets. `--override-name`
+accepts repeated or comma-separated `EXPORTED_VARIABLE=NAME` entries, requires `--env`, and rejects
+unknown variables, invalid names, and collisions. API credentials are omitted when Auth is disabled.
+
+The stack backend rejects every explicit legacy `-o/--output` value: `env`, `pretty`, `json`,
+`toml`, `yaml`, `table`, and `csv`. `--output-format text`, `json`, or `stream-json` replace them.
+`-o env` becomes `--env`.
+
 ## Selecting the top-level commands
 
-The top-level `supabase start` and `supabase stop` commands use the legacy backend by default.
-To make them aliases of the corresponding `supabase stack` commands, add this to
-`supabase/config.toml`:
+The top-level `supabase start`, `supabase stop`, and `supabase status` commands use the legacy
+backend by default. To make them aliases of the corresponding `supabase stack` commands, add this
+to `supabase/config.toml`:
 
 ```toml
 [experimental]
@@ -26,14 +48,14 @@ stack = true
 
 The selected backend determines accepted flags, help, and completion before the command is parsed.
 Set the flag to `false`, or remove it, to restore the legacy top-level commands. The explicit
-`supabase stack` namespace is available only when this flag is enabled. `supabase status` always
-uses its existing command implementation and is unaffected by this flag.
+`supabase stack` namespace is available only when this flag is enabled. `supabase status` is routed
+the same way as `supabase start` and `supabase stop`.
 
 Root help and root completion resolve the same feature flag from the environment or project
-configuration. Help and completion for `start` and `stop` resolve the same
-backend as the command itself. If the project configuration cannot be read or parsed, or if
-`experimental.stack` has an invalid value, routing falls back to the legacy backend and the stack
-namespace remains unavailable. An invalid `SUPABASE_EXPERIMENTAL_STACK` value is still an error.
+configuration. Help and completion for `start`, `status`, and `stop` resolve the same backend as the
+command itself. If the project configuration cannot be read or parsed, or if `experimental.stack`
+has an invalid value, routing falls back to the legacy backend and the stack namespace remains
+unavailable. An invalid `SUPABASE_EXPERIMENTAL_STACK` value is still an error.
 
 For temporary selection, set `SUPABASE_EXPERIMENTAL_STACK=1` to select the new backend or
 `SUPABASE_EXPERIMENTAL_STACK=0` to select the legacy backend. This environment variable takes
