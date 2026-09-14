@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option } from "effect";
 
 import { mockOutput, mockStdin } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -122,9 +122,9 @@ describe("encryption update-root-key integration", () => {
       const exit = yield* Effect.exit(encryptionUpdateRootKey(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("EncryptionNetworkError");
-        expect(json).toContain("failed to update pgsodium config");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("EncryptionNetworkError");
+        expect(causeText).toContain("failed to update pgsodium config");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -135,9 +135,9 @@ describe("encryption update-root-key integration", () => {
       const exit = yield* Effect.exit(encryptionUpdateRootKey(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("EncryptionUnexpectedStatusError");
-        expect(json).toContain("unexpected update pgsodium config status 503");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("EncryptionUnexpectedStatusError");
+        expect(causeText).toContain("unexpected update pgsodium config status 503");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -157,7 +157,7 @@ describe("encryption update-root-key integration", () => {
       const exit = yield* Effect.exit(encryptionUpdateRootKey(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("ProjectRefNotLinkedError");
+        expect(Cause.pretty(exit.cause)).toContain("ProjectRefNotLinkedError");
       }
     }).pipe(Effect.provide(layer));
   });

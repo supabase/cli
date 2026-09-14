@@ -1,10 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
-import { mkdtempSync } from "node:fs";
-import { readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { Cause, Effect, Exit, Layer, Option, Stdio } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Stdio } from "effect";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { ExperimentalFlag, WorkdirFlag, YesFlag } from "../../command-internal/global-flags.ts";
 import { normalizeCause } from "../../shared/output/normalize-error.ts";
@@ -12,11 +8,17 @@ import { textOutputLayer } from "../../shared/output/output.layer.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { stripAnsi } from "../../../tests/helpers/ansi.ts";
 import { mockOutput, mockRuntimeInfo, mockStdin, mockTty } from "../../../tests/helpers/mocks.ts";
+import { useTempWorkdir, withEnvVar } from "../../../tests/helpers/command-mocks.ts";
 import { init } from "./init.handler.ts";
 
-function makeTempDir(): string {
-  return mkdtempSync(join(tmpdir(), "supabase-init-"));
-}
+const tempRoot = useTempWorkdir("supabase-init-");
+
+const readTextFile = (...segments: Array<string>) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    return yield* fs.readFileString(path.join(...segments));
+  }).pipe(Effect.provide(BunServices.layer));
 
 function setup(
   cwd: string,
@@ -101,7 +103,7 @@ function renderFailureToStderr(exit: Exit.Exit<unknown, unknown>) {
 
 describe("init", () => {
   it.live("creates config.toml natively without the Go proxy", () => {
-    const tempDir = makeTempDir();
+    const tempDir = tempRoot.current;
 
     return Effect.gen(function* () {
       const { layer, out } = setup(tempDir);
@@ -115,18 +117,14 @@ describe("init", () => {
         withIntellijSettings: false,
       }).pipe(Effect.provide(layer));
 
-      const content = yield* Effect.tryPromise(() =>
-        readFile(join(tempDir, "supabase", "config.toml"), "utf8"),
-      );
+      const content = yield* readTextFile(tempDir, "supabase", "config.toml");
       expect(content).toContain("major_version = 17");
       expect(out.stdoutText).toBe("Finished supabase init.\n");
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    });
   });
 
   it.live("requires --experimental when --use-orioledb is set, with cobra's exact wording", () => {
-    const tempDir = makeTempDir();
+    const tempDir = tempRoot.current;
 
     return Effect.gen(function* () {
       const { layer } = setup(tempDir, { experimental: false });
@@ -149,13 +147,11 @@ describe("init", () => {
         `required flag(s) "experimental" not set\n`,
         "Try rerunning the command with --debug to troubleshoot the error.\n",
       ]);
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    });
   });
 
   it.live("fails with Go's exact error when config.toml already exists", () => {
-    const tempDir = makeTempDir();
+    const tempDir = tempRoot.current;
 
     const initFlags = {
       interactive: false,
@@ -185,13 +181,11 @@ describe("init", () => {
         "failed to create config file: open supabase/config.toml: file exists\n",
         "Run supabase init --force to overwrite existing config file.\n",
       ]);
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    });
   });
 
   it.live("renders the Windows form of the already-exists error on win32", () => {
-    const tempDir = makeTempDir();
+    const tempDir = tempRoot.current;
 
     const initFlags = {
       interactive: false,
@@ -221,13 +215,11 @@ describe("init", () => {
         "failed to create config file: open supabase\\config.toml: The file exists.\n",
         "Run supabase init --force to overwrite existing config file.\n",
       ]);
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    });
   });
 
   it.live("supports the hidden IDE flags natively", () => {
-    const tempDir = makeTempDir();
+    const tempDir = tempRoot.current;
 
     return Effect.gen(function* () {
       const { layer, out } = setup(tempDir);
@@ -241,27 +233,22 @@ describe("init", () => {
         withIntellijSettings: true,
       }).pipe(Effect.provide(layer));
 
-      expect(
-        yield* Effect.tryPromise(() =>
-          readFile(join(tempDir, ".vscode", "extensions.json"), "utf8"),
-        ),
-      ).toContain('"recommendations"');
-      expect(
-        yield* Effect.tryPromise(() => readFile(join(tempDir, ".vscode", "settings.json"), "utf8")),
-      ).toContain('"deno.enablePaths"');
-      expect(
-        yield* Effect.tryPromise(() => readFile(join(tempDir, ".idea", "deno.xml"), "utf8")),
-      ).toContain('<component name="DenoSettings">');
+      expect(yield* readTextFile(tempDir, ".vscode", "extensions.json")).toContain(
+        '"recommendations"',
+      );
+      expect(yield* readTextFile(tempDir, ".vscode", "settings.json")).toContain(
+        '"deno.enablePaths"',
+      );
+      expect(yield* readTextFile(tempDir, ".idea", "deno.xml")).toContain(
+        '<component name="DenoSettings">',
+      );
       expect(out.stdoutText).toContain("Generated VS Code settings in .vscode/settings.json.");
       expect(out.stdoutText).toContain("Generated IntelliJ settings in .idea/deno.xml.");
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    });
   });
 
   it.live("respects the legacy --workdir global flag", () => {
-    const tempDir = makeTempDir();
-    const workdir = join(tempDir, "nested");
+    const tempDir = tempRoot.current;
 
     return Effect.gen(function* () {
       const { layer } = setup(tempDir, { workdir: Option.some("nested") });
@@ -275,13 +262,9 @@ describe("init", () => {
         withIntellijSettings: false,
       }).pipe(Effect.provide(layer));
 
-      const content = yield* Effect.tryPromise(() =>
-        readFile(join(workdir, "supabase", "config.toml"), "utf8"),
-      );
+      const content = yield* readTextFile(tempDir, "nested", "supabase", "config.toml");
       expect(content).toContain("major_version = 17");
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    });
   });
 
   const BASE_INIT_FLAGS = {
@@ -293,7 +276,7 @@ describe("init", () => {
   } as const;
 
   it.live("init -i --yes writes VS Code settings with the Go echo instead of prompting", () => {
-    const tempDir = makeTempDir();
+    const tempDir = tempRoot.current;
 
     return Effect.gen(function* () {
       const { layer, out } = setup(tempDir, { interactive: true, stdinIsTty: true, yes: true });
@@ -303,42 +286,34 @@ describe("init", () => {
       expect(out.promptConfirmCalls).toHaveLength(0);
       expect(out.stderrText).toContain("Generate VS Code settings for Deno? [Y/n] y\n");
       expect(out.stderrText).not.toContain("IntelliJ");
-      expect(
-        yield* Effect.tryPromise(() => readFile(join(tempDir, ".vscode", "settings.json"), "utf8")),
-      ).toContain('"deno.enablePaths"');
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+      expect(yield* readTextFile(tempDir, ".vscode", "settings.json")).toContain(
+        '"deno.enablePaths"',
+      );
+    });
   });
 
   it.live("init -i with SUPABASE_YES=1 auto-accepts the VS Code prompt like --yes", () => {
-    const tempDir = makeTempDir();
-    const prev = process.env["SUPABASE_YES"];
-    process.env["SUPABASE_YES"] = "1";
+    const tempDir = tempRoot.current;
 
-    return Effect.gen(function* () {
-      const { layer, out } = setup(tempDir, { interactive: true, stdinIsTty: true });
+    return withEnvVar(
+      "SUPABASE_YES",
+      "1",
+      Effect.gen(function* () {
+        const { layer, out } = setup(tempDir, { interactive: true, stdinIsTty: true });
 
-      yield* init({ ...BASE_INIT_FLAGS, interactive: true }).pipe(Effect.provide(layer));
+        yield* init({ ...BASE_INIT_FLAGS, interactive: true }).pipe(Effect.provide(layer));
 
-      expect(out.promptConfirmCalls).toHaveLength(0);
-      expect(out.stderrText).toContain("Generate VS Code settings for Deno? [Y/n] y\n");
-      expect(
-        yield* Effect.tryPromise(() => readFile(join(tempDir, ".vscode", "settings.json"), "utf8")),
-      ).toContain('"deno.enablePaths"');
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (prev === undefined) delete process.env["SUPABASE_YES"];
-          else process.env["SUPABASE_YES"] = prev;
-        }),
-      ),
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+        expect(out.promptConfirmCalls).toHaveLength(0);
+        expect(out.stderrText).toContain("Generate VS Code settings for Deno? [Y/n] y\n");
+        expect(yield* readTextFile(tempDir, ".vscode", "settings.json")).toContain(
+          '"deno.enablePaths"',
+        );
+      }),
     );
   });
 
   it.live("init -i --yes writes VS Code settings even when stdout is piped (Go parity)", () => {
-    const tempDir = makeTempDir();
+    const tempDir = tempRoot.current;
 
     return Effect.gen(function* () {
       const { layer, out } = setup(tempDir, { interactive: false, stdinIsTty: true, yes: true });
@@ -346,11 +321,9 @@ describe("init", () => {
       yield* init({ ...BASE_INIT_FLAGS, interactive: true }).pipe(Effect.provide(layer));
 
       expect(out.stderrText).toContain("Generate VS Code settings for Deno? [Y/n] y\n");
-      expect(
-        yield* Effect.tryPromise(() => readFile(join(tempDir, ".vscode", "settings.json"), "utf8")),
-      ).toContain('"deno.enablePaths"');
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+      expect(yield* readTextFile(tempDir, ".vscode", "settings.json")).toContain(
+        '"deno.enablePaths"',
+      );
+    });
   });
 });
