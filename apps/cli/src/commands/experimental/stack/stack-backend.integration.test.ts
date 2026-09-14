@@ -108,6 +108,13 @@ stack = true
     });
   });
 
+  it.effect("ignores an invalid compute setting when reading stack", () => {
+    const root = project('[experimental]\nstack = true\ncompute = "yes"\n');
+    return Effect.gen(function* () {
+      expect(yield* resolve({ args: ["start"], cwd: root, env: {} })).toBe("stack");
+    }).pipe(Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))));
+  });
+
   it.effect("prefers config.json when both config formats exist", () => {
     const root = project("[experimental]\nstack = false\n");
     writeFileSync(
