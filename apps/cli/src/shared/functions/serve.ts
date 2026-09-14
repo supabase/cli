@@ -30,6 +30,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { styleText } from "node:util";
 import {
   Cause,
+  Deferred,
   Duration,
   Effect,
   Exit,
@@ -123,6 +124,14 @@ const ignoredDirNames = new Set([
 ]);
 const dockerLogRetryDelay = Duration.millis(400);
 const dockerLogDiagnosticTailLength = 4_096;
+// A Ctrl-C delivers SIGINT to both this process and the un-detached `docker
+// logs -f` child in the same instant, so a shutdown signal and a log-stream
+// failure can become ready within microseconds of each other. This bounds how
+// long a failing log stream waits to see whether that shutdown signal (which
+// already fired, just not yet observed by this fiber) lands before treating
+// the failure as real; it adds the same bounded delay to a genuine crash's
+// exit, which is imperceptible next to the process already tearing down.
+const shutdownSignalGracePeriod = Duration.millis(50);
 const defaultSupabaseEnv = "development";
 const serveMainDir = "/root";
 const shellVariableNamePattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -1951,14 +1960,39 @@ export const serveFunctions = Effect.fn("functions.serve")(function* (
 
       // `streamContainerLogs` succeeds when the container exits gracefully
       // (its own clean shutdown) and otherwise streams logs until it fails on
-      // a genuine crash or log-stream error. The race otherwise resolves to
-      // "shutdown", "restart", or "exited".
-      const outcome = yield* Effect.raceFirst(
-        Effect.raceFirst(
-          processControl.awaitSignal().pipe(Effect.as("shutdown" as const)),
-          waitForRestartSignal(started.watchSpecs).pipe(Effect.as("restart" as const)),
-        ),
-        streamContainerLogs(started.containerId).pipe(Effect.as("exited" as const)),
+      // a genuine crash or log-stream error. Ctrl-C races the same signal
+      // against both this fiber's own `awaitSignal` and the container's
+      // `docker logs -f` child dying (`container-cli.ts`'s `spawnContainerCli`
+      // shares this process's process group), so a shutdown can be observed
+      // just as, or just before, the log stream fails. `shutdownRequested`
+      // latches the signal outside the race itself: once it is set (or set
+      // within `shutdownSignalGracePeriod` of a log-stream failure), that
+      // failure is downgraded to the "shutdown" outcome instead of failing
+      // the command. The race otherwise resolves to "shutdown", "restart",
+      // or "exited".
+      const outcome = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const shutdownRequested = yield* Deferred.make<void>();
+          yield* processControl
+            .awaitSignal()
+            .pipe(Effect.andThen(Deferred.succeed(shutdownRequested, void 0)), Effect.forkScoped);
+
+          return yield* Effect.raceFirst(
+            Effect.raceFirst(
+              Deferred.await(shutdownRequested).pipe(Effect.as("shutdown" as const)),
+              waitForRestartSignal(started.watchSpecs).pipe(Effect.as("restart" as const)),
+            ),
+            streamContainerLogs(started.containerId).pipe(
+              Effect.as("exited" as const),
+              Effect.catch((error) =>
+                Effect.raceFirst(
+                  Deferred.await(shutdownRequested).pipe(Effect.as("shutdown" as const)),
+                  Effect.sleep(shutdownSignalGracePeriod).pipe(Effect.andThen(Effect.fail(error))),
+                ),
+              ),
+            ),
+          );
+        }),
       ).pipe(
         Effect.ensuring(
           bestEffortRemoveContainer(started.containerId).pipe(Effect.ensuring(started.cleanup)),
