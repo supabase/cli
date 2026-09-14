@@ -34,8 +34,6 @@ describe("parseSnippetUuid", () => {
     expect(parseSnippetUuid("{0b0d48f6-878b-4190-88d7-2ca33ed800bc}")).toEqual({
       canonical: "0b0d48f6-878b-4190-88d7-2ca33ed800bc",
     });
-    // The 38th (trailing) character is `!`, not `}` — still parses, because Go's
-    // `s = s[1:]` only strips the leading brace and never inspects the last byte.
     expect(parseSnippetUuid("{0b0d48f6-878b-4190-88d7-2ca33ed800bc!")).toEqual({
       canonical: "0b0d48f6-878b-4190-88d7-2ca33ed800bc",
     });
@@ -73,10 +71,9 @@ describe("parseSnippetUuid", () => {
     });
   });
 
-  // `uuid.Parse` dispatches on `len(s)` — UTF-8 BYTES — where a JS
-  // string's `length` counts UTF-16 code units. Non-ASCII arguments must take
-  // the byte-length branch and report the byte count. Every expectation
-  // below is ground truth from go1.26 + google/uuid v1.6.0.
+  // Dispatch is on byte length, not JS's UTF-16 code-unit length, so
+  // non-ASCII arguments must take the byte-length branch and report the byte
+  // count.
   describe("UTF-8 byte-length dispatch (non-ASCII arguments)", () => {
     const canonical = "0b0d48f6-878b-4190-88d7-2ca33ed800bc";
 
@@ -96,15 +93,15 @@ describe("parseSnippetUuid", () => {
     });
 
     it("slices the urn prefix by byte and %q-quotes it (printable rune prints literally)", () => {
-      // 2 (é) + 7 + 36 = 45 bytes → urn branch; first 9 BYTES are "érn:uuid".
+      // 2 (é) + 7 + 36 = 45 bytes → urn branch; first 9 bytes are "érn:uuid".
       expect(parseSnippetUuid(`érn:uuid${canonical}`)).toEqual({
         error: 'invalid urn prefix: "érn:uuid"',
       });
     });
 
     it("renders a rune split by the 9-byte prefix slice as Go's lone \\xNN escape", () => {
-      // 8 ASCII + é(2 bytes) + 35 = 45 bytes; byte 9 cuts é in half, so the
-      // reference `%q` formatting shows its orphaned lead byte: `"12345678\xc3"`.
+      // 8 ASCII + é (2 bytes) + 35 = 45 bytes; byte 9 splits é, so the escaped
+      // form is "12345678\xc3".
       expect(parseSnippetUuid(`12345678é${canonical.slice(0, 35)}`)).toEqual({
         error: 'invalid urn prefix: "12345678\\xc3"',
       });

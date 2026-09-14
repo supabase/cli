@@ -71,7 +71,7 @@ const concatChunks = (chunks: ReadonlyArray<Uint8Array>): Uint8Array => {
 /**
  * Buffered convenience over {@link squashDumpSchema} for the before/after
  * diff dumps — an `auth`/`storage` schema-only dump is tens of KB, not
- * a streaming-scale payload. The FULL dump never goes through this — it streams
+ * a streaming-scale payload. The full dump never goes through this — it streams
  * straight to the target migration file's own handle at constant memory
  * (`squash.handler.ts`'s `squashMigrations`).
  */

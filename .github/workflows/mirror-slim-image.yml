@@ -1,23 +1,14 @@
 name: Mirror Slim Image
 
-# Mirrors slim service images published by supabase/slim-services from
-# ghcr.io/supabase/cli/<service>:<version> to
-# public.ecr.aws/supabase/cli/<service>:<version>.
+# Mirrors slim service images published by supabase/slim-services from ghcr.io/supabase/cli to
+# public.ecr.aws/supabase/cli. The sender polls the ECR Public destination and fails its release
+# unless it resolves to the exact index digest published, so the copy must be digest-preserving
+# via `regctl image copy` (byte-for-byte); do not switch to `docker buildx imagetools create`,
+# which can rewrite the index and change its digest.
 #
-# The slim-services release pipeline sends a `mirror-slim-image`
-# repository_dispatch to this repo, then anonymously polls the ECR Public
-# destination (15-minute timeout) and fails its release unless the destination
-# resolves to the exact index digest it published. The copy must therefore be
-# digest-preserving: we use `regctl image copy`, which moves the whole OCI
-# index (all platform manifests and referrers) byte-for-byte. Do NOT switch
-# this to `docker buildx imagetools create` — it can rewrite the index and
-# change its digest, breaking the sender's verification.
-#
-# The payload arrives with whatever authority holds the dispatch token, so it
-# is validated as untrusted input: names are pattern-checked, source and
-# destination are derived here rather than trusted from the payload, and the
-# source must resolve to the digest claimed by the sender before anything is
-# copied.
+# The payload arrives with whatever authority holds the dispatch token, so it is treated as
+# untrusted: names are pattern-checked, source/destination are derived here rather than trusted
+# from the payload, and the source must resolve to the claimed digest before anything is copied.
 #
 # Full contract: docs/design/ecr-mirror-dispatch.md in supabase/slim-services.
 
@@ -103,8 +94,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Install regctl
-        # Installed under $RUNNER_TEMP (always writable by the job user) and
-        # exposed to later steps via $GITHUB_PATH.
+        # $RUNNER_TEMP is always writable by the job user.
         run: |
           set -euo pipefail
           install -d "${RUNNER_TEMP}/regctl-bin"
@@ -174,16 +164,10 @@ jobs:
           SOURCE: ${{ steps.validate.outputs.source }}
           DESTINATION: ${{ steps.validate.outputs.destination }}
           DIGEST: ${{ steps.validate.outputs.digest }}
-        # Copy by digest so the copy cannot race a tag move on the source; the
-        # whole index, all child manifests, and any referrers move as-is.
-        #
-        # The copy runs unconditionally, with no early exit when the
-        # destination tag already resolves to the digest: regctl's copy is
-        # incremental, so a re-dispatch after a complete copy is a cheap
-        # verification pass, while re-running after a partial failure (root
-        # index pushed but referrers or digest-tags missing) completes the
-        # copy instead of skipping it. Re-dispatches therefore still exit
-        # successfully with the destination digest unchanged.
+        # Copies by digest (not tag) so it can't race a tag move on the source, and runs
+        # unconditionally with no early exit: regctl's copy is incremental, so re-dispatching
+        # after a complete copy is a cheap no-op, and after a partial failure it finishes the
+        # copy instead of skipping it.
         run: |
           set -euo pipefail
           regctl image copy --referrers --digest-tags \

@@ -1,24 +1,7 @@
 /**
- * Orchestration for pg-delta next's two plan shadows (migrations + declarative) — the strategy
- * choice, the concurrency runner, and the output buffering that keeps the user-visible
- * transcript free of cross-fiber interleaving. Extracted from
- * `pgdelta-next-shadow.layer.ts` so the branch logic, the baseline-handoff signal, and
- * the flush ordering are unit-testable with plain fakes instead of a full Docker/runtime layer
- * graph.
- *
- * The three strategies, chosen from a {@link peekShadowBaseline} of each shadow:
- *
- * - `parallel` — both snapshots are published: both provisions warm-restore concurrently. A warm
- *   provision skips the platform baseline entirely, so the declarative fiber prints nothing and
- *   the migrations fiber's `Applying migration ...` lines stream live and in order.
- * - `baseline-handoff` — both are cold with the same cache key (webhooks agree): the baseline is
- *   paid exactly once. The migrations shadow cold-provisions; its snapshot export runs at the
- *   baseline seam (after platform setup, before migration replay) and signals the declarative
- *   fiber, which then warm-restores from the just-published tar concurrently with the migration
- *   replay.
- * - `sequential` — everything else (different keys, mixed warm/cold, `--no-cache`, cache env off,
- *   PG<=14/OrioleDB): no baseline can be shared, so run migrations then declarative exactly as
- *   the pre-parallel code did.
+ * Orchestration for pg-delta next's two plan shadows: the concurrency strategy chosen from each
+ * shadow's cache peek ({@link resolvePlanShadowStrategy}), the runner for it
+ * ({@link runPlanShadowProvisions}), and output buffering ({@link bufferedShadowOutput}).
  */
 
 import { Deferred, Effect } from "effect";
@@ -29,10 +12,9 @@ import type { ShadowBaselinePeek } from "../../../command-internal/db-bootstrap/
 export type PlanShadowStrategy = "parallel" | "baseline-handoff" | "sequential";
 
 /**
- * Pure strategy choice from the two peeks. Equal-key implies equal warm/cold state (one key =
- * one tar), so `cold`+`cold`+equal-keys is the only shareable-baseline shape; a mixed warm/cold
- * pair always means different keys, where nothing can be shared and sequential keeps the cold
- * side's baseline prints off the migration replay's live stream.
+ * Pure strategy choice from the two peeks: equal-key implies equal warm/cold state, so only
+ * `cold`+`cold` with equal keys shares a baseline. A mixed warm/cold pair always means
+ * different keys, so sequential keeps the cold side's baseline prints off the live stream.
  */
 export function resolvePlanShadowStrategy(
   migrations: ShadowBaselinePeek,
@@ -50,14 +32,10 @@ export function resolvePlanShadowStrategy(
 }
 
 /**
- * Runs the two provisions under the chosen strategy.
- *
- * `provisionMigrations` receives an `onBaselineSeam` effect it must arrange to run once its
- * baseline seam passes (the snapshot-export point, before migration replay) — the layer wires it
- * into the acquired handle's `snapshotBaseline` via `Effect.ensuring`, and fires it immediately
- * when the acquired handle will never run a snapshot (a warm or uncached acquire). The runner
- * additionally `Effect.ensuring`s the signal onto the whole migrations provision as a liveness
- * backstop, so the declarative waiter can never deadlock.
+ * Runs the two provisions under the chosen strategy. `provisionMigrations` must fire
+ * `onBaselineSeam` once its snapshot-export point passes (immediately if the acquired handle
+ * never snapshots); the runner also `Effect.ensuring`s that signal onto the whole migrations
+ * provision as a liveness backstop, so the declarative waiter can never deadlock.
  */
 export const runPlanShadowProvisions = <M, D, EM, ED, RM, RD>(opts: {
   readonly strategy: PlanShadowStrategy;
@@ -94,23 +72,19 @@ export interface BufferedShadowOutput {
   /** The wrapped service to provide to the fiber whose writes must not interleave. */
   readonly output: typeof Output.Service;
   /**
-   * Replays every buffered write to the real output, in order. Run it after the live fiber has
-   * finished (`Effect.ensuring` on the join, not on the buffered fiber — the buffered fiber can
-   * finish first). Idempotent; writes arriving after a flush pass straight through live so late
-   * teardown warnings are never lost.
+   * Replays every buffered write to the real output, in order; idempotent, and writes after a
+   * flush pass straight through live so late teardown warnings are never lost. Run this after
+   * the live fiber joins, not after the buffered fiber (which can finish first).
    */
   readonly flush: Effect.Effect<void>;
 }
 
 /**
- * An {@link Output} decorator that buffers `raw`/`rawBytes` (the only channels the shadow
- * provisioning paths write to) and delegates everything else live. This is the hard guarantee
- * that a concurrently provisioned shadow can never land a line between two of the live fiber's
- * lines — in normal mode the buffer stays empty (a warm restore prints nothing), so this exists
- * for the anomaly paths: cache warnings and cold-fallback baseline prints.
- *
- * Deliberately not covering writes that bypass `Output` entirely (`SUPABASE_SHADOW_DEBUG` timing
- * lines and failure-path container-log dumps write straight to `process.stderr`).
+ * An {@link Output} decorator that buffers `raw`/`rawBytes` and delegates everything else live,
+ * so a concurrently provisioned shadow's writes can never land mid-line in the other fiber's
+ * live transcript. The buffer stays empty in the common case (a warm restore prints nothing) and
+ * only holds anomaly-path output (cache warnings, cold-fallback baseline prints); it does not
+ * cover writes that bypass `Output`, such as `SUPABASE_SHADOW_DEBUG` timing lines.
  */
 export function bufferedShadowOutput(real: typeof Output.Service): BufferedShadowOutput {
   type BufferedWrite =

@@ -14,15 +14,10 @@ import {
 type LiveCli = LiveFixtures["cli"];
 type LiveRun = Awaited<ReturnType<LiveCli>>;
 
-// Every subprocess is bounded and the test's own timeout covers the longest
-// path through them: four 60s commands (the restore is issued at most twice)
-// plus two proof polls that can each run 102s (a 60s deadline that still
-// finishes an in-flight 20s attempt, waits the 2s interval and runs one last
-// 20s attempt), 444s in all, on top of the workspace fixture's own 60s init.
-// The real bound this ceiling has to fit inside is the 20-minute Live E2E
-// step budget that every serially-run live file shares.
-// Once a test has timed out its fixtures are disposed, so a late restore
-// cannot take effect and the shared project stays locked down.
+// The worst case across four 60s commands (restore issued at most twice) and two 102s proof
+// polls is 444s, plus the workspace fixture's ~60s init — all bounded by the 20-minute Live
+// E2E step budget shared by every serial live file. A timed-out test disposes its fixtures,
+// so a late restore can't run and the shared project stays locked down.
 const EXIT_TIMEOUT_MS = 60_000;
 const POLL_ATTEMPT_EXIT_TIMEOUT_MS = 20_000;
 const PROOF_TIMEOUT_MS = 60_000;
@@ -130,13 +125,10 @@ test(
       "network-restrictions get capture for network-restrictions update",
       EXIT_TIMEOUT_MS,
     );
-    // A never-configured project (both family keys absent) has no allowlist to
-    // post back, so that baseline is restored as allow-all rather than leaving
-    // the shared project locked down for every later live test that reaches
-    // the database directly. Any configured capture is restored as read — an
-    // explicitly empty (block-all) allowlist or an absent family beside a
-    // populated one included, since posting an empty family is restrict-all
-    // and therefore a faithful restore.
+    // A never-configured project has no allowlist to restore, so fall back to allow-all
+    // rather than leaving the shared project locked down for later tests. Any configured
+    // capture is restored as read, since posting an empty family is a faithful restrict-all
+    // restore.
     const baselineCidrs: AllowedCidrs = captured.configured ? captured.cidrs : ALLOW_ALL_CIDRS;
     let targetError: unknown;
     const cleanupErrors: Array<unknown> = [];
@@ -159,10 +151,9 @@ test(
       targetError = error;
     } finally {
       try {
-        // One re-issue covers a restore that failed transiently. The proof runs
-        // whatever the restore reported: it alone shows whether the allowlist
-        // came back, and a restore killed while its request was still in flight
-        // exits non-zero after the platform may already have applied it.
+        // One re-issue covers a transient restore failure. The proof alone decides success:
+        // a restore killed mid-request can exit non-zero even though the platform already
+        // applied it.
         const restore = () =>
           cli(updateArgs(baselineCidrs, flags), { exitTimeoutMs: EXIT_TIMEOUT_MS });
         const first = await restore();

@@ -14,10 +14,8 @@ import { DockerRun, type DockerRunOpts } from "./docker-run.service.ts";
 import { edgeRuntimeScriptLayer } from "./edge-runtime-script.layer.ts";
 import { EdgeRuntimeScript } from "./edge-runtime-script.service.ts";
 
-// Fakes a `docker run --rm` capture: the pg-delta scripts throw to force the
-// worker to exit, so a real diff always comes back with a non-zero exit and
-// "main worker has been destroyed" in stderr — the crash path only differs by
-// the sentinel line the templates' catch blocks add.
+// Fakes a `docker run --rm` capture. A real diff always exits non-zero with "main worker has
+// been destroyed" in stderr; the crash path only differs by the added sentinel line.
 function fakeDocker(result: { exitCode: number; stdout?: string; stderr?: string }) {
   let lastOpts: DockerRunOpts | undefined;
   return {
@@ -40,8 +38,8 @@ function fakeDocker(result: { exitCode: number; stdout?: string; stderr?: string
   };
 }
 
-// `workdir` points at a directory without `supabase/.temp/edge-runtime-version`,
-// so the image resolver falls back to the default tag (the read is orElseSucceed).
+// Points at a directory with no `supabase/.temp/edge-runtime-version`, so the image resolver
+// falls back to the default tag.
 function makeCliSettings(workdir = "/nonexistent-workdir") {
   return Layer.succeed(CommandSettings, {
     profile: "supabase",
@@ -99,8 +97,6 @@ describe("edgeRuntimeScriptLayer sentinel handling", () => {
   it.effect(
     "fails with the real error when the script crashes behind the worker-destroyed message",
     () => {
-      // The catch block emits the real error, the sentinel, and the worker is torn
-      // down — all with a non-zero exit. This must surface, not read as an empty diff.
       const stderr =
         "error: permission denied for table pg_user_mapping\n" +
         "PGDELTA_SCRIPT_ERROR\n" +
@@ -115,7 +111,6 @@ describe("edgeRuntimeScriptLayer sentinel handling", () => {
               : undefined;
             const message = (error as { message: string } | undefined)?.message ?? "";
             expect(message).toContain("error diffing schema: error running script:");
-            // The actionable permission error must reach the user.
             expect(message).toContain("permission denied for table pg_user_mapping");
           }),
         ),
@@ -125,8 +120,6 @@ describe("edgeRuntimeScriptLayer sentinel handling", () => {
   );
 
   it.effect("still succeeds on a worker-destroyed exit when no sentinel is present", () => {
-    // Success path: the template forces the worker to exit after writing output, so
-    // the exit is non-zero with "main worker has been destroyed" but no sentinel.
     return runScript().pipe(
       Effect.tap((res) =>
         Effect.sync(() => {
@@ -146,12 +139,6 @@ describe("edgeRuntimeScriptLayer sentinel handling", () => {
   it.effect(
     "resolves the image pin from `opts.workdir`, overriding the layer's own `cliSettings.workdir`",
     () => {
-      // Regression coverage (review thread on CLI-1953): `bootstrap` targets a
-      // directory other than the invocation directory, and `CommandSettings` is
-      // built once, before that `process.chdir` runs — so its `workdir` never
-      // reflects bootstrap's real target. `opts.workdir` (threaded from
-      // `PgDeltaContext.cwd` by every pg-delta/migra caller) must win the
-      // pin-file lookup instead.
       const configWorkdir = mkdtempSync(join(tmpdir(), "edge-runtime-config-"));
       const callerWorkdir = mkdtempSync(join(tmpdir(), "edge-runtime-caller-"));
       mkdirSync(join(configWorkdir, "supabase", ".temp"), { recursive: true });
@@ -217,8 +204,6 @@ describe("edgeRuntimeScriptLayer sentinel handling", () => {
   it.effect(
     "disables SELinux label separation so the container can read CLI-written workspace files",
     () => {
-      // Without this the pg-delta CA bundle written under `supabase/.temp/pgdelta/`
-      // is unreadable through the `/workspace` bind on SELinux hosts (supabase/cli#5989).
       const { layer, docker } = setup({
         exitCode: 1,
         stdout: "{}",

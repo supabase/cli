@@ -7,23 +7,10 @@ import { Effect } from "effect";
 import { useTempWorkdir } from "../../tests/helpers/command-mocks.ts";
 import { loadLocalProjectContext } from "./local-project-context.ts";
 
-/**
- * `DOCKER_HOST` stands in for the whole Docker-client key set (`isDockerClientEnvKey`,
- * `db-bootstrap/docker-create-args.ts`) here — `loadLocalProjectContext` deliberately does
- * NOT install any of these from a project `.env` (see its own doc comment; review:
- * PRRT_kwDOErm0O86WXFqw): Go's Docker connectivity is the package-level
- * `var Docker = NewDocker()`, frozen at binary
- * startup, well before `godotenv.Load` ever runs — so a project-dotenv-only override can never
- * reach it, and installing it here would retarget native commands' Docker daemon relative to Go.
- */
+/** Stands in for the whole Docker-client env-key set, which a project dotenv file never reaches. */
 const DOCKER_HOST_KEY = "DOCKER_HOST";
 
-/**
- * `BITBUCKET_CLONE_DIR` is installed alongside the Docker-client keys even though it isn't one
- * itself — see `BITBUCKET_CLONE_DIR_ENV_KEY`'s doc comment (review:
- * PRRT_kwDOErm0O86VmHkm) for why this key, unlike `SUPABASE_SERVICES_HOSTNAME`, must reach
- * `process.env` from a project-only dotenv file.
- */
+/** Unlike Docker-client keys, this one is read at container-spawn time, so a project dotenv file can still set it. */
 const BITBUCKET_CLONE_DIR_KEY = "BITBUCKET_CLONE_DIR";
 
 function writeDotEnv(workdir: string, contents: string): void {
@@ -56,11 +43,6 @@ describe("loadLocalProjectContext", () => {
   it.effect(
     "prefers a matched [remotes.<ref>]'s project_id over a conflicting SUPABASE_PROJECT_ID",
     () => {
-      // Regression (review: PRRT_kwDOErm0O86XHGDL) — `loadCliConfig`'s own remote merge
-      // (`packages/config/src/io.ts`) already installs the matched block's `project_id` at
-      // Go's viper override tier before this reads it; letting an unrelated
-      // `SUPABASE_PROJECT_ID` win here would resolve the WRONG project id for the shadow's
-      // own network id/container labels on a linked `db diff`/`db pull`.
       process.env["SUPABASE_PROJECT_ID"] = "local";
       const ref = "abcdefghijklmnopqrst";
       const workdir = tempRoot.current;

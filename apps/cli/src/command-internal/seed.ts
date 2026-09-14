@@ -14,7 +14,7 @@ import { createSeedTable, readSeedTable, UPSERT_SEED_FILE } from "./migration-hi
 import { sqlFilesGlob } from "./sql-files-glob.ts";
 import { splitAndTrim } from "./sql-split.ts";
 
-/** Applying a seed file failed (`SeedData` / `ExecBatchWithCache` errors). */
+/** Applying a seed file failed. */
 export class MigrationSeedError extends Data.TaggedError("MigrationSeedError")<{
   readonly message: string;
 }> {
@@ -29,26 +29,18 @@ export interface SeedConfig {
   readonly sqlPaths: ReadonlyArray<string>;
 }
 
-// Only metadata is kept during the pending scan — the decoded statements are NOT
-// retained. `SeedFile` holds just
-// `{Path, Hash, Dirty}` and re-parses each file individually inside the apply loop
-// ("Parse each file individually to reduce memory usage"), so a
-// large/many-file seed set never has every file's statements in memory at once.
+// Only metadata is kept during the pending scan; each file's statements are re-parsed
+// individually in the apply loop, so a large/many-file seed set never holds every file's
+// statements in memory at once.
 interface PendingSeed {
   readonly path: string;
   readonly hash: string;
   readonly dirty: boolean;
 }
 
-/**
- * Resolves `[db.seed].sql_paths` to existing files, porting `config.Glob.SQLFiles`
- * (via the shared {@link sqlFilesGlob} traversal —
- * also used by `getPendingSeeds` (`seed-ops.ts`) for the same field on
- * the `db push`/`db reset` path, and by `applySchemaFiles` (`migration-apply.ts`)
- * for `[db.migrations].schema_paths`). `GetPendingSeeds` prints a single unconditional
- * `WARN: <joined>` line for any glob problem — unlike the schema-files
- * apply path, which only warns when NO pattern matched anything at all.
- */
+// Resolves `[db.seed].sql_paths` to existing files via the shared {@link sqlFilesGlob}
+// traversal, printing a single `WARN: <joined>` line for any glob problem — unlike the
+// schema-files apply path, which only warns when no pattern matched anything at all.
 const resolveSeedFiles = (
   fs: FileSystem.FileSystem,
   path: Path.Path,
@@ -63,10 +55,8 @@ const resolveSeedFiles = (
   });
 
 /**
- * Applies pending seed files, port of `applySeedFiles` + `GetPendingSeeds` +
- * `SeedData`:
- * gated on `db.seed.enabled`; a new seed runs its statements + records its hash;
- * a changed seed only updates the recorded hash ("dirty" → skip statements);
+ * Applies pending seed files, gated on `db.seed.enabled`: a new seed runs its statements
+ * and records its hash; a changed seed only updates the recorded hash (skipping statements);
  * an unchanged seed is skipped entirely.
  */
 export const applySeedFiles = (
@@ -101,10 +91,8 @@ export const applySeedFiles = (
       );
       const hash = createHash("sha256").update(content).digest("hex");
       const previous = applied.get(relativePath);
-      if (previous === hash) continue; // unchanged → skip entirely
-      // Keep only metadata; the statements are read + split per-file in the apply loop
-      // below (each file is hashed up front via io.Copy in `NewSeedFile` but does not
-      // retain its contents).
+      if (previous === hash) continue;
+      // Keep only metadata; statements are read and split per-file in the apply loop below.
       pending.push({
         path: relativePath,
         hash,
@@ -130,9 +118,8 @@ export const applySeedFiles = (
         "stderr",
       );
       // Read + split this seed's statements here (not up front) so only one file's
-      // statements are in memory at a time, matching `ExecBatchWithCache` →
-      // `parseFile` inside the apply loop. A dirty seed only
-      // updates its recorded hash, so Go never re-reads it — skip the read.
+      // statements are in memory at a time. A dirty seed only updates its recorded hash,
+      // so its content is never read.
       let statements: ReadonlyArray<string> = [];
       if (!seed.dirty) {
         const content = new TextDecoder().decode(
@@ -145,9 +132,8 @@ export const applySeedFiles = (
             ),
           ),
         );
-        // `SeedFile.ExecBatchWithCache` parses through the same `parseFile` every
-        // other caller does, so it enforces `SUPABASE_SCANNER_BUFFER_SIZE` here too —
-        // see `checkScannerBufferSize`'s own doc comment.
+        // Enforces the same `SUPABASE_SCANNER_BUFFER_SIZE` limit as any other `parseFile`
+        // caller — see `checkScannerBufferSize`'s own doc comment.
         yield* checkScannerBufferSize(content, (message) => new MigrationSeedError({ message }));
         statements = splitAndTrim(content);
       }
@@ -156,8 +142,9 @@ export const applySeedFiles = (
         if (!seed.dirty) {
           for (const statement of statements) {
             yield* session.exec(statement);
-            // A top-level role revert drops a stepped-down session to the login
-            // role; restore `postgres` right away (supabase/cli#6236).
+            // A top-level role revert drops a stepped-down session to the login role;
+            // restore `postgres` immediately so later statements run with the expected
+            // privileges.
             if (session.restoreRoleSql !== undefined && revertsToLoginRole(statement)) {
               yield* session.exec(session.restoreRoleSql);
             }

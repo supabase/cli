@@ -19,9 +19,8 @@ import { CommandRuntime } from "../../shared/runtime/command-runtime.service.ts"
 
 /**
  * `services` always prints the local service matrix and only performs linked
- * version checks when both a linked project ref and an access token are present.
- * Keep this runtime lean so a tokenless local invocation does not fail before
- * the handler can choose the local-only path.
+ * version checks when both a linked project ref and an access token are
+ * present. Keep this runtime lean so a tokenless local invocation succeeds.
  */
 export const servicesRuntimeLayer = (() => {
   const cliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
@@ -41,18 +40,13 @@ export const servicesRuntimeLayer = (() => {
       Layer.provide(cliSettings),
       Layer.provide(httpClient),
       // The cache GET stitches session identity via the one per-command
-      // `IdentityStitch` (a single per-command `sync.Once`).
+      // `IdentityStitch` (only ever run once per command).
       Layer.provide(identityStitchLayer),
     ),
     telemetryStateLayer,
-    // The one per-command identity stitcher (a single per-command `sync.Once`),
-    // exposed at top level so `withCommandTelemetry` can read
-    // `stitchedDistinctId()` and attribute the cli_command_executed event to the
-    // gotrue id. The SAME reference is provided to linkedProjectCache above, so
-    // memoisation gives the cache GET and the instrumentation hook one
-    // `stitchAttempted` guard — aliasing/persisting at most once. Its
-    // Analytics / TelemetryRuntime / FileSystem / Path deps are ambient (root
-    // runtime). Mirrors advisors.layers.ts / lint.layers.ts.
+    // Exposed at top level so `withCommandTelemetry` can attribute
+    // cli_command_executed to the gotrue id via `stitchedDistinctId()`. The
+    // same instance is shared with linkedProjectCache so both stitch at most once.
     identityStitchLayer,
     commandRuntimeLayer(["services"]),
   ).pipe(Layer.provide(FetchHttpClient.layer));

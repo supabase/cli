@@ -91,9 +91,8 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       }),
   });
 
-  // `loadProjectRef` gives an explicit `--project-ref` flag top precedence, same
-  // as Go's `flags.LoadProjectRef` — mirror that so a test can prove the flag
-  // (not just the hardcoded `VALID_REF` fallback) drives the linked ref.
+  // Gives an explicit --project-ref flag precedence over the VALID_REF fallback, so a
+  // test can prove the flag drives the linked ref.
   const projectRef = Layer.succeed(ProjectRefResolver, {
     resolve: () => Effect.succeed(VALID_REF),
     resolveForLink: () => Effect.succeed(VALID_REF),
@@ -119,8 +118,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     mockTty({ stdinIsTty: opts.isTTY ?? true }),
     mockStdin(
       opts.isTTY ?? true,
-      // Migration prompts read stdin directly, so a confirm answer is
-      // supplied via piped stdin rather than the Output prompt mock.
+      // Migration prompts read stdin directly, so the confirm answer is piped in.
       opts.pipedInput ?? (opts.confirm === undefined ? undefined : opts.confirm ? "y\n" : "n\n"),
     ),
     BunServices.layer,
@@ -151,7 +149,6 @@ describe("migration fetch", () => {
     });
     return Effect.gen(function* () {
       yield* migrationFetch(flags());
-      // The connection banner prints to stderr before dialing.
       expect(out.stderrText).toContain("Connecting to remote database...");
       const dir = migrationsDir(tmp.current);
       const files = readdirSync(dir);
@@ -161,11 +158,8 @@ describe("migration fetch", () => {
   });
 
   it.live("writes a lone separator for a row with no statements (Go parity)", () => {
-    // A `schema_migrations` row can legally have a NULL/empty `statements` array
-    // (older projects, manually-inserted rows). Joining statements with ";\n"
-    // plus a trailing ";\n" means an empty array yields exactly ";\n" — a file with a stray
-    // semicolon, not an empty file. This port keeps these bytes; lock it
-    // so a future "emit an empty file instead" refactor is a conscious divergence.
+    // A schema_migrations row can have a NULL/empty statements array; joining still
+    // yields exactly ";\n", not an empty file. This locks that byte behavior.
     const { layer } = setup(tmp.current, {
       rows: [{ version: "20240101000000", name: "empty", statements: [] }],
     });
@@ -208,9 +202,7 @@ describe("migration fetch", () => {
   });
 
   it.live("honors a piped 'n' answer without a TTY (cancels the overwrite)", () => {
-    // The overwrite prompt defaults to YES; piped stdin is read even when non-interactive,
-    // so a piped `n` overrides the default and cancels. Proves the
-    // non-TTY path reads the answer instead of blindly taking the default.
+    // The overwrite prompt defaults to YES; piped stdin still overrides it without a TTY.
     mkdirSync(migrationsDir(tmp.current), { recursive: true });
     writeFileSync(join(migrationsDir(tmp.current), "existing.sql"), "select 1;\n");
     const { layer } = setup(tmp.current, {
@@ -246,9 +238,8 @@ describe("migration fetch", () => {
   it.live(
     "auto-confirms the overwrite prompt from SUPABASE_YES in the project .env (Go loadNestedEnv)",
     () => {
-      // SUPABASE_YES lives only in supabase/.env, not the shell — `fetch` defaults to
-      // `--linked`, and the project `.env` files load before the overwrite prompt, so the
-      // overwrite auto-confirms with no --yes flag and no piped stdin answer (CLI-1878).
+      // SUPABASE_YES lives only in supabase/.env; the project env loads before the
+      // overwrite prompt.
       mkdirSync(migrationsDir(tmp.current), { recursive: true });
       writeFileSync(join(migrationsDir(tmp.current), "existing.sql"), "select 1;\n");
       writeFileSync(join(tmp.current, "supabase", ".env"), "SUPABASE_YES=true\n");
@@ -264,9 +255,8 @@ describe("migration fetch", () => {
   );
 
   it.live("still prompts on stderr in json mode and proceeds on a piped yes", () => {
-    // The prompt writes to stderr and reads stdin regardless of --output,
-    // so --output-format json must NOT silently auto-accept: the overwrite prompt fires on
-    // stderr and a piped `y` proceeds, while the json result still goes to stdout.
+    // The overwrite prompt still writes to stderr and reads stdin in json mode; it must
+    // not silently auto-accept.
     mkdirSync(migrationsDir(tmp.current), { recursive: true });
     writeFileSync(join(migrationsDir(tmp.current), "existing.sql"), "select 1;\n");
     const { layer, out } = setup(tmp.current, {
@@ -276,7 +266,6 @@ describe("migration fetch", () => {
     });
     return Effect.gen(function* () {
       yield* migrationFetch(flags());
-      // The prompt label reached stderr (it was NOT format-gated into a silent default).
       expect(out.stderrText).toContain("[Y/n]");
       expect(out.messages).toContainEqual(
         expect.objectContaining({
@@ -289,8 +278,6 @@ describe("migration fetch", () => {
   });
 
   it.live("honors a piped no in json mode (cancels the overwrite, no auto-accept)", () => {
-    // Regression guard: before the fix, json mode routed through the non-interactive Output
-    // prompt and auto-accepted (default YES), overwriting. Now a piped `n` is honored.
     mkdirSync(migrationsDir(tmp.current), { recursive: true });
     writeFileSync(join(migrationsDir(tmp.current), "existing.sql"), "select 1;\n");
     const { layer } = setup(tmp.current, {
@@ -322,15 +309,13 @@ describe("migration fetch", () => {
         const failure = Cause.findErrorOption(exit.cause);
         expect(Option.isSome(failure) && failure.value._tag).toBe("MigrationFetchWriteError");
       }
-      // Nothing is written when the guard fires.
       expect(readdirSync(migrationsDir(tmp.current))).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
 
   it.live("writes a Go-valid signed version verbatim (no all-digits requirement)", () => {
-    // The raw `version` column writes into `<version>_<name>.sql` with no digit check,
-    // so a malformed-but-safe value like `-1`
-    // (listable/repairable) must fetch, not abort the whole run.
+    // The raw version column writes verbatim into <version>_<name>.sql with no digit
+    // check, so a value like "-1" still fetches instead of aborting the run.
     const { layer } = setup(tmp.current, {
       rows: [{ version: "-1", name: "legacy", statements: ["select 1"] }],
     });
@@ -341,8 +326,7 @@ describe("migration fetch", () => {
   });
 
   it.live("rejects a hostile version from the history table (traversal guard on version)", () => {
-    // The traversal hardening covers the `version` field too: a separator/`..` there is
-    // rejected even though it is no longer required to be all-digits.
+    // Traversal hardening covers the version field too, not just name.
     const { layer } = setup(tmp.current, {
       rows: [{ version: "../../etc", name: "x", statements: [] }],
     });
@@ -358,10 +342,9 @@ describe("migration fetch", () => {
   });
 
   it.live("reports a write failure", () => {
-    // A file at <workdir>/supabase/migrations makes `makeDirectory` fail. `supabase` itself
-    // must stay a real directory here: the handler's project-env load (CLI-1878)
-    // reads `<workdir>/supabase/.env*` before this mkdir, and a plain
-    // file at `<workdir>/supabase` would make that read fail first (ENOTDIR) instead.
+    // A file at .../migrations makes makeDirectory fail; supabase itself must stay a
+    // real directory, since the handler's project-env load reads supabase/.env* before
+    // this mkdir and would hit ENOTDIR first otherwise.
     mkdirSync(join(tmp.current, "supabase"), { recursive: true });
     writeFileSync(join(tmp.current, "supabase", "migrations"), "not a directory");
     const { layer } = setup(tmp.current, { rows: [] });
@@ -376,9 +359,6 @@ describe("migration fetch", () => {
   });
 
   it.live("resolves DB config before creating the migrations dir or prompting", () => {
-    // The DB config resolves before any filesystem/prompt side effect,
-    // so an invalid target fails first. With the resolver
-    // failing, the supabase/migrations dir must NOT be created and no prompt is shown.
     const { layer, out } = setup(tmp.current, { resolveFails: true });
     return Effect.gen(function* () {
       const exit = yield* migrationFetch(flags()).pipe(Effect.exit);
@@ -387,7 +367,6 @@ describe("migration fetch", () => {
         const failure = Cause.findErrorOption(exit.cause);
         expect(Option.isSome(failure) && failure.value._tag).toBe("DbConfigLoadError");
       }
-      // The config failed before any side effect: no migrations dir, no overwrite prompt.
       expect(existsSync(migrationsDir(tmp.current))).toBe(false);
       expect(out.promptConfirmCalls.length).toBe(0);
     }).pipe(Effect.provide(layer));
@@ -396,12 +375,8 @@ describe("migration fetch", () => {
   it.live(
     "rejects --db-url combined with --linked before reading the project .env (CLI-1878)",
     () => {
-      // Cobra's `MarkFlagsMutuallyExclusive` validates at parse time, ahead of the root
-      // `PersistentPreRunE` that runs `ParseDatabaseConfig`/`loadNestedEnv` — so a flag
-      // conflict must surface even when `supabase/.env` is malformed (which would abort a
-      // project-env load with a DIFFERENT error, `DbConfigLoadError`, if the env load
-      // ran first). Locks in the fix that reordered the project-env load in `fetch.handler.ts`
-      // to run after this flag-group check.
+      // A flag conflict must surface even when supabase/.env is malformed, which would
+      // otherwise abort with a different error (DbConfigLoadError) if the env load ran first.
       mkdirSync(join(tmp.current, "supabase"), { recursive: true });
       writeFileSync(join(tmp.current, "supabase", ".env"), "!=broken\n");
       const { layer } = setup(tmp.current, {
@@ -423,9 +398,8 @@ describe("migration fetch", () => {
   it.live(
     "fetches from the project given via --project-ref, overriding the default linked ref",
     () => {
-      // The fake resolver's own fallback (VALID_REF) represents whatever
-      // the workdir would resolve to absent the flag — the flag must win over it
-      // and drive the cached ref.
+      // VALID_REF is the fake resolver's fallback; the flag must win over it and drive
+      // the cached ref.
       const FLAG_REF = "flagflagflagflagflag";
       const { layer, cache } = setup(tmp.current, { rows: [] });
       return Effect.gen(function* () {

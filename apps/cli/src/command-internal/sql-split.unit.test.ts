@@ -33,9 +33,8 @@ describe("splitAndTrim", () => {
   });
 
   it("treats a non-decimal Unicode digit as an invalid dollar-tag character, like Go's unicode.IsDigit", () => {
-    // Go's TagState.Next gates on unicode.IsDigit (category Nd only), which is false
-    // for superscript-2 (U+00B2, category No) — the tag "a²" is therefore invalid,
-    // Go falls back out of the tag and the embedded `;` becomes a real boundary.
+    // "a²" (U+00B2, category No) is not a valid dollar-tag character, so the tag falls back
+    // and the embedded `;` becomes a real boundary.
     const sql = "CREATE FUNCTION f() AS $a²$foo; bar$a²$ LANGUAGE sql;";
     expect(splitAndTrim(sql)).toEqual(["CREATE FUNCTION f() AS $a²$foo", "bar$a²$ LANGUAGE sql"]);
   });
@@ -82,8 +81,6 @@ describe("findDropStatements", () => {
   });
 
   it("does not split a function body on its inner ; (no spurious statements)", () => {
-    // The dollar-quoted `;` must not create extra statements; this benign
-    // function (no DROP) stays whole and is therefore not flagged.
     const sql =
       "CREATE FUNCTION f() AS $$ BEGIN RETURN 1; END; $$ LANGUAGE plpgsql;\nDROP TABLE real;";
     expect(findDropStatements(sql)).toEqual(["DROP TABLE real"]);

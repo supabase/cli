@@ -26,45 +26,12 @@ import {
 import type { DocsInfoTag } from "./docs-spec.tables.ts";
 
 /**
- * Builds the `clispec 001` document consumed by the supabase.com CLI
- * reference (`supabase/supabase` `apps/docs/spec/cli_v1_commands.yaml`) from
- * the legacy Effect command tree — replacing the retired Go generator's
- * cobra walk.
+ * Builds the `clispec 001` document consumed by the supabase.com CLI reference
+ * (`apps/docs/spec/cli_v1_commands.yaml`) from the Effect command tree. A command's `id` is
+ * its `CommandPath` joined by dashes — the public URL slug and `common-cli-sections.json` join key.
  *
- * The load-bearing contract, verified against the retired Go generator's
- * output while both coexisted: command `id` is `CommandPath` with spaces
- * replaced by dashes and is the public URL slug plus the join key into
- * `common-cli-sections.json`; `subcommands`, `flags`, `tags`, `links` are
- * always arrays; `default_value` is always present; flag `name` is a
- * preformatted display string (`-p, --password <string>`); enum flags carry
- * `accepted_values`; experimental leaves append the root `--experimental`
- * flag. All 135 Go command ids, titles, subcommand sets, defaults and
- * accepted values matched; flag sets matched once deprecated flags were
- * excluded (`DOCS_EXCLUDED_FLAGS`).
- *
- * Deliberately NOT reproduced from the Go output:
- * - go-yaml serialization quirks: trailing-newline padding of long strings
- *   and the reversed command order (consumers parse the YAML and join on
- *   `id`);
- * - cobra's `UseLine` rule of appending ` [flags]` only when a command
- *   declares its own local flags — every leaf here accepts flags, so the
- *   suffix is emitted on all leaf usage strings;
- * - cobra's flag ordering where persistent group flags trailed local ones —
- *   flags that were persistent in cobra are own config flags in the Effect
- *   tree and sort alphabetically with the rest;
- * - Go-only scalar display typing (`uint`/`duration`/`time`/`stringArray`) —
- *   flag types render as the Effect tree (and `--help`) declares them;
- * - argument labels in usage strings render the Effect tree's names, which
- *   can differ from Go's hand-written `Use` wording (`[name]` vs
- *   `[project name]`) and are sometimes more precise (`orgs create <name>`,
- *   `functions deploy [Function name] ...`);
- * - TS-only surfaces (commands, flags, examples) are additions by design.
- *
- * Every static-table key (`docs-spec.tables.ts`) and every content
- * input (description overlays, `examples.yaml` entries) is validated against
- * the walked tree at build time — a stale entry after a command or flag
- * rename fails the build with the offending keys listed instead of silently
- * degrading the published reference.
+ * Every static-table key and content input is validated against the walked tree at build time,
+ * failing the build on stale entries instead of silently degrading the reference.
  */
 
 export interface DocsExample {
@@ -334,11 +301,10 @@ export function buildDocsSpec(input: DocsSpecInput): DocsSpec {
   const allowedOrphanOverlayPaths = new Set<string>();
 
   /**
-   * Builds the visible flag docs for a command's params, dropping hidden
-   * flags and `DOCS_EXCLUDED_FLAGS` entries (deprecated flags cobra
-   * hid from the reference). Does NOT record `seenFlagKeys` — callers record
-   * only the flags that actually reach the output, so table validation
-   * reflects the published spec, not intermediate candidates.
+   * Builds the visible flag docs for a command's params, dropping hidden flags and
+   * `DOCS_EXCLUDED_FLAGS` entries. Does not record `seenFlagKeys` itself — callers record
+   * only the flags that reach the output, so table validation reflects the published spec,
+   * not intermediate candidates.
    */
   const flagDocsFor = (
     commandPath: ReadonlyArray<string>,
@@ -457,10 +423,8 @@ export function buildDocsSpec(input: DocsSpecInput): DocsSpec {
       flags,
     });
 
-    // A non-root command's scoped global flags (`Command.withGlobalFlags`
-    // below root, e.g. `seed`'s `--linked`/`--local`) behave like persistent
-    // flags: the reference surfaces them on every leaf beneath the command,
-    // alongside shared (`contextConfig`) flags.
+    // A non-root command's own global flags (e.g. `seed`'s `--linked`/`--local`) behave like
+    // persistent flags: they're surfaced on every leaf beneath it, alongside shared flags.
     const childInherited = [
       ...inheritedParams,
       ...internals.contextConfig.flags,
@@ -524,12 +488,11 @@ export function buildDocsSpec(input: DocsSpecInput): DocsSpec {
 }
 
 /**
- * Serializes the spec for publication. Emitted under YAML 1.1 quoting rules
- * so scalars like `yes`/`no` stay strings for downstream YAML 1.1 parsers
- * (PyYAML, Psych, go-yaml v2); the output remains equally valid YAML 1.2.
- * Anchors/aliases are disabled — the injected `--experimental` doc is the
- * same object on every experimental leaf, and the serializer would otherwise
- * emit `&a1`/`*a1` references the published file never carried.
+ * Serializes the spec for publication. Uses YAML 1.1 quoting so scalars like `yes`/`no` stay
+ * strings for downstream YAML 1.1 parsers (PyYAML, Psych, go-yaml v2); the output remains
+ * valid YAML 1.2. Anchors/aliases are disabled since the injected `--experimental` doc is the
+ * same object on every experimental leaf, and the serializer would otherwise emit `&a1`/`*a1`
+ * references the published file never carried.
  */
 export function stringifyDocsSpec(spec: DocsSpec): string {
   return stringify(spec, {
@@ -541,10 +504,8 @@ export function stringifyDocsSpec(spec: DocsSpec): string {
 }
 
 /**
- * Fails the build when any static-table key no longer resolves against the
- * walked tree — the guard that keeps the frozen tables honest after a
- * command or flag rename, since nothing else cross-checks them once the Go
- * generator is gone.
+ * Fails the build when any static-table key no longer resolves against the walked tree — the
+ * guard that keeps the frozen tables honest after a command or flag rename.
  */
 function validateDocsTables(seen: {
   readonly emittedIds: ReadonlySet<string>;
@@ -596,13 +557,10 @@ function validateDocsTables(seen: {
 }
 
 /**
- * Extends the build-fails-on-drift guarantee to the content inputs: an
- * overlay whose path maps to no walked command, or an `examples.yaml` doc id
- * matching no emitted command, would otherwise vanish from the published
- * reference silently (the page falls back to the terse tree description).
- * Overlays belonging to `DOCS_EXCLUDED` commands are deliberate
- * orphans (deprecated pages keep their content until the follow-up cleanup)
- * and stay allowed.
+ * Extends the build-fails-on-drift guarantee to content inputs: an overlay or `examples.yaml`
+ * doc id matching no emitted command would otherwise vanish from the published reference
+ * silently. Overlays belonging to `DOCS_EXCLUDED` commands stay allowed as orphans until their
+ * pages are removed.
  */
 function validateDocsContent(
   input: DocsSpecInput,

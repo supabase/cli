@@ -5,8 +5,8 @@ import { InvalidStackConfigError, StackVersionUnsupportedError } from "../public
 import { canonicalize, compileStack, rebuildExecutionPlan, sameDefinition } from "./Compiler.ts";
 import { resolveThirdPartyIssuer } from "./capabilities/auth-third-party.ts";
 import { DEFAULT_DATABASE_HEALTH_TIMEOUT } from "./capabilities/database.ts";
-import { parseFileSize } from "./capabilities/storage.ts";
 import { catalogEntryFor } from "./WorkloadCatalog.ts";
+import { excludeStackCapabilities } from "./Exclusions.ts";
 
 const layer = NodeServices.layer;
 const compile = (
@@ -22,15 +22,55 @@ const failureOf = <E>(exit: Exit.Exit<unknown, E>): E | undefined =>
   Exit.isFailure(exit) ? Option.getOrUndefined(Cause.findErrorOption(exit.cause)) : undefined;
 
 describe("closed capability compiler", () => {
-  it.live("normalizes storage byte limits and rejects invalid sizes", () =>
+  it.live("compiles every optional exclusion and closes Studio dependents", () =>
     Effect.gen(function* () {
-      expect(parseFileSize("50MiB")).toBe("52428800");
-      expect(parseFileSize("1.5KB")).toBe("1500");
-      expect(parseFileSize("2 GiB")).toBe("2147483648");
-      expect(parseFileSize(-1)).toBeUndefined();
-      expect(parseFileSize("not-a-size")).toBeUndefined();
-      expect(parseFileSize("999999999999999999TiB")).toBeUndefined();
-      for (const value of ["not-a-size", "-1", "1.1B"]) {
+      for (const name of [
+        "rest",
+        "auth",
+        "realtime",
+        "storage",
+        "functions",
+        "studio",
+        "mail",
+        "analytics",
+        "pooler",
+      ] as const) {
+        const config = { capabilities: { rest: { settings: { max_rows: 42 } } } };
+        const excluded = excludeStackCapabilities(config, [name]);
+        expect(config.capabilities?.rest).toEqual({ settings: { max_rows: 42 } });
+        const result = yield* compile(excluded);
+        expect(result.definition.capabilities[name].enabled).toBe(false);
+        if (name !== "rest") expect(result.definition.capabilities.rest.settings.max_rows).toBe(42);
+        if (name === "rest" || name === "analytics")
+          expect(result.definition.capabilities.studio.enabled).toBe(false);
+      }
+      const combined = excludeStackCapabilities({}, ["rest", "analytics"]);
+      const result = yield* compile(combined);
+      expect(result.definition.capabilities.studio.enabled).toBe(false);
+      expect(result.definition.capabilities.rest.enabled).toBe(false);
+      expect(result.definition.capabilities.analytics.enabled).toBe(false);
+      expect(result.definition.capabilities.auth.enabled).toBe(true);
+      expect(excludeStackCapabilities({}, [])).toEqual({});
+      const studioExcluded = yield* compile(excludeStackCapabilities({}, ["studio"]));
+      expect(studioExcluded.definition.capabilities.rest.enabled).toBe(true);
+      expect(studioExcluded.definition.capabilities.analytics.enabled).toBe(true);
+    }),
+  );
+
+  it.live("accepts named storage byte limit formats during compilation", () =>
+    Effect.gen(function* () {
+      for (const input of ["50MiB", "1.5KB", "2 GiB"]) {
+        const result = yield* compile({
+          capabilities: { storage: { settings: { file_size_limit: input } } },
+        });
+        expect(result.definition.capabilities.storage.settings.file_size_limit).toBe(input);
+      }
+    }),
+  );
+
+  it.live("rejects invalid storage byte limits during compilation", () =>
+    Effect.gen(function* () {
+      for (const value of [-1, "not-a-size", "999999999999999999TiB", "1.1B"]) {
         const result = yield* compile({
           capabilities: { storage: { settings: { file_size_limit: value } } },
         }).pipe(Effect.exit);
@@ -58,7 +98,7 @@ describe("closed capability compiler", () => {
     }),
   );
 
-  it.live("defaults preparation to background and accepts on-demand mode", () =>
+  it.live("defaults preparation to background with lazy optional activation", () =>
     Effect.gen(function* () {
       const result = yield* compile({});
       expect(result.definition.preparation).toBe("background");
@@ -79,12 +119,26 @@ describe("closed capability compiler", () => {
         activation: "lazy",
       });
       expect(result.definition.listeners.pooler.enabled).toBe(true);
+    }),
+  );
+
+  it.live("disables pooler workloads while retaining its listener", () =>
+    Effect.gen(function* () {
       const disabledPooler = yield* compile({ capabilities: { pooler: { enabled: false } } });
       expect(disabledPooler.definition.capabilities.pooler.enabled).toBe(false);
       expect(disabledPooler.definition.listeners.pooler.enabled).toBe(true);
+    }),
+  );
+
+  it.live("accepts on-demand preparation", () =>
+    Effect.gen(function* () {
       const onDemand = yield* compile({ preparation: "on-demand" });
       expect(onDemand.definition.preparation).toBe("on-demand");
+    }),
+  );
 
+  it.live("rejects an invalid preparation mode during compilation", () =>
+    Effect.gen(function* () {
       const invalid = yield* compile({ preparation: "invalid" } as never).pipe(Effect.exit);
       expect(failureOf(invalid)).toBeInstanceOf(InvalidStackConfigError);
     }),
@@ -110,7 +164,27 @@ describe("closed capability compiler", () => {
         capabilities: { rest: { settings: { schemas: ["private"] } } },
       });
       expect(result.definition.capabilities.rest.settings).toMatchObject({ schemas: ["private"] });
-      expect(result.definition.capabilities.rest.settings.schemas).toEqual(["private"]);
+    }),
+  );
+
+  it.live("rejects settings without a local runtime consumer", () =>
+    Effect.gen(function* () {
+      const unsupported = yield* compile({
+        capabilities: {
+          rest: {
+            settings: { auto_expose_new_tables: true, tls: { enabled: true } },
+          },
+          storage: { settings: { analytics: { enabled: true } } },
+        },
+      } as never).pipe(Effect.exit);
+      expect(failureOf(unsupported)).toBeInstanceOf(InvalidStackConfigError);
+
+      const defaults = yield* compile({});
+      expect(defaults.definition.capabilities.rest.settings).not.toHaveProperty(
+        "auto_expose_new_tables",
+      );
+      expect(defaults.definition.capabilities.rest.settings).not.toHaveProperty("tls");
+      expect(defaults.definition.capabilities.storage.settings).not.toHaveProperty("analytics");
     }),
   );
 
@@ -298,36 +372,39 @@ describe("closed capability compiler", () => {
     }),
   );
 
-  it.live("derives each supported third-party issuer and rejects invalid combinations", () =>
+  it("derives each supported third-party issuer", () => {
+    const cases = [
+      [
+        { firebase: { enabled: true, project_id: "project-42" } },
+        "https://securetoken.google.com/project-42",
+      ],
+      [
+        { auth0: { enabled: true, tenant: "tenant", tenant_region: "eu" } },
+        "https://tenant.eu.auth0.com",
+      ],
+      [
+        {
+          aws_cognito: { enabled: true, user_pool_id: "eu_pool", user_pool_region: "eu-west-1" },
+        },
+        "https://cognito-idp.eu-west-1.amazonaws.com/eu_pool",
+      ],
+      [
+        { clerk: { enabled: true, domain: "example.clerk.accounts.dev" } },
+        "https://example.clerk.accounts.dev",
+      ],
+      [
+        { workos: { enabled: true, issuer_url: "https://login.example.test" } },
+        "https://login.example.test",
+      ],
+    ] as const;
+    for (const [settings, issuer] of cases) {
+      const result = resolveThirdPartyIssuer(settings);
+      expect(result).toEqual({ ok: true, value: expect.objectContaining({ issuer }) });
+    }
+  });
+
+  it.live("rejects conflicting or incomplete third-party issuer settings", () =>
     Effect.gen(function* () {
-      const cases = [
-        [
-          { firebase: { enabled: true, project_id: "project-42" } },
-          "https://securetoken.google.com/project-42",
-        ],
-        [
-          { auth0: { enabled: true, tenant: "tenant", tenant_region: "eu" } },
-          "https://tenant.eu.auth0.com",
-        ],
-        [
-          {
-            aws_cognito: { enabled: true, user_pool_id: "eu_pool", user_pool_region: "eu-west-1" },
-          },
-          "https://cognito-idp.eu-west-1.amazonaws.com/eu_pool",
-        ],
-        [
-          { clerk: { enabled: true, domain: "example.clerk.accounts.dev" } },
-          "https://example.clerk.accounts.dev",
-        ],
-        [
-          { workos: { enabled: true, issuer_url: "https://login.example.test" } },
-          "https://login.example.test",
-        ],
-      ] as const;
-      for (const [settings, issuer] of cases) {
-        const result = resolveThirdPartyIssuer(settings);
-        expect(result).toEqual({ ok: true, value: expect.objectContaining({ issuer }) });
-      }
       const invalid = yield* compile({
         capabilities: {
           auth: {
@@ -666,6 +743,27 @@ describe("closed capability compiler", () => {
           },
         });
       }
+    }),
+  );
+
+  it.live("prefers a compatible previous database release for a major selector", () =>
+    Effect.gen(function* () {
+      const previous = yield* compile({
+        capabilities: { database: { version: "15.14.1.168" } },
+      });
+      const selected = yield* compile(
+        { capabilities: { database: { version: "15" } } },
+        { kind: "native" },
+        previous,
+      );
+      expect(selected.definition.capabilities.database.version).toBe("15.14.1.168");
+    }),
+  );
+
+  it.live("uses the default release when a supported major matches it", () =>
+    Effect.gen(function* () {
+      const result = yield* compile({ capabilities: { database: { version: "17" } } });
+      expect(result.definition.capabilities.database.version).toBe("17.6.1.168");
     }),
   );
 

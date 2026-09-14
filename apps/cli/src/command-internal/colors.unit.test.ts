@@ -3,21 +3,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ColorStream } from "./colors.ts";
 import { aqua, bold, green, red, yellow } from "./colors.ts";
 
-// Bun's `util.styleText` ignores `validateStream` (verified on Bun 1.3.14: a
-// piped stdout still gets `\x1b[36m…\x1b[39m`, even under NO_COLOR=1), so
-// `colors.ts` implements termenv's gate itself — the same decision
-// order the established lipgloss-style default renderer uses. These tests pin
-// that gate deterministically with fake
-// streams and stubbed env vars; a piped stream (no `hasColors`) must yield
-// PLAIN text, exactly like the established behavior under a piped stdout.
+// Bun's `util.styleText` ignores `validateStream`, so `colors.ts` implements the colour gate
+// itself. These tests pin that gate deterministically with fake streams and stubbed env vars.
 const colorTty: ColorStream = { hasColors: () => true };
 const monoTty: ColorStream = { hasColors: () => false };
 const piped: ColorStream = {};
 
 beforeEach(() => {
-  // Neutralize the ambient environment (CI sets `CI`, developers may set
-  // NO_COLOR) so each case controls the gate's inputs exactly. Empty string
-  // reads as unset for every variable termenv consults.
+  // Neutralize the ambient environment (CI sets `CI`, developers may set NO_COLOR) so each
+  // case controls the gate's inputs exactly. Empty string reads as unset for every variable.
   vi.stubEnv("NO_COLOR", "");
   vi.stubEnv("CLICOLOR", "");
   vi.stubEnv("CLICOLOR_FORCE", "");
@@ -77,9 +71,8 @@ describe("colors TTY gating (termenv parity)", () => {
   });
 
   it("defaults to gating on stderr when no stream is given", () => {
-    // The live TTY-ness of the test process's stderr is environment-dependent,
-    // so pin the gate closed via the CI branch: the default-stream form must
-    // still come back plain, proving the default threads through the gate.
+    // The test process's real stderr TTY-ness is environment-dependent, so pin the gate closed
+    // via CI to prove the default stream threads through the gate.
     vi.stubEnv("CI", "true");
     expect(aqua("supabase")).toBe("supabase");
     expect(bold("text")).toBe("text");

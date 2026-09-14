@@ -11,13 +11,6 @@ const Bucket = Schema.Struct({
   objects_path: Schema.optionalKey(Schema.String),
 });
 const Secret = Schema.Redacted(Schema.String);
-const Analytics = Schema.Struct({
-  enabled: Schema.optionalKey(Schema.Boolean),
-  max_namespaces: Schema.optionalKey(Schema.Finite),
-  max_tables: Schema.optionalKey(Schema.Finite),
-  max_catalogs: Schema.optionalKey(Schema.Finite),
-  buckets: Schema.optionalKey(Schema.Record(Schema.String, Schema.Struct({}))),
-});
 const Vector = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
   max_buckets: Schema.optionalKey(Schema.Finite),
@@ -38,7 +31,6 @@ export const StorageSettingsSchema = Schema.Struct({
       secret_access_key: Schema.optionalKey(Secret),
     }),
   ),
-  analytics: Schema.optionalKey(Analytics),
   vector: Schema.optionalKey(Vector),
 });
 export type StorageSettings = Schema.Schema.Type<typeof StorageSettingsSchema>;
@@ -89,7 +81,7 @@ export const StorageModule: CapabilityModule<StorageSettings> = {
   settings: StorageSettingsSchema,
   defaultSettings: {
     file_size_limit: "50MiB",
-    image_transformation: { enabled: false },
+    image_transformation: { enabled: true },
     buckets: {},
     s3_protocol: {
       enabled: true,
@@ -98,7 +90,6 @@ export const StorageModule: CapabilityModule<StorageSettings> = {
       // Managed by the compiler so every stack receives a fresh credential.
       secret_access_key: undefined,
     },
-    analytics: { enabled: false, max_namespaces: 5, max_tables: 10, max_catalogs: 2, buckets: {} },
     vector: { enabled: true, max_buckets: 10, max_indexes: 5, buckets: {} },
   },
   defaultEnabled: true,

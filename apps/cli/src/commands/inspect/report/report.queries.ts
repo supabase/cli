@@ -14,11 +14,8 @@ import { trafficProfileSpec } from "../db/traffic-profile/traffic-profile.query.
 import { vacuumStatsSpec } from "../db/vacuum-stats/vacuum-stats.query.ts";
 
 /**
- * The `unused_indexes` query. The `inspect db`
- * tree folds `unused-indexes` into a deprecated alias of `index-stats`, so this
- * distinct query (columns: `name`, `index`, `index_size`, `index_scans`) has no
- * existing `InspectQuerySpec`; the report still emits its own `unused_indexes.csv`,
- * walking all 14 query files.
+ * The `unused_indexes` query. `inspect db` folds `unused-indexes` into a deprecated alias of
+ * `index-stats`, so there's no existing `InspectQuerySpec` for it; the report defines its own.
  */
 const UNUSED_INDEXES_REPORT_SQL = `SELECT
   FORMAT('%I.%I', schemaname, relname) AS name,
@@ -35,14 +32,11 @@ ORDER BY
   pg_relation_size(i.indexrelid) DESC`;
 
 /**
- * One report query: the basename derived from the embedded SQL filename and
- * the SQL it runs.
+ * One report query: the CSV basename (SQL filename with underscores, e.g. `db_stats` — not the
+ * `inspect db` spec name `db-stats`) and the SQL to run.
  *
- * The `fileName` is the **SQL basename with underscores** (`db_stats`), which is
- * also the CSV name (`<fileName>.csv`) — NOT the `inspect db` spec `name`
- * (`db-stats`). The report does not bind parameters: `COPY` cannot, so the
- * placeholders are substituted textually by `wrapReportQuery`, not via
- * `spec.params()`.
+ * `COPY` can't bind parameters, so placeholders are substituted textually by `wrapReportQuery`
+ * instead of `spec.params()`.
  */
 export interface ReportQuery {
   readonly fileName: string;
@@ -80,11 +74,8 @@ export function reportIgnoreSchemas(): string {
 }
 
 /**
- * Substitutes each positional placeholder (`$1`, `$2`, …) with the
- * corresponding `arg`, replacing every occurrence (`$1` appears 3× in
- * `index_stats.sql`), in order, then wraps
- * the result in `COPY (...) TO STDOUT WITH CSV HEADER`. With no args it is a pure
- * wrap.
+ * Substitutes each `$1`, `$2`, … placeholder with the corresponding `arg` (every occurrence,
+ * since a placeholder can repeat), then wraps the result in `COPY (...) TO STDOUT WITH CSV HEADER`.
  */
 export function wrapReportQuery(sql: string, ...args: ReadonlyArray<string>): string {
   let query = sql;

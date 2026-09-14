@@ -35,9 +35,8 @@ import type { ServicesFlags } from "./services.command.ts";
 import { ServicesEnvNotSupportedError } from "./services.errors.ts";
 
 /**
- * Type shape for the hand-written `imageVersion` struct — declaration order
- * is Name, Local, Remote (not alphabetical), and `Remote` is always emitted
- * even when empty (CLI-1975).
+ * Struct shape for `imageVersion`: field order is name, local, remote (not
+ * alphabetical), and `remote` is always emitted even when empty.
  */
 const GO_IMAGE_VERSION = goStruct([
   ["name", goString],
@@ -70,14 +69,9 @@ export const services = Effect.fn("services")(function* (_flags: ServicesFlags) 
       return Option.none<string>();
     }
 
-    // Warns on a ref-file READ error (as opposed to the file simply
-    // not existing) and keeps going as unlinked (`fmt.Fprintln(os.Stderr, err)`
-    // with `LoadProjectRef`'s `failed to load project ref: %w`,
-    // `project_ref.go:71-72`). A NotFound between the exists() check above and
-    // this read (TOCTOU) maps to the `os.ErrNotExist` → `ErrNotLinked` branch:
-    // silent, no warning. The warning's error suffix is Effect's description,
-    // not the reference implementation's `*PathError` text — the prefix is
-    // the compatibility-bearing part.
+    // Warns on a ref-file read error, but treats a NotFound race between the
+    // exists() check and this read as simply unlinked (silent, no warning).
+    // Only the "failed to load project ref: " prefix is compatibility-bearing.
     const content = yield* fs
       .readFileString(projectRefPath)
       .pipe(
@@ -107,15 +101,11 @@ export const services = Effect.fn("services")(function* (_flags: ServicesFlags) 
 
     const validLinkedRef = Option.filter(linkedProjectRef, (ref) => PROJECT_REF_PATTERN.test(ref));
     if (Option.isSome(linkedProjectRef) && Option.isNone(validLinkedRef)) {
-      // `flags.LoadProjectRef` (project_ref.go:54-76) validates the ref but
-      // the reference `Run` only warns on the error and keeps going, still
-      // calling `listRemoteImages` with the malformed ref (services.go:61-62).
-      // TS matches the warning but deliberately skips the remote call instead of
-      // reproducing it: the ref is embedded unescaped into the tenant gateway
-      // hostname in `fetchLinkedServiceVersions`, so proceeding would let a
-      // malformed ref redirect the service-role key to an attacker-controlled host.
-      // Emitted before the config-load warning below to match the order these
-      // are printed in (services.go:18-24).
+      // A malformed linked ref still warns, but the remote call is skipped:
+      // `fetchLinkedServiceVersions` embeds the ref unescaped into the tenant
+      // gateway hostname, so proceeding could redirect the service-role key to
+      // an attacker-controlled host. Emitted before the config-load warning to
+      // preserve output order.
       yield* output.raw(`${INVALID_PROJECT_REF_MESSAGE}\n`, "stderr");
     }
 
@@ -208,10 +198,9 @@ export const services = Effect.fn("services")(function* (_flags: ServicesFlags) 
       return;
     }
 
-    // goOutput is undefined or "pretty" — defer to the TS --output-format flag for
-    // machine output, otherwise render the `--output pretty` table. Guarding the
-    // table behind this (rather than treating "pretty" as force-table) keeps
-    // `--output pretty --output-format json` emitting JSON, per CLI-1546.
+    // goOutput is undefined or "pretty" — defer to --output-format for machine
+    // output, otherwise render the `--output pretty` table. This keeps
+    // `--output pretty --output-format json` emitting JSON.
     if (output.format === "json" || output.format === "stream-json") {
       yield* output.success("", { services: rows });
       return;

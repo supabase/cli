@@ -1,18 +1,12 @@
 /**
- * Logflare container spec builder, gated on `config.analytics.enabled` — the
- * gate itself is `start.handler.ts`'s job (a later task), not this module's;
- * this file only builds the `docker create` spec.
+ * Builds the `docker create` spec for the Logflare/analytics container. Gating on
+ * `config.analytics.enabled` is the caller's responsibility.
  *
- * Two things make this the fullest worked example among the three real
- * services ported in this file group:
- *
- * - A custom `Entrypoint`/`Cmd` pair that writes and runs its own `run.sh`,
- *   because the image's own entrypoint conflicts with the healthcheck due to
- *   a 15-second sleep
- *   (https://github.com/Logflare/logflare/blob/staging/run.sh#L35).
- * - A `config.analytics.backend` branch (`postgres` vs `bigquery`) that
- *   appends different env vars (and, for BigQuery only, a bind mount for the
- *   GCP service-account JSON).
+ * Writes and execs its own `run.sh` because the image's own entrypoint conflicts with the
+ * healthcheck due to a 15-second startup sleep
+ * (https://github.com/Logflare/logflare/blob/staging/run.sh#L35). Branches on
+ * `config.analytics.backend` (`postgres` vs `bigquery`) for env vars and, for BigQuery, a bind
+ * mount for the GCP service-account JSON.
  */
 
 import { join } from "node:path";
@@ -26,37 +20,21 @@ import { usesSlimImageRuntime } from "../../../shared/services/slim-images.ts";
 const LOGFLARE_CONTAINER_SUFFIX = "analytics";
 
 /**
- * The superuser role — the DB user Logflare's own Ecto connection
- * authenticates as. Distinct from
- * {@link LogflareContainerSpecInput.dbUser} (`"postgres"`), which is
- * used only for the Postgres-backend `POSTGRES_BACKEND_URL` below — two
- * different DB users really are used for two different env vars in this one
- * block.
+ * The DB user Logflare's own Ecto connection authenticates as, distinct from
+ * {@link LogflareContainerSpecInput.dbUser} (used only for the Postgres-backend
+ * `POSTGRES_BACKEND_URL`).
  */
 const LOGFLARE_DB_USERNAME = "supabase_admin";
 
-/**
- * The analytics API key's only possible value. It's never decoded from
- * `config.toml`, so this can never actually vary; hardcoding it here
- * (rather than threading it through as an input) reflects that.
- */
+/** The analytics API key's only possible value; never decoded from `config.toml`, so it's hardcoded rather than threaded through as an input. */
 const LOGFLARE_API_KEY = "api-key";
 
 /**
- * The Logflare entrypoint script: the image's own entrypoint conflicts with
- * the container healthcheck due to a 15-second sleep, so this writes its own
- * `run.sh` and runs that instead.
- *
- * Deliberate design choice, do not "fix" this in a later cleanup (issue
- * #6088): `migrate && start`, so a failed migrate exits the container and
- * the `unless-stopped` restart policy retries until the db is ready —
- * running Logflare against an unmigrated database lets Oban die on the
- * missing `public.oban_jobs` table instead.
- *
- * `run.sh` stays PID 1 on purpose: a plain `exec` of `beam.smp` still burned
- * Docker's 10s SIGTERM grace (upstream hang). Forward TERM, wait 3s, then
- * KILL. Interrupted `wait` is >128; a second `wait` recovers the BEAM's
- * status unless it was already reaped (127).
+ * Writes and execs a custom `run.sh`: the image's own entrypoint conflicts with the container
+ * healthcheck due to a 15-second startup sleep. Runs `migrate && start` so a failed migration
+ * exits the container and the restart policy retries until the db is ready, instead of running
+ * Logflare against an unmigrated database. Stays PID 1, trapping TERM to forward it, wait 3s,
+ * then KILL — a plain `exec` of `beam.smp` was still hitting Docker's 10s SIGTERM grace.
  */
 const LOGFLARE_ENTRYPOINT_SCRIPT =
   "cat <<'EOF' > run.sh && exec sh run.sh\n" +
@@ -89,10 +67,8 @@ export interface LogflareContainerSpecInput {
   /** `config.analytics.gcp_project_number` — only read when {@link backend} is `"bigquery"`. */
   readonly gcpProjectNumber: string;
   /**
-   * `config.analytics.gcp_jwt_path` — only read when {@link backend} is
-   * `"bigquery"`. Joined onto {@link workdir} UNCONDITIONALLY — an empty
-   * string still produces a (degenerate) bind mount of `workdir` itself,
-   * the behavior when the field is unset.
+   * `config.analytics.gcp_jwt_path`, only read when {@link backend} is `"bigquery"`. Always
+   * joined onto {@link workdir}; an unset field falls back to a bind mount of `workdir` itself.
    */
   readonly gcpJwtPath: string;
   /** The process working directory, used to resolve {@link gcpJwtPath} to a host path. */
@@ -102,9 +78,8 @@ export interface LogflareContainerSpecInput {
   /** Hardcoded `5432`. */
   readonly dbPort: number;
   /**
-   * Hardcoded `"postgres"` — used only for the Postgres-backend
-   * `POSTGRES_BACKEND_URL` env var, NOT for `DB_USERNAME` (see
-   * {@link LOGFLARE_DB_USERNAME}'s doc comment).
+   * Hardcoded `"postgres"`, used only for the Postgres-backend `POSTGRES_BACKEND_URL` env var —
+   * not for `DB_USERNAME` (see {@link LOGFLARE_DB_USERNAME}).
    */
   readonly dbUser: string;
   /** `config.db.password`. */
@@ -126,9 +101,8 @@ export function buildLogflareContainerSpec(input: LogflareContainerSpecInput): S
     LOGFLARE_PRIVATE_ACCESS_TOKEN: LOGFLARE_API_KEY,
     LOGFLARE_LOG_LEVEL: "warn",
     LOGFLARE_NODE_HOST: "127.0.0.1",
-    // The literal env VALUE includes the single quotes — this is set directly
-    // on the container env, never through a shell, so the quotes are not
-    // stripped anywhere.
+    // The single quotes are part of the literal value; this is set directly on the container
+    // env, not through a shell, so they are never stripped.
     LOGFLARE_FEATURE_FLAG_OVERRIDE: "'multibackend=true'",
     RELEASE_COOKIE: "cookie",
   };

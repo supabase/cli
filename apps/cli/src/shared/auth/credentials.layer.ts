@@ -27,7 +27,6 @@ const makeCredentials = Effect.gen(function* () {
       : yield* Effect.tryPromise(() => import("@napi-rs/keyring")).pipe(Effect.option);
 
   return Credentials.of({
-    // Read current storage first, then fall back to legacy account and finally the filesystem.
     getAccessToken: Effect.gen(function* () {
       if (Option.isSome(keyringModule)) {
         try {
@@ -57,7 +56,6 @@ const makeCredentials = Effect.gen(function* () {
       return Option.none();
     }).pipe(Effect.orElseSucceed(() => Option.none())),
 
-    // Writes follow the same policy: keyring when possible, filesystem when necessary.
     saveAccessToken: (token: string | Redacted.Redacted<string>) =>
       Effect.gen(function* () {
         const plainToken = typeof token === "string" ? token : Redacted.value(token);
@@ -75,7 +73,6 @@ const makeCredentials = Effect.gen(function* () {
         yield* fs.writeFileString(fallbackPath, plainToken, { mode: 0o600 });
       }).pipe(Effect.orDie),
 
-    // Deletes the token from all storage locations. Returns true if anything was deleted.
     deleteAccessToken: Effect.gen(function* () {
       let anyDeleted = false;
 

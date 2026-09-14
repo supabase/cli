@@ -72,13 +72,13 @@ export const gateMapError =
     });
 
 /**
- * Ports `plan_gate.go:SuggestUpgradeOnError`. Never fails the caller.
+ * Suggests an upgrade when a request fails with a plan-gate error. Never
+ * fails the caller.
  *
- * The fallback bypasses the typed API client: its strict response schemas
+ * The fallback bypasses the typed API client, whose strict response schemas
  * reject the cli-e2e replay fixtures' placeholder refs (same workaround as
- * `linked-project-cache.layer.ts`).
- * Returns whether the feature was confirmed plan-gated so callers can carry
- * that typed result into their error classification.
+ * `linked-project-cache.layer.ts`). Returns whether the feature was
+ * confirmed plan-gated.
  */
 export const suggestUpgrade = Effect.fnUntraced(function* (opts: {
   readonly projectRef: string;
@@ -91,29 +91,21 @@ export const suggestUpgrade = Effect.fnUntraced(function* (opts: {
   readonly statusCode: number;
   readonly response?: HttpClientResponse.HttpClientResponse;
   /**
-   * Overrides the API base URL of the fallback project + entitlement GETs.
-   * `SuggestUpgradeOnError` calls `GetSupabase()`, which targets the
-   * process-wide `CurrentProfile` — commands that reconcile a pflag-effective
-   * profile differing from the config layer's (sso add/update, PR #5974
-   * round 7) pass that profile's URL so the gate requests hit the same host
-   * as their main calls. Defaults to `CommandSettings.apiUrl`.
+   * Overrides the API base URL of the fallback project + entitlement GETs,
+   * for commands that reconcile a profile differing from the config layer's
+   * (sso add/update), so the gate requests hit the same host as their main
+   * calls. Defaults to `CommandSettings.apiUrl`.
    */
   readonly apiUrl?: string;
   /**
    * Overrides the bearer token of the fallback GETs, complementing `apiUrl`:
-   * Go resolves credentials for the process-wide reconciled `CurrentProfile`,
-   * so callers that pass a reconciled `apiUrl` must
-   * pass the reconciled profile's token too — otherwise the stale profile's
-   * bearer token would be sent to the reconciled host (review r3684524241).
-   * `Some` uses that token, `None` sends unauthenticated (the reconciled
-   * profile has no token — matching Go, which fails its token lookup and
-   * never attaches the stale one), `undefined` resolves from the service.
+   * a caller passing a reconciled `apiUrl` must also pass that profile's
+   * token, or the stale profile's token would reach the reconciled host.
+   * `Some` uses that token, `None` sends unauthenticated, `undefined`
+   * resolves from the service.
    */
   readonly accessToken?: Option.Option<Redacted.Redacted<string>>;
-  /**
-   * Set false where the Go twin fires no `TrackUpgradeSuggested` (vanity
-   * check-availability), keeping telemetry 1:1.
-   */
+  /** Set false for call sites that must not fire `EventUpgradeSuggested` (vanity check-availability). */
   readonly trackAnalytics?: boolean;
 }) {
   if (opts.statusCode < 400 || opts.statusCode >= 500) {

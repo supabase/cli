@@ -3,7 +3,6 @@ import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, Exit, Fiber, Option, Queue } from "effect";
 import { GatewayActivationError } from "../public/Errors.ts";
 import { connect as connectNet, createServer, type Server, type Socket } from "node:net";
-// oxlint-disable-next-line effecttsgo/node-builtin-import
 import {
   Agent,
   type ClientRequest,
@@ -11,7 +10,7 @@ import {
   request as requestHttp,
   type IncomingMessage,
   type ServerResponse,
-  // oxlint-disable-next-line effecttsgo/node-builtin-import
+  // oxlint-disable-next-line effecttsgo/node-builtin-import -- fixture exercises raw HTTP proxy behavior.
 } from "node:http";
 import {
   GatewayRouteNotFoundError,
@@ -21,7 +20,7 @@ import {
 } from "./Gateway.ts";
 import { makeHttpGateway } from "./HttpGateway.ts";
 import { makeTcpGateway } from "./TcpGateway.ts";
-import type { HostListener } from "../state/PortCoordinator.ts";
+import type { HostListener } from "../supervisor/HostListener.ts";
 import { bindHostListener } from "../supervisor/HostListener.ts";
 
 const withPlatform = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
@@ -244,7 +243,8 @@ describe("stack gateway", () => {
           backend.listen(0, "127.0.0.1", () => resume(Effect.void));
         });
         const address = backend.address();
-        if (typeof address !== "object" || address === null) return;
+        if (typeof address !== "object" || address === null)
+          return yield* Effect.die("backend did not expose an address");
         const backendEndpoint: BackendEndpoint = { host: "127.0.0.1", port: address.port };
         const activated: string[] = [];
         const gateway = yield* makeHttpGateway({
@@ -316,7 +316,8 @@ describe("stack gateway", () => {
           prebound.listen(0, "127.0.0.1", () => resume(Effect.void));
         });
         const address = prebound.address();
-        if (typeof address !== "object" || address === null) return;
+        if (typeof address !== "object" || address === null)
+          return yield* Effect.die("prebound listener did not expose an address");
         let released = false;
         let releaseCalls = 0;
         const listener: HostListener = {
@@ -363,11 +364,14 @@ describe("stack gateway", () => {
           backend.listen(0, "127.0.0.1", () => resume(Effect.void));
         });
         const backendAddress = backend.address();
-        if (typeof backendAddress !== "object" || backendAddress === null) return;
+        if (typeof backendAddress !== "object" || backendAddress === null)
+          return yield* Effect.die("backend did not expose an address");
         const listener = yield* bindHostListener("127.0.0.1", 0, "api");
-        if (listener.binding.kind !== "http") return;
+        if (listener.binding.kind !== "http")
+          return yield* Effect.die("API listener did not expose HTTP binding");
         const listenerAddress = listener.binding.server.address();
-        if (typeof listenerAddress !== "object" || listenerAddress === null) return;
+        if (typeof listenerAddress !== "object" || listenerAddress === null)
+          return yield* Effect.die("API listener did not expose an address");
         const clientReady = yield* Deferred.make<void>();
         const getClientReady = yield* Deferred.make<void>();
         const activationStarted = yield* Deferred.make<void>();
@@ -440,7 +444,8 @@ describe("stack gateway", () => {
         yield* Deferred.await(clientReady);
         yield* Deferred.await(getClientReady);
         const pendingEvents = listener.binding.pendingEvents;
-        if (pendingEvents === undefined) return;
+        if (pendingEvents === undefined)
+          return yield* Effect.die("API listener did not expose pending events");
         const queuedPost = yield* Queue.take(pendingEvents.queue);
         const queuedGet = yield* Queue.take(pendingEvents.queue);
         Queue.offerUnsafe(pendingEvents.queue, queuedPost);
@@ -507,10 +512,12 @@ describe("stack gateway", () => {
     withPlatform(
       Effect.gen(function* () {
         const listener = yield* bindHostListener("127.0.0.1", 0, "api");
-        if (listener.binding.kind !== "http") return;
+        if (listener.binding.kind !== "http")
+          return yield* Effect.die("API listener did not expose HTTP binding");
         const server = listener.binding.server;
         const address = server.address();
-        if (typeof address !== "object" || address === null) return;
+        if (typeof address !== "object" || address === null)
+          return yield* Effect.die("API listener did not expose an address");
         const accepted = yield* Effect.forkChild(
           Effect.callback<Socket, Error>((resume) => {
             const onConnection = (socket: Socket) => resume(Effect.succeed(socket));
@@ -562,7 +569,8 @@ describe("stack gateway", () => {
           backend.listen(0, "127.0.0.1", () => resume(Effect.void));
         });
         const address = backend.address();
-        if (typeof address !== "object" || address === null) return;
+        if (typeof address !== "object" || address === null)
+          return yield* Effect.die("backend did not expose an address");
         const endpoint: BackendEndpoint = { host: "127.0.0.1", port: address.port };
         const gateway = yield* makeHttpGateway({
           address: "127.0.0.1",
@@ -648,7 +656,8 @@ describe("stack gateway", () => {
           backend.listen(0, "127.0.0.1", () => resume(Effect.void));
         });
         const address = backend.address();
-        if (typeof address !== "object" || address === null) return;
+        if (typeof address !== "object" || address === null)
+          return yield* Effect.die("backend did not expose an address");
         const endpoint: BackendEndpoint = { host: "127.0.0.1", port: address.port };
         const gateway = yield* makeHttpGateway({
           address: "127.0.0.1",
@@ -690,14 +699,16 @@ describe("stack gateway", () => {
           backend.listen(0, "127.0.0.1", () => resume(Effect.void));
         });
         const backendAddress = backend.address();
-        if (typeof backendAddress !== "object" || backendAddress === null) return;
+        if (typeof backendAddress !== "object" || backendAddress === null)
+          return yield* Effect.die("backend did not expose an address");
         const prebound = createServer({ allowHalfOpen: true });
         yield* Effect.callback<void, Error>((resume) => {
           prebound.once("error", (error) => resume(Effect.fail(error)));
           prebound.listen(0, "127.0.0.1", () => resume(Effect.void));
         });
         const preboundAddress = prebound.address();
-        if (typeof preboundAddress !== "object" || preboundAddress === null) return;
+        if (typeof preboundAddress !== "object" || preboundAddress === null)
+          return yield* Effect.die("prebound listener did not expose an address");
         const endpoint: BackendEndpoint = { host: "127.0.0.1", port: backendAddress.port };
         const listener: HostListener = {
           field: "database",
@@ -736,10 +747,12 @@ describe("stack gateway", () => {
     withPlatform(
       Effect.gen(function* () {
         const listener = yield* bindHostListener("127.0.0.1", 0, "database");
-        if (listener.binding.kind !== "tcp") return;
+        if (listener.binding.kind !== "tcp")
+          return yield* Effect.die("database listener did not expose TCP binding");
         const server = listener.binding.server;
         const address = server.address();
-        if (typeof address !== "object" || address === null) return;
+        if (typeof address !== "object" || address === null)
+          return yield* Effect.die("database listener did not expose an address");
         const accepted = yield* Effect.forkChild(
           Effect.callback<Socket, Error>((resume) => {
             const onConnection = (socket: Socket) => resume(Effect.succeed(socket));
@@ -900,7 +913,8 @@ describe("stack gateway", () => {
           backend.listen(0, "127.0.0.1", () => resume(Effect.void));
         });
         const address = backend.address();
-        if (typeof address !== "object" || address === null) return;
+        if (typeof address !== "object" || address === null)
+          return yield* Effect.die("backend did not expose an address");
         const endpoint: BackendEndpoint = { host: "127.0.0.1", port: address.port };
         const gateway = yield* makeHttpGateway({
           address: "127.0.0.1",
@@ -951,7 +965,8 @@ describe("stack gateway", () => {
           backend.listen(0, "127.0.0.1", () => resume(Effect.void));
         });
         const address = backend.address();
-        if (typeof address !== "object" || address === null) return;
+        if (typeof address !== "object" || address === null)
+          return yield* Effect.die("backend did not expose an address");
         const endpoint: BackendEndpoint = { host: "127.0.0.1", port: address.port };
         const gateway = yield* makeTcpGateway({
           address: "127.0.0.1",
@@ -1006,7 +1021,8 @@ describe("stack gateway", () => {
           backend.listen(0, "127.0.0.1", () => resume(Effect.void));
         });
         const address = backend.address();
-        if (typeof address !== "object" || address === null) return;
+        if (typeof address !== "object" || address === null)
+          return yield* Effect.die("backend did not expose an address");
         const endpoint: BackendEndpoint = { host: "127.0.0.1", port: address.port };
         const gateway = yield* makeTcpGateway({
           address: "127.0.0.1",

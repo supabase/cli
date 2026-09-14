@@ -3,12 +3,9 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { ArtifactIntegrityError, StackPreparationError } from "../public/Errors.ts";
 import { validateRelativePath, validateSha256 } from "./Integrity.ts";
 
-/**
- * A concrete artifact identity. `key` is deliberately private to preparation and may contain
- * subdirectories, but never an absolute or traversing path.
- */
+/** A concrete artifact identity. `key` may contain subdirectories but never an absolute or traversing path. */
 export interface ArtifactRequest {
-  /** Immutable published identity; a reused key intentionally reuses its persisted digest. */
+  /** Immutable published identity; a reused key reuses its persisted digest. */
   readonly key: string;
   /** Relative paths that a runtime may use after installation. */
   readonly requiredRuntimePaths: ReadonlyArray<string>;
@@ -17,9 +14,9 @@ export interface ArtifactRequest {
 }
 
 /**
- * The source is the only download/archive boundary. It writes an unpacked artifact tree below
- * `destination` after verifying the downloaded archive digest. Production sources stream directly
- * to disk and return void. The store itself remains independent of transport and archive formats.
+ * The source is the only download/archive boundary: it writes an unpacked artifact tree
+ * below `destination` after verifying the downloaded archive digest. The store stays
+ * independent of transport and archive formats.
  */
 export interface ArtifactSource {
   /** Resolves the published digest only when the store has no valid cached artifact. */
@@ -616,9 +613,9 @@ const makeArtifactOperation = (
       if (Option.isNone(cachedMetadata)) return Option.none();
       const metadata = cachedMetadata.value;
       const sha256 = yield* verifyMetadata(request, metadata);
-      // Published content is intentionally not rehashed on cache hits. Metadata and cheap
-      // structural checks protect the cache boundary; content tampering may execute or fail
-      // later when the workload starts.
+      // Published content is not rehashed on cache hits: metadata and cheap structural checks
+      // protect the cache boundary; content tampering may execute or fail later when the
+      // workload starts.
       const safePaths = yield* ensureSafePaths(
         fs,
         path,

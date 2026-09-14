@@ -4,12 +4,8 @@ import { describe, expect, it } from "vitest";
 
 import { SQUASH_SEPARATOR_COMMENT, squashLineByLineDiff, squashScanLines } from "./squash.diff.ts";
 
-/**
- * The `before.sql`/`after.sql`/`diff.sql` fixtures are vendored copies of real
- * `pg_dump` output rather than hand-transcribed template literals: a byte-for-byte
- * corpus of 90+109+19 lines is exactly the kind of content a manual transcription
- * would silently corrupt (trailing whitespace, blank lines, quoting).
- */
+// before.sql/after.sql/diff.sql are vendored real pg_dump output, not hand-transcribed
+// literals, since manual transcription would silently corrupt whitespace/quoting.
 const testdataDir = fileURLToPath(new URL("./testdata/", import.meta.url));
 const readGoFixture = (name: string) => readFileSync(`${testdataDir}${name}`, "utf8");
 
@@ -40,10 +36,6 @@ describe("squashLineByLineDiff", () => {
   });
 
   it('swallows every subsequent after line once before is exhausted (the anchor.Text() === "" sentinel)', () => {
-    // Once `before` runs out of tokens, the anchor text returns `""` forever, so a
-    // blank line in `after` matches that sentinel and is silently dropped — NOT emitted
-    // as if it were an unmatched line. `before` has a single non-blank token; every
-    // remaining `after` line (including two literal blank lines) must vanish.
     const before = "create schema test;";
     const after = "create schema test;\n\n\nselect 1;";
     expect(squashLineByLineDiff(before, after)).toBe("select 1;\n");
@@ -52,15 +44,11 @@ describe("squashLineByLineDiff", () => {
   it("strips one trailing \\r per line like bufio.ScanLines (CRLF before, LF after)", () => {
     const before = "select 1;\r\nselect 2;\r\n";
     const after = "select 1;\nselect 2;\n";
-    // After stripping the trailing \r from each `before` token, every `after` line
-    // matches its anchor — the diff is empty.
     expect(squashLineByLineDiff(before, after)).toBe("");
   });
 
   it("treats a final line without a trailing newline as a token, and a trailing newline as no extra empty token", () => {
-    // `before` has no trailing newline (one token, "a"); `after` DOES (two tokens: "a",
-    // "b"), so only "b" is unmatched — a final "\n" must not manufacture a phantom empty
-    // token that would otherwise consume the "b" match or emit an extra blank line.
+    // before has one token ("a"); after has two ("a", "b"), so only "b" is unmatched.
     const before = "a";
     const after = "a\nb\n";
     expect(squashLineByLineDiff(before, after)).toBe("b\n");

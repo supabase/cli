@@ -23,8 +23,6 @@ import { commandCredentialsLayer } from "./command-credentials.layer.ts";
 import { CommandCredentials } from "./command-credentials.service.ts";
 import { DeleteTokenError, InvalidAccessTokenError, NotLoggedInError } from "./errors.ts";
 
-// Keyring mock
-
 const passwords = new Map<string, string>();
 let throwOnSetPassword = false;
 let throwOnSetSecret = false;
@@ -98,8 +96,6 @@ vi.mock("@napi-rs/keyring", () => ({
     }
   },
 }));
-
-// Layer wiring
 
 let tempHome: string;
 
@@ -400,10 +396,7 @@ describe("commandCredentialsLayer.saveAccessToken", () => {
 
   it.effect("falls back to the filesystem when the keyring write throws", () => {
     throwOnSetPassword = true;
-    // Deterministic mode assertions require a permissive umask: Go pins the
-    // fallback dir to 0755 (`access_token.go:91` → `MkdirIfNotExistFS`,
-    // `misc.go:273`, changed from the prior 0700) and the token file itself to
-    // 0600 (`access_token.go:94`).
+    // Deterministic mode assertions require a permissive umask.
     const prevUmask = process.umask(0);
     return Effect.gen(function* () {
       const { saveAccessToken } = yield* CommandCredentials;
@@ -433,9 +426,6 @@ describe("commandCredentialsLayer.saveAccessToken", () => {
   });
 });
 
-// `deleteAccessToken` collapses three outcomes — logged out / not-logged-in /
-// real failure — into the file + legacy-keyring + profile-keyring sequence.
-// These cases assert that ordering and tri-state exactly.
 describe("commandCredentialsLayer.deleteAccessToken", () => {
   const seedTokenFile = (home: string, token = VALID_TOKEN) => {
     const supaDir = join(home, ".supabase");
@@ -482,7 +472,6 @@ describe("commandCredentialsLayer.deleteAccessToken", () => {
           expect(JSON.stringify(exit.cause)).toContain("NotLoggedInError");
           expect(JSON.stringify(exit.cause)).toContain("You were not logged in, nothing to do.");
         }
-        // File removal happens before the profile-keyring check (deliberate ordering).
         expect(tokenFileExists(tempHome)).toBe(false);
       }).pipe(Effect.provide(makeLayer()));
     },
@@ -533,8 +522,7 @@ describe("commandCredentialsLayer.deleteAccessToken", () => {
     const home = tempHome;
     const env = { HOME: home };
     const tokenPath = join(home, ".supabase", "access-token");
-    // Seed a profile keyring entry to prove the keyring is never touched once
-    // the file removal fails.
+    // Seeds a profile keyring entry to prove the keyring is never touched once the file removal fails.
     passwords.set("Supabase CLI/supabase", VALID_TOKEN);
     const runtimeInfoLayer = mockRuntimeInfo({ homeDir: home, cwd: home });
     const fsLayer = Layer.succeed(
@@ -724,7 +712,6 @@ describe("commandCredentialsLayer.deleteAllProjectCredentials", () => {
         const { deleteAllProjectCredentials } = yield* CommandCredentials;
         const exit = yield* Effect.exit(deleteAllProjectCredentials);
         expect(exit._tag).toBe("Success");
-        // One undecodable entry aborts the whole findCredentials call.
         expect(passwords.has(goWindowsKey("abcdefghijklmnopqrs1"))).toBe(true);
         expect(passwords.has(goWindowsKey("abcdefghijklmnopqrs2"))).toBe(true);
       }).pipe(Effect.provide(makeLayer({ platform: "win32" })));
@@ -760,7 +747,8 @@ describe("commandCredentialsLayer.deleteProjectCredential", () => {
   );
 });
 
-// Suppress unused-import nag — referenced in JSDoc / used in assertions above.
+// Kept to avoid an unused-import lint error; the classes are only referenced by name in
+// assertions above.
 void InvalidAccessTokenError;
 void DeleteTokenError;
 void NotLoggedInError;

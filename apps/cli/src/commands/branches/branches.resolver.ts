@@ -22,9 +22,8 @@ const mapGetError = mapHttpError({
 });
 
 /**
- * The branches family's binding of the shared branch-ref resolver
- * (`command-internal/branch-ref.resolver.ts`) to this family's error
- * classes. See the shared module for resolution semantics.
+ * Binds the shared branch-ref resolver to this family's error classes. See
+ * `command-internal/branch-ref.resolver.ts` for resolution semantics.
  */
 export function resolveBranchProjectRef(input: string, projectRef: string) {
   return resolveBranchProjectRefShared(input, projectRef, { mapGetError, mapFindError });

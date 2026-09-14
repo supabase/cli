@@ -43,19 +43,11 @@ const config = {
     Flag.withDescription("Pushes to the local database."),
     Flag.withDefault(false),
   ),
-  // TS-only flag on every user-facing `db` subcommand (Go's user-facing `db`
-  // commands never registered --project-ref; only the SUPABASE_PROJECT_ID env
-  // var could override the linked ref). The one Go exception is a hidden seam,
-  // not a user-facing flag: `db declarative __catalog --project-ref` exists
-  // solely so the native TS declarative commands can forward the resolved
-  // linked ref to the bundled Go binary (`apps/cli-go/cmd/pgdelta_catalog.go:44`).
-  // Feeds ProjectRefResolver.loadProjectRef, which keeps Go's precedence:
-  // flag > SUPABASE_PROJECT_ID > supabase/.temp/project-ref. Unlike that env
-  // var, this flag ONLY feeds ref resolution — it does not affect local
-  // container ids or the pg-delta project id (see db-config.types.ts's
-  // `linkedProjectRef` doc for the full non-overlap), and is rejected outright
-  // on a non-linked target rather than silently ignored (see the handler's
-  // guard).
+  // Feeds `ProjectRefResolver.loadProjectRef`: flag > `SUPABASE_PROJECT_ID` >
+  // `supabase/.temp/project-ref`. Only feeds ref resolution — it does not affect local
+  // container ids or the pg-delta project id (see `db-config.types.ts`'s
+  // `linkedProjectRef` doc) — and is rejected outright on a non-linked target rather
+  // than silently ignored (see the handler's guard).
   projectRef: Flag.string("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
@@ -90,9 +82,7 @@ export const dbPushCommand = Command.make("push", config).pipe(
           // `password` is a credential — always reaches telemetry as `<redacted>`.
           password: flags.password,
         },
-        // TS-only flag with no Go telemetry-safety baseline; Go's nearest
-        // --project-ref registrations (cmd/pgdelta_catalog.go:44 and most
-        // others) are unmarked, so it stays redacted.
+        // Not on the established `--project-ref` safeFlags allowlist, so it stays redacted.
         aliases: { p: "password" },
       }),
       withJsonErrorHandling,

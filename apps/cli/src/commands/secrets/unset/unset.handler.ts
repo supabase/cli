@@ -43,7 +43,7 @@ export const secretsUnset = Effect.fn("secrets.unset")(function* (flags: Secrets
   const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
-  // `--yes` OR `SUPABASE_YES` (mirrors viper's AutomaticEnv, root.go:318-320).
+  // `resolveYes` also honors `SUPABASE_YES`, not just the `--yes` flag.
   const yes = yield* resolveYes;
 
   const ref = yield* resolver.resolve(flags.projectRef);
@@ -52,8 +52,6 @@ export const secretsUnset = Effect.fn("secrets.unset")(function* (flags: Secrets
     let names: ReadonlyArray<string> = flags.names;
 
     if (names.length === 0) {
-      // Fetches the full list and filters out SUPABASE_-prefixed entries.
-      // Reuse the LIST error pair here.
       const all: Secrets = yield* api.v1
         .listAllSecrets({ ref })
         .pipe(Effect.catch(mapListErrorForUnset));
@@ -67,11 +65,9 @@ export const secretsUnset = Effect.fn("secrets.unset")(function* (flags: Secrets
 
     const label = `Do you want to unset these function secrets?\n • ${names.join("\n • ")}\n\n`;
 
-    // `PromptYesNo(msg, true)` (`console.go:64-82`): `--yes`/`SUPABASE_YES`
-    // auto-confirms with the `<label> [Y/n] y` stderr echo; a non-TTY stdin
-    // still prints the label and scans one piped line (100ms), so `echo n |
-    // supabase secrets unset` declines instead of hardcoding the Yes default
-    // (CLI-1974).
+    // `promptYesNo` echoes `<label> [Y/n] <answer>` to stderr even on a non-TTY: it scans one
+    // piped line (100ms timeout) so `echo n | supabase secrets unset` declines instead of
+    // hardcoding the Yes default.
     const confirmed = yield* promptYesNo(output, yes, label, true);
 
     if (!confirmed) {

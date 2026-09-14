@@ -7,9 +7,12 @@ import {
   Exit,
   FileSystem,
   Fiber,
+  Match,
   Option,
   Path,
   Predicate,
+  Redacted,
+  Result,
   Schedule,
   Schema,
   Stream,
@@ -20,13 +23,20 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/unstable/process/ChildProcessSpawner";
 import type { StackIdentity } from "../identity/Identity.ts";
 import { resolveStackIdentity, deriveStackId } from "../identity/Identity.ts";
-import { compileStack, rebuildExecutionPlan, type StackDefinition } from "../model/Compiler.ts";
+import {
+  compileStack,
+  rebuildExecutionPlan,
+  sameDefinition,
+  type SecretSlotInput,
+  type StackDefinition,
+} from "../model/Compiler.ts";
 import { dependencyClosure, type ExecutionPlan } from "../model/ExecutionPlan.ts";
 import type { PersistedStackState } from "../state/StackState.ts";
 import { toPersistedIdentity } from "../state/StackState.ts";
 import {
   isMissingStateRemnantError,
   makeStackStateStore,
+  withRegistryLock,
   type StackStateStore,
 } from "../state/StackStateStore.ts";
 import { resolveStackPaths } from "../state/Paths.ts";
@@ -110,8 +120,10 @@ import {
 } from "../supervisor/Launcher.ts";
 import {
   ContainerEngineResolver,
+  defaultContainerEngineResolver,
   type ContainerEngineResolverShape,
 } from "../runtime/ContainerEngineResolver.ts";
+import type { ContainerEngineFailure } from "../runtime/ContainerEngine.ts";
 import { statusFor } from "../supervisor/StatusProjection.ts";
 import { EMPTY_LOG_CURSOR, readRetainedLogs, selectLogBatch } from "../supervisor/LogStore.ts";
 import {
@@ -140,43 +152,57 @@ export interface FindStackOptions {
 export interface ListStacksOptions {
   readonly projectRoot?: string;
 }
+
+export interface InspectStackOptions {
+  readonly config?: StackConfig;
+}
 export interface PreparedCapability {
   readonly capability: CapabilityName;
   readonly version: string;
   readonly outcome: "cached" | "downloaded" | "pulled";
 }
+
+const selectDefaultRuntime = (
+  resolver: ContainerEngineResolverShape | undefined,
+): Effect.Effect<StackRuntime, ContainerEngineError, ChildProcessSpawnerService> => {
+  return (resolver ?? defaultContainerEngineResolver).isInstalled("docker").pipe(
+    Effect.map((installed): StackRuntime =>
+      installed ? { kind: "container", engine: "docker" } : { kind: "native" },
+    ),
+    Effect.mapError(
+      (error: ContainerEngineFailure) =>
+        new ContainerEngineError({
+          engine: "docker",
+          message: `Unable to determine whether Docker is installed: ${error.message}`,
+          cause: error,
+        }),
+    ),
+  );
+};
+
 export interface PrepareStackResult {
   readonly capabilities: ReadonlyArray<PreparedCapability>;
 }
 
 export interface EffectStack {
   readonly id: StackId;
-  // These methods intentionally create a fresh scoped RPC invocation per call.
-  // oxlint-disable-next-line effecttsgo/lazy-effect
-  readonly status: () => Effect.Effect<StackStatus, StackStatusError>;
-  // oxlint-disable-next-line effecttsgo/lazy-effect
-  readonly credentials: () => Effect.Effect<EffectStackCredentials, StackCredentialsError>;
-  // oxlint-disable-next-line effecttsgo/lazy-effect
+  readonly status: Effect.Effect<StackStatus, StackStatusError>;
+  readonly credentials: Effect.Effect<EffectStackCredentials, StackCredentialsError>;
   readonly prepare: (
     options?: PrepareStackOptions,
   ) => Effect.Effect<PrepareStackResult, PrepareStackError>;
-  // oxlint-disable-next-line effecttsgo/lazy-effect
   readonly start: (options?: StartStackOptions) => Effect.Effect<StackStatus, StackStartError>;
-  // oxlint-disable-next-line effecttsgo/lazy-effect
-  readonly stop: () => Effect.Effect<void, StackStopError>;
-  // oxlint-disable-next-line effecttsgo/lazy-effect
-  readonly destroy: () => Effect.Effect<void, DestroyStackError>;
-  // oxlint-disable-next-line effecttsgo/lazy-effect
+  readonly stop: Effect.Effect<void, StackStopError>;
+  readonly destroy: Effect.Effect<void, DestroyStackError>;
   readonly logs: (query?: LogQuery) => Effect.Effect<StackLogBatch, StackLogsError>;
-  // oxlint-disable-next-line effecttsgo/lazy-effect
   readonly followLogs: (query?: LogQuery) => Stream.Stream<StackLogEntry, StackLogsError>;
 }
 
 const optionOf = <A>(value: A | undefined): Option.Option<A> =>
   value === undefined ? Option.none() : Option.some(value);
 
-const descriptor = (state: PersistedStackState): StackDescriptor => ({
-  id: StackIdSchema.make(state.identity.stackId),
+const descriptor = (state: PersistedStackState, id: StackId): StackDescriptor => ({
+  id,
   projectRoot: state.identity.projectRoot,
   name: state.identity.stackName,
   branchContext: state.identity.branchContext,
@@ -186,7 +212,9 @@ const descriptor = (state: PersistedStackState): StackDescriptor => ({
 
 const environment = () =>
   Effect.serviceOption(StackRuntimeEnvironment).pipe(
-    Effect.map(Option.getOrElse(defaultRuntimeEnvironment)),
+    Effect.flatMap((configured) =>
+      Option.isSome(configured) ? Effect.succeed(configured.value) : defaultRuntimeEnvironment,
+    ),
   );
 
 const isCapabilityName = (value: unknown): value is CapabilityName =>
@@ -356,7 +384,7 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
             ownerSessionId: owner.ownerSessionId,
             rpcRelease: owner.rpcRelease,
           });
-          const stop = yield* Effect.exit(client.stop());
+          const stop = yield* Effect.exit(client.stop);
           if (
             Exit.isSuccess(stop) &&
             !stop.value.ok &&
@@ -508,57 +536,59 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
         }),
       ),
     );
-    const destroy = (): Effect.Effect<void, DestroyStackError> =>
+    const destroy: Effect.Effect<void, DestroyStackError> = Effect.suspend(() =>
       options.readPersistedState.pipe(
         Effect.mapError(destroyError),
         Effect.flatMap((state) =>
           Option.isNone(state) ? Effect.fail(stackNotFound()) : destroyAndAwaitOwner,
         ),
-      );
-    const status = () => {
-      const rpcStatus = invoke((rpc) => rpc.status(undefined), statusError);
-      return rpcStatus.pipe(
-        Effect.catchTag("StackOwnershipConflictError", (ownershipError) =>
-          options.readOfflineState.pipe(
-            Effect.mapError(statusError),
-            Effect.flatMap((state) =>
-              Option.isNone(state)
-                ? Effect.fail(stackNotFound())
-                : isStoppedState(state.value)
-                  ? statusFor(state.value, [], new Set<CapabilityName>(), "stopped").pipe(
-                      Effect.mapError(statusError),
-                    )
-                  : Effect.fail(
-                      new StackOwnershipConflictError({ message: "No Supervisor owns this stack" }),
-                    ),
-            ),
-            Effect.catchTag("StackOwnershipConflictError", () => Effect.fail(ownershipError)),
-          ),
-        ),
-      );
-    };
-    const credentials = (): Effect.Effect<EffectStackCredentials, StackCredentialsError> =>
-      invoke((rpc) => rpc.credentials(undefined), credentialsError).pipe(
-        Effect.catchTag("StackOwnershipConflictError", (ownershipError) => {
-          const offline: Effect.Effect<never, StackCredentialsError> =
+      ),
+    );
+    const status: Effect.Effect<StackStatus, StackStatusError> = Effect.suspend(
+      (): Effect.Effect<StackStatus, StackStatusError> => {
+        const rpcStatus = invoke((rpc) => rpc.status(undefined), statusError);
+        return rpcStatus.pipe(
+          Effect.catchTag("StackOwnershipConflictError", (ownershipError) =>
             options.readOfflineState.pipe(
-              Effect.mapError(credentialsError),
-              Effect.flatMap((state): Effect.Effect<never, StackCredentialsError> =>
-                Option.isNone(state)
-                  ? Effect.fail(stackNotFound())
-                  : isStoppedState(state.value)
-                    ? Effect.fail(
-                        new StackNotRunningError({
-                          stackId: id,
-                          message: "Stack is not running",
-                        }),
-                      )
-                    : Effect.fail(ownershipError),
-              ),
+              Effect.mapError(statusError),
+              Effect.flatMap((state): Effect.Effect<StackStatus, StackStatusError> => {
+                if (Option.isNone(state)) return Effect.fail(stackNotFound());
+                if (isStoppedState(state.value))
+                  return statusFor(id, state.value, [], new Set<CapabilityName>(), "stopped");
+                return Effect.fail(
+                  new StackOwnershipConflictError({ message: "No Supervisor owns this stack" }),
+                );
+              }),
               Effect.catchTag("StackOwnershipConflictError", () => Effect.fail(ownershipError)),
-            );
-          return offline;
-        }),
+            ),
+          ),
+        );
+      },
+    );
+    const credentials: Effect.Effect<EffectStackCredentials, StackCredentialsError> =
+      Effect.suspend((): Effect.Effect<EffectStackCredentials, StackCredentialsError> =>
+        invoke((rpc) => rpc.credentials(undefined), credentialsError).pipe(
+          Effect.catchTag("StackOwnershipConflictError", (ownershipError) => {
+            const offline: Effect.Effect<never, StackCredentialsError> =
+              options.readOfflineState.pipe(
+                Effect.mapError(credentialsError),
+                Effect.flatMap((state): Effect.Effect<never, StackCredentialsError> =>
+                  Option.isNone(state)
+                    ? Effect.fail(stackNotFound())
+                    : isStoppedState(state.value)
+                      ? Effect.fail(
+                          new StackNotRunningError({
+                            stackId: id,
+                            message: "Stack is not running",
+                          }),
+                        )
+                      : Effect.fail(ownershipError),
+                ),
+                Effect.catchTag("StackOwnershipConflictError", () => Effect.fail(ownershipError)),
+              );
+            return offline;
+          }),
+        ),
       );
     const start = (startOptions?: StartStackOptions) => {
       return invoke(
@@ -590,7 +620,7 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
         // Subscribe to the owner control connection before sending stop so a
         // fast shutdown cannot race the close witness.
         const closeFiber = yield* Effect.forkChild(owner.awaitClose(), { startImmediately: true });
-        const response = yield* owner.stop().pipe(Effect.exit);
+        const response = yield* owner.stop.pipe(Effect.exit);
         if (Exit.isFailure(response)) {
           yield* Fiber.interrupt(closeFiber);
           return yield* Effect.failCause(response.cause);
@@ -615,7 +645,7 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
       Effect.mapError(stopError),
       Effect.flatMap(({ client }) => stopOwner(client)),
     );
-    const stop = () =>
+    const stop: Effect.Effect<void, StackStopError> = Effect.suspend(() =>
       resolveClient(false, "maintenance").pipe(
         Effect.mapError(stopError),
         Effect.flatMap(({ client }) => stopOwner(client)),
@@ -631,7 +661,8 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
             Effect.catchTag("StackOwnershipConflictError", () => launchAndStop),
           ),
         ),
-      );
+      ),
+    );
     const prepare = (
       prepareOptions?: PrepareStackOptions,
     ): Effect.Effect<PrepareStackResult, PrepareStackError> => options.prepare(prepareOptions);
@@ -699,13 +730,9 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
     } satisfies EffectStack;
   });
 
-const stateInitial = (
-  identity: StackIdentity,
-  stackId: StackId,
-  runtime: StackRuntime,
-): PersistedStackState => ({
+const stateInitial = (identity: StackIdentity, runtime: StackRuntime): PersistedStackState => ({
   format: "supabase-stack-state-v1",
-  identity: toPersistedIdentity(identity, stackId),
+  identity: toPersistedIdentity(identity),
   runtime,
   desiredLifecycle: "unconfigured",
   ports: [],
@@ -966,14 +993,29 @@ export const createStack = (
     });
     const stackId = yield* deriveStackId(identity);
     const store = yield* makeStackStateStore({ stateRoot: env.stateRoot });
+    // Concurrent initial writes may expose temporary files before state.json is published.
+    const persisted = yield* withRegistryLock(
+      env.stateRoot,
+      store
+        .read(stackId)
+        .pipe(
+          Effect.catch((error) =>
+            isMissingStateRemnantError(error)
+              ? Effect.map(Effect.void, () => undefined)
+              : Effect.fail(error),
+          ),
+        ),
+    );
+    const resolverOption = yield* Effect.serviceOption(ContainerEngineResolver).pipe(
+      Effect.map(Option.getOrUndefined),
+    );
     const requestedRuntime: StackRuntime =
       options.runtime?.kind === "container"
         ? { kind: "container", engine: options.runtime.engine ?? "docker" }
-        : { kind: "native" };
-    const current = yield* store.initialize(
-      stackId,
-      stateInitial(identity, stackId, requestedRuntime),
-    );
+        : options.runtime?.kind === "native"
+          ? { kind: "native" }
+          : (persisted?.runtime ?? (yield* selectDefaultRuntime(resolverOption)));
+    const current = yield* store.initialize(stackId, stateInitial(identity, requestedRuntime));
     const runtimeMismatch =
       options.runtime !== undefined &&
       (current.runtime.kind !== requestedRuntime.kind ||
@@ -988,9 +1030,6 @@ export const createStack = (
     const path = yield* Path.Path;
     const crypto = yield* Crypto.Crypto;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const containerEngineResolver = yield* Effect.serviceOption(ContainerEngineResolver).pipe(
-      Effect.map(Option.getOrUndefined),
-    );
     const dependencies = handleDependencies({
       environment: env,
       store,
@@ -999,7 +1038,7 @@ export const createStack = (
       path,
       crypto,
       spawner,
-      containerEngineResolver,
+      containerEngineResolver: resolverOption,
     });
     return yield* makeHandle(stackId, dependencies);
   });
@@ -1052,13 +1091,46 @@ export const findStack = (
     });
     const id = yield* deriveStackId(identity);
     const state = yield* (yield* makeStackStateStore({ stateRoot: env.stateRoot })).read(id);
-    return state === undefined ? Option.none() : Option.some(descriptor(state));
+    return state === undefined ? Option.none() : Option.some(descriptor(state, id));
   });
 
-export const listStacks = (
+export interface StackDiscoveryIssue {
+  readonly id: StackId;
+  readonly error: StackDiscoveryError;
+}
+
+/** The managed stack registry with entry-level read errors retained for bulk operations. */
+export interface StackDiscoveryResult {
+  readonly stacks: ReadonlyArray<StackDescriptor>;
+  readonly errors: ReadonlyArray<StackDiscoveryIssue>;
+}
+
+const enrichStackDiscoveryError = (
+  entry: StackId,
+  error: Effect.Error<ReturnType<StackStateStore["read"]>>,
+): StackDiscoveryError => {
+  const message = `Failed to read managed stack ${entry}: ${error.message}`;
+  return Match.value(error).pipe(
+    Match.tag(
+      "InvalidProjectRootError",
+      (value) => new InvalidProjectRootError({ ...value, message, cause: error }),
+    ),
+    Match.tag(
+      "StackStateInvalidError",
+      (value) => new StackStateInvalidError({ ...value, stackId: entry, message, cause: error }),
+    ),
+    Match.tag(
+      "StackStateFormatUnsupportedError",
+      (value) => new StackStateFormatUnsupportedError({ ...value, message, cause: error }),
+    ),
+    Match.exhaustive,
+  );
+};
+
+export const discoverStacks = (
   options: ListStacksOptions = {},
 ): Effect.Effect<
-  ReadonlyArray<StackDescriptor>,
+  StackDiscoveryResult,
   StackDiscoveryError,
   FileSystem.FileSystem | Path.Path | Crypto.Crypto
 > =>
@@ -1079,30 +1151,145 @@ export const listStacks = (
         .exists(env.stateRoot)
         .pipe(Effect.mapError((error) => new StackStateInvalidError({ message: error.message }))))
     )
-      return [];
+      return { stacks: [], errors: [] };
     const entries = yield* fs
       .readDirectory(env.stateRoot)
       .pipe(Effect.mapError((error) => new StackStateInvalidError({ message: error.message })));
-    const result: StackDescriptor[] = [];
+    const stacks: StackDescriptor[] = [];
+    const errors: StackDiscoveryIssue[] = [];
     for (const entry of entries) {
       if (!Schema.is(StackIdSchema)(entry)) continue;
-      const state = yield* store
-        .read(entry)
-        .pipe(Effect.catchIf(isMissingStateRemnantError, () => Effect.void));
+      const result = yield* store.read(entry).pipe(
+        Effect.catchTag("StackStateInvalidError", (error) =>
+          isMissingStateRemnantError(error) ? Effect.void : Effect.fail(error),
+        ),
+        Effect.result,
+      );
+      if (Result.isFailure(result)) {
+        errors.push({ id: entry, error: enrichStackDiscoveryError(entry, result.failure) });
+        continue;
+      }
+      const state = result.success;
       if (
         state !== undefined &&
         (projectRoot === undefined || state.identity.projectRoot === projectRoot)
       )
-        result.push(descriptor(state));
+        stacks.push(descriptor(state, entry));
     }
-    return result;
+    return { stacks, errors };
   });
+
+type ConfigDrift = NonNullable<StackInspection["configDrift"]>;
+
+const isPlainRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const definitionDiffPaths = (
+  left: unknown,
+  right: unknown,
+  prefix: string,
+  paths: string[],
+): void => {
+  if (Object.is(left, right)) return;
+  if ((left === undefined || left === null) && (right === undefined || right === null)) return;
+  if (Array.isArray(left) && Array.isArray(right)) {
+    if (left.length !== right.length) {
+      paths.push(prefix);
+      return;
+    }
+    for (let index = 0; index < left.length; index++) {
+      definitionDiffPaths(left[index], right[index], `${prefix}.${index}`, paths);
+    }
+    return;
+  }
+  if (Array.isArray(left) || Array.isArray(right)) {
+    paths.push(prefix);
+    return;
+  }
+  if (isPlainRecord(left) && isPlainRecord(right)) {
+    const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
+    for (const key of keys) {
+      definitionDiffPaths(left[key], right[key], `${prefix}.${key}`, paths);
+    }
+    return;
+  }
+  paths.push(prefix);
+};
+
+const secretDriftPaths = (
+  candidate: ReadonlyArray<SecretSlotInput>,
+  persisted: PersistedStackState["secrets"],
+): ReadonlyArray<string> => {
+  const paths: string[] = [];
+  const supplied = new Map(candidate.map((entry) => [entry.slot, entry]));
+  for (const entry of candidate) {
+    const old = persisted[entry.slot];
+    if (old === undefined) {
+      if (entry.policy === "passthrough" || entry.value !== undefined)
+        paths.push(`secrets.${entry.slot}`);
+      continue;
+    }
+    if (old.policy !== entry.policy) {
+      paths.push(`secrets.${entry.slot}`);
+      continue;
+    }
+    if (entry.policy === "passthrough" || entry.value !== undefined) {
+      const value = entry.value === undefined ? undefined : Redacted.value(entry.value);
+      if (value !== old.value) paths.push(`secrets.${entry.slot}`);
+    }
+  }
+  for (const [slot, old] of Object.entries(persisted)) {
+    if (old.policy === "passthrough" && !supplied.has(slot)) paths.push(`secrets.${slot}`);
+  }
+  return paths;
+};
+
+const inspectConfigDrift = (
+  state: PersistedStackState,
+  config: StackConfig,
+): Effect.Effect<ConfigDrift, InvalidStackConfigError | StackVersionUnsupportedError, Path.Path> =>
+  Effect.gen(function* () {
+    const compiled = yield* compileStack(
+      {
+        projectRoot: state.identity.projectRoot,
+        runtime: state.runtime,
+        config,
+      },
+      state.definition === undefined ? undefined : { definition: state.definition },
+    );
+    if (state.definition === undefined)
+      return { status: "unconfigured", paths: [] } satisfies ConfigDrift;
+    const paths: string[] = [];
+    if (!sameDefinition(state.definition, compiled.definition))
+      definitionDiffPaths(state.definition, compiled.definition, "definition", paths);
+    paths.push(...secretDriftPaths(compiled.secrets, state.secrets));
+    const uniquePaths = [...new Set(paths)].sort();
+    return {
+      status: uniquePaths.length === 0 ? "unchanged" : "changed",
+      paths: uniquePaths,
+    } satisfies ConfigDrift;
+  });
+
+export const listStacks = (
+  options: ListStacksOptions = {},
+): Effect.Effect<
+  ReadonlyArray<StackDescriptor>,
+  StackDiscoveryError,
+  FileSystem.FileSystem | Path.Path | Crypto.Crypto
+> =>
+  discoverStacks(options).pipe(
+    Effect.flatMap(({ stacks, errors }) => {
+      const firstError = errors[0];
+      return firstError === undefined ? Effect.succeed(stacks) : Effect.fail(firstError.error);
+    }),
+  );
 
 export const inspectStack = (
   id: StackId,
+  options: InspectStackOptions = {},
 ): Effect.Effect<
   StackInspection,
-  StackNotFoundError | StackDiscoveryError,
+  StackNotFoundError | StackDiscoveryError | InvalidStackConfigError | StackVersionUnsupportedError,
   FileSystem.FileSystem | Path.Path | Crypto.Crypto
 > =>
   Effect.gen(function* () {
@@ -1111,14 +1298,21 @@ export const inspectStack = (
     const state = yield* store.read(id);
     if (state === undefined)
       return yield* new StackNotFoundError({ stackId: id, message: "Stack state was not found" });
+    const configDrift =
+      options.config === undefined ? undefined : yield* inspectConfigDrift(state, options.config);
     const metadata = yield* readOwnerMetadata(env.stateRoot, id, env);
     if (metadata === undefined)
       return {
-        descriptor: descriptor(state),
+        descriptor: descriptor(state, id),
         owner: (yield* ownerLockExists(env.stateRoot, id)) ? "unreachable" : "absent",
+        ...(configDrift === undefined ? {} : { configDrift }),
       };
     if (metadata.rpcRelease !== STACK_RPC_RELEASE)
-      return { descriptor: descriptor(state), owner: "incompatible" };
+      return {
+        descriptor: descriptor(state, id),
+        owner: "incompatible",
+        ...(configDrift === undefined ? {} : { configDrift }),
+      };
     const status = yield* Effect.scoped(
       Effect.gen(function* () {
         const client = makeControlClient(metadata.endpoint, {
@@ -1132,8 +1326,21 @@ export const inspectStack = (
     if (Exit.isFailure(status)) {
       const failure = Cause.findErrorOption(status.cause);
       if (Option.isSome(failure) && isOwnerUnreachable(failure.value))
-        return { descriptor: descriptor(state), owner: "unreachable" };
-      return { descriptor: descriptor(state), owner: "running" };
+        return {
+          descriptor: descriptor(state, id),
+          owner: "unreachable",
+          ...(configDrift === undefined ? {} : { configDrift }),
+        };
+      return {
+        descriptor: descriptor(state, id),
+        owner: "running",
+        ...(configDrift === undefined ? {} : { configDrift }),
+      };
     }
-    return { descriptor: descriptor(state), owner: "running", status: status.value };
+    return {
+      descriptor: descriptor(state, id),
+      owner: "running",
+      status: status.value,
+      ...(configDrift === undefined ? {} : { configDrift }),
+    };
   });

@@ -15,20 +15,14 @@ import {
   type HealthCheckPostgrestGateway,
 } from "./health-check.ts";
 
-/**
- * Ends a scripted `logs` script, failing the stream after the chunks before it
- * have already been emitted — the real "daemon dropped the pipe mid-dump" case.
- */
+/** Ends a scripted `logs` script, failing the stream after already-emitted chunks — the real "daemon dropped the pipe mid-dump" case. */
 const LOG_STREAM_FAILS = Symbol("log stream fails");
 
 /**
- * A spawner that answers `docker container inspect`/`docker logs` calls.
- * `inspectResponse` is called once per `(containerId, callIndex)` pair — the
- * `callIndex` (0-based, per container) lets a test script a container's
- * health across successive polling rounds. `docker logs` calls (the
- * timeout-path debug dump) succeed with whatever `logs` scripts for that
- * container — an array so a test can script chunk boundaries, optionally
- * terminated by {@link LOG_STREAM_FAILS} — and with empty output otherwise.
+ * A spawner that answers `docker container inspect`/`docker logs` calls. `inspectResponse` is
+ * called once per `(containerId, callIndex)` pair, so a test can script a container's health
+ * across successive polling rounds. `docker logs` calls succeed with whatever `logs` scripts for
+ * that container, optionally terminated by {@link LOG_STREAM_FAILS}, and empty output otherwise.
  */
 type LogChunks = ReadonlyArray<string | typeof LOG_STREAM_FAILS>;
 
@@ -149,10 +143,9 @@ const runningStarting = JSON.stringify({
 const notRunning = JSON.stringify({ Status: "exited", Running: false });
 
 /**
- * `waitForHealthyServices` structurally requires `HttpClient.HttpClient`
- * (only exercised on the PostgREST HTTP-HEAD branch) — every test provides
- * some `HttpClient.HttpClient`, and this one fails loudly if a
- * container-only-health-check test ever calls it unexpectedly.
+ * `waitForHealthyServices` structurally requires `HttpClient.HttpClient` (only exercised on the
+ * PostgREST HTTP-HEAD branch); this layer fails loudly if a container-only-health-check test
+ * ever calls it unexpectedly.
  */
 const unusedHttpClientLayer = Layer.succeed(
   HttpClient.HttpClient,
@@ -240,7 +233,7 @@ describe("waitForHealthyServices", () => {
           { timeoutSeconds: 2 },
         ).pipe(Effect.provide(unusedHttpClientLayer), Effect.forkChild({ startImmediately: true }));
 
-        // 2 retries after the initial attempt (Go's `WithMaxRetries(..., timeout.Seconds())`).
+        // 2 retries after the initial attempt.
         yield* TestClock.adjust("1 seconds");
         yield* TestClock.adjust("1 seconds");
         const exit = yield* Fiber.await(fiber);
@@ -255,8 +248,6 @@ describe("waitForHealthyServices", () => {
           (args) =>
             args[0] === "container" && args[1] === "inspect" && args[2] === "supabase_rest_proj",
         );
-        // The healthy container is probed exactly once, then narrowed out of
-        // the "still watching" set — the unhealthy one is probed on every round.
         expect(kongCalls).toHaveLength(1);
         expect(restCalls).toHaveLength(3);
       }),
@@ -413,8 +404,6 @@ describe("waitForHealthyServices", () => {
           new Map([["supabase_inbucket_proj", "public.ecr.aws/supabase/mailpit:v1.30.2"]]),
         );
 
-        // A dropped pipe part-way through the dump must not discard a marker the
-        // scanner already matched — that is exactly when this bug class shows up.
         expect(error.suggestion).toContain(
           "docker image rm -f public.ecr.aws/supabase/mailpit:v1.30.2",
         );
@@ -436,9 +425,8 @@ describe("waitForHealthyServices", () => {
 
     it.effect("detects the marker when it arrives on the container's stderr stream", () =>
       Effect.gen(function* () {
-        // Where the container runtime actually writes it: `docker logs` demuxes
-        // the container's stderr onto its own stderr pipe, so this is the real
-        // path, not the stdout one every other scenario here scripts.
+        // `docker logs` demuxes the container's stderr onto its own stderr pipe, so this is the
+        // real path, not the stdout one every other scenario here scripts.
         const mock = mockHealthSpawner(() => notRunning, {
           supabase_inbucket_proj: { stderr: ["exec /mailpit: exec format error\n"] },
         });
@@ -552,17 +540,14 @@ describe("waitForHealthyServices", () => {
           ]),
         );
 
-        // Both containers are named against the shared image...
         expect(error.suggestion).toContain("supabase_rest_proj's image");
         expect(error.suggestion).toContain("supabase_realtime_proj's image");
-        // ...which the removal command lists once, not twice.
         expect(error.suggestion).toContain(
           "docker image rm -f public.ecr.aws/supabase/postgrest:v14.15",
         );
         expect(error.suggestion).not.toContain(
           "postgrest:v14.15 public.ecr.aws/supabase/postgrest:v14.15",
         );
-        // The healthy-logged container's own image is never suggested.
         expect(error.suggestion).not.toContain("storage-api");
       }),
     );
@@ -781,11 +766,9 @@ const shadowConnConfig: PgConnInput = {
 };
 
 /**
- * A `DbConnection` whose `connect` fails the first `failTimes` calls
- * (`Number.POSITIVE_INFINITY` never succeeds), recording every dialled config
- * and how many probe sessions were released. `closedSessions` is what proves
- * the readiness probe hands nothing back to the caller: the downstream code
- * opens its own connection through `connectShadowDatabase` afterwards.
+ * A `DbConnection` whose `connect` fails the first `failTimes` calls, recording every dialled
+ * config and how many probe sessions were released. `closedSessions` proves the readiness probe
+ * hands nothing back to the caller.
  */
 function mockShadowDbConnection(
   opts: { readonly failTimes?: number; readonly connectMillis?: number } = {},
@@ -850,10 +833,9 @@ describe("waitForShadowReady", () => {
     "resolves on the first successful connect, while Docker still reports the healthcheck as starting",
     () =>
       Effect.gen(function* () {
-        // The shadow container's healthcheck runs on a 10s interval with no
-        // start period, so Docker cannot report `healthy` before t+10s even
-        // though Postgres accepts connections at ~3.5s — the whole point of
-        // this wait is that the health status is never consulted at all.
+        // The shadow container's healthcheck runs on a 10s interval with no start period, so
+        // Docker cannot report `healthy` before t+10s even though Postgres accepts connections
+        // at ~3.5s — this wait never consults the health status at all.
         const mock = mockHealthSpawner(() => runningStarting);
         const db = mockShadowDbConnection();
 
@@ -888,8 +870,7 @@ describe("waitForShadowReady", () => {
       const exit = yield* Fiber.await(fiber);
 
       expect(Exit.isSuccess(exit)).toBe(true);
-      // 2 refused attempts, then the 3rd that connects — a refused connect is
-      // "not ready yet", never an error in its own right.
+      // A refused connect is "not ready yet", never an error in its own right.
       expect(db.attempts).toHaveLength(3);
       expect(inspectCalls(mock)).toHaveLength(3);
       expect(db.closedSessions).toBe(1);
@@ -923,8 +904,7 @@ describe("waitForShadowReady", () => {
           { containerId: SHADOW_CONTAINER_ID, reason: "connection refused" },
         ]);
         expect(error.message).toBe(`${SHADOW_CONTAINER_ID} connection refused`);
-        // 1 initial attempt + `timeoutSeconds * 2` retries at 500ms (same wall
-        // time as the old 1s poll).
+        // 1 initial attempt plus `timeoutSeconds * 2` retries at 500ms intervals.
         expect(db.attempts).toHaveLength(5);
         expect(
           mock.spawned.some((args) => args[0] === "logs" && args[1] === SHADOW_CONTAINER_ID),

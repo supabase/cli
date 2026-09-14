@@ -9,9 +9,9 @@ export interface PgProveArgs {
   /** Docker volume binds, each `hostpath:dockerpath:ro`. */
   readonly binds: ReadonlyArray<string>;
   /**
-   * The searched paths as they exist on the *host*, for diagnostics. Deliberately
-   * not the `toDockerMountPath` form used in `cmd`: on Windows that has the volume
-   * name stripped, so an error naming it would point at a path the user does not have.
+   * The searched paths as they exist on the host, for diagnostics — not the
+   * `toDockerMountPath` form used in `cmd`, which strips the volume name on
+   * Windows and would point an error at a path the user doesn't have.
    */
   readonly hostPaths: ReadonlyArray<string>;
   /** Container working directory (dir of the first test path). */
@@ -19,20 +19,16 @@ export interface PgProveArgs {
 }
 
 /**
- * Build the `pg_prove` command, volume binds, and working directory for a
- * `test db` run. Pure port of the loop in `apps/cli-go/internal/db/test/test.go:29-56`
- * (deleted in CLI-1970; last present at commit 7b469f5b3).
+ * Builds the `pg_prove` command, volume binds, and working directory for a
+ * `test db` run.
  *
- * - No paths → default to `<workdir>/supabase/tests` (Go's `filepath.Abs(DbTestsDir)`
- *   after chdir to the project root).
- * - Relative paths resolve against `cwd` (Go's `utils.CurrentDirAbs`, the original
- *   invocation directory).
- * - `--verbose` is appended when debug logging is enabled (Go's `viper.GetBool("DEBUG")`).
+ * - No paths defaults to `<workdir>/supabase/tests`.
+ * - Relative paths resolve against `cwd`, the original invocation directory.
+ * - `--verbose` is appended when debug logging is enabled.
  *
- * Intentional divergence from Go (CLI-1139): for a file path we mount its parent
- * *directory* rather than the lone file, so psql `\ir`/`\i` includes resolve. Go
- * mounts the file alone, which breaks single-file runs that include a sibling.
- * Output is unchanged — the full file path is still passed to `pg_prove`.
+ * For a file path, the bind mounts its parent directory (not the lone file),
+ * so psql `\ir`/`\i` includes to a sibling file resolve; the full path is
+ * still passed to `pg_prove`.
  */
 export function buildPgProveArgs(opts: {
   readonly paths: ReadonlyArray<string>;
@@ -48,7 +44,7 @@ export function buildPgProveArgs(opts: {
   const hostPaths: string[] = [];
   const seenTargets = new Set<string>();
   // `testFiles` is never empty (it defaults to supabase/tests), so the first
-  // iteration always sets this; Go derives workingDir from the first path only.
+  // iteration always sets this.
   let workingDir = "";
 
   for (const candidate of testFiles) {
@@ -57,11 +53,10 @@ export function buildPgProveArgs(opts: {
     cmd.push(dockerPath);
     hostPaths.push(fp);
 
-    // Mount the *directory* containing a test file (not the lone file) so psql
-    // `\ir ./sibling.sql` includes resolve: they look relative to the test file's
-    // own directory, and a single-file bind leaves siblings absent in the
-    // container (CLI-1139). Directories are mounted as-is. The file-vs-directory
-    // heuristic (presence of an extension) matches Go's workingDir logic.
+    // Mount the directory containing a test file (not the lone file) so psql
+    // `\ir ./sibling.sql` includes resolve relative to the test file's own
+    // directory; a single-file bind would leave siblings absent in the
+    // container. Directories are mounted as-is.
     const isFile = nodePath.posix.extname(dockerPath) !== "";
     const hostMount = isFile ? nodePath.dirname(fp) : fp;
     const dockerMount = toDockerMountPath(hostMount);

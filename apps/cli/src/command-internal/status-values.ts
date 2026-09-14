@@ -9,13 +9,9 @@ import {
 } from "./local-config-values.ts";
 
 /**
- * Port of `status.CustomName` + `toValues()`.
- * Each field's Go `env:"..."` tag carries two things: the dotted key
- * `--override-name <key>=<name>` matches against (`fieldKey` below), and the
- * default output env-var name (`defaultName`). `deprecated` fields (`inbucket`,
- * `jwt_secret`, `anon_key`, `service_role_key`) are still emitted — Go's
- * `deprecated` tag only affects a startup warning it never wires up for `status`
- * (only `env.Unmarshal` reads the tag, and it does not warn), so no divergence here.
+ * A status output field: the dotted key `--override-name <key>=<name>` matches against
+ * (`fieldKey`), and its default output env-var name (`defaultName`). Deprecated fields
+ * (`inbucket`, `jwt_secret`, `anon_key`, `service_role_key`) are still emitted.
  */
 export interface StatusField {
   readonly fieldKey: string;
@@ -62,7 +58,7 @@ const STORAGE_S3_REGION: StatusField = {
   defaultName: "S3_PROTOCOL_REGION",
 };
 
-/** All 18 fields, in `CustomName` struct declaration order. */
+/** All 18 fields, in declaration order. */
 export const STATUS_FIELDS: ReadonlyArray<StatusField> = [
   API_URL,
   REST_URL,
@@ -103,9 +99,8 @@ export interface StatusOutputNames {
 }
 
 /**
- * Resolves each field's output KEY, applying `--override-name <fieldKey>=<name>`
- * remaps over the Go default names. `overrides` maps `fieldKey` (e.g. `"api.url"`)
- * to the replacement output name, mirroring `env.Unmarshal`'s `default=` override.
+ * Resolves each field's output key, applying `--override-name <fieldKey>=<name>` remaps over
+ * the default names. `overrides` maps `fieldKey` (e.g. `"api.url"`) to the replacement name.
  */
 function resolveOutputNames(overrides: ReadonlyMap<string, string>): StatusOutputNames {
   const nameFor = (field: StatusField) => overrides.get(field.fieldKey) ?? field.defaultName;
@@ -127,11 +122,7 @@ function resolveOutputNames(overrides: ReadonlyMap<string, string>): StatusOutpu
   };
 }
 
-/**
- * Container ids `toValues()` gates each group on, taken from
- * `serviceContainerIds`'s alias order (`kong`, `auth`, `inbucket`, ...,
- * `edge_runtime`, ...) — see `docker-ids.ts`.
- */
+/** Container ids each status group gates on, taken from `serviceContainerIds` (`docker-ids.ts`). */
 export interface StatusContainerIds {
   readonly kong: string;
   readonly auth: string;
@@ -142,9 +133,8 @@ export interface StatusContainerIds {
   readonly edgeRuntime: string;
 }
 
-// Positional indices into `serviceContainerIds`'s fixed 13-element
-// array (`docker-ids.ts`'s `GetDockerIds()` order), named so a caller
-// never has to destructure the array positionally.
+// Positional indices into `serviceContainerIds`'s fixed array, named so a caller never has
+// to destructure it positionally.
 const CONTAINER_INDEX = {
   kong: 0,
   auth: 1,
@@ -156,11 +146,8 @@ const CONTAINER_INDEX = {
 } as const;
 
 /**
- * Derives {@link StatusContainerIds} from `serviceContainerIds`'s
- * flat array for a given project id. The array's length and order are a fixed
- * Go-parity contract (13 elements, `GetDockerIds()` order), so every named
- * index here is guaranteed present — this only exists to give the handler a
- * named-field view instead of positional array destructuring.
+ * Derives {@link StatusContainerIds} from `serviceContainerIds`'s flat array for a given
+ * project id, giving the handler a named-field view instead of positional destructuring.
  */
 export function statusContainerIds(projectId: string): StatusContainerIds {
   const ids = serviceContainerIds(projectId);
@@ -177,25 +164,18 @@ export function statusContainerIds(projectId: string): StatusContainerIds {
 }
 
 /**
- * Port of `utils.ShortContainerImageName`:
- * extracts the repo name between the (first) `/` and the (last) `:`, falling back to
- * the full string when the image ref doesn't match (no slash, or no tag).
+ * Extracts the repo name between the (first) `/` and the (last) `:`, falling back to the
+ * full string when the image ref doesn't match (no slash, or no tag).
  */
 export function shortContainerImageName(imageName: string): string {
   const match = /\/(.*):/.exec(imageName);
   return match?.[1] ?? imageName;
 }
 
-// Default image short names `--exclude` also matches against,
-// one per gated service. Sourced from the same
-// embedded Dockerfile manifest Go parses (`dockerfileServiceImageRaw`), so a version bump
-// there is picked up automatically. Pinned-version substitution
-// (`db-image.ts`'s `replaceImageTag`) only ever rewrites the portion after the
-// first `:`, which `shortContainerImageName` discards — so these are invariant to
-// version pinning and no `.temp/<service>-version` file needs to be read here.
-// They read the RAW manifest so `SUPABASE_USE_SLIM_IMAGES` cannot shift them:
-// these names are the established `--exclude`/status-key contract (`gotrue`,
-// `storage-api`), while slim refs would report `supabase/cli/auth` etc.
+// Default image short names `--exclude` also matches against, one per gated service.
+// Invariant to version pinning (`db-image.ts`'s `replaceImageTag` only rewrites the tag,
+// which `shortContainerImageName` discards) and to `SUPABASE_USE_SLIM_IMAGES` (read from the
+// raw manifest, since the established `--exclude` contract uses non-slim names).
 const KONG_IMAGE_NAME = shortContainerImageName(dockerfileServiceImageRaw("kong"));
 const POSTGREST_IMAGE_NAME = shortContainerImageName(dockerfileServiceImageRaw("postgrest"));
 const STUDIO_IMAGE_NAME = shortContainerImageName(dockerfileServiceImageRaw("studio"));
@@ -211,12 +191,9 @@ export interface StatusValuesResult {
 }
 
 /**
- * Everything `toValues()` needs that does NOT depend on `--override-name` —
- * i.e. every field except the output KEY remapping. Resolving this once and
- * reusing it for both the env/json/toml/yaml values (real overrides) and the
- * pretty-table values (always recomputed with an empty override map)
- * avoids re-reading `auth.signing_keys_path` and
- * re-signing the anon/service_role JWTs a second time per invocation.
+ * Everything needed to compute status output except `--override-name` remapping. Resolving
+ * this once and reusing it for both the real values and the pretty-table values avoids
+ * re-reading `auth.signing_keys_path` and re-signing the anon/service_role JWTs twice.
  */
 export interface StatusState {
   readonly config: CliConfig;
@@ -232,15 +209,11 @@ export interface StatusState {
 }
 
 /**
- * The config-load/`Validate`-equivalent half of {@link StatusState} —
- * everything that can THROW, and none of it depends on `excluded`/
- * `containerIds`. Split out so `status.handler.ts` can resolve and validate
- * this before any Docker call, matching `flags.LoadConfig` (config load
- * + `Validate`) running entirely before `assertContainerHealthy`/
- * container listing — a bad
- * `auth.jwt_secret` or malformed `SUPABASE_*_PORT`/`SUPABASE_*_ENABLED`
- * override must fail here, not be masked by a Docker/DB error when the local
- * stack happens to be unavailable.
+ * The validating half of {@link StatusState}: everything that can throw, and none of it
+ * depends on `excluded`/`containerIds`. Split out so `status.handler.ts` can resolve and
+ * validate this before any Docker call — a bad `auth.jwt_secret` or malformed
+ * `SUPABASE_*_PORT`/`SUPABASE_*_ENABLED` override must fail here, not be masked by a
+ * Docker/DB error when the local stack happens to be unavailable.
  */
 export interface StatusLocalState {
   readonly config: CliConfig;
@@ -255,31 +228,19 @@ export interface StatusLocalState {
 }
 
 /**
- * Port of the throwing, non-Docker-dependent half of
- * `(*CustomName).toValues(exclude...)`:
- * resolves local config values (URLs, keys — can throw, see
- * {@link resolveLocalConfigValues}) and the per-service `.enabled` gates,
- * with NO reference to `excluded`/`containerIds` — see {@link gateStatusState}
- * for the Docker-dependent, non-throwing half this composes with (in
- * `status.handler.ts`, or via {@link statusValues} for callers that
- * don't need to run validation before Docker calls).
- *
- * Each `.enabled` gate is read through {@link envOverrideBool}, not the
- * raw decoded `config.<section>.enabled`, because `status.toValues()`
- * reads `utils.Config.*.Enabled` — a package-level struct
- * that already has any `SUPABASE_<SECTION>_ENABLED` env/dotenv
- * override applied — generically,
- * not just for `auth.enabled`. Skipping this would mean a stack started
- * with e.g. `SUPABASE_API_ENABLED=true` over a `false` TOML value has Kong/
- * PostgREST running while native `status` omits them entirely.
+ * Resolves local config values (URLs, keys — can throw, see {@link resolveLocalConfigValues})
+ * and the per-service `.enabled` gates, with no reference to `excluded`/`containerIds` — see
+ * {@link gateStatusState} for the Docker-dependent half this composes with. Each `.enabled`
+ * gate is read through {@link envOverrideBool}, not the raw decoded `config.<section>.enabled`,
+ * so an env-overridden stack's running services match what `status` reports.
  *
  * @throws {InvalidJwtSecretError} when `auth.jwt_secret` is set but too short.
- * @throws {InvalidPortEnvOverrideError} when a `SUPABASE_*_PORT` env/dotenv
- * override doesn't parse as a valid port.
- * @throws {InvalidBoolEnvOverrideError} when a `SUPABASE_*_ENABLED` env/dotenv
- * override doesn't parse as a valid bool.
- * @throws when `auth.signing_keys_path` is set but the file is missing, malformed,
- * or its first key is unsupported — see {@link generateAsymmetricGoJwt}.
+ * @throws {InvalidPortEnvOverrideError} when a `SUPABASE_*_PORT` env/dotenv override doesn't
+ * parse as a valid port.
+ * @throws {InvalidBoolEnvOverrideError} when a `SUPABASE_*_ENABLED` env/dotenv override
+ * doesn't parse as a valid bool.
+ * @throws when `auth.signing_keys_path` is set but the file is missing, malformed, or its
+ * first key is unsupported — see {@link generateAsymmetricGoJwt}.
  */
 export function resolveStatusLocalState(
   config: CliConfig,
@@ -289,19 +250,12 @@ export function resolveStatusLocalState(
   /** `LoadedCliConfig.document` — see {@link resolveLocalConfigValues}'s doc comment. */
   document?: Readonly<Record<string, unknown>>,
   /**
-   * An already-resolved {@link resolveLocalConfigValues} result to reuse
-   * instead of re-deriving one. Callers that resolved `local` earlier in the
-   * SAME process (e.g. `start`'s success-path status print, after the values
-   * it already resolved were used to build every container spec) must pass it
-   * here rather than let this function call
-   * {@link resolveLocalConfigValues} again — a second call re-mints a
-   * time-dependent asymmetric JWT (`auth.signing_keys_path` +
-   * {@link generateAsymmetricGoJwt}'s `exp` claim) with a DIFFERENT
-   * signature than the one baked into the already-running containers. The
-   * reference implementation never has this problem: `c.Auth.generateAPIKeys()` runs exactly once per
-   * process (`Config.Validate()`), mutating the
-   * config in place, so every later read — including its own status print —
-   * sees the same value.
+   * An already-resolved {@link resolveLocalConfigValues} result to reuse instead of
+   * re-deriving one. Callers that resolved `local` earlier in the same process (e.g.
+   * `start`'s success-path status print) must pass it here: a second call re-mints a
+   * time-dependent asymmetric JWT (`auth.signing_keys_path` + {@link generateAsymmetricGoJwt}'s
+   * `exp` claim) with a different signature than the one baked into the already-running
+   * containers.
    */
   precomputedLocal?: LocalConfigValues,
 ): StatusLocalState {
@@ -366,15 +320,11 @@ export function resolveStatusLocalState(
 }
 
 /**
- * The Docker-dependent, non-throwing half of `toValues()`: applies
- * `excluded` (matching each gated service by its container id
- * (`statusContainerIds`) OR its default Docker image short name
- * (`shortContainerImageName` above) — the 6 relevant Go config fields
- * (`Api.KongImage`, `Api.Image`, `Studio.Image`, `Auth.Image`, `Inbucket.Image`,
- * `Storage.Image`, `EdgeRuntime.Image`) all carry `toml:"-"`, so they're never
- * user-overridable and the default image is always the one to check) on top of
- * an already-resolved {@link StatusLocalState}. Pure: every throwing
- * concern already ran in {@link resolveStatusLocalState}.
+ * The Docker-dependent, non-throwing half of status resolution: applies `excluded`, matching
+ * each gated service by its container id ({@link statusContainerIds}) or its default Docker
+ * image short name ({@link shortContainerImageName}) — service images are never
+ * user-overridable, so the default is always the one to check. Pure: every throwing concern
+ * already ran in {@link resolveStatusLocalState}.
  */
 export function gateStatusState(
   localState: StatusLocalState,
@@ -418,9 +368,8 @@ export function gateStatusState(
 }
 
 /**
- * Applies `--override-name` remapping to an already-resolved {@link StatusState}.
- * Pure and non-throwing — every failure mode of `toValues()` lives in
- * {@link resolveStatusLocalState}, which runs once per `status` invocation.
+ * Applies `--override-name` remapping to an already-resolved {@link StatusState}. Pure and
+ * non-throwing — every failure mode lives in {@link resolveStatusLocalState}.
  */
 export function statusValuesFromState(
   state: StatusState,
@@ -474,14 +423,10 @@ export function statusValuesFromState(
 }
 
 /**
- * Convenience wrapper combining {@link resolveStatusLocalState} +
- * {@link gateStatusState} + {@link statusValuesFromState} in one
- * call — used directly by tests that only need a single override map.
- * `status.handler.ts` calls the three separately instead, so it can resolve +
- * validate `localState` before any Docker call (see
- * {@link resolveStatusLocalState}'s doc comment), and reuse the gated
- * `state` for both the real and pretty-mode (empty-override) value maps
- * without recomputing `local`.
+ * Convenience wrapper combining {@link resolveStatusLocalState}, {@link gateStatusState}, and
+ * {@link statusValuesFromState} in one call — used by tests needing only a single override
+ * map. `status.handler.ts` calls the three separately so it can validate before any Docker
+ * call and reuse the gated state for both the real and pretty-mode value maps.
  */
 export function statusValues(
   config: CliConfig,

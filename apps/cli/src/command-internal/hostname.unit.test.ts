@@ -4,7 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { configureLoopbackProxyBypass, getHostname } from "./hostname.ts";
+import {
+  configureLoopbackProxyBypass,
+  getHostname,
+  platformDefaultDockerHost,
+  resolveDockerDaemonEndpoint,
+} from "./hostname.ts";
 
 const LOOPBACK_NO_PROXY = "localhost,127.0.0.1,[::1]";
 
@@ -186,6 +191,75 @@ describe("getHostname", () => {
       );
       expect(result).toBe("direct-host");
     });
+  });
+});
+
+describe("platformDefaultDockerHost", () => {
+  it("resolves the unix default off Windows", () => {
+    expect(platformDefaultDockerHost("darwin")).toBe("unix:///var/run/docker.sock");
+    expect(platformDefaultDockerHost("linux")).toBe("unix:///var/run/docker.sock");
+  });
+
+  it("resolves the named-pipe default on Windows", () => {
+    expect(platformDefaultDockerHost("win32")).toBe("npipe:////./pipe/docker_engine");
+  });
+});
+
+describe("resolveDockerDaemonEndpoint", () => {
+  let configDirs: Array<string> = [];
+
+  afterEach(() => {
+    for (const dir of configDirs) rmSync(dir, { recursive: true, force: true });
+    configDirs = [];
+  });
+
+  function withDockerConfig<T>(
+    options: Parameters<typeof writeDockerConfigDir>[0],
+    env: Record<string, string | undefined>,
+    run: () => T,
+  ): T {
+    const dir = writeDockerConfigDir(options);
+    configDirs.push(dir);
+    return withEnv(
+      { DOCKER_HOST: undefined, DOCKER_CONTEXT: undefined, DOCKER_CONFIG: dir, ...env },
+      run,
+    );
+  }
+
+  it("returns DOCKER_HOST verbatim, non-tcp schemes included", () => {
+    expect(
+      withEnv({ DOCKER_HOST: "unix:///custom/engine.sock" }, resolveDockerDaemonEndpoint),
+    ).toBe("unix:///custom/engine.sock");
+    expect(withEnv({ DOCKER_HOST: "tcp://docker-host:2375" }, resolveDockerDaemonEndpoint)).toBe(
+      "tcp://docker-host:2375",
+    );
+  });
+
+  it("maps the default context to the platform-default daemon endpoint", () => {
+    expect(withDockerConfig({}, {}, resolveDockerDaemonEndpoint)).toBe(platformDefaultDockerHost());
+    expect(
+      withDockerConfig(
+        { currentContext: "default", contexts: { default: "tcp://never-read:2375" } },
+        {},
+        resolveDockerDaemonEndpoint,
+      ),
+    ).toBe(platformDefaultDockerHost());
+  });
+
+  it("returns the active context's stored endpoint verbatim", () => {
+    expect(
+      withDockerConfig(
+        { currentContext: "remote", contexts: { remote: "tcp://remote-host:2375" } },
+        {},
+        resolveDockerDaemonEndpoint,
+      ),
+    ).toBe("tcp://remote-host:2375");
+  });
+
+  it("returns undefined for an unreadable non-default context, never the platform default", () => {
+    expect(
+      withDockerConfig({ currentContext: "ghost" }, {}, resolveDockerDaemonEndpoint),
+    ).toBeUndefined();
   });
 });
 

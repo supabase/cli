@@ -1,4 +1,3 @@
-// oxlint-disable effecttsgo/prefer-schema-over-json -- malformed caller/state fixtures exercise public validation boundaries.
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
@@ -60,6 +59,8 @@ import {
 import type { LogQuery, StackLogBatch, StackLogEntry } from "./Logs.ts";
 import {
   createStack,
+  discoverStacks,
+  findStack,
   inspectStack,
   listStacks,
   makeHandle,
@@ -76,7 +77,11 @@ import {
   type ContainerCommandResult,
   type ContainerCommandRunner,
 } from "../runtime/ContainerEngine.ts";
-import { ContainerEngineResolver } from "../runtime/ContainerEngineResolver.ts";
+import {
+  ContainerEngineResolver,
+  defaultContainerEngineResolver,
+} from "../runtime/ContainerEngineResolver.ts";
+import { runGit } from "../../tests/helpers/git.ts";
 
 const defaultDatabaseVersion = catalogEntryFor("database:database").defaultVersion;
 const defaultDatabaseMajor = defaultDatabaseVersion.split(".")[0];
@@ -85,6 +90,12 @@ const defaultRestVersion = catalogEntryFor("rest:rest").defaultVersion;
 const stackId = StackIdSchema.make(
   "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 );
+
+const expectPresent = <A>(value: A | undefined, description: string): A => {
+  expect(value, description).toBeDefined();
+  if (value === undefined) throw new Error(`Expected ${description}`);
+  return value;
+};
 
 const runningStatus: StackStatus = {
   id: stackId,
@@ -114,13 +125,8 @@ const credentials = {
 const stoppedState = (): PersistedStackState => ({
   format: "supabase-stack-state-v1",
   identity: {
-    stackId,
     projectRoot: "/tmp/project",
-    checkoutRoot: "/tmp/project",
-    workspaceId: "workspace",
-    checkoutId: "checkout",
     branchContext: "branch",
-    localProjectKey: "key",
     stackName: "stack",
   },
   runtime: { kind: "native" },
@@ -156,16 +162,49 @@ const withRuntimeRoot = <A, E, R>(effect: (project: string) => Effect.Effect<A, 
       );
       const project = path.join(root, "project");
       yield* fs.makeDirectory(project);
-      const defaults = defaultRuntimeEnvironment();
+      const defaults = yield* defaultRuntimeEnvironment;
       const runtime: StackRuntimeEnvironmentValue = {
         ...defaults,
         stateRoot: path.join(root, "managed", "stacks"),
         tempRoot: "/tmp",
         platform: "posix",
       };
-      return yield* effect(project).pipe(Effect.provideService(StackRuntimeEnvironment, runtime));
+      return yield* effect(project).pipe(
+        Effect.provideService(StackRuntimeEnvironment, runtime),
+        Effect.provideService(ContainerEngineResolver, {
+          isInstalled: () => Effect.succeed(false),
+          resolve: (kind) => defaultContainerEngineResolver.resolve(kind),
+        }),
+      );
     }),
   ).pipe(Effect.provide(NodeServices.layer));
+
+const lifecycleConfig = () => {
+  return {
+    capabilities: {
+      database: {},
+      rest: {},
+      auth: { enabled: false },
+      realtime: { enabled: false },
+      storage: { enabled: false },
+      functions: { enabled: false },
+      studio: { enabled: false },
+      mail: { enabled: false },
+      analytics: { enabled: false },
+      pooler: { enabled: false },
+    },
+    listeners: {
+      api: { enabled: false },
+      database: { enabled: false },
+      pooler: { enabled: false },
+      studio: { enabled: false },
+      mailUi: { enabled: false },
+      smtp: { enabled: false },
+      pop3: { enabled: false },
+      functionsInspector: { enabled: false },
+    },
+  } as const;
+};
 
 describe("Effect stack lifecycle handoff", () => {
   it.live("reclaims a stale owner after a failed maintenance connection", () =>
@@ -230,7 +269,7 @@ describe("Effect stack lifecycle handoff", () => {
                 )
               : Effect.succeed(Option.some({ owner: deadOwner, launched: false })),
         });
-        yield* stack.stop();
+        yield* stack.stop;
         expect(yield* Ref.get(launchCalls)).toBe(1);
         expect(yield* Ref.get(liveStopCalls)).toBe(1);
       }).pipe(Effect.provide(NodeServices.layer)),
@@ -289,7 +328,7 @@ describe("Effect stack lifecycle handoff", () => {
         const stack = yield* makeTestHandle(stackId, {
           resolveOwner: () => Effect.succeed(Option.some({ owner, launched: false })),
         });
-        const stopped = yield* stack.stop().pipe(Effect.exit);
+        const stopped = yield* stack.stop.pipe(Effect.exit);
         expect(Exit.isFailure(stopped)).toBe(true);
         if (Exit.isFailure(stopped))
           expect(Option.getOrUndefined(Cause.findErrorOption(stopped.cause))).toBeInstanceOf(
@@ -423,14 +462,14 @@ describe("Effect stack lifecycle handoff", () => {
           { startImmediately: true },
         );
         yield* Deferred.await(followRead);
-        const stopFiber = yield* Effect.forkChild(stack.stop(), { startImmediately: true });
+        const stopFiber = yield* Effect.forkChild(stack.stop, { startImmediately: true });
         yield* Deferred.await(stopped);
         const followed = yield* Fiber.join(followedFiber);
         expect(Array.from(followed)).toEqual([finalAuth]);
         yield* Ref.set(ownerAvailable, false);
         yield* Scope.close(ownerScope, Exit.void);
         yield* Fiber.join(stopFiber);
-        expect((yield* stack.status()).lifecycle).toBe("stopped");
+        expect((yield* stack.status).lifecycle).toBe("stopped");
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
   );
@@ -491,7 +530,6 @@ describe("Effect stack lifecycle handoff", () => {
 
   it.live("delivers final followed entries once and completes after stop", () =>
     withRuntimeRoot((_project) =>
-      // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context -- test-only handle seam
       Effect.gen(function* () {
         const calls = yield* Ref.make(0);
         const entries: [StackLogEntry, StackLogEntry, StackLogEntry, StackLogEntry] = [
@@ -561,14 +599,159 @@ describe("Effect stack lifecycle handoff", () => {
         const env = yield* StackRuntimeEnvironment;
         const stack = yield* createStack({ projectRoot: project });
         expect(yield* readOwnerMetadata(env.stateRoot, stack.id, env)).toBeUndefined();
-        const offline = yield* stack.status();
+        const offline = yield* stack.status;
         expect(offline.lifecycle).toBe("unconfigured");
         expect(offline.capabilities.every(({ state }) => state === "disabled")).toBe(true);
         yield* openStack(stack.id);
         expect(yield* readOwnerMetadata(env.stateRoot, stack.id, env)).toBeUndefined();
-        yield* stack.stop();
-        expect((yield* stack.status()).lifecycle).toBe("unconfigured");
+        yield* stack.stop;
+        expect((yield* stack.status).lifecycle).toBe("unconfigured");
         expect((yield* stack.logs()).entries).toHaveLength(0);
+      }),
+    ),
+  );
+
+  it.live("isolates parallel stacks by project root, branch context, and name", () =>
+    withRuntimeRoot((project) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = path.dirname(project);
+        const monorepoA = path.join(project, "apps", "one");
+        const monorepoB = path.join(project, "apps", "two");
+        const detachedWorktreeA = path.join(root, "chat-worktree-a");
+        const detachedWorktreeB = path.join(root, "chat-worktree-b");
+        const plainProject = path.join(root, "plain-project");
+        yield* fs.makeDirectory(monorepoA, { recursive: true });
+        yield* fs.makeDirectory(monorepoB, { recursive: true });
+        yield* fs.makeDirectory(plainProject);
+        yield* runGit(project, ["init", "-b", "main"]);
+        yield* runGit(project, ["config", "user.email", "stack-tests@example.test"]);
+        yield* runGit(project, ["config", "user.name", "Stack Tests"]);
+        yield* fs.writeFileString(path.join(project, "README.md"), "identity\n");
+        yield* runGit(project, ["add", "README.md"]);
+        yield* runGit(project, ["commit", "-m", "initial"]);
+        yield* runGit(project, ["worktree", "add", "--detach", detachedWorktreeA, "HEAD"]);
+        yield* runGit(project, ["worktree", "add", "--detach", detachedWorktreeB, "HEAD"]);
+
+        const [sameA, sameB, namedA, namedB, monoA, monoB, siblingA, siblingB, plainA, plainB] =
+          yield* Effect.all(
+            [
+              createStack({ projectRoot: project }),
+              createStack({ projectRoot: project }),
+              createStack({ projectRoot: project, name: "preview-a" }),
+              createStack({ projectRoot: project, name: "preview-b" }),
+              createStack({ projectRoot: monorepoA }),
+              createStack({ projectRoot: monorepoB }),
+              createStack({ projectRoot: detachedWorktreeA }),
+              createStack({ projectRoot: detachedWorktreeB }),
+              createStack({ projectRoot: plainProject, name: "preview-a" }),
+              createStack({ projectRoot: plainProject, name: "preview-b" }),
+            ],
+            { concurrency: 10 },
+          );
+        yield* runGit(project, ["checkout", "-b", "feat-a"]);
+        const feature = yield* createStack({ projectRoot: project });
+        yield* runGit(project, ["checkout", "main"]);
+
+        expect(sameA.id).toBe(sameB.id);
+        expect(
+          new Set([
+            sameA.id,
+            namedA.id,
+            namedB.id,
+            feature.id,
+            monoA.id,
+            monoB.id,
+            siblingA.id,
+            siblingB.id,
+            plainA.id,
+            plainB.id,
+          ]).size,
+        ).toBe(10);
+        const found = yield* findStack({ projectRoot: project });
+        expect(Option.getOrUndefined(found)?.id).toBe(sameA.id);
+        expect((yield* listStacks({ projectRoot: project })).map(({ id }) => id).sort()).toEqual(
+          [sameA.id, namedA.id, namedB.id, feature.id].sort(),
+        );
+        expect((yield* listStacks({ projectRoot: monorepoA })).map(({ id }) => id)).toEqual([
+          monoA.id,
+        ]);
+        const detachedA = yield* listStacks({ projectRoot: detachedWorktreeA });
+        const detachedB = yield* listStacks({ projectRoot: detachedWorktreeB });
+        expect(detachedA.map(({ id }) => id)).toEqual([siblingA.id]);
+        expect(detachedB.map(({ id }) => id)).toEqual([siblingB.id]);
+        expect(detachedA[0]?.branchContext).toBe("detached");
+        expect(detachedB[0]?.branchContext).toBe("detached");
+        expect(siblingA.id).not.toBe(siblingB.id);
+        expect(
+          (yield* listStacks({ projectRoot: plainProject })).map(({ id }) => id).sort(),
+        ).toEqual([plainA.id, plainB.id].sort());
+      }),
+    ),
+  );
+
+  it.live("does not relocate a stack when a linked Git worktree moves", () =>
+    withRuntimeRoot((project) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = path.dirname(project);
+        const linked = path.join(root, "linked-project");
+        yield* runGit(project, ["init", "-b", "main"]);
+        yield* runGit(project, ["config", "user.email", "stack-tests@example.test"]);
+        yield* runGit(project, ["config", "user.name", "Stack Tests"]);
+        yield* fs.writeFileString(path.join(project, "README.md"), "identity\n");
+        yield* runGit(project, ["add", "README.md"]);
+        yield* runGit(project, ["commit", "-m", "initial"]);
+        yield* runGit(project, ["worktree", "add", "--detach", linked, "HEAD"]);
+        const original = yield* createStack({ projectRoot: linked });
+        const moved = path.join(root, "moved-project");
+        yield* runGit(project, ["worktree", "move", linked, moved]);
+
+        const movedBeforeCreate = yield* findStack({ projectRoot: moved });
+        expect(Option.isNone(movedBeforeCreate)).toBe(true);
+        const replacement = yield* createStack({ projectRoot: moved });
+        expect(replacement.id).not.toBe(original.id);
+        const movedCanonical = yield* fs.realPath(moved);
+        expect(yield* listStacks({ projectRoot: moved })).toEqual([
+          expect.objectContaining({ id: replacement.id, projectRoot: movedCanonical }),
+        ]);
+      }),
+    ),
+  );
+
+  it.live("does not adopt state when a removed worktree basename is reused elsewhere", () =>
+    withRuntimeRoot((project) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = path.dirname(project);
+        const oldParent = path.join(root, "old-parent");
+        const newParent = path.join(root, "new-parent");
+        const oldWorktree = path.join(oldParent, "session");
+        const newWorktree = path.join(newParent, "session");
+        yield* fs.makeDirectory(oldParent);
+        yield* fs.makeDirectory(newParent);
+        yield* runGit(project, ["init", "-b", "main"]);
+        yield* runGit(project, ["config", "user.email", "stack-tests@example.test"]);
+        yield* runGit(project, ["config", "user.name", "Stack Tests"]);
+        yield* fs.writeFileString(path.join(project, "README.md"), "identity\n");
+        yield* runGit(project, ["add", "README.md"]);
+        yield* runGit(project, ["commit", "-m", "initial"]);
+        yield* runGit(project, ["worktree", "add", "--detach", oldWorktree, "HEAD"]);
+        const original = yield* createStack({ projectRoot: oldWorktree });
+        yield* runGit(project, ["worktree", "remove", "--force", oldWorktree]);
+        yield* runGit(project, ["worktree", "add", "--detach", newWorktree, "HEAD"]);
+
+        const replacement = yield* createStack({ projectRoot: newWorktree });
+        expect(replacement.id).not.toBe(original.id);
+        expect((yield* listStacks({ projectRoot: newWorktree })).map(({ id }) => id)).toEqual([
+          replacement.id,
+        ]);
+        expect((yield* listStacks()).map(({ id }) => id).sort()).toEqual(
+          [original.id, replacement.id].sort(),
+        );
       }),
     ),
   );
@@ -590,9 +773,9 @@ describe("Effect stack lifecycle handoff", () => {
         expect(Exit.isFailure(started)).toBe(true);
         expect(yield* readOwnerMetadata(env.stateRoot, stack.id, env)).toBeUndefined();
         expect(yield* ownerLockExists(env.stateRoot, stack.id)).toBe(false);
-        expect((yield* stack.status()).lifecycle).toBe("stopped");
+        expect((yield* stack.status).lifecycle).toBe("stopped");
         const reopened = yield* openStack(stack.id);
-        expect((yield* reopened.status()).lifecycle).toBe("stopped");
+        expect((yield* reopened.status).lifecycle).toBe("stopped");
       }),
     ),
   );
@@ -608,7 +791,7 @@ describe("Effect stack lifecycle handoff", () => {
           readOfflineState: Effect.fail(ownership),
           readLogs: () => Effect.fail(ownership),
         });
-        const status = yield* stack.status().pipe(Effect.exit);
+        const status = yield* stack.status.pipe(Effect.exit);
         expect(Exit.isFailure(status)).toBe(true);
         const logs = yield* stack.logs().pipe(Effect.exit);
         expect(Exit.isFailure(logs)).toBe(true);
@@ -639,7 +822,7 @@ describe("Effect stack lifecycle handoff", () => {
             new StackOwnershipConflictError({ message: "Owner metadata still exists" }),
           ),
         });
-        const result = yield* stack.status().pipe(Effect.exit);
+        const result = yield* stack.status.pipe(Effect.exit);
         expect(Exit.isFailure(result)).toBe(true);
         if (Exit.isFailure(result)) {
           const error = Option.getOrUndefined(Cause.findErrorOption(result.cause));
@@ -715,7 +898,7 @@ describe("Effect stack lifecycle handoff", () => {
           });
           const assertGuarded = (candidate: EffectStack) =>
             Effect.gen(function* () {
-              expect(Exit.isFailure(yield* candidate.status().pipe(Effect.exit))).toBe(true);
+              expect(Exit.isFailure(yield* candidate.status.pipe(Effect.exit))).toBe(true);
               expect(Exit.isFailure(yield* candidate.logs().pipe(Effect.exit))).toBe(true);
             });
           const lockOnly = yield* openStack(stack.id);
@@ -770,7 +953,7 @@ describe("Effect stack lifecycle handoff", () => {
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-effect-stack-cache-" });
         const project = path.join(root, "project");
         yield* fs.makeDirectory(project);
-        const defaults = defaultRuntimeEnvironment();
+        const defaults = yield* defaultRuntimeEnvironment;
         const stateRoot = path.join(root, "managed", "stacks");
         const artifactCacheRoot = path.join(root, "shared-artifacts");
         const configuredEnvironment: StackRuntimeEnvironmentValue = {
@@ -794,10 +977,11 @@ describe("Effect stack lifecycle handoff", () => {
     withRuntimeRoot((project) =>
       Effect.gen(function* () {
         const stack = yield* createStack({ projectRoot: project, runtime: { kind: "native" } });
-        // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- exercise unknown caller input
         const invalid = yield* stack
           .prepare({
-            config: JSON.parse('{"capabilities":{"rest":{"settings":{"unknown":true}}}}'),
+            config: yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Any))(
+              '{"capabilities":{"rest":{"settings":{"unknown":true}}}}',
+            ),
           })
           .pipe(Effect.exit);
         expect(Exit.isFailure(invalid)).toBe(true);
@@ -825,10 +1009,11 @@ describe("Effect stack lifecycle handoff", () => {
         const env = yield* StackRuntimeEnvironment;
         const stack = yield* createStack({ projectRoot: project });
         const paths = yield* resolveStackPaths({ stateRoot: env.stateRoot, stackId: stack.id });
-        // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- malformed persisted state fixture
         yield* fs.writeFileString(
           paths.stateDocument,
-          JSON.stringify({ format: "supabase-stack-v0" }),
+          yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
+            format: "supabase-stack-v0",
+          }),
         );
 
         const result = yield* stack.prepare().pipe(Effect.exit);
@@ -852,9 +1037,9 @@ describe("Effect stack lifecycle handoff", () => {
     withRuntimeRoot((project) =>
       Effect.gen(function* () {
         const stack = yield* createStack({ projectRoot: project });
-        yield* stack.destroy();
+        yield* stack.destroy;
 
-        const status = yield* stack.status().pipe(Effect.exit);
+        const status = yield* stack.status.pipe(Effect.exit);
         expect(Exit.isFailure(status)).toBe(true);
         if (Exit.isFailure(status))
           expect(Option.getOrUndefined(Cause.findErrorOption(status.cause))).toBeInstanceOf(
@@ -875,7 +1060,7 @@ describe("Effect stack lifecycle handoff", () => {
       const stopped = yield* makeTestHandle(stackId, {
         readOfflineState: Effect.succeed(Option.some(stoppedState())),
       });
-      const stoppedResult = yield* stopped.credentials().pipe(Effect.exit);
+      const stoppedResult = yield* stopped.credentials.pipe(Effect.exit);
       expect(Exit.isFailure(stoppedResult)).toBe(true);
       if (Exit.isFailure(stoppedResult)) {
         const error = Cause.findErrorOption(stoppedResult.cause);
@@ -884,7 +1069,7 @@ describe("Effect stack lifecycle handoff", () => {
       }
 
       const missing = yield* makeTestHandle(stackId);
-      const missingResult = yield* missing.credentials().pipe(Effect.exit);
+      const missingResult = yield* missing.credentials.pipe(Effect.exit);
       expect(Exit.isFailure(missingResult)).toBe(true);
       if (Exit.isFailure(missingResult)) {
         const error = Cause.findErrorOption(missingResult.cause);
@@ -897,7 +1082,7 @@ describe("Effect stack lifecycle handoff", () => {
           Option.some({ ...stoppedState(), desiredLifecycle: "running" }),
         ),
       });
-      const runningResult = yield* running.credentials().pipe(Effect.exit);
+      const runningResult = yield* running.credentials.pipe(Effect.exit);
       expect(Exit.isFailure(runningResult)).toBe(true);
       if (Exit.isFailure(runningResult)) {
         const error = Cause.findErrorOption(runningResult.cause);
@@ -913,7 +1098,7 @@ describe("Effect stack lifecycle handoff", () => {
         const fs = yield* FileSystem.FileSystem;
         const env = yield* StackRuntimeEnvironment;
         const stack = yield* createStack({ projectRoot: project });
-        yield* stack.destroy();
+        yield* stack.destroy;
         const paths = yield* resolveStackPaths({ stateRoot: env.stateRoot, stackId: stack.id });
 
         const failed = yield* stack.start().pipe(Effect.exit);
@@ -942,6 +1127,29 @@ describe("Effect stack lifecycle handoff", () => {
 
         expect(listed).toHaveLength(1);
         expect(listed[0]?.id).toBe(valid.id);
+      }),
+    ),
+  );
+
+  it.live("retains healthy stacks while reporting unreadable registry entries", () =>
+    withRuntimeRoot((project) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const env = yield* StackRuntimeEnvironment;
+        const healthy = yield* createStack({ projectRoot: project });
+        const corruptProject = path.join(project, "corrupt");
+        yield* fs.makeDirectory(corruptProject);
+        const corrupt = yield* createStack({ projectRoot: corruptProject });
+        const paths = yield* resolveStackPaths({ stateRoot: env.stateRoot, stackId: corrupt.id });
+        yield* fs.writeFileString(paths.stateDocument, "{ malformed");
+
+        const discovered = yield* discoverStacks();
+
+        expect(discovered.stacks.map(({ id }) => id)).toEqual([healthy.id]);
+        expect(discovered.errors).toHaveLength(1);
+        expect(discovered.errors[0]?.id).toBe(corrupt.id);
+        expect(discovered.errors[0]?.error).toBeInstanceOf(StackStateInvalidError);
       }),
     ),
   );
@@ -1081,6 +1289,7 @@ describe("Effect stack lifecycle handoff", () => {
           runtime: { kind: "container", engine: "docker" },
         }).pipe(
           Effect.provideService(ContainerEngineResolver, {
+            isInstalled: () => Effect.succeed(true),
             resolve: () => Effect.succeed(engine),
           }),
         );
@@ -1099,7 +1308,7 @@ describe("Effect stack lifecycle handoff", () => {
           ...state,
           definition: persisted.definition,
         });
-        const before = yield* stack.status();
+        const before = yield* stack.status;
         const progress: Array<ArtifactPreparationStatus> = [];
         const prepared = yield* stack.prepare({
           config: { capabilities: { rest: { settings: { schemas: ["private"] } } } },
@@ -1121,7 +1330,7 @@ describe("Effect stack lifecycle handoff", () => {
             { workloadId: "rest:rest", capability: "rest", state: "ready" },
           ]),
         );
-        expect(yield* stack.status()).toEqual(before);
+        expect(yield* stack.status).toEqual(before);
       }),
     ),
   );
@@ -1337,6 +1546,7 @@ describe("Effect stack lifecycle handoff", () => {
           platform: { os: "linux" },
         });
         const resolver = {
+          isInstalled: () => Effect.succeed(true),
           resolve: () => Effect.succeed(engine),
         };
         const stack = yield* createStack({
@@ -1567,7 +1777,7 @@ describe("Effect stack lifecycle handoff", () => {
             ),
           readPersistedState: Effect.succeed(Option.some(stoppedState())),
         });
-        const destroyFiber = yield* Effect.forkChild(stack.destroy(), { startImmediately: true });
+        const destroyFiber = yield* Effect.forkChild(stack.destroy, { startImmediately: true });
         yield* Deferred.await(responseSent);
         yield* Scope.close(ownerScope, Exit.void);
         const destroyed = yield* Fiber.join(destroyFiber).pipe(Effect.exit);
@@ -1599,7 +1809,7 @@ describe("Effect stack lifecycle handoff", () => {
             ),
           readPersistedState: Effect.succeed(Option.some(stoppedState())),
         });
-        const result = yield* stack.destroy().pipe(Effect.exit);
+        const result = yield* stack.destroy.pipe(Effect.exit);
         expect(Exit.isFailure(result)).toBe(true);
         if (Exit.isFailure(result)) {
           const error = Cause.findErrorOption(result.cause);
@@ -1624,7 +1834,7 @@ describe("Effect stack lifecycle handoff", () => {
           }),
         readPersistedState: Effect.succeed(Option.none()),
       });
-      const result = yield* stack.destroy().pipe(Effect.exit);
+      const result = yield* stack.destroy.pipe(Effect.exit);
       expect(Exit.isFailure(result)).toBe(true);
       if (Exit.isFailure(result)) {
         const failure = Cause.findErrorOption(result.cause);
@@ -1643,7 +1853,7 @@ describe("Effect stack lifecycle handoff", () => {
           const fs = yield* FileSystem.FileSystem;
           const env = yield* StackRuntimeEnvironment;
           const stack = yield* createStack({ projectRoot: project, runtime: { kind: "native" } });
-          yield* Effect.addFinalizer(() => stack.destroy().pipe(Effect.ignore));
+          yield* Effect.addFinalizer(() => stack.destroy.pipe(Effect.ignore));
           const store = yield* makeStackStateStore({ stateRoot: env.stateRoot });
           yield* ensureSupervisor({
             stackId: stack.id,
@@ -1651,13 +1861,12 @@ describe("Effect stack lifecycle handoff", () => {
             environment: env,
           });
           const owner = yield* readOwnerMetadata(env.stateRoot, stack.id, env);
-          expect(owner).toBeDefined();
-          if (owner === undefined) return;
+          const originalOwner = expectPresent(owner, "owner metadata");
           const paths = yield* resolveStackPaths({ stateRoot: env.stateRoot, stackId: stack.id });
           const incompatibleOwner = yield* Schema.encodeEffect(
             Schema.fromJsonString(Schema.Unknown),
           )({
-            ...owner,
+            ...originalOwner,
             rpcRelease: "stack-rpc-v0@0.0.1",
           }).pipe(
             Effect.mapError(
@@ -1668,13 +1877,13 @@ describe("Effect stack lifecycle handoff", () => {
           yield* fs.writeFileString(paths.controlMetadata, incompatibleOwner);
 
           const oldOwner = yield* openStack(stack.id);
-          expect(Exit.isFailure(yield* oldOwner.status().pipe(Effect.exit))).toBe(true);
+          expect(Exit.isFailure(yield* oldOwner.status.pipe(Effect.exit))).toBe(true);
           const ordinaryCreate = yield* createStack({ projectRoot: project });
           expect(ordinaryCreate.id).toBe(stack.id);
           const restarted = yield* openStack(stack.id);
-          yield* Effect.addFinalizer(() => restarted.destroy().pipe(Effect.ignore));
+          yield* Effect.addFinalizer(() => restarted.destroy.pipe(Effect.ignore));
           const directStart = yield* restarted
-            .start({ config: { capabilities: {} } })
+            .start({ config: lifecycleConfig() })
             .pipe(Effect.exit);
           expect(Exit.isFailure(directStart)).toBe(true);
           if (Exit.isFailure(directStart)) {
@@ -1683,20 +1892,20 @@ describe("Effect stack lifecycle handoff", () => {
             if (Option.isSome(failure))
               expect(failure.value).toBeInstanceOf(StackUpgradeRequiredError);
           }
-          yield* restarted.stop();
-          const status = yield* restarted.start({ config: { capabilities: {} } });
+          yield* restarted.stop;
+          const status = yield* restarted.start({ config: lifecycleConfig() });
           const currentOwner = yield* readOwnerMetadata(env.stateRoot, stack.id, env);
           expect(currentOwner?.rpcRelease).toBe(STACK_RPC_RELEASE);
-          expect(currentOwner?.ownerSessionId).not.toBe(owner.ownerSessionId);
+          expect(currentOwner?.ownerSessionId).not.toBe(originalOwner.ownerSessionId);
           expect(status.id).toBe(stack.id);
           expect(status.runtime).toEqual({ kind: "native" });
-          expect((yield* restarted.status()).lifecycle).toBe("running");
-          yield* restarted.stop();
+          expect((yield* restarted.status).lifecycle).toBe("running");
+          yield* restarted.stop;
           expect(yield* readOwnerMetadata(env.stateRoot, stack.id, env)).toBeUndefined();
           expect(yield* ownerLockExists(env.stateRoot, stack.id)).toBe(false);
-          const startedAgain = yield* restarted.start({ config: { capabilities: {} } });
+          const startedAgain = yield* restarted.start({ config: lifecycleConfig() });
           expect(startedAgain.lifecycle).toBe("running");
-          yield* restarted.destroy();
+          yield* restarted.destroy;
         }),
       ),
     240_000,
@@ -1725,7 +1934,7 @@ describe("Effect stack lifecycle handoff", () => {
                       const compiled = yield* compileStack({
                         projectRoot,
                         runtime: { kind: "native" },
-                        config: { capabilities: {} },
+                        config: lifecycleConfig(),
                       });
                       const resolved = yield* resolveSecrets(
                         {
@@ -1749,7 +1958,7 @@ describe("Effect stack lifecycle handoff", () => {
                   : undefined;
               const initialState: PersistedStackState = {
                 format: "supabase-stack-state-v1",
-                identity: toPersistedIdentity(identity, id),
+                identity: toPersistedIdentity(identity),
                 runtime: { kind: "native" },
                 desiredLifecycle,
                 ports: [],
@@ -1853,15 +2062,14 @@ describe("Effect stack lifecycle handoff", () => {
           const cleanupRecovered = yield* Effect.cached(
             Effect.uninterruptible(
               Effect.gen(function* () {
-                yield* replaced.stop();
-                yield* replaced.destroy();
+                yield* replaced.stop;
+                yield* replaced.destroy;
                 expect(yield* readOwnerMetadata(env.stateRoot, openId, env)).toBeUndefined();
                 expect(yield* ownerLockExists(env.stateRoot, openId)).toBe(false);
               }),
             ),
           );
-          // Register exact cleanup before launching the replacement. The cached effect makes the
-          // explicit assertion below and scope finalization share one stop/destroy transition.
+          // Cache the stop/destroy effect so the assertion below and the finalizer share one transition.
           yield* Effect.addFinalizer(() => cleanupRecovered.pipe(Effect.ignore));
           yield* replaced.start();
           expect((yield* readOwnerMetadata(env.stateRoot, openId, env))?.rpcRelease).toBe(
@@ -1890,14 +2098,13 @@ describe("Effect stack lifecycle handoff", () => {
           environment: env,
         });
         const ownerHandle = yield* openStack(stack.id);
-        yield* Effect.addFinalizer(() => ownerHandle.stop().pipe(Effect.ignore));
+        yield* Effect.addFinalizer(() => ownerHandle.stop.pipe(Effect.ignore));
         const owner = yield* readOwnerMetadata(env.stateRoot, stack.id, env);
-        expect(owner).toBeDefined();
-        if (owner === undefined) return;
+        const currentOwner = expectPresent(owner, "owner metadata");
         const paths = yield* resolveStackPaths({ stateRoot: env.stateRoot, stackId: stack.id });
         const incompatibleOwner = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(
           {
-            ...owner,
+            ...currentOwner,
             rpcRelease: "stack-rpc-v0@0.0.1",
           },
         ).pipe(
@@ -1906,7 +2113,7 @@ describe("Effect stack lifecycle handoff", () => {
           ),
         );
         yield* fs.writeFileString(paths.controlMetadata, incompatibleOwner);
-        yield* ownerHandle.stop();
+        yield* ownerHandle.stop;
         expect(yield* readOwnerMetadata(env.stateRoot, stack.id, env)).toBeUndefined();
         expect(yield* ownerLockExists(env.stateRoot, stack.id)).toBe(false);
       }),
@@ -1966,8 +2173,8 @@ describe("Effect stack lifecycle handoff", () => {
           const stack = yield* makeTestHandle(stackId, {
             resolveOwner: () => Effect.succeed(Option.some({ owner, launched: false })),
           });
-          const status = yield* stack.status().pipe(Effect.exit);
-          const stackCredentials = yield* stack.credentials().pipe(Effect.exit);
+          const status = yield* stack.status.pipe(Effect.exit);
+          const stackCredentials = yield* stack.credentials.pipe(Effect.exit);
           const logs = yield* stack.logs().pipe(Effect.exit);
           const assertUpgrade = (result: Exit.Exit<unknown, StackError>) => {
             expect(Exit.isFailure(result)).toBe(true);
@@ -1987,7 +2194,7 @@ describe("Effect stack lifecycle handoff", () => {
           assertUpgrade(stackCredentials);
           assertUpgrade(logs);
           expect(yield* Ref.get(calls)).toBe(0);
-          yield* stack.stop();
+          yield* stack.stop;
         }).pipe(Effect.provide(NodeServices.layer)),
       ),
   );
@@ -2101,7 +2308,7 @@ describe("Effect stack lifecycle handoff", () => {
           resolveOwner: () => Effect.succeed(Option.some({ owner, launched: true })),
           readPersistedState: Effect.succeed(Option.some(stoppedState())),
         });
-        const destroy = yield* Effect.forkChild(stack.destroy(), { startImmediately: true });
+        const destroy = yield* Effect.forkChild(stack.destroy, { startImmediately: true });
         yield* Deferred.await(destroyEntered);
         yield* Fiber.interrupt(destroy);
         const interrupted = yield* Fiber.join(destroy).pipe(Effect.exit);

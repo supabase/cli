@@ -122,8 +122,6 @@ describe("resolveAgentOutputFormat", () => {
     expect(
       resolveAgentOutputFormatFromArgs(["--log-level=error", "--version"], Option.some("codex")),
     ).toBe("text");
-    // Version wins over Completions/Wizard (built-in action precedence), so
-    // these argv render the version line and must resolve to text.
     expect(
       resolveAgentOutputFormatFromArgs(
         ["--completions", "bash", "--version"],
@@ -139,23 +137,15 @@ describe("resolveAgentOutputFormat", () => {
     expect(
       resolveAgentOutputFormatFromArgs(["--debug=false", "--version"], Option.some("codex")),
     ).toBe("text");
-    // An invalid inline value on a SKIPPED boolean still serves the action
-    // (presence is scanned before `--wizard=bogus` parses) — text. On the
-    // action flag ITSELF it fails that flag's own parse — no action, so the
-    // error keeps the agent JSON envelope.
     expect(
       resolveAgentOutputFormatFromArgs(["--wizard=bogus", "--version"], Option.some("codex")),
     ).toBe("text");
-    // The parser consumes a space-separated boolean literal too.
     expect(
       resolveAgentOutputFormatFromArgs(["--wizard", "false", "--version"], Option.some("codex")),
     ).toBe("text");
     expect(
       resolveAgentOutputFormatFromArgs(["--debug", "0", "--version"], Option.some("codex")),
     ).toBe("text");
-    // Boundary: a non-literal operand is NOT skipped — the walk bails
-    // conservatively even though the renderer still serves the version here
-    // (ledgered with the walk-consolidation follow-up).
     expect(
       resolveAgentOutputFormatFromArgs(["--wizard", "bogus", "--version"], Option.some("codex")),
     ).toBe("json");

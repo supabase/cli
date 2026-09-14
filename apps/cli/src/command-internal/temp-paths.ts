@@ -6,11 +6,9 @@ import {
 } from "../shared/telemetry/error-actionability.ts";
 
 /**
- * A real failure reading `<workdir>/supabase/.temp/project-ref` (e.g. the path is a
- * directory or permissions deny access). Mirrors `flags.LoadProjectRef`, which
- * returns `failed to load project ref: <err>` for any non-not-exist read error
- * rather than treating it
- * as an unlinked project.
+ * A real failure reading `<workdir>/supabase/.temp/project-ref` (e.g. the
+ * path is a directory, or permissions deny access) — distinct from the file
+ * simply not existing, which means "not linked" rather than an error.
  */
 export class ProjectRefReadError extends Data.TaggedError("ProjectRefReadError")<{
   readonly message: string;
@@ -21,13 +19,9 @@ export class ProjectRefReadError extends Data.TaggedError("ProjectRefReadError")
 }
 
 /**
- * Absolute paths to the established files written under `<workdir>/supabase/.temp/`.
- *
- * `supabase link` / `supabase unlink` are the authoritative writers and remover
- * of this directory, but several layers (`project-ref.layer.ts`,
- * `linked-project-cache.layer.ts`) also read from it. Centralising the
- * joins here keeps the path layout in one place instead of re-inlining
- * `path.join(workdir, "supabase", ".temp", "...")` at every call site.
+ * Absolute paths to the established files under `<workdir>/supabase/.temp/`.
+ * `supabase link`/`unlink` own writing and removing this directory; other
+ * layers only read from it.
  */
 export interface TempPaths {
   readonly tempDir: string;
@@ -60,13 +54,9 @@ export function tempPaths(path: Path.Path, workdir: string): TempPaths {
 
 /**
  * Reads the linked project ref from `<workdir>/supabase/.temp/project-ref`,
- * returning `None` when the file is absent or blank. Mirrors the non-prompting
- * file read in `flags.LoadProjectRef`: a single read
- * where a not-exist file is "not linked" (→ `None`), but any other read error (the
- * path is a directory, permission denied, …) surfaces `failed to load project ref`
- * rather than being swallowed into an unlinked result. Shared by the project-ref
- * resolver and the declarative smart-generate prompt so both detect a linked workdir —
- * and a broken one — the same way.
+ * returning `None` when the file is absent or blank. A missing file means
+ * "not linked"; any other read error (a directory, permission denied, …)
+ * fails instead of being swallowed into an unlinked result.
  */
 export const readProjectRefFile = (
   fs: FileSystem.FileSystem,
@@ -75,9 +65,8 @@ export const readProjectRefFile = (
 ): Effect.Effect<Option.Option<string>, ProjectRefReadError> =>
   Effect.gen(function* () {
     const refPath = tempPaths(path, workdir).projectRef;
-    // One read, mirroring Go's single `afero.ReadFile`. Effect surfaces not-exist as
-    // a `PlatformError` with a `SystemError` reason tagged `"NotFound"` → treat as the
-    // unlinked/fall-through case; every other read error fails (`errors.Errorf`).
+    // A `NotFound` PlatformError means unlinked (fall through); any other
+    // read error fails.
     const content = yield* fs.readFileString(refPath).pipe(
       Effect.catchTag("PlatformError", (error) =>
         error.reason._tag === "NotFound"

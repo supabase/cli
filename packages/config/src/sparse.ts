@@ -2,18 +2,8 @@ import { Schema } from "effect";
 import { CliConfigSchema, type CliConfig } from "./base.ts";
 
 /**
- * Sparse config subtraction — see `docs/adr/0018-sparse-config-subtraction.md`.
- *
- * A sparse config is a partial overlay containing only the values that differ
- * from some baseline. In the primary case — subtracting the default config
- * ({@link omitDefaultValues}) — the result is itself a valid config document:
- * re-decoding refills exactly what was removed, so it denotes the same
- * effective config under the current schema's defaults. Subtracting any other
- * baseline (e.g. a remote block against the merged base config) yields an
- * overlay meaningful only relative to that baseline. Arrays are compared
- * wholesale (order-sensitive) and never subtracted element-wise, so a sparse
- * value is always either an entire array or an object subtree of kept leaves —
- * hence arrays survive `DeepPartial` unchanged below.
+ * A deeply partial `T` used for sparse config overlays; arrays are kept as whole units
+ * rather than partialized element-wise. See `docs/adr/0018-sparse-config-subtraction.md`.
  */
 export type DeepPartial<T> =
   T extends ReadonlyArray<unknown>
@@ -25,18 +15,9 @@ export type DeepPartial<T> =
 export type SparseCliConfig = DeepPartial<CliConfig>;
 
 /**
- * The family-neutral operand shape of the comparison core: a deeply partial
- * root scope of {@link CliConfig}, without the nested `remotes` record. Every
- * key an operand carries must hold its fully-resolved *effective* value; an
- * absent key means the operand doesn't speak for that field — never that the
- * field is at its default. Both config families fit: on the local side a full
- * {@link CliConfig} document or a branch's merged effective config, and on
- * the hosted side the sparse `ProjectConfig` subset produced by
- * `toProjectConfig` — a Management API response never mentions local-only
- * sections, so its operands are inherently partial. Keeping `remotes` out of
- * the contract means neither operand has to fabricate one to type-check.
- * (Replaces the former fully-materialized `BaseCliConfig` operand; see ADR
- * 0018's addendum for the CLI-2230 ruling.)
+ * The comparison operand shape: a deeply partial {@link CliConfig} without `remotes`.
+ * Every key an operand carries must hold its fully-resolved effective value; an absent key
+ * means the operand doesn't speak for that field, not that the field is at its default.
  */
 export type EffectiveConfig = DeepPartial<Omit<CliConfig, "remotes">>;
 
@@ -45,18 +26,9 @@ const decodeCliConfig = Schema.decodeUnknownSync(CliConfigSchema);
 let defaultCliConfig: CliConfig | undefined;
 
 /**
- * The default config: a {@link CliConfig} in which every value carries its
- * schema-declared default. Derived by decoding `{}` through
- * {@link CliConfigSchema} — the schema's `default` annotations and decoding
- * defaults are the single source of truth, so there is no hand-maintained
- * defaults table to drift. Fields declared `optionalKey` without a default
- * (e.g. `project_id`, `api.external_url`) are absent.
- *
- * Memoized (and the memo shared with callers) rather than computed at module
- * load, so importing the package doesn't pay for a full schema decode. The
- * memo is deeply frozen before it is shared: it doubles as the module-wide
- * subtraction baseline, so a caller mutation would silently corrupt every
- * later {@link omitDefaultValues} result.
+ * The default config: a {@link CliConfig} decoded from `{}`, so every value carries its
+ * schema-declared default. Memoized and deeply frozen; the frozen result is reused as the
+ * baseline for every {@link omitDefaultValues} call, so callers must not mutate it.
  */
 export function getDefaultCliConfig(): CliConfig {
   defaultCliConfig ??= deepFreeze(decodeCliConfig({}));
@@ -64,21 +36,8 @@ export function getDefaultCliConfig(): CliConfig {
 }
 
 /**
- * Recursively freezes `value` and returns it. Exported (not re-exported from
- * `./index.ts` — this stays an internal cross-module helper, per CLI-2230's
- * `_apiResponse` clone-and-freeze finding) so `./project-config/
- * project-config.ts` can freeze the cloned raw attributes it attaches, using
- * the same freezing behavior {@link getDefaultCliConfig}'s memo relies on.
- *
- * Guarded against revisiting an already-frozen (or otherwise already-seen)
- * object with a `WeakSet`, as defense in depth: {@link getDefaultCliConfig}'s
- * memo is a decoded schema default, genuinely acyclic by construction, but
- * `./project-config/project-config.ts`'s caller is a cloned Management API
- * response — untrusted input — and that caller now bounds depth and cycles
- * itself before ever calling this (`assertRawAttributesDepthWithinBound`).
- * This guard exists so `deepFreeze` stays safe to call directly against
- * arbitrary input even if that upstream bound is ever bypassed or forgotten,
- * not because this function's own callers currently need it.
+ * Recursively freezes `value` and returns it. Guards against revisiting an already-seen
+ * object with a `WeakSet`, so it stays safe to call against cyclic or untrusted input.
  */
 export function deepFreeze<T>(value: T): T {
   return deepFreezeVisiting(value, new WeakSet());
@@ -103,11 +62,9 @@ function isObject(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Defines `key` as an own data property. Record keys come from user config
- * files, and both smol-toml and `JSON.parse` produce an own `__proto__` key
- * (a valid function name or remote label) that a plain `target[key] = value`
- * assignment would feed to the legacy prototype setter, silently dropping the
- * entry — or, for object values, swapping the target's prototype.
+ * Defines `key` as an own data property. Guards against a `__proto__` key from user config
+ * (a valid function name or remote label) being treated as the prototype setter by a plain
+ * assignment, which would silently drop the entry or swap the target's prototype.
  */
 export function setOwnProperty(target: Record<string, unknown>, key: string, value: unknown): void {
   Object.defineProperty(target, key, {
@@ -154,21 +111,9 @@ function isEqualValue(left: unknown, right: unknown): boolean {
 }
 
 /**
- * The untyped subtraction walk: returns `value − baseline`, or `undefined`
- * when nothing survives. Values strictly deep-equal (order-sensitive) to the
- * baseline's are removed; objects recurse per key and are dropped once empty;
- * arrays are removed wholesale on equality, never subtracted element-wise. A
- * key with no counterpart in the baseline is kept verbatim — which is exactly
- * how `remotes` and other record entries pass through untouched when the
- * baseline is the default config. Symmetrically, a baseline-only key is
- * ignored by design: subtraction reports what `value` declares, and in
- * overlay semantics absence means *inherit*, so a missing key is not a
- * removal.
- *
- * Shared with `io.ts`, which subtracts *encoded* documents before writing
- * minimal config files; the typed entry points below operate on decoded
- * {@link CliConfig} values, the only shape where "equals the default" is
- * well-defined.
+ * Returns `value − baseline`, or `undefined` when nothing survives. A key missing from the
+ * baseline is kept verbatim (so record entries like `remotes` pass through untouched); a
+ * key present only in the baseline is ignored, since overlay absence means "inherit".
  */
 export function subtractValue(value: unknown, baseline: unknown): unknown {
   if (baseline === undefined) {
@@ -201,58 +146,32 @@ export function subtractValue(value: unknown, baseline: unknown): unknown {
 }
 
 /**
- * Returns the sparse config `config − baseline`. Directional: a value equal to
- * the baseline's is removed even when it differs from the schema default, and
- * a value differing from the baseline's is kept even when it equals the schema
- * default.
+ * Returns the sparse config `config − baseline`. Directional: a value equal to the
+ * baseline is removed even if it differs from the schema default, and kept otherwise.
  *
- * Operands must be *effective* wherever they speak: every key present must
- * carry its fully-resolved value (a decode of a complete document, or of a
- * raw-merged one — or the hosted values a Management API response reports),
- * while an absent key is simply outside the comparison, per the absence rules
- * above. A standalone-decoded `[remotes.*]` block is NOT a valid operand:
- * decoding a sparse fragment materializes global defaults in every section it
- * omitted, where the block meant to inherit from the base config, so the
- * overlay would pin the branch to global defaults wherever the base overrides
- * a field the block omits. To sparsify a branch's config (a `[remotes.*]`
- * block declares overrides for a specific persistent Supabase branch, bound
- * to it by `project_id`), subtract its merged effective config — the raw
- * remote subtree merged over the raw base document *before* decoding, exactly
- * as `io.ts`'s `mergeRemoteSubtree` does so remote schema defaults never leak
- * in — against the base effective config, never the default config; see ADR
- * 0018 for why the default-config baseline silently changes what the branch
- * resolves to.
+ * Both operands must be effective — every present key holds its fully-resolved value. A
+ * standalone-decoded `[remotes.*]` block does not qualify: decoding it alone materializes
+ * defaults it meant to inherit from the base config. See
+ * `docs/adr/0018-sparse-config-subtraction.md`.
  */
 export function subtractCliConfig(
   config: EffectiveConfig,
   baseline: EffectiveConfig,
 ): SparseCliConfig;
-// The implementation signature stays untyped because TypeScript cannot verify
-// that a structural walk over `unknown` reconstructs a `DeepPartial` of its
-// input; the overload above is the contract, pinned by the unit tests.
+// Untyped here because a structural walk over `unknown` can't be verified to reconstruct a
+// `DeepPartial`; the overload above is the enforced contract.
 export function subtractCliConfig(config: EffectiveConfig, baseline: EffectiveConfig): unknown {
   const result = subtractValue(config, baseline);
   return isObject(result) ? result : {};
 }
 
 /**
- * Returns the sparse config `config − default config`: only the values that
- * differ from their schema defaults, per {@link subtractCliConfig}'s
- * semantics. The result is itself a valid config document — re-decoding
- * refills the removed defaults, yielding the same effective config. `remotes`
- * blocks (per-persistent-branch overrides) pass through untouched (the
- * default config has none), and undefaulted `optionalKey` fields always
- * survive when present.
+ * Returns the sparse config `config − default config`: only the values differing from
+ * their schema defaults. The result re-decodes to the same effective config.
  *
- * The result is sparse at the root scope only: record-keyed entries
- * (`functions.*`, `remotes.*`) survive whole, with every per-entry decoding
- * default materialized — decoding fills them in, and the default config's
- * empty records offer no per-entry baseline to subtract. This cancels out in
- * a diff (both sides carry the same materialized defaults), but a consumer
- * rendering the result directly must strip entry-level defaults itself. For a
- * remote block that is necessarily the consumer's job — its correct baseline
- * is the merged base config (ADR 0018); for function entries, `io.ts`'s
- * `stripFunctionRecordDefaults` is the encoded-path precedent.
+ * Sparse only at the root: record-keyed entries (`functions.*`, `remotes.*`) survive
+ * whole, with their own per-entry defaults materialized, so a consumer rendering the
+ * result directly must strip those defaults itself.
  */
 export function omitDefaultValues(config: EffectiveConfig): SparseCliConfig {
   return subtractCliConfig(config, getDefaultCliConfig());

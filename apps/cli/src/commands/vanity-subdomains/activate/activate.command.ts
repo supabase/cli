@@ -17,12 +17,9 @@ const config = {
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
-  // Go marks this flag required (`cmd/vanitySubdomains.go:67`), but cobra
-  // validates required flags only AFTER `PersistentPreRunE`
-  // (`cobra@v1.10.2/command.go:985,1005`) — so the `--experimental` gate,
-  // login check, and project-ref resolution must all win over a missing
-  // `--desired-subdomain`. Optional at parse time; presence is enforced in
-  // the handler (after ref resolution) instead.
+  // Optional at parse time so the --experimental gate, login check, and project-ref
+  // resolution all run first; required-ness is enforced in the handler after ref
+  // resolution.
   desiredSubdomain: Flag.string("desired-subdomain").pipe(
     Flag.withDescription("The desired vanity subdomain to use for your Supabase project."),
     Flag.optional,
@@ -38,17 +35,13 @@ export const vanitySubdomainsActivateCommand = Command.make("activate", config).
   Command.withShortDescription("Activate a vanity subdomain"),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
-      // Cobra parses flags — rejecting an out-of-enum `-o` (`internal/utils/enum.go:21-27`)
-      // — before `PersistentPreRunE` ever runs (`cobra@v1.10.2/command.go:919,985`), so an
-      // invalid `-o` value must win over a missing `--experimental` flag.
+      // An invalid `-o` value must win over a missing `--experimental` flag, so this
+      // validation runs before the gate.
       yield* validateOutputFormat(RESOURCE_OUTPUT_FORMATS);
-      // Go gates `vanityCmd` (vanity-subdomains) behind `--experimental` in PersistentPreRunE
-      // (root.go:91-96) BEFORE the `IsManagementAPI` login check (root.go:105-109).
-      // `managementApiRuntimeLayer` eagerly resolves an access token as part
-      // of building its `CommandPlatformApi` layer, so it must be provided AFTER
-      // the gate (inline here) rather than via `Command.provide` on the whole
-      // command — `Command.provide` would build the layer, and fail on a missing
-      // token, before this generator's first `yield*` ever runs.
+      // `managementApiRuntimeLayer` eagerly resolves an access token, so it's provided
+      // inline after the experimental gate rather than via `Command.provide` on the
+      // whole command — `Command.provide` would build the layer, and fail on a missing
+      // token, before the gate ever runs.
       yield* requireExperimental;
       return yield* vanitySubdomainsActivate(flags).pipe(
         withCommandTelemetry({ flags }),

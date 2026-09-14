@@ -149,10 +149,18 @@ function cleanupErrorDetail(
   }`;
 }
 
-function isPermissionError(error: unknown): boolean {
-  const code =
-    error != null && typeof error === "object" && "code" in error ? String(error.code) : undefined;
-  return code === "EACCES" || code === "EPERM";
+// Walks the `cause` chain (bounded) so a typed wrapper like `CliHomeDisposeError`
+// classifies by the errno it carries, not by its own shape.
+function isPermissionError(error: unknown, hops = 8): boolean {
+  let current: unknown = error;
+  for (let hop = 0; hop < hops && current != null && typeof current === "object"; hop += 1) {
+    const code = "code" in current ? String(current.code) : undefined;
+    if (code === "EACCES" || code === "EPERM") {
+      return true;
+    }
+    current = "cause" in current ? current.cause : undefined;
+  }
+  return false;
 }
 
 function formatMode(mode: number): string {
@@ -475,15 +483,9 @@ export function createStackE2eCleanupManager(
         }
       }
 
-      // Cleanup of leaked stack resources is best-effort: assertions in the
-      // test itself have already passed by the time `drain()` runs, and CI
-      // runners are ephemeral so a leaked temp dir doesn't affect
-      // correctness. Surface the details so developers can still see them
-      // locally, but don't fail the test (in particular: `functions dev`
-      // leaves root-owned files from edge-runtime's docker container that
-      // the runner user cannot unlink, and the docker fallback may itself
-      // fail in environments where the daemon is unreachable from the
-      // sandbox).
+      // Cleanup failures are best-effort and don't fail the test: assertions already
+      // ran, CI runners are ephemeral, and cases like `functions dev`'s root-owned
+      // docker files can make cleanup itself impossible.
       if (failures.length > 0) {
         console.warn(
           `[stack-e2e-cleanup] ${failures.length} resource(s) could not be cleaned up:\n${failures.join("\n")}`,

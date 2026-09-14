@@ -8,12 +8,9 @@ import { runSupabase } from "../../../../tests/helpers/cli.ts";
 const E2E_TIMEOUT_MS = 30_000;
 
 /**
- * Golden-path e2e for CLI-1865: exercises the real compiled-binary boundary —
- * `signing-key.command.ts`'s actual production runtime layer, not the mocked
- * `Stdin` the integration suite provides via `Layer.succeed`. A missing
- * `stdinLayer` in that composition only surfaces as a "Service not found" defect
- * at this boundary (see the CLAUDE.md invariant 5). Per-branch
- * prompt/format coverage lives in the integration suite.
+ * Golden-path e2e exercising the real compiled-binary boundary: the actual production runtime
+ * layer, not the mocked `Stdin` the integration suite provides. Per-branch prompt/format
+ * coverage lives in the integration suite.
  */
 describe("supabase gen signing-key", () => {
   let projectDir: string;

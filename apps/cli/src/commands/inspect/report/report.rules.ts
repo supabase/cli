@@ -13,10 +13,7 @@ export interface InspectRule {
   readonly fail: string;
 }
 
-/**
- * The default rules. Used when
- * `[experimental.inspect.rules]` is absent or empty in `config.toml`.
- */
+/** The default rules, used when `[experimental.inspect.rules]` is absent or empty in `config.toml`. */
 export const DEFAULT_INSPECT_RULES: ReadonlyArray<InspectRule> = [
   {
     query: "SELECT LISTAGG(stmt, ',') AS match FROM `locks.csv` WHERE age > '00:02:00'",
@@ -112,16 +109,7 @@ export interface InspectRuleResult {
   readonly matches: string;
 }
 
-/**
- * Evaluate one rule against the written CSVs and map it to its summary cells:
- *
- * - aggregate over zero rows / non-aggregate with no rows (csvq NULL / ErrNoRows)
- *   → STATUS = `pass`, MATCHES = `-`;
- * - a valid empty string → STATUS = `pass`, MATCHES = `` (empty);
- * - a non-empty value → STATUS = `fail`, MATCHES = the value;
- * - a csvq error → STATUS = the error message, MATCHES = `-` (the command does not
- *   fail; the error becomes the cell).
- */
+/** Evaluates one rule against the written CSVs and maps the result to summary cells. */
 export function evaluateInspectRule(
   rule: InspectRule,
   provider: CsvTableProvider,
@@ -151,13 +139,9 @@ function summarizeInspectRuleMatch(match: string): string {
 }
 
 /**
- * Build the `[RULE, STATUS, MATCHES]` summary rows in rule order, for
- * `renderGlamourTable`. Each cell wraps in backticks inside its markdown:
- * Glamour strips a non-empty inline code span (so a populated
- * cell renders bare), but an EMPTY code span (`` `` ``) is passed through as the
- * two literal backtick characters — the same rule `inspectText` encodes for
- * the `inspect db` tables. A valid empty `matches` cell therefore renders as `` ``
- * (width 2); `name`/`status` are never empty.
+ * Builds `[RULE, STATUS, MATCHES]` summary rows for `renderGlamourTable`. Glamour strips a
+ * non-empty inline code span but renders an empty one as its two literal backticks, so a valid
+ * empty `matches` cell renders as `` `` `` (width 2) instead of vanishing.
  */
 export function buildRuleSummaryRows(
   results: ReadonlyArray<InspectRuleResult>,

@@ -42,12 +42,9 @@ describe("completion bash", () => {
     "accepts --no-descriptions from real argv via the command parser and still prints the no-desc script",
     () => {
       const out = setupCompletionBash();
-      // Running through the real command (rather than calling the handler
-      // directly, as the two tests above do) also runs
-      // `withCommandTelemetry` (fires the `cli_command_executed`
-      // event), which needs `Analytics`/`ProcessControl`/`Stdio` alongside
-      // `Output` — the same minimal layer set `telemetry.integration.test.ts`
-      // uses for its own local-only (no Management API) native command.
+      // Running the real command (not the handler directly) also runs withCommandTelemetry,
+      // which needs Analytics/ProcessControl/Stdio alongside Output — the same layer set
+      // telemetry.integration.test.ts uses for its own local-only native command.
       const layer = Layer.mergeAll(
         out.layer,
         mockAnalytics().layer,
@@ -60,7 +57,7 @@ describe("completion bash", () => {
           "--no-descriptions",
         ]);
         expect(out.stdoutText).toContain("__completeNoDesc");
-      }).pipe(Effect.provide(layer)) as Effect.Effect<void>;
+      }).pipe(Effect.provide(layer));
     },
   );
 
@@ -79,7 +76,7 @@ describe("completion bash", () => {
         yield* Command.runWith(testRoot(), { version: "0.0.0-test" })(["bash"]);
         const event = analytics.captured.find((entry) => entry.event === EventCommandExecuted);
         expect(event).toBeDefined();
-      }).pipe(Effect.provide(layer)) as Effect.Effect<void>;
+      }).pipe(Effect.provide(layer));
     },
   );
 });

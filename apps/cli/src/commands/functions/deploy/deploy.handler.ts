@@ -20,8 +20,7 @@ export const functionsDeploy = Effect.fn("functions.deploy")(function* (
   const api = yield* CommandPlatformApi;
   const cliSettings = yield* CommandSettings;
   const resolver = yield* ProjectRefResolver;
-  // `--yes` OR `SUPABASE_YES` inside the `--prune` confirm — the env var
-  // must auto-confirm too, not just the flag.
+  // Also honors `SUPABASE_YES`, not just the `--yes` flag, for the `--prune` confirm.
   const yes = yield* resolveYes;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
@@ -52,17 +51,11 @@ export const functionsDeploy = Effect.fn("functions.deploy")(function* (
           }),
         ),
       ),
-    // Go: `fmt.Printf("Deployed Functions on project %s: %s\n",
-    // utils.Aqua(flags.ProjectRef), …)` (`internal/functions/deploy/deploy.go:70`)
-    // — stdout-bound, so the TTY gate must check stdout.
+    // Written to stdout, so the TTY color gate must check stdout.
     styleIdentifier: (text) => aqua(text, process.stdout),
-    // Go: `utils.Bold` on the `Bundling Function:` slug (`bundle.go:30`, stderr)
-    // and the no-functions error dir (`deploy.go:35`, rendered on stderr) —
-    // both stderr-bound, matching `bold`'s default TTY gate.
+    // Written to stderr, matching `bold`'s default TTY gate.
     styleEmphasis: (text) => bold(text),
-    // Go: `utils.Yellow` on the `WARNING:` token before "Docker is not
-    // running" (`deploy.go:60`, stderr) — matches `yellow`'s default
-    // TTY gate.
+    // Written to stderr, matching `yellow`'s default TTY gate.
     styleWarning: (text) => yellow(text),
   }).pipe(
     Effect.ensuring(

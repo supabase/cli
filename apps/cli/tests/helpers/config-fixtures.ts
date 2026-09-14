@@ -1,11 +1,9 @@
 import { VALID_REF } from "./command-mocks.ts";
 
 /**
- * Schema-valid `GET /v2/projects/{ref}/config` response body whose managed
- * values all sit at the local schema defaults, so an empty `config.toml`
- * diffs clean against it. Shared by `config diff` and `config push`'s
- * integration suites — hoisted here (verbatim, CLI-2313 shard 5a) rather than
- * duplicated, per `apps/cli/CLAUDE.md`'s "Hoist Before You Duplicate" rule.
+ * Schema-valid `GET /v2/projects/{ref}/config` response body whose managed values all sit at
+ * the local schema defaults, so an empty `config.toml` diffs clean against it. Shared by
+ * `config diff` and `config push`'s integration suites.
  */
 export function v2ProjectConfigResponse(
   opts: {
@@ -37,11 +35,10 @@ export function v2ProjectConfigResponse(
       default_pool_size: 20,
       max_client_conn: 100,
     },
-    // A realistic fresh-project GoTrue record at platform defaults — the
-    // largest, most transform-heavy mapping surface (durations, inversions,
-    // unconfigured sentinels, provisioning-default subjects) must run end to
-    // end and classify CLEANLY against an empty config.toml. An `auth: {}`
-    // here previously let two classifier blockers through untested.
+    // A realistic fresh-project GoTrue record at platform defaults — the largest, most
+    // transform-heavy mapping surface (durations, inversions, unconfigured sentinels,
+    // provisioning-default subjects) must run end to end and classify cleanly against an empty
+    // config.toml.
     auth: {
       site_url: "http://127.0.0.1:3000",
       uri_allow_list: "https://127.0.0.1:3000",
@@ -59,8 +56,8 @@ export function v2ProjectConfigResponse(
       rate_limit_verify: 30,
       rate_limit_sms_sent: 30,
       rate_limit_web3: 30,
-      // GoTrue reports 0 hours for unconfigured session bounds; the mapping
-      // canonicalizes them to the STRING "0s" (registry unconfiguredValue).
+      // GoTrue reports 0 hours for unconfigured session bounds; the mapping canonicalizes them
+      // to the string "0s" (registry unconfiguredValue).
       sessions_timebox: 0,
       sessions_inactivity_timeout: 0,
       external_email_enabled: true,

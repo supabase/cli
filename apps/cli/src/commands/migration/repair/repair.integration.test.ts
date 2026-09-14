@@ -89,17 +89,15 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         extensionExists: () => Effect.succeed(false),
         copyToCsv: () => Effect.succeed(new Uint8Array()),
         queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
-        // A migration file's statements arrive as one batch; replay them through
-        // `exec`/`query` so this suite's recordings and failure injection still apply.
+        // Replays each statement through exec/query so recordings and failure injection apply.
         execBatch: (statements) => sequentialExecBatch(session)(statements),
       };
       return Effect.succeed(session);
     },
   });
 
-  // `loadProjectRef` gives an explicit `--project-ref` flag top precedence, same
-  // as Go's `flags.LoadProjectRef` — mirror that so a test can prove the flag
-  // (not just the hardcoded `VALID_REF` fallback) drives the linked ref.
+  // Gives an explicit --project-ref flag precedence over the VALID_REF fallback, so a
+  // test can prove the flag drives the linked ref.
   const projectRef = Layer.succeed(ProjectRefResolver, {
     resolve: () => Effect.succeed(VALID_REF),
     resolveForLink: () => Effect.succeed(VALID_REF),
@@ -125,8 +123,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     mockTty({ stdinIsTty: opts.isTTY ?? true }),
     mockStdin(
       opts.isTTY ?? true,
-      // Migration prompts read stdin directly, so a confirm answer is
-      // supplied via piped stdin rather than the Output prompt mock.
+      // Migration prompts read stdin directly, so the confirm answer is piped in.
       opts.pipedInput ?? (opts.confirm === undefined ? undefined : opts.confirm ? "y\n" : "n\n"),
     ),
     BunServices.layer,
@@ -158,9 +155,7 @@ describe("migration repair", () => {
     const { layer, execs, queries, out } = setup(tmp.current);
     return Effect.gen(function* () {
       yield* migrationRepair(input({ versions: ["20240101000000"], status: "applied" }));
-      // The connection banner prints to stderr before dialing.
       expect(stripAnsi(out.stderrText)).toContain("Connecting to remote database...");
-      // One transaction: BEGIN ... COMMIT, no ROLLBACK.
       expect(execs).toContain("BEGIN");
       expect(execs).toContain("COMMIT");
       expect(execs).not.toContain("ROLLBACK");
@@ -170,8 +165,6 @@ describe("migration repair", () => {
   });
 
   it.live("resolves the DB target before parsing positional versions", () => {
-    // The DB config resolves before
-    // version parsing, so an unlinked target error wins over a bad version.
     const { layer } = setup(tmp.current, { failResolve: true });
     return Effect.gen(function* () {
       const exit = yield* migrationRepair(
@@ -180,15 +173,12 @@ describe("migration repair", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
-        // The config/target error surfaces first, NOT the invalid-version error.
         expect(Option.isSome(failure) && failure.value._tag).toBe("ProjectRefNotLinkedError");
       }
     }).pipe(Effect.provide(layer));
   });
 
   it.live("caches the linked project even when the repair-all prompt is declined", () => {
-    // The project cache runs regardless of the
-    // handler's own failure, so a declined repair-all (cancellation) still caches the ref.
     const { layer, cache } = setup(tmp.current, { confirm: false });
     return Effect.gen(function* () {
       const exit = yield* migrationRepair(input({ versions: [], status: "applied" })).pipe(
@@ -225,8 +215,7 @@ describe("migration repair", () => {
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
         expect(Option.isSome(failure) && failure.value._tag).toBe("MigrationInvalidVersionError");
-        // Guard: unlike `db reset` (bare `invalid version number`),
-        // `migration repair` keeps the established `failed to parse <v>:` wrapper.
+        // Unlike db reset's bare message, migration repair keeps the "failed to parse <v>:" wrapper.
         expect(Option.isSome(failure) && failure.value.message).toBe(
           "failed to parse not-a-number: invalid version number",
         );
@@ -237,9 +226,6 @@ describe("migration repair", () => {
   it.live("rejects a version outside Go's int range before any DB mutation", () => {
     const { layer, execs, queries } = setup(tmp.current);
     return Effect.gen(function* () {
-      // Explicit versions validate with a strict integer parse, which
-      // rejects values above the int64 range; a 20-digit version must fail
-      // `invalid version number` before any glob/upsert/delete.
       const exit = yield* migrationRepair(
         input({ versions: ["99999999999999999999"], status: "applied" }),
       ).pipe(Effect.exit);
@@ -248,7 +234,6 @@ describe("migration repair", () => {
         const failure = Cause.findErrorOption(exit.cause);
         expect(Option.isSome(failure) && failure.value._tag).toBe("MigrationInvalidVersionError");
       }
-      // Validation runs before connecting, so no transaction or upsert occurred.
       expect(execs).not.toContain("BEGIN");
       expect(queries.some((q) => q.sql.includes("ON CONFLICT"))).toBe(false);
     }).pipe(Effect.provide(layer));
@@ -267,9 +252,8 @@ describe("migration repair", () => {
   it.live(
     "repair-all with --status reverted wipes the whole history (no upserts, no deletes)",
     () => {
-      // repair-all + reverted queues ONLY TRUNCATE: the per-version DELETE is
-      // the non-repair-all path and the UPSERT is the applied path, so the net
-      // effect is wiping the entire history table.
+      // repair-all + reverted only queues TRUNCATE; DELETE is the non-repair-all path
+      // and UPSERT is the applied path.
       seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
       const { layer, execs, queries } = setup(tmp.current, { confirm: true });
       return Effect.gen(function* () {
@@ -298,8 +282,7 @@ describe("migration repair", () => {
   });
 
   it.live("repair-all without a TTY and no piped answer falls back to NO (cancel)", () => {
-    // Stdin is read regardless of TTY (isTTY only changes the timeout);
-    // with no piped answer the empty read falls back to the default (NO) → cancel.
+    // isTTY only changes the read timeout; stdin is still read either way.
     const { layer, out } = setup(tmp.current, { isTTY: false });
     return Effect.gen(function* () {
       const exit = yield* migrationRepair(input({ versions: [], status: "applied" })).pipe(
@@ -315,20 +298,17 @@ describe("migration repair", () => {
   });
 
   it.live("repair-all honors a piped 'y' answer without a TTY (proceeds)", () => {
-    // Piped stdin is read even when non-interactive; a piped `y` overrides
-    // the default NO, so repair-all truncates and reapplies.
+    // Piped stdin is read even without a TTY, overriding the default no.
     seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
     const { layer, execs, queries } = setup(tmp.current, { isTTY: false, pipedInput: "y\n" });
     return Effect.gen(function* () {
       yield* migrationRepair(input({ versions: [], status: "applied" }));
-      // Proceeded: repair-all truncates then upserts the local file.
       expect(execs).toContain("TRUNCATE supabase_migrations.schema_migrations");
       expect(queries.some((q) => q.sql.includes("ON CONFLICT"))).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
   it.live("auto-confirms repair-all via SUPABASE_YES (no --yes flag)", () => {
-    // SUPABASE_YES=1 auto-confirms without --yes.
     const previous = process.env["SUPABASE_YES"];
     process.env["SUPABASE_YES"] = "1";
     seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
@@ -351,8 +331,7 @@ describe("migration repair", () => {
   it.live(
     "auto-confirms repair-all via SUPABASE_YES in the project .env (Go loadNestedEnv)",
     () => {
-      // SUPABASE_YES set only in supabase/.env (not the shell) — the project env loads it
-      // before the repair-all prompt, so it auto-confirms with no --yes flag and no stdin answer.
+      // SUPABASE_YES lives only in supabase/.env; the project env loads it before the prompt.
       seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
       writeFileSync(join(tmp.current, "supabase", ".env"), "SUPABASE_YES=true\n");
       const { layer, execs, queries } = setup(tmp.current);
@@ -375,8 +354,6 @@ describe("migration repair", () => {
         const failure = Cause.findErrorOption(exit.cause);
         expect(Option.isSome(failure) && failure.value._tag).toBe("ProjectRefNotLinkedError");
       }
-      // The DB config resolves before any prompt, so the
-      // config error surfaces immediately and the repair-all confirmation is never shown.
       expect(out.promptConfirmCalls.length).toBe(0);
     }).pipe(Effect.provide(layer));
   });
@@ -397,9 +374,8 @@ describe("migration repair", () => {
   });
 
   it.live("prints multiple repaired versions using Go's %v slice format", () => {
-    // The established slice format prints
-    // space-separated, bracketed, NO commas. A `.join(", ")` "cleanup" reads more
-    // natural in TS but would silently break byte parity, so lock the format here.
+    // The established format is space-separated and bracketed, with no commas; a
+    // `.join(", ")` cleanup would silently change established output.
     seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
     seedMigration(tmp.current, "20240102000000_more.sql", "create table b;\n");
     const { layer, out } = setup(tmp.current);
@@ -461,9 +437,8 @@ describe("migration repair", () => {
   });
 
   it.live("repairs the project given via --project-ref, overriding the default linked ref", () => {
-    // The fake resolver's own fallback (VALID_REF) represents whatever
-    // the workdir would resolve to absent the flag — the flag must win over it
-    // and drive the cached ref.
+    // VALID_REF is the fake resolver's fallback; the flag must win over it and drive
+    // the cached ref.
     const FLAG_REF = "flagflagflagflagflag";
     seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
     const { layer, cache } = setup(tmp.current);

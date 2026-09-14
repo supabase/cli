@@ -179,7 +179,6 @@ describe("projectRefLayer", () => {
     return Effect.gen(function* () {
       const { resolve } = yield* ProjectRefResolver;
       yield* resolve(Option.none());
-      // The resolver must not write the file — only `supabase link` does.
       expect(existsSync(refPath)).toBe(false);
     }).pipe(Effect.provide(layer));
   });
@@ -291,10 +290,6 @@ describe("projectRefLayer", () => {
     });
 
     it.effect("fails fast with ProjectRefNotLinkedError and never prompts on a TTY", () => {
-      // Even on an interactive TTY with projects available, loadProjectRef
-      // must NOT open the picker (that is `resolve`'s job). `db
-      // lint`/`db advisors --linked` use loadProjectRef, which fails with
-      // ProjectRefNotLinkedError instead of prompting.
       const { layer, out } = makeLayer({
         workdir: tempRoot,
         stdinIsTty: true,
@@ -349,8 +344,6 @@ describe("projectRefLayer", () => {
     });
 
     it.effect("skips the ref file (Go MemMapFs) and fails off-TTY with no flag/projectId", () => {
-      // A ref file is present, but link must ignore it and fail like cobra's
-      // required-flag check would.
       writeRefFile(tempRoot, VALID_REF);
       const { layer } = makeLayer({ workdir: tempRoot });
       return Effect.gen(function* () {

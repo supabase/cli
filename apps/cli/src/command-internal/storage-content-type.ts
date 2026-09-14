@@ -5,22 +5,19 @@ import { Effect, FileSystem, Option } from "effect";
 import { detectContentType } from "./detect-content-type.ts";
 
 /**
- * Upload content-type resolution, ported from `pkg/storage/objects.go`
- * (`ParseFileOptions` + `UploadObject`) and shared by `seed buckets` and
- * `storage cp`: run `http.DetectContentType` on the first ≤512 bytes (the bytes
- * decide), then refine a generic `text/plain` by file extension. So a PNG named
- * `.txt` stores as `image/png` (bytes win), while a JSON text file refines to
- * `application/json`.
+ * Resolves the content-type for a file upload, shared by `seed buckets` and
+ * `storage cp`: sniff the first ≤512 bytes, then refine a generic `text/plain`
+ * result by file extension. Bytes win over extension, so a PNG named `.txt`
+ * still uploads as `image/png`.
  */
 
-// Content-type sniff window: Go reads the first 512 bytes (`io.LimitReader(f, 512)`).
 const SNIFF_LEN = 512;
 
 /**
- * Read ONLY the first ≤512 bytes of a file for content-type sniffing, mirroring
- * `io.LimitReader(f, 512)` — the file is
- * NOT fully buffered. Returns an empty buffer on EOF or any read error (an
- * unreadable file then fails at the streaming upload open, so the sniff is moot).
+ * Reads the first ≤512 bytes of a file for content-type sniffing without
+ * buffering the whole file. Returns an empty buffer on EOF or any read error;
+ * an unreadable file fails later at the streaming upload open, so the sniff
+ * failure is harmless.
  */
 export const readSniffBytes = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
@@ -38,10 +35,9 @@ export const readSniffBytes = Effect.fnUntraced(function* (
 });
 
 /**
- * Refine a content-type by file extension, but only when it is a generic
- * `text/plain` (`if strings.Contains(fo.ContentType, "text/plain")` gate).
- * Applied to both the sniffed type and an explicit
- * `--content-type` value, matching the established file-options → upload flow.
+ * Refines a content-type by file extension, but only when it is a generic
+ * `text/plain`. Applied to both the sniffed type and an explicit
+ * `--content-type` value.
  */
 export function refineUploadContentType(contentType: string, filePath: string): string {
   if (contentType.includes("text/plain")) {
@@ -52,19 +48,13 @@ export function refineUploadContentType(contentType: string, filePath: string): 
   return contentType;
 }
 
-/**
- * Content-type for an uploaded object from its sniffed bytes: detect, then refine
- * a generic `text/plain` by extension. `sniff` is the first ≤512 bytes.
- */
+/** Resolves the upload content-type from sniffed bytes, refining a generic `text/plain` by extension. */
 export function contentTypeForUpload(sniff: Uint8Array, filePath: string): string {
   return refineUploadContentType(detectContentType(sniff), filePath);
 }
 
-// Go's built-in `mime` extension table (`mime/type.go` `builtinTypesLower`), used
-// only to refine a generic `text/plain` sniff result. NOTE: Go's
-// `mime.TypeByExtension` also augments this from the OS MIME database
-// (`/etc/mime.types`, the Windows registry), which is host-dependent and not
-// reproduced here — the deterministic built-in table is the faithful baseline.
+// Built-in extension-to-MIME table used only to refine a generic `text/plain`
+// sniff result. Does not consult the OS MIME database, which is host-dependent.
 const MIME_BY_EXTENSION: Readonly<Record<string, string>> = {
   ".ai": "application/postscript",
   ".apk": "application/vnd.android.package-archive",

@@ -4,19 +4,11 @@ import { textOutputLayer } from "../shared/output/output.layer.ts";
 import { Output } from "../shared/output/output.service.ts";
 
 /**
- * Wrapper over the shared text output layer for the Go-compat
- * machine-format flag (`-o json|yaml|toml|env`).
- *
- * `--output` selects a machine encoder that the handler writes via
- * `output.raw`. If the text layer stays fully active, its progress spinner
- * writes ANSI escape sequences to stdout and corrupts that payload — see
- * CLI-1546, where `branches list -o json` emitted a hide-cursor sequence ahead
- * of the JSON and broke `JSON.parse`.
- *
- * This layer suppresses ONLY the transient progress UI (`task`/`progress`).
- * Everything else (errors -> red text on stderr, `raw`, logs, `format: "text"`)
- * delegates to the text layer unchanged, so output stays byte-identical
- * while stdout stays parseable.
+ * Wrapper over the shared text output layer for the machine-format flag (`-o
+ * json|yaml|toml|env`) that suppresses only the transient progress UI (`task`/`progress`),
+ * since a live spinner would write ANSI escapes to stdout and corrupt the machine payload the
+ * handler writes via `output.raw`. Everything else delegates to the text layer unchanged, so
+ * output stays byte-identical while stdout stays parseable.
  */
 export const quietProgressTextOutputLayer = Layer.effect(
   Output,

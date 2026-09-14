@@ -97,10 +97,7 @@ allowed_cidrs = ["1.2.3.4/32"]
     expect(SmolToml.parse(text)).toEqual({ a: { x: 1, y: 'back\\slash and "quote"' } });
   });
 
-  // Regression coverage for CLI-2064 review finding 1: `scanBareValue` used to include
-  // trailing inline whitespace before a `#` comment in the replaced value span, so replacing
-  // `port = 54321 # comment` silently ate the space and produced `port = 54322# comment`. The
-  // mandatory re-parse can't catch this — TOML parses the value identically either way.
+  // Re-parsing can't catch this: TOML parses the value identically either way.
   test("replacing a bare number keeps exactly the original single space before a trailing comment", () => {
     const source = "[db]\nport = 54321 # default port\n";
     const outcome = applyConfigEdits(source, "toml", [{ path: ["db", "port"], value: 54322 }]);
@@ -125,17 +122,14 @@ allowed_cidrs = ["1.2.3.4/32"]
     expect(applied(outcome).text).toBe("[db]\nport = 54322# no space\n");
   });
 
-  // Pin test: a string value is already terminated by its closing quote, so the trailing
-  // whitespace before `#` was never part of `scanBasicString`'s span — unaffected by this bug
-  // or its fix either way.
+  // Pin test: a quote-terminated value's span already excludes trailing whitespace before `#`.
   test("replacing a string value with a trailing comment is unaffected (already quote-terminated)", () => {
     const source = '[a]\nname = "old" # a name\n';
     const outcome = applyConfigEdits(source, "toml", [{ path: ["a", "name"], value: "new" }]);
     expect(applied(outcome).text).toBe('[a]\nname = "new" # a name\n');
   });
 
-  // Pin test: replacing an EXISTING root-level (single-segment) key must keep working —
-  // finding 6's new refusal only targets an INSERT at that same shape (no exact key match).
+  // Pin test: only an insert at this shape is refused, not a replace of an existing key.
   test("replaces an existing root-level single-segment key in place", () => {
     const source = 'project_id = "demo"\n\n[api]\nenabled = true\n';
     const outcome = applyConfigEdits(source, "toml", [{ path: ["project_id"], value: "updated" }]);
@@ -175,17 +169,7 @@ b.d = 2
 `);
   });
 
-  // Regression coverage for CLI-2064 review finding: the dotted-sibling search used to accept
-  // ANY key-value declared below the insert's parent, including one living inside a genuine
-  // DESCENDANT table header (not a dotted-key-only parent) — here `host` inside
-  // `[auth.email.smtp]` when inserting under `auth.email`. That produced an enclosing length
-  // longer than the leaf path itself and spliced in an empty, keyless ` = true` line, refused
-  // only by mandatory re-parse verification. The fix requires the candidate's ENCLOSING TABLE to
-  // be a prefix of the insert's parent (an ancestor, reached via dotted-key assignment) — a
-  // descendant table like `[auth.email.smtp]` no longer qualifies, so this falls through to
-  // ordinary missing-table placement instead, creating `[auth.email]` right after the table it
-  // shares the longest path prefix with (TOML permits declaring a super-table after its
-  // sub-table).
+  // TOML permits declaring a super-table after its sub-table, as this fixture does.
   test("creates the missing parent table instead of a bogus dotted sibling when only a descendant table exists", () => {
     const source = `[auth.email.smtp]
 host = "smtp.example.com"
@@ -354,8 +338,6 @@ max_rows = 900
     expect(applied(otpOutcome).text).toContain('"+15551234" = "123456"');
   });
 
-  // Regression coverage for CLI-2064 review finding 5: inserting a new key into a table whose
-  // existing keys are indented used to write the new line flush-left instead of matching.
   test("inserts a new key into an indented table matching the indentation of the key it follows", () => {
     const source = `[a]
   x = 1
@@ -434,21 +416,14 @@ auth_token = "env(SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN)"
     expect(refusalReason(outcome)).toBe("parse_error");
   });
 
-  // Regression coverage for CLI-2064 review finding 6: a root-level single-segment path with
-  // no existing exact key (an INSERT, not a replace) used to fall into the "dotted sibling"
-  // placement branch — trivially true for every key in the document, since an empty path is a
-  // prefix of everything — and splice in a keyless ` = value` line that only the mandatory
-  // re-parse caught. This is now refused up front instead.
   test("refuses inserting a brand-new root-level (single-segment) key", () => {
     const source = 'project_id = "demo"\n\n[api]\nenabled = true\n';
     const outcome = applyConfigEdits(source, "toml", [{ path: ["new_top_level_key"], value: 1 }]);
     expect(refusalReason(outcome)).toBe("verification_mismatch");
   });
 
-  // Regression/documentation coverage for CLI-2064 review finding 7: `deepSet` (the mandatory
-  // verification oracle) REPLACES a destination table wholesale with an object-valued edit's
-  // value, while the actual written text only ever touches the leaves the object mentions —
-  // so an object edit that omits an existing sibling key verify-mismatches instead of merging.
+  // `deepSet` (the verification oracle) replaces the destination table wholesale, while the
+  // actual write only touches the leaves the edit mentions — so an omitted sibling mismatches.
   test("refuses an object-valued edit that omits an existing sibling key of the destination table", () => {
     const source = `[a]
 x = 1
@@ -458,11 +433,8 @@ y = 2
     expect(refusalReason(outcome)).toBe("verification_mismatch");
   });
 
-  // Regression pin: the TOML arm already refused this shape before the JSON arm was brought in
-  // line with it (config-edit.ts's JSON-arm consistency fix) — this test just confirms TOML's
-  // own behavior didn't move. Same shape as the JSON refusal test below, with the omitted
-  // sibling spelled as an `env(...)` reference (an exfiltration-adjacent flavor: the omitted
-  // sibling is exactly the kind of value that must never be silently dropped from the file).
+  // Same shape as the JSON refusal test below; the omitted sibling is an `env(...)` reference,
+  // exactly the kind of value that must never be silently dropped from the file.
   test("refuses a TOML object-valued edit that would delete an existing env() sibling", () => {
     const source = `[auth.sms.test_otp]
 "+15551234" = "111111"
@@ -486,11 +458,6 @@ describe("applyConfigEdits (toml): newline and idempotence", () => {
     );
   });
 
-  // Regression coverage for CLI-2064 review finding 3: `endsWithNewline` used to check
-  // `source.endsWith(newline)`, where `newline` is CRLF as soon as the file contains one
-  // anywhere. A mixed-EOL file whose LAST line ends in a bare `\n` (not preceded by `\r`)
-  // doesn't end with `"\r\n"`, so this read as "no trailing newline" and doubled the EOF
-  // terminator ahead of an EOF-inserted block.
   test("a mixed-EOL file whose last line ends in a bare LF gets exactly one blank line before EOF-inserted content, not two", () => {
     const source = "[api]\r\nmax_rows = 1000\n";
     const outcome = applyConfigEdits(source, "toml", [
@@ -680,8 +647,7 @@ describe("applyConfigEdits (json)", () => {
     ]);
   });
 
-  // Regression coverage for CLI-2064 review finding 4: `JSON.stringify` always renders `\n`, so
-  // this used to silently flip a CRLF-flavored JSON config to LF on every edit.
+  // `JSON.stringify` always renders `\n`, so this guards against silently flipping CRLF to LF.
   test("preserves CRLF line endings and a trailing newline", () => {
     const source = '{\r\n  "api": {\r\n    "max_rows": 1000\r\n  }\r\n}\r\n';
     const outcome = applyConfigEdits(source, "json", [{ path: ["api", "max_rows"], value: 2 }]);
@@ -707,11 +673,8 @@ describe("applyConfigEdits (json)", () => {
     expect(refusalReason(outcome)).toBe("parse_error");
   });
 
-  // Regression coverage for the JSON-arm consistency fix: before it, an object-valued edit was
-  // mutated AND verified with the same whole-subtree-replacing `deepSet`, so it could never
-  // catch itself deleting an unmentioned sibling — here, an `env(...)` reference, the exact kind
-  // of value this module must never silently drop. The TOML arm already refused this shape (see
-  // the pinned regression test in the `toml` describe block above); this is the JSON equivalent.
+  // Same mechanism as the object-edit refusal above: an omitted `env(...)` sibling must never
+  // be silently dropped from the file.
   test("refuses a JSON object-valued edit that would delete an existing env() sibling, leaving the source untouched", () => {
     const source = `{
     "auth": {
@@ -731,9 +694,8 @@ describe("applyConfigEdits (json)", () => {
     expect(outcome.kind).toBe("refused");
   });
 
-  // Companion case: an object-valued edit that mentions EVERY existing sibling key has nothing
-  // left to delete, so it merges cleanly — writing only the mentioned leaves and preserving the
-  // destination's OWN key order (not the edit value's own key order, which lists them reversed).
+  // Companion case: an edit that mentions every existing sibling key merges cleanly, preserving
+  // the destination's own key order rather than the edit value's.
   test("merges a JSON object-valued edit that omits no existing sibling, writing mentioned leaves and preserving key order", () => {
     const source = `{
     "auth": {
@@ -779,29 +741,11 @@ max_rows = 1000
   });
 });
 
-// ---------------------------------------------------------------------------
-// Randomized property test. For every random edit set that `applyConfigEdits` accepts, asserts:
-//
-//  (a) BYTE PRESERVATION — every source line whose span doesn't intersect an edited key's own
-//      line appears verbatim, in order, in the output; a REPLACED key's line is held to a
-//      narrower standard (its `key = ` prefix and any trailing `#comment` — including the
-//      whitespace right before it — must survive unchanged, only the value between them may
-//      differ), since that's the one span the editor is actually allowed to touch. This is the
-//      check that would have caught finding 1 (comment-eating): the ORIGINAL, tautological
-//      version of this test only compared PARSED values, which are identical either way.
-//  (b) IDEMPOTENCE — re-applying the same edits to the already-edited text is a no-op
-//      (byte-identical to the first result).
-//  (c) ZERO REFUSALS — these fixtures/edits never hit a refusal-triggering construct (no
-//      duplicate headers, arrays-of-tables, inline tables, or existing `env()` values), so an
-//      "applied" outcome is required, not merely accepted; a refusal here means either a fixture
-//      accidentally exercises one of those constructs, or a real regression.
-//  (d) the original PARSE-EQUIVALENCE oracle — `SmolToml.parse(apply(source, edits).text)` must
-//      deep-equal an independently computed `deepSet(SmolToml.parse(source), edits)`. Still a
-//      valid oracle (it does catch structural mistakes), just not a SUFFICIENT one on its own —
-//      see (a) above.
-//
+// Randomized property test. For every random edit set `applyConfigEdits` accepts, asserts byte
+// preservation (untouched lines survive verbatim; a replaced line keeps its `key = ` prefix and
+// trailing comment, only the value differs), idempotence (re-applying is a no-op), zero
+// refusals, and parse-equivalence against an independently computed whole-subtree replacement.
 // Seeded PRNG so a failure reproduces: the seed is printed in every thrown error.
-// ---------------------------------------------------------------------------
 
 function mulberry32(seed: number): () => number {
   let state = seed;
@@ -918,9 +862,7 @@ backend = "postgres"
 [experimental.pgdelta]
 enabled = true
 `,
-  // Rich in trailing inline comments on bare (non-string) values, deliberately varying the
-  // whitespace before `#` (single space / multiple spaces / none) — this is the fixture shape
-  // that would have caught finding 1, via the byte-preservation check below.
+  // Rich in trailing inline comments on bare values, varying the whitespace before `#`.
   `[db]
 port = 54322 # default port, don't change carelessly
 major_version = 17   # postgres version
@@ -932,10 +874,9 @@ max_client_conn = 100# no space before this comment
 ];
 
 /** A line, as read off one of `PROPERTY_FIXTURES` verbatim, and — for a key-value line — the
- * fully qualified path it declares. Deliberately INDEPENDENT of `config-edit.ts`'s own scanner:
- * these fixtures never contain indented keys, dotted-key assignments, quoted keys/headers, or
- * multi-line values, so a full TOML scanner isn't needed to know which physical line each
- * key-value pair lives on — only used to build the byte-preservation oracle below. */
+ * fully qualified path it declares. Independent of `config-edit.ts`'s own scanner: these
+ * fixtures never contain indented keys, dotted-key assignments, or multi-line values, so a
+ * simple line-based reader is enough. */
 interface FixtureLine {
   readonly text: string;
   readonly path?: ReadonlyArray<string>;
@@ -957,9 +898,8 @@ function describeFixtureLines(source: string): ReadonlyArray<FixtureLine> {
   });
 }
 
-/** Splits a key-value line into its `key = ` prefix and, if present, its trailing comment —
- * INCLUDING whichever run of spaces/tabs immediately precedes the `#`, since that's exactly the
- * span finding 1's bug used to eat. */
+/** Splits a key-value line into its `key = ` prefix and, if present, its trailing comment,
+ * including whichever run of spaces/tabs immediately precedes the `#`. */
 function splitKvLineSuffix(line: string): { prefix: string; commentSuffix: string | undefined } {
   const prefixMatch = /^([A-Za-z0-9_-]+\s*=\s*)/.exec(line);
   const prefix = prefixMatch?.[1] ?? "";
@@ -977,8 +917,8 @@ function splitKvLineSuffix(line: string): { prefix: string; commentSuffix: strin
 
 /** Asserts property (a): every `sourceLines` entry appears, in order, in `outputText` — exactly
  * (for a line whose path isn't in `replacedPathKeys`) or matching just its `key = ` prefix and
- * trailing comment (for a line whose path IS in `replacedPathKeys`, since only its value may
- * differ). Throws with a descriptive message on the first violation. */
+ * trailing comment (for a line whose path is in `replacedPathKeys`, since only its value may
+ * differ). */
 function assertLinePreservation(
   sourceLines: ReadonlyArray<FixtureLine>,
   replacedPathKeys: ReadonlySet<string>,
@@ -1046,13 +986,9 @@ describe("applyConfigEdits (toml): randomized property test", () => {
         if (leaf === undefined) {
           continue;
         }
-        // A root-level (single-segment) leaf has no enclosing table to insert a new sibling
-        // key into (see finding 6's dedicated refusal test) — only ever replace it here.
-        // Nesting the new key one level UNDER the leaf itself (rather than alongside it, in
-        // its own enclosing table) is deliberately avoided too: a scalar leaf isn't a table,
-        // so `SmolToml.parse` rejects the resulting document as redeclaring the same key as
-        // both a value and a table — an unrelated, out-of-scope corner case this test isn't
-        // meant to exercise.
+        // A root-level (single-segment) leaf has no enclosing table for a new sibling key, so
+        // only ever replace it here. Nesting a new key under the leaf itself is avoided too: a
+        // scalar leaf isn't a table, so `SmolToml.parse` would reject the redeclaration.
         const canInsert = leaf.path.length > 1;
         const isInsert = canInsert && rand() > 0.7;
         const path = isInsert
@@ -1067,11 +1003,9 @@ describe("applyConfigEdits (toml): randomized property test", () => {
         continue;
       }
 
-      // De-duplicate by path, last edit wins (matching `deepSet`'s own reduce semantics): two
-      // edits at the exact same path in one call hits an unrelated, out-of-scope corner case
-      // (`applySplices` applying two same-span replacements sequentially, the second using a
-      // now-stale offset) that isn't one of this review's findings — avoided here so the zero-
-      // refusals property stays meaningful.
+      // De-duplicate by path, last edit wins: two edits at the same path would hit an
+      // unrelated corner case (`applySplices` using a stale offset for the second), avoided
+      // here so the zero-refusals property stays meaningful.
       const dedupedByPath = new Map<string, ConfigEdit>();
       for (const edit of rawEdits) {
         dedupedByPath.set(pathKey(edit.path), edit);

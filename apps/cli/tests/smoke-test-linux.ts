@@ -30,14 +30,12 @@ interface TestResult {
 
 const results: TestResult[] = [];
 
-// --- Native ---
-
 console.log(`\n${"=".repeat(60)}`);
 console.log("Native binary tests");
 console.log("=".repeat(60));
 
 {
-  const arch = process.arch; // "x64" or "arm64"
+  const arch = process.arch;
   const name = `native-linux-${arch}`;
   const binPath = path.join(root, "packages", `cli-linux-${arch}`, "bin", "supabase");
 
@@ -55,8 +53,6 @@ console.log("=".repeat(60));
     results.push({ name, status: "fail" });
   }
 }
-
-// --- Docker ---
 
 console.log(`\n${"=".repeat(60)}`);
 console.log("Docker-based Linux package tests");
@@ -159,8 +155,6 @@ if (!hasDocker) {
   }
 }
 
-// --- npm ---
-
 console.log(`\n${"=".repeat(60)}`);
 console.log("npm (Verdaccio) test");
 console.log("=".repeat(60));
@@ -172,8 +166,6 @@ try {
   console.error(`[npm] Error:\n${describeError(e)}`);
   results.push({ name: "npm", status: "fail" });
 }
-
-// --- Summary ---
 
 console.log(`\n${"=".repeat(60)}`);
 console.log("Linux Smoke Test Summary");

@@ -6,12 +6,8 @@ import { inspectBaseLayer } from "../inspect.layers.ts";
 /**
  * Runtime layer for `supabase inspect report`.
  *
- * `inspect report` is a sibling of `inspect db` (a direct child of `inspect`, not
- * under `db`), so its command-runtime path is `["inspect", "report"]` — two levels.
- * It shares
- * the same `inspectBaseLayer` (resolver + connection + CLI config + telemetry)
- * as the `db` leaves. `FileSystem` / `Path` / `Tty` / `RuntimeInfo` / `Clock` are
- * provided by the global run harness (`shared/cli/run.ts`), not here.
+ * `FileSystem` / `Path` / `Tty` / `RuntimeInfo` / `Clock` come from the global run harness
+ * (`shared/cli/run.ts`), not here.
  */
 export const inspectReportRuntimeLayer = Layer.merge(
   inspectBaseLayer,

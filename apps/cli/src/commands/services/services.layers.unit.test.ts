@@ -1,13 +1,7 @@
 /**
- * Layer-exposure test for `servicesRuntimeLayer`.
- *
- * Verifies that `IdentityStitch` is exposed at the top level of the
- * runtime layer so that `withCommandTelemetry` can read
- * `stitchedDistinctId()` via `Effect.serviceOption(IdentityStitch)` and
- * attribute the `cli_command_executed` event to the gotrue id.
- *
- * See `db/lint/lint.layers.unit.test.ts` for the canonical pattern and a
- * detailed explanation of the bug this guards against.
+ * Verifies `IdentityStitch` is exposed at the top level of
+ * `servicesRuntimeLayer` so `withCommandTelemetry` can attribute
+ * `cli_command_executed` to the gotrue id. See lint.layers.unit.test.ts.
  */
 
 import { describe, expect, it } from "@effect/vitest";
@@ -65,7 +59,7 @@ function ambientStubs() {
 
   return Layer.mergeAll(
     BunServices.layer,
-    // The runtime layer under test builds the REAL commandSettingsLayer against
+    // The runtime layer under test builds the real commandSettingsLayer against
     // the real filesystem — see isolatedHomeLayer's docs.
     isolatedHomeLayer(tempRoot.current),
     mockTty(),

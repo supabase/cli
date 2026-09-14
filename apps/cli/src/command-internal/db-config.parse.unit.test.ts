@@ -9,8 +9,7 @@ import {
   redactConnectionString,
 } from "./db-config.parse.ts";
 
-// Mirrors the parser's default-user resolution: PGUSER (env) else the actual OS
-// account (os.userInfo().username, NOT $USER/$USERNAME) else "postgres".
+// The parser's own default-user resolution: PGUSER, else the OS account, else "postgres".
 const osAccount = (() => {
   try {
     return userInfo().username || undefined;
@@ -71,7 +70,6 @@ describe("parseConnectionString (URL form)", () => {
     process.env["PGPORT"] = "6543";
     process.env["PGDATABASE"] = "envdb";
     try {
-      // Password/port/database omitted from the URL → taken from PG* env.
       expect(parseConnectionString("postgresql://alice@db.example.com")).toEqual({
         host: "db.example.com",
         port: 6543,
@@ -79,7 +77,6 @@ describe("parseConnectionString (URL form)", () => {
         password: "env-secret",
         database: "envdb",
       });
-      // Explicit URL fields override the env defaults (connStringSettings win).
       expect(parseConnectionString("postgresql://alice:pw@db.example.com:5555/appdb")).toEqual({
         host: "db.example.com",
         port: 5555,
@@ -96,8 +93,6 @@ describe("parseConnectionString (URL form)", () => {
   });
 
   it("honors libpq query params (host/dbname) over the structural URL (pgconn parity)", () => {
-    // pgconn's parseURLSettings merges query params last, so ?host=/socket wins
-    // over the (empty) URL host, and a unix-socket host is used verbatim.
     expect(parseConnectionString("postgresql:///postgres?host=/var/run/postgresql")).toEqual({
       host: "/var/run/postgresql",
       port: 5432,
@@ -105,7 +100,6 @@ describe("parseConnectionString (URL form)", () => {
       password: "",
       database: "postgres",
     });
-    // A query dbname overrides the URL path.
     expect(
       parseConnectionString("postgresql://postgres:pw@db.example.com:6543/ignored?dbname=real"),
     ).toEqual({
@@ -145,7 +139,6 @@ describe("parseConnectionString (URL form)", () => {
     const parsed = parseConnectionString(
       "postgres://u:pw@h/db?search_path=tenant&statement_timeout=5000&sslmode=require&options=reference%3Dabc",
     );
-    // search_path/statement_timeout → runtimeParams; sslmode/options stay dedicated.
     expect(parsed?.runtimeParams).toEqual({ search_path: "tenant", statement_timeout: "5000" });
     expect(parsed?.options).toBe("reference=abc");
     expect(parsed).not.toHaveProperty("runtimeParams.options");
@@ -189,7 +182,6 @@ describe("parseConnectionString (URL form)", () => {
     expect(parsed?.sslcert).toBe("/c/client.crt");
     expect(parsed?.sslkey).toBe("/c/client.key");
     expect(parsed?.sslpassword).toBe("secret");
-    // sslcert/sslkey are connection settings, never forwarded as runtime params.
     expect(parsed).not.toHaveProperty("runtimeParams");
   });
 
@@ -216,7 +208,6 @@ describe("parseConnectionString (URL form)", () => {
 
   it("rejects a non-numeric or empty ?port= query override (pgconn parsePort error)", () => {
     expect(parseConnectionString("postgresql://host/db?port=abc")).toBeUndefined();
-    // An explicit empty port override overrides the structural port and is invalid.
     expect(parseConnectionString("postgresql://db.example.com/app?port=")).toBeUndefined();
   });
 
@@ -224,7 +215,6 @@ describe("parseConnectionString (URL form)", () => {
     const prev = process.env["PGPORT"];
     process.env["PGPORT"] = "abc";
     try {
-      // No port in the URL or DSN → falls back to PGPORT, which is invalid → reject.
       expect(parseConnectionString("postgresql://host/db")).toBeUndefined();
       expect(parseConnectionString("host=pg.example.com user=admin")).toBeUndefined();
     } finally {
@@ -252,7 +242,6 @@ describe("parseConnectionString (URL form)", () => {
     process.env["PGSSLMODE"] = "verify-full";
     try {
       expect(parseConnectionString("postgres://u:pw@h:5432/db")?.sslmode).toBe("verify-full");
-      // An explicit query sslmode still wins over PGSSLMODE.
       expect(parseConnectionString("postgres://u:pw@h:5432/db?sslmode=disable")?.sslmode).toBe(
         "disable",
       );
@@ -263,8 +252,6 @@ describe("parseConnectionString (URL form)", () => {
   });
 
   it("rejects a non-Postgres URL scheme instead of connecting to a bogus host", () => {
-    // pgconn only treats `postgres://`/`postgresql://` as a URL (config.go:236);
-    // any other scheme is parsed as a keyword/value DSN, which fails.
     expect(parseConnectionString("https://db.example.com/app")).toBeUndefined();
     expect(parseConnectionString("mysql://user:pw@host:3306/app")).toBeUndefined();
   });
@@ -309,9 +296,6 @@ describe("parseConnectionString (libpq keyword/value DSN)", () => {
     const prev = process.env["PGUSER"];
     process.env["PGUSER"] = "pg_role";
     try {
-      // No user= keyword: PGUSER wins over USER/USERNAME, and the database
-      // defaults to that resolved user — matching pgconn's
-      // mergeSettings(defaultSettings, envSettings, connStringSettings) order.
       expect(parseConnectionString("host=pg.example.com")).toEqual({
         host: "pg.example.com",
         port: 5432,
@@ -319,9 +303,7 @@ describe("parseConnectionString (libpq keyword/value DSN)", () => {
         database: "pg_role",
         password: "",
       });
-      // An explicit user= still wins over PGUSER (connStringSettings override env).
       expect(parseConnectionString("host=h user=explicit")?.user).toBe("explicit");
-      // The URL form without userinfo also honors PGUSER.
       expect(parseConnectionString("postgresql://localhost/mydb")?.user).toBe("pg_role");
     } finally {
       if (prev === undefined) delete process.env["PGUSER"];
@@ -348,7 +330,6 @@ describe("parseConnectionString (libpq keyword/value DSN)", () => {
         password: "env-secret",
         database: "envdb",
       });
-      // Explicit keywords override the env defaults.
       expect(parseConnectionString("host=h port=1234 user=admin dbname=db password=pw")).toEqual({
         host: "h",
         port: 1234,
@@ -368,7 +349,6 @@ describe("parseConnectionString (libpq keyword/value DSN)", () => {
     const prev = process.env["PGHOST"];
     delete process.env["PGHOST"];
     try {
-      // No host= and no PGHOST → libpq default (a unix-socket dir or "localhost").
       expect(parseConnectionString("user=admin")?.host).toMatch(/^(\/|localhost)/);
     } finally {
       if (prev === undefined) delete process.env["PGHOST"];
@@ -386,10 +366,7 @@ describe("parseConnectionString (libpq keyword/value DSN)", () => {
 });
 
 describe("empty-password precedence (pgconn parity)", () => {
-  // pgconn merges the connection-string password over PGPASSWORD, so an explicit
-  // *empty* password (`user:@host`, `?password=`, `password=`) suppresses
-  // PGPASSWORD and then falls through to `.pgpass` (config.go:264-379). Point
-  // PGPASSFILE at a temp file we control and set PGPASSWORD to prove which one wins.
+  // Points PGPASSFILE at a temp file we control and sets PGPASSWORD, to prove which one wins.
   let tmp: string;
   let pgpassPath: string;
   const prev: Record<string, string | undefined> = {};
@@ -442,7 +419,6 @@ describe("empty-password precedence (pgconn parity)", () => {
 
   it("falls through to an empty password when neither PGPASSWORD nor .pgpass match", () => {
     delete process.env["PGPASSWORD"];
-    // No matching .pgpass line for this host → empty.
     expect(parseConnectionString("postgres://alice:@other.example.com:6543/appdb")?.password).toBe(
       "",
     );
@@ -473,11 +449,10 @@ describe("multi-host failover (pgconn parity)", () => {
   });
 
   it("zips hosts to the (compacted) port list exactly as pgconn does", () => {
-    // pgconn drops empty ports before zipping (config.go:462-488), so a host that
-    // omits a port does NOT inherit the previous host's port — it takes the next
-    // entry in the compacted port list, and only a host past the end reuses ports[0].
-    // For `h1:5432,h2,h3:5544` the port list is [5432, 5544]: h1→5432, h2→5544,
-    // h3 (index 2, past the end)→ports[0]=5432. This is pgconn's quirk, matched 1:1.
+    // Empty ports are dropped before zipping, so a host that omits a port takes the next entry
+    // in the compacted port list rather than inheriting the previous host's port; only a host
+    // past the end reuses `ports[0]`. For `h1:5432,h2,h3:5544` the port list is `[5432, 5544]`:
+    // h1→5432, h2→5544, h3 (past the end)→ports[0]=5432.
     expect(parseConnectionString("postgres://u:pw@h1:5432,h2,h3:5544/db")).toMatchObject({
       host: "h1",
       port: 5432,
@@ -520,9 +495,8 @@ describe("multi-host failover (pgconn parity)", () => {
 });
 
 describe("passfile= DSN setting (pgconn parity)", () => {
-  // pgconn honors a connection-string `passfile=` ahead of PGPASSFILE/the default
-  // (`config.go:293,369-377`). Point PGPASSFILE at one file and `passfile=` at a
-  // different one to prove the connection-string setting wins.
+  // Points PGPASSFILE at one file and `passfile=` at a different one, to prove the
+  // connection-string setting wins.
   let tmp: string;
   let customPath: string;
   const prev: Record<string, string | undefined> = {};
@@ -570,8 +544,6 @@ describe("passfile= DSN setting (pgconn parity)", () => {
   });
 
   it("a present-but-empty passfile= suppresses PGPASSFILE (→ empty password)", () => {
-    // pgconn: present-empty passfile overrides PGPASSFILE, then ReadPassfile("") fails
-    // → no .pgpass lookup → empty password (not the env-file credential).
     expect(
       parseConnectionString("postgres://alice@db.example.com:6543/appdb?passfile=")?.password,
     ).toBe("");
@@ -583,10 +555,9 @@ describe("passfile= DSN setting (pgconn parity)", () => {
 });
 
 describe("injected env lookup (project dotenv parity)", () => {
-  // The resolver layers the project `.env*` files under the shell env and passes a
-  // lookup into the parser, mirroring Go's LoadConfig-before-ParseConfig order
-  // (`internal/utils/flags/db_url.go:59-68`). A field omitted from the DSN is then
-  // filled from the injected env, not just `process.env`.
+  // The resolver layers the project `.env*` files under the shell env and passes a lookup into
+  // the parser. A field omitted from the DSN is then filled from the injected env, not just
+  // `process.env`.
   it("fills omitted URL fields from the injected env (PGPASSWORD/PGSSLMODE/PGHOST)", () => {
     const env = (name: string): string | undefined =>
       ({ PGPASSWORD: "dotenv-pw", PGSSLMODE: "require", PGHOST: "dotenv-host" })[name];
@@ -621,10 +592,9 @@ describe("injected env lookup (project dotenv parity)", () => {
 });
 
 describe("pgservice resolution (pgconn parity)", () => {
-  // pgconn resolves a `service=`/`PGSERVICE` against the service file and merges
-  // its settings between env and the explicit connection-string fields
-  // (config.go:250-256). dbname is remapped to database. An unresolvable service
-  // is a hard parse error.
+  // A `service=`/`PGSERVICE` resolves against the service file and merges its settings between
+  // env and the explicit connection-string fields. `dbname` is remapped to `database`. An
+  // unresolvable service is a hard parse error.
   let tmp: string;
   let servicefile: string;
 
@@ -701,7 +671,6 @@ describe("pgservice resolution (pgconn parity)", () => {
 
 describe("keyword/value DSN backslash handling (pgconn parity)", () => {
   it("preserves backslashes before ordinary chars (Windows cert paths)", () => {
-    // pgconn unescapes only \\ and \', so a Windows path keeps its backslashes.
     expect(
       parseConnectionString("host=h dbname=d user=u sslrootcert=C:\\certs\\root.pem")?.sslrootcert,
     ).toBe("C:\\certs\\root.pem");
@@ -808,14 +777,11 @@ describe("pgconn parse refinements", () => {
 
   it("treats an empty connection-string service= as explicit (parse error), not PGSERVICE", () => {
     const env = (name: string): string | undefined => (name === "PGSERVICE" ? "prod" : undefined);
-    // Empty ?service= overrides PGSERVICE and fails resolution (pgconn GetService("")).
     expect(parseConnectionString("postgres://host/db?service=", env)).toBeUndefined();
     expect(parseConnectionString("host=h user=u service=", env)).toBeUndefined();
   });
 
   it("uses the OS account (not $USER/$USERNAME) when PGUSER is empty/absent", () => {
-    // pgconn reads user.Current().Username for the default, never $USER/$USERNAME;
-    // a divergent $USER must be ignored. Empty PGUSER falls through to the OS account.
     const env = (name: string): string | undefined =>
       ({ PGUSER: "", USER: "not-the-account", USERNAME: "not-the-account" })[name];
     expect(parseConnectionString("postgres://host/db", env)?.user).toBe(osUser);
@@ -823,10 +789,8 @@ describe("pgconn parse refinements", () => {
   });
 
   it("rejects an empty connection-string connect_timeout but ignores an empty env var", () => {
-    // Present-but-empty ?connect_timeout= / connect_timeout= is a parse error.
     expect(parseConnectionString("postgres://u:p@h/db?connect_timeout=")).toBeUndefined();
     expect(parseConnectionString("host=h user=u connect_timeout=")).toBeUndefined();
-    // An empty PGCONNECT_TIMEOUT env var is unset → no error, default applies.
     const env = (name: string): string | undefined =>
       name === "PGCONNECT_TIMEOUT" ? "" : undefined;
     expect(parseConnectionString("postgres://u:p@h/db", env)).not.toHaveProperty(
@@ -875,7 +839,6 @@ describe("database= alias and empty service values (pgconn parity)", () => {
         : name === "PGPASSFILE"
           ? join(tmp, "no-pgpass")
           : undefined;
-    // Empty service password overrides PGPASSWORD; no .pgpass match → "".
     expect(parseConnectionString(`postgres:///?service=s&servicefile=${sf}`, env)?.password).toBe(
       "",
     );

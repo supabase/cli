@@ -46,9 +46,6 @@ describe("buildBearerJwtClaims", () => {
   });
 
   it("floors only the FINAL iat, applying a sub-second --valid-for before truncating (CLI-1961)", () => {
-    // `--exp 2030-01-01T00:00:00Z --valid-for 1.5s` must yield
-    // `iat=1893455998` — flooring the 1.5s duration to 1s BEFORE subtracting
-    // (this port's previous behavior) would wrongly yield 1893455999.
     const claims = buildBearerJwtClaims({
       role: "anon",
       sub: Option.none(),
@@ -61,9 +58,6 @@ describe("buildBearerJwtClaims", () => {
   });
 
   it("preserves a fractional --exp through the iat subtraction, flooring only the final result (CLI-1961 Codex review finding)", () => {
-    // `--exp 2030-01-01T00:00:00.9Z --valid-for 1.2s` must yield
-    // `iat=1893455999`. Flooring `expiresAt` BEFORE the subtraction
-    // (this port's previous behavior) would wrongly yield `1893455998`.
     const claims = buildBearerJwtClaims({
       role: "anon",
       sub: Option.none(),
@@ -76,9 +70,6 @@ describe("buildBearerJwtClaims", () => {
   });
 
   it("floors exp down (never rounds up) for a near-second nanosecond --exp fraction (CLI-1961 Codex review finding)", () => {
-    // `--exp 2030-01-01T00:00:00.999999999Z` must yield `exp=1893456000`
-    // — a naive float addition of `wholeSeconds + 0.999999999` (this port's previous
-    // behavior) rounds UP to the exact integer `1893456001` in plain JS arithmetic.
     const claims = buildBearerJwtClaims({
       role: "anon",
       sub: Option.none(),
@@ -90,12 +81,6 @@ describe("buildBearerJwtClaims", () => {
   });
 
   it("adds a sub-second --valid-for to the unfloored current time when --exp is omitted (CLI-1961 Codex review finding)", () => {
-    // `exp = now.Add(validFor)` is computed on the RAW fractional `now`,
-    // then `iat`/`exp` are truncated separately — a run at `X.900` with
-    // `--valid-for 200ms` must land in the NEXT second (`exp = X + 1`), not
-    // stay in the current one. Computing `exp` from an already-floored
-    // `iat` (this port's previous behavior) would wrongly keep `exp = X`,
-    // shortening the token's lifetime to effectively zero.
     const claims = buildBearerJwtClaims({
       role: "anon",
       sub: Option.none(),
@@ -108,8 +93,6 @@ describe("buildBearerJwtClaims", () => {
   });
 
   it("sets is_anonymous when --sub is explicitly passed as an empty string (CLI-1961)", () => {
-    // The gate is emptiness, not presence — an explicitly-passed EMPTY
-    // `--sub ""` still counts as "no subject", not just an omitted flag.
     const claims = buildBearerJwtClaims({
       role: "authenticated",
       sub: Option.some(""),
@@ -130,7 +113,6 @@ describe("buildBearerJwtClaims", () => {
       nowInstant: NOW_INSTANT,
     });
     expect(claims["is_anonymous"]).toBe(true);
-    // Role keeps its original casing.
     expect(claims["role"]).toBe("AUTHENTICATED");
   });
 
@@ -226,10 +208,6 @@ describe("mergeBearerJwtPayload", () => {
   });
 
   it("rejects an overflowing number nested in an object payload instead of silently signing Infinity-as-null (CLI-1961 Codex review finding)", () => {
-    // Verified against the real binary: `--payload '{"extra":1e309}'` exits 1 with
-    // this exact message. `JSON.parse` alone would accept `1e309` as `Infinity`,
-    // which `encodeBearerJwtClaims`'s Go-compatible encoder then serializes as
-    // `null` — silently changing the claim instead of failing the command.
     expect(() => mergeBearerJwtPayload({ role: "anon" }, '{"extra":1e309}')).toThrow(
       "json: cannot unmarshal number 1e309 into Go value of type float64",
     );
@@ -253,11 +231,6 @@ describe("mergeBearerJwtPayload", () => {
   });
 
   it("prioritizes the top-level type-mismatch message over an overflowing scalar payload", () => {
-    // A bare top-level overflowing scalar payload (`--payload '1e309'`)
-    // still reports the STRUCTURAL mismatch, WITHOUT the literal, because
-    // the top-level kind is rejected before ever attempting to decode the
-    // number itself — the array/scalar top-level check must run BEFORE the
-    // overflow scan.
     expect(() => mergeBearerJwtPayload({ role: "anon" }, "1e309")).toThrow(
       "json: cannot unmarshal number into Go value of type jwt.MapClaims",
     );
@@ -281,10 +254,6 @@ describe("mergeBearerJwtPayload", () => {
   });
 
   it("reports a partial keyword match against Go's exact 'in literal' wording", () => {
-    // `not-json-at-all` starts with `n`, which the established scanner
-    // reads as the start of the `null` literal; the second byte `o`
-    // mismatches `null`'s `u` — the established scanner text for this is
-    // `invalid character 'o' in literal null (expecting 'u')`.
     expect(() => mergeBearerJwtPayload({ role: "anon" }, "not-json-at-all")).toThrow(
       "invalid character 'o' in literal null (expecting 'u')",
     );
@@ -327,8 +296,7 @@ describe("mergeBearerJwtPayload", () => {
   });
 
   it("skips over an escaped quote inside a string when finding where it closes", () => {
-    // The actual payload bytes are: `"` `a` `\` `"` `b` `"` `c` — a string containing an
-    // escaped quote (`a"b`), followed by trailing garbage `c`.
+    // Payload bytes: `"a\"b"c` — a string with an escaped quote, then trailing garbage `c`.
     expect(() => mergeBearerJwtPayload({ role: "anon" }, '"a\\"b"c')).toThrow(
       "invalid character 'c' after top-level value",
     );
@@ -341,8 +309,6 @@ describe("mergeBearerJwtPayload", () => {
   });
 
   it("reports trailing garbage after a FULLY matched literal keyword", () => {
-    // "null" matches completely; JSC's own tokenizer reports this generically (no
-    // position), unlike a partial mismatch — this exercises that specific fall-through.
     expect(() => mergeBearerJwtPayload({ role: "anon" }, "nullx")).toThrow(
       "invalid character 'x' after top-level value",
     );
@@ -367,12 +333,9 @@ describe("mergeBearerJwtPayload", () => {
   });
 
   it("falls back to the generic message when the only valid prefix is the WHOLE trimmed string", () => {
-    // A leading vertical tab is in JS's `\s` regex class (so `trimmed` strips it) but is
-    // NOT valid JSON whitespace (so the original `JSON.parse(payload)` call still fails
-    // on it) — `trimmed` alone ("{}") is then a single complete, valid JSON value with
-    // nothing left over, which must fall through to the generic message rather than
-    // reporting on empty leftover content. Built via `String.fromCharCode` rather than a
-    // literal escape so no raw control byte sits in the source file.
+    // A vertical tab is JS `\s` whitespace but not valid JSON whitespace, so
+    // `JSON.parse` still fails even though the rest ("{}") is valid JSON.
+    // Built via `String.fromCharCode` to avoid a raw control byte in the source.
     const verticalTab = String.fromCharCode(11);
     expect(() => mergeBearerJwtPayload({ role: "anon" }, `${verticalTab}{}`)).toThrow(
       "invalid character looking for beginning of value",
@@ -399,12 +362,8 @@ describe("encodeBearerJwtClaims", () => {
   });
 
   it("keeps Go's true lexicographic order for numeric-looking custom claim keys (CLI-1961 Codex review finding)", () => {
-    // Go signs a real `jwt.MapClaims` map via `encoding/json`, which sorts string keys
-    // purely lexicographically ("10" before "2") — verified directly against the Go
-    // standard library. A plain JS object always reorders integer-like string keys into
-    // ascending NUMERIC order on enumeration regardless of insertion order, which would
-    // otherwise silently re-sort "10"/"2" back to "2" before "10" and change the signed
-    // bytes for these inputs.
+    // JS objects reorder integer-like string keys into ascending numeric order on
+    // enumeration, but Go's lexicographic string-key sort keeps "10" before "2".
     const claims = { role: "anon", 10: "a", 2: "b" };
     expect(encodeBearerJwtClaims(claims)).toBe('{"10":"a","2":"b","role":"anon"}');
   });

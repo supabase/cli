@@ -1,23 +1,12 @@
 /**
- * Studio env + container spec builder, gated on `config.studio.enabled` and
- * `!isContainerExcluded(config.studio.image, excluded)` — see
- * `service-catalog.ts`'s `studio` entry (`excludeKey: "studio"`, gated
- * on `studio.enabled`, depends on pg-meta being healthy/running). Gating,
- * image resolution/pre-pull, and edge-function bind-mount resolution
- * (`serve.PopulatePerFunctionConfigs`, out of scope here — see
- * {@link StudioContainerInput.functionBinds}) are the caller's job (a
- * future `start.handler.ts`).
+ * Studio env + container spec builder. Gating, image resolution, and edge-function bind-mount
+ * resolution are the caller's responsibility.
  *
- * `workdir`/`containerSnippetsPath`: the host snippets path is
- * `filepath.Join(workdir, "supabase", "snippets")` — a plain top-level
- * `<project>/supabase/snippets` directory, NOT under `supabase/.temp/` (that
- * directory is reserved for the link-state cache, see
- * `temp-paths.ts`; snippets are user content Studio's SQL Editor
- * reads/writes, meant to persist, not a cache). `containerSnippetsPath` is
- * that host path translated to its in-container mount form (see
- * {@link toDockerMountPath}), computed once by
- * {@link buildStudioContainerSpec} and threaded into both the bind mount
- * and {@link buildStudioEnv}'s `SNIPPETS_MANAGEMENT_FOLDER`.
+ * The host snippets path (`<workdir>/supabase/snippets`) is a plain top-level directory, not
+ * under `supabase/.temp/` (reserved for the link-state cache) — snippets are persistent user
+ * content Studio's SQL Editor reads/writes, not a cache. {@link buildStudioContainerSpec} computes
+ * its in-container mount form once and reuses it for both the bind mount and
+ * {@link buildStudioEnv}'s `SNIPPETS_MANAGEMENT_FOLDER`.
  */
 
 import { join } from "node:path";
@@ -31,28 +20,15 @@ const STUDIO_CONTAINER_PORT = 3000;
 /** The Studio network alias — a fixed, non-configurable constant. */
 const STUDIO_NETWORK_ALIASES = ["studio"];
 
-/**
- * The default analytics API key — never decoded from `config.toml`, never
- * overridable — so this is always the value regardless of the resolved
- * project config, exactly like `local-config-values.ts`'s other
- * hardcoded, schema-absent constants (`DEFAULT_DB_PASSWORD`, the S3
- * credential triple).
- */
+/** The analytics API key; never decoded from `config.toml` or overridable, so it's always this value. */
 const LOGFLARE_PRIVATE_ACCESS_TOKEN = "api-key";
 
 export interface BuildStudioEnvInput {
   /** The db password — becomes `POSTGRES_PASSWORD`. */
   readonly dbPassword: string;
-  /**
-   * `CommandSettings.workdir`, the already-resolved absolute project root —
-   * `EDGE_FUNCTIONS_MANAGEMENT_FOLDER` is resolved against it
-   * (`<workdir>/supabase/functions`).
-   */
+  /** The already-resolved absolute project root; `EDGE_FUNCTIONS_MANAGEMENT_FOLDER` is resolved against it (`<workdir>/supabase/functions`). */
   readonly workdir: string;
-  /**
-   * Becomes `SNIPPETS_MANAGEMENT_FOLDER` verbatim. See this module's doc
-   * comment for what it is and how it's derived.
-   */
+  /** Becomes `SNIPPETS_MANAGEMENT_FOLDER` verbatim; see this module's header for how it's derived. */
   readonly containerSnippetsPath: string;
   /** `CURRENT_CLI_VERSION`. */
   readonly cliVersion: string;
@@ -63,14 +39,9 @@ export interface BuildStudioEnvInput {
   /** Logflare's own container name — `LOGFLARE_URL=http://<name>:4000`. */
   readonly logflareContainerName: string;
   /**
-   * `config.studio.api_url`, post-`SUPABASE_STUDIO_API_URL`-override AND
-   * post-config-validation's host-rewrite (`resolveStudioApiUrl`) —
-   * `SUPABASE_PUBLIC_URL`. Distinct from `LocalConfigValues.studioUrl`
-   * (the `http://<hostname>:<port>` value `status` reports). This is NOT
-   * simply the raw `studio.api_url` field: under a default config its host
-   * (`127.0.0.1`) matches the local hostname, so it's rewritten to
-   * `Config.Api.ExternalUrl` (the Kong URL) before `start` ever reads it —
-   * the caller must apply that same rewrite before passing this field in.
+   * Becomes `SUPABASE_PUBLIC_URL`. Not the raw `config.studio.api_url` field: under a default
+   * config its host (`127.0.0.1`) is rewritten to the Kong URL before `start` reads it, and the
+   * caller must apply that rewrite before passing this field in.
    */
   readonly studioApiUrl: string;
   /** `resolveLocalConfigValues(...).jwtSecret` — `AUTH_JWT_SECRET`. */
@@ -87,10 +58,7 @@ export interface BuildStudioEnvInput {
   readonly s3AccessKeyId: string;
   /** `resolveLocalConfigValues(...).storageS3SecretAccessKey` — `S3_PROTOCOL_ACCESS_KEY_SECRET`. */
   readonly s3SecretAccessKey: string;
-  /**
-   * `config.studio.openai_api_key`, decrypted/resolved by the caller —
-   * `OPENAI_API_KEY`. `undefined` maps to `""`, the unset-secret case.
-   */
+  /** `config.studio.openai_api_key`, resolved by the caller; `undefined` maps to `""` (unset). */
   readonly openaiApiKey: string | undefined;
   /** `config.api.schemas` — `PGRST_DB_SCHEMAS`, comma-joined. */
   readonly apiSchemas: ReadonlyArray<string>;
@@ -105,11 +73,8 @@ export interface BuildStudioEnvInput {
 }
 
 /**
- * Builds Studio's container env. Returns a `KEY -> value` map —
- * {@link StartContainerSpec.env}'s own shape, chosen so secret values
- * never round-trip through this process's own `docker create` argv (see that
- * field's doc comment in `docker-create-args.ts`). Pure — no Effect or I/O —
- * so every env var mapping is unit-testable in isolation.
+ * Builds Studio's container env as a `KEY -> value` map, matching {@link StartContainerSpec.env}'s
+ * shape, so secret values never round-trip through this process's own `docker create` argv.
  */
 export function buildStudioEnv(input: BuildStudioEnvInput): Record<string, string> {
   return {
@@ -153,23 +118,15 @@ export interface StudioContainerInput {
   /** `config.studio.port` — the host port published to `3000/tcp`. */
   readonly port: number;
   /**
-   * The per-enabled-Edge-Function module bind mounts resolved from each
-   * `supabase/functions/<slug>`'s deploy config
-   * (`serve.PopulatePerFunctionConfigs`). Out of scope for now (a separate,
-   * large functions-deploy-config-parsing concern); pass `[]` until a
-   * future edge-functions-serve integration supplies these.
+   * Per-enabled-Edge-Function module bind mounts, resolved from each `supabase/functions/<slug>`'s
+   * deploy config. Pass `[]` until an edge-functions-serve integration supplies these.
    */
   readonly functionBinds: ReadonlyArray<string>;
   /** Every value {@link buildStudioEnv} needs, minus the path this builder derives itself. */
   readonly env: Omit<BuildStudioEnvInput, "containerSnippetsPath">;
 }
 
-/**
- * Assembles Studio's {@link StartContainerSpec}, including the snippets
- * bind mount and its Docker-path form, derived from `workdir` once and
- * reused for both the bind and {@link buildStudioEnv}'s
- * `SNIPPETS_MANAGEMENT_FOLDER`.
- */
+/** Builds Studio's {@link StartContainerSpec}, including the snippets bind mount. */
 export function buildStudioContainerSpec(input: StudioContainerInput): StartContainerSpec {
   const hostSnippetsPath = join(input.env.workdir, "supabase", "snippets");
   const containerSnippetsPath = toDockerMountPath(hostSnippetsPath);

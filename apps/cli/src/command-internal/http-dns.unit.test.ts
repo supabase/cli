@@ -25,13 +25,11 @@ describe("buildDohRequest", () => {
     const result = buildDohRequest("https://api.supabase.com:8443/v1/projects", "203.0.113.10");
     expect(result.url).toBe("https://203.0.113.10:8443/v1/projects");
     expect(result.serverName).toBe("api.supabase.com");
-    // Host header must include the port when it differs from the scheme default.
     expect(result.hostHeader).toBe("api.supabase.com:8443");
   });
 
   it("does not include the port in the Host header for the default HTTPS port", () => {
     const result = buildDohRequest("https://api.supabase.com:443/v1/projects", "203.0.113.10");
-    // URL constructor normalises :443 away for https.
     expect(result.url).toBe("https://203.0.113.10/v1/projects");
     expect(result.hostHeader).toBe("api.supabase.com");
   });
@@ -46,8 +44,7 @@ describe("buildDohRequest", () => {
 
   it("sets serverName to the bare hostname, never the IP", () => {
     const result = buildDohRequest("https://api.supabase.com/", "203.0.113.10");
-    // serverName must be the original hostname for TLS SNI + cert validation.
-    expect(net.isIP(result.serverName)).toBe(0); // not an IP
+    expect(net.isIP(result.serverName)).toBe(0);
     expect(result.serverName).toBe("api.supabase.com");
   });
 });
@@ -86,17 +83,80 @@ describe("dohFetch", () => {
 
     expect(captured).toHaveLength(1);
     const call = captured[0]!;
-    // URL authority is the first resolved IP.
     expect(new URL(call.url).hostname).toBe("203.0.113.10");
-    // Path preserved.
     expect(new URL(call.url).pathname).toBe("/v1/projects");
-    // TLS SNI set to original hostname (CWE-350 guard).
     expect(call.init.tls?.serverName).toBe("api.supabase.com");
     // Host header pinned to original hostname.
-    const headers = call.init.headers as Record<string, string>;
-    expect(headers["Host"]).toBe("api.supabase.com");
+    const headers = new Headers(call.init.headers);
+    expect(headers.get("host")).toBe("api.supabase.com");
     // Other headers preserved.
-    expect(headers["authorization"]).toBe("Bearer tok");
+    expect(headers.get("authorization")).toBe("Bearer tok");
+  });
+
+  it("preserves entries from a WHATWG Headers instance (supabase-js shape)", async () => {
+    const captured: CapturedCall[] = [];
+    const fetchFn = dohFetch({
+      dnsResolver: "https",
+      resolver: makeFakeResolver(["203.0.113.10"]),
+      innerFetch: makeFakeFetch(captured),
+    });
+
+    // supabase-js passes `init.headers` as a `Headers` instance, not a plain
+    // record. Spreading a `Headers` instance yields zero entries, so this is
+    // the regression case: auth and capability headers must survive the
+    // DoH rewrite.
+    await fetchFn("https://feedback.supabase.co/rest/v1/interfaces_feedback", {
+      method: "DELETE",
+      headers: new Headers({
+        apikey: "sb_publishable_key",
+        "content-type": "application/json",
+        "x-feedback-token": "123e4567-e89b-12d3-a456-426614174000",
+      }),
+    });
+
+    const headers = new Headers(captured[0]!.init.headers);
+    expect(headers.get("apikey")).toBe("sb_publishable_key");
+    expect(headers.get("content-type")).toBe("application/json");
+    expect(headers.get("x-feedback-token")).toBe("123e4567-e89b-12d3-a456-426614174000");
+    expect(headers.get("host")).toBe("feedback.supabase.co");
+  });
+
+  it("preserves headers embedded on a Request when no init headers are given", async () => {
+    const captured: CapturedCall[] = [];
+    const fetchFn = dohFetch({
+      dnsResolver: "https",
+      resolver: makeFakeResolver(["203.0.113.10"]),
+      innerFetch: makeFakeFetch(captured),
+    });
+
+    await fetchFn(
+      new Request("https://api.supabase.com/v1/projects", {
+        headers: { authorization: "Bearer tok" },
+      }),
+    );
+
+    const headers = new Headers(captured[0]!.init.headers);
+    expect(headers.get("authorization")).toBe("Bearer tok");
+    expect(headers.get("host")).toBe("api.supabase.com");
+  });
+
+  it("cancels an in-flight DoH resolution when the request signal aborts", async () => {
+    // Ctrl-C or a caller timeout during the DNS lookup must not leave the
+    // resolver running (holding the process open) until the DoH server
+    // answers: the request signal has to reach the resolver fiber.
+    const captured: CapturedCall[] = [];
+    const fetchFn = dohFetch({
+      dnsResolver: "https",
+      resolver: () => Effect.never,
+      innerFetch: makeFakeFetch(captured),
+    });
+    const controller = new AbortController();
+
+    const pending = fetchFn("https://api.supabase.com/v1/projects", { signal: controller.signal });
+    controller.abort();
+
+    await expect(pending).rejects.toBeDefined();
+    expect(captured).toHaveLength(0);
   });
 
   it("passes through without DoH when dnsResolver is 'native'", async () => {
@@ -113,7 +173,6 @@ describe("dohFetch", () => {
 
     await fetchFn("https://api.supabase.com/v1/projects");
 
-    // Original URL passed through unchanged.
     expect(captured[0]?.url).toBe("https://api.supabase.com/v1/projects");
     expect(resolverCalls).toHaveLength(0);
   });
@@ -185,7 +244,6 @@ describe("dohFetchLayer (Effect layer integration)", () => {
     });
 
     return Effect.gen(function* () {
-      // Verify the DoH fetch rewrites the URL and sets serverName correctly.
       yield* Effect.promise(() => fakeFetch("https://api.supabase.com/v1/projects"));
 
       expect(captured).toHaveLength(1);
@@ -200,7 +258,6 @@ describe("dohFetchLayer (Effect layer integration)", () => {
     };
 
     return Effect.gen(function* () {
-      // With dnsResolver = "https", the layer should provide a function.
       const dohLayer = dohFetchLayer.pipe(Layer.provide(Layer.succeed(DnsResolverFlag, "https")));
       const fetchFn = yield* FetchHttpClient.Fetch.pipe(Effect.provide(dohLayer));
       expect(typeof fetchFn).toBe("function");

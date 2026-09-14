@@ -2,16 +2,11 @@ import { Effect, FileSystem, Path, Schema, Crypto } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 import { InvalidProjectRootError, InvalidStackIdentityError } from "../public/Errors.ts";
 import { StackIdSchema, type StackId } from "../public/StackId.ts";
-import { resolveFolderIdentity } from "./FolderIdentity.ts";
-import { resolveGitIdentity } from "./GitIdentity.ts";
+import { resolveGitBranchContext } from "./GitBranchContext.ts";
 
 export interface StackIdentity {
   readonly projectRoot: string;
-  readonly checkoutRoot: string;
-  readonly workspaceId: string;
-  readonly checkoutId: string;
   readonly branchContext: string;
-  readonly localProjectKey: string;
   readonly stackName: string;
 }
 
@@ -25,13 +20,7 @@ const identityFailure = (message: string, fields?: Readonly<Record<string, unkno
 
 const encodeTuple = (identity: StackIdentity): Uint8Array => {
   const encoder = new TextEncoder();
-  const fields = [
-    identity.workspaceId,
-    identity.checkoutId,
-    identity.branchContext,
-    identity.localProjectKey,
-    identity.stackName,
-  ];
+  const fields = [identity.projectRoot, identity.branchContext, identity.stackName];
   const encoded = fields.map((field) => encoder.encode(field));
   const byteLength = encoded.reduce((total, bytes) => total + 4 + bytes.byteLength, 0);
   const result = new Uint8Array(byteLength);
@@ -107,9 +96,12 @@ export const resolveStackIdentity = (
       return yield* identityFailure("The stack name must not be blank", { name: options.name });
     }
 
-    const git = yield* resolveGitIdentity(canonicalProjectRoot);
-    const parts = git ?? (yield* resolveFolderIdentity(canonicalProjectRoot));
-    return { projectRoot: canonicalProjectRoot, stackName, ...parts };
+    const branchContext = yield* resolveGitBranchContext(canonicalProjectRoot);
+    return {
+      projectRoot: canonicalProjectRoot,
+      branchContext: branchContext ?? "ordinary-workspace",
+      stackName,
+    };
   }).pipe(
     Effect.catchTag("PlatformError", (error: PlatformError) =>
       Effect.fail(

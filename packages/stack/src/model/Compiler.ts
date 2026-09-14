@@ -447,7 +447,22 @@ const releaseFor = <T>(
   const selected = extract(raw, "version");
   const selector =
     typeof selected === "string" ? selected : (previousVersion ?? module.defaultVersion);
-  const release = module.releases[selector];
+  // The CLI config exposes PostgreSQL as a major selector (`15`, `17`), while the catalog
+  // persists a concrete release; resolve a major against the catalog here so the CLI never
+  // needs to know artifact patch IDs.
+  const majorSelector = module.name === "database" && /^\d+$/.test(selector);
+  const resolvedSelector = majorSelector
+    ? (() => {
+        const sameMajor = (version: string | undefined): boolean =>
+          version !== undefined && version.split(".", 1)[0] === selector;
+        if (sameMajor(previousVersion) && previousVersion !== undefined) return previousVersion;
+        if (sameMajor(module.defaultVersion)) return module.defaultVersion;
+        return Object.keys(module.releases).find(
+          (version) => version.includes(".") && sameMajor(version),
+        );
+      })()
+    : selector;
+  const release = resolvedSelector === undefined ? undefined : module.releases[resolvedSelector];
   if (release !== undefined) return Effect.succeed(release.version);
   return Effect.fail(
     new StackVersionUnsupportedError({

@@ -4,6 +4,7 @@ import {
   RESOURCE_OUTPUT_FORMATS,
   invalidOutputFormatMessage,
   outputFormatEnumMessage,
+  unsupportedOutputFlagMessage,
 } from "./go-output-flag.ts";
 
 describe("go-output-flag", () => {
@@ -23,6 +24,21 @@ describe("go-output-flag", () => {
     );
     expect(invalidOutputFormatMessage("yaml", QUERY_OUTPUT_FORMATS)).toBe(
       'invalid argument "yaml" for "-o, --output" flag: must be one of [ json | table | csv ]',
+    );
+  });
+
+  it("directs unsupported commands to --output-format", () => {
+    expect(unsupportedOutputFlagMessage("whoami")).toBe(
+      "the -o/--output flag is not supported by whoami; use --output-format json|stream-json instead.",
+    );
+    expect(unsupportedOutputFlagMessage("pull")).toBe(
+      "the -o/--output flag is not supported by pull; use --output-format json|stream-json instead.",
+    );
+    expect(unsupportedOutputFlagMessage("config diff")).toBe(
+      "the -o/--output flag is not supported by config diff; use --output-format json|stream-json instead.",
+    );
+    expect(unsupportedOutputFlagMessage("config pull")).toBe(
+      "the -o/--output flag is not supported by config pull; use --output-format json|stream-json instead.",
     );
   });
 });

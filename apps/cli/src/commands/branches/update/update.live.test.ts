@@ -44,11 +44,9 @@ test("renames a preview branch", async ({ cli, project }) => {
     expect(updated.stderr).toContain("Updated preview branch");
     expect(JSON.parse(updated.stdout)).toMatchObject({ name: renamed });
 
-    // Right after the rename the platform can still miss the new name (`get` by
-    // name is a server-side lookup and returned 404 for it), so after one
-    // fail-fast read the lookup is polled (2s apart, 60s deadline, each attempt
-    // bounded) until it resolves. The first read aborts on anything but a 404.
-    // The proof carries stderr only: `get` prints secrets on stdout.
+    // The platform can still 404 the rename right after it completes, so this polls (2s apart,
+    // 60s deadline) until it resolves, aborting immediately on anything but a 404. Checks stderr
+    // only since `get` prints secrets on stdout.
     const prove = async (): Promise<string> => {
       const proof = await cli(["branches", "get", renamed, "--project-ref", project.ref], {
         exitTimeoutMs: 20_000,

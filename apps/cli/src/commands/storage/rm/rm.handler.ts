@@ -32,11 +32,10 @@ import { listStoragePaths } from "../storage.iterate.ts";
 export interface StorageRmFlags {
   readonly files: ReadonlyArray<string>;
   readonly recursive: boolean;
-  // `linked` is carried for parity with the ls/cp/mv handler signatures; routing
-  // reads only `local` (Go `storage.go:21-32` reads `GetBool("local")`).
+  // Routing reads only `local`; `linked` is unused.
   readonly linked: boolean;
   readonly local: boolean;
-  // TS-only override of the linked project ref — see push.command.ts (db push).
+  // Overrides the linked project's ref; only valid when targeting --linked, not --local.
   readonly projectRef: Option.Option<string>;
 }
 
@@ -65,14 +64,8 @@ export const storageRm = Effect.fn("storage.rm")(function* (flags: StorageRmFlag
   yield* Effect.gen(function* () {
     yield* assertStorageWorkdir(cliSettings.workdir);
 
-    // Resolve the project ref BEFORE reading the project `.env`: the
-    // linked-project ref must be resolved strictly before the config load
-    // (the `.env` work). An unlinked workdir must fail fast with the
-    // not-linked guidance before a malformed/unreadable `supabase/.env` gets
-    // a chance to mask it with an env-parse error.
-    // `--project-ref` never implies `--linked` and must not be silently
-    // discarded on the local target — see push.handler.ts's identical guard
-    // (db push) for the full TS-only rationale.
+    // Resolving the project ref before loading the project `.env` ensures an unlinked
+    // workdir fails with the not-linked message instead of an env-parse error.
     if (Option.isSome(flags.projectRef) && flags.local) {
       return yield* Effect.fail(
         new StorageMutuallyExclusiveFlagsError({
@@ -84,10 +77,8 @@ export const storageRm = Effect.fn("storage.rm")(function* (flags: StorageRmFlag
 
     const projectRef = flags.local ? "" : yield* resolver.loadProjectRef(flags.projectRef);
     linkedRef = projectRef;
-    // `--yes` OR `SUPABASE_YES`. Both the `--local` and (default) `--linked`
-    // branches load the project `.env` files before the confirmation
-    // prompt, so a `SUPABASE_YES` set only in `supabase/.env` must
-    // auto-confirm here too.
+    // `.env` loads before the confirmation prompt, so a `SUPABASE_YES` set only in
+    // `supabase/.env` also auto-confirms.
     const projectEnv = yield* loadProjectEnv(fs, path, cliSettings.workdir);
     const yes = yield* resolveYesWithProjectEnv(projectEnv);
     const loaded = yield* loadStorageConfig(cliSettings, projectRef);
@@ -95,7 +86,6 @@ export const storageRm = Effect.fn("storage.rm")(function* (flags: StorageRmFlag
       yield* output.raw(`Loading config override: [remotes.${loaded.appliedRemote}]\n`, "stderr");
     }
 
-    // Group paths by bucket, validating BEFORE building the client (Go `rm.go:31-47`).
     const groups = new Map<string, Array<string>>();
     for (const objectPath of flags.files) {
       const remotePath = yield* parseStorageUrlEffect(objectPath);
@@ -117,8 +107,7 @@ export const storageRm = Effect.fn("storage.rm")(function* (flags: StorageRmFlag
       { projectRef, config: loaded.config, userAgent: cliSettings.userAgent },
       (gateway) =>
         Effect.gen(function* () {
-          // No paths: `-r` deletes every bucket, otherwise it's a missing-flag
-          // error (Go `rm.go:52-63`, after the client is built).
+          // No paths given: `-r` deletes every bucket, otherwise it's a missing-flag error.
           if (groups.size === 0) {
             if (!flags.recursive) {
               return yield* new StorageMissingFlagError();
@@ -168,7 +157,7 @@ export const storageRm = Effect.fn("storage.rm")(function* (flags: StorageRmFlag
   );
 });
 
-/** Go `rm.deleteObjects` (`rm.go:145-156`): DELETE in chunks of DELETE_OBJECTS_LIMIT. */
+/** Deletes objects in chunks of DELETE_OBJECTS_LIMIT. */
 const deleteObjects = (
   gateway: StorageGateway,
   bucket: string,
@@ -187,9 +176,8 @@ const deleteObjects = (
   });
 
 /**
- * Go `RemoveStoragePathAll` (`rm.go:102-143`): BFS over the prefix tree (LIFO),
- * deleting files per directory, then deleting the bucket itself when the prefix
- * is empty. `prefix` is terminated by `/` or empty.
+ * Walks the prefix tree with a stack, deleting files per directory, then the bucket
+ * itself once the prefix is empty. `prefix` ends with `/` or is empty.
  */
 const removeStoragePathAll = (
   gateway: StorageGateway,

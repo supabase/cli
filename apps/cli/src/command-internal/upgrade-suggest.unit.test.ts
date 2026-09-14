@@ -289,10 +289,6 @@ describe("suggestUpgrade", () => {
   });
 
   it.live("a caller-provided reconciled token authenticates the fallback GETs", () => {
-    // Go resolves credentials for the process-wide reconciled CurrentProfile —
-    // a reconciled caller passes its token with the
-    // URL so the stale profile's bearer token never follows the reconciled
-    // host (review r3684524241).
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* suggestUpgrade({
@@ -309,8 +305,6 @@ describe("suggestUpgrade", () => {
   });
 
   it.live("a reconciled profile with no token sends the fallback GETs unauthenticated", () => {
-    // `None` means the reconciled profile's own lookup found nothing — Go
-    // never falls back to the stale profile's token in that case.
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* suggestUpgrade({

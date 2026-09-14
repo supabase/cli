@@ -35,10 +35,8 @@ export class FunctionsNewWriteError extends Data.TaggedError("FunctionsNewWriteE
 
 /**
  * The resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a
- * directory (`validateWorkdirIsDirectory`). Only reachable when the
- * user explicitly set it — beats slug validation and every filesystem write,
- * so a typo'd `--workdir` can never scaffold a fresh `supabase/functions/…`
- * tree (plus a new `config.toml`) at the wrong path.
+ * directory. Checked before slug validation and any filesystem write, so a
+ * typo'd `--workdir` can never scaffold a fresh tree at the wrong path.
  */
 export class FunctionsNewWorkdirError extends Data.TaggedError("FunctionsNewWorkdirError")<{
   readonly message: string;
@@ -49,10 +47,8 @@ export class FunctionsNewWorkdirError extends Data.TaggedError("FunctionsNewWork
 }
 
 /**
- * Maps an arbitrary thrown cause from a filesystem write to a typed
- * `FunctionsNewWriteError` tagged with the given `path`. Used by the IDE
- * settings writers, where the same shape is needed for both the `.vscode` and
- * `.idea/deno.xml` targets.
+ * Maps a thrown filesystem-write cause to a typed `FunctionsNewWriteError`
+ * tagged with `path`. Shared by the `.vscode` and `.idea/deno.xml` writers.
  */
 export function mapFunctionsNewWriteError(path: string) {
   return (cause: unknown): FunctionsNewWriteError =>

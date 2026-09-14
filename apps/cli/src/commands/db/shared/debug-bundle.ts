@@ -19,7 +19,7 @@ export interface DebugBundle {
   readonly migrations?: ReadonlyArray<string>;
 }
 
-/** Go's debug-bundle id layout `20060102-150405` (UTC). */
+/** The debug-bundle id layout `20060102-150405` (UTC). */
 export function formatDebugId(millis: number): string {
   const digits = new Date(millis).toISOString().replace(/\D/gu, "").slice(0, 14);
   return `${digits.slice(0, 8)}-${digits.slice(8)}`;
@@ -38,11 +38,9 @@ const copyBestEffort = (fs: FileSystem.FileSystem, from: string, to: string): Ef
   );
 
 /**
- * Writes a debug bundle to `<tempDir>/debug/<id>/` and returns the directory.
- * Mirrors Go's `SaveDebugBundle`: creating the top-level directory is fatal (the
- * effect fails so callers don't claim a bundle was saved), while every individual
- * artifact write and the nested `migrations/` dir are best-effort (a failed copy
- * must not mask the original error).
+ * Writes a debug bundle to `<tempDir>/debug/<id>/` and returns the directory. Creating the
+ * top-level directory is fatal (so callers don't claim a bundle was saved), while every
+ * individual artifact write is best-effort (a failed copy must not mask the original error).
  */
 export const saveDebugBundle = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
@@ -53,12 +51,6 @@ export const saveDebugBundle = Effect.fnUntraced(function* (
   bundle: DebugBundle,
 ) {
   const debugDir = path.join(tempDir, "debug", bundle.id);
-  // Go's `SaveDebugBundle` returns an error when the top-level debug directory
-  // cannot be created (`apps/cli-go/internal/db/declarative/debug.go:40-42`); only
-  // the individual artifact writes (and the nested `migrations/` dir) are
-  // best-effort once the directory exists. Propagating this failure lets callers
-  // suppress the "Debug information saved" message instead of pointing at a
-  // directory that was never created.
   yield* fs.makeDirectory(debugDir, { recursive: true });
 
   // The catalog refs are workdir-relative paths (`supabase/.temp/pgdelta/...`), so
@@ -94,18 +86,15 @@ export const saveDebugBundle = Effect.fnUntraced(function* (
   return debugDir;
 });
 
-/** Collects local migration *filenames* for a debug bundle (Go's `CollectMigrationsList`). */
+/** Collects local migration filenames for a debug bundle. */
 export const collectMigrationsList = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   migrationsDir: string,
 ) {
-  // Go's `CollectMigrationsList` swallows a `ListLocalMigrations` read error and
-  // returns nil (`internal/db/declarative/debug.go:118-128`): the debug bundle is
-  // collected while a primary diff/apply error is already in flight, so an
-  // unreadable `supabase/migrations` must only omit migration copies, never replace
-  // the actionable original error. (The main generate/sync path keeps failing on an
-  // unreadable dir — that fail-on-read lives at the direct callers.)
+  // The debug bundle is collected while a primary diff/apply error is already in flight, so an
+  // unreadable `supabase/migrations` must only omit migration copies, never replace the
+  // actionable original error. The main generate/sync path still fails on an unreadable dir.
   const migrations = yield* listLocalMigrations(fs, path, migrationsDir).pipe(
     Effect.orElseSucceed(() => [] as ReadonlyArray<string>),
   );
@@ -113,8 +102,8 @@ export const collectMigrationsList = Effect.fnUntraced(function* (
 });
 
 /**
- * Builds the issue-reporting message printed after a debug bundle is saved.
- * Byte-matches Go's `PrintDebugBundleMessage` (leading blank line included).
+ * Builds the issue-reporting message printed after a debug bundle is saved (leading blank line
+ * included); message text is an established output contract.
  */
 export function debugBundleMessage(debugDir: string): string {
   const lines = [""];

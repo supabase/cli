@@ -5,7 +5,6 @@ import { makeMigrationListRows, migrationListTableCells } from "./list.format.ts
 
 describe("makeMigrationListRows", () => {
   it("tabulates short numeric versions in chronological order (Go TestMakeTable)", () => {
-    // makeTable(["0","2"], ["0","1"]) — passthrough time for non-timestamp versions.
     expect(makeMigrationListRows(["0", "2"], ["0", "1"])).toEqual([
       { local: "0", remote: "0", time: "0" },
       { local: "1", remote: "", time: "1" },
@@ -27,10 +26,9 @@ describe("makeMigrationListRows", () => {
   });
 
   it("pairs an 8-digit and a 14-digit version that share a prefix (#6036)", () => {
-    // Local versions arrive in file-name order, where `20260420010000_b.sql`
-    // precedes `20260420_a.sql` ('0' < '_') — the reverse of the `ORDER BY
-    // version` order `schema_migrations` is read back in. Unsorted, the walk
-    // desynchronises and reports `20260420` as both remote-only and local-only.
+    // File-name order puts `20260420010000_b.sql` before `20260420_a.sql`, the
+    // reverse of `ORDER BY version`; unsorted, the walk reports `20260420` as both
+    // remote-only and local-only.
     expect(
       makeMigrationListRows(["20260420", "20260420010000"], ["20260420010000", "20260420"]),
     ).toEqual([
@@ -67,7 +65,6 @@ describe("migrationListTableCells", () => {
       ["Local", "Remote", "Time (UTC)"],
       migrationListTableCells(rows),
     );
-    // Backtick-wrapped inline code is preserved by AsciiStyle.
     expect(out).toContain("` `");
     expect(out).toContain("`20220727064247`");
     expect(out).toContain("`20220727064248`");

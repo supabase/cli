@@ -87,11 +87,8 @@ const mapBranchDatabaseConfigError = mapHttpError({
     `unexpected preview branch database config status ${status}: ${body}`,
 });
 
-// A 404 from `GET /v1/projects/{ref}` means the ref is a preview branch rather
-// than a project, so fall back to the branch config endpoint. Mirror the link
-// handler, which treats *any* 404 as the branch case (`link.handler.ts:46-50`);
-// do not narrow on the response body, since the Management API's 404 wording
-// is not guaranteed.
+// A 404 from `GET /v1/projects/{ref}` means the ref is a preview branch, not a project — fall
+// back to the branch config endpoint. Don't narrow on the response body; its wording isn't guaranteed.
 function isProjectNotFound(cause: unknown) {
   return cause instanceof GenTypesUnexpectedStatusError && cause.status === 404;
 }
@@ -107,9 +104,7 @@ type GenTypesMutexFlag =
   | "swift-access-control"
   | "query-timeout";
 
-// Four mutually-exclusive flag groups. Validation runs in lexicographically
-// sorted group-key order and reports only the first violated group, so they
-// are listed here in that sorted order — e.g. `--db-url X
+// Validation reports only the first violated group, in this listed order — e.g. `--db-url X
 // --postgrest-v9-compat --project-id Y` reports the postgrest group, not the
 // local/linked/project-id/db-url group.
 const GEN_TYPES_MUTEX_GROUPS: ReadonlyArray<ReadonlyArray<GenTypesMutexFlag>> = [
@@ -120,15 +115,9 @@ const GEN_TYPES_MUTEX_GROUPS: ReadonlyArray<ReadonlyArray<GenTypesMutexFlag>> = 
 ];
 
 /**
- * Every value-taking (non-boolean) flag reachable when `gen types` parses:
- * the command's own (`types.command.ts`) plus the root's persistent value
- * flags — these tell `pflagArgvScan` which bare tokens consume the next argv
- * token as their value. `--local`, `--linked`, and `--postgrest-v9-compat`
- * are this command's only boolean flags and are deliberately excluded;
- * booleans never consume a following token. `--schema`'s `-s` shorthand
- * (Go `cmd/gen.go:155` `StringSliceVarP`) is covered via the shorthand map
- * so a genuine `-s public` invocation — and a bare `-s` consuming the next
- * flag-shaped token as pflag does — is seen exactly as pflag sees it.
+ * Every value-taking flag `gen types` parses, telling `pflagArgvScan` which bare tokens
+ * consume the next argv token as their value. Boolean flags (`--local`, `--linked`,
+ * `--postgrest-v9-compat`) are excluded since they never consume a following token.
  */
 const GEN_TYPES_SCAN_SPEC = {
   valueFlagNames: new Set([
@@ -162,10 +151,9 @@ function collectByteStream(stream: Stream.Stream<Uint8Array, unknown>) {
   ).pipe(Effect.map((text) => text + decoder.decode()));
 }
 
-// Keep these two sets in sync with the value-bearing flags on the root command
-// (command-internal/global-flags.ts) and the `gen types` command (types.command.ts).
-// They let `findPositionalLanguage` skip a flag's value so it is not
-// mistaken for the legacy positional language argument (e.g. `gen types typescript`).
+// Keep in sync with the value-bearing flags on the root command and `gen types` itself.
+// Lets `findPositionalLanguage` skip a flag's value so it isn't mistaken for the legacy
+// positional language argument (e.g. `gen types typescript`).
 const LONG_FLAGS_WITH_VALUES = new Set([
   "db-url",
   "project-id",
@@ -245,49 +233,34 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
   const dbConfig = yield* DbConfigResolver;
   const sslProbe = yield* PgDeltaSslProbe;
 
-  // "Set" follows cobra's `pflag.Changed` semantics — whether the flag was
-  // passed at all — not the resulting value: `--linked=false` still counts
-  // as set. Scanning raw argv keeps detection aligned with pflag's semantics
-  // rather than with whatever the TS parser produced — e.g. a bare
-  // `-s --linked --local` is pflag's `-s` consuming `--linked` as its
-  // (oddly named, but valid) schema value, leaving only `--local` changed,
-  // while the Effect parser reads `--linked` as its own boolean flag.
+  // "Set" means the flag appeared in argv at all (pflag's `Changed` semantics), not its parsed
+  // value — `--linked=false` still counts. Argv is scanned directly since a token like
+  // `-s --linked` consumes `--linked` as `-s`'s value, not as its own boolean flag.
   const scan = pflagArgvScan(rawArgs, GEN_TYPES_COMMAND_PATH, GEN_TYPES_SCAN_SPEC);
   const occurrences = scan.occurrences;
 
-  // `--query-timeout` is parsed at flag-parse time (pflag's `DurationVar`),
-  // before the telemetry context is installed — so an invalid duration wins
-  // over every guard below, and unlike them, its rejection is never
-  // followed by a telemetry flush.
+  // Parsed before the telemetry context is installed, so an invalid `--query-timeout` wins
+  // over every guard below and, unlike them, is never followed by a telemetry flush.
   const queryTimeoutSeconds = yield* parseQueryTimeoutSeconds(flags.queryTimeout);
 
-  // flags.schema is already CSV-parsed and validated by `Flag.mapTryCatch(parseSchemaFlags)`
-  // in types.command.ts — use it directly.
   const schemas = flags.schema;
   const lang = flags.lang;
   const swiftAccessControl = flags.swiftAccessControl;
 
-  // Resolved against `cliSettings.workdir`, the root every config load in
-  // this handler uses.
   const toRelativeConfigPath = (path: string) => relativeConfigPath(cliSettings.workdir, path);
 
-  // `projectRef` is only ever passed for the `--linked`/`--project-id` paths
-  // below (so a matching `[remotes.*]` overlay is merged in the SAME load);
-  // omitted for the `--local`/`--db-url` paths, matching `loadCliConfig`'s
-  // own optional `projectRef`.
+  // `projectRef` is passed only for the `--linked`/`--project-id` paths, so a matching
+  // `[remotes.*]` overlay is merged in the same load; omitted for `--local`/`--db-url`.
   const loadConfig = (projectRef?: string) =>
     loadCliConfig(cliSettings.workdir, {
       ...(projectRef === undefined ? {} : { projectRef }),
       goViperCompat: true,
       search: shouldSearchAncestors(cliSettings),
     }).pipe(
-      // `cause.path` names the file that actually failed to parse — `loadCliConfig`
-      // probes `supabase/config.json` before falling back to `supabase/config.toml`
-      // (`findCliProjectPaths`), so hardcoding the `.toml` name here would mislabel a
-      // broken `config.json`. Caught regardless of `explicitWorkdir` — a malformed
-      // config is a parse failure, not the "no project here" case
-      // `requireProjectConfigWhenExplicit` handles, so it must run before that
-      // flatMap ever sees the (by-then-already-failed) load.
+      // `cause.path` names the actual failed file; `loadCliConfig` probes `config.json`
+      // before falling back to `config.toml`, so hardcoding `.toml` here would mislabel it.
+      // Caught before `requireProjectConfigWhenExplicit`, since a parse failure is distinct
+      // from the "no project here" case that guard handles.
       Effect.catchTag(
         "CliConfigParseError",
         (cause) =>
@@ -302,10 +275,9 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       Effect.flatMap(requireProjectConfigWhenExplicit),
     );
 
-  // CLI-2285: an explicit --workdir that holds no project must not silently
-  // resolve to the embedded default schemas (dropping a declared [api].schemas
-  // and writing a public-only types file, exit 0). A DEFAULTED workdir keeps
-  // today's tolerant fallback.
+  // An explicit --workdir that holds no project must not silently resolve to the embedded
+  // default schemas (dropping a declared [api].schemas and writing a public-only file at exit
+  // 0). A defaulted workdir keeps the tolerant fallback.
   const requireProjectConfigWhenExplicit = (loaded: LoadedCliConfig | null) =>
     loaded === null && cliSettings.explicitWorkdir
       ? Effect.gen(function* () {
@@ -464,12 +436,9 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
           Effect.gen(function* () {
             yield* output.raw(`Connecting to ${target.host} ${target.port}\n`, "stderr");
 
-            // Each entry is a "KEY=VALUE" string, passed as a `--env
-            // KEY=VALUE` argument rather than a `--env-file`: env-files
-            // split on newlines, so they cannot carry the multi-line PEM CA
-            // bundle, and a value containing a newline could inject an extra
-            // variable. Passing argv elements keeps each entry as exactly
-            // one variable regardless of its contents.
+            // Passed as `--env KEY=VALUE` args rather than `--env-file`: env-files split on
+            // newlines and can't carry the multi-line PEM CA bundle without injecting an
+            // extra variable.
             const env = [
               `PG_META_DB_URL=${target.url}`,
               `PG_CONN_TIMEOUT_SECS=${queryTimeoutSeconds}`,
@@ -480,9 +449,8 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
               `PG_META_GENERATE_TYPES_DETECT_ONE_TO_ONE_RELATIONSHIPS=${String(!input.postgrestV9Compat)}`,
             ];
 
-            // Emitted to stderr when the probe runs with certificate
-            // verification disabled. Our wire-level SSLRequest probe never
-            // verifies certificates, so honour the same env var here too.
+            // The SSL probe never verifies certificates on its own, so honor the same env var
+            // here too when warning about disabled verification.
             if (process.env["SUPABASE_CA_SKIP_VERIFY"] === "true") {
               yield* output.raw(
                 "WARNING: TLS certificate verification disabled for SSL probe (SUPABASE_CA_SKIP_VERIFY=true)\n",
@@ -497,8 +465,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
             // After the TLS probe, so an unreachable database fails before any image pull.
             const pgmetaImage = yield* resolvedImage;
 
-            // `--network-id` overrides any base network mode (even the
-            // "host" mode used for --db-url), so honour the override here too.
+            // `--network-id` overrides any base network mode, including "host" for --db-url.
             const networkMode = Option.isSome(networkId) ? networkId.value : input.networkMode;
             const args = [
               "run",
@@ -567,9 +534,8 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
   const assertLocalDbRunning = (projectId: string) =>
     Effect.scoped(
       Effect.gen(function* () {
-        // We only need the exit code and stderr (Go uses Docker's ContainerInspect API,
-        // which reads no stdout). Discard stdout so the inspect JSON can never fill the
-        // pipe buffer and deadlock the unconsumed stream.
+        // Only the exit code and stderr matter; discard stdout so the inspect JSON can't
+        // fill the pipe buffer and deadlock the unconsumed stream.
         const child = yield* spawnContainerCli(
           spawner,
           ["container", "inspect", localDbContainerId(projectId)],
@@ -600,19 +566,14 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
     );
 
   yield* Effect.gen(function* () {
-    // The resolved `--workdir`/`SUPABASE_WORKDIR` must exist and be a
-    // directory before the command's own guard or flag-group validation —
-    // the query-timeout parse failure above still precedes it (parsed at
-    // flag-parse time, before the telemetry context).
+    // Validated before the command's own guard or flag-group validation; the query-timeout
+    // parse failure above still precedes even this, since it happens at flag-parse time.
     yield* validateWorkdirIsDirectory(cliSettings.workdir, fs).pipe(
       Effect.mapError((error) => new GenTypesWorkdirError({ message: error.message })),
     );
 
-    // The command's own guard runs next, then flag-group validation — so
-    // this guard's error wins when both apply (e.g. `--local --linked
-    // --postgrest-v9-compat`). Both run AFTER the telemetry context is
-    // already installed, unlike the query-timeout parse failure above, so
-    // every return in this block must stay inside the
+    // This guard runs before flag-group validation, so its error wins when both apply. Both
+    // run after the telemetry context is installed, so every return here must stay inside the
     // `Effect.ensuring(telemetryState.flush)` below.
     if (flags.postgrestV9Compat && Option.isNone(flags.dbUrl)) {
       // Established error text, including the "must used" typo — do not
@@ -630,12 +591,9 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       return yield* Effect.fail(new Error("use --lang flag to specify the typegen language"));
     }
 
-    // Cobra's mutual exclusion keys off pflag `Changed` — a flag counts as
-    // set once passed explicitly, regardless of value, so `--linked=false`
-    // still trips its groups. `project-id` and `db-url` are read straight off
-    // the parsed flags: neither has a boolean-vs-default ambiguity, and
-    // reconciling them against the scan is unnecessary here — every guard
-    // test drives the handler with argv that matches its flags.
+    // A flag counts as set once passed explicitly, regardless of value (`--linked=false`
+    // still trips its group). `project-id`/`db-url` are read straight off parsed flags since
+    // they have no boolean-vs-default ambiguity.
     const changedMutexFlags: Record<GenTypesMutexFlag, boolean> = {
       local: occurrences.has("local"),
       linked: occurrences.has("linked"),
@@ -663,10 +621,8 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       );
 
       const paths = tempPaths(path, cliSettings.workdir);
-      // Go resolves Config.Api.Image from the rest-version file only when
-      // Db.MajorVersion > 14, then forces v9 compat when that image tag contains "v9"
-      // (pkg/config/config.go:657-666, internal/gen/types/types.go:69). Gate and trim
-      // identically so we don't force v9 on older databases.
+      // Only forces v9 compat from the rest-version file's image tag when the database's
+      // major version is > 14, so older databases aren't forced into v9 mode.
       const restVersion =
         config.majorVersion > 14
           ? (yield* fs
@@ -704,11 +660,9 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
     }
 
     if (Option.isSome(flags.dbUrl)) {
-      // Mirrors the `--linked`/`--project-id` branches below: an explicit
-      // `--schema` makes the config load's only output (the schema fallback)
-      // unused, so skip it entirely — an explicit workdir with no project
-      // must not fail a `--db-url --schema ...` invocation that never needed
-      // the config in the first place.
+      // Skips the config load entirely when `--schema` is explicit, since the load's only
+      // output here is the schema fallback — a `--db-url --schema ...` invocation must not
+      // fail just because the workdir has no project config.
       const loaded = schemas.length > 0 ? null : yield* loadConfig();
       const direct = yield* parseDatabaseUrl(flags.dbUrl.value);
       const includedSchemas = (

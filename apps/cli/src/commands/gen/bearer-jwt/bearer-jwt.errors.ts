@@ -7,25 +7,18 @@ import {
 } from "../../../shared/telemetry/error-actionability.ts";
 
 /**
- * Extracts a display message from a thrown `cause`. Every `Effect.try` catch in this
- * command's handler/signing-key resolver wraps a function that only ever throws a real
- * `Error` (never a plain string/object) — but `catch` still types `cause` as `unknown`,
- * so the `instanceof` check stays. Pulled out here (rather than inlined at each call
- * site) so neither `bearer-jwt.handler.ts` nor `bearer-jwt.signing-key.ts` carries this
- * branch itself for coverage purposes — it's exercised directly by this file's own
- * unit tests instead.
+ * Extracts a display message from a thrown `cause`. Every catch site here
+ * only ever throws a real `Error`, but `catch` still types `cause` as
+ * `unknown`, hence the `instanceof` check.
  */
 export function bearerJwtErrorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
 
 /**
- * `--role` is required, but required-flag validation runs only AFTER the
- * telemetry context is set up and later flushed. Enforced in the handler
- * (after the telemetry-flushing wrapper is already active) rather than at
- * parse time, so this failure still flushes `telemetry.json`. Established
- * message text `required flag(s) "role" not set`, with no usage block and
- * no `"Error: "` prefix.
+ * `--role` is required, but enforced in the handler rather than at parse
+ * time, so a missing value still flushes `telemetry.json`. Message text is
+ * `required flag(s) "role" not set`, with no usage block or `"Error: "` prefix.
  */
 export class GenBearerJwtRoleRequiredError extends Data.TaggedError(
   "GenBearerJwtRoleRequiredError",
@@ -89,9 +82,9 @@ export class GenBearerJwtKeyNotFoundError extends Data.TaggedError("GenBearerJwt
 }
 
 /**
- * Branch C: the TTY key picker given ZERO available keys quits immediately
- * without ever letting the user select anything. Established bare,
- * unwrapped message `"user aborted"`.
+ * Branch C: the TTY key picker given zero available keys quits immediately
+ * without ever letting the user select anything. Message is the bare,
+ * unwrapped `"user aborted"`.
  */
 export class GenBearerJwtKeyPickerAbortedError extends Data.TaggedError(
   "GenBearerJwtKeyPickerAbortedError",

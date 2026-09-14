@@ -6,12 +6,6 @@ import {
   statusCodeActionability,
 } from "../../shared/telemetry/error-actionability.ts";
 
-// ---------------------------------------------------------------------------
-// Bootstrap-specific tagged errors, one per established failure site.
-// Login / create / api-keys / link failures are surfaced by the extracted
-// shared cores (`command-internal/legacy-*`), so they are NOT redefined here.
-// ---------------------------------------------------------------------------
-
 /** Positional template arg with no case-insensitive match — `"Invalid template: " + name`. */
 export class BootstrapInvalidTemplateError extends Data.TaggedError(
   "BootstrapInvalidTemplateError",
@@ -32,7 +26,7 @@ export class BootstrapTemplateListError extends Data.TaggedError("BootstrapTempl
   }
 }
 
-/** Reading the target workdir failed — `failed to read workdir: %w`. */
+/** Reading the target workdir failed — `failed to read workdir: ${cause}`. */
 export class BootstrapWorkdirReadError extends Data.TaggedError("BootstrapWorkdirReadError")<{
   readonly message: string;
 }> {
@@ -42,8 +36,8 @@ export class BootstrapWorkdirReadError extends Data.TaggedError("BootstrapWorkdi
 }
 
 /**
- * User declined the overwrite prompt — returns `errors.New(context.Canceled)`.
- * Carries no suggestion frame (cancellation, not a fault).
+ * User declined the overwrite prompt. Carries no suggestion frame since this is a
+ * cancellation, not a fault.
  */
 export class BootstrapOverwriteDeclinedError extends Data.TaggedError(
   "BootstrapOverwriteDeclinedError",
@@ -55,7 +49,7 @@ export class BootstrapOverwriteDeclinedError extends Data.TaggedError(
   }
 }
 
-/** Template download failure — `failed to download template: %w`. */
+/** Template download failure (network, non-200 status, or an unsafe archive entry). */
 export class BootstrapTemplateDownloadError extends Data.TaggedError(
   "BootstrapTemplateDownloadError",
 )<{
@@ -67,8 +61,8 @@ export class BootstrapTemplateDownloadError extends Data.TaggedError(
 }
 
 /**
- * Project health probe failed — `Error status %d: %s` (non-200) or
- * `Service not healthy: %s (%s)`.
+ * Project health probe failed — `Error status <status>: <body>` (non-200) or
+ * `Service not healthy: <name> (<status>)`.
  */
 export class BootstrapHealthError extends Data.TaggedError("BootstrapHealthError")<{
   readonly message: string;

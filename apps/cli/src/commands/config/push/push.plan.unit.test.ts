@@ -1,7 +1,3 @@
-/**
- * Unit tests for push.plan.ts.
- */
-
 import type { CliConfig, ConfigChange, ConfigChangeSet, ProjectConfig } from "@supabase/config";
 import { comparableProjectConfigPaths, getDefaultCliConfig } from "@supabase/config";
 import { describe, expect, it } from "vitest";
@@ -136,13 +132,9 @@ describe("pushResourceForPath", () => {
   });
 
   it("drift guard: every comparable config path resolves to a resource, or one of the two intentionally-unsupported prefixes", () => {
-    // `pushResourceForPath` never returns `undefined` (B12) — an
-    // unroutable path falls through to `"unsupported"` too, the same result
-    // an intentionally-listed prefix gets. So a plain `!== undefined`
-    // assertion here would never catch a new registry row this module
-    // forgot to route. Assert the stronger claim instead: every
-    // `"unsupported"` result must be explained by one of
-    // `PUSH_UNSUPPORTED_PREFIXES`, not by falling through unnoticed.
+    // An unroutable path also falls through to `"unsupported"`, the same result an
+    // intentionally-listed prefix gets, so a plain `!== undefined` assertion wouldn't catch a
+    // registry row this module forgot to route.
     for (const path of comparableProjectConfigPaths) {
       const resource = pushResourceForPath(path);
       const isIntentionallyUnsupported = PUSH_UNSUPPORTED_PREFIXES.some(
@@ -247,10 +239,8 @@ describe("pushResourceEnabled", () => {
   });
 
   it("is always true for auth and storage, regardless of their local enabled toggle (CLI-2314)", () => {
-    // `auth.enabled`/`storage.enabled` control only the local GoTrue/Storage
-    // Docker service — gating the whole resource on them silently dropped a
-    // user's declared hosted-auth/storage changes whenever they simply
-    // didn't run that service locally.
+    // `auth.enabled`/`storage.enabled` control only the local GoTrue/Storage Docker service; a
+    // resource-wide gate on them would drop a declared hosted change whenever unused locally.
     const base = getDefaultCliConfig();
     const authOff: CliConfig = { ...base, auth: { ...base.auth, enabled: false } };
     const storageOff: CliConfig = { ...base, storage: { ...base.storage, enabled: false } };

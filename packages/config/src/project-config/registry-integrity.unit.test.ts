@@ -11,40 +11,18 @@ import { unmappedSecretApiPaths } from "./registry-auth.ts";
 import { projectConfigMappingRows } from "./registry.ts";
 
 /**
- * Standing AST-walk drift guard (CLI-2230): every row's `configPath` must
- * resolve against {@link CliConfigSchema}'s AST, and every row's `apiPath`
- * (plus `alsoConsumes` and `./registry-auth.ts`'s `unmappedSecretApiPaths`)
- * must resolve against {@link ProjectConfigApiAttributesSchema}'s AST. This
- * is what keeps the 243 rows across `./registry.ts`/`./registry-auth.ts`
- * true when either schema moves — a renamed or removed field fails a test
- * here instead of silently producing a `ProjectConfig` that never populates
- * (a wrong `configPath`) or a row that never reads a real API field (a
- * wrong `apiPath`).
+ * AST-walk guard: every row's `configPath` must resolve against {@link CliConfigSchema}, and every
+ * row's `apiPath` (plus `alsoConsumes` and `unmappedSecretApiPaths`) must resolve against
+ * {@link ProjectConfigApiAttributesSchema}. A renamed or removed field fails a test here instead of
+ * silently producing a `ProjectConfig` that never populates, or a row that never reads a real API
+ * field.
  *
- * The walker below mirrors `../lib/env.ts`'s `descendAst`/`../lib/
- * secret-paths.ts`'s `collectSecretPathPatterns`: Effect v4 represents both
- * `Schema.Struct` and `Schema.Record` as an `"Objects"` AST node
- * (`.repos/effect/packages/effect/src/SchemaAST.ts:2038-2090`), carrying
- * named `propertySignatures` (struct fields) and/or `indexSignatures`
- * (record key patterns) side by side on the same node type. Descending a
- * path segment therefore tries an exact-name property signature first, then
- * falls back to the first index signature's value type — the record
- * fallback is what "the auth record accepts any second segment" means for
- * `ProjectConfigApiAttributesSchema`'s `auth: Schema.Record(Schema.String,
- * Schema.Json)` field: every row's two-segment `["auth", "<gotrue_key>"]`
- * `apiPath` resolves through that index signature, not a named property.
- *
- * That same open-`Record` shape makes this file's `apiPath` check
- * structurally vacuous for all 189 auth rows: ANY second segment resolves
- * through the record's index signature, whether or not GoTrue actually has a
- * key by that name, so this walker cannot catch a renamed or invented
- * GoTrue key the way it catches a real `configPath`/`CliConfigSchema`
- * mismatch. The real check for the auth half of the registry — every row's
- * `apiPath` against the generated Management API v1 auth-config contract's
- * actual key set — lives in
- * `apps/cli/src/shared/config/project-config-auth-contract.unit.test.ts`,
- * since `packages/config` cannot depend on `packages/api`'s generated
- * client.
+ * Effect v4 represents both `Schema.Struct` and `Schema.Record` as an `"Objects"` AST node, so
+ * descending a path segment tries a named property signature first, then falls back to the first
+ * index signature — which is also why this check is vacuous for the auth rows: `auth` is an open
+ * `Schema.Record`, so any second segment resolves whether or not GoTrue actually has a key by that
+ * name. The real check for auth `apiPath`s against GoTrue's actual key set lives in `apps/cli`,
+ * since `packages/config` cannot depend on `packages/api`'s generated client.
  */
 
 interface AstNode {
@@ -109,13 +87,10 @@ function pathResolves(rootAst: unknown, path: ReadonlyArray<string>): boolean {
 }
 
 /**
- * The named property-signature keys directly under `path` from `rootAst` —
- * empty if `path` doesn't resolve at all, or resolves to a node with no named
- * signatures (e.g. a bare `Schema.Record`). Used for the entry-sweep tables
- * below, whose `entryKeys` is sometimes omitted (the sweep walks
- * `Object.keys(container)` at runtime instead) — reading the schema's own
- * property names is the only way to still assert something concrete about
- * which entries that sweep can ever see.
+ * The named property-signature keys directly under `path` from `rootAst` — empty if `path`
+ * doesn't resolve, or resolves to a node with no named signatures (e.g. a bare `Schema.Record`).
+ * Used when a sweep's `entryKeys` is omitted, to still assert something concrete about which
+ * entries it can see.
  */
 function structPropertyNames(rootAst: unknown, path: ReadonlyArray<string>): ReadonlyArray<string> {
   let current: unknown = rootAst;
@@ -131,8 +106,6 @@ function structPropertyNames(rootAst: unknown, path: ReadonlyArray<string>): Rea
 
 describe("registry integrity: every row resolves against both schemas", () => {
   test("the registry actually has rows to check", () => {
-    // Guards against the loop below passing vacuously if the registry import
-    // is ever broken.
     expect(projectConfigMappingRows.length).toBeGreaterThan(100);
   });
 
@@ -163,19 +136,12 @@ describe("registry integrity: every row resolves against both schemas", () => {
 });
 
 /**
- * Standing AST-walk drift guard for the three hand-written disabled-sentinel
- * tables in `./project-config.ts` (`DISABLED_SENTINEL_PRUNES`,
- * `DISABLED_SENTINEL_ENTRY_SWEEPS`, `SMS_PROVIDER_PUSH_PRECEDENCE`): these
- * tables were added after the registry-integrity walker above and carry no
- * AST guard of their own — a renamed `CliConfigSchema` field would silently
- * turn one of their rules into a no-op (the gating `enabled` check, a dropped
- * sibling, or an entry sweep simply never firing again for that field) with
- * no red test anywhere to catch it.
+ * AST-walk guard for the three hand-written disabled-sentinel tables in `./project-config.ts`.
+ * These carry no guard of their own — a renamed `CliConfigSchema` field would silently turn one
+ * of their rules into a no-op with nothing to catch it.
  */
 describe("disabled-sentinel tables: every path/key resolves against CliConfigSchema", () => {
   test("DISABLED_SENTINEL_PRUNES actually has rows to check", () => {
-    // Guards against the loop below passing vacuously if the table is ever
-    // emptied out.
     expect(DISABLED_SENTINEL_PRUNES.length).toBeGreaterThan(5);
   });
 
@@ -208,10 +174,8 @@ describe("disabled-sentinel tables: every path/key resolves against CliConfigSch
       expect(pathResolves(CliConfigSchema.ast, sweep.containerPath)).toBe(true);
     });
 
-    // A row without `entryKeys` sweeps `Object.keys(container)` at runtime —
-    // fall back to the schema's own property names so this guard still
-    // catches an "enabled" rename on any concrete entry the container can
-    // ever hold.
+    // Falls back to the schema's own property names when `entryKeys` is omitted, so this guard
+    // still catches an "enabled" rename on any entry the container can hold.
     const entryKeys =
       sweep.entryKeys ?? structPropertyNames(CliConfigSchema.ast, sweep.containerPath);
 
@@ -230,11 +194,9 @@ describe("disabled-sentinel tables: every path/key resolves against CliConfigSch
 });
 
 /**
- * `SMS_PROVIDER_PUSH_PRECEDENCE` doubles as data (every entry must resolve as
- * a real `auth.sms` provider) and as a pinned ORDER (it must keep matching
- * the legacy push switch's fixed provider priority, since a reordering here
- * would silently change which provider `fromConfigDocument` treats as "the"
- * enabled one when a document enables more than one).
+ * `SMS_PROVIDER_PUSH_PRECEDENCE` doubles as data (every entry resolves as a real `auth.sms`
+ * provider) and as a pinned order: reordering it would silently change which provider
+ * `fromConfigDocument` treats as "the" enabled one when a document enables more than one.
  */
 describe("SMS_PROVIDER_PUSH_PRECEDENCE: every provider resolves and matches the legacy push order", () => {
   test("SMS_PROVIDER_PUSH_PRECEDENCE actually has rows to check", () => {
@@ -251,12 +213,7 @@ describe("SMS_PROVIDER_PUSH_PRECEDENCE: every provider resolves and matches the 
     });
   }
 
-  // Pinned against a hardcoded copy of the legacy switch's order (cited
-  // below) — this test file cannot itself see auth.sync.ts. The FIRST
-  // enabled provider wins and every later one is skipped entirely
-  // (apps/cli/src/commands/config/push/config-sync/auth.sync.ts:2498-2539's
-  // `switch (true)`: twilio (case at :2499), twilio_verify (:2507),
-  // messagebird (:2515), textlocal (:2522), vonage (:2529), default (:2537-2539)).
+  // The first enabled provider wins; every later one is skipped.
   test("order matches the legacy push switch's fixed provider priority", () => {
     expect(SMS_PROVIDER_PUSH_PRECEDENCE).toEqual([
       "twilio",
@@ -269,21 +226,14 @@ describe("SMS_PROVIDER_PUSH_PRECEDENCE: every provider resolves and matches the 
 });
 
 /**
- * `dualScope` (CLI-2064): every flagged row's `configPath` resolves against
- * `CliConfigSchema` (already exercised generically by the main loop above,
- * since every `dualScope` row is a member of `projectConfigMappingRows` —
- * asserted again here against the narrower subset so this describe block
- * stands on its own) and the exact dual-scope path SET is pinned by an inline
- * snapshot: adding (or removing) a `dualScope` flag anywhere in the registry
- * must be a deliberate, reviewed act, not a silent side effect of an
- * unrelated row edit.
+ * Every `dualScope`-flagged row's `configPath` resolves against `CliConfigSchema`, and the exact
+ * set of dual-scope paths is pinned by an inline snapshot: adding or removing a `dualScope` flag
+ * must be a reviewed act, not a silent side effect of an unrelated edit.
  */
 describe("dualScope rows: configPath resolves against CliConfigSchema and the path list is pinned", () => {
   const dualScopeRows = projectConfigMappingRows.filter((row) => row.dualScope === true);
 
   test("dualScope rows actually exist to check", () => {
-    // Guards against the loop below passing vacuously if every `dualScope`
-    // flag is ever accidentally removed from the registry.
     expect(dualScopeRows.length).toBeGreaterThan(0);
   });
 

@@ -6,6 +6,7 @@ import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { Data, Effect, Exit } from "effect";
 import {
   noteStackCliProjectHome,
   registerTempHome,
@@ -64,13 +65,42 @@ function assertBuildArtifactsExist(binaryPath: string): void {
   }
 }
 
-type RunResult = {
+export type RunResult = {
   stdout: string;
   stderr: string;
   exitCode: number;
   /** Set when the harness exit bound fired and SIGKILLed the process group. */
   timedOutAfterMs?: number;
 };
+
+/** The CLI closed its stdin before the harness finished writing to it. */
+export class CliStdinWriteError extends Data.TaggedError("CliStdinWriteError")<{
+  readonly cause: Error;
+}> {
+  override get message(): string {
+    return this.cause.message;
+  }
+}
+
+/** Spawning the CLI failed before the child was usable: temp home, symlink, missing build artifacts, or stdio pipes. */
+export class CliSpawnError extends Data.TaggedError("CliSpawnError")<{
+  readonly cause: unknown;
+}> {
+  override get message(): string {
+    return this.cause instanceof Error ? this.cause.message : String(this.cause);
+  }
+}
+
+/** Disposing the run's owned temp `SUPABASE_HOME` failed after the CLI exited. */
+export class CliHomeDisposeError extends Data.TaggedError("CliHomeDisposeError")<{
+  readonly cause: unknown;
+}> {
+  override get message(): string {
+    return this.cause instanceof Error ? this.cause.message : String(this.cause);
+  }
+}
+
+export type CliRunError = CliSpawnError | CliStdinWriteError | CliHomeDisposeError;
 
 const DEFAULT_EXIT_TIMEOUT_MS = 60_000;
 const DEFAULT_STACK_CLEANUP_TIMEOUT_MS = 120_000;
@@ -84,6 +114,15 @@ interface SpawnedSupabase {
   readonly kill: (signal?: NodeJS.Signals) => void;
   readonly waitForOutput: (pattern: RegExp, timeoutMs?: number, startAt?: number) => Promise<void>;
   readonly waitForExit: (timeoutMs?: number) => Promise<RunResult>;
+  /** Effect-native exit path; `waitForExit` is the Promise facade over this. */
+  readonly exitEffect: (timeoutMs?: number) => Effect.Effect<RunResult, CliHomeDisposeError>;
+  /** The deferred stdin write failure, if the CLI closed stdin early. */
+  readonly stdinFailure: (result: RunResult) => Error | undefined;
+  /**
+   * Effect-path scope release: kills the group once (unless the caller opted out on a
+   * successful run), then disposes the owned temp home. Idempotent across the close path.
+   */
+  readonly releaseOwned: (opts: { readonly successOptOut: boolean }) => void;
 }
 
 export function makeTempHome() {
@@ -393,22 +432,49 @@ export function spawnSupabase(
     closeWaiters.clear();
   });
 
+  let stdinError: unknown;
   if (options?.stdin !== undefined && proc.stdin) {
+    proc.stdin.on("error", (error) => {
+      if (!("code" in error && error.code === "EPIPE")) {
+        stdinError = error;
+      }
+    });
     proc.stdin.write(options.stdin);
     proc.stdin.end();
   }
 
-  const waitForExit = async (
-    timeoutMs = options?.exitTimeoutMs ?? DEFAULT_EXIT_TIMEOUT_MS,
-  ): Promise<RunResult> => {
-    if (closeResult) {
-      cleanupProcessGroupOnClose();
-      disposeOwnHome();
-      return closeResult;
-    }
+  const stdinFailure = (result: RunResult) =>
+    new Error(
+      [
+        `stdin write to the CLI failed`,
+        `Command: supabase ${args.join(" ")}`,
+        `PID: ${proc.pid ?? "<unknown>"}`,
+        `exit code: ${result.exitCode}${
+          result.timedOutAfterMs === undefined
+            ? ""
+            : ` (no exit within ${result.timedOutAfterMs}ms, SIGKILLed by the harness)`
+        }`,
+        outputTail("stdout tail", result.stdout),
+        outputTail("stderr tail", result.stderr),
+      ].join("\n\n"),
+      { cause: stdinError },
+    );
 
-    let timedOut = false;
-    const result = await new Promise<RunResult>((resolve) => {
+  // The single exit path. `waitForExit` is the Promise facade over it, so both callers
+  // share one implementation of the exit bound, the process-group kill and home disposal.
+  const exitEffect = (
+    timeoutMs = options?.exitTimeoutMs ?? DEFAULT_EXIT_TIMEOUT_MS,
+  ): Effect.Effect<RunResult, CliHomeDisposeError> =>
+    Effect.callback<RunResult>((resume) => {
+      if (closeResult) {
+        cleanupProcessGroupOnClose();
+        resume(Effect.succeed(closeResult));
+        return Effect.void;
+      }
+
+      let settled = false;
+      let timedOut = false;
+
       const timeout = setTimeout(() => {
         timedOut = true;
         killProcessGroup(proc.pid!, "SIGKILL");
@@ -419,17 +485,46 @@ export function spawnSupabase(
       timeout.unref();
 
       const onClose = (result: RunResult) => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timeout);
         closeWaiters.delete(onClose);
         cleanupProcessGroupOnClose();
-        resolve(result);
+        resume(Effect.succeed(timedOut ? { ...result, timedOutAfterMs: timeoutMs } : result));
       };
 
       closeWaiters.add(onClose);
-    });
 
-    disposeOwnHome();
-    return timedOut ? { ...result, timedOutAfterMs: timeoutMs } : result;
+      return Effect.sync(() => {
+        settled = true;
+        clearTimeout(timeout);
+        closeWaiters.delete(onClose);
+        cleanupProcessGroupOnClose();
+        // The home may still be in use when the opt-out kept the child alive here; in
+        // that case `releaseOwned` disposes it after the outer release kills the group.
+        if (closeResult !== undefined || cleanedUpProcessGroup) {
+          disposeOwnHome();
+        }
+      });
+    }).pipe(
+      // Disposal can throw (`rmSync`); inside the `close` listener that escapes as an
+      // uncaught exception and leaves this effect pending, so it fails the caller here.
+      Effect.tap(() =>
+        Effect.try({
+          try: disposeOwnHome,
+          catch: (cause) => new CliHomeDisposeError({ cause }),
+        }),
+      ),
+    );
+
+  const waitForExit = async (
+    timeoutMs = options?.exitTimeoutMs ?? DEFAULT_EXIT_TIMEOUT_MS,
+  ): Promise<RunResult> => {
+    const result = await Effect.runPromise(exitEffect(timeoutMs));
+    if (stdinError !== undefined) {
+      throw stdinFailure(result);
+    }
+    return result;
   };
 
   return {
@@ -510,6 +605,23 @@ export function spawnSupabase(
       });
     },
     waitForExit,
+    exitEffect,
+    stdinFailure: (result) => (stdinError === undefined ? undefined : stdinFailure(result)),
+    releaseOwned: ({ successOptOut }) => {
+      // `closeResult === undefined` is the honest liveness test: the pid is still owned,
+      // so signaling is safe and necessary; once the child has closed, signaling again
+      // would only race pid reuse. The group flag alone cannot carry this — on Windows
+      // the group signal is a swallowed no-op, and the direct kill below is the only one
+      // that works there.
+      if (!successOptOut && closeResult === undefined) {
+        cleanedUpProcessGroup = true;
+        killProcessGroup(proc.pid!, "SIGKILL");
+        try {
+          proc.kill("SIGKILL");
+        } catch {}
+      }
+      disposeOwnHome();
+    },
   };
 }
 
@@ -548,6 +660,45 @@ export async function runSupabase(
   const result = await spawned.waitForExit();
   return { ...result, exitCode: killedByUntil ? 0 : result.exitCode };
 }
+
+/**
+ * Effect-native CLI run. The spawned process group is owned by the calling scope, so an
+ * interrupted test kills the child instead of orphaning it; `cleanupProcessGroupOnClose:
+ * false` is honoured only on successful completion. `runSupabase` is the Promise facade
+ * over the same exit path.
+ */
+export const runSupabaseEffect = (
+  args: string[],
+  options?: Parameters<typeof spawnSupabase>[1],
+): Effect.Effect<RunResult, CliRunError> =>
+  Effect.acquireRelease(
+    Effect.try({
+      try: () => spawnSupabase(args, options),
+      catch: (cause) => new CliSpawnError({ cause }),
+    }),
+    // Scope teardown owns the spawned group: an interrupted run always kills it so the
+    // child is never orphaned, without re-signaling a group the close path already
+    // cleaned. On successful completion the caller's `cleanupProcessGroupOnClose: false`
+    // opt-out is honoured, matching the Promise path.
+    (spawned, exit) =>
+      Effect.sync(() =>
+        spawned.releaseOwned({
+          successOptOut: Exit.isSuccess(exit) && options?.cleanupProcessGroupOnClose === false,
+        }),
+      ),
+  ).pipe(
+    Effect.flatMap((spawned) =>
+      spawned.exitEffect().pipe(
+        Effect.flatMap((result) => {
+          const failure = spawned.stdinFailure(result);
+          return failure === undefined
+            ? Effect.succeed(result)
+            : Effect.fail(new CliStdinWriteError({ cause: failure }));
+        }),
+      ),
+    ),
+    Effect.scoped,
+  );
 
 export function requireCliSuccess(
   result: {

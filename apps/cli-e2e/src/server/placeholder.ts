@@ -29,7 +29,7 @@ const LEGACY_KEY_PREFIX_PATTERN = /"prefix": "[A-Za-z0-9]{4,10}"/g;
 const INTEGER_ID_PATTERN = /"id": \d{4,}/g;
 
 // A fixed valid ISO 8601 timestamp used in place of real timestamps so that
-// CLI code that calls time.Parse on response fields doesn't fail.
+// date-parsing code on response fields doesn't fail.
 const FIXED_TIMESTAMP = "2000-01-01T00:00:00Z";
 
 /** Replace dynamic values in a string with stable, unnumbered placeholders.
@@ -61,15 +61,11 @@ export function applyPlaceholders(input: string): { output: string } {
   return { output };
 }
 
-// The project-ref placeholder (`__PROJECT_REF__`) is 15 characters, but the
-// Management API schema constrains project refs to `^[a-z]{20}$` (minLength 20).
-// The Go CLI doesn't validate response bodies, so it tolerates the short
-// placeholder; the TS port decodes responses against the generated schema and
-// rejects it (e.g. `link` calling `getProject`). When serving a recorded
-// response we therefore substitute any field whose value is *exactly* the
-// placeholder back to a valid 20-char ref. Substring occurrences such as
-// `db.__PROJECT_REF__.supabase.red` are left untouched so tests that assert on
-// the literal placeholder host keep matching.
+// `__PROJECT_REF__` is 15 characters, but the Management API schema requires
+// `^[a-z]{20}$`, and response decoding rejects a value that doesn't match. When
+// serving a recorded response, substitute any field whose value is *exactly*
+// the placeholder back to a valid 20-char ref; leave substring occurrences such
+// as `db.__PROJECT_REF__.supabase.red` untouched so placeholder-host assertions still match.
 const PROJECT_REF_VALUE = /"__PROJECT_REF__"/g;
 const PLACEHOLDER_PROJECT_REF = "abcdefghijklmnopqrst";
 

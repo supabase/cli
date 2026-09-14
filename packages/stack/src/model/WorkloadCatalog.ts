@@ -55,8 +55,9 @@ const native = (
 /**
  * The single authoritative private workload identity table.
  *
- * Pins track the slim-services release feed (ADR 0017), not the Dockerfile, and
- * deliberately diverge from it — do not "reconcile" the two. Maintained by
+ * Pins track the slim-services release feed (see
+ * `docs/adr/0017-simplified-managed-stack-architecture.md`), not the Dockerfile, and diverge
+ * from it on purpose — do not "reconcile" the two. Maintained by
  * `.github/workflows/sync-stack-workload-catalog.yml`.
  */
 const workloadCatalog = {

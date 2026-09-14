@@ -14,10 +14,6 @@ const EMPTY_CHANGE_SET: ConfigChangeSet = {
 
 describe("configApiScope", () => {
   test("lists record blocks the response carried, dropping non-records and empty records", () => {
-    // An EMPTY block record is how a permission-truncated response most
-    // plausibly reports a block it could not read — claiming it was
-    // "compared" while all its keys render (not returned) would be false,
-    // and with --exit-code that is a permanently red CI no file edit fixes.
     expect(
       configApiScope({
         api: { max_rows: 5 },
@@ -57,10 +53,6 @@ describe("configScopeLine", () => {
 
 describe("configDiffSummaryMessage", () => {
   test("a missing block's caveat travels with the summary message, not just the text renderer", () => {
-    // Mirrors the hazard documented above: a partial API response (e.g. a
-    // scoped token returning `auth: {}`) must not report an unqualified "No
-    // config differences found." in machine `.message` — an agent echoing
-    // just `.message` would otherwise wrongly claim a full comparison.
     expect(
       configDiffSummaryMessage(EMPTY_CHANGE_SET, { present: ["api"], missing: ["auth"] }),
     ).toBe(
@@ -98,11 +90,8 @@ describe("configDiffSummaryMessage", () => {
 });
 
 describe("renderConfigDiffText", () => {
-  // Pins the exact byte shape once the per-change loop moved to
-  // `configRenderChangeLines` (`../config.format.ts`, shared with
-  // `config push`): one blank line between change blocks, one blank line
-  // between the last change block and the counts line, no blank line before
-  // the `Note:` lines.
+  // `configRenderChangeLines` (../config.format.ts) is shared with `config push`; its blank-line
+  // spacing between change blocks, the counts line, and the `Note:` lines must match here exactly.
   test("byte-identical after the per-change renderer moved to config.format.ts", () => {
     const changeSet: ConfigChangeSet = {
       changes: [

@@ -159,8 +159,8 @@ const INTERNAL_SCHEMAS = ["_analytics", "_supavisor"] as const;
 
 /**
  * Ensures the private database and service-owned schemas exist before any
- * dependent workload is started. Database creation is deliberately outside a
- * transaction because PostgreSQL does not support CREATE DATABASE there.
+ * dependent workload is started. Database creation happens outside a transaction because
+ * PostgreSQL does not support CREATE DATABASE there.
  */
 export const ensureInternalDatabase = (
   postgres: PostgresDatabaseSession,

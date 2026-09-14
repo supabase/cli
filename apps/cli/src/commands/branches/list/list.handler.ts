@@ -37,9 +37,8 @@ export const branchesList = Effect.fn("branches.list")(function* (flags: Branche
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
-  // `branches` is PARENT-scoped: after `supabase link <branch>`,
-  // `supabase/.temp/project-ref` holds the branch's own ref, and the platform
-  // 403s on that ref for every branches-management endpoint (CLI-2167 follow-up).
+  // `branches` is parent-scoped: after `supabase link <branch>`, `supabase/.temp/project-ref`
+  // holds the branch's own ref, which the platform 403s on for every branches-management endpoint.
   const ref = yield* resolveParentScopedProjectRef(flags.projectRef);
 
   yield* Effect.gen(function* () {
@@ -67,8 +66,7 @@ export const branchesList = Effect.fn("branches.list")(function* (flags: Branche
       return;
     }
     if (goFmt === "toml") {
-      // Go builds the list with `append` (`list.go:70-80`), so an empty list
-      // stays a nil slice and BurntSushi emits nothing for the wrapper.
+      // An empty branch list omits the `branches` key entirely rather than emitting `[]`.
       yield* output.raw(
         encodeGoToml(
           { branches: branches.length > 0 ? branches : undefined },
@@ -78,17 +76,14 @@ export const branchesList = Effect.fn("branches.list")(function* (flags: Branche
       return;
     }
 
-    // goFmt is undefined or "pretty" — defer to TS --output-format for
-    // JSON/stream-json, otherwise render the Glamour-styled table.
+    // No --output flag (or "pretty"): fall back to --output-format.
     if (output.format === "json" || output.format === "stream-json") {
       yield* output.success("", { branches });
       return;
     }
 
-    // Pretty text table only: mark the branch matching the CURRENTLY linked
-    // ref as `(active)` — same soft chain `projects list` uses for its "you
-    // are here" marker, never a prompt/failure. TS-only QoL (CLI-2167
-    // follow-up, no Go counterpart); the machine payloads above stay untouched.
+    // Marks the linked branch as `(active)`; resolveOptional never prompts or fails
+    // when nothing is linked.
     const activeRef = yield* resolver.resolveOptional(Option.none());
     yield* output.raw(renderBranchesListTable(branches, Option.getOrUndefined(activeRef)));
   }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));

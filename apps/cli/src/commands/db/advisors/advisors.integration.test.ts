@@ -147,9 +147,8 @@ function mockProjectRef() {
       }),
     resolveForLink: () => Effect.succeed(VALID_REF),
     resolveOptional: () => Effect.succeed(Option.some(VALID_REF)),
-    // Gives an explicit `--project-ref` flag top precedence, same as Go's
-    // `flags.LoadProjectRef` — mirrors the real resolver so a test can prove the
-    // flag (not just the hardcoded fallback) drives the linked ref.
+    // Gives an explicit `--project-ref` flag top precedence, mirroring the real resolver so a
+    // test can prove the flag (not just the hardcoded fallback) drives the linked ref.
     loadProjectRef: (flagValue: Option.Option<string>) =>
       Effect.sync(() => {
         calls.push("loadProjectRef");
@@ -457,11 +456,8 @@ describe("db advisors — local", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // ── Changed-based routing (explicitly-set flag, not its value) ───────────
-
   it.live("--linked=false routes to the linked branch (Changed, not value)", () => {
-    // "Changed" fires when the flag appears on the command line regardless of
-    // its value: `--linked=false` is still "explicitly set" → linked branch.
+    // "Changed" fires when the flag appears on the command line regardless of its value.
     const { layer, projectRef, cache } = setup({
       args: ["--linked=false"],
       securityLints: [],
@@ -488,7 +484,6 @@ describe("db advisors — local", () => {
   });
 
   it.live("--local=false --linked fails with mutual-exclusion (sorted set [linked local])", () => {
-    // Both flags are Changed → mutual exclusion fires with cobra's sorted set.
     const { layer } = setup({ args: ["--local=false", "--linked"] });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(dbAdvisors(flags()));
@@ -502,7 +497,6 @@ describe("db advisors — local", () => {
   });
 
   it.live("--local=false alone routes to the local branch (Changed local, connType=local)", () => {
-    // `--local=false` is Changed for `local` → connType="local".
     const { layer, out, cache } = setup({ rows: [], args: ["--local=false"] });
     return Effect.gen(function* () {
       yield* dbAdvisors(flags());
@@ -543,7 +537,6 @@ describe("db advisors — linked", () => {
       expect(urls.some((u) => u.includes("/advisors/performance"))).toBe(true);
       expect(out.stdoutText).toContain("rls_disabled_in_public");
       expect(out.stdoutText).toContain("unindexed_foreign_keys");
-      // Linked runs write the linked-project cache.
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -551,9 +544,8 @@ describe("db advisors — linked", () => {
   it.live(
     "fetches advisors for the project given via --project-ref, overriding the workdir's own ref",
     () => {
-      // The fake resolver's own fallback (VALID_REF) represents whatever
-      // the workdir would resolve to absent the flag (e.g. .temp/project-ref) —
-      // the flag must win over it and drive both the API path and the cache.
+      // The fake resolver's own fallback (VALID_REF) represents whatever the workdir would
+      // resolve to absent the flag; the flag must win over it and drive both API and cache.
       const FLAG_REF = "flagflagflagflagflag";
       const { layer, api, cache } = setup({
         securityLints: [securityLint],
@@ -563,9 +555,6 @@ describe("db advisors — linked", () => {
         yield* dbAdvisors(
           flags({ type: Option.some("security"), projectRef: Option.some(FLAG_REF) }),
         );
-        // The request path itself must be scoped to the FLAG ref, not merely
-        // any /advisors/security hit — proving the flag (not the fallback)
-        // drove the API call the same way it drove the cache below.
         expect(
           api.requests.some((r) => r.url.includes(`/v1/projects/${FLAG_REF}/advisors/security`)),
         ).toBe(true);
@@ -577,8 +566,7 @@ describe("db advisors — linked", () => {
   );
 
   it.live("rejects --project-ref on the default local target", () => {
-    // advisors defaults to the local path when --linked isn't set — the guard
-    // must fire from the flag alone, with no explicit --local/--db-url needed.
+    // The guard fires from the flag alone; no explicit --local/--db-url is needed.
     const FLAG_REF = "flagflagflagflagflag";
     const { layer, connection, api, cache } = setup({ rows: [] });
     return Effect.gen(function* () {
@@ -598,9 +586,7 @@ describe("db advisors — linked", () => {
   it.live(
     "resolves the linked DB config before fetching advisors (Go root PersistentPreRunE)",
     () => {
-      // The linked DB config is resolved (and on failure aborts) before the
-      // linked lint-gathering path hits the Management API — even though that
-      // path discards the connection.
+      // Resolved even though the linked lint-gathering path discards the connection.
       const { layer, resolver, api } = setup({
         securityLints: [securityLint],
         args: ["--linked"],
@@ -608,18 +594,15 @@ describe("db advisors — linked", () => {
       return Effect.gen(function* () {
         yield* dbAdvisors(flags({ type: Option.some("security") }));
         expect(resolver.resolveFlags.some((f) => f.connType === "linked")).toBe(true);
-        // The fetch still ran after a successful resolve.
         expect(api.requests.some((r) => r.url.includes("/advisors/security"))).toBe(true);
       }).pipe(Effect.provide(layer));
     },
   );
 
   it.live("fails on the linked DB-config error before any advisor API call", () => {
-    // Unreachable direct host + no pooler: the DB-config resolve fails with the
-    // IPv6 error before the linked lint-gathering path runs, so the advisors
-    // API is never reached. But the ref was already loaded and cached
-    // unconditionally on the error path — so the linked-project cache is
-    // still written.
+    // The DB-config resolve fails before the linked lint-gathering path runs, so the advisors
+    // API is never reached — but the ref was already loaded and cached unconditionally on the
+    // error path.
     const { layer, api, cache } = setup({ ipv6Error: true, args: ["--linked"] });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(dbAdvisors(flags()));
@@ -628,15 +611,13 @@ describe("db advisors — linked", () => {
         expect(JSON.stringify(exit.cause)).toContain("IPv6 is not supported");
       }
       expect(api.requests).toHaveLength(0);
-      // Cache written despite the DB-config failure (ref was loaded first).
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
   it.live("runs the identity stitch on each advisor response (Go identityTransport)", () => {
-    // Every Management API response is wrapped in identity stitching. The
-    // raw-HTTP advisor path must run the same stitch (once per response)
-    // rather than silently skipping session-identity stitching.
+    // Every Management API response is wrapped in identity stitching; the raw-HTTP advisor path
+    // must run the same stitch, once per response.
     const { layer, identityStitch } = setup({
       securityLints: [securityLint],
       performanceLints: [performanceLint],
@@ -649,8 +630,7 @@ describe("db advisors — linked", () => {
   });
 
   it.live("resolves the linked ref via the non-prompting load (Go LoadProjectRef)", () => {
-    // `--linked` must take the fail-fast/non-interactive path (`loadProjectRef`)
-    // rather than `resolve` (which opens a project picker on a TTY).
+    // `resolve` opens an interactive project picker on a TTY; `--linked` must avoid it.
     const { layer, projectRef } = setup({
       securityLints: [securityLint],
       args: ["--linked"],
@@ -719,8 +699,8 @@ describe("db advisors — linked", () => {
   });
 
   it.live("fails on a 200 with a non-JSON content type (Go requires json header)", () => {
-    // The body is only decoded when Content-Type contains "json"; otherwise
-    // the fetcher returns the status-200 error.
+    // The body is only decoded when Content-Type contains "json"; otherwise this fails as a
+    // status-200 error.
     const { layer } = setup({ securityNonJson: true, args: ["--linked"] });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(dbAdvisors(flags({ type: Option.some("security") })));

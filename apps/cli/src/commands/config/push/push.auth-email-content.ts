@@ -1,13 +1,9 @@
 /**
- * `config push` reads HTML from `content_path` before building the auth push
- * body. Both templates and notifications resolve relative paths from the
- * project root (parent of `supabase/`); notifications additionally fall back
- * to the legacy `supabase/`-relative location when the root-resolved file is
- * missing, so configs written for older scaffolds keep working. Containment
- * — confining the resolved path to the project root before it is read, since
- * the loaded bytes are uploaded to whichever project the config names — is
- * enforced centrally by `resolveEmailTemplateContentPath` in
- * `config-validate.ts`, not locally in this module.
+ * `config push` reads HTML from `content_path` before building the auth push body. Templates
+ * and notifications resolve relative paths from the project root (parent of `supabase/`);
+ * notifications additionally fall back to the legacy `supabase/`-relative location when the
+ * root-resolved file is missing. Containment is enforced centrally by
+ * `resolveEmailTemplateContentPath` in `config-validate.ts`, not locally here.
  */
 
 import type { CliConfig } from "@supabase/config";

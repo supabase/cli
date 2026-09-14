@@ -152,9 +152,8 @@ describe("secrets unset integration", () => {
     const { layer, out, api } = setup({ yes: false, stdinIsTty: false });
     return Effect.gen(function* () {
       yield* secretsUnset({ projectRef: Option.none(), names: ["FOO"] });
-      // `PromptText` prints the label to stderr, the 100ms non-TTY read scans
-      // nothing, and the empty input is echoed back before the true default wins
-      // (`console.go:64-102`).
+      // The 100ms non-TTY read scans nothing here, and the empty input is echoed back before
+      // the true default wins.
       expect(out.stderrText).toContain(
         "Do you want to unset these function secrets?\n • FOO\n\n [Y/n] \n",
       );
@@ -170,7 +169,6 @@ describe("secrets unset integration", () => {
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain("SecretsUnsetCancelledError");
       }
-      // The piped answer is echoed to stderr, matching non-TTY `PromptText`.
       expect(out.stderrText).toContain("[Y/n] n\n");
       expect(api.requests.filter((r) => r.method === "DELETE")).toHaveLength(0);
     }).pipe(Effect.provide(layer));
@@ -191,7 +189,6 @@ describe("secrets unset integration", () => {
     const { layer, out, api } = setup();
     return Effect.gen(function* () {
       yield* secretsUnset({ projectRef: Option.none(), names: ["FOO"] });
-      // Same bytes as the `viper.GetBool("YES")` branch (`console.go:70-72`).
       expect(out.stderrText).toContain(
         "Do you want to unset these function secrets?\n • FOO\n\n [Y/n] y\n",
       );
@@ -289,11 +286,8 @@ describe("secrets unset integration", () => {
   });
 
   it.live("--output-format=json without --yes takes the Yes default silently", () => {
-    // TS-only machine mode has no Go equivalent; `promptYesNo` documents
-    // that json/stream-json never prompts and takes the call site's default —
-    // for unset that is Yes, mirroring the non-TTY default-through behavior
-    // for scripts. Deliberate (CLI-1974 review); pass --yes explicitly in
-    // automation for clarity.
+    // json/stream-json never prompts and takes the call site's default, which for unset is
+    // Yes — pass --yes explicitly in automation for clarity.
     const { layer, out, api } = setup({ yes: false, format: "json" });
     return Effect.gen(function* () {
       yield* secretsUnset({ projectRef: Option.none(), names: ["FOO"] });

@@ -62,8 +62,7 @@ async function writeLocalFunction(
   await writeFile(join(functionDir, "deno.json"), '{"imports":{}}\n');
 }
 
-// Strip ANSI SGR (color/bold) sequences — `bold` styles the pruned slugs
-// only when stderr supports color, so byte-assertions normalize first.
+// Strips ANSI SGR sequences so byte-assertions are stable regardless of color support.
 // eslint-disable-next-line no-control-regex
 const stripSgr = (text: string) => text.replace(/\x1b\[[0-9;]*m/gu, "");
 
@@ -76,11 +75,9 @@ function resolveDockerOutputPath(args: ReadonlyArray<string>): string {
 }
 
 /**
- * Every `docker image inspect` call is a cache hit (exit 0) — no real pull,
- * no real registry candidate fallback (that path has its own coverage in
- * `functions/download`'s integration tests) — and every `docker run`
- * synthesizes the eszip the bundler container would otherwise have produced,
- * so `bundleFunctionWithDocker` can read it back and complete the deploy.
+ * Mocks `docker image inspect` as a cache hit and `docker run` as writing a
+ * fake eszip output, so `bundleFunctionWithDocker` completes without a real
+ * Docker pull or build.
  */
 function mockDockerBundleSpawner() {
   const spawnerOpts: {
@@ -171,9 +168,6 @@ describe("functions deploy", () => {
   });
 
   it.live("prints a duplicated slug argument verbatim, matching Go's raw strings.Join", () => {
-    // The established join uses the raw CLI-arg slugs, not a deduped set, so
-    // a repeated slug prints twice even though only one deploy request is
-    // made for it.
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({
       handler: (request) => {
@@ -438,16 +432,8 @@ describe("functions deploy", () => {
   });
 
   it.live("rejects a bundled file whose workdir-relative name escapes with a `..` segment", () => {
-    // Established behavior: uploaded file names and the server-recorded
-    // `entrypoint_path` / `import_map_path` are anchored at `os.Getwd()` —
-    // the workdir — never at the git root. A monorepo import outside the
-    // workdir but inside the git root (allowed by the source-root
-    // containment check since #5755) would otherwise upload with a
-    // `../`-relative name. Every uploaded path is opened through an `fs.FS`,
-    // which rejects any path containing a `..` element (`fs.ValidPath`)
-    // before the read — and thus the upload — happens. This asserts the CLI
-    // hard-fails the same way instead of letting the `..`-relative name reach
-    // the server.
+    // Uploaded paths are anchored at the workdir, not the git root, so this
+    // monorepo import fails the `fs.FS` boundary check before upload.
     const repoRoot = tempRoot.current;
     const workdir = join(repoRoot, "app");
     const multiparts: Array<{ metadata?: string; fileNames: ReadonlyArray<string> }> = [];
@@ -697,9 +683,6 @@ describe("functions deploy", () => {
       yield* functionsDeploy({ ...baseFlags, prune: true });
 
       expect(out.promptConfirmCalls).toHaveLength(0);
-      // Established behavior: the accepted prompt echoes to stderr under the
-      // global YES flag — byte-match `confirmPruneAll` + choices (each slug
-      // is bolded, so strip SGR codes first).
       expect(stripSgr(out.stderrText)).toContain(
         "Do you want to delete the following Functions from your project?\n • remote-only\n\n [y/N] y\n",
       );
@@ -712,10 +695,9 @@ describe("functions deploy", () => {
     );
   });
 
-  // INC-699: a `bundleOnly` upload bumps the remote version without persisting
-  // metadata, so a partially failed bulk deploy must still send the final PUT for
-  // whatever uploaded — otherwise the remote metadata is stranded and every later
-  // deploy conflicts.
+  // A `bundleOnly` upload bumps the remote version without persisting metadata,
+  // so a partially failed bulk deploy must still send the final PUT for whatever
+  // uploaded, or the remote metadata is stranded and later deploys conflict.
   describe("partial bulk upload failures (INC-699)", () => {
     function setupBulkDeploy(opts: {
       readonly deployStatuses: ReadonlyArray<number>;
@@ -799,7 +781,6 @@ describe("functions deploy", () => {
           'unexpected deploy status 409: {"message":"rejected bye-world"}',
         );
 
-        // Both uploads ran — the 201 was not interrupted by the sibling 409.
         expect(
           api.requests.filter(
             (request) => request.method === "POST" && request.url.endsWith("/functions/deploy"),
@@ -829,7 +810,6 @@ describe("functions deploy", () => {
           functionNames: ["hello-world", "bye-world"],
         }).pipe(Effect.flip);
 
-        // Established join behavior: one message per failed upload, in input order.
         expect((error as Error).message).toBe(
           [
             'unexpected deploy status 409: {"message":"rejected hello-world"}',
@@ -945,9 +925,6 @@ describe("functions deploy", () => {
     });
 
     it.live("rejects --jobs > 1 with --use-docker=false and no --use-api (Go parity gap)", () => {
-      // Divergence this test guards: previously the guard only fired when local
-      // bundling (Docker/legacy-bundle) was active, so `--use-docker=false --jobs 2`
-      // (no --use-api) silently passed where it should error.
       const { layer } = setupJobsTest([
         "functions",
         "deploy",
@@ -1089,11 +1066,8 @@ describe("functions deploy", () => {
 
   describe("bundler routing with --use-api=false (Go parity: cmd/functions.go:79-80)", () => {
     it.live("falls through to Docker bundling, not the API path, when --use-api=false", () => {
-      // Divergence this test guards: `if useApi { useDocker = false }` only forces
-      // the API path when the RESOLVED value is true. `--use-api=false` alone must leave
-      // `useDocker`'s own value (default true) in effect, routing to Docker — previously
-      // `useLocalBundler` keyed off flag *presence* (`explicitUseApi`), so typing
-      // `--use-api=false` silently forced the API path instead.
+      // `useDocker` forces the API path only when `useApi` resolves to true, so
+      // `--use-api=false` alone leaves `useDocker`'s own default (true) in effect.
       const out = mockOutput({ format: "text" });
       const child = mockChildProcessSpawner({ exitCode: 1 });
       const api = mockCommandPlatformApi({
@@ -1142,8 +1116,6 @@ describe("functions deploy", () => {
           useDocker: true,
         });
 
-        // Docker was actually attempted (proves useLocalBundler resolved to true);
-        // it wasn't running, so the command fell back to the API and still succeeded.
         expect(child.spawned).toEqual([{ command: "docker", args: ["info"] }]);
         expect(out.stderrText).toContain("WARNING: Docker is not running\n");
         expect(stripSgr(out.stdoutText)).toContain(
@@ -1169,10 +1141,8 @@ describe("functions deploy", () => {
   });
 
   describe("no-functions error styling (Go parity: deploy.go:35; structured output stays plain)", () => {
-    // Calls the shared `deployFunctions` with a marker `styleEmphasis` instead of
-    // going through `functionsDeploy`: the real hook (`bold`) is
-    // TTY-gated and therefore inert under vitest, so only an injected marker can
-    // deterministically observe which output formats apply the styling.
+    // Uses a marker `styleEmphasis` instead of `functionsDeploy`'s real `bold`
+    // hook, which is TTY-gated and inert under vitest.
     function setupNoFunctionsTest(format: "text" | "json") {
       const out = mockOutput({ format });
       const api = mockCommandPlatformApi();
@@ -1291,9 +1261,6 @@ describe("functions deploy", () => {
     it.live(
       "fails before any Docker/API work on an unrelated Config.Validate branch (unsupported Postgres major version)",
       () => {
-        // Proves the WHOLE resolved config is validated, not just `project_id`
-        // — `db.major_version = 12` is a genuinely unrelated Go `Config.Validate`
-        // branch (`config.go:1034-1062`).
         const out = mockOutput({ format: "text" });
         const api = mockCommandPlatformApi();
         const layer = Layer.mergeAll(
@@ -1636,9 +1603,7 @@ describe("functions deploy", () => {
               "com.docker.compose.project=test-project",
             ]),
           );
-          // Adjacent pairs, not merely present anywhere in argv —
-          // `buildFunctionsDockerRunArgs` emits the two `--label KEY=VALUE`
-          // pairs back-to-back, immediately before the image.
+          // Assert adjacent `--label KEY=VALUE` pairs, not merely present anywhere in argv.
           const cliLabelIndex = runCommand?.args.indexOf("--label") ?? -1;
           expect(runCommand?.args.slice(cliLabelIndex, cliLabelIndex + 4)).toEqual([
             "--label",
@@ -1646,9 +1611,7 @@ describe("functions deploy", () => {
             "--label",
             "com.docker.compose.project=test-project",
           ]);
-          // `-w <toDockerPath(projectRoot)>` — the bundler sets WorkingDir to
-          // the post-ChangeWorkDir cwd, which `deploy.ts`/`deploy.handler.ts`
-          // resolve to `cliSettings.workdir`, i.e. `tempRoot.current` in this test.
+          // `-w` sets WorkingDir to the resolved `cliSettings.workdir` (`tempRoot.current` here).
           const workingDirIndex = runCommand?.args.indexOf("-w") ?? -1;
           expect(runCommand?.args.slice(workingDirIndex, workingDirIndex + 2)).toEqual([
             "-w",
@@ -1666,11 +1629,6 @@ describe("functions deploy", () => {
     it.live(
       "does not climb to an ancestor project's config.toml for the Docker bundling path",
       () => {
-        // Established behavior: `supabase/config.toml` only ever resolves
-        // from the already-resolved workdir, with no ancestor climb —
-        // implemented via `loadFunctionsCliConfig`'s `search: false` (a
-        // real behavior change: deploy did NOT have this before CLI-1963,
-        // unlike download).
         const nestedWorkdir = join(tempRoot.current, "nested");
         const out = mockOutput({ format: "text" });
         const api = mockFunctionCreateApi();
@@ -1717,19 +1675,6 @@ describe("functions deploy", () => {
   it.live(
     "does not treat an ancestor project's deno.json as this project's own import map when --workdir names a config-less subdirectory of it",
     () => {
-      // CLI-2285: `inferFunctionsManifest`'s filesystem discovery previously
-      // climbed independently of the config load — no `search` option meant
-      // the package default (always climbing), regardless of `goConfigCompat`,
-      // while the config load (`loadFunctionsCliConfig`) has always used
-      // `search: false` for the CLI. Before this fix, a function
-      // directory with no `deno.json` of its own would still be reported as
-      // HAVING one — borrowed from an unrelated ANCESTOR project's own
-      // `deno.json` — because the manifest's filesystem walk climbed to find
-      // the ancestor's project root even though the config load never did.
-      // The resulting (wrong) import map path is then re-anchored under THIS
-      // project's own supabase dir, where no such file exists — failing the
-      // deploy outright with a spurious file-not-found, instead of correctly
-      // deploying the function with no import map.
       const nestedWorkdir = join(tempRoot.current, "nested");
       const out = mockOutput({ format: "text" });
       const api = mockCommandPlatformApi({
@@ -1770,14 +1715,12 @@ describe("functions deploy", () => {
       );
 
       return Effect.gen(function* () {
-        // Ancestor project: a real config.toml plus a real function with
-        // BOTH an entrypoint and a deno.json.
+        // Ancestor project: a config.toml plus a function with an entrypoint and a deno.json.
         yield* Effect.tryPromise(() =>
           writeCliConfig(tempRoot.current, 'project_id = "ancestor-project"\n'),
         );
         yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
-        // The sub-project actually deployed has its OWN entrypoint, but
-        // deliberately no deno.json of its own.
+        // The sub-project has its own entrypoint but no deno.json.
         yield* Effect.tryPromise(() =>
           mkdir(join(nestedWorkdir, "supabase", "functions", "hello-world"), {
             recursive: true,
@@ -1807,11 +1750,8 @@ describe("functions deploy", () => {
 
   describe("docker-not-running warning styling (Go parity: deploy.go:60; only WARNING: is styled)", () => {
     it.live("wraps only the WARNING token, not the rest of the fallback line", () => {
-      // Calls the shared `deployFunctions` with a marker `styleWarning` instead
-      // of going through `functionsDeploy`: the real hook (`yellow`)
-      // is TTY-gated and therefore inert under vitest, so only an injected
-      // marker can deterministically observe styling scope — same pattern as
-      // the "no-functions error styling" block above.
+      // Uses a marker `styleWarning` instead of `functionsDeploy`'s real
+      // `yellow` hook, which is TTY-gated and inert under vitest.
       const out = mockOutput({ format: "text" });
       const api = mockCommandPlatformApi({
         handler: (request) => {

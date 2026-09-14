@@ -1,17 +1,10 @@
 import { Flag, GlobalFlag } from "effect/unstable/cli";
 
 /**
- * The TS-only `--output-format` global (no Go counterpart), accepted on any
- * subcommand.
+ * The TS-only `--output-format` global, accepted on any subcommand.
  *
- * It takes a value, so its name is registered in
- * `PERSISTENT_VALUE_FLAG_NAMES` (`shared/cli/cobra-flag-groups.ts`) — the
- * pre-parse scanners derive their token set from it
- * (`GLOBAL_VALUE_FLAG_TOKENS`), so that one edit covers any value-taking
- * global added here. Without it, the raw-argv scanners that run for
- * `--help`/`--version`/bare-group invocations will not consume its following
- * token. See `GLOBAL_FLAGS` (`command-internal/global-flags.ts`) for what
- * silently breaks when a flag is missing from the shared registry.
+ * A value-taking global flag must also be registered in `PERSISTENT_VALUE_FLAG_NAMES`
+ * (`shared/cli/cobra-flag-groups.ts`), or the pre-parse argv scanners won't consume its value.
  */
 export const OutputFormatFlag = GlobalFlag.setting("output-format")({
   flag: Flag.choice("output-format", ["text", "json", "stream-json"]).pipe(

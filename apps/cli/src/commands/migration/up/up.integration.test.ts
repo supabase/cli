@@ -92,17 +92,15 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         extensionExists: () => Effect.succeed(false),
         copyToCsv: () => Effect.succeed(new Uint8Array()),
         queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
-        // A migration file's statements arrive as one batch; replay them through
-        // `exec`/`query` so this suite's recordings and failure injection still apply.
+        // Replays each statement through exec/query so recordings and failure injection apply.
         execBatch: (statements) => sequentialExecBatch(session)(statements),
       };
       return Effect.succeed(session);
     },
   });
 
-  // `loadProjectRef` gives an explicit `--project-ref` flag top precedence, same
-  // as Go's `flags.LoadProjectRef` — mirror that so a test can prove the flag
-  // (not just the hardcoded `VALID_REF` fallback) drives the linked ref.
+  // The flag value takes precedence over the VALID_REF fallback, so tests can assert the
+  // flag drives the linked ref.
   const projectRef = Layer.succeed(ProjectRefResolver, {
     resolve: () => Effect.succeed(VALID_REF),
     resolveForLink: () => Effect.succeed(VALID_REF),
@@ -159,13 +157,10 @@ describe("migration up", () => {
       yield* migrationUp(flags());
       const stderr = stripAnsi(out.stderrText);
       const stdout = stripAnsi(out.stdoutText);
-      // The connection banner prints to stderr before dialing.
       expect(stderr).toContain("Connecting to local database...");
       expect(stderr).toContain("Applying migration 20240102000000_b.sql...");
       expect(stderr).toContain("Applying migration 20240103000000_c.sql...");
       expect(stdout).toContain("Local database is up to date.");
-      // Lock the channel split: "Applying ..." is stderr
-      // and the final "up to date" is stdout — neither bleeds across.
       expect(stdout).not.toContain("Applying migration");
       expect(stderr).not.toContain("Local database is up to date.");
       expect(insertedVersions(queries)).toEqual(["20240102000000", "20240103000000"]);
@@ -208,7 +203,6 @@ describe("migration up", () => {
     const { layer, queries } = setup(tmp.current, { remote: ["20240102000000"] });
     return Effect.gen(function* () {
       yield* migrationUp(flags({ includeAll: true }));
-      // The trailing pending set is appended after the out-of-order set.
       expect(insertedVersions(queries)).toEqual(["20240101000000", "20240103000000"]);
     }).pipe(Effect.provide(layer));
   });
@@ -276,9 +270,7 @@ describe("migration up", () => {
   it.live(
     "applies on the project given via --project-ref --linked, overriding the linked ref",
     () => {
-      // up defaults to local; only with --linked does the flag's ref get cached.
-      // The fake resolver's own fallback (VALID_REF) represents whatever
-      // the workdir would resolve to absent the flag — the flag must win over it.
+      // VALID_REF is the resolver's fallback if the flag were absent; the flag must win.
       const FLAG_REF = "flagflagflagflagflag";
       const { layer, cache } = setup(tmp.current, { args: ["--linked"], remote: [] });
       return Effect.gen(function* () {
@@ -293,8 +285,6 @@ describe("migration up", () => {
   );
 
   it.live("rejects --project-ref on the default local target", () => {
-    // up defaults to local when no target flag is set — the guard must fire
-    // from the flag alone, with no explicit --local/--db-url needed.
     const FLAG_REF = "flagflagflagflagflag";
     const { layer, execs, queries, cache } = setup(tmp.current, { remote: [] });
     return Effect.gen(function* () {

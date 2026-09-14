@@ -6,7 +6,7 @@ import { textCliOutputFormatter } from "../../shared/output/text-formatter.ts";
 import { GLOBAL_FLAGS } from "../../command-internal/global-flags.ts";
 import { migrationCommand } from "./migration.command.ts";
 
-// `withGlobalFlags` must come AFTER `withSubcommands` — see
+// `withGlobalFlags` must come after `withSubcommands` — see
 // `start.string-slice-flags.integration.test.ts`'s identical comment.
 const testRoot = Command.make("supabase").pipe(
   Command.withSubcommands([migrationCommand]),
@@ -15,10 +15,9 @@ const testRoot = Command.make("supabase").pipe(
 
 describe("migration command integration", () => {
   it.live("accepts the Go-compatible plural migrations alias", () => {
-    // After CLI-1969, `squash` is native and no `migration` subcommand is proxied
-    // any more — so the plural alias is now proven at the PARSER instead: a
+    // No subcommand is proxied, so the plural alias is proven at the parser:
     // `migrations squash --nope` must fail with squash's own unknown-flag error,
-    // which never builds the command's `Command.provide` runtime layer.
+    // before the command's runtime layer ever builds.
     const run = Effect.gen(function* () {
       const exit = yield* Command.runWith(testRoot, { version: "0.0.0-test" })([
         "migrations",
@@ -28,14 +27,13 @@ describe("migration command integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeJson = JSON.stringify(exit.cause);
-        // The alias resolved: the parse error is scoped to the squash LEAF, not the root.
+        // The alias resolved: the parse error is scoped to the squash subcommand, not the root.
         expect(causeJson).toContain('"commandPath":["supabase","migration","squash"]');
         expect(causeJson).not.toContain('"subcommand":"migrations"');
       }
     }).pipe(Effect.provide(CliOutput.layer(textCliOutputFormatter())));
 
-    // Command.runWith's Environment type is retained even though this path only needs CliOutput
-    // at runtime.
+    // Command.runWith's Environment type is retained even though only CliOutput is needed.
     return run as Effect.Effect<void>;
   });
 });

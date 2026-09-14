@@ -63,17 +63,15 @@ function mockResolver(opts: {
   const layer = Layer.succeed(DbConfigResolver, {
     resolve: (flags) => {
       calls.push(flags);
-      // Simulate connection resolution failing (IPv6 probe / pooler / temp
-      // login-role) after the ref is already loaded.
+      // Simulates connection resolution failing (IPv6 probe/pooler/temp login-role)
+      // after the ref is already loaded.
       if (opts.resolveFails === true) {
         return Effect.fail(
           new DbConfigConnectTempRoleError({ message: "failed to create temp role" }),
         );
       }
-      // A threaded `--project-ref` flag wins over the fixed `opts.ref` test
-      // fixture, same top precedence a real resolver would give it — lets a
-      // test prove the flag (not just `opts.ref`) drives the resolved (and
-      // later cached) ref.
+      // A threaded `--project-ref` flag wins over the fixed `opts.ref` fixture,
+      // matching real resolver precedence.
       const linkedProjectRef = flags.linkedProjectRef ?? Option.none();
       const ref =
         Option.isSome(linkedProjectRef) && linkedProjectRef.value.length > 0
@@ -104,16 +102,10 @@ function mockResolver(opts: {
 }
 
 /**
- * Mocks `ProjectRefResolver` for the up-front `loadProjectRef` pre-capture
- * (`dump.handler.ts`), mirroring push/diff's identical mock (`push.integration.test.ts`,
- * `diff.integration.test.ts`): `loadProjectRef` gives an explicit `--project-ref` flag
- * top precedence, same as Go's `flags.LoadProjectRef` — a real (non-empty) ref pattern
- * is validated so a malformed flag surfaces `InvalidProjectRefError`, matching the
- * real service. `opts.projectId` stands in for `CommandSettings.projectId`
- * (`SUPABASE_PROJECT_ID`/`project_id`), which `loadProjectRef` consults before falling
- * back to `opts.ref` (the SAME ref `mockResolver`'s own mock embeds in its resolved
- * `ref`, so both stay consistent regardless of which fixture a test sets).
- * `opts.linkedFails` simulates a genuinely unlinked workdir absent an explicit flag.
+ * Mocks `ProjectRefResolver` for the up-front `loadProjectRef` pre-capture, mirroring
+ * push/diff's identical mock: an explicit `--project-ref` flag wins, a malformed value
+ * fails with `InvalidProjectRefError`, and `opts.projectId` stands in for
+ * `CommandSettings.projectId` consulted before falling back to `opts.ref`.
  */
 function mockProjectRefResolver(opts: {
   projectId: Option.Option<string>;
@@ -329,8 +321,6 @@ describe("db dump integration", () => {
   it.live(
     "allows --use-copy with an explicit --data-only=false (Go required check is presence)",
     () => {
-      // The required-flag check keys off explicit presence, so `--data-only=false`
-      // satisfies it; the command proceeds and runs the schema dump with dataOnly=false.
       const { layer } = setup({ isLocal: true, stdout: "SELECT 1;\n" });
       return Effect.gen(function* () {
         const exit = yield* dbDump(
@@ -405,8 +395,6 @@ describe("db dump integration", () => {
   });
 
   it.live("rejects --linked=false --local as a target conflict (Go flag.Changed)", () => {
-    // The target mutex keys off explicit presence, so the explicit-false
-    // `--linked` still counts as set and conflicts with `--local`.
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* dbDump(
@@ -433,8 +421,6 @@ describe("db dump integration", () => {
   });
 
   it.live("treats --local=false as an explicit local target (Go ParseDatabaseConfig)", () => {
-    // Local is selected on explicit presence of `--local` before the linked
-    // default, so `--local=false` resolves the local target, not the linked one.
     const { layer, resolver } = setup({ isLocal: true });
     return Effect.gen(function* () {
       yield* dbDump(flags({ local: Option.some(false), dryRun: true }));
@@ -448,15 +434,12 @@ describe("db dump integration", () => {
       yield* dbDump(flags({ dryRun: true, local: Option.some(true) }));
       expect(out.stderrText).toContain("DRY RUN: *only* printing the pg_dump script to console.");
       expect(out.stderrText).toContain("Dumping schemas from local database...");
-      // The script must have $PGHOST expanded from the resolved local connection.
       expect(out.stdoutText).toContain('export PGHOST="127.0.0.1"');
       expect(docker.lastOpts).toBeUndefined();
     }).pipe(Effect.provide(layer));
   });
 
   it.live("prints the post-run Dumped-schema message on --dry-run --file without writing", () => {
-    // The file is never opened on dry-run, but `Dumped schema to <abs>.` is
-    // still printed, with no dry-run guard and without touching the file.
     const filePath = join(tmp.current, "dry.sql");
     const { layer, out, docker } = setup({ isLocal: true });
     return Effect.gen(function* () {
@@ -470,9 +453,6 @@ describe("db dump integration", () => {
   });
 
   it.live("treats an explicit --file '' as stdout on --dry-run (Go: len(path) > 0)", () => {
-    // Every --file branch keys off len(path) > 0, not flag presence; an
-    // explicit empty --file means stdout, with no "Dumped schema to …" line
-    // and no file ever touched.
     const { layer, out, docker } = setup({ isLocal: true });
     return Effect.gen(function* () {
       yield* dbDump(flags({ dryRun: true, local: Option.some(true), file: Option.some("") }));
@@ -483,8 +463,6 @@ describe("db dump integration", () => {
   });
 
   it.live("validates the merged config before the --dry-run print (Go root PreRun order)", () => {
-    // The merged config is validated before the dump runs, even for
-    // --dry-run, so an invalid config fails without printing.
     mkdirSync(join(tmp.current, "supabase"), { recursive: true });
     writeFileSync(
       join(tmp.current, "supabase", "config.toml"),
@@ -515,7 +493,6 @@ describe("db dump integration", () => {
         expect.stringContaining("pg_dump"),
         "--",
       ]);
-      // host networking, no security-opt
       expect(docker.lastOpts?.network).toEqual({ _tag: "host" });
       expect(docker.lastOpts?.securityOpt).toEqual([]);
       expect(docker.lastOpts?.env["EXCLUDED_SCHEMAS"]).toBeDefined();
@@ -559,9 +536,8 @@ describe("db dump integration", () => {
   });
 
   it.live("joins a multi-schema selection into EXTRA_FLAGS with pipes", () => {
-    // CSV-splitting of `--schema` happens at the flag level via
-    // `parseSchemaFlags`, so the handler receives the already-split
-    // array and the env builder pipe-joins it.
+    // The handler receives an already-split array (CSV-split at the flag level by
+    // `parseSchemaFlags`) and the env builder pipe-joins it.
     const { layer, docker } = setup({ isLocal: true });
     return Effect.gen(function* () {
       yield* dbDump(flags({ schema: ["public", "auth"], local: Option.some(true) }));
@@ -570,8 +546,6 @@ describe("db dump integration", () => {
   });
 
   it.live("resolves a relative --file against the workdir", () => {
-    // A relative `--file` is resolved against the workdir, so it is written
-    // under the workdir, not the original cwd.
     const { layer } = setup({
       isLocal: true,
       stdout: "CREATE SCHEMA public;\n",
@@ -594,9 +568,8 @@ describe("db dump integration", () => {
   it.live(
     "resolves the pg_dump network via SUPABASE_NETWORK_ID from supabase/.env when neither the flag nor the ambient env is set",
     () => {
-      // Host networking is the default, but a resolved `--network-id`/`SUPABASE_NETWORK_ID`
-      // value overrides it whenever non-empty — a value sourced only from `supabase/.env`
-      // still wins over host.
+      // A `SUPABASE_NETWORK_ID` sourced only from `supabase/.env` still overrides host
+      // networking.
       const prev = process.env["SUPABASE_NETWORK_ID"];
       delete process.env["SUPABASE_NETWORK_ID"];
       mkdirSync(join(tmp.current, "supabase"), { recursive: true });
@@ -646,12 +619,8 @@ describe("db dump integration", () => {
   it.live(
     "caches the flag ref, not the workdir's own config ref, when resolution fails (regression)",
     () => {
-      // The pre-connect `linkedRefForCache` chain must check `flags.projectRef`
-      // FIRST — before config.toml's `project_id` and the `.temp/project-ref`
-      // file — so a `--project-ref` override still wins even when `resolve()`
-      // fails before ever returning its own `ref`. `opts.projectId` here stands
-      // in for the workdir's own linked ref (e.g. config.toml `project_id`);
-      // it must lose to the flag.
+      // `linkedRefForCache` must check `flags.projectRef` before config.toml's
+      // `project_id`, so the flag still wins even when `resolve()` fails first.
       const FLAG_REF = "flagflagflagflagflag";
       const { layer, cache } = setup({
         projectId: Option.some("abcdefghijklmnopqrst"),
@@ -670,10 +639,8 @@ describe("db dump integration", () => {
   );
 
   it.live("does not cache when the linked ref is unknown and resolution fails", () => {
-    // No config project_id and no .temp/project-ref file (workdir is a throwaway
-    // path), so the up-front `loadProjectRef` pre-capture itself fails "not linked"
-    // (linkedFails) before `resolve()` is ever reached; the cache is only written
-    // when a ref is known, so nothing is cached.
+    // No config project_id or .temp/project-ref file, so the up-front pre-capture
+    // itself fails "not linked" before `resolve()` is reached; nothing is cached.
     const { layer, cache } = setup({ resolveFails: true, linkedFails: true });
     return Effect.gen(function* () {
       const exit = yield* dbDump(flags({ linked: Option.some(true) })).pipe(Effect.exit);
@@ -696,8 +663,7 @@ describe("db dump integration", () => {
   });
 
   it.live("dumps the project given via --project-ref without a linked workdir", () => {
-    // No fixed `opts.ref` fixture — only the flag can resolve a ref for the
-    // resolver call and the linked-project cache.
+    // No fixed `opts.ref`; only the flag can resolve a ref here.
     const FLAG_REF = "flagflagflagflagflag";
     const { layer, cache, resolver } = setup({
       conn: REMOTE_CONN,
@@ -714,8 +680,7 @@ describe("db dump integration", () => {
 
   it.live("--project-ref overrides an already-linked workdir's project ref", () => {
     const FLAG_REF = "flagflagflagflagflag";
-    // The workdir already resolves to a fixed ref (e.g. via .temp/project-ref) —
-    // the flag must win over it.
+    // A distinct fixed ref proves the flag, not the workdir's own ref, wins.
     const { layer, cache } = setup({
       conn: REMOTE_CONN,
       isLocal: false,
@@ -733,11 +698,8 @@ describe("db dump integration", () => {
   it.live(
     "rejects a malformed --project-ref on the linked path before resolving or caching",
     () => {
-      // The pre-capture now runs the SAME validated `loadProjectRef` the resolver
-      // would raise right after (codex review on dump.handler.ts:182), so a malformed
-      // flag value must fail fast — never reaching `resolver.resolve()` (no
-      // connection/API work) and never writing the linked-project cache (no
-      // `GET /v1/projects/*`).
+      // `loadProjectRef` validates before `resolver.resolve()` runs, so a malformed
+      // flag fails fast with no connection/API work and no cache write.
       const { layer, cache, resolver } = setup();
       return Effect.gen(function* () {
         const exit = yield* dbDump(
@@ -811,13 +773,10 @@ describe("db dump integration", () => {
     });
     return Effect.gen(function* () {
       yield* dbDump(flags());
-      // Retried once: two container runs, one fallback resolution.
       expect(docker.allOpts).toHaveLength(2);
       expect(resolver.fallbackCalls).toHaveLength(1);
       expect(resolver.fallbackCalls[0]).toMatchObject({ connType: "linked" });
-      // The retry targeted the pooler host (PGHOST in the rebuilt env).
       expect(docker.allOpts[1]?.env["PGHOST"]).toBe(POOLER_CONN.host);
-      // The IPv6 warning was printed to stderr; only the retry's output reached stdout.
       expect(out.stderrText).toContain("does not support IPv6");
       expect(out.stderrText).toContain("Retrying via the IPv4 connection pooler.");
       expect(out.stdoutText).toBe("CREATE SCHEMA x;\n");
@@ -825,8 +784,6 @@ describe("db dump integration", () => {
   });
 
   it.live("linked: preserves the original dump error when the pooler fallback fails", () => {
-    // Any fallback-resolution error reports the original pg_dump failure — the
-    // optional retry must not replace it.
     const { layer, resolver, docker } = setup({
       conn: REMOTE_CONN,
       isLocal: false,
@@ -836,7 +793,6 @@ describe("db dump integration", () => {
     return Effect.gen(function* () {
       const exit = yield* dbDump(flags()).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      // Original container failure, NOT the fallback-resolution error.
       expect(failMessage(exit)).toBe("error running container: exit 1");
       expect(resolver.fallbackCalls).toHaveLength(1); // attempted
       expect(docker.allOpts).toHaveLength(1); // no retry container ran
@@ -870,11 +826,8 @@ describe("db dump integration", () => {
       const exit = yield* dbDump(flags()).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toBe("error running container: exit 1");
-      // The fallback was attempted (classified IPv6) but returned no pooler.
       expect(resolver.fallbackCalls).toHaveLength(1);
       expect(docker.allOpts).toHaveLength(1);
-      // The IPv6 pooler guidance is attached on the no-fallback path; the bare
-      // container error must carry it.
       expect(failSuggestion(exit)).toContain(
         "Your network does not support IPv6, which is required for direct connections",
       );
@@ -883,8 +836,6 @@ describe("db dump integration", () => {
   });
 
   it.live("linked: attaches the IPv6 suggestion when the pooler retry also fails", () => {
-    // The IPv6 pooler guidance is also attached to the retry's stderr when the
-    // pooler retry also fails; an IPv6 retry failure surfaces the same guidance.
     const { layer, docker } = setup({
       conn: REMOTE_CONN,
       isLocal: false,
@@ -942,9 +893,8 @@ describe("db dump integration", () => {
   const NON_ASCII_WARNING = "The dump contains non-ASCII characters";
   const PIPED_WIN32 = { platform: "win32", stdoutIsPipe: true } as const;
 
-  // Real-runtime probe of the classification `ttyLayer` ships for
-  // `stdoutIsPipe`. A shell pipeline is used for the pipe case: spawnSync's
-  // own "pipe" stdio is a socketpair under Bun, which fstats as a socket.
+  // A shell pipeline gets a genuine FIFO for the pipe probe below; Bun's spawnSync
+  // "pipe" stdio is a socketpair, which fstats as a socket instead.
   const PROBE = 'process.stdout.write(String(require("node:fs").fstatSync(1).isFIFO()));';
 
   it.skipIf(process.platform === "win32")("classifies a real piped stdout as a pipe", () => {

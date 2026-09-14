@@ -1,0 +1,85 @@
+name: Live E2E Gate
+
+on:
+  workflow_call:
+    inputs:
+      sha:
+        description: Exact commit to verify
+        required: true
+        type: string
+    secrets:
+      SUPABASE_E2E_CLI_LIVE_STAGING_ACCESS_TOKEN:
+        required: true
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  lookup:
+    name: Find exact-SHA live result
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      reuse: ${{ steps.lookup.outputs.reuse }}
+    steps:
+      - name: Check latest relevant run
+        id: lookup
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          SHA: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+          response="$(gh api --paginate "/repos/${REPOSITORY}/actions/workflows/live-e2e.yml/runs?branch=develop&head_sha=${SHA}&per_page=100")"
+          latest="$(jq -s -c 'map(.workflow_runs[]) | sort_by(.run_number) | reverse | .[0] // empty' <<< "$response")"
+          if [[ -z "$latest" ]]; then
+            echo "No live run exists for ${SHA}; the stable gate will run the suite."
+            echo "reuse=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          status="$(jq -r '.status' <<< "$latest")"
+          conclusion="$(jq -r '.conclusion // empty' <<< "$latest")"
+          run_id="$(jq -r '.id' <<< "$latest")"
+          echo "Latest live run ${run_id}: status=${status}, conclusion=${conclusion}"
+          jobs="$(gh api --paginate "/repos/${REPOSITORY}/actions/runs/${run_id}/jobs?per_page=100")"
+          # Keep this exact job suffix and step name aligned with the producer
+          # and notifier; renaming either changes reuse semantics.
+          executed="$(jq -s -r 'any(.[].jobs[]; (.name == "Live e2e" or (.name | endswith(" / Live e2e"))) and .conclusion == "success" and any(.steps[]?; .name == "Run live e2e" and .conclusion == "success"))' <<< "$jobs")"
+          if [[ "$status" == completed && "$conclusion" == success && "$executed" == true ]]; then
+            echo "reuse=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Latest live run did not pass; the stable gate will run the suite."
+            echo "reuse=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  run:
+    name: Run live e2e for stable gate
+    needs: lookup
+    if: needs.lookup.outputs.reuse != 'true'
+    uses: ./.github/workflows/live-e2e-suite.yml
+    with:
+      ref: ${{ inputs.sha }}
+      concurrency_group: live-e2e-stable-${{ inputs.sha }}
+    # Forward the one secret required by live-e2e-suite.yml.
+    secrets:
+      SUPABASE_E2E_CLI_LIVE_STAGING_ACCESS_TOKEN: ${{ secrets.SUPABASE_E2E_CLI_LIVE_STAGING_ACCESS_TOKEN }}
+
+  result:
+    name: Verify live e2e gate
+    needs: [lookup, run]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require a successful result
+        env:
+          REUSE: ${{ needs.lookup.outputs.reuse }}
+          RUN_RESULT: ${{ needs.run.result }}
+        run: |
+          set -euo pipefail
+          if [[ "$REUSE" == true || "$RUN_RESULT" == success ]]; then
+            exit 0
+          fi
+          echo "::error::live e2e did not produce a successful result"
+          exit 1

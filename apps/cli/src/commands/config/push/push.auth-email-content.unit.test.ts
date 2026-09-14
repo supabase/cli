@@ -1,7 +1,3 @@
-/**
- * Unit tests for push.auth-email-content.ts.
- */
-
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { tmpdir } from "node:os";
@@ -10,10 +6,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import { loadAuthEmailContent } from "./push.auth-email-content.ts";
 
 /**
- * Builds the exact anchored containment-rejection regex for a given declared `content_path` —
- * the thrown message echoes that DECLARED value (quoted) between the field name and "resolves
- * outside the project root", not the fully-canonicalized target (a deliberate recon-leak
- * mitigation — see `resolveEmailTemplateContentPath`'s own doc comment).
+ * Builds the anchored containment-rejection regex for a given declared `content_path` — the
+ * thrown message echoes that declared value (quoted), not the fully-canonicalized target,
+ * avoiding a recon leak.
  */
 function containmentRejectionPattern(fieldPath: string, declaredContentPath: string): RegExp {
   const escaped = declaredContentPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -211,19 +206,15 @@ describe("loadAuthEmailContent", () => {
     expect(thrown).toBeInstanceOf(Error);
     const message = (thrown as Error).message;
     // A genuinely missing in-root file must surface the normal read-failure message, never the
-    // containment message — locks in that the symlinked-ancestor containment fix (see the
-    // dedicated symlink test below) doesn't regress into over-rejecting a legitimate missing
-    // file as "outside the project root".
+    // containment message, guarding against over-rejecting a missing file as "outside the
+    // project root".
     expect(message).not.toMatch(/resolves outside the project root/);
     expect(message).toMatch(/^Invalid config for auth\.email\.template\.invite\.content_path:/);
   });
 
   it("does not raise the containment error for a template file missing behind a symlinked project root", () => {
-    // The project root itself is reached through a symlink (mirroring macOS's `/tmp` ->
-    // `/private/tmp`), and the configured template file doesn't exist. Before the CLI-2339 fix
-    // to `canonicalPathForContainment`, comparing a realpath'd root against a lexically-resolved
-    // (symlink-unaware) candidate would have misreported this as escaping the project root
-    // instead of a plain missing file.
+    // The project root itself is reached through a symlink (mirroring macOS's /tmp ->
+    // /private/tmp), and the configured template file doesn't exist.
     const realDir = mkdtempSync(join(tmpdir(), "auth-email-content-real-"));
     const linkContainer = mkdtempSync(join(tmpdir(), "auth-email-content-link-"));
     const symlinkedRoot = join(linkContainer, "project-root");

@@ -22,8 +22,6 @@ describe("viperEnvBool", () => {
   });
 
   it("is false for the false set and any unrecognized value", () => {
-    // viper casts via strconv.ParseBool and swallows the error to `false`, so
-    // `yes`/`on`/`""`/garbage are NOT truthy (unlike some bool parsers).
     for (const value of ["0", "f", "F", "FALSE", "false", "False", "yes", "on", "", "nope"]) {
       process.env[KEY] = value;
       expect(viperEnvBool(KEY)).toBe(false);
@@ -41,11 +39,6 @@ describe("viperEnvBoolWithProjectFallback", () => {
     delete process.env[KEY];
   });
 
-  // Go truth table: godotenv.Load only sets project-.env keys ABSENT from the
-  // shell env (presence is key-existence, so even an empty shell value blocks
-  // the file value), then viper.GetBool reads the merged env
-  // (godotenv@v1.5.1/godotenv.go:184-200, apps/cli-go/pkg/config/config.go).
-
   it("falls back to the project value only when the shell var is absent", () => {
     delete process.env[KEY];
     expect(viperEnvBoolWithProjectFallback(KEY, { [KEY]: "true" })).toBe(true);
@@ -59,8 +52,6 @@ describe("viperEnvBoolWithProjectFallback", () => {
   });
 
   it("treats an empty shell value as present (blocks the project value) and false", () => {
-    // godotenv's presence check is key-existence in os.Environ(), and viper
-    // without AllowEmptyEnv resolves "" to the false default.
     process.env[KEY] = "";
     expect(viperEnvBoolWithProjectFallback(KEY, { [KEY]: "true" })).toBe(false);
   });
@@ -81,8 +72,6 @@ describe("viperEnvBoolWithProjectFallback", () => {
   });
 
   it("whenUnset: true still yields false for any present non-true value", () => {
-    // A present value keeps the exact ParseBool semantics — `0`, `false`, empty, and garbage
-    // all disable, whether from the shell or the project dotenv.
     process.env[KEY] = "0";
     expect(viperEnvBoolWithProjectFallback(KEY, {}, { whenUnset: true })).toBe(false);
     process.env[KEY] = "";
@@ -119,8 +108,6 @@ describe("viperEnvStringWithProjectFallback", () => {
   });
 
   it("treats an empty shell value as present (blocks the project value)", () => {
-    // Same presence-based semantics as viperEnvBoolWithProjectFallback: godotenv.Load's
-    // "don't override a key already in os.Environ()" check is key-existence, not value-truthiness.
     process.env[STRING_KEY] = "";
     expect(viperEnvStringWithProjectFallback(STRING_KEY, { [STRING_KEY]: "project-value" })).toBe(
       "",

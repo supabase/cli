@@ -37,9 +37,9 @@ export const sslEnforcementUpdate = Effect.fn("ssl-enforcement.update")(function
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
-  // Telemetry flushes on every invocation, including validation failures — matches Go's
-  // PersistentPostRun semantics. The linked-project cache write happens only after the ref
-  // has been resolved (it requires `ref` as input), so it wraps the inner sub-effect.
+  // Telemetry flushes on every invocation, including validation failures. The
+  // linked-project cache write happens only after the ref is resolved, so it
+  // wraps the inner sub-effect only.
   yield* Effect.gen(function* () {
     if (flags.enableDbSslEnforcement && flags.disableDbSslEnforcement) {
       return yield* new SslEnforcementMutuallyExclusiveFlagsError();
@@ -55,7 +55,7 @@ export const sslEnforcementUpdate = Effect.fn("ssl-enforcement.update")(function
         output.format === "text"
           ? yield* output.task("Updating SSL enforcement config...")
           : undefined;
-      // Go only sends the `enforceDbSsl` boolean (`update.go:16`); `--disable-db-ssl-enforcement`
+      // There's no separate API field for "disable" — `--disable-db-ssl-enforcement`
       // is the user-facing way to send `database: false`.
       const response = yield* api.v1
         .updateSslEnforcementConfig({

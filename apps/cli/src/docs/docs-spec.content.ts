@@ -4,12 +4,10 @@ import { parse } from "yaml";
 import type { DocsExample } from "./docs-spec.ts";
 
 /**
- * Loads the docs-spec content inputs from `apps/cli/docs/`: the description
- * overlay markdown under `supabase/` (keyed by docs-relative POSIX path, the
- * same keys `docsOverlayPath` produces on every platform) and the
- * per-command examples from `templates/examples.yaml` (keyed by doc id).
- * Shared by the generator (`scripts/generate-docs-spec.ts`) and the unit
- * tests.
+ * Loads the docs-spec content inputs from `apps/cli/docs/`: description overlay markdown
+ * under `supabase/` (keyed by docs-relative POSIX path) and per-command examples from
+ * `templates/examples.yaml` (keyed by doc id). Shared by the generator
+ * (`scripts/generate-docs-spec.ts`) and the unit tests.
  */
 export interface DocsContent {
   readonly overlays: ReadonlyMap<string, string>;
@@ -35,10 +33,9 @@ export function readDocsContent(docsDir: string): DocsContent {
 }
 
 /**
- * Narrows the parsed `examples.yaml` document to its expected shape — a
- * mapping of doc id to example entries with optional string fields — failing
- * with the offending doc id instead of letting a malformed file flow into
- * the published spec.
+ * Narrows the parsed `examples.yaml` document to its expected shape — a mapping of doc id to
+ * example entries with optional string fields — failing with the offending doc id instead of
+ * letting a malformed file flow into the published spec.
  */
 function parseExamples(parsed: unknown): Readonly<Record<string, ReadonlyArray<DocsExample>>> {
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {

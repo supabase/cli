@@ -3,12 +3,10 @@ import type { LocalServiceVersionOverrides } from "../shared/services/services.s
 import { tempPaths } from "./temp-paths.ts";
 
 /**
- * `supabase/.temp/{gotrue,rest,storage,realtime,studio,pgmeta,logflare,pooler}-version`
- * pin files — written by `supabase link` for a linked/bootstrap project, read
- * by Go's `Config.Load` to rewrite `c.Auth.Image`/`c.Api.Image`/etc. before any
- * command that pulls or starts these services (`apps/cli-go/pkg/config/
- * config.go:827-863`). `gotrue`/`postgrest` are additionally gated on
- * `majorVersion > 14`, mirroring Go's same condition there.
+ * `supabase/.temp/{gotrue,rest,storage,realtime,studio,pgmeta,logflare,pooler}-version` pin
+ * files, written by `supabase link` for a linked/bootstrap project and read before any
+ * command that pulls or starts these services to override their image tag. `gotrue`/
+ * `postgrest` are additionally gated on `majorVersion > 14`.
  */
 const VERSION_FILES = [
   ["auth", "gotrue-version", (majorVersion: number | undefined) => (majorVersion ?? 17) > 14],
@@ -28,10 +26,9 @@ const VERSION_FILES = [
 >;
 
 /**
- * Reads every linked-service version pin present under `<workdir>/supabase/
- * .temp/`, returning only the services whose pin file exists and is
- * non-blank. Any read error (including not-exist) resolves to "" for that
- * file, matching Go's `err == nil && len(version) > 0` gate.
+ * Reads every linked-service version pin present under `<workdir>/supabase/.temp/`,
+ * returning only the services whose pin file exists and is non-blank. Any read error
+ * (including not-exist) resolves to "" for that file.
  */
 export const readServiceVersionOverrides = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,

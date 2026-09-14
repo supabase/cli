@@ -6,11 +6,8 @@ import {
 } from "../shared/telemetry/error-actionability.ts";
 
 /**
- * An explicit `--workdir`/`SUPABASE_WORKDIR` path doesn't exist or isn't a
- * directory. Mirrors `ChangeWorkDir`, which unconditionally `os.Chdir(workdir)`s in `PersistentPreRunE` —
- * before `status`'s own `PreRunE`
- * (override-name parsing) or `RunE`, so a bad explicit workdir must fail here
- * first, before config load or any Docker access.
+ * An explicit `--workdir`/`SUPABASE_WORKDIR` path doesn't exist or isn't a directory. Checked
+ * before config load or any Docker access.
  */
 export class StatusWorkdirError extends Data.TaggedError("StatusWorkdirError")<{
   readonly message: string;
@@ -29,7 +26,7 @@ export class StatusConfigLoadError extends Data.TaggedError("StatusConfigLoadErr
   }
 }
 
-/** A `--override-name KEY=VALUE` entry did not parse, mirroring `env.EnvironToEnvSet`. */
+/** A `--override-name KEY=VALUE` entry did not parse. */
 export class StatusOverrideParseError extends Data.TaggedError("StatusOverrideParseError")<{
   readonly message: string;
 }> {
@@ -39,12 +36,9 @@ export class StatusOverrideParseError extends Data.TaggedError("StatusOverridePa
 }
 
 /**
- * Inspecting the db container failed for a reason other than "not found" —
- * except `assertContainerHealthy` never special-cases a missing
- * container (see `status.handler.ts`'s step-5 comment): an absent container
- * is just another non-zero inspect exit, so the dominant real trigger of this
- * error is "the local stack was never started", same fix as
- * {@link StatusDbNotRunningError}.
+ * Inspecting the db container failed for a reason other than "not found" — but since an
+ * absent container is just another non-zero inspect exit, the dominant real trigger is that
+ * the local stack was never started, same as {@link StatusDbNotRunningError}.
  */
 export class StatusDbInspectError extends Data.TaggedError("StatusDbInspectError")<{
   readonly message: string;
@@ -82,8 +76,8 @@ export class StatusListError extends Data.TaggedError("StatusListError")<{
 }
 
 /**
- * `config.toml` resolved to a value `Config.Validate` would reject before status
- * ever renders — e.g. an `auth.jwt_secret` shorter than 16 characters.
+ * `config.toml` resolved to a value validation would reject before status ever renders —
+ * e.g. an `auth.jwt_secret` shorter than 16 characters.
  */
 export class StatusInvalidConfigError extends Data.TaggedError("StatusInvalidConfigError")<{
   readonly message: string;

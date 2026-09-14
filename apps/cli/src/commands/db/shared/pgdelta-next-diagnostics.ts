@@ -24,13 +24,9 @@ const operationAction: Record<PgDeltaNextOperation, string> = {
 };
 
 /**
- * Declarative statements pg-delta's loader could not model, e.g. `CREATE ROLE`
- * (`planSchemaFiles`' `skipped` list). Synthesized by the next adapter rather than
- * emitted by pg-delta itself, so it is absent from the library's
- * `STRICT_COVERAGE_CODES` — {@link isCoverageDiagnostic} layers it on top so a
- * skipped statement warns by default and fails under `--strict-coverage`, exactly
- * like an unmodeled object kind. Silently dropping these would let a statement the
- * user wrote in a declarative file vanish from the plan with no signal at all.
+ * Code for declarative statements pg-delta's loader couldn't model. Synthesized here
+ * rather than emitted by pg-delta, so {@link isCoverageDiagnostic} layers it onto
+ * `STRICT_COVERAGE_CODES` to warn by default and fail under `--strict-coverage`.
  */
 export const PG_DELTA_NEXT_SKIPPED_STATEMENT_CODE = "skipped_statement";
 
@@ -108,9 +104,9 @@ function pgDeltaNextUnmodeledKindsMessage(
 }
 
 /**
- * Aggregate line for skipped declarative statements, shaped like the unmodeled-kind
- * summary above: it names the files, never the statement SQL (the per-diagnostic
- * detail carries that, and only renders under `--debug`/`--strict-coverage`).
+ * Aggregate line for skipped declarative statements: names only the files, never the
+ * statement SQL. The per-diagnostic detail carries that, rendered only under
+ * `--debug`/`--strict-coverage`.
  */
 function pgDeltaNextSkippedStatementsMessage(
   operation: PgDeltaNextOperation,

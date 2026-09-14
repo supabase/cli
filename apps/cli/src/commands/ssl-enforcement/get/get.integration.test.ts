@@ -313,8 +313,8 @@ describe("ssl-enforcement get integration", () => {
   });
 
   it.live("flushes telemetry even when ref resolution fails (no cache write)", () => {
-    // Pre-PersistentPostRun-fix regression guard: telemetry must flush whether or not the
-    // resolver succeeds. The linked-project cache only writes after a ref is resolved.
+    // Telemetry must flush whether or not the resolver succeeds; the
+    // linked-project cache only writes after a ref is resolved.
     const localTempRoot = mkdtempSync(join(tmpdir(), "supabase-ssl-get-int-postrun-"));
     const telemetry = mockTelemetryStateTracked();
     const cache = mockLinkedProjectCacheTracked();

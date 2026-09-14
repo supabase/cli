@@ -22,7 +22,7 @@ import {
 } from "../vanity-subdomains.errors.ts";
 import type { VanitySubdomainsCheckAvailabilityFlags } from "./check-availability.command.ts";
 
-/** Type shape for `api.SubdomainAvailabilityResponse` (`types.gen.go`). */
+/** Struct shape for encoding the availability response as YAML/TOML. */
 const GO_AVAILABILITY_RESPONSE = goStruct([["available", goBool]]);
 
 const mapCheckError = mapHttpError({
@@ -45,19 +45,13 @@ export const vanitySubdomainsCheckAvailability = Effect.fn("vanity-subdomains.ch
       const ref = yield* resolver.resolve(flags.projectRef);
 
       yield* Effect.gen(function* () {
-        // The required `--desired-subdomain` is validated only after the
-        // gate → login → ref resolution sequence completes (`cmd/root.go:93-117`;
-        // `cobra@v1.10.2/command.go:985,1005`), and telemetry + the
-        // linked-project cache still fire on that failure — hence this check
-        // sits inside both `Effect.ensuring` wrappers, after ref resolution.
-        // Cobra checks the flag was *changed*, not non-empty, so
-        // `--desired-subdomain ""` passes and reaches the API.
+        // This check sits inside both `Effect.ensuring` wrappers so telemetry and the
+        // linked-project cache still fire on this failure. Only absence is checked, not
+        // emptiness, so an explicit `--desired-subdomain ""` passes through to the API.
         if (Option.isNone(flags.desiredSubdomain)) {
-          return yield* Effect.fail(
-            new DesiredSubdomainRequiredError({
-              message: `required flag(s) "desired-subdomain" not set`,
-            }),
-          );
+          return yield* new DesiredSubdomainRequiredError({
+            message: `required flag(s) "desired-subdomain" not set`,
+          });
         }
         const desiredSubdomain = flags.desiredSubdomain.value;
         const checking =
@@ -77,8 +71,8 @@ export const vanitySubdomainsCheckAvailability = Effect.fn("vanity-subdomains.ch
                 // tagged error before deciding whether to suggest an upgrade, then re-fail.
                 const mapped = yield* Effect.flip(mapCheckError(cause));
                 if (mapped._tag === "VanitySubdomainsCheckUnexpectedStatusError") {
-                  // The check command calls SuggestUpgradeOnError without a following
-                  // TrackUpgradeSuggested, so the analytics event is suppressed here too.
+                  // Unlike `activate`, this command suppresses the upgrade-suggestion
+                  // analytics event.
                   const upgradeSuggested = yield* suggestUpgrade({
                     projectRef: ref,
                     featureKey: "vanity_subdomain",
@@ -86,14 +80,12 @@ export const vanitySubdomainsCheckAvailability = Effect.fn("vanity-subdomains.ch
                     response: gateResponse(cause),
                     trackAnalytics: false,
                   });
-                  return yield* Effect.fail(
-                    new VanitySubdomainsCheckUnexpectedStatusError({
-                      status: mapped.status,
-                      body: mapped.body,
-                      message: mapped.message,
-                      upgradeSuggested,
-                    }),
-                  );
+                  return yield* new VanitySubdomainsCheckUnexpectedStatusError({
+                    status: mapped.status,
+                    body: mapped.body,
+                    message: mapped.message,
+                    upgradeSuggested,
+                  });
                 }
                 return yield* Effect.fail(mapped);
               }),

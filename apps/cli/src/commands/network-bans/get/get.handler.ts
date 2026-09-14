@@ -45,16 +45,14 @@ export const networkBansGet = Effect.fn("network-bans.get")(function* (flags: Ne
 
       const goOutput = Option.getOrUndefined(outputFlag);
 
-      // TS-native machine-readable modes skip the stderr heading for clean output.
-      // Go --output takes priority (CLAUDE.md item 6), so this only fires when the
-      // legacy flag is unset.
+      // Skips the stderr heading for json/stream-json output, but only when -o/--output
+      // is unset, since that flag takes priority.
       if (goOutput === undefined && (output.format === "json" || output.format === "stream-json")) {
         yield* output.success("", response);
         return;
       }
 
-      // Prints `DB banned IPs:` to stderr unconditionally before the format
-      // switch, including for `--output env` (which then errors).
+      // Emitted here so --output env still prints this heading before erroring below.
       yield* output.raw("DB banned IPs:\n", "stderr");
 
       if (goOutput === "env") {
@@ -71,8 +69,7 @@ export const networkBansGet = Effect.fn("network-bans.get")(function* (flags: Ne
         return;
       }
 
-      // Default and `--output {json,pretty}`. Go aliases `pretty` → `json` in
-      // `get.go:21-23` and falls through to `EncodeOutput(format, ips)`.
+      // Default output, and `--output pretty`, which aliases to json.
       yield* output.raw(encodeGoJson(response.banned_ipv4_addresses));
     }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)));
   }).pipe(Effect.ensuring(telemetryState.flush));

@@ -24,9 +24,8 @@ const config = {
 export type TestNewFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 // `test new` writes a local file and makes no Management API calls, so it avoids
-// `managementApiRuntimeLayer` (which eagerly resolves an access token).
-// `commandSettingsLayer` provides the resolved `workdir`; `Layer.provide` does not
-// share to siblings inside a merge, so it is exposed at the top level too.
+// `managementApiRuntimeLayer`. `commandSettingsLayer` (providing `workdir`) is
+// exposed at the top level too, since `Layer.provide` doesn't share to merge siblings.
 const cliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
 
 const testNewRuntimeLayer = Layer.mergeAll(
@@ -43,11 +42,8 @@ export const testNewCommand = Command.make("new", config).pipe(
       withCommandTelemetry({
         flags,
         config,
-        // `--template` registers `-t` (Flag.withAlias above); without this,
-        // `-t pgtap` never resolves to the canonical `template` name in
-        // extractChangedFlagNames, so it wouldn't appear in telemetry at all
-        // (Go's pflag.Visit reports the canonical name regardless of shorthand —
-        // cmd/root_analytics.go:53-76).
+        // Without this, `-t pgtap` never resolves to the canonical `template` name in
+        // extractChangedFlagNames, so it wouldn't appear in telemetry at all.
         aliases: { t: "template" },
       }),
       withJsonErrorHandling,

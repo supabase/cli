@@ -40,8 +40,6 @@ const run = (
 
 describe("applySeedFiles seed glob", () => {
   it.effect("treats a backslash escape as a glob metacharacter (matches the real file)", () => {
-    // `io/fs.hasMeta` counts `\` (escape), so `seed\.sql` globs via path.Match
-    // and matches the literal `seed.sql` — not a file named `seed\.sql`.
     const dir = mkdtempSync(join(tmpdir(), "seed-"));
     writeFileSync(join(dir, "seed.sql"), "insert into t values (1);");
     const { session, queries } = fakeSession();
@@ -49,7 +47,6 @@ describe("applySeedFiles seed glob", () => {
     return run(session, dir, ["seed\\.sql"], out).pipe(
       Effect.tap(() =>
         Effect.sync(() => {
-          // The seed file was found and recorded under its clean path.
           const upsert = queries.find((q) =>
             q.sql.includes("INSERT INTO supabase_migrations.seed_files"),
           );
@@ -62,8 +59,6 @@ describe("applySeedFiles seed glob", () => {
   });
 
   it.effect("warns (no match) when a backslash-escaped pattern's literal file is absent", () => {
-    // `missing\.sql` escapes to the literal `missing.sql`; with no such file it matches
-    // nothing and Go emits a single `no files matched pattern` warning.
     const dir = mkdtempSync(join(tmpdir(), "seed-"));
     const { session, queries } = fakeSession();
     const out = mockOutput();
@@ -83,10 +78,6 @@ describe("applySeedFiles seed glob", () => {
   it.effect(
     "expands a matched directory to its sorted, regular .sql files (Go's Glob.SQLFiles)",
     () => {
-      // `GetPendingSeeds` calls `locals.SQLFiles(fsys)` — the SAME `Glob.SQLFiles` method
-      // `db.migrations.schema_paths` resolves through — which expands a directory match to its
-      // recursively-walked, sorted `.sql` files rather than treating the directory itself as a
-      // seed file.
       const dir = mkdtempSync(join(tmpdir(), "seed-"));
       mkdirSync(join(dir, "seeds"));
       writeFileSync(join(dir, "seeds", "b.sql"), "insert into t values (2);");
@@ -117,13 +108,9 @@ describe("applySeedFiles scanner buffer size", () => {
   it.effect(
     "rejects an oversized seed statement when SUPABASE_SCANNER_BUFFER_SIZE is configured (Go SeedFile.ExecBatchWithCache parity)",
     () => {
-      // Ports the same `parseFile` every migration/globals/schema-file caller goes
-      // through (see `checkScannerBufferSize`'s doc comment), so an oversized
-      // statement must abort here too, not execute silently.
       const dir = mkdtempSync(join(tmpdir(), "seed-scanner-"));
-      // Raw text must exceed the 4096-byte floor Go's bufio.Scanner starts at
-      // regardless of the configured limit (see migration-apply.unit.test.ts's
-      // equivalent case for the exact same 4096-byte floor).
+      // The seed text must exceed the 4096-byte scanner floor regardless of the configured
+      // limit (see migration-apply.unit.test.ts's equivalent case).
       writeFileSync(join(dir, "big.sql"), `insert into t values ('${"x".repeat(5000)}');`);
       const { session, queries } = fakeSession();
       const out = mockOutput();
@@ -174,8 +161,6 @@ describe("applySeedFiles stepped-down session", () => {
           const upsertAt = calls.findIndex((sql) =>
             sql.includes("INSERT INTO supabase_migrations.seed_files"),
           );
-          // Injected immediately after the reset, so the following insert (and
-          // everything else in the file) runs as postgres again.
           expect(calls[resetAt + 1]).toBe("SET SESSION ROLE postgres");
           expect(upsertAt).toBeGreaterThan(resetAt);
           expect(out.stderrText).not.toContain("WARN:");

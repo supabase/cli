@@ -13,12 +13,8 @@ const REGISTRY_ENV = "SUPABASE_INTERNAL_IMAGE_REGISTRY";
 
 function mockSpawner(
   pullResults: ReadonlyArray<{ readonly exitCode: number; readonly stderr?: string }>,
-  // Defaults to a confirmed "not found" inspect response, which forces every
-  // candidate through the pull path instead of the already-cached shortcut —
-  // the behavior both existing pull-retry tests below rely on. A test
-  // covering `hasLocalImage`'s own fail-fast behavior overrides this to
-  // simulate a daemon-down (or other non-not-found) `image inspect` response
-  // instead.
+  // Defaults to a confirmed "not found" inspect response so every candidate goes through the
+  // pull path; tests covering the fail-fast inspect behavior override this.
   imageInspectResult: { readonly exitCode: number; readonly stderr?: string } = {
     exitCode: 1,
     stderr: "Error response from daemon: No such image: placeholder",
@@ -90,12 +86,7 @@ function mockSpawner(
   };
 }
 
-/**
- * Joins everything written to stderr — the tee's `Uint8Array` chunks and the
- * resolver's own `string` writes — into one transcript, so tests can assert
- * on the byte sequence a terminal would actually display (e.g. that a retry
- * banner starts on a fresh line after an unterminated child error).
- */
+/** Joins tee'd `Uint8Array` chunks and the resolver's own `string` writes into one transcript. */
 function stderrTranscript(chunks: ReadonlyArray<unknown>): string {
   const decoder = new TextDecoder();
   return chunks
@@ -112,17 +103,10 @@ describe("makeDockerImageResolver", () => {
     "retries a pull failure unconditionally through messages that wouldn't have matched the old retryable-pattern allowlist, giving up after 3 total attempts",
     () =>
       Effect.gen(function* () {
-        // Pins the resolver to a single registry candidate (the image
-        // unchanged) so the assertions below cover exactly one candidate's
-        // attempt count, rather than the full ECR/GHCR/Docker Hub fallback
-        // list built by `getRegistryImageUrlCandidates`.
+        // Pins the resolver to a single registry candidate so the assertions below cover
+        // exactly one candidate's attempt count.
         const previousRegistry = process.env[REGISTRY_ENV];
         process.env[REGISTRY_ENV] = "docker.io";
-        // Records every chunk written to stderr, including the `docker pull` child's own
-        // stdout/stderr, which `pullImage` tees live to the parent's stderr as `Uint8Array`
-        // chunks — only the `Retrying after …` banner (and its fresh-line `"\n"` separator)
-        // is ever written as a plain `string`, so filtering by `startsWith("Retrying after")`
-        // isolates the banner from the tee below.
         const stderrChunks: Array<unknown> = [];
         const originalWrite = globalThis.process.stderr.write.bind(globalThis.process.stderr);
         globalThis.process.stderr.write = ((chunk: unknown) => {
@@ -131,11 +115,6 @@ describe("makeDockerImageResolver", () => {
         }) as typeof globalThis.process.stderr.write;
 
         try {
-          // Mirrors Go's own `docker_test.go` "throws error on failure to pull
-          // image" case: a bare, non-pattern-matching message (no
-          // "toomanyrequests"/"rate exceeded"/etc.) still exhausts every
-          // retry, because `DockerImagePullWithRetry` retries on any
-          // non-nil error, with no message classification at all.
           const mock = mockSpawner([
             { exitCode: 1, stderr: "no space left on device" },
             { exitCode: 1, stderr: "no space left on device" },
@@ -146,8 +125,6 @@ describe("makeDockerImageResolver", () => {
             Effect.forkChild({ startImmediately: true }),
           );
 
-          // 2 retries after the initial attempt, with Go's escalating 4s/8s
-          // backoff (`2<<(i+1)` seconds for i=0,1) between them.
           yield* TestClock.adjust("4 seconds");
           yield* TestClock.adjust("8 seconds");
           const error = yield* Fiber.join(fiber).pipe(Effect.flip);
@@ -155,18 +132,10 @@ describe("makeDockerImageResolver", () => {
           expect(mock.pulls).toHaveLength(3);
           expect(error.message).toContain("no space left on device");
           expect(error.message).toContain("attempt 3");
-          // `image inspect`'s stdout must be fully ignored — the default
-          // `"pipe"` stdio risks a write-buffer deadlock on a cache hit (see
-          // the doc comment in `docker-image-resolve.ts`) — but
-          // stderr IS piped so a daemon-unreachable response can be told
-          // apart from a genuine cache miss.
           expect(mock.imageInspectOptions.length).toBeGreaterThan(0);
           for (const options of mock.imageInspectOptions) {
             expect(options).toMatchObject({ stdin: "ignore", stdout: "ignore", stderr: "pipe" });
           }
-          // Go's per-retry banner: `Fprintf(os.Stderr, "Retrying after %v: %s\n", …)` —
-          // one banner before each of the 2 retries, escalating 4s then 8s, naming the exact
-          // candidate this resolver pinned to (see the comment above on `REGISTRY_ENV`).
           const retryBanners = stderrChunks.filter(
             (chunk): chunk is string =>
               typeof chunk === "string" && chunk.startsWith("Retrying after"),
@@ -175,10 +144,6 @@ describe("makeDockerImageResolver", () => {
             "Retrying after 4s: supabase/postgres:17.6.1.138\n",
             "Retrying after 8s: supabase/postgres:17.6.1.138\n",
           ]);
-          // Go `Fprintln`s the failed error before the banner,
-          // so the banner always starts on a fresh line. The child's error here
-          // has no trailing newline, so the resolver must add one — never the
-          // glued `…deviceRetrying after …`.
           const transcript = stderrTranscript(stderrChunks);
           expect(transcript).toContain(
             "no space left on device\nRetrying after 4s: supabase/postgres:17.6.1.138\n",
@@ -220,9 +185,6 @@ describe("makeDockerImageResolver", () => {
 
           expect(mock.pulls).toHaveLength(2);
           expect(image).toBe("supabase/postgres:17.6.1.138");
-          // Only the first candidate's failed attempt sleeps through a retry banner — the
-          // second attempt succeeds immediately, so the 8s banner (and a third pull) must
-          // never happen.
           const retryBanners = stderrChunks.filter(
             (chunk): chunk is string =>
               typeof chunk === "string" && chunk.startsWith("Retrying after"),
@@ -263,9 +225,6 @@ describe("makeDockerImageResolver", () => {
           const image = yield* Fiber.join(fiber);
 
           expect(image).toBe("supabase/postgres:17.6.1.138");
-          // The child already terminated its own line — `Fprintln`
-          // output shape is exactly one newline between error and banner, so
-          // the resolver must not add a second one.
           const transcript = stderrTranscript(stderrChunks);
           expect(transcript).toContain(
             "no space left on device\nRetrying after 4s: supabase/postgres:17.6.1.138\n",
@@ -280,10 +239,8 @@ describe("makeDockerImageResolver", () => {
   );
 
   it.live("gives every registry candidate its share when a deadline is passed", () => {
-    // Fail-fast pulls with a small budget: each candidate still gets a turn
-    // (unused share carries forward), and the guarded backoff never sleeps a
-    // 4s retry into the next candidate's time — the test finishing in
-    // milliseconds rather than seconds is itself the assertion.
+    // Finishing within the test timeout is itself the assertion that the guarded backoff never
+    // overruns the deadline.
     const mock = mockSpawner([
       { exitCode: 1, stderr: "denied" },
       { exitCode: 1, stderr: "denied" },
@@ -376,10 +333,6 @@ describe("makeDockerImageResolver", () => {
         process.env[REGISTRY_ENV] = "docker.io";
 
         try {
-          // `DockerResolveImageIfNotCached` treats ONLY a confirmed `errdefs.IsNotFound`
-          // as a cache miss; every other inspect error — this is neither a "no such image" nor
-          // a daemon-unreachable message — returns immediately instead of falling through to
-          // the pull loop.
           const authPluginDenialStderr =
             "Error response from daemon: authorization denied by plugin AuthZPlugin: no policy matched";
           const mock = mockSpawner([], { exitCode: 1, stderr: authPluginDenialStderr });
@@ -406,9 +359,6 @@ describe("makeDockerImageResolver", () => {
         process.env[REGISTRY_ENV] = "docker.io";
 
         try {
-          // An uncached `podman image inspect <missing>` exits non-zero with `image not
-          // known` rather than Docker's `No such image` — see `isImageNotFoundMessage`'s
-          // doc comment. Both wordings must reach the pull loop identically.
           const mock = mockSpawner([{ exitCode: 0 }], {
             exitCode: 1,
             stderr: "supabase/postgres:17.6.1.138: image not known",

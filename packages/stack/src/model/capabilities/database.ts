@@ -31,19 +31,9 @@ const settingsFields = {
 };
 
 const settingsSchema = Schema.Struct(settingsFields);
-const networkSchema = Schema.Struct({
-  enabled: Schema.optionalKey(Schema.Boolean),
-  allowed_cidrs: Schema.optionalKey(Schema.Array(Schema.String)),
-  allowed_cidrs_v6: Schema.optionalKey(Schema.Array(Schema.String)),
-});
-const sslSchema = Schema.Struct({ enabled: Schema.optionalKey(Schema.Boolean) });
-
 export const DatabaseSettingsSchema = Schema.Struct({
   health_timeout: Schema.optionalKey(Schema.String),
   settings: Schema.optionalKey(settingsSchema),
-  network_restrictions: Schema.optionalKey(networkSchema),
-  ssl_enforcement: Schema.optionalKey(sslSchema),
-  vault: Schema.optionalKey(Schema.Record(Schema.String, Schema.Redacted(Schema.String))),
 });
 export type DatabaseSettings = Schema.Schema.Type<typeof DatabaseSettingsSchema>;
 
@@ -127,13 +117,6 @@ const defaults: DatabaseSettings = {
     wal_sender_timeout: undefined,
     work_mem: undefined,
   },
-  network_restrictions: {
-    enabled: false,
-    allowed_cidrs: ["0.0.0.0/0"],
-    allowed_cidrs_v6: ["::/0"],
-  },
-  ssl_enforcement: { enabled: false },
-  vault: {},
 };
 
 const databaseCatalog = catalogEntryFor("database:database");

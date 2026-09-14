@@ -2,17 +2,10 @@ import type { ApiKeyResponse } from "@supabase/api/effect";
 
 type ApiKey = typeof ApiKeyResponse.Type;
 
-/**
- * Masking placeholder Go substitutes for a nullable-null api key value
- * (`apps/cli-go/internal/projects/apiKeys/api_keys.go:61-66`, deleted in
- * CLI-1970; last present at commit 7b469f5b3).
- */
+/** Placeholder returned for a null or missing api key value. */
 const API_KEY_MASK = "******";
 
-/**
- * Reproduces Go's `apiKeys.toValue` (`api_keys.go:61-66`): return the api key
- * value, or the `******` mask when the value is nullable-null / absent.
- */
+/** Returns the api key value, or the mask when it's null or absent. */
 export function apiKeyValue(value: string | null | undefined): string {
   return value === undefined || value === null ? API_KEY_MASK : value;
 }
@@ -25,10 +18,9 @@ function envSuffix(entry: ApiKey): string {
 }
 
 /**
- * Reproduces Go's `apiKeys.ToEnv` (`api_keys.go:51-68`):
- * uppercase the name (with `default` publishable → `PUBLISHABLE`), wrap as
- * `SUPABASE_<SUFFIX>_KEY`, fall back to `"******"` when the api_key value is
- * nullable-null. Shared by `branches get` and `projects api-keys`.
+ * Builds `SUPABASE_<SUFFIX>_KEY` env entries from api keys, uppercasing the name (the
+ * default publishable key maps to `PUBLISHABLE`). Shared by `branches get` and
+ * `projects api-keys`.
  */
 export function apiKeysToEnv(keys: ReadonlyArray<ApiKey>): Record<string, string> {
   const envs: Record<string, string> = {};

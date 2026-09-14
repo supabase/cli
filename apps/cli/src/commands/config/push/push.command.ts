@@ -11,9 +11,8 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { configPush } from "./push.handler.ts";
 
 const config = {
-  // `link`'s settled vocabulary (CLI-2167/CLI-2289): one flag that accepts
-  // either a project ref or a branch of the linked project — no separate
-  // `--target`.
+  // Accepts either a project ref or a branch name/UUID of the linked project; there's no
+  // separate --target flag.
   projectRef: Flag.string("project-ref").pipe(
     Flag.withDescription(
       "Project ref of the Supabase project, or the name (or UUID) of one of its branches. Values that are exactly 20 lowercase letters are always treated as project refs.",
@@ -28,11 +27,8 @@ export type ConfigPushFlags = CliCommand.Command.Config.Infer<typeof config>;
 // `Command.withHandler` uses below (same precedent as `linkHandler`).
 export const configPushHandler = (flags: ConfigPushFlags) =>
   configPush(flags).pipe(
-    // Nothing validates `--project-ref` before the instrumentation fires, so
-    // its value is only safe to log verbatim when it is actually ref-shaped —
-    // an arbitrary string (a typo, a value pasted from the wrong clipboard)
-    // must reach PostHog as "<redacted>". Same guard as `link`/`config diff`
-    // (documented safe list in apps/cli/CLAUDE.md).
+    // --project-ref is only safe to log verbatim when ref-shaped; an arbitrary string (a typo,
+    // a bad paste) must reach PostHog as "<redacted>".
     withCommandTelemetry({
       flags,
       safeFlags:

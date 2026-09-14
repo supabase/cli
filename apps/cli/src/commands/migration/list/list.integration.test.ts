@@ -78,9 +78,8 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       }),
   });
 
-  // `loadProjectRef` gives an explicit `--project-ref` flag top precedence, same
-  // as Go's `flags.LoadProjectRef` — mirror that so a test can prove the flag
-  // (not just the hardcoded `VALID_REF` fallback) drives the linked ref.
+  // Gives an explicit --project-ref flag precedence over the VALID_REF fallback, so a
+  // test can prove the flag drives the linked ref.
   const projectRef = Layer.succeed(ProjectRefResolver, {
     resolve: () => Effect.succeed(VALID_REF),
     resolveForLink: () => Effect.succeed(VALID_REF),
@@ -137,15 +136,13 @@ describe("migration list", () => {
     });
     return Effect.gen(function* () {
       yield* migrationList(flags());
-      // The connection banner prints to stderr before dialing.
       expect(stripAnsi(ctx.out.stderrText)).toContain("Connecting to remote database...");
       const stdout = stripAnsi(ctx.out.stdoutText);
       expect(stdout).toContain("Local");
       expect(stdout).toContain("Time (UTC)");
-      expect(stdout).toContain("`20240101000000`"); // in sync (both)
-      expect(stdout).toContain("`20240102000000`"); // remote only
-      expect(stdout).toContain("`20240103000000`"); // local only
-      // linked by default → resolver receives connType "linked" + cache written.
+      expect(stdout).toContain("`20240101000000`");
+      expect(stdout).toContain("`20240102000000`");
+      expect(stdout).toContain("`20240103000000`");
       expect(ctx.resolverCalls[0]?.connType).toBe("linked");
       expect(ctx.cache.cachedRef).toBe(VALID_REF);
     }).pipe(Effect.provide(ctx.layer));
@@ -183,9 +180,8 @@ describe("migration list", () => {
   });
 
   it.live("lists the project given via --project-ref, overriding the default linked ref", () => {
-    // The fake resolver's own fallback (VALID_REF) represents whatever
-    // the workdir would resolve to absent the flag — the flag must win over it
-    // and drive the cached ref.
+    // VALID_REF is the fake resolver's fallback; the flag must win over it and drive
+    // the cached ref.
     const FLAG_REF = "flagflagflagflagflag";
     seedMigrations(tmp.current, ["20240101000000_a.sql"]);
     const ctx = setup(tmp.current, { remote: ["20240101000000"] });

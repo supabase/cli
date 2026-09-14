@@ -74,21 +74,11 @@ const readManagedDeclarativeSqlFiles = Effect.fnUntraced(function* (
 });
 
 /**
- * Materializes pg-delta declarative export output under the declarative dir
- * using the export manifest's ownership and file classification: only stale
- * files owned by the previous export are removed, unchanged files are not
- * rewritten, unmanaged files are preserved, and the reserved root `_custom/`
- * tree is never read as managed output or deleted. Returns which unmanaged
- * files that preservation kept, so the caller can warn (see
- * {@link warnPreservedUnmanagedDeclarativeFiles}).
- *
- * Go also updates `[db.migrations] schema_paths` afterwards, but only when
- * pg-delta is *disabled* in config (`if utils.IsPgDeltaEnabled() { return nil }`).
- * `db schema declarative generate/sync` force-enable pg-delta, so that branch is
- * unreachable for them; `db pull --declarative` does NOT force-enable it, so the
- * pull caller invokes `updateDeclarativeSchemaPathsConfig` (below) when
- * config pg-delta is disabled. Keeping the config edit at the caller leaves this
- * writer a pure file-materializer shared unchanged by generate/sync.
+ * Materializes pg-delta declarative export output under the declarative dir: only stale files
+ * owned by the previous export are removed, unchanged files are untouched, unmanaged files are
+ * preserved, and `_custom/` is never read as managed output or deleted. Returns which unmanaged
+ * files were preserved (see {@link warnPreservedUnmanagedDeclarativeFiles}). Never touches
+ * `[db.migrations] schema_paths`; `db pull --declarative` handles that separately.
  */
 export const writeDeclarativeSchemas = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
@@ -140,12 +130,10 @@ export const writeDeclarativeSchemas = Effect.fnUntraced(function* (
       ? { previouslyOwned: new Set(previousManifest.files) }
       : {}),
   });
-  // With no manifest there is no ownership record, so nothing can be classified as
-  // stale: every pre-existing file the export does not itself replace survives. The
-  // typical producer of such a directory is the OLD legacy full-wipe exporter, whose
-  // files still feed future plans (`LoadPgDeltaSqlFiles` walks the whole tree),
-  // so the result is a silent partial merge behind an "overwrite existing files"
-  // prompt. Report them and let the handler say so out loud.
+  // With no manifest there is no ownership record, so nothing can be classified as stale:
+  // every pre-existing file the export doesn't itself replace survives, producing a silent
+  // partial merge behind an "overwrite existing files" prompt. Report them so the handler
+  // can say so out loud.
   const proposedNames = new Set(proposed.map((file) => file.name));
   const preservedUnmanagedFiles =
     previousManifest?.files === undefined
@@ -207,22 +195,18 @@ export const writeDeclarativeSchemas = Effect.fnUntraced(function* (
 });
 
 /**
- * Go's `declarative.Generate` / `pull.go`'s written-to line, printed by all three
- * declarative write paths (`generate`, `pull --declarative`, `sync`'s bootstrap).
- * Every caller passes the relative `GetDeclarativeDir()` value, never the resolved
- * absolute dir (`generate` and `sync` route through this helper; `pull` still
- * inlines the same template) — this pins the shared message text in one place.
+ * The written-to line, printed by all three declarative write paths (`generate`,
+ * `pull --declarative`, `sync`'s bootstrap). Every caller passes the relative declarative
+ * dir, never the resolved absolute path, so this pins the shared message text in one place.
  */
 export const declarativeSchemaWrittenLine = (dir: string): string =>
   `Declarative schema written to ${bold(dir)}\n`;
 
 /**
- * The manifest-less-merge warning text. The next writer only prunes files an
- * existing `.pgdelta-export.json` claimed, so a directory produced by the old
- * legacy full-wipe exporter (no manifest) keeps every file the new export does not
- * itself replace — even though the prompt the user just answered said existing
- * files may be deleted. Name the survivors and give the one instruction that
- * actually produces a clean tree.
+ * The manifest-less-merge warning text: without an export manifest, nothing can be classified
+ * as stale, so a pre-existing declarative directory keeps every file the new export doesn't
+ * itself replace — even though the "overwrite existing files" prompt implied a clean rewrite.
+ * Names the survivors and gives the one instruction that produces a clean tree.
  */
 const preservedUnmanagedDeclarativeFilesWarning = (
   dir: string,
@@ -253,22 +237,14 @@ export const warnPreservedUnmanagedDeclarativeFiles = Effect.fnUntraced(function
   );
 });
 
-// Go's `schemaPathsPattern` (`internal/db/declarative/declarative.go:59`):
-// `(?s)\nschema_paths = \[(.*?)\]\n`. The `(?s)` (dotall) maps to `[\s\S]`, and
-// the capture group is unused (Go uses `ReplaceAllLiteral`).
+// `(?s)` (dotall) is equivalent to `[\s\S]`; the capture group is unused.
 const SCHEMA_PATHS_PATTERN = /\nschema_paths = \[[\s\S]*?\]\n/g;
 
 /**
- * Ports Go's `updateDeclarativeSchemaPathsConfig` (`declarative.go:276-304`): a
- * raw-text replace-or-append of `[db.migrations] schema_paths` in
- * `supabase/config.toml`, pointing it at the `supabase/`-relative declarative dir.
- * This is a literal byte-edit (NOT a TOML re-serialize), so it preserves comments
- * and formatting exactly like Go — reproduce the regex and the literal block
- * rather than "doing the right TOML thing".
- *
- * `resolvedDeclarativeDir` is the resolved declarative dir (Go's
- * `GetDeclarativeDir()`, e.g. `supabase/schemas`); the leading `supabase/` is
- * trimmed for the written value (Go's `strings.TrimPrefix`).
+ * A raw-text replace-or-append of `[db.migrations] schema_paths` in `supabase/config.toml`,
+ * pointing it at `resolvedDeclarativeDir` with its leading `supabase/` trimmed. This is a
+ * literal byte-edit, not a TOML re-serialize, so the rest of the file's comments and
+ * formatting are preserved exactly.
  */
 export const updateDeclarativeSchemaPathsConfig = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
@@ -280,13 +256,11 @@ export const updateDeclarativeSchemaPathsConfig = Effect.fnUntraced(function* (
   const relative = normalized.startsWith("supabase/")
     ? normalized.slice("supabase/".length)
     : normalized;
-  // Go's literal replacement block (`declarative.go:278-284`): leading newline,
-  // two-space indent, trailing comma inside the array, trailing newline.
   const block = `\nschema_paths = [\n  "${relative}",\n]\n`;
   const configPath = path.join(workdir, "supabase", "config.toml");
   const existing = yield* fs.readFileString(configPath).pipe(
     Effect.catchTag("PlatformError", (error) =>
-      // Go tolerates a missing config (`os.ErrNotExist`); other read errors abort.
+      // A missing config file is tolerated; other read errors abort.
       error.reason._tag === "NotFound"
         ? Effect.succeed("")
         : Effect.fail(
@@ -296,8 +270,8 @@ export const updateDeclarativeSchemaPathsConfig = Effect.fnUntraced(function* (
           ),
     ),
   );
-  // Use a replacer function so `$` in the path/value is never interpreted as a
-  // replacement pattern (Go's `ReplaceAllLiteral` semantics).
+  // A replacer function, not a string, so a literal "$" in the path/value can't be
+  // misread as a replacement pattern.
   const replaced = existing.replace(SCHEMA_PATHS_PATTERN, () => block);
   const next = replaced.includes(block) ? replaced : `${existing}\n[db.migrations]${block}`;
   yield* fs

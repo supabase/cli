@@ -22,7 +22,7 @@ import {
 } from "../vanity-subdomains.errors.ts";
 import type { VanitySubdomainsActivateFlags } from "./activate.command.ts";
 
-/** Type shape for `api.ActivateVanitySubdomainResponse` (`types.gen.go`). */
+/** Struct shape for encoding the activate response as YAML/TOML. */
 const GO_ACTIVATE_VANITY_RESPONSE = goStruct([["custom_domain", goString]]);
 
 const mapActivateError = mapHttpError({
@@ -46,19 +46,13 @@ export const vanitySubdomainsActivate = Effect.fn("vanity-subdomains.activate")(
     const ref = yield* resolver.resolve(flags.projectRef);
 
     yield* Effect.gen(function* () {
-      // Go validates the required `--desired-subdomain` only after
-      // `PersistentPreRunE` completes (gate → login → ref resolution,
-      // `cmd/root.go:93-117`; `cobra@v1.10.2/command.go:985,1005`), and
-      // `PersistentPostRun` still fires telemetry + the linked-project cache
-      // on that failure — hence this check sits inside both `Effect.ensuring`
-      // wrappers, after ref resolution. Cobra checks the flag was *changed*,
-      // not non-empty, so `--desired-subdomain ""` passes and reaches the API.
+      // This check sits inside both `Effect.ensuring` wrappers so telemetry and the
+      // linked-project cache still fire on this failure. Only absence is checked, not
+      // emptiness, so an explicit `--desired-subdomain ""` passes through to the API.
       if (Option.isNone(flags.desiredSubdomain)) {
-        return yield* Effect.fail(
-          new DesiredSubdomainRequiredError({
-            message: `required flag(s) "desired-subdomain" not set`,
-          }),
-        );
+        return yield* new DesiredSubdomainRequiredError({
+          message: `required flag(s) "desired-subdomain" not set`,
+        });
       }
       const desiredSubdomain = flags.desiredSubdomain.value;
       const activating =
@@ -82,14 +76,12 @@ export const vanitySubdomainsActivate = Effect.fn("vanity-subdomains.activate")(
                   statusCode: mapped.status,
                   response: gateResponse(cause),
                 });
-                return yield* Effect.fail(
-                  new VanitySubdomainsActivateUnexpectedStatusError({
-                    status: mapped.status,
-                    body: mapped.body,
-                    message: mapped.message,
-                    upgradeSuggested,
-                  }),
-                );
+                return yield* new VanitySubdomainsActivateUnexpectedStatusError({
+                  status: mapped.status,
+                  body: mapped.body,
+                  message: mapped.message,
+                  upgradeSuggested,
+                });
               }
               return yield* Effect.fail(mapped);
             }),

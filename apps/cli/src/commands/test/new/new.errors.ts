@@ -19,10 +19,7 @@ export class TestNewFileExistsError extends Data.TaggedError("TestNewFileExistsE
   }
 }
 
-/**
- * Writing the test file failed (e.g. permission denied). Mirrors Go's
- * `utils.WriteFile` error (`new.go:28`).
- */
+/** Writing the test file failed (e.g. permission denied). */
 export class TestNewWriteError extends Data.TaggedError("TestNewWriteError")<{
   readonly path: string;
   readonly message: string;

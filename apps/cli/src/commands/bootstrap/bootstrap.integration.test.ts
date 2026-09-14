@@ -84,11 +84,9 @@ interface SetupOpts {
   readonly apiKeysFailTimes?: number;
   readonly pushConnectFailTimes?: number;
   /**
-   * When `false`, the pooler-config route reports no PRIMARY pooler (Go's
-   * `utils.GetPoolerConfig` returning nil) — `linkServicesCore`'s
-   * best-effort `linkPooler` step then never writes `<workdir>/supabase/.temp/
-   * pooler-url`, so `resolveLinkedConn`'s push-connection resolution has
-   * neither a reachable direct host nor a saved pooler URL to fall back to.
+   * When `false`, the pooler-config route reports no PRIMARY pooler, so `linkServicesCore` never
+   * writes `<workdir>/supabase/.temp/pooler-url` and `resolveLinkedConn` has no pooler URL to
+   * fall back to.
    */
   readonly poolerAvailable?: boolean;
   readonly health?: { readonly status: number; readonly body: unknown };
@@ -131,15 +129,11 @@ function setup(opts: SetupOpts = {}) {
     if (url.includes("/v1/organizations")) {
       return Effect.succeed(jsonResponse(request, 200, ORGS));
     }
-    // Pooler config: the in-process test's direct db host is never reachable (no
-    // real network), so `resolveLinkedConn`'s push-connection resolution
-    // always falls back to the IPv4 pooler — matching the real-world "common
-    // case" this fallback exists for (CLI-1953). `linkServicesCore`'s own
-    // `linkPooler` step (step I) fetches this same route and saves it to
-    // `<workdir>/supabase/.temp/pooler-url`, which the fallback then reads.
+    // Pooler config: the test's direct db host is never reachable, so `resolveLinkedConn` always
+    // falls back to the IPv4 pooler. `linkServicesCore`'s `linkPooler` step fetches this route
+    // and saves it to `<workdir>/supabase/.temp/pooler-url`, which the fallback then reads.
     if (recorded.method === "GET" && url.includes("/config/database/pooler")) {
       if (opts.poolerAvailable === false) {
-        // No PRIMARY entry — mirrors `utils.GetPoolerConfig` returning nil.
         return Effect.succeed(jsonResponse(request, 200, []));
       }
       return Effect.succeed(
@@ -182,18 +176,16 @@ function setup(opts: SetupOpts = {}) {
       }),
   });
 
-  // Native push (CLI-1953): the scratch/downloaded-template fixtures never scaffold
-  // migrations/seed.sql/roles.sql, so `dbPushCore` always reaches the "up to
-  // date" short-circuit right after connecting — no query results or edge-runtime
-  // invocation are needed beyond a successful connect.
+  // The scratch/downloaded-template fixtures never scaffold migrations/seed.sql/roles.sql, so
+  // `dbPushCore` always reaches the "up to date" short-circuit right after connecting — no query
+  // results or edge-runtime invocation are needed.
   const pushConnectCalls: Array<PgConnInput> = [];
   const dbConnectionLayer = Layer.succeed(DbConnection, {
     connect: (conn: PgConnInput) =>
       Effect.suspend(() => {
         pushConnectCalls.push(conn);
-        // Fails the first N connect attempts (retry coverage for the push step's
-        // own `bootstrapRetryNotify()` + `Effect.retry(retry)` wrap, CLI-1953)
-        // before succeeding, mirroring `apiKeysFailTimes`'s pattern above.
+        // Fails the first N connect attempts (retry coverage for the push step's own retry
+        // wrap), succeeding after, mirroring `apiKeysFailTimes` above.
         if (pushConnectCalls.length <= (opts.pushConnectFailTimes ?? 0)) {
           return Effect.fail(new DbConnectError({ message: "connection refused" }));
         }
@@ -218,8 +210,7 @@ function setup(opts: SetupOpts = {}) {
     api.httpClientLayer,
     cliSettings,
     mockTty({ stdinIsTty: opts.stdinIsTty ?? true, stdoutIsTty: false }),
-    // cwd differs from the (absolute) workdir so the "Using workdir" line prints,
-    // matching the established `cwd != CurrentDirAbs` guard.
+    // cwd differs from the workdir so the "Using workdir" line prints.
     mockRuntimeInfo({ cwd: dirname(tempRoot.current) }),
     telemetry.layer,
     linkedCache.layer,
@@ -272,18 +263,14 @@ describe("bootstrap integration", () => {
     const s = setup();
     return Effect.gen(function* () {
       yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF);
-      // Blank init scaffolded config.toml.
       expect(existsSync(join(s.workdir, "supabase", "config.toml"))).toBe(true);
-      // Project ref written for the delegated db push.
       expect(readFileSync(join(s.workdir, "supabase", ".temp", "project-ref"), "utf8")).toBe(
         VALID_REF,
       );
-      // .env populated with derived keys.
       const env = readFileSync(join(s.workdir, ".env"), "utf8");
       expect(env).toContain('SUPABASE_ANON_KEY="anon-key"');
       expect(env).toContain("SUPABASE_URL=");
       expect(env).toContain("POSTGRES_URL=");
-      // Progress + create echo on stderr.
       expect(s.out.stderrText).toContain("Using workdir");
       expect(s.out.stderrText).toContain("Created a new project at");
       expect(s.out.stderrText).toContain("To start your app:");
@@ -367,8 +354,6 @@ describe("bootstrap integration", () => {
     writeFileSync(join(tempRoot.current, "existing.txt"), "keep me");
     return Effect.gen(function* () {
       yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF);
-      // Established behavior: the auto-accepted overwrite question echoes to
-      // stderr under the global YES flag.
       expect(s.out.stderrText).toContain("Do you want to overwrite existing files in ");
       expect(s.out.stderrText).toContain(" directory? [Y/n] y\n");
       expect(existsSync(join(s.workdir, "supabase", "config.toml"))).toBe(true);
@@ -394,7 +379,6 @@ describe("bootstrap integration", () => {
         yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF);
         const events = s.analytics.captured.map((c) => c.event);
         expect(events).not.toContain("cli_login_completed");
-        // Bootstrap calls link.LinkServices (not link.Run) — no cli_project_linked.
         expect(events).not.toContain("cli_project_linked");
       }).pipe(Effect.provide(s.layer));
     },
@@ -411,18 +395,12 @@ describe("bootstrap integration", () => {
   });
 
   it.live("retries the native push connection until it succeeds", () => {
-    // Regression coverage: `bootstrapRetryNotify()` + `Effect.retry(retry)`
-    // wraps the push step the same way as the api-keys/health-poll retries above
-    // (`bootstrap.go:122-127`'s `backoff.RetryNotify`). Deleting that wrap would
-    // leave this test's second and third connect attempts unreached.
     const s = setup({ pushConnectFailTimes: 2, debug: true });
     return Effect.gen(function* () {
       yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF);
       expect(s.pushConnectCalls).toHaveLength(3);
-      // Failures 1-2 go to the debug logger; the notice reaches stderr only from
-      // the 3rd failure onward (`bootstrapRetryNotify`'s `failureCount * 3 >
-      // maxRetries` gate) — with only 2 failures here, this never fires, so assert
-      // via `--debug` instead (`debug: true` above) that both attempts were logged.
+      // The stderr retry notice needs 3+ failures to fire; asserting via the debug logger
+      // (`debug: true` above) catches both attempts with only 2 failures here.
       const retryLines = s.out.stderrText.match(/connection refused\nRetry \(\d\/8\): /g) ?? [];
       expect(retryLines.length).toBe(2);
     }).pipe(Effect.provide(s.layer));
@@ -486,11 +464,8 @@ describe("bootstrap integration", () => {
   it.live(
     "pushes natively — falls back to the IPv4 pooler when the direct host is unreachable, no Go subprocess",
     () => {
-      // The in-process test's direct db host is never reachable (no real network),
-      // so `resolveLinkedConn` transparently falls back to the IPv4 pooler
-      // (CLI-1953) — exactly the real-world path new (IPv6-only) Supabase projects
-      // take. `setup()`'s pooler-config mock feeds `linkServicesCore`'s saved
-      // `<workdir>/supabase/.temp/pooler-url`, which this fallback reads.
+      // The test's direct db host is never reachable, so `resolveLinkedConn` falls back to the
+      // IPv4 pooler fed by `setup()`'s pooler-config mock via the saved pooler-url file.
       const s = setup();
       return Effect.gen(function* () {
         yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF);
@@ -506,19 +481,10 @@ describe("bootstrap integration", () => {
   it.live(
     "falls back to the direct-host config and keeps retrying push when connection resolution itself fails",
     () => {
-      // Regression coverage (review thread on CLI-1953): when the direct host is
-      // unreachable AND no pooler URL was ever saved, `resolveLinkedConn`
-      // fails with `DbConfigIpv6Error`. The established resolver logs
-      // that same error and presses on with its best-effort direct-host
-      // config, letting the retry-wrapped push get real reconnect attempts
-      // instead of aborting bootstrap outright. This asserts the native flow
-      // does the same instead of failing before `dbPushCore` ever runs.
       const s = setup({ poolerAvailable: false, pushConnectFailTimes: 1 });
       return Effect.gen(function* () {
         yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF);
         expect(s.out.stderrText).toContain("IPv6 is not supported on your current network");
-        // Falls back to the same direct-host shape as the `.env` config (step K),
-        // not the pooler — and still reaches/retries the native push.
         expect(s.pushConnectCalls).toHaveLength(2);
         expect(s.pushConnectCalls[0]?.host).toBe(`db.${VALID_REF}.supabase.co`);
         expect(s.pushConnectCalls[0]?.port).toBe(5432);
@@ -542,11 +508,9 @@ describe("bootstrap integration", () => {
   });
 
   it.live("pushes with the prompted password when --password is empty", () => {
-    // An explicit `--password ""` (e.g. unset `$SUPABASE_DB_PASSWORD` expanded by
-    // the shell) leaves the password empty, so the create step prompts — and the
-    // in-process push reuses that exact same resolved connection (the push
-    // step always uses the create-resolved password; there is no separate
-    // flag/env channel to preserve once the call is in-process, CLI-1953).
+    // An explicit `--password ""` (e.g. unset `$SUPABASE_DB_PASSWORD` expanded by the shell)
+    // leaves the password empty, so the create step prompts, and the push reuses that same
+    // resolved connection.
     const s = setup({ promptPasswordResponses: ["prompted-pw"] });
     const prev = process.env["SUPABASE_DB_PASSWORD"];
     delete process.env["SUPABASE_DB_PASSWORD"];

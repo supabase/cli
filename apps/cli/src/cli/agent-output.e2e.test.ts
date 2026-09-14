@@ -16,11 +16,7 @@ describe("CLI agent output", () => {
     });
 
     expect(exitCode).toBe(1);
-    // CLI-1901: the vendored effect CLI library's own duplicate JSON render
-    // (the old `{_tag:"Help"}` + `{_tag:"Error", error:{code:"ShowHelp"}}`
-    // pair on stdout, `{_tag:"Errors"}` on stderr) is gone. stdout carries
-    // exactly this repo's single Go-parity error line; the library's help
-    // doc is redirected to stderr instead of being dropped or duplicated.
+    // stdout carries exactly one JSON error line; the library's help doc goes to stderr.
     expect(parseJsonLines(stdout)).toEqual([
       expect.objectContaining({
         _tag: "Error",
@@ -39,7 +35,6 @@ describe("CLI agent output", () => {
     );
 
     expect(exitCode).toBe(1);
-    // CLI-1901: the help doc no longer prints to stdout at all.
     expect(stdout).toBe("");
     expect(stderr).toContain("DESCRIPTION");
     expect(stderr).toContain('Unknown subcommand "definitely-not-a-command"');

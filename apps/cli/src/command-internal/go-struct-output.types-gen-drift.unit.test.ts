@@ -10,14 +10,11 @@ import type { GoType } from "./go-struct-output.encoders.ts";
 import { compareGoTypeToParsedGoType, parseGoStruct } from "./go-struct-output.types-gen-parser.ts";
 
 /**
- * Mechanical drift check for the `*.go-payload.ts` specs against the real Go
- * structs they mirror (CLI-1975, review kanadgupta). Parses
- * `apps/cli-go/pkg/api/types.gen.go` and structurally compares each entry
- * below against the runtime {@link GoType} spec it corresponds to —
- * field order, pointer-ness, and coarse kind must match. When
- * `types.gen.go` regenerates with a field added/removed/reordered/renamed,
- * this test fails instead of silently producing wrong `-o yaml`/`-o toml`
- * bytes.
+ * Mechanical drift check for the `*.go-payload.ts` specs against the real Go structs they mirror.
+ * Parses `apps/cli-go/pkg/api/types.gen.go` and structurally compares each entry below against the
+ * runtime {@link GoType} spec it corresponds to — field order, pointer-ness, and coarse kind must
+ * match. When `types.gen.go` regenerates with a field added/removed/reordered/renamed, this test
+ * fails instead of silently producing wrong `-o yaml`/`-o toml` bytes.
  */
 
 const TYPES_GEN_GO_PATH = fileURLToPath(
@@ -31,13 +28,10 @@ interface GoPayloadSpecEntry {
 }
 
 /**
- * `Create`/`Update`/`DeleteProviderResponse` share `GetProviderResponse`'s
- * exact anonymous shape (see the doc comment in `sso.go-payload.ts`), so
- * checking `GetProviderResponse` alone covers all four. Wrapper-only specs
- * (`GO_*_TOML_WRAPPER`, `GO_SSO_PROVIDERS_WRAPPER`,
- * `GO_*_LIST`) aren't distinct Go structs — they're a
- * `goTomlListWrapper`/`goSlice` around one of the entries below —
- * so they're intentionally excluded.
+ * `Create`/`Update`/`DeleteProviderResponse` share `GetProviderResponse`'s exact anonymous shape,
+ * so checking `GetProviderResponse` alone covers all four. Wrapper-only specs
+ * (`GO_*_TOML_WRAPPER`, `GO_SSO_PROVIDERS_WRAPPER`, `GO_*_LIST`) aren't distinct Go structs —
+ * they're a `goTomlListWrapper`/`goSlice` around one of the entries below — so they're excluded.
  */
 const GO_PAYLOAD_SPEC_REGISTRY: ReadonlyArray<GoPayloadSpecEntry> = [
   {

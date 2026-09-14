@@ -16,11 +16,8 @@ import { withJsonErrorHandling } from "../../shared/output/json-error-handling.t
 import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import { status } from "./status.handler.ts";
 
-// `--override-name` and `--exclude` are pflag-style string-slice flags, which
-// CSV-split each occurrence and accumulate
-// across repeats — `--override-name a=1,b=2` is two overrides, not one.
-// Malformed CSV fails at parse time with pflag's exact diagnostic (CLI-2005,
-// see `stringSliceFlag`).
+// pflag-style string-slice flags: each occurrence is CSV-split and accumulated across repeats,
+// so `--override-name a=1,b=2` is two overrides, not one. Malformed CSV fails at parse time.
 export const statusOverrideNameFlag = stringSliceFlag(
   "override-name",
   "Override specific variable names.",
@@ -43,24 +40,14 @@ const config = {
 
 export type StatusFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-// `status` makes no Management API calls (it needs no access token), so it
-// deliberately avoids `managementApiRuntimeLayer` (the EAGER
-// `CommandPlatformApi` stack, which resolves a token at layer BUILD time and
-// fails outright with none) — mirrors `unlink`'s runtime shape.
-// `commandSettingsLayer` is exposed at the top level directly (nothing else in
-// this runtime needs to consume it internally).
+// `status` makes no Management API calls, so it avoids `managementApiRuntimeLayer` — the eager
+// `CommandPlatformApi` stack that resolves a token at layer build time and fails outright
+// without one.
 const cliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
 
-// TS-only QoL (CLI-2167 follow-up, no Go counterpart): a LAZY Management API
-// handle for `resolveLinkedState`'s best-effort branch-name lookup
-// (`linked-state.ts`). `commandPlatformApiFactoryLayer` — not the eager
-// `commandPlatformApiLayer` — defers all token resolution and client
-// construction to the first `factory.make` call (memoised via
-// `Effect.cached`), i.e. only when a branch lookup actually fires, and its
-// own layer build never fails without a token/network. `makeCommandPlatformApi`
-// (which the factory wraps) also needs `IdentityStitch` for response
-// stitching, hence the extra provide + top-level merge below (mirrors
-// `db pull`'s `linkedDbResolverRuntimeLayer` composition).
+// Lazy Management API handle for `resolveLinkedState`'s best-effort branch-name lookup:
+// `commandPlatformApiFactoryLayer` defers token resolution to the first `factory.make` call, so
+// its layer build never fails without a token, and provides `IdentityStitch` for response stitching.
 const credentials = commandCredentialsLayer.pipe(
   Layer.provide(cliSettings),
   Layer.provide(debugLoggerLayer),

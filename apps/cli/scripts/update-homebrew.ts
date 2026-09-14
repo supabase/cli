@@ -32,22 +32,17 @@ const dryRun = values["dry-run"]!;
 const root = path.resolve(import.meta.dir, "../../..");
 const distDir = path.join(root, "dist");
 
-// Convert name (e.g. "supabase-beta") to the Ruby class name Homebrew
-// expects (e.g. "SupabaseBeta"). The class + filename differ by channel so
-// `supabase` and `supabase-beta` can coexist as separate formulas in the
-// same tap, but the installed binary is always `supabase` (matching the
-// Go CLI's historical behaviour).
+// Converts name (e.g. "supabase-beta") to the Ruby class Homebrew expects (e.g. "SupabaseBeta").
+// The class and filename vary by channel, but the installed binary is always `supabase`.
 const className = name
   .split(/[-_]/)
   .filter(Boolean)
   .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
   .join("");
 
-// `supabase-go` is the Go sidecar the CLI spawns via
-// apps/cli/src/command-internal/go-proxy.layer.ts. It is looked up by exact
-// filename colocated with process.execPath, so we MUST install it with its
-// original name right next to the SFE. The `if File.exist?` guard keeps the
-// formula working for a build that ships only the SFE.
+// The Go sidecar is looked up by exact filename next to the running binary, so it must install
+// under its original name; `if File.exist?` keeps the formula working when a build ships only
+// the CLI binary.
 const installBlock = [
   `    bin.install "supabase"`,
   `    bin.install "supabase-go" if File.exist?("supabase-go")`,
@@ -55,7 +50,6 @@ const installBlock = [
 
 const testInvocation = `#{bin}/supabase`;
 
-// Parse checksums
 const checksums = new Map<string, string>();
 const checksumsText = await readFile(path.join(distDir, "checksums.txt"), "utf-8");
 for (const line of checksumsText.trim().split("\n")) {
@@ -127,7 +121,6 @@ async function hasStagedChanges(repoDir: string, repoPath: string): Promise<bool
   throw new Error(`Failed to inspect staged changes for ${repoPath}`);
 }
 
-// Clone tap repo, update formula, commit, push
 const tmpDir = await mkdtemp(path.join(tmpdir(), "homebrew-tap-"));
 try {
   const tapUrl = `https://github.com/${tap}.git`;

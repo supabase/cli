@@ -118,9 +118,8 @@ function readGoWindowsTarget(module: KeyringModule, account: string): string | n
   }
 }
 
-// `Entry.withTarget` is avoided as a probe — its constructor writes an empty
-// placeholder. A `findCredentials` throw is ambiguous (an undecodable Go blob or
-// a real enumeration failure), so reported as `"unknown"`, never assumed present.
+// `Entry.withTarget` is avoided as a probe since its constructor writes an empty placeholder. A
+// `findCredentials` throw is ambiguous, so it's reported as `"unknown"`, never assumed present.
 type WindowsTargetProbe = "present" | "absent" | "unknown";
 
 function probeWindowsTarget(module: KeyringModule, account: string): WindowsTargetProbe {
@@ -161,9 +160,8 @@ function normalizeGoWindowsPassword(value: string): string {
   const direct = normalizeKeyringToken(value);
   if (ACCESS_TOKEN_PATTERN.test(direct)) return direct;
 
-  // Go writes Windows CredentialBlob values as raw UTF-8 bytes. The TS keyring
-  // search API can surface those bytes packed into UTF-16 code units, so unpack
-  // each code unit back into the original byte sequence before validation.
+  // Go writes Windows CredentialBlob values as raw UTF-8 bytes, which the keyring search API
+  // can surface packed into UTF-16 code units; unpack each back into the original byte sequence.
   const bytes: number[] = [];
   for (let index = 0; index < value.length; index += 1) {
     const code = value.charCodeAt(index);
@@ -200,21 +198,9 @@ function deleteGoWindowsTarget(module: KeyringModule, account: string): boolean 
     return false;
   }
 }
-// Delete the project database-password entry (keyed by project ref), surfacing a
-// real failure while ignoring the "nothing to delete" cases — mirroring Go's
-// unlink, which ignores both `keyring.ErrNotFound` AND `credentials.ErrNotSupported`
-// (backend unavailable) and only surfaces other errors (`unlink.go:36-40`).
-//
-// The plain `Entry(service, projectRef)` is the macOS/Linux form and the Windows
-// default. On Windows, Go also writes a separate target-shaped credential,
-// deleted through the `withTarget` entry. The `withTarget` entry is only
-// constructed on Windows — on macOS its first argument is an invalid keychain
-// domain and throws.
-//
-// Each entry is probed before `deleteCredential()`: on macOS deleting an absent
-// entry blocks on a Keychain authorization prompt, and an absent read means
-// there is nothing to delete (ignorable, per Go). Only a real delete failure is
-// surfaced as `CredentialDeleteError`.
+// Deletes the project database-password keyring entry, ignoring "nothing to delete" and
+// surfacing only a real failure. Each entry is probed first, since deleting an absent macOS
+// entry blocks on a Keychain prompt; on Windows a separate `withTarget` entry is also probed.
 const deleteKeyringEntryStrict = (
   module: KeyringModule,
   account: string,
@@ -252,13 +238,8 @@ const deleteKeyringEntryStrict = (
     return deleted;
   });
 
-// Delete the access-token profile entry, distinguishing three outcomes:
-//   - `"deleted"`  — an entry existed and was removed (→ logged out, exit 0);
-//   - `"notFound"` — no entry existed (→ not logged in, exit 0);
-//   - `DeleteTokenError` — a real `deleteCredential()` failure (exit 1).
-// Like `deleteKeyringEntryStrict`, the entry is probed first so deleting an
-// absent macOS entry never blocks on a Keychain prompt, and the Windows
-// target-shaped credential is handled separately.
+// Deletes the profile's access-token keyring entry. Returns "notFound" when nothing existed
+// (not an error) so the caller can treat that as already logged out.
 const deleteProfileKeyringEntry = (
   module: KeyringModule,
   account: string,
@@ -296,13 +277,9 @@ const deleteProfileKeyringEntry = (
     return found ? "deleted" : "notFound";
   });
 
-// Best-effort wipe of the `"Supabase CLI"` keyring namespace; errors are
-// swallowed so one stuck credential can't abort logout.
-//
-// Windows credentials are also written under the target-shaped form
-// (`Supabase CLI:<account>`), invisible to the plain enumeration below, so
-// it's swept separately. `findCredentials` decodes every matched blob and
-// aborts entirely on one undecodable entry.
+// Best-effort wipe of the "Supabase CLI" keyring namespace; errors are swallowed so one stuck
+// credential can't abort logout. Windows credentials are also written under a separate
+// target-shaped form, invisible to the plain enumeration, so they're swept separately.
 const deleteAllKeyringEntries = (
   module: KeyringModule,
   platform: RuntimePlatform,
@@ -337,10 +314,8 @@ const deleteAllKeyringEntries = (
     }
   });
 
-// `SUPABASE_NO_KEYRING=1` disables the OS keyring entirely (matches the shared
-// credentials layer and the cli-e2e harness, which sets it). Without this, any
-// unconditional keyring access — e.g. `unlink`'s credential delete — blocks on a
-// Keychain authorization prompt in non-interactive / CI contexts.
+// `SUPABASE_NO_KEYRING=1` disables the OS keyring entirely; without it, unconditional keyring
+// access blocks on a Keychain authorization prompt in non-interactive/CI contexts.
 const loadKeyringModule = (
   fs: FileSystem.FileSystem,
 ): Effect.Effect<Option.Option<KeyringModule>> =>
@@ -352,9 +327,8 @@ const loadKeyringModule = (
       : yield* Effect.tryPromise(() => import("@napi-rs/keyring")).pipe(Effect.option);
   });
 
-// Keyring chain for a given profile account: profile key first, then the
-// legacy `access-token` key. The account parameter matters because Go keys
-// the read on the RECONCILED `CurrentProfile.Name` (`access_token.go:43`).
+// Keyring chain for a given profile account: profile key first, then the legacy `access-token`
+// key. Callers must pass the already-reconciled profile name.
 const readKeyringForAccount = (
   keyringModule: Option.Option<KeyringModule>,
   profileAccount: string,
@@ -392,24 +366,17 @@ const readFallbackFile = (
   });
 
 /**
- * Token resolution for an explicit profile account, mirroring the service's
- * `getAccessToken` chain exactly: env token → keyring (profile account, then
- * legacy account) → fallback file. Go resolves credentials AFTER
- * `LoadProfile`, so the keyring account is the reconciled
- * `CurrentProfile.Name` (`access_token.go:43`) — but the `CommandCredentials`
- * service captures the config layer's profile at construction. Commands that
- * reconcile a pflag-effective profile (sso add/update, PR #5974 round 9)
- * resolve their token through this instead, keyed on the reconciled name.
- * Fails with the same validation error as the service; callers absorb it the
- * same way `resolveAccessToken` does.
+ * Resolves an access token for an explicit profile account: env token → keyring (profile
+ * account, then legacy account) → fallback file. Used by commands that reconcile a
+ * pflag-effective profile after `CommandCredentials` already captured a different one at
+ * construction. Fails with the same validation error as `resolveAccessToken`.
  */
 export const accessTokenForProfile = Effect.fnUntraced(function* (profileAccount: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const runtimeInfo = yield* RuntimeInfo;
   const cliSettings = yield* CommandSettings;
-  // `serviceOption` keeps the logger optional (no-op outside the real CLI
-  // tree), same as the sso pflag-reconcile module's optional services.
+  // Keeps the logger optional — a no-op outside the real CLI tree.
   const debugLogger: DebugLoggerShape = Option.getOrElse(
     yield* Effect.serviceOption(DebugLogger),
     () => ({ debug: () => Effect.void, http: () => Effect.void }),
@@ -469,21 +436,19 @@ const makeCommandCredentials = Effect.gen(function* () {
 
   return CommandCredentials.of({
     getAccessToken: Effect.gen(function* () {
-      // Env takes precedence (matches access_token.go:38).
       if (Option.isSome(cliSettings.accessToken)) {
         yield* debugLogger.debug("Using access token from env var...");
         yield* validateAccessToken(Redacted.value(cliSettings.accessToken.value), "env");
         return Option.some(cliSettings.accessToken.value);
       }
 
-      // Keyring (profile key, then legacy key). Skipped on WSL.
+      // Skipped on WSL.
       const keyringValue = yield* readKeyring;
       if (Option.isSome(keyringValue)) {
         yield* validateAccessToken(keyringValue.value, "stored");
         return Option.some(Redacted.make(keyringValue.value));
       }
 
-      // Filesystem fallback in the Supabase home directory.
       const fileValue = yield* readFile;
       if (Option.isSome(fileValue)) {
         yield* debugLogger.debug(`Using access token from file: ${fallbackPath}`);
@@ -506,16 +471,15 @@ const makeCommandCredentials = Effect.gen(function* () {
           );
           if (ok) return;
         }
-        // The containing directory is world-readable (0755); only the token
-        // FILE itself needs to be private (0600).
+        // The containing directory is world-readable (0755); only the token file itself must
+        // be private (0600).
         yield* fs.makeDirectory(fallbackDir, { recursive: true, mode: 0o755 }).pipe(Effect.orDie);
         yield* fs.writeFileString(fallbackPath, token, { mode: 0o600 }).pipe(Effect.orDie);
       }),
 
     deleteAccessToken: Effect.gen(function* () {
-      // 1. Always remove the fallback token file first. A missing file is
-      //    ignored; any other removal failure aborts before the keyring is
-      //    touched.
+      // Removes the fallback token file first; a missing file is ignored, but any other
+      // failure aborts before the keyring is touched.
       const exists = yield* fs.exists(fallbackPath).pipe(Effect.orElseSucceed(() => false));
       if (exists) {
         yield* fs.remove(fallbackPath).pipe(
@@ -529,15 +493,14 @@ const makeCommandCredentials = Effect.gen(function* () {
         );
       }
 
-      // 2. Best-effort delete of the legacy `access-token` keyring account.
-      //    Any error here is ignored — never affects the result.
+      // Best-effort delete of the legacy `access-token` keyring account; errors here don't
+      // affect the result.
       if (Option.isSome(keyringModule)) {
         yield* tryKeyringDelete(keyringModule.value, LEGACY_KEYRING_ACCOUNT, runtimeInfo.platform);
       }
 
-      // 3. Delete the profile keyring account — this alone decides the outcome.
-      //    No keyring backend (WSL / `SUPABASE_NO_KEYRING` / unsupported) maps
-      //    to `NotLoggedInError`.
+      // Deleting the profile keyring account decides the outcome; no keyring backend (WSL,
+      // `SUPABASE_NO_KEYRING`, unsupported) maps to `NotLoggedInError`.
       if (Option.isNone(keyringModule)) {
         return yield* Effect.fail(new NotLoggedInError({ message: NOT_LOGGED_IN_MESSAGE }));
       }
@@ -558,7 +521,7 @@ const makeCommandCredentials = Effect.gen(function* () {
 
     deleteProjectCredential: (projectRef: string) =>
       Effect.gen(function* () {
-        // WSL / no keyring module: treated as `ErrNotSupported` — a no-op success.
+        // WSL or no keyring module: no-op success, nothing to delete.
         if (Option.isNone(keyringModule)) return false;
         return yield* deleteKeyringEntryStrict(
           keyringModule.value,

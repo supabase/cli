@@ -32,13 +32,8 @@ import { renderSnippetsTable, type SnippetRow } from "../snippets.format.ts";
 import type { SnippetsListFlags } from "./list.command.ts";
 
 // Tolerant accessors for the API response body. The real `/v1/snippets`
-// payload regularly omits optional fields like `description` that the
-// generated `V1ListAllSnippetsOutput` schema declares as `Union[String, Null]`
-// (present-but-nullable). Routing through the typed client therefore fails
-// with a `SchemaError: Missing key …` on any real-world response — see the
-// cli-e2e `snippets-download-prints-sql-content-to-stdout` failure that
-// prompted the bypass. Same workaround pattern as
-// `linked-project-cache.layer.ts` and `suggestUpgrade`.
+// payload omits optional fields the generated schema declares required, so
+// routing through the typed client fails with `SchemaError: Missing key …`.
 function readString(obj: unknown, key: string): string {
   if (typeof obj === "object" && obj !== null && key in obj) {
     const value = (obj as Record<string, unknown>)[key];
@@ -52,11 +47,9 @@ function asRecord(obj: unknown): Record<string, unknown> {
 }
 
 /**
- * Type shape for the snippets-list response, used to drive `-o yaml|toml`
- * key casing (see `apps/cli-go/pkg/api/types.gen.go`; re-audit if it
- * regenerates). The `description` field is a `nullable.Nullable[string]` —
- * yaml.v3 renders it as a `map[bool]string`, and BurntSushi refuses it
- * whenever present (CLI-1975).
+ * Type shape for the snippets-list response, used to drive `-o yaml|toml` key
+ * casing. `description` (`nullable.Nullable[string]`) renders as
+ * `map[bool]string` in YAML and is refused outright in TOML.
  */
 const GO_SNIPPET_LIST = goStruct([
   ["cursor", goPtr(goString)],
@@ -197,10 +190,9 @@ export const snippetsList = Effect.fn("snippets.list")(function* (flags: Snippet
       const goFmt = Option.getOrUndefined(goOutputFlag);
 
       if (goFmt === "json") {
-        // Round-trip the raw body so a real API `data: []` stays `data: []`
-        // (and a hypothetical `data: null` would stay null). Go's
-        // `encoding/json` preserves nil-vs-empty; bypassing the typed client
-        // means we can faithfully mirror that here too.
+        // Round-trips the raw body so a real API `data: []` stays `data: []`
+        // and a hypothetical `data: null` stays null — nil-vs-empty is
+        // preserved rather than normalized.
         yield* output.raw(encodeGoJson(rawBody));
         return;
       }
@@ -209,9 +201,9 @@ export const snippetsList = Effect.fn("snippets.list")(function* (flags: Snippet
         return;
       }
       if (goFmt === "toml") {
-        // BurntSushi cannot encode the `nullable.Nullable[string]` description
-        // field (`map[bool]string`), so Go fails whenever any snippet carries a
-        // `description` key. Mirror the failure byte-for-byte.
+        // The established TOML encoder can't represent the nullable
+        // `description` field, so this fails whenever any snippet carries a
+        // `description` key — mirroring that established failure exactly.
         const toml = yield* Effect.try({
           try: () => encodeGoToml(rawBody, GO_SNIPPET_LIST),
           catch: (cause) =>

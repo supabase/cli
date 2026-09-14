@@ -1,16 +1,10 @@
 /**
- * Faithful 1:1 port of `net/http` content sniffer (`net/http/sniff.go`'s
- * `DetectContentType` + `sniffSignatures`), reproduced from the Go 1.x stdlib.
- *
- * `seed buckets` upload path runs `http.DetectContentType` on the first 512
- * bytes of each object, so the
- * stored Storage `Content-Type` metadata is byte-driven, not extension-driven.
- * Porting this verbatim is the only way to store the same Content-Type the Go CLI
- * would. The signature table and its ORDER are 1:1 with `sniffSignatures`
- * (first match wins); kept dependency-free and pure for a Go-parity test corpus.
+ * Content-type sniffer for the `seed buckets` upload path: Storage's `Content-Type` metadata is
+ * byte-driven, not extension-driven, matching Go's `net/http.DetectContentType` byte-for-byte so
+ * stored metadata stays reproducible. Signature order matters: first match wins.
  */
 
-// The algorithm uses at most sniffLen bytes to make its decision.
+// The sniffer considers at most this many leading bytes.
 const SNIFF_LEN = 512;
 
 /** Latin-1 byte view of a string literal (each char code is one byte). */
@@ -22,12 +16,12 @@ function bytesOf(s: string): Uint8Array {
   return out;
 }
 
-// isWS reports whether the byte is a whitespace byte (0xWS) per the spec.
+// The WHATWG spec's 0xWS whitespace-byte definition.
 function isWS(b: number): boolean {
   return b === 0x09 || b === 0x0a || b === 0x0c || b === 0x0d || b === 0x20;
 }
 
-// isTT reports whether the byte is a tag-terminating byte (0xTT) per the spec.
+// The WHATWG spec's 0xTT tag-terminating-byte definition.
 function isTT(b: number): boolean {
   return b === 0x20 || b === 0x3e; // ' ' or '>'
 }
@@ -43,7 +37,6 @@ function byteAt(arr: Uint8Array, i: number): number {
   return b === undefined ? -1 : b;
 }
 
-// bytes.HasPrefix(data, sig).
 function exactSig(sig: string, ct: string): SniffSig {
   const pat = bytesOf(sig);
   return (data) => {
@@ -55,7 +48,7 @@ function exactSig(sig: string, ct: string): SniffSig {
   };
 }
 
-// WHATWG masked pattern match (`maskedSig`).
+// WHATWG masked pattern match.
 function maskedSig(mask: string, pat: string, ct: string, skipWS = false): SniffSig {
   const m = bytesOf(mask);
   const p = bytesOf(pat);
@@ -70,9 +63,8 @@ function maskedSig(mask: string, pat: string, ct: string, skipWS = false): Sniff
   };
 }
 
-// `htmlSig`: case-insensitive tag prefix followed by a tag-terminating byte. The
-// pattern is stored uppercase (as in Go); the data byte is uppercased via & 0xDF
-// only where the pattern byte is A-Z.
+// Case-insensitive tag prefix followed by a tag-terminating byte. The pattern is stored
+// uppercase; the data byte is uppercased via & 0xDF only where the pattern byte is A-Z.
 function htmlSig(sig: string): SniffSig {
   const h = bytesOf(sig);
   return (data, firstNonWS) => {
@@ -89,7 +81,7 @@ function htmlSig(sig: string): SniffSig {
   };
 }
 
-// `mp4Sig`: WHATWG MP4 box signature (section 6.2.1).
+// WHATWG MP4 box signature (section 6.2.1).
 const mp4Sig: SniffSig = (data) => {
   if (data.length < 12) return undefined;
   const boxSize =
@@ -122,7 +114,7 @@ const mp4Sig: SniffSig = (data) => {
   return undefined;
 };
 
-// `textSig` (must be last): text/plain unless a binary control byte is present.
+// Must be last: text/plain unless a binary control byte is present.
 const textSig: SniffSig = (data, firstNonWS) => {
   for (let i = firstNonWS; i < data.length; i++) {
     const b = byteAt(data, i);
@@ -133,7 +125,7 @@ const textSig: SniffSig = (data, firstNonWS) => {
   return "text/plain; charset=utf-8";
 };
 
-// 1:1 with `sniffSignatures`, including order (first match wins).
+// Signature order matters: first match wins.
 const SNIFF_SIGNATURES: ReadonlyArray<SniffSig> = [
   htmlSig("<!DOCTYPE HTML"),
   htmlSig("<HTML"),
@@ -214,9 +206,8 @@ const SNIFF_SIGNATURES: ReadonlyArray<SniffSig> = [
 ];
 
 /**
- * Reproduces `http.DetectContentType`: considers at most the first 512
- * bytes and always returns a valid MIME type, falling back to
- * `application/octet-stream` when no signature matches.
+ * Sniffs the MIME type from up to the first 512 bytes, always returning a valid type and
+ * falling back to `application/octet-stream` when no signature matches.
  */
 export function detectContentType(input: Uint8Array): string {
   const data = input.length > SNIFF_LEN ? input.subarray(0, SNIFF_LEN) : input;

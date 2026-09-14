@@ -117,10 +117,9 @@ export function parsePgDeltaNextEndpoint(
     return yield* Effect.fail(
       new PgDeltaEngineError({
         message: "failed to parse Postgres connection string for pg-delta",
-        // `redactConnectionString`, not a local `:password@` regex: the input
-        // reaching here is by definition unparseable, and a hand-typed password
-        // containing `/`, `@`, or `:` defeats a naive single-character-class match
-        // (CWE-209). The shared redactor over-redacts instead of leaking.
+        // The input is by definition unparseable, so a naive `:password@` regex could miss a
+        // hand-typed password containing `/`, `@`, or `:` (CWE-209); `redactConnectionString`
+        // over-redacts instead of risking a leak.
         cause: redactConnectionString(endpoint.ref),
       }),
     );

@@ -6,54 +6,25 @@ import type { CliProjectEnvironment } from "@supabase/config";
 import { parseDotEnv } from "./dotenv.ts";
 
 /**
- * Fills the gap between `@supabase/config`'s `loadCliProjectEnvironment` and
- * `loadNestedEnv`. The established
- * behavior walks not just `supabase/` but one directory further, up to the project
- * root/workdir (the loop stops once `cwd == filepath.Dir(repoDir)`, i.e. after
- * exactly two directories: `supabase/`, then its parent), and at each
- * directory calls `loadDefaultEnv`, which loads dotenv
- * files chosen by `SUPABASE_ENV` (empty/unset defaults to `"development"`):
- * `.env.<env>.local`, `.env.local` (skipped when
- * `env === "test"`), `.env.<env>`, `.env` — via `godotenv.Load`, which only
- * sets a key if it isn't already present in the process environment
- * (`overload: false`). Because
- * `godotenv.Load` writes straight into the process env as it goes, the net
- * precedence (highest first) is: ambient shell env > `supabase/`-dir dotenv
- * files (`.local` variant before non-local, env-specific before bare `.env`)
- * > project-root dotenv files (same internal order).
+ * Dotenv filenames to check, in precedence order, for a given `SUPABASE_ENV` value
+ * (`.env.<env>.local`, `.env.local` — skipped for `"test"` — `.env.<env>`, `.env`).
  *
- * `loadCliProjectEnvironment` only implements the `supabase/`-dir, plain
- * `.env`/`.env.local` half of this (no project-root pass, no `SUPABASE_ENV`
- * filename selection) — and it's shared infrastructure used well beyond
- * `stop`/`status` (`packages/stack`, `secrets set`), so extending its
- * file-resolution semantics is out of scope here.
- * Instead, this fills in the missing project-root + `SUPABASE_ENV`-selected
- * files locally: `loadCliProjectEnvironment`'s already-resolved `values` (its
- * ambient-wins-over-`supabase/.env`(.local) result) always takes precedence
- * over anything discovered here, since it's already correct for the keys it
- * knows about.
+ * Fills a gap in `@supabase/config`'s `loadCliProjectEnvironment`, which only resolves this
+ * order for the `supabase/` directory: this module also checks the project root, and applies
+ * `SUPABASE_ENV`-selected filenames there too. Its own resolved values still take precedence
+ * over anything found here, since it's already correct for the keys it knows about.
  */
 export function candidateDotenvFilenames(env: string): ReadonlyArray<string> {
   return [`.env.${env}.local`, ...(env === "test" ? [] : [".env.local"]), `.env.${env}`, ".env"];
 }
 
 /**
- * Minimal dotenv reader for the project-root and `SUPABASE_ENV`-selected extra
- * files this module resolves, intentionally not reusing `@supabase/config`'s
- * Effect-based `FileSystem` parser: this module stays a plain synchronous
- * helper (like `local-config-values.ts`'s `loadFirstSigningKey`) since
- * it only needs a handful of extra files read once per `stop`/`status`
- * invocation. Delegates to {@link parseDotEnv} — the same `godotenv`-faithful,
- * cursor-based parser `bootstrap`/`readDbToml` already use — rather than
- * a hand-rolled line-by-line scan, so a quoted value spanning physical lines
- * (a PEM/private key) parses correctly instead of aborting on what looks like
- * a malformed continuation line.
+ * Reads and parses a dotenv file, or `undefined` if it doesn't exist. Delegates to
+ * {@link parseDotEnv} rather than a hand-rolled line scanner, so a quoted value spanning
+ * physical lines (a PEM/private key) parses correctly.
  *
- * @throws on a line that isn't blank, a comment, or a `KEY=VALUE`/`KEY: VALUE`
- * assignment — matching `loadEnvIfExists`,
- * which propagates `godotenv.Load`'s parse error up through `loadNestedEnv` and
- * fails `Config.Load` before `stop`/`status` touch Docker, rather than silently
- * skipping the bad line.
+ * @throws on a malformed line (not blank, a comment, or a `KEY=VALUE`/`KEY: VALUE`
+ * assignment) — the caller must fail rather than silently skip it.
  */
 function readDotEnvFile(path: string): Record<string, string> | undefined {
   if (!existsSync(path)) return undefined;
@@ -69,33 +40,17 @@ function readDotEnvFile(path: string): Record<string, string> | undefined {
 }
 
 /**
- * Returns the merged env-var map `stop`/`status` should read `SUPABASE_*`
- * overrides (project id, auth fields) from — the project-root and
- * `SUPABASE_ENV`-selected files `loadCliProjectEnvironment` doesn't cover, layered
- * under only the truly ambient-sourced entries of `projectEnv.values`.
+ * Merged env-var map for `stop`/`status` to read `SUPABASE_*` overrides from, covering the
+ * project-root and `SUPABASE_ENV`-selected files {@link candidateDotenvFilenames} adds beyond
+ * `loadCliProjectEnvironment`.
  *
- * Only `projectEnv`'s AMBIENT entries outrank `merged`: `projectEnv.values`
- * also carries plain `supabase/.env`/`.env.local` values it read itself, and
- * those are not necessarily higher Go precedence than an env-specific file
- * (`.env.<env>.local`/`.env.<env>`) `merged` resolved — `loadCliProjectEnvironment`
- * has no notion of `SUPABASE_ENV`-selected filenames, so it can't tell the two
- * apart itself. `merged`'s own walk below already re-derives the full file
- * precedence, including `supabase/.env`(.local), so only ambient needs to be
- * layered back on top (`projectEnv.sources[key] === "ambient"` marks exactly
- * those entries — see `loadCliProjectEnvironment`'s `CliProjectEnvironment` shape).
+ * Only `projectEnv`'s ambient-sourced entries are layered back on top: its other, file-derived
+ * entries aren't necessarily higher-precedence than the env-specific files resolved here, and
+ * it has no notion of those filenames to tell the two apart itself.
  *
- * `projectEnv` is `null` whenever `@supabase/config` found no
- * `supabase/config.toml`/`config.json` (searching ancestors, or at exactly
- * `workdir` when the caller passed `search: false`) — but dotenv loading
- * doesn't share that precondition: `Config.Load` calls
- * `loadNestedEnv(builder.SupabaseDirPath)` BEFORE it ever opens `config.toml`,
- * and `SupabaseDirPath` is a pure string
- * join with no existence check (`NewPathBuilder`).
- * So a missing/absent config file must not skip dotenv loading — fall back to
- * deriving the same two directories directly from `workdir`
- * (`<workdir>/supabase` and `workdir` itself) and read `process.env` itself as
- * the ambient layer, since there's no `loadCliProjectEnvironment` result to
- * consult for it in this branch.
+ * `projectEnv` is `null` when no config file was found, but dotenv loading isn't gated on
+ * that — fall back to deriving `<workdir>/supabase` and `workdir` directly, with `process.env`
+ * as the ambient layer.
  */
 export function resolveProjectEnvironmentValues(
   projectEnv: CliProjectEnvironment | null,
@@ -108,10 +63,9 @@ export function resolveProjectEnvironmentValues(
   const supabaseDir = projectEnv?.paths.supabaseDir ?? join(workdir, "supabase");
   const projectRoot = projectEnv?.paths.projectRoot ?? workdir;
 
-  // supabase/ dir first, then its parent (the project root) — matching Go's
-  // directory walk order. Within a directory, `godotenv.Load`'s "never
-  // override an already-set var" means first-processed-wins, so the plain
-  // merge below (skip keys already present) reproduces both orderings at once.
+  // supabase/ dir first, then its parent (the project root). Within a directory,
+  // "never override an already-set var" means first-processed-wins, so skipping keys
+  // already present reproduces both orderings at once.
   for (const dir of [supabaseDir, projectRoot]) {
     for (const filename of filenames) {
       const parsed = readDotEnvFile(join(dir, filename));

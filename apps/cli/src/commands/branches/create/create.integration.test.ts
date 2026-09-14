@@ -242,12 +242,7 @@ describe("branches create integration", () => {
     );
   });
 
-  // ---------------------------------------------------------------------------
-  // Git-branch auto-name confirmation — Go `create.go:17-28` routes it through
-  // `PromptYesNo(title, true)` (`console.go:64-82`). `GITHUB_HEAD_REF` drives
-  // `detectGitBranch` deterministically (its highest-priority source).
-  // ---------------------------------------------------------------------------
-
+  // `GITHUB_HEAD_REF` drives `detectGitBranch` deterministically (its highest-priority source).
   const withGitBranch = <A, E, R>(effect: Effect.Effect<A, E, R>, branch = "feat-y") => {
     const prevHead = process.env["GITHUB_HEAD_REF"];
     process.env["GITHUB_HEAD_REF"] = branch;
@@ -266,8 +261,6 @@ describe("branches create integration", () => {
     return withGitBranch(
       Effect.gen(function* () {
         yield* branchesCreate(baseFlags);
-        // Established behavior: the `--yes` branch echoes `<title> [Y/n] y`
-        // to stderr instead of blocking the TTY prompt.
         expect(out.stderrText).toContain("Do you want to create a branch named ");
         expect(out.stderrText).toContain("? [Y/n] y\n");
         expect(api.requests[0]?.body).toMatchObject({
@@ -308,7 +301,6 @@ describe("branches create integration", () => {
         if (Exit.isFailure(exit)) {
           expect(JSON.stringify(exit.cause)).toContain("BranchesCreateCancelledError");
         }
-        // The piped answer is echoed to stderr, matching the non-TTY prompt.
         expect(out.stderrText).toContain("? [Y/n] n\n");
         expect(api.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer)),
@@ -320,7 +312,6 @@ describe("branches create integration", () => {
     return withGitBranch(
       Effect.gen(function* () {
         yield* branchesCreate(baseFlags);
-        // Label printed, empty scan echoed, true default wins (`console.go:64-102`).
         expect(out.stderrText).toContain("? [Y/n] \n");
         expect(api.requests[0]?.body).toMatchObject({ branch_name: "feat-y" });
       }).pipe(Effect.provide(layer)),
@@ -458,10 +449,6 @@ describe("branches create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // The established --size enum is an 18-value list that does not include
-  // "nano" (or "pico") and rejects any other value at flag-parse time. TS
-  // previously listed "nano" as a valid choice, silently succeeding where
-  // it should error.
   it.live("rejects --size nano at flag-parse time, matching Go's 18-value enum", () => {
     const root = Command.make("supabase").pipe(
       Command.withSubcommands([branchesCreateCommand]),
@@ -480,9 +467,8 @@ describe("branches create integration", () => {
   });
 });
 
-// Distinguishes "the --size flag itself was rejected at parse time" from any
-// other failure (e.g. a missing runtime service in this minimal test setup),
-// so the regression test above can't pass for the wrong reason.
+// Distinguishes "the --size flag itself was rejected at parse time" from any other failure, so
+// the test above can't pass for the wrong reason.
 function rejectsInvalidSizeChoice(error: unknown): boolean {
   if (typeof error !== "object" || error === null || !("errors" in error)) return false;
   const { errors } = error;

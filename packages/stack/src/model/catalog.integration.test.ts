@@ -3,7 +3,6 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Option } from "effect";
 import { compileStack } from "./Compiler.ts";
 import { CAPABILITY_NAMES } from "../public/Capability.ts";
-import { CAPABILITY_MODULES } from "./ExecutionPlan.ts";
 import { workload } from "./CapabilityModule.ts";
 import {
   catalogEntryFor,
@@ -28,6 +27,12 @@ const compileContainer = (config: Parameters<typeof compileStack>[0]["config"]) 
     runtime: { kind: "container", engine: "docker" },
     config,
   }).pipe(Effect.provide(NodeServices.layer));
+
+const expectWorkload = <T>(value: T | undefined, description: string): T => {
+  expect(value, description).toBeDefined();
+  if (value === undefined) throw new Error(`Expected ${description}`);
+  return value;
+};
 
 describe("complete workload catalog", () => {
   it("uses the catalog release for both runtime artifact identities", () => {
@@ -94,9 +99,8 @@ describe("complete workload catalog", () => {
         const workload =
           defaults.executionPlan.workloads.find((entry) => entry.id === `${name}:${name}`) ??
           defaults.executionPlan.workloads.find((entry) => entry.capability === name);
-        expect(workload).toBeDefined();
-        if (workload === undefined) continue;
-        expect(workload.artifacts.native.release).toBe(capability.version);
+        const selected = expectWorkload(workload, `${name} workload`);
+        expect(selected.artifacts.native.release).toBe(capability.version);
       }
 
       const databaseAlias = yield* compile({
@@ -105,27 +109,20 @@ describe("complete workload catalog", () => {
       const database = databaseAlias.executionPlan.workloads.find(
         (entry) => entry.id === "database:database",
       );
-      expect(database).toBeDefined();
-      if (database === undefined) return;
+      const selected = expectWorkload(database, "database workload");
       expect(databaseAlias.definition.capabilities.database.version).toBe(
-        database.artifacts.native.release,
+        selected.artifacts.native.release,
       );
-      expect(database.artifacts.native.release).toBe(databaseCatalog.defaultVersion);
+      expect(selected.artifacts.native.release).toBe(databaseCatalog.defaultVersion);
     }),
   );
-
-  it("registers every release under its canonical version key", () => {
-    for (const name of CAPABILITY_NAMES)
-      for (const release of Object.values(CAPABILITY_MODULES[name].releases))
-        expect(CAPABILITY_MODULES[name].releases[release.version]).toBe(release);
-  });
 
   it.live("resolves every declared workload to a slim-services native release", () =>
     Effect.gen(function* () {
       const result = yield* compile({
         capabilities: {
           storage: { settings: { image_transformation: { enabled: true } } },
-          analytics: { settings: { vector_port: 9001 } },
+          analytics: { settings: {} },
         },
       });
       expect(result.executionPlan.workloads.length).toBeGreaterThan(10);
@@ -146,48 +143,51 @@ describe("complete workload catalog", () => {
       const result = yield* compile({
         capabilities: {
           storage: { settings: { image_transformation: { enabled: true } } },
-          analytics: { settings: { vector_port: 9001 } },
+          analytics: { settings: {} },
         },
       });
       for (const id of ["studio:pgmeta", "analytics:vector"] as const) {
         const catalog = WORKLOAD_CATALOG[id];
-        expect(catalog).toBeDefined();
-        if (catalog === undefined) continue;
+        const selectedCatalog = expectWorkload(catalog, `${id} catalog entry`);
         const workload = result.executionPlan.workloads.find((entry) => entry.id === id);
-        expect(workload).toBeDefined();
-        if (workload === undefined) continue;
-        expect(workload.artifacts.native.release).toBe(catalog.defaultVersion);
-        const artifact = yield* resolveNativeArtifactForWorkload(workload, {
+        const selectedWorkload = expectWorkload(workload, `${id} workload`);
+        expect(selectedWorkload.artifacts.native.release).toBe(selectedCatalog.defaultVersion);
+        const artifact = yield* resolveNativeArtifactForWorkload(selectedWorkload, {
           os: "darwin",
           arch: "arm64",
         });
-        expect(artifact.releaseTag).toBe(`${catalog.service}-${catalog.defaultVersion}`);
+        expect(artifact.releaseTag).toBe(
+          `${selectedCatalog.service}-${selectedCatalog.defaultVersion}`,
+        );
         expect(artifact.downloadUrl).toBe(
-          `https://github.com/supabase/slim-services/releases/download/${catalog.service}-${catalog.defaultVersion}/${catalog.service}-${catalog.defaultVersion}-darwin-arm64.tar.zst`,
+          `https://github.com/supabase/slim-services/releases/download/${selectedCatalog.service}-${selectedCatalog.defaultVersion}/${selectedCatalog.service}-${selectedCatalog.defaultVersion}-darwin-arm64.tar.zst`,
         );
       }
     }),
   );
 
-  it.live("materialized settings control optional companion workloads", () =>
+  it.live("enables companion workloads by default and honors explicit disablement", () =>
     Effect.gen(function* () {
       const defaults = yield* compile({});
       expect(defaults.executionPlan.workloads.some(({ id }) => id === "storage:imgproxy")).toBe(
-        false,
+        true,
       );
       expect(defaults.executionPlan.workloads.some(({ id }) => id === "analytics:vector")).toBe(
-        false,
+        true,
       );
       expect(defaults.executionPlan.workloads).toEqual(
         expect.arrayContaining([
-          expect.objectContaining({ id: "storage:storage", dependencies: ["database:database"] }),
+          expect.objectContaining({
+            id: "storage:storage",
+            dependencies: ["database:database", "storage:imgproxy"],
+          }),
         ]),
       );
 
       const enabled = yield* compile({
         capabilities: {
           storage: { settings: { image_transformation: { enabled: true } } },
-          analytics: { settings: { vector_port: 9001 } },
+          analytics: { settings: {} },
         },
       });
       expect(enabled.executionPlan.workloads.some(({ id }) => id === "storage:imgproxy")).toBe(
@@ -213,6 +213,20 @@ describe("complete workload catalog", () => {
           }),
         ]),
       );
+
+      const disabled = yield* compile({
+        capabilities: {
+          storage: { settings: { image_transformation: { enabled: false } } },
+          analytics: { enabled: false },
+          studio: { enabled: false },
+        },
+      });
+      expect(disabled.executionPlan.workloads.some(({ id }) => id === "storage:imgproxy")).toBe(
+        false,
+      );
+      expect(disabled.executionPlan.workloads.some(({ id }) => id === "analytics:vector")).toBe(
+        false,
+      );
     }),
   );
 
@@ -221,7 +235,7 @@ describe("complete workload catalog", () => {
       const result = yield* compileContainer({
         capabilities: {
           storage: { settings: { image_transformation: { enabled: true } } },
-          analytics: { settings: { vector_port: 9001 } },
+          analytics: { settings: {} },
         },
       });
       const images = new Map(
@@ -245,12 +259,13 @@ describe("complete workload catalog", () => {
       const database = compiled.executionPlan.workloads.find(
         ({ id }) => id === "database:database",
       );
-      expect(database).toBeDefined();
-      if (database === undefined) return;
-      const artifact = yield* resolveNativeArtifactForWorkload(database, {
-        os: "linux",
-        arch: "x64",
-      });
+      const artifact = yield* resolveNativeArtifactForWorkload(
+        expectWorkload(database, "database workload"),
+        {
+          os: "linux",
+          arch: "x64",
+        },
+      );
       expect(artifact.version).toBe(databaseCatalog.defaultVersion);
       expect(artifact.downloadUrl).toContain(
         `postgres-${databaseCatalog.defaultVersion}-linux-amd64.tar.zst`,
@@ -264,13 +279,12 @@ describe("complete workload catalog", () => {
       const database = compiled.executionPlan.workloads.find(
         ({ id }) => id === "database:database",
       );
-      expect(database).toBeDefined();
-      if (database === undefined) return;
+      const selected = expectWorkload(database, "database workload");
       const unsupported = {
-        ...database,
+        ...selected,
         artifacts: {
-          ...database.artifacts,
-          native: { ...database.artifacts.native, release: "99.0.0" },
+          ...selected.artifacts,
+          native: { ...selected.artifacts.native, release: "99.0.0" },
         },
       };
       const failed = yield* resolveNativeArtifactForWorkload(unsupported, {
@@ -278,10 +292,9 @@ describe("complete workload catalog", () => {
         arch: "x64",
       }).pipe(Effect.exit);
       expect(Exit.isFailure(failed)).toBe(true);
-      if (Exit.isFailure(failed)) {
-        const error = Option.getOrUndefined(Cause.findErrorOption(failed.cause));
-        expect(error).toBeInstanceOf(StackPreparationError);
-      }
+      if (!Exit.isFailure(failed)) throw new Error("expected unsupported release to fail");
+      const error = Option.getOrUndefined(Cause.findErrorOption(failed.cause));
+      expect(error).toBeInstanceOf(StackPreparationError);
     }),
   );
 
@@ -293,17 +306,14 @@ describe("complete workload catalog", () => {
       const database = compiled.executionPlan.workloads.find(
         ({ id }) => id === "database:database",
       );
-      expect(database).toBeDefined();
-      if (database === undefined) return;
-      const failed = yield* resolveNativeArtifactForWorkload(database, {
-        os: "win32",
-        arch: "x64",
-      }).pipe(Effect.exit);
+      const failed = yield* resolveNativeArtifactForWorkload(
+        expectWorkload(database, "database workload"),
+        { os: "win32", arch: "x64" },
+      ).pipe(Effect.exit);
       expect(Exit.isFailure(failed)).toBe(true);
-      if (Exit.isFailure(failed)) {
-        const error = Option.getOrUndefined(Cause.findErrorOption(failed.cause));
-        expect(error).toBeInstanceOf(StackPreparationError);
-      }
+      if (!Exit.isFailure(failed)) throw new Error("expected unsupported platform to fail");
+      const error = Option.getOrUndefined(Cause.findErrorOption(failed.cause));
+      expect(error).toBeInstanceOf(StackPreparationError);
     });
   });
 });

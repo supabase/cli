@@ -4,21 +4,12 @@ import { renderGlamourTable } from "../../output/glamour-table.ts";
 import { apiKeyValue } from "../../command-internal/api-keys.format.ts";
 import { formatTimestamp } from "../../command-internal/timestamp.format.ts";
 
-// ---------------------------------------------------------------------------
-// Pure formatters — no Effect / no service dependencies, kept unit-testable.
-// Match the established byte output for `projects list`, `projects create`,
-// `projects api-keys`.
-// ---------------------------------------------------------------------------
-
 type ApiKey = typeof ApiKeyResponse.Type;
 
 /**
- * Lenient project record. `projects list` / `create` parse the `/v1/projects`
- * response via the raw HTTP client because the typed client's `ref:
- * isMinLength(20)` + `^[a-z]+$` schema rejects the cli-e2e `__PROJECT_REF__`
- * placeholder fixtures (the same reason `suggestUpgrade` and the
- * linked-project cache bypass the typed client). Projects therefore flow
- * through as plain JSON objects.
+ * Lenient project record. `projects list`/`create` parse the `/v1/projects` response via the raw
+ * HTTP client because the typed schema's `ref` pattern (20+ lowercase letters) rejects placeholder
+ * refs in test fixtures, so projects flow through as plain JSON objects.
  */
 export type LinkedProject = Readonly<Record<string, unknown>> & { readonly linked: boolean };
 
@@ -70,13 +61,8 @@ export function dashboardUrlForProfile(profile: string): string {
   return DASHBOARD_URLS[profile] ?? DASHBOARD_URLS.supabase!;
 }
 
-// ---------------------------------------------------------------------------
-// Tables. `renderGlamourTable` lays out cells directly, so literal `|` in a
-// project name flows through unescaped and matches the established glamour
-// byte output (the markdown `\|` escape is decoded back to `|` by glamour
-// upstream).
-// ---------------------------------------------------------------------------
-
+// `renderGlamourTable` lays out cells directly, so a literal `|` in a project name passes
+// through unescaped.
 const LIST_HEADERS = [
   "LINKED",
   "ORG ID",

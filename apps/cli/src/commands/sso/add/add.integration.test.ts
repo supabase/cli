@@ -42,18 +42,14 @@ interface SetupOpts {
   // Metadata-URL fetch responses keyed by URL prefix.
   metadataUrlResponse?: { status: number; body: string };
   /**
-   * Raw argv the handler sees via `Stdio.Stdio` — drives the pflag-faithful
-   * scan (`pflagArgvScan`) behind the required-flag check, the mutex check,
-   * and the value reconciliation. Defaults to a bare invocation with no optional
-   * flags present; tests that pass flags must pass matching argv here
-   * (usually via `cliArgsFor`), exactly as the real parser guarantees.
+   * Raw argv the handler sees via `Stdio.Stdio`, driving the pflag-faithful
+   * scan behind the required-flag, mutex, and value-reconciliation checks.
+   * Keep in sync with the flags passed to `ssoAdd` (usually via `cliArgsFor`).
    */
   cliArgs?: ReadonlyArray<string>;
   /**
-   * The Effect-parsed `--profile` value (`ProfileFlag`), which the real
-   * parser sets for any `--profile` it accepted. Tests whose `cliArgs` carry a
-   * `--profile` the parser would have consumed must provide it, exactly as the
-   * real CLI tree would.
+   * The Effect-parsed `--profile` value. Must be set whenever `cliArgs`
+   * carries a `--profile` the parser would have consumed.
    */
   profileFlag?: string;
 }
@@ -185,11 +181,9 @@ const defaultFlags = {
 };
 
 /**
- * Serializes a flags record into the raw argv the real CLI would have been
- * invoked with. The handler reconciles every value it acts on against a
- * pflag-faithful scan of this argv, so tests must keep the two consistent —
- * a flag passed in the record but absent from argv reconciles to "not set",
- * exactly as it would be for a real invocation.
+ * Serializes a flags record into matching raw argv, since the handler
+ * reconciles the values it acts on against a scan of argv, not the flags
+ * record itself.
  */
 function cliArgsFor(flags: typeof defaultFlags): ReadonlyArray<string> {
   const argv: string[] = ["sso", "add", "--type", flags.type];
@@ -256,8 +250,6 @@ describe("sso add integration", () => {
         if (Exit.isFailure(exit)) {
           const dump = JSON.stringify(exit.cause);
           expect(dump).toContain("SsoMutexFlagError");
-          // Established mutual-exclusion error template: group in
-          // declaration order, changed flags sorted alphabetically.
           expect(dump).toContain(
             "if any flags in the group [metadata-file metadata-url] are set none of the others can be; [metadata-file metadata-url] were all set",
           );
@@ -269,10 +261,6 @@ describe("sso add integration", () => {
   it.live(
     "mutex check: an explicit but empty --metadata-file= still conflicts with --metadata-url (changed, not truthy)",
     () => {
-      // `--metadata-file=` parses to an empty string, but cobra's
-      // `pflag.Changed` tracks that the flag was passed at all, not the
-      // resulting value — the mutex must trip on an explicit empty value,
-      // and with cobra's exact template, not the old hand-written message.
       const { layer } = setup({
         cliArgs: [
           "sso",
@@ -307,15 +295,6 @@ describe("sso add integration", () => {
   it.live(
     "mutex check: a bare --metadata-file followed by --metadata-url is not a violation, and the consumed token is the file",
     () => {
-      // pflag's `--flag arg` branch consumes the very next argv token as the
-      // value unconditionally (`flag.go:1013-1031`), so real cobra parses
-      // this as `metadata-file` receiving the literal value
-      // `"--metadata-url"` — `metadata-url` is never parsed as its own flag
-      // and stays unset. The raw-argv scan must reach the same conclusion:
-      // no mutex violation, and the handler must then behave exactly like Go
-      // — try to open a file literally named `--metadata-url` (Go: `failed
-      // to open metadata file: open --metadata-url: no such file or
-      // directory`), not silently succeed with no metadata at all.
       const { layer, api } = setup({
         cliArgs: ["sso", "add", "--type", "saml", "--metadata-file", "--metadata-url"],
       });
@@ -335,16 +314,6 @@ describe("sso add integration", () => {
   it.live(
     "reconciles project-ref consuming --metadata-file: fails ref validation like Go, never reads metadata",
     () => {
-      // `sso add --type saml --project-ref --metadata-file file.xml
-      // --metadata-url URL`: pflag hands `--metadata-file` to `--project-ref`
-      // as its value, `file.xml` becomes a positional, and only
-      // `metadata-url` is set — no mutex violation. The Effect parser instead
-      // drops the bare `--project-ref` and parses both metadata options, so
-      // without reconciliation the handler would read `file.xml` and POST
-      // `metadata_xml` — an API call that should never happen: ref
-      // validation must fail on the value `--metadata-file` before touching
-      // metadata. The reconciled handler must fail with the established
-      // invalid-ref error and make no API request.
       const { layer, api } = setup({
         cliArgs: [
           "sso",
@@ -380,13 +349,6 @@ describe("sso add integration", () => {
   it.live(
     "required emulation: a bare --domains consuming --type fails the required-flag check, no POST",
     () => {
-      // `sso add --domains --type saml`: pflag hands `--type` to `--domains`
-      // as its value and `saml` becomes a positional — `type` is never
-      // marked changed, so Go fails cobra's `ValidateRequiredFlags`
-      // (`command.go:1007`, `MarkFlagRequired("type")` at `cmd/sso.go:165`)
-      // before `RunE` and never POSTs. The Effect parser read `--type saml`
-      // as a normal flag, so the handler must re-derive the required check
-      // from the scan (PR #5974 review).
       const { layer, api } = setup({
         cliArgs: ["sso", "add", "--domains", "--type", "saml"],
       });
@@ -404,10 +366,6 @@ describe("sso add integration", () => {
   );
 
   it.live("required emulation: the required-flag error wins over a mutex violation", () => {
-    // cobra runs `ValidateRequiredFlags` (`command.go:1007`) before
-    // `ValidateFlagGroups` (`command.go:1010`), so when `--domains` swallows
-    // `--type` AND both metadata flags are set, Go reports the required-flag
-    // error, not the mutex template (binary-verified).
     const { layer, api } = setup({
       cliArgs: [
         "sso",
@@ -442,13 +400,6 @@ describe("sso add integration", () => {
   it.live(
     "workdir emulation: --workdir consuming --metadata-file fails at Go's chdir, never POSTs",
     () => {
-      // `sso add --type saml --project-ref <ref> --workdir --metadata-file
-      // missing.xml`: pflag binds `"--metadata-file"` to the persistent
-      // `--workdir` and the workdir change exits before the handler runs
-      // with zero HTTP traffic. The Effect parser refused the flag-shaped
-      // value (workdir stayed unset) and read `missing.xml` as metadata —
-      // without the workdir emulation the reconciliation discarded that
-      // metadata and POSTed a provider that should never be created.
       const { layer, api } = setup({
         cliArgs: [
           "sso",
@@ -486,9 +437,6 @@ describe("sso add integration", () => {
   it.live(
     "workdir emulation: the chdir failure wins over required-type and mutex violations",
     () => {
-      // The workdir change runs before required-flag and flag-group
-      // validation, so a missing workdir beats both the missing required
-      // `--type` and the metadata mutex.
       const { layer, api } = setup({
         cliArgs: [
           "sso",
@@ -525,8 +473,6 @@ describe("sso add integration", () => {
   );
 
   it.live("workdir emulation: an existing --workdir directory proceeds to the POST", () => {
-    // Go chdir's into an existing workdir and continues to `RunE` — the
-    // emulation must only reject what `os.Chdir` would reject.
     const { layer, api } = setup({
       cliArgs: ["sso", "add", "--type", "saml", "--workdir", tempRoot.current],
     });
@@ -538,9 +484,6 @@ describe("sso add integration", () => {
   });
 
   it.live("required emulation: a -t shorthand invocation POSTs normally", () => {
-    // The scan resolves `-t saml` to a `type` occurrence via the shorthand
-    // map (`cmd/sso.go:157` registers `VarP`), so a genuine shorthand
-    // invocation must never trip the emulated required-flag check.
     const { layer, api } = setup({
       cliArgs: ["sso", "add", "-t", "saml"],
     });
@@ -554,9 +497,6 @@ describe("sso add integration", () => {
   it.live(
     "required emulation: -t saml plus a consumed --type still POSTs, like pflag (type IS changed)",
     () => {
-      // `-t saml --domains --type saml`: pflag sets `type` via the shorthand
-      // first, then `--domains` swallows the long `--type` token — the flag
-      // is changed, so Go proceeds and POSTs with `domains: ["--type"]`.
       const { layer, api } = setup({
         cliArgs: ["sso", "add", "-t", "saml", "--domains", "--type", "saml"],
       });
@@ -574,13 +514,6 @@ describe("sso add integration", () => {
   it.live(
     "required emulation: a bare --domains consuming -t fails the required-flag check, no POST",
     () => {
-      // `sso add --domains -t saml` (and `-t=saml`) fails the required-flag
-      // check — pflag hands the `-t` token to `--domains` as its value, so
-      // `type` is never marked changed and `saml` becomes a positional (the
-      // `add` command has no arity validation and accepts it). The Effect
-      // parser read `-t saml` as a normal flag, so without the scan's
-      // consumed-shorthand tracking the handler would POST `type: "saml"`,
-      // `domains: ["-t"]`.
       const { layer, api } = setup({
         cliArgs: ["sso", "add", "--domains", "-t", "saml"],
       });
@@ -600,12 +533,6 @@ describe("sso add integration", () => {
   it.live(
     "invalid-value emulation: a later invalid --type occurrence fails with pflag's shorthand-labelled error, no POST",
     () => {
-      // `--type saml --type bogus`: the Effect parser resolves repeats
-      // first-wins and never validates the rest, so it parses; pflag Sets
-      // every occurrence in order and rejects `bogus` at ParseFlags —
-      // before every hook, the required-flag check, and the POST
-      // (binary-verified, PR #5974 review round 4). pflag names the flag
-      // with its shorthand (`-t, --type`, errors.go:39-41).
       const { layer, api } = setup({
         cliArgs: ["sso", "add", "--type", "saml", "--type", "bogus"],
       });
@@ -627,12 +554,6 @@ describe("sso add integration", () => {
   it.live(
     "invalid-value emulation: a later inline-empty --skip-url-validation= fails like pflag, no POST",
     () => {
-      // `--skip-url-validation=false --skip-url-validation=`: the Effect
-      // parser resolves repeats first-wins and never validates the second
-      // occurrence, so it parses; pflag hands `""` to strconv.ParseBool
-      // (`flag.go:1014-1016`) and aborts ParseFlags before every hook and
-      // the POST — only a *bare* repeat means NoOptDefVal true
-      // (binary-verified, PR #5974 review round 5).
       const { layer, api } = setup({
         cliArgs: [
           "sso",
@@ -669,10 +590,6 @@ describe("sso add integration", () => {
   it.live(
     "value reconciliation: repeated --skip-url-validation resolves last-wins like pflag and skips validation",
     () => {
-      // `--skip-url-validation=false --skip-url-validation` ends true for
-      // pflag (Sets every occurrence) but false for the Effect parser
-      // (first-wins) — Go skips URL validation and POSTs the non-HTTPS URL
-      // (binary-verified, PR #5974 review round 4).
       const { layer, api } = setup({
         cliArgs: [
           "sso",
@@ -702,9 +619,6 @@ describe("sso add integration", () => {
   it.live(
     "value reconciliation: repeated --name-id-format resolves last-wins like pflag in the POST body",
     () => {
-      // pflag's Set runs per occurrence, so the last one wins; the Effect
-      // parser resolved first-wins (binary-verified, PR #5974 review
-      // round 4).
       const transient = "urn:oasis:names:tc:SAML:2.0:nameid-format:transient" as const;
       const persistent = "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent";
       const { layer, api } = setup({
@@ -729,12 +643,6 @@ describe("sso add integration", () => {
   );
 
   it.live("missing-value emulation: a trailing bare --domains fails pflag parse, no POST", () => {
-    // Binary-verified: `sso add --type saml --domains` errors
-    // `flag needs an argument: --domains` — pflag fails `ParseFlags` (cobra
-    // `command.go:919`) before the required-flag and mutex validations and
-    // Go never POSTs. The Effect parser accepts the argv (the flag parses
-    // as unset), so the handler must reject it before any side effect
-    // (PR #5974 review round 3).
     const { layer, api } = setup({
       cliArgs: ["sso", "add", "--type", "saml", "--domains"],
     });
@@ -753,12 +661,6 @@ describe("sso add integration", () => {
   it.live(
     "reconciles a bare --domains consuming --metadata-file: POSTs the domain pflag saw, no metadata",
     () => {
-      // `--domains --metadata-file x.xml`: pflag appends the literal string
-      // `--metadata-file` to the domains slice and `x.xml` becomes a
-      // positional — `metadata-file` is never set. The Effect parser drops
-      // the bare `--domains` and parses `--metadata-file x.xml` instead, so
-      // without reconciliation the request body would carry `metadata_xml`
-      // and no domains — the opposite of the established body.
       const { layer, api } = setup({
         cliArgs: ["sso", "add", "--type", "saml", "--domains", "--metadata-file", "x.xml"],
       });
@@ -776,11 +678,6 @@ describe("sso add integration", () => {
   it.live(
     "reconciles a bare --metadata-url consuming --name-id-format: validates the consumed token as the URL",
     () => {
-      // `--metadata-url --name-id-format urn:…`: pflag hands
-      // `--name-id-format` to `--metadata-url` as its value and the urn
-      // becomes a positional — `name-id-format` is never set. Go then fails
-      // URL validation on the literal string `--name-id-format`; the body
-      // must not pick up the parsed name-id-format either.
       const { layer, api } = setup({
         cliArgs: [
           "sso",
@@ -802,10 +699,6 @@ describe("sso add integration", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const dump = JSON.stringify(exit.cause);
-          // URL validation runs against the consumed token, not the parsed
-          // Option — it is not a valid HTTPS URL, so the command fails before
-          // any request, like Go. URL implementations do not consistently
-          // include the rejected input in their exception text.
           expect(dump).toContain("SsoAddMetadataFileError");
           expect(dump).toContain("Use --skip-url-validation to suppress this error");
         }
@@ -815,9 +708,7 @@ describe("sso add integration", () => {
   );
 
   it.live("falls back to the parsed domains when the scan's raw values are malformed CSV", () => {
-    // Unreachable through the real CLI (the parser rejects malformed CSV at
-    // parse time), but the reconciliation must not crash if the consumed
-    // token is un-parseable — it keeps the parser's values instead.
+    // Unreachable via the real CLI; only tests that reconciliation doesn't crash on malformed input.
     const { layer, api } = setup({
       cliArgs: ["sso", "add", "--type", "saml", "--domains", '--x"y'],
     });
@@ -831,7 +722,6 @@ describe("sso add integration", () => {
   it.live("reads metadata file and sends as metadata_xml", () => {
     const path = join(tempRoot.current, "good.xml");
     writeFileSync(path, '<?xml version="1.0"?><md/>');
-    // A single metadata flag on the raw argv must sail through the mutex scan.
     const { layer, api } = setup({
       cliArgs: ["sso", "add", "--type", "saml", "--metadata-file", path],
     });
@@ -857,7 +747,6 @@ describe("sso add integration", () => {
   });
 
   it.live("sends metadata_url verbatim when --skip-url-validation", () => {
-    // A single metadata flag on the raw argv must sail through the mutex scan.
     const { layer, api } = setup({
       cliArgs: [
         "sso",
@@ -1068,17 +957,14 @@ describe("sso add integration", () => {
       if (Exit.isFailure(exit)) {
         const dump = JSON.stringify(exit.cause);
         expect(dump).toContain("SsoAddMetadataFileError");
-        // Error tail is `… Use --skip-url-validation to suppress this error`
-        // (no trailing period).
         expect(dump).toContain("Use --skip-url-validation to suppress this error");
       }
     }).pipe(Effect.provide(layer));
   });
 
-  // Non-UTF-8 body coverage lives in `sso.saml.unit.test.ts` — the test runtime
-  // here passes the response body through `Response`'s constructor which always
-  // emits valid UTF-8 bytes regardless of the input string, so a byte-level
-  // invalid sequence cannot be expressed without bypassing the Response API.
+  // Non-UTF-8 body coverage lives in `sso.saml.unit.test.ts`: this runtime's
+  // `Response` constructor always emits valid UTF-8, so that case can't be
+  // expressed here.
 
   it.live("malformed metadata URL surfaces invalid URI error", () => {
     const flags = {
@@ -1125,13 +1011,6 @@ describe("sso add integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // -------------------------------------------------------------------------
-  // Profile emulation: the effective `--profile`/`SUPABASE_PROFILE` is
-  // resolved immediately before the workdir change — it decides which API
-  // host receives the POST and aborts the command when the profile cannot
-  // be loaded.
-  // -------------------------------------------------------------------------
-
   const writeProfileYaml = (name: string, apiUrl: string): string => {
     const path = join(tempRoot.current, name);
     writeFileSync(
@@ -1165,13 +1044,6 @@ describe("sso add integration", () => {
   it.live(
     "profile emulation: --domains consuming --profile POSTs to the env profile's host, not the parsed file's",
     () => {
-      // `sso add --type saml --domains --profile alternate.yml`: pflag hands
-      // `--profile` to `--domains` and never marks profile changed, so viper
-      // falls to SUPABASE_PROFILE — while the Effect parser read
-      // `alternate.yml` as the profile and built `CommandSettings` from it.
-      // Binary-verified (the demonstrated divergent input, PR #5974 round 7):
-      // Go POSTs `{"domains":["--profile"],"type":"saml"}` to the env
-      // profile's api_url; the parsed file's host receives nothing.
       const envProfile = writeProfileYaml("env-profile.yml", "http://reconciled.example");
       const alternate = writeProfileYaml("alternate.yml", "http://alternate.example");
       const restoreEnv = withProfileEnv(envProfile);
@@ -1189,8 +1061,6 @@ describe("sso add integration", () => {
         expect((posts[0]?.body as { domains?: ReadonlyArray<string> })?.domains).toEqual([
           "--profile",
         ]);
-        // The linked-project cache fill targets the reconciled host too —
-        // it uses the process-wide profile.
         expect(cache.cachedApiUrl).toBe("http://reconciled.example");
       }).pipe(Effect.ensuring(restoreEnv), Effect.provide(layer));
     },
@@ -1199,10 +1069,6 @@ describe("sso add integration", () => {
   it.live(
     "profile emulation: --profile consuming a flag-shaped token fails LoadProfile, never POSTs",
     () => {
-      // `sso add --type saml --profile --metadata-url u`: pflag binds
-      // `"--metadata-url"` as the profile value; viper's extension gate
-      // rejects it before any request (binary-verified: `failed to read
-      // profile: Unsupported Config Type ""`).
       const restoreEnv = withProfileEnv(undefined);
       const { layer, api } = setup({
         cliArgs: [
@@ -1234,9 +1100,6 @@ describe("sso add integration", () => {
   );
 
   it.live("profile emulation: repeated --profile resolves last-wins, matching pflag", () => {
-    // `--profile a.yml --profile b.yml`: the Effect parser is first-wins (the
-    // config layer resolved a.yml) while pflag Sets every occurrence and ends
-    // on b.yml — binary-verified: Go POSTs to b.yml's api_url.
     const first = writeProfileYaml("first.yml", "http://first.example");
     const second = writeProfileYaml("second.yml", "http://second.example");
     const restoreEnv = withProfileEnv(undefined);
@@ -1257,9 +1120,6 @@ describe("sso add integration", () => {
   it.live(
     "profile emulation: the LoadProfile failure wins over the workdir, required-type, and mutex checks",
     () => {
-      // Go loads the profile BEFORE ChangeWorkDir (`cmd/root.go:98-105` —
-      // "Load profile before changing workdir"), and both run before
-      // `ValidateRequiredFlags` and `ValidateFlagGroups`.
       const restoreEnv = withProfileEnv(undefined);
       const { layer, api } = setup({
         cliArgs: [
@@ -1298,10 +1158,6 @@ describe("sso add integration", () => {
   it.live(
     "profile emulation: an agreeing --profile keeps the config layer's resolution (no override)",
     () => {
-      // When the scan and the parser saw the same token (every normal
-      // invocation), the reconciliation resolves to `none` and the POST
-      // targets `CommandSettings.apiUrl` — the layer already loaded exactly
-      // the profile Go would.
       const agreed = writeProfileYaml("agreed.yml", "http://agreed.example");
       const restoreEnv = withProfileEnv(undefined);
       const { layer, api } = setup({
@@ -1312,8 +1168,6 @@ describe("sso add integration", () => {
         yield* ssoAdd(defaultFlags);
         const posts = api.requests.filter((r) => r.method === "POST");
         expect(posts.length).toBe(1);
-        // The mock layer's apiUrl, NOT agreed.yml's — the layer is authoritative
-        // when there is no scan/parser disagreement.
         expect(posts[0]?.url).toBe(
           `${DEFAULT_API_URL}/v1/projects/${VALID_REF}/config/auth/sso/providers`,
         );

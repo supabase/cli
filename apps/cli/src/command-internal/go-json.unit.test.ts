@@ -76,12 +76,6 @@ describe("encodeGoJsonCompact", () => {
     expect(encodeGoJsonCompact(null)).toBe("null");
   });
 
-  // `JSON.stringify(-0)` collapses to `"0"` (ECMA-262 prints no sign for negative
-  // zero), but `encoding/json` marshals a `float64` negative zero as `-0` —
-  // reachable through `gen bearer-jwt --payload`'s `json.Unmarshal` into a real Go
-  // map. Verified against the real binary (CLI-1961 Codex review finding): the
-  // compiled Go CLI's signed token payload for `--payload '{"extra":-0}'` literally
-  // contains `"extra":-0`.
   it("preserves negative zero's sign, unlike plain JSON.stringify", () => {
     expect(encodeGoJsonCompact({ extra: -0 })).toBe('{"extra":-0}');
     expect(encodeGoJsonCompact({ extra: Number("-1e-10000") })).toBe('{"extra":-0}');
@@ -89,10 +83,6 @@ describe("encodeGoJsonCompact", () => {
   });
 
   it("iterates a Map in true insertion order, unlike a plain object with integer-like keys", () => {
-    // A plain object always reorders integer-like string keys ("2", "10") into ascending
-    // NUMERIC order on enumeration, regardless of insertion order — a `Map` does not, which
-    // is exactly why `go-output.encoders.ts`'s `sortKeysDeep` builds one to carry a
-    // lexicographic sort through to this walker intact (CLI-1961 Codex review finding).
     const map = new Map<string, unknown>([
       ["10", "a"],
       ["2", "b"],
@@ -107,8 +97,6 @@ describe("goJsonKindName", () => {
     expect(goJsonKindName(1)).toBe("number");
     expect(goJsonKindName("s")).toBe("string");
     expect(goJsonKindName(true)).toBe("bool");
-    // Never reachable from real JSON.parse output (every call site already excludes
-    // null/array/object before calling this) — exercised directly for completeness.
     expect(goJsonKindName(undefined)).toBe("value");
   });
 });

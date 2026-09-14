@@ -17,14 +17,12 @@ import {
 import type { BranchesDeleteFlags } from "./delete.command.ts";
 import { branchesDelete } from "./delete.handler.ts";
 
-// V1DeleteABranchInput.branch_id_or_ref is a oneOf [project-ref, uuid] union.
-// A 20-lowercase project ref matches BOTH branches → schema rejects.
-// Tests pass a v4 UUID so the schema picks exactly one branch.
+// `branch_id_or_ref` is a oneOf [project-ref, uuid]; a 20-lowercase ref would match both shapes
+// and get rejected, so tests use a v4 UUID to pick exactly one.
 const BRANCH_UUID = "11111111-1111-4111-8111-111111111111";
 
-// V1GetABranchConfigOutput body — used by the resolver's UUID path. The
-// returned `ref` becomes the `branch_id_or_ref` for the DELETE call, so it
-// must be UUID-shaped.
+// Used by the resolver's UUID path; the returned `ref` becomes `branch_id_or_ref` for the DELETE
+// call, so it must be UUID-shaped.
 const BRANCH_CONFIG = {
   ref: BRANCH_UUID,
   postgres_version: "15",
@@ -146,9 +144,8 @@ describe("branches delete integration", () => {
       const PARENT_REF = "parentprojectrefxxxx";
       const BRANCH_OWN_REF = "branchownrefyyyyyyyy";
       const RESOLVED_BRANCH_UUID = "22222222-2222-4222-8222-222222222222";
-      // `V1GetABranchOutput` body for the name lookup — its own `project_ref`
-      // becomes `branch_id_or_ref` for the subsequent DELETE call, so it must
-      // be UUID-shaped (see the oneOf note on `BRANCH_UUID` above).
+      // Its own `project_ref` becomes `branch_id_or_ref` for the subsequent DELETE call, so it
+      // must be UUID-shaped (see the oneOf note on `BRANCH_UUID` above).
       const NAME_LOOKUP_BRANCH = {
         id: "33333333-3333-4333-8333-333333333333",
         name: "my-feature",
@@ -179,10 +176,9 @@ describe("branches delete integration", () => {
         projectId: Option.none(),
       });
       const layer = buildTestRuntime({ out, api, cliSettings });
-      // Simulate the state left by `supabase link <branch>`: project-ref holds
-      // the branch's OWN ref, but linked-project.json still holds the real
-      // parent — `branches delete` must resolve the parent for the name
-      // lookup, not the branch ref sitting in project-ref.
+      // Simulates the state left by `supabase link <branch>`: project-ref holds the branch's own
+      // ref, but linked-project.json still holds the real parent — `branches delete` must
+      // resolve the parent for the name lookup, not the branch ref sitting in project-ref.
       mkdirSync(join(tempRoot.current, "supabase", ".temp"), { recursive: true });
       writeFileSync(join(tempRoot.current, "supabase", ".temp", "project-ref"), BRANCH_OWN_REF);
       writeFileSync(
@@ -200,9 +196,6 @@ describe("branches delete integration", () => {
           (r) => r.method === "GET" && r.url.includes("/branches/my-feature"),
         );
         expect(lookup?.url).toContain(`/v1/projects/${PARENT_REF}/branches/my-feature`);
-        // The subsequent branch-scoped DELETE is unaffected — it uses whatever
-        // ref the name lookup resolved to, not the parent and not the stale
-        // branch-own ref from project-ref.
         const del = api.requests.find((r) => r.method === "DELETE");
         expect(del?.url).toContain(`/v1/branches/${RESOLVED_BRANCH_UUID}`);
       }).pipe(Effect.provide(layer));

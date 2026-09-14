@@ -237,7 +237,7 @@ describe("domains get integration", () => {
     const { layer, out } = setup({ goOutput: "yaml" });
     return Effect.gen(function* () {
       yield* domainsGet(baseFlags);
-      // yaml.v3 lowercases the whole field name (CLI-1975).
+      // yaml.v3 lowercases the whole field name.
       expect(out.stdoutText).toContain("customhostname: shop.acme.dev");
     }).pipe(Effect.provide(layer));
   });
@@ -246,7 +246,7 @@ describe("domains get integration", () => {
     const { layer, out } = setup({ goOutput: "toml" });
     return Effect.gen(function* () {
       yield* domainsGet(baseFlags);
-      // BurntSushi emits PascalCase field names (CLI-1975).
+      // BurntSushi emits PascalCase field names.
       expect(out.stdoutText).toContain('CustomHostname = "shop.acme.dev"');
     }).pipe(Effect.provide(layer));
   });

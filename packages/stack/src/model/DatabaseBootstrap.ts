@@ -42,9 +42,8 @@ export class DatabaseBootstrapError extends Data.TaggedError("DatabaseBootstrapE
 }> {}
 
 /**
- * The bootstrap intentionally knows nothing about a PostgreSQL client. A
- * native or container runtime supplies this boundary from its already-ready
- * database connection.
+ * The bootstrap knows nothing about a PostgreSQL client; a native or container runtime
+ * supplies this boundary from its already-ready database connection.
  */
 export interface DatabaseTransaction {
   readonly execute: (

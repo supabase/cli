@@ -24,23 +24,19 @@ const SHORT_E2E_TIMEOUT_MS = 30_000;
 const LIFECYCLE_OVERHEAD_MS = 90_000;
 
 /**
- * `--exclude` values for the 3 heaviest/least-relevant services — same intent
- * as the reduced-stack `start` calls in the sibling Docker e2e suites (Studio's
- * Next.js build and the Logflare/Vector logging pipeline). The legacy service
- * catalog uses `logflare` as the exclusion key for that logging service.
+ * `--exclude` values for the 3 heaviest, least-relevant services (same set the sibling Docker
+ * e2e suites use): Studio's Next.js build and the Logflare/Vector logging pipeline. The service
+ * catalog's exclusion key for the logging service is `logflare`.
  */
 const EXCLUDED_SERVICE_KEYS: ReadonlySet<string> = new Set(["studio", "logflare", "vector"]);
 
 /**
- * Services the running-container assertion below must NOT expect to be running, even though
+ * Services the running-container assertion below must not expect to be running, even though
  * they are neither in `EXCLUDED_SERVICE_KEYS` nor `--exclude`d on the `start` call itself:
- *  - `supavisor` — `db.pooler.enabled` defaults to `false` (`packages/config/src/db.ts`,
- *    `defaultPoolerEnabled`), and `runSupabase(["init"], ...)` above writes a config.toml
- *    with no override, so it's genuinely disabled on this test's stack, not merely unasserted.
- *  - `imgproxy` — gated on `storage.image_transformation.enabled` (`start.gates.ts:169`),
- *    which defaults to `false`/absent; `runSupabase(["init"], ...)` writes a config.toml
- *    with `[storage.image_transformation]` still commented out
- *    (`project-init.templates.ts:132-133`), so imgproxy is genuinely disabled on this test's stack.
+ *  - `supavisor` — `db.pooler.enabled` defaults to `false`, and this test's `init`-written
+ *    config.toml has no override, so it's genuinely disabled, not merely unasserted.
+ *  - `imgproxy` — gated on `storage.image_transformation.enabled`, which the same config.toml
+ *    leaves commented out (defaulting to disabled).
  */
 const NEVER_RUNNING_SERVICE_KEYS: ReadonlySet<string> = new Set(["supavisor", "imgproxy"]);
 
@@ -51,19 +47,15 @@ function splitNonEmptyLines(text: string): ReadonlyArray<string> {
     .filter((line) => line.length > 0);
 }
 
-// `start` is the one local-dev-stack command whose correctness genuinely
-// depends on a real Docker daemon — real label filtering and real container
-// lifecycle, not just CLI exit codes. `describe` gates the
-// "we're in a configured e2e runner" signal (see stop.e2e.test.ts's own
-// comment for why this, not a Management-API gate, is correct here). See
-// AGENTS.md's "e2e tests" section for the full convention.
+// `start`'s correctness genuinely depends on a real Docker daemon — real label filtering and
+// container lifecycle, not just CLI exit codes. See `stop.e2e.test.ts` and AGENTS.md's "e2e
+// tests" section for the runner-gating convention.
 describe("supabase start (e2e)", () => {
   let projectDir: string | undefined;
 
   afterEach(async () => {
     if (projectDir === undefined) return;
-    // Best-effort cleanup even if an assertion above failed mid-lifecycle — a
-    // leaked local stack would otherwise pollute the CI runner for later jobs.
+    // Best-effort: a leaked local stack would otherwise pollute the CI runner for later jobs.
     await runSupabase(["stop", "--no-backup"], {
       cwd: projectDir,
     }).catch(() => undefined);
@@ -76,10 +68,8 @@ describe("supabase start (e2e)", () => {
     { timeout: START_TIMEOUT_MS * 2 + LIFECYCLE_OVERHEAD_MS },
     async () => {
       projectDir = await mkdtemp(path.join(tmpdir(), "sb-start-e2e-"));
-      // No `project_id` override, so the cli resolves it from the workdir
-      // basename (see docker-ids.ts). Sanitizing is a no-op for a
-      // `mkdtemp`-generated basename (already alphanumeric/`-`), but mirrors
-      // the port's actual resolution rather than assuming that stays true.
+      // No `project_id` override, so the CLI resolves it from the workdir basename. Sanitizing
+      // is currently a no-op for a `mkdtemp` basename, but mirrors the CLI's actual resolution.
       const projectId = sanitizeProjectId(path.basename(projectDir));
       const projectFilter = `label=com.supabase.cli.project=${projectId}`;
       const dbContainerId = localDbContainerId(projectId);
@@ -167,10 +157,6 @@ describe("supabase start (e2e)", () => {
       ]);
       expect(persistedData.trim()).toBe(persistedValue);
 
-      // The real Docker daemon must agree with the CLI's own exit code: every
-      // non-excluded service is actually running under this project's label,
-      // AND every excluded service is genuinely absent — not merely reported
-      // "stopped" by a status diff.
       const { stdout: psOutput } = await execFileAsync("docker", [
         "ps",
         "--filter",
@@ -262,10 +248,9 @@ describe("supabase start (e2e)", () => {
     },
   );
 
-  // The health watch inspects and dumps logs by container NAME against a real
-  // daemon, and derives recovery advice from a real container's real log bytes.
-  // Neither is observable through the in-process mocks, so this reproduces
-  // supabase/cli#5952 for real: a locally cached image that cannot be executed.
+  // The health watch inspects and dumps logs by container name against a real daemon and derives
+  // recovery advice from real log bytes — not observable through in-process mocks. Reproduces
+  // supabase/cli#5952: a locally cached image that cannot be executed.
   test(
     "names the container and its image when a cached image cannot be executed",
     { timeout: START_TIMEOUT_MS + LIFECYCLE_OVERHEAD_MS },
@@ -273,8 +258,8 @@ describe("supabase start (e2e)", () => {
       projectDir = await mkdtemp(path.join(tmpdir(), "sb-start-e2e-exec-"));
       const projectId = sanitizeProjectId(path.basename(projectDir));
       const mailpitContainer = serviceContainerName("inbucket", projectId);
-      // The exact tag `start` resolves for Mailpit, so its already-cached check
-      // finds this deliberately broken build and never reaches a registry.
+      // The exact tag `start` resolves for Mailpit, so its already-cached check finds this
+      // broken build without reaching a registry.
       const mailpitImage = getRegistryImageUrl(dockerfileServiceImage("mailpit"));
 
       const init = await runSupabase(["init"], {
@@ -312,7 +297,6 @@ describe("supabase start (e2e)", () => {
         // The container's established name is "inbucket", not the id `docker create` returns.
         expect(start.stderr).toContain(`${mailpitContainer} container logs:`);
         expect(start.stderr).toContain(`${mailpitContainer} container is not ready`);
-        // ...and the advice names that container's actual resolved image.
         expect(start.stderr).toContain(`${mailpitContainer}'s image ${mailpitImage}`);
         expect(start.stderr).toContain(`image rm -f ${mailpitImage}`);
       } finally {

@@ -1,3 +1,5 @@
+import { NodeHttpClient } from "@effect/platform-node";
+import { HttpClient } from "effect/unstable/http";
 import {
   Cause,
   Context,
@@ -24,7 +26,7 @@ import {
 import type { StackStateStore } from "../state/StackStateStore.ts";
 import { resolveStackPaths } from "../state/Paths.ts";
 import { redactKnownSecrets } from "../state/SecretStore.ts";
-import type { PersistedStackState } from "../state/StackState.ts";
+import { privateBindingKey, type PersistedStackState } from "../state/StackState.ts";
 import type { PersistedSecretValues } from "../state/StackState.ts";
 import type { StackId } from "../public/StackId.ts";
 import type { StackRuntime } from "../public/Runtime.ts";
@@ -64,6 +66,7 @@ import {
 import type { NativeProcessSpec } from "./NativeProcess.ts";
 import {
   resolveContainerResolutionFor,
+  privateBindingIntentsFor,
   runtimeSpecFor,
   validatePrivateAssignments,
   validateWorkloadRuntimeInputs,
@@ -340,12 +343,17 @@ const bootstrapContent =
   typeof SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE === "string"
     ? Effect.succeed(SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE)
     : Effect.tryPromise({
-        try: () =>
-          import("../functions/serve-main-bundler.ts").then(({ bundleServeMainTemplate }) =>
-            bundleServeMainTemplate(),
-          ),
+        try: () => import("../functions/serve-main-bundler.ts"),
         catch: (cause) => preparationError("Unable to bundle functions bootstrap", cause),
-      });
+      }).pipe(
+        Effect.flatMap(({ bundleServeMainTemplate }) =>
+          bundleServeMainTemplate.pipe(
+            Effect.mapError((cause) =>
+              preparationError("Unable to bundle functions bootstrap", cause),
+            ),
+          ),
+        ),
+      );
 
 const mapDriverError = (
   key: Pick<RuntimeWorkloadKey, "stackId" | "workloadId">,
@@ -436,18 +444,16 @@ export const makeProductionRuntime = (
     const fetchJson: RuntimeJsonFetcher =
       options.fetchJson ??
       ((url) =>
-        // oxlint-disable effecttsgo/async-function -- production fetch leaf owns AbortSignal.
-        // oxlint-disable effecttsgo/global-fetch-in-effect -- production fetch leaf is the network boundary.
-        Effect.tryPromise({
-          try: async (signal) => {
-            const response = await fetch(url, { signal });
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-            return await response.json();
-          },
-          catch: (cause) => preparationError("Unable to fetch Auth OIDC metadata", cause),
-        }));
-    // oxlint-enable effecttsgo/async-function
-    // oxlint-enable effecttsgo/global-fetch-in-effect
+        Effect.gen(function* () {
+          const client = yield* HttpClient.HttpClient;
+          const response = yield* HttpClient.followRedirects(client, 20).get(url);
+          if (response.status < 200 || response.status >= 300)
+            return yield* preparationError(`HTTP ${response.status}`);
+          return yield* response.json;
+        }).pipe(
+          Effect.mapError((cause) => preparationError("Unable to fetch Auth OIDC metadata", cause)),
+          Effect.provide(NodeHttpClient.layerNodeHttp),
+        ));
     const inputOwner = yield* makeRuntimeInputOwner({
       stateRoot: options.stateRoot,
       stackId: options.stackId,
@@ -786,9 +792,11 @@ export const makeProductionRuntime = (
           yield* Ref.set(hostRoute, route);
         }
         if (input.state.runtime.kind === "native") {
+          const usableListeners = new Set(input.plan.routes.map(({ listener }) => listener));
           for (const assignment of input.state.ports) {
             const listener = input.definition.listeners[assignment.field];
             if (
+              !usableListeners.has(assignment.field) ||
               !listener.enabled ||
               (listener.port === "automatic"
                 ? assignment.intent !== "automatic"
@@ -807,12 +815,17 @@ export const makeProductionRuntime = (
               ),
             );
           }
-          for (const assignment of input.state.privatePorts)
+          const requestedPrivate = new Set(
+            privateBindingIntentsFor(input.plan, candidateState).map(privateBindingKey),
+          );
+          for (const assignment of input.state.privatePorts) {
+            if (!requestedPrivate.has(privateBindingKey(assignment))) continue;
             yield* checkHostPort(
               "127.0.0.1",
               assignment.port,
               `${assignment.workloadId}:${assignment.binding}`,
             );
+          }
           yield* checkNativeDatabaseLockEvidence(
             fileSystem,
             pathService.join(paths.data, "database", "postmaster.pid"),

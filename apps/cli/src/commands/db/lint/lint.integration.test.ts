@@ -81,8 +81,8 @@ function mockConnection(opts: {
         extensionExists: () => Effect.succeed(false),
         copyToCsv: () => Effect.succeed(new Uint8Array()),
         queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
-        // Record at run-time (inside the effect), not call-time, so a finalizer
-        // built with `session.exec("rollback")` is logged only when it runs.
+        // Recorded at run-time (inside `Effect.suspend`), so a finalizer's
+        // `exec("rollback")` is only logged when it actually runs.
         exec: (sql: string) =>
           Effect.suspend(() => {
             execs.push(sql);
@@ -117,8 +117,7 @@ function mockConnection(opts: {
             }
             return Effect.succeed([]);
           }),
-        // A migration file's statements arrive as one batch; replay them through
-        // `exec`/`query` so this suite's recordings and failure injection still apply.
+        // Replays a batch through exec/query so recordings and failure injection apply.
         execBatch: (statements) => sequentialExecBatch(session)(statements),
       };
       return Effect.succeed(session);
@@ -147,9 +146,8 @@ function mockProjectRef() {
     resolve: () => Effect.succeed(VALID_REF),
     resolveForLink: () => Effect.succeed(VALID_REF),
     resolveOptional: () => Effect.succeed(Option.some(VALID_REF)),
-    // Gives an explicit `--project-ref` flag top precedence, same as Go's
-    // `flags.LoadProjectRef` — mirrors the real resolver so a test can prove the
-    // flag (not just the hardcoded fallback) drives the linked ref.
+    // An explicit `--project-ref` flag takes top precedence, mirroring the real
+    // resolver.
     loadProjectRef: (flagValue: Option.Option<string>) =>
       Effect.sync(() => {
         calls.push("loadProjectRef");
@@ -231,7 +229,6 @@ describe("db lint", () => {
       expect(out.stdoutText).toBe(expected);
       expect(out.stderrText).toContain("Connecting to local database...");
       expect(out.stderrText).toContain("Linting schema: public");
-      // Begin / enable extension / rollback all ran on the session.
       expect(connection.execs).toEqual(["begin", ENABLE_PGSQL_CHECK, "rollback"]);
     }).pipe(Effect.provide(layer));
   });
@@ -243,7 +240,6 @@ describe("db lint", () => {
     });
     return Effect.gen(function* () {
       yield* dbLint(flags());
-      // ListUserSchemas ran with the managed-schemas array bound as $1.
       expect(Array.isArray(connection.listParams?.[0])).toBe(true);
       expect(connection.linted).toEqual(["public", "private"]);
       expect(out.stderrText).toContain("Linting schema: private");
@@ -329,7 +325,6 @@ describe("db lint", () => {
           );
         }
       }
-      // The result is still printed to stdout before the non-zero exit.
       expect(out.stdoutText).toContain("never read variable");
     }).pipe(Effect.provide(layer));
   });
@@ -356,8 +351,6 @@ describe("db lint", () => {
   });
 
   it.live("does not trigger --fail-on warning when --level error filters the warning out", () => {
-    // The --level filter runs before the fail-on check, so a warning removed
-    // by --level error cannot trigger --fail-on warning.
     const { layer, out } = setup({ checkRows: { public: [checkRow("f1", [WARNING_ISSUE])] } });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -375,7 +368,6 @@ describe("db lint", () => {
   });
 
   it.live("rejects --db-url together with --linked (via args Changed detection)", () => {
-    // Both flags present in args → mutual exclusion error (sorted set [db-url linked]).
     const { layer } = setup({ args: ["--db-url=postgres://x", "--linked"] });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(dbLint(flags({ dbUrl: Option.some("postgres://x") })));
@@ -456,22 +448,18 @@ describe("db lint", () => {
   });
 
   it.live("lints multiple pre-parsed schemas from a comma-separated --schema value", () => {
-    // CSV parsing of `public,private` into ["public", "private"] now happens at
-    // Flag.mapTryCatch parse time (before the handler). The handler receives the
-    // already-split list and uses it directly.
+    // CSV parsing happens at `Flag.mapTryCatch` parse time; the handler receives the
+    // already-split list directly.
     const { layer, connection } = setup({
       checkRows: { public: [], private: [] },
     });
     return Effect.gen(function* () {
       yield* dbLint(flags({ schema: ["public", "private"] }));
-      // Both schemas linted — the handler no longer does CSV splitting itself.
       expect(connection.linted).toEqual(["public", "private"]);
     }).pipe(Effect.provide(layer));
   });
 
   it.live("writes the linked-project cache for --linked (Go PersistentPostRun)", () => {
-    // --linked via args (Changed-based detection) routes to the linked branch and
-    // writes the linked-project cache.
     const { layer, projectRef, cache } = setup({
       isLocal: false,
       checkRows: { public: [] },
@@ -479,16 +467,14 @@ describe("db lint", () => {
     });
     return Effect.gen(function* () {
       yield* dbLint(flags({ schema: ["public"] }));
-      // Resolved via the non-prompting load and cached for telemetry grouping.
       expect(projectRef.calls).toContain("loadProjectRef");
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
   it.live("lints the project given via --project-ref, overriding the workdir's own ref", () => {
-    // The fake resolver's own fallback (VALID_REF) represents whatever
-    // the workdir would resolve to absent the flag (e.g. .temp/project-ref) —
-    // the flag must win over it and drive the cached ref.
+    // `VALID_REF` stands in for whatever the workdir would resolve to absent the
+    // flag; the flag must win.
     const FLAG_REF = "flagflagflagflagflag";
     const { layer, cache } = setup({
       isLocal: false,
@@ -507,14 +493,11 @@ describe("db lint", () => {
     const { layer, cache } = setup({ checkRows: { public: [] } });
     return Effect.gen(function* () {
       yield* dbLint(flags({ schema: ["public"] }));
-      // The cache is only written when a ref is known.
       expect(cache.cached).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 
   it.live("rejects --project-ref on the default local target", () => {
-    // lint defaults to local when no target flag is set — the guard must fire
-    // from the flag alone, with no explicit --local/--db-url needed.
     const FLAG_REF = "flagflagflagflagflag";
     const { layer, connection, cache } = setup({ checkRows: { public: [] } });
     return Effect.gen(function* () {
@@ -543,11 +526,7 @@ describe("db lint", () => {
     });
   });
 
-  // ── Changed-based routing (explicitly-set flag, not its value) ───────────
-
   it.live("--linked=false routes to the linked branch (Changed, not value)", () => {
-    // "Changed" fires when the flag appears on the command line regardless of
-    // its value: `--linked=false` is still "explicitly set" → linked branch.
     const { layer, projectRef, cache } = setup({
       isLocal: false,
       checkRows: { public: [] },
@@ -574,7 +553,6 @@ describe("db lint", () => {
   });
 
   it.live("--local=false --linked fails with mutual-exclusion (sorted set [linked local])", () => {
-    // Both flags are explicitly set → mutual exclusion fires with the sorted set.
     const { layer } = setup({ args: ["--local=false", "--linked"] });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(dbLint(flags({ schema: ["public"] })));
@@ -588,7 +566,6 @@ describe("db lint", () => {
   });
 
   it.live("--local=false alone routes to the local branch (Changed local, connType=local)", () => {
-    // `--local=false` is Changed for `local` → connType="local" (Changed-first: local).
     const { layer, out, cache } = setup({ checkRows: { public: [] }, args: ["--local=false"] });
     return Effect.gen(function* () {
       yield* dbLint(flags({ schema: ["public"] }));

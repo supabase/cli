@@ -30,11 +30,9 @@ const CUSTOM_ROLES_PATH = "supabase/roles.sql";
 
 const toSlash = (p: string): string => p.replaceAll("\\", "/");
 
-/** `confirmPushAll` — bold filenames. */
 const confirmPushAll = (filenames: ReadonlyArray<string>): string =>
   filenames.map((name) => ` • ${bold(name)}\n`).join("");
 
-/** `confirmSeedAll` — bold paths, hash notice. */
 const confirmSeedAll = (seeds: ReadonlyArray<SeedFile>): string =>
   seeds
     .map((seed) => ` • ${bold(seed.dirty ? `${seed.path} (hash update)` : seed.path)}\n`)
@@ -43,30 +41,12 @@ const confirmSeedAll = (seeds: ReadonlyArray<SeedFile>): string =>
 const applyError = (message: string) => new DbPushApplyError({ message });
 
 /**
- * Everything `push.Run` does once its target connection AND config are
- * already resolved. Shared by two
- * callers, following the same structure — `push.Run` never
- * resolves the project ref or loads `config.toml` itself, it just uses
- * whatever its caller already resolved:
+ * Everything `db push` does once its target connection and config are already resolved. Callers
+ * (`db push`, `bootstrap`) resolve the project ref, connection, and `config.toml` themselves and
+ * pass the results in; this core never touches `ProjectRefResolver`/`DbConfigResolver` itself.
  *
- * - `db push` (`push.handler.ts`) resolves `--db-url`/`--linked`/`--local` via
- * `DbConfigResolver`/`ProjectRefResolver`, loads + validates
- * `config.toml` itself (so the "Loading config override" line — printed by
- * the config-load path, which runs before `push.Run` — prints before this
- * core runs), then calls this core with the resolved connection.
- * - `bootstrap` calls `push.Run(ctx, false, false, true, true, config, fsys)`
- * directly — it never re-resolves the
- * project ref or db config for push, reusing the config it already derived
- * for `.env`. `bootstrap.handler.ts` mirrors that: it passes its own
- * `workdir` / `projectRef` / connection directly, never touching
- * `ProjectRefResolver` or `DbConfigResolver` (which key off
- * `CommandSettings.workdir` — stale after bootstrap's `process.chdir`, see
- * bootstrap.handler.ts's workdir comments).
- *
- * The "DRY RUN: …" heads-up line is the literal first line of `push.Run` —
- * i.e. it prints AFTER the connection-resolution phase's
- * own output (e.g. "Initialising login role..."), not before — so it lives
- * here, right before "Connecting to...", not at either caller's call site.
+ * The "DRY RUN: …" heads-up line prints first here, after the caller's own connection-resolution
+ * output (e.g. "Initialising login role..."), so it lives here rather than at either call site.
  */
 export interface DbPushCoreInput {
   /** Absolute project directory (never read from `CommandSettings.workdir`). */
@@ -76,19 +56,16 @@ export interface DbPushCoreInput {
   readonly conn: PgConnInput;
   readonly isLocal: boolean;
   /**
-   * Whether `--local` (not `--db-url`/`--linked`) was the explicit target
-   * selector — distinct from `isLocal` (whether the *resolved* connection
-   * happens to point at a local address, e.g. a `--db-url` pointing at
-   * `127.0.0.1`). Only feeds the "missing local migrations" repair
-   * suggestion's `--local` flag (`connType === "local"` check,
-   * `push.handler.ts`). `bootstrap` never selects `--local`, so it is always
-   * `false` there.
+   * Whether `--local` (not `--db-url`/`--linked`) was the explicit target selector, distinct
+   * from `isLocal` (whether the resolved connection happens to point at a local address, e.g. a
+   * `--db-url` pointing at `127.0.0.1`). Only feeds the "missing local migrations" repair
+   * suggestion's `--local` flag; `bootstrap` never selects `--local`, so it is always `false`
+   * there.
    */
   readonly repairSuggestsLocalFlag: boolean;
   /**
-   * Gates the "DRY RUN: …" heads-up line, the "Would push/seed/create …"
-   * plan, and the JSON `dryRun` field — matches Go's single `dryRun` check at
-   * the top of `push.Run`.
+   * Gates the "DRY RUN: …" heads-up line, the "Would push/seed/create …" plan, and the JSON
+   * `dryRun` field.
    */
   readonly dryRun: boolean;
   readonly includeAll: boolean;
@@ -101,9 +78,8 @@ export interface DbPushCoreInput {
   /** Already resolved confirm-prompt default, e.g. via `resolveYesWithProjectEnv`. */
   readonly yes: boolean;
   /**
-   * Standalone `db push` emits a `--output-format` json/stream-json success
-   * result for its own invocation; `bootstrap` suppresses it (it emits its own
-   * top-level result), matching `projectCreateCore`'s `emitStructuredResult`.
+   * Standalone `db push` emits a `--output-format` json/stream-json success result for its own
+   * invocation; `bootstrap` suppresses it since it emits its own top-level result instead.
    */
   readonly emitStructuredResult: boolean;
 }
@@ -133,9 +109,8 @@ export const dbPushCore = Effect.fnUntraced(function* (input: DbPushCoreInput) {
 
   const vaultSecrets = toml.vault;
 
-  // Literal first line of `push.Run` — prints AFTER the
-  // caller's own connection-resolution output (e.g. "Loading config override",
-  // "Initialising login role..."), never before.
+  // Prints first here, after the caller's own connection-resolution output (e.g. "Loading
+  // config override", "Initialising login role..."), never before.
   if (dryRun) {
     yield* output.raw("DRY RUN: migrations will *not* be pushed to the database.\n", "stderr");
   }
@@ -148,7 +123,6 @@ export const dbPushCore = Effect.fnUntraced(function* (input: DbPushCoreInput) {
       yield* output.raw(`Connecting to ${isLocal ? "local" : "remote"} database...\n`, "stderr");
       const session = yield* dbConn.connect(conn, { isLocal, dnsResolver });
 
-      // --- Collect pending migrations ---
       let pending: ReadonlyArray<string> = [];
       if (!toml.migrationsEnabled) {
         yield* output.raw(
@@ -170,7 +144,7 @@ export const dbPushCore = Effect.fnUntraced(function* (input: DbPushCoreInput) {
         }
         if (result.kind === "missing-remote") {
           if (!includeAll) {
-            // Go's suggestIgnoreFlag lists the workdir-relative paths.
+            // Workdir-relative paths for `suggestIgnoreFlag`.
             const relPaths = result.paths.map((p) => toSlash(path.relative(workdir, p)));
             return yield* Effect.fail(
               new DbPushMissingRemoteError({
@@ -185,7 +159,6 @@ export const dbPushCore = Effect.fnUntraced(function* (input: DbPushCoreInput) {
         }
       }
 
-      // --- Collect pending seeds ---
       let seeds: ReadonlyArray<SeedFile> = [];
       if (includeSeed) {
         if (!toml.seed.enabled) {
@@ -198,7 +171,6 @@ export const dbPushCore = Effect.fnUntraced(function* (input: DbPushCoreInput) {
         }
       }
 
-      // --- Collect custom roles ---
       const globals: Array<string> = [];
       if (includeRoles) {
         const exists = yield* fs.exists(path.join(workdir, CUSTOM_ROLES_PATH)).pipe(
@@ -212,7 +184,6 @@ export const dbPushCore = Effect.fnUntraced(function* (input: DbPushCoreInput) {
         if (exists) globals.push(CUSTOM_ROLES_PATH);
       }
 
-      // --- Nothing to push ---
       if (pending.length === 0 && seeds.length === 0 && globals.length === 0) {
         if (output.format === "text") {
           yield* output.raw(`${statusTarget} is up to date.\n`);
@@ -241,7 +212,6 @@ export const dbPushCore = Effect.fnUntraced(function* (input: DbPushCoreInput) {
           yield* output.raw(confirmSeedAll(seeds), "stderr");
         }
       } else {
-        // --- Custom roles ---
         if (globals.length > 0) {
           const ok = yield* promptYesNo(
             output,
@@ -263,7 +233,6 @@ export const dbPushCore = Effect.fnUntraced(function* (input: DbPushCoreInput) {
           );
         }
 
-        // --- Migrations ---
         if (pending.length > 0) {
           const ok = yield* promptYesNo(
             output,
@@ -284,7 +253,6 @@ export const dbPushCore = Effect.fnUntraced(function* (input: DbPushCoreInput) {
           yield* output.raw("Schema migrations are up to date.\n", "stderr");
         }
 
-        // --- Seeds ---
         if (seeds.length > 0) {
           const ok = yield* promptYesNo(
             output,

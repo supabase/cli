@@ -10,15 +10,15 @@ import {
   Schema,
   Scope,
 } from "effect";
-// oxlint-disable-next-line effecttsgo/node-builtin-import
-import { createServer, type Server } from "node:net";
+import { NodeSocketServer } from "@effect/platform-node";
+import * as Socket from "effect/unstable/socket/Socket";
 import { StackIdSchema, type StackId } from "../public/StackId.ts";
 import { resolveStackPaths } from "./Paths.ts";
 import { StackOwnershipConflictError, StackStateInvalidError } from "../public/Errors.ts";
 import { OwnerSessionIdSchema } from "../control/MaintenanceProtocol.ts";
 import { NetworkPortSchema } from "../public/Status.ts";
 
-/** The owner metadata format is deliberately fail-closed. */
+/** Bump this format string so owner metadata version mismatches fail closed. */
 const OWNERSHIP_FORMAT = "supabase-stack-owner-v1" as const;
 export const OWNER_LOCK_FORMAT = "supabase-stack-lease-v1" as const;
 
@@ -51,20 +51,19 @@ export class StackRuntimeEnvironment extends Context.Service<
   StackRuntimeEnvironmentValue
 >()("@supabase/stack/StackRuntimeEnvironment") {}
 
-const ControlEndpointSchema = Schema.Union([
-  Schema.Struct({ kind: Schema.Literal("unix"), path: Schema.String }),
-  Schema.Struct({ kind: Schema.Literal("pipe"), name: Schema.String }),
-]);
-
-const OwnerMetadataSchema = Schema.Struct({
+// stackId and endpoint are derived from the identity directory and lease port.
+// Keep them in the in-memory lease value for callers, but do not duplicate them
+// in the durable control document.
+const OwnerMetadataDiskSchema = Schema.Struct({
   format: Schema.Literal(OWNERSHIP_FORMAT),
-  stackId: StackIdSchema,
   ownerSessionId: OwnerSessionIdSchema,
   leasePort: NetworkPortSchema,
-  endpoint: ControlEndpointSchema,
   rpcRelease: Schema.String,
 });
-export type OwnerMetadata = Schema.Schema.Type<typeof OwnerMetadataSchema>;
+export type OwnerMetadata = Schema.Schema.Type<typeof OwnerMetadataDiskSchema> & {
+  readonly stackId: StackId;
+  readonly endpoint: ControlEndpoint;
+};
 
 const OwnerLockSchema = Schema.Struct({
   format: Schema.Literal(OWNER_LOCK_FORMAT),
@@ -105,114 +104,8 @@ export const readOwnerLock = (
     ),
     Effect.catchTag("PlatformError", (error) =>
       Predicate.isTagged(error.reason, "NotFound")
-        ? // oxlint-disable-next-line effecttsgo/effect-succeed-with-void -- this branch carries Option.none as undefined
-          Effect.succeed(undefined)
+        ? Effect.undefined
         : Effect.fail(stateError(`Unable to read owner lock: ${error.message}`)),
-    ),
-  );
-
-const bindLease = (port: number): Effect.Effect<Server, StackStateInvalidError> =>
-  Effect.callback<Server, StackStateInvalidError>((resume) => {
-    const server = createServer({ allowHalfOpen: false }, (socket) => socket.destroy());
-    let settled = false;
-    let canceled = false;
-    const cleanup = () => {
-      server.off("error", onError);
-      server.off("listening", onListening);
-    };
-    const close = () => {
-      if (server.listening) {
-        try {
-          server.close(() => undefined);
-        } catch {
-          // The listener may have failed before a handle was allocated.
-        }
-      }
-    };
-    const onError = (cause: Error & { readonly code?: string }) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      close();
-      if (canceled) return;
-      resume(
-        Effect.fail(
-          new StackStateInvalidError({
-            message: `Unable to acquire owner lease: ${cause.message}`,
-            code: cause.code,
-            cause,
-          }),
-        ),
-      );
-    };
-    const onListening = () => {
-      if (canceled) {
-        settled = true;
-        cleanup();
-        close();
-        return;
-      }
-      if (settled) return;
-      settled = true;
-      cleanup();
-      resume(Effect.succeed(server));
-    };
-    server.once("error", onError);
-    server.once("listening", onListening);
-    try {
-      server.listen({ host: "127.0.0.1", port });
-    } catch (cause) {
-      onError(cause instanceof Error ? cause : new Error(String(cause)));
-    }
-    return Effect.sync(() => {
-      if (!settled) {
-        canceled = true;
-        if (server.listening) close();
-      }
-    });
-  });
-
-const closeBoundServer = (server: Server): Effect.Effect<void> =>
-  Effect.callback<void>((resume) => {
-    if (!server.listening) {
-      resume(Effect.void);
-      return;
-    }
-    let settled = false;
-    const finish = () => {
-      if (!settled) {
-        settled = true;
-        resume(Effect.void);
-      }
-    };
-    try {
-      server.close(finish);
-    } catch {
-      finish();
-    }
-    return Effect.sync(() => {
-      if (!settled) {
-        settled = true;
-        try {
-          server.close(() => undefined);
-        } catch {
-          // The exact listener is already closed or was never allocated.
-        }
-      }
-    });
-  });
-
-const leasePort = (server: Server): Effect.Effect<number, StackStateInvalidError> =>
-  Effect.sync(() => {
-    const address = server.address();
-    if (address === null || typeof address === "string" || !Number.isInteger(address.port))
-      return undefined;
-    return address.port;
-  }).pipe(
-    Effect.flatMap((port) =>
-      port === undefined
-        ? Effect.fail(stateError("Owner lease did not expose a bound port"))
-        : Effect.succeed(port),
     ),
   );
 
@@ -224,13 +117,50 @@ export interface HeldPortLease {
 export const acquirePortLease = (
   port: number,
 ): Effect.Effect<HeldPortLease, StackStateInvalidError> =>
-  Effect.uninterruptible(
+  Effect.uninterruptibleMask((restore) =>
     Effect.gen(function* () {
-      const server = yield* bindLease(port);
-      return yield* leasePort(server).pipe(
-        Effect.map((actualPort) => ({ port: actualPort, close: closeBoundServer(server) })),
-        Effect.onExit((exit) => (Exit.isFailure(exit) ? closeBoundServer(server) : Effect.void)),
-      );
+      const scope = yield* Scope.make();
+      const close = Scope.close(scope, Exit.void);
+      return yield* Effect.gen(function* () {
+        const server = yield* restore(
+          NodeSocketServer.make({ host: "127.0.0.1", port, allowHalfOpen: false }).pipe(
+            Effect.provideService(Scope.Scope, scope),
+            Effect.mapError((error) => {
+              const cause = error.reason.cause;
+              const code =
+                typeof cause === "object" &&
+                cause !== null &&
+                "code" in cause &&
+                typeof cause.code === "string"
+                  ? cause.code
+                  : undefined;
+              return new StackStateInvalidError({
+                message: `Unable to acquire owner lease: ${String(cause)}`,
+                code,
+                cause,
+              });
+            }),
+          ),
+        );
+        if (!Predicate.isTagged(server.address, "TcpAddress"))
+          return yield* stateError("Owner lease did not expose a bound port");
+        yield* Effect.forkIn(
+          server.run((socket) =>
+            socket
+              .run(() => Effect.void, {
+                onOpen: Effect.scoped(
+                  Effect.gen(function* () {
+                    const write = yield* socket.writer;
+                    yield* write(new Socket.CloseEvent());
+                  }),
+                ).pipe(Effect.ignore),
+              })
+              .pipe(Effect.ignore),
+          ),
+          scope,
+        );
+        return { port: server.address.port, close };
+      }).pipe(Effect.onExit((exit) => (Exit.isFailure(exit) ? close : Effect.void)));
     }),
   );
 
@@ -241,15 +171,28 @@ const decodeStackId = (value: string): Effect.Effect<StackId, StackStateInvalidE
     Effect.mapError((error) => stateError(`Invalid StackId: ${String(error)}`)),
   );
 
-const metadataFrom = (value: unknown): Effect.Effect<OwnerMetadata, StackStateInvalidError> =>
-  Schema.decodeUnknownEffect(OwnerMetadataSchema)(value, { onExcessProperty: "error" }).pipe(
+const metadataFrom = (
+  value: unknown,
+  stackId: StackId,
+  environment: Pick<StackRuntimeEnvironmentValue, "platform" | "tempRoot">,
+): Effect.Effect<OwnerMetadata, StackStateInvalidError> =>
+  Schema.decodeUnknownEffect(Schema.Record(Schema.String, Schema.Unknown))(value).pipe(
+    Effect.map(({ stackId: _stackId, endpoint: _endpoint, ...disk }) => disk),
+    Effect.flatMap((disk) =>
+      Schema.decodeUnknownEffect(OwnerMetadataDiskSchema)(disk, { onExcessProperty: "error" }),
+    ),
     Effect.mapError((error) => stateError(`Invalid owner metadata: ${String(error)}`)),
+    Effect.map((metadata) => ({
+      ...metadata,
+      stackId,
+      endpoint: controlEndpointFor(stackId, environment, metadata.leasePort),
+    })),
   );
 
 /**
  * Computes the one local endpoint for an identity. The complete digest is used
- * so two identities can never alias. The caller supplies a deliberately short
- * IPC root; no project path is embedded in the endpoint.
+ * so two identities can never alias. The caller supplies a short IPC root;
+ * no project path is embedded in the endpoint.
  */
 export const controlEndpointFor = (
   stackId: StackId | string,
@@ -295,25 +238,7 @@ export const readOwnerMetadata = (
     ).pipe(
       Effect.mapError((error) => stateError(`Unable to parse owner metadata: ${String(error)}`)),
     );
-    const metadata = yield* metadataFrom(parsed);
-    if (metadata.stackId !== validId)
-      return yield* stateError("Owner metadata StackId does not match its directory");
-    const expected = controlEndpointFor(validId, environment, metadata.leasePort);
-    if (metadata.endpoint.kind !== expected.kind)
-      return yield* stateError("Owner metadata endpoint kind does not match this runtime");
-    if (
-      metadata.endpoint.kind === "unix" &&
-      expected.kind === "unix" &&
-      metadata.endpoint.path !== expected.path
-    )
-      return yield* stateError("Owner metadata endpoint does not match its StackId");
-    if (
-      metadata.endpoint.kind === "pipe" &&
-      expected.kind === "pipe" &&
-      metadata.endpoint.name !== expected.name
-    )
-      return yield* stateError("Owner metadata endpoint does not match its StackId");
-    return metadata;
+    return yield* metadataFrom(parsed, validId, environment);
   });
 
 export const ownerLockExists = (
@@ -344,7 +269,7 @@ export const publishOwnership = (
 ): Effect.Effect<void, StackStateInvalidError, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(OwnerMetadataSchema))(
+    const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(OwnerMetadataDiskSchema))(
       lease.metadata,
     ).pipe(
       Effect.mapError((error) => stateError(`Unable to encode owner metadata: ${String(error)}`)),
@@ -638,9 +563,9 @@ export const acquireOwnership = (options: {
           const release = Effect.suspend(() =>
             fs.readFileString(paths.controlMetadata).pipe(
               Effect.flatMap((text) =>
-                Schema.decodeEffect(Schema.fromJsonString(OwnerMetadataSchema))(text).pipe(
+                Schema.decodeEffect(Schema.fromJsonString(OwnerMetadataDiskSchema))(text).pipe(
                   Effect.flatMap((current) =>
-                    current.stackId === validId && current.ownerSessionId === options.ownerSessionId
+                    current.ownerSessionId === options.ownerSessionId
                       ? fs.remove(paths.controlMetadata, { force: true }).pipe(
                           Effect.catchTag("PlatformError", () => Effect.void),
                           Effect.andThen(removeLeaseIfHeld(fs, lockPath, options.ownerSessionId)),

@@ -229,7 +229,7 @@ describe("domains create integration", () => {
     const { layer, out } = setup({ goOutput: "yaml" });
     return Effect.gen(function* () {
       yield* domainsCreate(flags());
-      // yaml.v3 lowercases the whole field name (CLI-1975).
+      // yaml.v3 lowercases the whole field name.
       expect(out.stdoutText).toContain(`customhostname: ${CUSTOM_HOSTNAME}`);
       expect(out.stderrText).toBe("");
     }).pipe(Effect.provide(layer));

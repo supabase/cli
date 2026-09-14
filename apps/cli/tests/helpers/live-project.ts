@@ -6,6 +6,7 @@ import path from "node:path";
 import { makeApiClient, type OperationOutput } from "@supabase/api/effect";
 import { Cause, Data, Effect, Exit, Schedule } from "effect";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
+import { getDomain } from "tldts";
 
 import {
   deriveLiveProjectHost,
@@ -123,6 +124,16 @@ export function selectPrimaryPoolerConfig(
   configs: ReadonlyArray<PoolerConfig>,
 ): PoolerConfig | undefined {
   return configs.find((config) => config.database_type === "PRIMARY");
+}
+
+/** The profile's `pooler_host` is the registrable domain, not the pooler hostname. */
+export function resolvePoolerDomain(dbUrl: string): string {
+  const hostname = new URL(dbUrl).hostname;
+  const domain = getDomain(hostname);
+  if (domain === null) {
+    throw new Error(`unable to derive a pooler domain from ${hostname}`);
+  }
+  return domain;
 }
 
 export function resolvePoolerDatabaseUrl(
@@ -450,7 +461,7 @@ function writeProfile(
       const directory = await mkdtemp(path.join(tmpdir(), "supabase-live-profile-"));
       const profilePath = path.join(directory, "profile.yaml");
       try {
-        const poolerHost = new URL(dbUrl).hostname;
+        const poolerHost = resolvePoolerDomain(dbUrl);
         await writeFile(
           profilePath,
           [

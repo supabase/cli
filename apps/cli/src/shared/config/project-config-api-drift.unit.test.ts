@@ -4,41 +4,18 @@ import { toProjectConfig } from "@supabase/config";
 import type { ProjectConfigApiAttributes } from "@supabase/config/internal";
 
 /**
- * Compile-time drift guards (CLI-2230 design requirement): `@supabase/config`
- * deliberately hand-mirrors the Management API v2 project-config response
- * shape in `ProjectConfigApiAttributes` rather than importing
- * `packages/api`'s generated client (the config package must stay decoupled
- * from `@supabase/api` so it can publish to npm independently). That mirror
- * can only ever drift silently from the real, generated OpenAPI contract —
- * unless something pins the two together. Two independent checks do that,
- * because neither alone covers every kind of drift:
+ * Compile-time drift guards: `@supabase/config` hand-mirrors the Management API v2
+ * project-config shape in `ProjectConfigApiAttributes` rather than importing the generated
+ * client, so it stays decoupled and can publish independently. Two checks are needed because
+ * neither alone covers every kind of drift: `_typeDriftGuard` fails to compile if the real
+ * contract widens a field's type, but TypeScript's structural assignability lets it add, remove,
+ * or rename fields undetected; the key-set assertions further down (`AssertNever<Exclude<keyof
+ * A, keyof B>>`) catch exactly that gap instead, one pair per mirrored nesting level (`auth` is
+ * exempt, since both sides model it as an open record).
  *
- * 1. `_typeDriftGuard` below fails to compile if the real contract *widens* a
- *    field's type out from under the lenient mirror (e.g. a field changing
- *    from a primitive to an object). It does NOT catch a field the real
- *    contract adds, removes, or renames: TypeScript's structural
- *    assignability allows the source type (the real contract's attributes)
- *    to carry extra or differently-named properties the target type (the
- *    mirror) never sees, so the assignment still compiles.
- * 2. The type-level key-set assertions further down this file
- *    (`AssertNever<Exclude<keyof A, keyof B>>`, one added/removed pair per
- *    mirrored nesting level) are the guard for exactly that gap: an added,
- *    removed, or renamed key at any mirrored level fails one of those
- *    assertions to compile. `auth` is exempt — both sides model it as an
- *    open `Record<string, Json>`, so there is no fixed key set to diff.
- *
- * `_typeDriftGuard` is also intentionally vacuous for every field
- * `ProjectConfigApiAttributes` mirrors as `Schema.Unknown` (every unmapped
- * field, per `api-attributes.ts`'s own docstring): the mirror's field type is
- * `unknown`, and every type is assignable to `unknown`, so a real-contract
- * type change on one of those fields can never fail this assignability check
- * — only the key-set assertions in point 2 still catch that field being
- * added, removed, or renamed outright. This is by design (ADR 0019 rule 2:
- * an unmapped field's *type* is deliberately not load-bearing at decode
- * time), not a gap this file needs to close.
- *
- * No `as` cast anywhere in this file: a cast would defeat either guard's
- * entire purpose by silencing exactly the failure it exists to surface.
+ * `_typeDriftGuard` is intentionally vacuous for fields mirrored as `Schema.Unknown` (by design,
+ * ADR 0019 rule 2) — only the key-set assertions still catch those being added or removed. No
+ * `as` cast anywhere in this file: it would silence the failure each guard exists to surface.
  */
 const _typeDriftGuard: (
   value: (typeof V2GetProjectConfigOutput.Type)["data"]["attributes"],
@@ -81,11 +58,9 @@ type _RemovedNetworkRestrictionsKeys = AssertNever<
   Exclude<keyof MirrorNetworkRestrictions, keyof GeneratedNetworkRestrictions>
 >;
 
-// `allowed_cidrs` is mapped (`filterCidrAddresses`, `@supabase/config`'s
-// `registry.ts`), so its element shape stays concretely typed on the mirror
-// side (unlike the sibling `entitlement`/`status`/`updated_at`/`applied_at`
-// fields above, which the mirror widens to `Schema.Unknown` since no row
-// maps them) — worth its own key-set pair.
+// `allowed_cidrs` is mapped (`filterCidrAddresses`), so it stays concretely typed on the mirror
+// side (unlike the sibling fields above, which widen to `Schema.Unknown` since no row maps
+// them) — worth its own key-set pair.
 type GeneratedAllowedCidrsElement = NonNullable<
   GeneratedNetworkRestrictions["allowed_cidrs"]
 >[number];
@@ -132,10 +107,9 @@ type _RemovedStorageFeaturesKeys = AssertNever<
   Exclude<keyof MirrorStorageFeatures, keyof GeneratedStorageFeatures>
 >;
 
-// `image_transformation`/`s3_protocol` are mapped (`@supabase/config`'s
-// `registry.ts`), so — unlike sibling `purge_cache`, which the mirror widens
-// to `Schema.Unknown` since no row maps it — they stay concretely typed
-// `{enabled}` structs on the mirror side, each worth its own key-set pair.
+// `image_transformation`/`s3_protocol` are mapped, so — unlike sibling `purge_cache`, which
+// widens to `Schema.Unknown` — they stay concretely typed `{enabled}` structs, each worth its
+// own key-set pair.
 type GeneratedImageTransformation = GeneratedStorageFeatures["image_transformation"];
 type MirrorImageTransformation = NonNullable<MirrorStorageFeatures["image_transformation"]>;
 
@@ -174,21 +148,15 @@ type _RemovedVectorBucketsKeys = AssertNever<
   Exclude<keyof MirrorVectorBuckets, keyof GeneratedVectorBuckets>
 >;
 
-// `storage.capabilities` is unmapped in full (no row reads `list_v2` or
-// `iceberg_catalog`), so the mirror widens the whole substruct to
-// `Schema.Unknown` (`@supabase/config`'s `api-attributes.ts`) rather than
-// keeping a `{list_v2, iceberg_catalog}` shape — there is no longer an inner
-// key set to diff here. `_AddedStorageKeys`/`_RemovedStorageKeys` above still
-// cover `capabilities`'s own presence as a key of `storage`; only its
-// interior stopped being type-checked, which is the point of widening an
-// unmapped field.
+// `storage.capabilities` is unmapped in full, so the mirror widens the whole substruct to
+// `Schema.Unknown` rather than keeping a `{list_v2, iceberg_catalog}` shape — no inner key set
+// to diff. `_AddedStorageKeys`/`_RemovedStorageKeys` above still cover `capabilities`'s own
+// presence as a key of `storage`.
 
 describe("project-config API type drift guard", () => {
   it("keeps the generated v2 attributes type assignable to the package's lenient input type", () => {
-    // The type-level assignment above (and the type-level key-set assertions
-    // further up this file) are the real guards; this only asserts the guard
-    // function itself is a callable identity so the module isn't pure dead
-    // code under `noUnusedLocals`-style lint passes.
+    // The type-level assertions above are the real guards; this only keeps the guard function
+    // from being pure dead code under `noUnusedLocals`-style lint passes.
     expect(typeof _typeDriftGuard).toBe("function");
   });
 

@@ -1,41 +1,13 @@
 /**
- * Supavisor/pooler container spec builder, gated on
- * `config.db.pooler.enabled` — the gate itself is `start.handler.ts`'s job
- * (a later task), not this module's; this file only builds the
- * `docker create` spec (plus the pure tenant-provisioning script it embeds
- * — see below).
+ * Builds the `docker create` spec for the Supavisor/pooler container. Gated on
+ * `config.db.pooler.enabled` by the caller.
  *
- * IMPORTANT — how the Supavisor tenant is actually provisioned: it is NOT a
- * post-start `docker exec`. The rendered `pooler.exs` (via
- * `renderStartPoolerExs`, already ported in `../lib/template-render.ts`)
- * is built BEFORE the container is created, then baked directly into the
- * container's own startup `Cmd`
- * (`/bin/sh -c "/app/bin/migrate && /app/bin/supavisor eval '<script>' &&
- * /app/bin/server"`) — overriding the image's default `CMD` while keeping
- * its own `ENTRYPOINT` (no `Entrypoint` field is set here at all, matching
- * `docker-create-args.ts`'s documented Pooler precedent). There is no
- * separate post-start step: tenant creation runs once, as part of the
- * container's first boot, inside the same shell invocation that also runs
- * `/app/bin/migrate`.
- *
- * A literal shell-embed of `<script>` (which carries the DB password) would
- * only be safe with an architecture that calls the Docker Engine API
- * directly, so that `Cmd` string never becomes a subprocess's own argv.
- * THIS PORT SHELLS OUT to a real `docker create`, where that would leak, so
- * it deliberately diverges: the rendered script travels via
- * {@link StartContainerSpec.secretFiles} instead (an in-memory tar
- * entry, mode `0644`, streamed via `docker cp - <id>:/` into the container at
- * {@link SUPAVISOR_POOLER_TENANT_CONTAINER_PATH}) — Supavisor itself
- * runs fully as root in its image, so it is unaffected by the non-root read
- * issue that motivates `0644` for Kong/Postgres (see
- * `copyStartSecretFilesIntoContainer`'s doc comment); the file mode is
- * simply widened here for consistency with the other secrets, and
- * {@link buildSupavisorStartCmd} only ever references that FIXED path
- * — never the secret content itself (CWE-214/522). See that function's doc
- * comment for the resulting quoting nuance. {@link buildSupavisorStartCmd}
- * is exported separately (rather than inlined) so a later orchestrator can
- * unit-test or reuse the exact shell-embedding shape independently of the
- * rest of the spec.
+ * The tenant is provisioned by baking the rendered `pooler.exs` script into the container's own
+ * startup `Cmd`, not via a post-start `docker exec`. The script travels via
+ * {@link StartContainerSpec.secretFiles} (`docker cp`'d in) rather than being embedded literally
+ * in `Cmd`, because `Cmd` becomes real process argv and would leak the DB password it carries
+ * (CWE-214/522); {@link buildSupavisorStartCmd} only ever references the resulting file's fixed
+ * path, never the secret content.
  */
 
 import { serviceContainerName } from "../../../command-internal/docker-ids.ts";
@@ -60,35 +32,17 @@ const SUPAVISOR_SESSION_PORT = "5432";
 /** The Supavisor transaction-mode port. */
 const SUPAVISOR_TRANSACTION_PORT = "6543";
 
-/**
- * The fixed in-container path the rendered `pooler.exs` tenant script is
- * `docker cp`'d to (see {@link buildSupavisorContainerSpec}'s
- * `secretFiles`).
- */
+/** The fixed in-container path the rendered `pooler.exs` tenant script is `docker cp`'d to. */
 const SUPAVISOR_POOLER_TENANT_CONTAINER_PATH = "/app/pooler_tenant.exs";
 
 /**
- * An unescaped single-quote wrap around the rendered `pooler.exs` script
- * embedded directly into the container's `Cmd` would only be safe with an
- * architecture that calls the Docker Engine API directly, so that `Cmd`
- * string never becomes a subprocess's own argv — see this module's header
- * comment for why that isn't this port's architecture.
- *
- * This `Cmd` instead reads the script from
- * {@link SUPAVISOR_POOLER_TENANT_CONTAINER_PATH} at container
- * startup: `eval "$(cat <path>)"`'s double-quoted command substitution
- * passes the file's content to `eval` as a single argument, the same way an
- * inline single-quote wrap would pass a literal as a single argument. Two
- * quoting nuances, both immaterial for every value these fields can take
- * today: `$()` strips the script's own trailing newline (irrelevant to
- * `Code.eval_string`), and the surrounding double quotes re-expand a
- * `$`/backtick sequence in the file's content that a single-quote wrap
- * never would (every interpolated `pooler.exs` field is a fixed/internal
- * value today — `db.password` in particular has no config.toml field at
- * all, always literally `"postgres"`, see `postgres.service.ts`'s
- * `POSTGRES_PASSWORD` — none of which contain `$`, a backtick, or a
- * single quote). A future caller that ever makes one of these fields
- * genuinely attacker-controlled must revisit this quoting.
+ * Reads the tenant script from {@link SUPAVISOR_POOLER_TENANT_CONTAINER_PATH} at container
+ * startup (`eval "$(cat <path>)"`) instead of embedding it as a quoted literal in `Cmd` — see this
+ * module's header for why. The double-quoted command substitution passes the file's content to
+ * `eval` as a single argument, the same as a single-quote literal would, except it also
+ * re-expands any `$`/backtick in the content; every interpolated `pooler.exs` field is fixed or
+ * internal today, so none can contain those characters. Revisit the quoting if a field ever
+ * becomes attacker-controlled.
  */
 export function buildSupavisorStartCmd(): ReadonlyArray<string> {
   return [
@@ -99,10 +53,7 @@ export function buildSupavisorStartCmd(): ReadonlyArray<string> {
 }
 
 export interface SupavisorContainerSpecInput {
-  /**
-   * The already-resolved `config.db.pooler.image`. Not part of the decoded
-   * `@supabase/config` schema; resolution is the caller's responsibility.
-   */
+  /** The already-resolved `config.db.pooler.image`; resolution is the caller's responsibility. */
   readonly image: string;
   /** The project id, used to derive this container's own name via {@link serviceContainerName}. */
   readonly projectId: string;
@@ -116,13 +67,13 @@ export interface SupavisorContainerSpecInput {
   readonly defaultPoolSize: number;
   /** `config.db.pooler.max_client_conn` — also the tenant's `DefaultMaxClients`/`default_max_clients`. */
   readonly maxClientConn: number;
-  /** `config.auth.jwt_secret` — used for BOTH `API_JWT_SECRET` and `METRICS_JWT_SECRET`. */
+  /** `config.auth.jwt_secret`, used for both `API_JWT_SECRET` and `METRICS_JWT_SECRET`. */
   readonly jwtSecret: string;
   /** The `db` container's own hostname. Also the tenant's `DbHost`/`db_host`. */
   readonly dbHost: string;
   /** Hardcoded `5432`. Also the tenant's `DbPort`/`db_port`. */
   readonly dbPort: number;
-  /** Hardcoded `"postgres"` — used only for `DATABASE_URL` (Supavisor's own metadata store), NOT the tenant script. */
+  /** Hardcoded `"postgres"`, used only for `DATABASE_URL` (Supavisor's own metadata store) — not the tenant script. */
   readonly dbUser: string;
   /** Used for both `DATABASE_URL` and the tenant's `DbPassword`/`db_password`. */
   readonly dbPassword: string;

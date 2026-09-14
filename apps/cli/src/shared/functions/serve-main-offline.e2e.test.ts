@@ -12,16 +12,15 @@ import { dockerfileServiceImage } from "../services/dockerfile-images.ts";
 import { bundleServeMainTemplate } from "./serve-main-bundler.ts";
 
 /**
- * Regression guard for supabase/supabase#45570: the edge-runtime worker bootstrap
- * template must boot with **no network access**. Before bundling, the template
- * imported `deno.land/std` and `jsr:` modules that Deno resolved over the network on
- * every start, so `functions serve` failed offline.
+ * Regression guard for supabase/supabase#45570: the edge-runtime worker
+ * bootstrap template must boot with no network access. Before bundling, the
+ * template imported `deno.land/std` and `jsr:` modules resolved over the
+ * network on every start, so `functions serve` failed offline.
  *
- * This boots the real bundled template as an edge-runtime main service with
- * `--network none` and asserts it reaches the template's own "Serving functions"
- * log line without any remote fetch. The service is mounted at `/app` (read-only) so
- * `/root` stays writable for Deno's module cache — isolating the network as the only
- * variable (a control run of the unbundled template fails here with a DNS error).
+ * Boots the real bundled template with `--network none` and asserts it
+ * reaches the "Serving functions" log line without any remote fetch. Mounted
+ * at `/app` (read-only) so `/root` stays writable for Deno's module cache —
+ * isolating the network as the only variable.
  */
 
 function hasDocker(): boolean {
@@ -35,9 +34,8 @@ function hasDocker(): boolean {
 
 const dockerAvailable = hasDocker();
 const SERVE_OFFLINE_STARTUP_TIMEOUT_MS = 60_000;
-// Cold-cache image resolution (up to one shared 90s resolveDeadline budget)
-// runs inside the test body, ahead of the 60s startup wait — the test budget
-// must cover both stacked, or a healthy near-cap pull trips vitest first.
+// Cold-cache image resolution (up to a shared 90s budget) runs ahead of the
+// 60s startup wait; the test timeout must cover both stacked.
 const SERVE_OFFLINE_TEST_TIMEOUT_MS = 180_000;
 const AUTH_FUNCTIONS_CONFIG = JSON.stringify({
   test: {
@@ -80,17 +78,22 @@ const KONG_FUNCTIONS_CONFIG = JSON.stringify({
 });
 const CUSTOM_FUNCTION = `import { sharedValue } from "../_shared/value.ts";
 
-Deno.serve(() => new Response("ok", {
-  headers: {
-    "X-Custom-Id": "abc123",
-    "X-Function-Slug": Deno.env.get("SUPABASE_FUNCTION_SLUG") ?? "",
-    "X-Shared-Import": sharedValue,
-    "X-Shared": Deno.env.get("SHARED") ?? "",
-    "X-Function-Only": Deno.env.get("FUNCTION_ONLY") ?? "",
-    "X-Global-Only": Deno.env.get("GLOBAL_ONLY") ?? "",
-    "Access-Control-Expose-Headers": "X-Custom-Id",
-  },
-}));`;
+Deno.serve((req) => {
+  if (req.headers.get("x-reject-before-body") === "true") {
+    return new Response("rejected", { status: 400 });
+  }
+  return new Response("ok", {
+    headers: {
+      "X-Custom-Id": "abc123",
+      "X-Function-Slug": Deno.env.get("SUPABASE_FUNCTION_SLUG") ?? "",
+      "X-Shared-Import": sharedValue,
+      "X-Shared": Deno.env.get("SHARED") ?? "",
+      "X-Function-Only": Deno.env.get("FUNCTION_ONLY") ?? "",
+      "X-Global-Only": Deno.env.get("GLOBAL_ONLY") ?? "",
+      "Access-Control-Expose-Headers": "X-Custom-Id",
+    },
+  });
+});`;
 const NESTED_FUNCTION = `Deno.serve(() => new Response("ok", {
   headers: {
     "X-Function-Slug": Deno.env.get("SUPABASE_FUNCTION_SLUG") ?? "",
@@ -146,6 +149,21 @@ function containerLogs(container: string): string {
   return `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
 }
 
+async function fetchFunctionWithDiagnostics(
+  url: string,
+  diagnosticContainers: readonly string[],
+  init: RequestInit,
+): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (cause) {
+    const diagnostics = diagnosticContainers
+      .map((container) => `${container} logs:\n${containerLogs(container)}`)
+      .join("\n");
+    throw new Error(`Function request to ${url} failed.\n${diagnostics}`, { cause });
+  }
+}
+
 async function fetchColdFunction(
   url: string,
   diagnosticContainers: readonly string[],
@@ -187,10 +205,8 @@ async function fetchColdFunction(
 }
 
 async function writeKongConfig(dir: string, edgeRuntimeContainer: string) {
-  // Was: read straight from apps/cli-go/internal/start/templates/kong.yml. That
-  // package was deleted outright (CLI-1966; unreachable from the TS CLI, directly
-  // or indirectly), so this now uses the TS transcription of the same template
-  // that `start`'s Kong service already ports byte-for-byte.
+  // Uses the TS transcription of the Kong template that `start`'s Kong
+  // service already ports byte-for-byte.
   const config = START_KONG_YML_TEMPLATE.replaceAll("{{ .EdgeRuntimeId }}", edgeRuntimeContainer)
     .replaceAll("{{ .BearerToken }}", "$((headers.authorization or headers.apikey))")
     .replaceAll("{{ .QueryToken }}", "$((query_params.apikey))")
@@ -251,9 +267,7 @@ describe("functions serve runtime template (offline)", () => {
           await new Promise((resolve) => setTimeout(resolve, 250));
         }
 
-        // The template's own onListen message — proves the bundled worker booted.
         expect(logs).toMatch(/Serving functions on/);
-        // No remote module resolution occurred (the #45570 failure mode).
         expect(logs).not.toMatch(/deno\.land|jsr\.io/);
         expect(logs).not.toMatch(/dns error|name resolution|worker boot error/i);
       } finally {
@@ -346,7 +360,7 @@ describe("functions serve runtime template (offline)", () => {
   );
 
   test.skipIf(!dockerAvailable)(
-    "preserves function env and CORS headers and exposes JWT errors through Kong",
+    "preserves function env and CORS headers, exposes JWT errors, and returns early responses through Kong",
     { timeout: SERVE_OFFLINE_TEST_TIMEOUT_MS },
     async () => {
       const imageDeadline = resolveDeadline();
@@ -498,6 +512,18 @@ describe("functions serve runtime template (offline)", () => {
         expect(aliasResponse.headers.get("x-shared-import")).toBe("shared-import-ok");
         expect(nestedResponse.status).toBe(200);
         expect(nestedResponse.headers.get("x-function-slug")).toBe("nested-worker-path");
+        const earlyResponse = await fetchFunctionWithDiagnostics(
+          `${functionsUrl}/custom`,
+          diagnosticContainers,
+          {
+            method: "POST",
+            headers: { "x-reject-before-body": "true" },
+            body: new Uint8Array(128 * 1024),
+            signal: AbortSignal.timeout(5_000),
+          },
+        );
+        expect(earlyResponse.status).toBe(400);
+        expect(await earlyResponse.text()).toBe("rejected");
         const runtimeLogs = containerLogs(runtimeContainer);
         expect(runtimeLogs).toContain("Functions config:");
         expect(runtimeLogs).toContain('"custom"');

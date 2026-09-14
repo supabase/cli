@@ -187,7 +187,7 @@ const sameLabels = (left: ContainerLabels, right: ContainerLabels): boolean =>
       (left.role === "network" ||
         ("workloadId" in left && "workloadId" in right && left.workloadId === right.workloadId)));
 
-/** Workload identity deliberately excludes ownerSessionId; stack ownership is fenced externally. */
+/** Workload identity excludes ownerSessionId; stack ownership is fenced externally. */
 const sameWorkloadIdentity = (left: ContainerLabels, right: ContainerWorkloadLabels): boolean =>
   left.role === "workload" &&
   left.stackId === right.stackId &&

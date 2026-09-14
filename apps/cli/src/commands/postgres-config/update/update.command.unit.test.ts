@@ -32,9 +32,6 @@ describe("postgres-config update --config flag (pflag StringSlice parity)", () =
   });
 
   test("keeps only the first CSV record of a multiline value (pflag reads ONE record)", async () => {
-    // Go-verified (CLI-2005): `postgres-config update --config $'a=1\nb"2'`
-    // raises no parse error — pflag calls `csv.Reader.Read()` once, so the
-    // malformed second line is silently dropped.
     const [, values] = await Effect.runPromise(
       postgresConfigUpdateConfigFlag
         .parse({
@@ -60,8 +57,7 @@ describe("postgres-config update --config flag (pflag StringSlice parity)", () =
 
     expect(Exit.isFailure(exit)).toBe(true);
     if (Exit.isFailure(exit)) {
-      // Matches pflag's own diagnostic (`"max_connections=100` is 20 bytes →
-      // EOF at column 21).
+      // `"max_connections=100` is 20 bytes, so pflag's CSV reader hits EOF at column 21.
       expect(normalizeCause(exit.cause).message).toBe(
         'invalid argument "\\"max_connections=100" for "--config" flag: parse error on line 1, column 21: extraneous or missing " in quoted-field',
       );
@@ -69,8 +65,6 @@ describe("postgres-config update --config flag (pflag StringSlice parity)", () =
   });
 
   test("rejects a blank-only value with pflag's EOF diagnostic", async () => {
-    // Go-verified (CLI-2005): `postgres-config update --config $'\n'` →
-    // `invalid argument "\n" for "--config" flag: EOF`.
     const exit = await Effect.runPromise(
       postgresConfigUpdateConfigFlag
         .parse({

@@ -3,22 +3,18 @@ import type { PgConnInput } from "./db-connection.service.ts";
 import type { DbConnType } from "./db-target-flags.ts";
 
 /**
- * The connection-resolution flags shared by `db lint`, `db advisors`, `test db`
- * (and later `db reset` / `db dump`).
+ * The connection-resolution flags shared by `db lint`, `db advisors`, and `test db`.
  *
- * `connType` encodes which selector flag was explicitly set by the user, derived
- * from raw argv via `resolveDbTargetFlags` (Changed-first, matching
- * `ParseDatabaseConfig`'s precedence):
- * - "db-url" → `--db-url` was changed (read `dbUrl.value`)
- * - "linked" → `--linked` was changed (Management API path)
- * - "local" → `--local` was changed (explicit local path)
- * - undefined → no selector was changed; resolver defaults to local
+ * `connType` records which selector flag the user explicitly set, derived from raw argv via
+ * `resolveDbTargetFlags`:
+ * - "db-url" → `--db-url` was set (read `dbUrl.value`)
+ * - "linked" → `--linked` was set (Management API path)
+ * - "local" → `--local` was set (explicit local path)
+ * - undefined → no selector was set; resolver defaults to local
  *
- * `--db-url` / `--linked` / `--local` are mutually exclusive.
- * `dnsResolver` carries the global
- * `--dns-resolver` value (`utils.DNSResolver.Value`), used when the
- * resolver opens its own remote connection (the linked pooler temp-role probe);
- * the handler passes the same value to its primary `connect`.
+ * `--db-url` / `--linked` / `--local` are mutually exclusive. `dnsResolver` carries the global
+ * `--dns-resolver` value, used when the resolver opens its own remote connection (the linked
+ * pooler temp-role probe); the handler passes the same value to its primary `connect`.
  */
 export interface DbConfigFlags {
   readonly dbUrl: Option.Option<string>;
@@ -30,91 +26,40 @@ export interface DbConfigFlags {
    */
   readonly resolveVaultSecrets?: boolean;
   /**
-   * The `--password` / `-p` flag value. When `Some`, it
-   * takes precedence over the `SUPABASE_DB_PASSWORD` env var on the linked path,
-   * matching the established flag-over-env precedence. Commands without a `--password`
-   * flag (e.g. `test db`) omit it; the resolver then falls back to env only.
+   * The `--password`/`-p` flag value. When `Some`, it takes precedence over the
+   * `SUPABASE_DB_PASSWORD` env var on the linked path. Commands without a `--password` flag
+   * (e.g. `test db`) omit it, and the resolver falls back to env only.
    */
   readonly password?: Option.Option<string>;
   /**
-   * Optional explicit linked project ref override. Commands such as
-   * `gen types --project-id <ref>` need the linked DB resolver's temp-role and
-   * pooler fallback behavior without requiring the current workdir to be linked.
-   * The eight `db` commands that resolve a project ref (`push`, `pull`, `diff`,
-   * `dump`, `reset`, `lint`, `advisors`, `query`) also thread their own
-   * `--project-ref` flag value through here, taking effect only on the linked
-   * path (it does NOT imply `--linked` — those handlers reject the flag
-   * outright on a non-linked target instead of silently discarding it, unlike
-   * the env var below). `None` when the flag is unset, which preserves the
-   * normal `--linked` path's fallback to `.temp/project-ref`.
-   *
-   * This shares ONLY the `SUPABASE_PROJECT_ID` env var's linked-ref-resolution
-   * precedence (flag > env > `.temp/project-ref` file, via
-   * `ProjectRefResolver.loadProjectRef`) — it is NOT a full substitute for
-   * that env var. `SUPABASE_PROJECT_ID` also drives the LOCAL container id and
-   * the pg-delta project id (`resolvePgDeltaProjectId`, read from
-   * `cliSettings.projectId` in `db diff`/`db pull`/`db reset`), which this flag
-   * deliberately does NOT touch — the `db` commands' `--project-ref` only ever
-   * feeds the resolver above, never the local-side id derivation.
+   * Optional explicit linked project ref override, letting e.g. `gen types --project-id <ref>`
+   * reuse the linked resolver's temp-role and pooler fallback without the workdir being linked.
+   * Shares only `SUPABASE_PROJECT_ID`'s ref-resolution precedence (flag > env >
+   * `.temp/project-ref`) — it never drives the local container id or pg-delta project id the way
+   * that env var does. `None` preserves the normal `--linked` fallback.
    */
   readonly linkedProjectRef?: Option.Option<string>;
   /**
-   * Marks `linkedProjectRef` as an ad-hoc remote target supplied explicitly
-   * (e.g. `gen types --project-id <ref>`) rather than the current linked
-   * workdir. The ref may belong to a different project than the cwd, so the
-   * resolver must NOT inherit workdir-scoped credentials or cached state:
-   * - it ignores the ambient `SUPABASE_DB_PASSWORD` (shell / `.env*`) so it
-   * always mints a temporary login role instead of handing pg-meta an
-   * unrelated password, and
-   * - on an IPv4-only network it skips the saved `.temp/pooler-url` (which
-   * belongs to the linked workdir) and fetches the primary pooler config
-   * for `ref` from the Management API instead of failing with the IPv6
-   * "run supabase link" suggestion.
-   * Absent / false for the normal `--linked` path, which is the workdir's own
-   * project and may legitimately reuse those env vars and saved files.
-   *
-   * The eight `db` commands' `--project-ref` deliberately leave this unset:
-   * unlike `gen types --project-id`'s genuinely ad-hoc target, `db`'s
-   * `--project-ref` is meant to have identical workdir credential semantics to
-   * `SUPABASE_PROJECT_ID` — it may still reuse the ambient `SUPABASE_DB_PASSWORD`
-   * / `--password`, since forcing ad-hoc would silently break existing
-   * password-based workflows that already set `--project-ref` expecting
-   * `SUPABASE_PROJECT_ID`-equivalent behavior. The mismatched-pooler-url risk
-   * `adHocProjectRef` guards against for a genuinely different project is
-   * already rejected independently: `poolerConfigFromConnectionString`
-   * (`db-config.parse.ts`) verifies the saved `.temp/pooler-url`'s
-   * tenant ref matches the resolved ref before reusing it, so a stale pooler
-   * URL for a DIFFERENT project than the one `--project-ref` now selects fails
-   * loudly instead of silently connecting to the wrong project.
-   *
-   * Leaving this unset does NOT, however, confine the eight `db` commands to
-   * the workdir's saved `.temp/pooler-url` on an IPv4-only network: any
-   * explicit `linkedProjectRef` (this flag's own presence, independent of
-   * `adHocProjectRef`) additionally unlocks the Management API pooler-config
-   * fetch (`resolvePoolerConn`'s `fetchFromApi`) whenever that saved URL is
-   * absent or fails the tenant-ref check above — so `--project-ref` against an
-   * unlinked workdir (no saved pooler URL at all) still resolves an IPv4
-   * pooler connection instead of dead-ending in the "run supabase link" IPv6
-   * error. `ignoreSavedUrl` (skip a matching saved URL outright) stays keyed to
-   * `adHocProjectRef` alone, so a `db` command's own linked workdir's saved URL
-   * for the SAME ref is still reused with no API call.
+   * Marks `linkedProjectRef` as an ad-hoc remote target (e.g. `gen types --project-id <ref>`)
+   * rather than the current linked workdir, so the resolver must not reuse workdir-scoped
+   * credentials or cached state for it: it ignores the ambient `SUPABASE_DB_PASSWORD` and skips
+   * the saved `.temp/pooler-url`, fetching pooler config from the Management API instead. Absent
+   * for the normal `--linked` path, which may reuse both.
    */
   readonly adHocProjectRef?: boolean;
 }
 
 /**
- * A resolved Postgres connection plus whether it points at the local stack
- * (`utils.IsLocalDatabase`). `isLocal` decides the pg_prove docker network/host
- * rewrite in the `test db` handler, so it is computed once here.
+ * A resolved Postgres connection plus whether it points at the local stack. `isLocal` decides
+ * the pg_prove docker network/host rewrite in the `test db` handler, so it is computed once here.
  */
 export interface ResolvedDbConfig {
   readonly conn: PgConnInput;
   readonly isLocal: boolean;
   /**
-   * The resolved linked project ref (`--linked` path only; `None` for
-   * `--local` / `--db-url`). Lets the caller re-read config with the ref applied
-   * so a matching `[remotes.<ref>]` block overrides e.g. `db.major_version` for the
-   * container image, matching Go's remote-merged `utils.Config` on the linked path.
+   * The resolved linked project ref (`--linked` path only; `None` for `--local` / `--db-url`).
+   * Lets the caller re-read config with the ref applied so a matching `[remotes.<ref>]` block can
+   * override fields like `db.major_version` for the container image.
    */
   readonly ref?: Option.Option<string>;
 }

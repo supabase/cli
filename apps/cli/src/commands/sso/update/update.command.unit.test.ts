@@ -89,9 +89,8 @@ describe("sso update domain flags (pflag StringSlice parity)", () => {
 
   test("--domains= (explicit empty value) parses to an empty array, not a missing flag", async () => {
     // The handler's `hasExplicitLongFlag` reads raw argv rather than this
-    // parsed value precisely because `--domains=` collapses to `[]` here,
-    // indistinguishable from the flag never being passed at all if you only
-    // looked at `.length`.
+    // parsed value, since `--domains=` collapses to `[]` here — indistinguishable
+    // from an absent flag by `.length` alone.
     const [, domains] = await Effect.runPromise(
       ssoUpdateDomainsFlag
         .parse({
@@ -105,9 +104,6 @@ describe("sso update domain flags (pflag StringSlice parity)", () => {
   });
 
   test("keeps only the first CSV record of a multiline value (pflag reads ONE record)", async () => {
-    // `sso update <id> --domains $'a.com\nb"c'` raises no parse error —
-    // pflag calls `csv.Reader.Read()` once, so the malformed second line is
-    // silently dropped.
     const [, domains] = await Effect.runPromise(
       ssoUpdateDomainsFlag
         .parse({
@@ -152,7 +148,6 @@ describe("sso update domain flags (pflag StringSlice parity)", () => {
 
     expect(Exit.isFailure(exit)).toBe(true);
     if (Exit.isFailure(exit)) {
-      // Go-verified (CLI-2005): `"x` is 2 bytes → EOF at column 3.
       expect(normalizeCause(exit.cause).message).toBe(
         'invalid argument "\\"x" for "--add-domains" flag: parse error on line 1, column 3: extraneous or missing " in quoted-field',
       );
@@ -179,8 +174,6 @@ describe("sso update domain flags (pflag StringSlice parity)", () => {
   });
 
   test("rejects a blank-only value with pflag's EOF diagnostic", async () => {
-    // Go-verified (CLI-2005): `sso update <id> --add-domains $'\n\n'` →
-    // `invalid argument "\n\n" for "--add-domains" flag: EOF`.
     const exit = await Effect.runPromise(
       ssoUpdateAddDomainsFlag
         .parse({

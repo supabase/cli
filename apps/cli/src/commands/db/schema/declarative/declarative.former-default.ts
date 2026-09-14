@@ -17,18 +17,13 @@ const formerDeclarativeDefaultWarning = (formerDirRel: string, defaultDirRel: st
   )}\n`;
 
 /**
- * Warns when a project still has a declarative tree at the former default
- * `supabase/database` while relying on the implicit default, which now resolves
- * to `supabase/schemas`. Without this, an upgraded project silently stops
- * reading its existing tree: non-interactive sync reports "no declarative
- * schema found" with no hint why, and `--yes` regenerates a fresh tree that
- * ignores edits present only under the old path. TS-only guidance (no Go
- * counterpart); recorded in docs/go-cli-divergences.md.
+ * Warns when a project still has a declarative tree at the former default `supabase/database`
+ * while relying on the implicit default, which now resolves to `supabase/schemas` — otherwise an
+ * upgraded project silently stops reading its existing tree. See docs/go-cli-divergences.md.
  *
- * Fires only when all three hold: `declarative_schema_path` is unset, the new
- * default directory has no entries, and the former default contains `.sql`
- * files or an export manifest. Probe failures read as "absent" so the warning
- * can never turn an unreadable directory into a command failure.
+ * Fires only when `declarative_schema_path` is unset, the new default directory has no entries,
+ * and the former default contains `.sql` files or an export manifest; probe failures read as
+ * "absent" so the warning can never turn an unreadable directory into a command failure.
  */
 export const warnFormerDeclarativeDefault = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,

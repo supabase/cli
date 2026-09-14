@@ -195,11 +195,9 @@ describe("cliProjectHomeLayer", () => {
   it.live(
     "dies with CliProjectHomeNotDirectoryError (BadResource) when a FILE occupies an ancestor of the project home path",
     () => {
-      // Distinct from the AlreadyExists case above: here `.supabase` itself
-      // doesn't exist, but a FILE sits on one of ITS OWN parent directories
-      // (`<tempDir>/proj`), so `mkdir(..., { recursive: true })` fails with
-      // ENOTDIR (-> PlatformError reason "BadResource") while trying to
-      // traverse through it, rather than EEXIST on the leaf itself.
+      // Distinct from the AlreadyExists case above: here `.supabase` doesn't exist, but a file
+      // sits on one of its own parent directories, so `mkdir` fails with ENOTDIR while
+      // traversing, not EEXIST on the leaf itself.
       const tempDir = makeTempDir();
       const fileAsDir = join(tempDir, "proj");
       const cwd = join(fileAsDir, "child");

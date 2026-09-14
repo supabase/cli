@@ -63,10 +63,8 @@ const runInspectReport = Effect.fnUntraced(function* (
   const cliArgs = yield* CliArgs;
   const isText = output.format === "text";
 
-  // Mutual exclusivity is keyed off raw argv (which flags were explicitly
-  // passed), not the parsed boolean value. `--local=false` was explicitly
-  // passed even though its value is false; value-based detection would miss
-  // it and route to linked incorrectly.
+  // Mutual exclusivity is keyed off raw argv, not the parsed boolean value: `--local=false`
+  // was explicitly passed, so value-based detection would miss it and default to linked.
   const target = resolveDbTargetFlags(cliArgs.args);
   if (target.setFlags.length > 1) {
     return yield* Effect.fail(
@@ -76,18 +74,13 @@ const runInspectReport = Effect.fnUntraced(function* (
     );
   }
 
-  // Read + validate the custom `[experimental.inspect.rules]` BEFORE any DB work,
-  // so a malformed `inspect.rules` config aborts before connecting or writing any
-  // CSV files. They are applied later (in the summary rendering below), but
-  // validated here up front.
+  // Validated before any DB work so a malformed config aborts before connecting or writing
+  // CSVs; applied later in the summary rendering below.
   const configRules = yield* readInspectRules(fs, path, cliSettings.workdir);
 
   // `--linked` is the default, so absence of the others resolves to linked.
   const connType = target.connType ?? "linked";
 
-  // `--project-ref` never implies `--linked` and must not be silently
-  // discarded on a non-linked target — see push.handler.ts's identical guard
-  // (db push) for the full TS-only rationale.
   if (Option.isSome(flags.projectRef) && connType !== "linked") {
     return yield* Effect.fail(
       new InspectMutuallyExclusiveFlagsError({
@@ -104,14 +97,12 @@ const runInspectReport = Effect.fnUntraced(function* (
     linkedProjectRef: flags.projectRef,
   });
 
-  // `outDir = <output-dir>/<date>`, resolved against the process CWD when relative
-  // (NOT `--workdir`).
+  // Resolved against the process CWD when relative, not `--workdir`.
   const epochMillis = yield* Clock.currentTimeMillis;
   let outDir = path.join(flags.outputDir, reportDateFolder(epochMillis));
   if (!path.isAbsolute(outDir)) {
     outDir = path.join(runtimeInfo.cwd, outDir);
   }
-  // The output dir is pinned to 0755 and each CSV to 0644.
   yield* fs
     .makeDirectory(outDir, { recursive: true, mode: 0o755 })
     .pipe(
@@ -120,7 +111,6 @@ const runInspectReport = Effect.fnUntraced(function* (
       ),
     );
 
-  // The connect diagnostic is written to stderr before dialing.
   if (isText) {
     yield* output.raw(`Connecting to ${cfg.isLocal ? "local" : "remote"} database...\n`, "stderr");
   }
@@ -155,8 +145,7 @@ const runInspectReport = Effect.fnUntraced(function* (
     yield* output.raw(`Reports saved to ${bold(outDir, tty.stdoutIsTty)}\n`, "stderr");
   }
 
-  // Custom `[experimental.inspect.rules]` (read + validated up front) replace the 7
-  // defaults when present.
+  // Custom rules (validated above) replace the defaults when present.
   const rules = configRules.length > 0 ? configRules : DEFAULT_INSPECT_RULES;
   if (configRules.length === 0 && isText) {
     yield* output.raw("Loading default rules...\n", "stderr");

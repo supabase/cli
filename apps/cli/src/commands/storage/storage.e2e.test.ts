@@ -8,11 +8,9 @@ import { runSupabase } from "../../../tests/helpers/cli.ts";
 const E2E_TIMEOUT_MS = 30_000;
 
 /**
- * Golden-path e2e for the `storage` group: the real compiled-binary surface and
- * the parser boundary for the persistent `--linked`/`--local` flags. Object
- * list/copy/move/remove parity is covered by the integration + unit suites
- * (they don't need a live local stack); these only exercise what the in-process
- * suites bypass.
+ * Golden-path e2e for `storage`: the compiled binary and `--linked`/`--local` flag
+ * parsing. Object list/copy/move/remove behavior is covered by the integration and
+ * unit suites, which don't need a live local stack.
  */
 describe("supabase storage", () => {
   let projectDir: string;
@@ -38,9 +36,8 @@ describe("supabase storage", () => {
   });
 
   test("rejects passing both --local and --linked", { timeout: E2E_TIMEOUT_MS }, async () => {
-    // The experimental gate runs BEFORE the mutex check, so --experimental
-    // must be set here to reach the mutex check at all — otherwise the
-    // experimental-gate error wins (see the next test).
+    // The experimental gate runs before the mutex check, so --experimental must be
+    // set here to reach the mutex check at all.
     const { exitCode, stdout, stderr } = await runSupabase(
       ["storage", "ls", "--local", "--linked", "ss:///", "--experimental"],
       { cwd: projectDir },
@@ -55,8 +52,6 @@ describe("supabase storage", () => {
     "rejects storage subcommands without --experimental",
     { timeout: E2E_TIMEOUT_MS },
     async () => {
-      // `storage` is an experimental command group; running it without
-      // --experimental is rejected by the experimental gate.
       const { exitCode, stdout, stderr } = await runSupabase(
         ["storage", "ls", "ss:///", "--local"],
         {
@@ -71,11 +66,8 @@ describe("supabase storage", () => {
   );
 
   test("accepts --local after the subcommand token", { timeout: E2E_TIMEOUT_MS }, async () => {
-    // `--linked`/`--local` are per-leaf flags (Effect CLI requires unique
-    // global-flag names tree-wide and `seed` owns them), so they follow the
-    // subcommand. With --experimental it parses and passes the gate; there's no
-    // live local stack so it fails to connect — but it must PARSE (no
-    // "Unrecognized flag") and must NOT be blocked by the experimental gate.
+    // --linked/--local are per-leaf flags, not global ones — Effect CLI requires
+    // unique global-flag names tree-wide and `seed` already owns those names.
     const { stdout, stderr } = await runSupabase(
       ["storage", "ls", "ss:///", "--local", "--experimental"],
       { cwd: projectDir },

@@ -39,8 +39,8 @@ class EncryptionUnexpectedStatusError extends Data.TaggedError("EncryptionUnexpe
 }
 
 /**
- * Build the network/status error mapper for an encryption subcommand. Go uses
- * different verbs for the network vs status message of the same subcommand
+ * Build the network/status error mapper for an encryption subcommand. The
+ * network and status messages of the same subcommand use different verbs
  * (get: "retrieve"/"get"; update: "update"/"update"), so the factory takes
  * both and shares the dispatch + body-truncation policy from `mapHttpError`.
  */

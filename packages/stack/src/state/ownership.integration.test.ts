@@ -14,7 +14,7 @@ import {
   Stream,
 } from "effect";
 import { ChildProcess } from "effect/unstable/process";
-import { createServer, type Server } from "node:net";
+import { createServer, Socket, type Server } from "node:net";
 import { deriveStackId, type StackIdentity } from "../identity/Identity.ts";
 import { StackOwnershipConflictError, StackStateInvalidError } from "../public/Errors.ts";
 import {
@@ -65,6 +65,40 @@ const closeServer = (server: Server) =>
     );
   });
 
+const observeRejectedPeer = (port: number) =>
+  Effect.callback<void, Error>((resume) => {
+    const socket = new Socket();
+    let connected = false;
+    let settled = false;
+    const finish = (result: Effect.Effect<void, Error>) => {
+      if (settled) return;
+      settled = true;
+      socket.off("connect", onConnect);
+      socket.off("error", onError);
+      socket.off("close", onClose);
+      socket.destroy();
+      resume(result);
+    };
+    const onConnect = () => {
+      connected = true;
+    };
+    const onError = (error: Error) => finish(Effect.fail(error));
+    const onClose = () => {
+      if (connected) finish(Effect.void);
+    };
+    socket.once("connect", onConnect);
+    socket.once("error", onError);
+    socket.once("close", onClose);
+    socket.connect({ host: "127.0.0.1", port });
+    return Effect.sync(() => {
+      settled = true;
+      socket.off("connect", onConnect);
+      socket.off("error", onError);
+      socket.off("close", onClose);
+      socket.destroy();
+    });
+  });
+
 const jsonText = (value: unknown) =>
   Schema.encodeSync(Schema.fromJsonString(Schema.Unknown))(value);
 
@@ -73,17 +107,13 @@ const withPlatform = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
 
 const identity: StackIdentity = {
   projectRoot: "/tmp/project",
-  checkoutRoot: "/tmp/project",
-  workspaceId: "/tmp/project",
-  checkoutId: "/tmp/project",
   branchContext: "ordinary-workspace",
-  localProjectKey: ".",
   stackName: "default",
 };
 
-const stateFor = (stackId: string): PersistedStackState => ({
+const stateFor = (): PersistedStackState => ({
   format: "supabase-stack-state-v1",
-  identity: { ...identity, stackId },
+  identity,
   runtime: { kind: "native" },
   desiredLifecycle: "unconfigured",
   ports: [],
@@ -104,10 +134,21 @@ describe("stack ownership", () => {
           return yield* Effect.die("Blocker did not expose a bound port");
         const failed = yield* acquirePortLease(address.port).pipe(Effect.exit);
         expect(Exit.isFailure(failed)).toBe(true);
+        const failure = errorOf(failed);
+        expect(failure).toBeInstanceOf(StackStateInvalidError);
+        expect(failure?.code).toBe("EADDRINUSE");
         yield* closeServer(blocker);
         const lease = yield* acquirePortLease(address.port);
         yield* lease.close;
       }),
+    ),
+  );
+
+  it.live("closes accepted lease peers before lease cleanup completes", () =>
+    withPlatform(
+      Effect.acquireRelease(acquirePortLease(0), (lease) => lease.close).pipe(
+        Effect.flatMap((lease) => observeRejectedPeer(lease.port).pipe(Effect.timeout("1 second"))),
+      ),
     ),
   );
 
@@ -118,7 +159,7 @@ describe("stack ownership", () => {
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-init-" });
         const stackId = yield* deriveStackId(identity);
         const store = yield* makeStackStateStore({ stateRoot: root });
-        const candidate = stateFor(stackId);
+        const candidate = stateFor();
         const [first, second] = yield* Effect.all(
           [store.initialize(stackId, candidate), store.initialize(stackId, candidate)],
           { concurrency: 2 },
@@ -153,6 +194,12 @@ describe("stack ownership", () => {
           controlEndpointFor(stackId, environment, lease.metadata.leasePort),
         );
         yield* publishOwnership(lease);
+        const paths = yield* resolveStackPaths({ stateRoot: root, stackId });
+        const persisted = yield* Schema.decodeEffect(
+          Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
+        )(yield* fs.readFileString(paths.controlMetadata));
+        expect(persisted).not.toHaveProperty("stackId");
+        expect(persisted).not.toHaveProperty("endpoint");
         expect(yield* readOwnerMetadata(root, stackId, environment)).toEqual(lease.metadata);
 
         const competing = yield* acquireOwnership({
@@ -187,10 +234,6 @@ describe("stack ownership", () => {
         const childIdentity = {
           ...identity,
           projectRoot: root,
-          checkoutRoot: root,
-          workspaceId: root,
-          checkoutId: root,
-          localProjectKey: ".",
         };
         const stackId = yield* deriveStackId(childIdentity);
         const environment: StackRuntimeEnvironmentValue = {
@@ -304,7 +347,7 @@ describe("stack ownership", () => {
     ),
   );
 
-  it.live("fails closed when owner metadata belongs to another identity", () =>
+  it.live("derives control identity and endpoint from the stack directory", () =>
     withPlatform(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -325,12 +368,31 @@ describe("stack ownership", () => {
         yield* publishOwnership(lease);
         const metadataPath = lease.metadataPath;
         const text = yield* fs.readFileString(metadataPath);
-        yield* fs.writeFileString(metadataPath, text.replace(stackId, "b".repeat(64)));
-        const read = yield* readOwnerMetadata(root, stackId, environment).pipe(Effect.exit);
-        expect(errorOf(read)).toBeInstanceOf(StackStateInvalidError);
+        const persisted = yield* Schema.decodeEffect(
+          Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
+        )(text);
+        yield* fs.writeFileString(
+          metadataPath,
+          jsonText({
+            ...persisted,
+            stackId: "b".repeat(64),
+            endpoint: { kind: "unix", path: "/wrong/control.sock" },
+            unexpected: true,
+          }),
+        );
+        const rejected = yield* readOwnerMetadata(root, stackId, environment).pipe(Effect.exit);
+        expect(errorOf(rejected)).toBeInstanceOf(StackStateInvalidError);
+        yield* fs.writeFileString(
+          metadataPath,
+          jsonText({
+            ...persisted,
+            stackId: "b".repeat(64),
+            endpoint: { kind: "unix", path: "/wrong/control.sock" },
+          }),
+        );
+        expect(yield* readOwnerMetadata(root, stackId, environment)).toEqual(lease.metadata);
         yield* lease.release;
-        // A malformed replacement cannot be removed by this stale finalizer.
-        expect(yield* fs.exists(metadataPath)).toBe(true);
+        expect(yield* fs.exists(metadataPath)).toBe(false);
       }),
     ),
   );

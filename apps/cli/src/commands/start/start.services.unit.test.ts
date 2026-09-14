@@ -116,15 +116,9 @@ describe("startServiceMeta", () => {
 });
 
 /**
- * Cross-check: `start.services.ts`'s `enabledGate` metadata (descriptive
- * only, never read by runtime code — see that module's header) against
- * `start.gates.ts`'s `resolveStartGates` (the REAL, executable gate).
- * The two are hand-maintained separately and can silently drift (e.g. a gate
- * condition changes in `start.gates.ts` without the matching `enabledGate`
- * string being updated) — this mechanically evaluates every `enabledGate`
- * boolean-string expression against a synthetic config and compares it
- * against what `resolveStartGates` actually computes for the SAME
- * config, so a future drift fails loudly here instead of silently.
+ * `start.services.ts`'s `enabledGate` strings and `start.gates.ts`'s `resolveStartGates` are
+ * hand-maintained separately and can drift silently; this evaluates every `enabledGate`
+ * expression against a synthetic config and compares it to what `resolveStartGates` computes.
  */
 describe("START_SERVICES enabledGate cross-check against start.gates.ts", () => {
   const decodeConfig = Schema.decodeUnknownSync(CliConfigSchema);
@@ -170,10 +164,9 @@ describe("START_SERVICES enabledGate cross-check against start.gates.ts", () => 
   }
 
   /**
-   * Evaluates an `enabledGate` string ("x.enabled", "x.enabled && y.enabled",
-   * or the `"none"` sentinel) against a synthetic config. Deliberately
-   * ignores the `!excluded(...)` factor every real gate also ANDs in — the
-   * caller isolates that by resolving with `excludedKeys` empty.
+   * Evaluates an `enabledGate` string (`"x.enabled"`, `"x.enabled && y.enabled"`, or the
+   * `"none"` sentinel) against a synthetic config. Ignores the `!excluded(...)` factor real
+   * gates also apply — callers isolate that by resolving with `excludedKeys` empty.
    */
   function evaluateEnabledGate(expr: string, config: CliConfig): boolean {
     if (expr === "none") return true;

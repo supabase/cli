@@ -43,10 +43,9 @@ const asStringArray = (value: unknown): ReadonlyArray<string> =>
   Array.isArray(value) ? value.map(asString) : [];
 
 /**
- * Decodes a JSON value into a plain string field: an absent or `null` value is
- * the zero value `""`; a present non-string (number/bool/object/array) throws.
- * Any string value is accepted (the deliberate unknown-enum tolerance). Used
- * only on the typed-API path, not the local `rows.Scan` path.
+ * Decodes a JSON value into a plain string field: an absent or `null` value is the zero value
+ * `""`; a present non-string (number/bool/object/array) throws. Any string value is accepted
+ * (an intentional unknown-enum tolerance), used only on the typed-API path, not `rows.Scan`.
  */
 function requireApiString(value: unknown, field: string): string {
   if (value === undefined || value === null) return "";
@@ -178,18 +177,16 @@ function projectApiMetadata(value: unknown): Record<string, unknown> | undefined
 }
 
 /**
- * Reads the advisors API response with plain string narrowing instead of the
- * generated closed-enum schema (which would reject advisor names / metadata
- * types the API can add): `name` / `level` / `facing` / category values pass
- * through as raw strings.
+ * Reads the advisors API response with plain string narrowing instead of the generated
+ * closed-enum schema, which would reject advisor names/metadata types the API can add: `name` /
+ * `level` / `facing` / category values pass through as raw strings.
  *
- * Structurally strict, though — a top-level non-object, a `lints` /
- * `categories` / `metadata` / `fkey_columns` of the wrong JSON container type,
- * or a non-object lint entry throws rather than surfacing as a non-zero
- * failure. **Throws** on those so a malformed 200 body fails instead of being
- * reported as "No issues found"; the caller maps the throw to the same
- * `failed to fetch … advisors` error. A top-level `null` decodes to the zero
- * value (no lints).
+ * Structurally strict, though: a top-level non-object, a wrongly-typed `lints`/`categories`/
+ * `metadata`/`fkey_columns` container, or a non-object lint entry throws — so a malformed 200
+ * body fails instead of being reported as "No issues found". A top-level `null` decodes to the
+ * zero value (no lints).
+ *
+ * @throws On structurally invalid input; the caller maps it to `failed to fetch … advisors`.
  */
 export function apiResponseToAdvisorLints(parsed: unknown): ReadonlyArray<AdvisorLint> {
   if (parsed === null) return [];
@@ -203,9 +200,8 @@ export function apiResponseToAdvisorLints(parsed: unknown): ReadonlyArray<Adviso
   }
   const lints: Array<AdvisorLint> = [];
   for (const entry of lintsRaw) {
-    // A null slice element decodes to the zero-value struct (all fields at
-    // their zero values), not a throw. Normalise null/undefined to an empty
-    // record so the field decoders produce zero values.
+    // A null slice element decodes to the zero-value struct, not a throw; normalize
+    // null/undefined to an empty record so the field decoders produce zero values.
     if (entry === null || entry === undefined) {
       lints.push({
         name: "",

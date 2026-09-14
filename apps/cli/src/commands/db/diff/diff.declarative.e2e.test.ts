@@ -23,16 +23,11 @@ const DIFF_TEST_TIMEOUT_MS =
   DIFF_COMMAND_TIMEOUT_MS +
   LIFECYCLE_MARGIN_MS;
 
-// CLI-1947 regression: pg-delta's `filterPublicBuiltInDefaults()` unconditionally
-// treated PUBLIC's implicit built-in privilege as a no-op on both sides of a diff,
-// so a declarative schema's `REVOKE ... FROM PUBLIC` on a function was silently
-// dropped from the generated migration — exit code 0, no error, just a missing
-// statement. Fixed upstream in @supabase/pg-delta@1.0.0-alpha.33
-// (supabase/pg-toolbelt#357). Verified directly against this repo's build: with
-// the pre-fix pin (1.0.0-alpha.32) the migration below contains only the CREATE
-// FUNCTION statement; the REVOKE is silently absent. This suite uses the local
-// Docker-stack e2e coverage and never calls the Management API. See AGENTS.md's
-// "E2e tests" section.
+// Regression coverage: `filterPublicBuiltInDefaults()` treated PUBLIC's implicit built-in
+// privilege as a no-op on both sides of a diff, so a declarative schema's `REVOKE ... FROM
+// PUBLIC` on a function was silently dropped from the generated migration. Fixed upstream in
+// @supabase/pg-delta@1.0.0-alpha.33. Uses local Docker-stack e2e coverage; see AGENTS.md's "E2e
+// tests" section.
 describe("supabase db diff (e2e, pg-delta declarative privileges)", () => {
   let project: Awaited<ReturnType<typeof makeTempCliStackProject>> | undefined;
 
@@ -63,10 +58,9 @@ describe("supabase db diff (e2e, pg-delta declarative privileges)", () => {
       );
       requireCliSuccess(start, "start setup");
 
-      // Minimal, deterministic repro: execute a fresh function's implicit PUBLIC
-      // EXECUTE grant, explicitly revoked, directly against the local database.
-      // `db query` is setup only; keep each statement in its own invocation
-      // because the legacy query command sends one prepared statement at a time.
+      // Minimal, deterministic repro: execute a fresh function's implicit PUBLIC EXECUTE grant,
+      // explicitly revoked, directly against the local database. `db query` is setup only; keep
+      // each statement in its own invocation, since it sends one prepared statement at a time.
       const createFunction = await runSupabase(
         [
           "db",
@@ -100,11 +94,8 @@ as $$ select 1; $$;`,
       expect(written, `no migration written; stderr:\n${diff.stderr}`).toBeTruthy();
       const sql = readFileSync(path.join(migrationsDir, written as string), "utf8");
 
-      // The negative-space regression: pre-fix, exit code 0 and this file would
-      // exist, but silently missing the REVOKE statement (only the CREATE FUNCTION
-      // survives). Anchor the match to the function's own REVOKE statement — up to
-      // its terminating `;` — so this cannot pass on an unrelated PUBLIC mention
-      // elsewhere in the file.
+      // Anchored to the function's own REVOKE statement, up to its terminating `;`, so this
+      // cannot pass on an unrelated PUBLIC mention elsewhere in the file.
       expect(sql).toMatch(
         /CREATE(?:\s+OR\s+REPLACE)?\s+FUNCTION\s+"?public"?\s*\.\s*"?probe_fn"?\s*\(\)/i,
       );

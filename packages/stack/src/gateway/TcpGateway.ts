@@ -1,6 +1,5 @@
 import { Effect, Exit, FiberSet, Scope } from "effect";
 import { createServer, Socket, type Server } from "node:net";
-// oxlint-disable-next-line effecttsgo/node-builtin-import
 import type { Duplex } from "node:stream";
 import type { Fiber } from "effect/Fiber";
 import { GatewayActivationError } from "../public/Errors.ts";
@@ -10,7 +9,7 @@ import type {
   GatewayProxyRoute,
   GatewayRouteRequest,
 } from "./Gateway.ts";
-import type { HostListener } from "../state/PortCoordinator.ts";
+import type { HostListener } from "../supervisor/HostListener.ts";
 
 export interface TcpGatewayOptions {
   readonly address?: string;

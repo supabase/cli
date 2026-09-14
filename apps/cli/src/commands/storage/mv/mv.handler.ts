@@ -43,9 +43,7 @@ export const storageMv = Effect.fn("storage.mv")(function* (flags: StorageMvFlag
   yield* Effect.gen(function* () {
     yield* assertStorageWorkdir(cliSettings.workdir);
 
-    // `--project-ref` never implies `--linked` and must not be silently
-    // discarded on the local target — see push.handler.ts's identical guard
-    // (db push) for the full TS-only rationale.
+    // `--project-ref` only applies to the linked project; it never implies `--linked`.
     if (Option.isSome(flags.projectRef) && flags.local) {
       return yield* Effect.fail(
         new StorageMutuallyExclusiveFlagsError({
@@ -62,8 +60,8 @@ export const storageMv = Effect.fn("storage.mv")(function* (flags: StorageMvFlag
       yield* output.raw(`Loading config override: [remotes.${loaded.appliedRemote}]\n`, "stderr");
     }
 
-    // Parse + validate BEFORE building the client (Go `mv.go:24-39`): both must be
-    // ss://, at least one prefix non-empty, and the same bucket.
+    // Parse and validate both paths before building the client: both must be ss://, at
+    // least one prefix non-empty, and the same bucket.
     const srcParsed = yield* parseStorageUrlEffect(flags.src);
     const dstParsed = yield* parseStorageUrlEffect(flags.dst);
     const [srcBucket, srcPrefix] = splitBucketPrefix(srcParsed);
@@ -92,7 +90,6 @@ export const storageMv = Effect.fn("storage.mv")(function* (flags: StorageMvFlag
           );
 
           if (result.moved) {
-            // Go prints the move response message on success.
             yield* output.raw(`${result.message}\n`, "stderr");
             if (output.format !== "text") {
               yield* output.success("", { message: result.message });
@@ -116,9 +113,8 @@ export const storageMv = Effect.fn("storage.mv")(function* (flags: StorageMvFlag
 });
 
 /**
- * Go `MoveStorageObjectAll` (`mv.go:55-88`): BFS over the source tree (LIFO),
- * moving each object with its `srcPrefix`→`dstPrefix` rewrite. `srcPath` is
- * terminated by `/`. Fails with `Object not found: <srcPath>` when nothing moved.
+ * BFS over the source tree (LIFO), moving each object with its `srcPrefix`→`dstPrefix` rewrite.
+ * `srcPath` is terminated by `/`. Fails with `Object not found: <srcPath>` when nothing moved.
  */
 const moveStorageObjectAll = (
   gateway: StorageGateway,

@@ -1,12 +1,6 @@
-// Verbatim copies of the Go migra Deno + bash templates. These embed the
-// scripts byte-for-byte; `migra.deno-templates.unit.test.ts` asserts
-// equality against the Go sources in `apps/cli-go/internal/db/diff/templates/`.
-// Do not hand-edit — regenerate from Go.
-//
-// Rollback engine for `db diff --use-migra` and `db pull --diff-engine migra`.
-// The `.ts` template runs inside Edge Runtime (`@pgkit/migra` +
-// `@pgkit/client`); the `.sh` template is the OOM bash fallback executed in the
-// `supabase/migra` Docker image.
+// Embedded templates for the migra rollback path (`db diff --use-migra`,
+// `db pull --diff-engine migra`). `migra.deno-templates.unit.test.ts` pins their
+// exact content — edit through that test, not by hand.
 
 /** `templates/migra.ts` — diffs SOURCE→TARGET via @pgkit/migra inside Edge Runtime. */
 export const migraDiffScript =

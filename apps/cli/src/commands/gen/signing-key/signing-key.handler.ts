@@ -144,19 +144,9 @@ const generatePrivateKey = Effect.fnUntraced(function* (algorithm: SigningAlgori
   } satisfies SigningKeyJwk;
 });
 
-// `gen signing-key` goes through the exact same config load and validation
-// pipeline as `gen bearer-jwt` — there is no separate, ungated code path for
-// this command. The `[auth].signing_keys_path` file is only read when auth
-// is enabled, so with auth disabled the signing keys never advance past the
-// default single-key array — meaning `--append` appends to (and a
-// subsequent overwrite clobbers) that phantom default set, NOT the file's
-// real content: with `auth.enabled = false` and a configured
-// `signing_keys_path` pointing at a file containing a real custom key, `gen signing-key
-// --append` overwrote the file with the default ES256 key plus the newly generated one,
-// discarding the original entry entirely — surprising, but this is the
-// established behavior, so this must gate the read on `paths.authEnabled`
-// exactly like `gen bearer-jwt`'s own `resolveBearerJwtSigningKey`
-// already does.
+// Only reads the `signing_keys_path` file when auth is enabled; otherwise `--append` appends
+// to (and an overwrite clobbers) the default single-key array instead of the file's real
+// content. Surprising but established behavior — matches `gen bearer-jwt`'s own gate.
 const loadSigningKeysConfig = Effect.fnUntraced(function* (cwd: string) {
   const paths = yield* resolveSigningKeysConfigPaths(
     cwd,
@@ -221,12 +211,8 @@ export const genSigningKey = Effect.fn("gen.signing-key")(function* (flags: GenS
   const warnText = (text: string) => styleIfTty(tty.stdoutIsTty, "yellow", text);
 
   return yield* Effect.gen(function* () {
-    // The project `.env` files are loaded before the overwrite prompt reads
-    // the yes flag, so a `SUPABASE_YES` set only in `supabase/.env` must
-    // auto-confirm here too. Resolved inside this block (not above it) so a
-    // malformed/unreadable `.env` still flushes telemetry below — telemetry
-    // must attach before the config load runs, so the capture still fires
-    // even when that load fails.
+    // Loaded here (not above) so a malformed `.env` still flushes telemetry: `SUPABASE_YES`
+    // in `supabase/.env` must be able to auto-confirm the overwrite prompt below.
     const projectEnv = yield* loadProjectEnv(fs, path, cliSettings.workdir);
     const yes = yield* resolveYesWithProjectEnv(projectEnv);
     // The configured signing-keys file is validated before any key is
@@ -247,24 +233,16 @@ export const genSigningKey = Effect.fn("gen.signing-key")(function* (flags: GenS
     const nextKeys = flags.append
       ? [...configured.value.existingKeys, key]
       : yield* Effect.gen(function* () {
-          // `promptYesNo` silently returns the default (true) for any non-text
-          // `--output-format`, but this command has no structured json/stream-json output
-          // (SIDE_EFFECTS.md) — that combination only arises from a real interactive TTY
-          // explicitly requesting machine output. Fail closed rather than silently
-          // overwriting irrecoverable key material.
+          // Fail closed instead of relying on `promptYesNo`'s default-true fallback: this
+          // command has no structured json/stream-json output, so silently overwriting key
+          // material on a machine-output TTY would be worse than erroring.
           const confirmed =
             !yes && tty.stdinIsTty && output.format !== "text"
               ? false
               : yield* promptYesNo(
-                  // `promptYesNo` checks `output.format !== "text"` BEFORE it checks
-                  // TTY, so a non-TTY (piped or empty) invocation under `json`/`stream-json`
-                  // would otherwise hit that check first and return the default without
-                  // ever reading stdin. The confirmation prompt has no concept of output
-                  // format at all — it always reads piped stdin — so a piped `y`/`n` answer
-                  // must be honored here the same as in text mode. Present a text-shaped
-                  // view of `output` to reach that read; `raw`/`promptConfirm` write the
-                  // prompt to stderr under every `Output` layer, so this never touches the
-                  // machine-readable stdout payload.
+                  // Presents a text-shaped `output` so `promptYesNo` reads piped stdin instead
+                  // of short-circuiting on `output.format !== "text"`; the prompt itself always
+                  // writes to stderr, so this never touches the machine-readable stdout payload.
                   output.format === "text" ? output : { ...output, format: "text" },
                   yes,
                   `Do you want to overwrite the existing ${emphasize(configured.value.displayPath)} file?`,

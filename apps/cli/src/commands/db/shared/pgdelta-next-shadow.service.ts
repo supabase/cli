@@ -38,13 +38,9 @@ interface PgDeltaNextShadowShape {
     opts: PgDeltaNextShadowInput,
   ) => Effect.Effect<PgDeltaNextMigrationsShadow, DeclarativeShadowDbError, Scope.Scope>;
   /**
-   * Provisions the independent migrated and declarative shadows needed by a
-   * declarative plan. Concurrency is strategy-driven (see
-   * `pgdelta-next-shadow.plan.ts`): warm snapshots restore in parallel,
-   * a shared cold baseline is built once and handed off, and everything else
-   * runs sequentially — with the concurrent shapes buffering the declarative
-   * side's output so progress lines never interleave. Both shadows are removed
-   * when the current Effect scope closes.
+   * Provisions the independent migrated and declarative shadows needed by a declarative plan.
+   * Concurrency is strategy-driven (see `pgdelta-next-shadow.plan.ts`). Both shadows are
+   * removed when the current Effect scope closes.
    */
   readonly provisionPlan: (
     opts: PgDeltaNextShadowInput,

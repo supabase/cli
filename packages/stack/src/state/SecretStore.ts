@@ -1,5 +1,5 @@
 import { Clock, Crypto, Effect, FileSystem, Path, Redacted, Schema } from "effect";
-// oxlint-disable-next-line effecttsgo/node-builtin-import
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- Effect Crypto has no HMAC, private-key import, or asymmetric signing API.
 import { createHmac, createPrivateKey, createSign } from "node:crypto";
 import {
   InvalidJwtSigningMaterialError,
@@ -257,8 +257,8 @@ const privateSigningJwk = (value: unknown): SigningJwk | undefined => {
   return undefined;
 };
 
-const invalidSigningMaterial = () =>
-  new InvalidJwtSigningMaterialError({ message: "Unable to resolve JWT signing material" });
+const invalidSigningMaterial = (message = "Unable to resolve JWT signing material") =>
+  new InvalidJwtSigningMaterialError({ message });
 
 const readSigningJwks = (
   signing: Extract<SecretJwtSigning, { readonly kind: "jwks-file" }>,
@@ -274,7 +274,7 @@ const readSigningJwks = (
     const candidate = path.resolve(projectRoot, signing.path);
     const relative = path.relative(projectRoot, candidate);
     if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
-      return yield* invalidSigningMaterial();
+      return yield* invalidSigningMaterial("JWT signing key file must be inside project root");
     const canonicalRoot = yield* fs
       .realPath(projectRoot)
       .pipe(Effect.mapError(() => invalidSigningMaterial()));
@@ -287,7 +287,7 @@ const readSigningJwks = (
       canonicalRelative.startsWith(`..${path.sep}`) ||
       path.isAbsolute(canonicalRelative)
     )
-      return yield* invalidSigningMaterial();
+      return yield* invalidSigningMaterial("JWT signing key file must be inside project root");
     const raw = yield* fs
       .readFileString(canonicalCandidate)
       .pipe(Effect.mapError(() => invalidSigningMaterial()));

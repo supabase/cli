@@ -1,33 +1,13 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { Crypto, Data, Effect, Exit, FileSystem, Path, Schema } from "effect";
+import { Crypto, Effect, Exit, FileSystem, Path, Schema } from "effect";
 import { InvalidStackIdentityError } from "../public/Errors.ts";
 import { StackIdSchema, type StackId } from "../public/StackId.ts";
 import { resolveStackPaths } from "../state/Paths.ts";
+import { GitSetupError, runGit } from "../../tests/helpers/git.ts";
 import { deriveStackId, resolveStackIdentity, type StackIdentity } from "./Identity.ts";
 
 const platformLayer = NodeServices.layer;
-
-class GitSetupError extends Data.TaggedError("GitSetupError")<{
-  readonly message: string;
-}> {}
-
-const runGit = (
-  cwd: string,
-  args: ReadonlyArray<string>,
-): Effect.Effect<void, GitSetupError, ChildProcessSpawner.ChildProcessSpawner> =>
-  Effect.gen(function* () {
-    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const exitCode = yield* spawner
-      .exitCode(ChildProcess.make("git", [...args], { cwd }))
-      .pipe(Effect.mapError((error) => new GitSetupError({ message: error.message })));
-    if (exitCode !== 0) {
-      return yield* new GitSetupError({
-        message: `git ${args.join(" ")} exited with code ${exitCode}`,
-      });
-    }
-  });
 
 const makeGitWorkspace = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
@@ -89,16 +69,12 @@ describe("deterministic stack identity and state paths", () => {
       Effect.gen(function* () {
         const identity: StackIdentity = {
           projectRoot: "/tmp/project",
-          checkoutRoot: "/tmp/checkout",
-          workspaceId: "workspace",
-          checkoutId: "checkout",
           branchContext: "refs/heads/main",
-          localProjectKey: ".",
           stackName: "default",
         };
 
         expect(yield* stackId(identity)).toBe(
-          "c4c6587af0cd4fb3e5dab47a532023ba81cf1cd24e35b5173634a4539e8dab0f",
+          "64616c83912c48442ec266f86ee2d7f004d2be5c8b7f31a6d6b4c2634f82145f",
         );
       }),
     ),
@@ -122,7 +98,7 @@ describe("deterministic stack identity and state paths", () => {
     ),
   );
 
-  it.live("keeps sibling worktrees distinct while sharing the common repository identity", () =>
+  it.live("keeps sibling worktrees distinct by their canonical project roots", () =>
     withScope(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -133,8 +109,7 @@ describe("deterministic stack identity and state paths", () => {
         const primary = yield* resolveStackIdentity({ projectRoot: repository });
         const linked = yield* resolveStackIdentity({ projectRoot: sibling });
 
-        expect(linked.workspaceId).toBe(primary.workspaceId);
-        expect(linked.checkoutId).not.toBe(primary.checkoutId);
+        expect(linked.projectRoot).not.toBe(primary.projectRoot);
         expect(linked.branchContext).toBe(primary.branchContext);
         expect(yield* stackId(linked)).not.toBe(yield* stackId(primary));
         expect(yield* fs.exists(path.join(sibling, ".git"))).toBe(true);
@@ -182,7 +157,63 @@ describe("deterministic stack identity and state paths", () => {
     ),
   );
 
-  it.live("normalizes a nested project root relative to its checkout", () =>
+  it.live("rejects a malformed HEAD marker in an otherwise empty git directory", () =>
+    withScope(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-git-marker-" });
+        const project = path.join(root, "project");
+        yield* fs.makeDirectory(path.join(project, ".git"), { recursive: true });
+        yield* fs.writeFileString(path.join(project, ".git", "HEAD"), "not-a-commit\n");
+
+        const error = yield* resolveStackIdentity({ projectRoot: project }).pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(InvalidStackIdentityError);
+      }),
+    ),
+  );
+
+  it.live("preserves errors for an explicit gitdir target with missing HEAD", () =>
+    withScope(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-gitdir-" });
+        const project = path.join(root, "project");
+        const gitDirectory = path.join(root, "git-directory");
+        yield* fs.makeDirectory(project);
+        yield* fs.makeDirectory(path.join(gitDirectory, "objects"), { recursive: true });
+        yield* fs.makeDirectory(path.join(gitDirectory, "refs"));
+        yield* fs.writeFileString(path.join(project, ".git"), `gitdir: ${gitDirectory}\n`);
+
+        const error = yield* resolveStackIdentity({ projectRoot: project }).pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(InvalidStackIdentityError);
+        expect(error.message).toContain("Unable to read HEAD");
+      }),
+    ),
+  );
+
+  it.live("preserves Git exit diagnostics when setup fails", () =>
+    withScope(
+      Effect.gen(function* () {
+        const { repository } = yield* makeGitWorkspace;
+        const error = yield* runGit(repository, [
+          "rev-parse",
+          "--verify",
+          "refs/heads/missing",
+        ]).pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(GitSetupError);
+        expect(error.exitCode).toBe(128);
+        expect(error.stderr).toContain("Needed a single revision");
+        expect(error.message).toContain("stderr:");
+      }),
+    ),
+  );
+
+  it.live("uses the canonical nested project root as its identity", () =>
     withScope(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -193,7 +224,7 @@ describe("deterministic stack identity and state paths", () => {
         const identity = yield* resolveStackIdentity({ projectRoot: nested });
 
         expect(identity.projectRoot).toBe(yield* fs.realPath(nested));
-        expect(identity.localProjectKey).toBe("apps/web");
+        expect(identity.branchContext).toBe("refs/heads/main");
       }),
     ),
   );
@@ -210,11 +241,43 @@ describe("deterministic stack identity and state paths", () => {
         const identity = yield* resolveStackIdentity({ projectRoot: project });
         const after = yield* fs.readDirectory(project);
 
-        expect(identity.workspaceId).toBe(identity.projectRoot);
-        expect(identity.checkoutId).toBe(identity.projectRoot);
         expect(identity.branchContext).toBe("ordinary-workspace");
-        expect(identity.localProjectKey).toBe(".");
         expect(after).toEqual(before);
+      }),
+    ),
+  );
+
+  it.live("ignores a stray ancestor .git directory that is not a repository", () =>
+    withScope(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-stray-git-" });
+        const project = path.join(root, "project");
+        yield* fs.makeDirectory(path.join(root, ".git", "gk"), { recursive: true });
+        yield* fs.makeDirectory(project);
+
+        const identity = yield* resolveStackIdentity({ projectRoot: project });
+
+        expect(identity.branchContext).toBe("ordinary-workspace");
+      }),
+    ),
+  );
+
+  it.live("continues past a stray ancestor to find the enclosing repository", () =>
+    withScope(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const { repository } = yield* makeGitWorkspace;
+        const container = path.join(repository, "apps");
+        const project = path.join(container, "web");
+        yield* fs.makeDirectory(path.join(container, ".git", "gk"), { recursive: true });
+        yield* fs.makeDirectory(project, { recursive: true });
+
+        const identity = yield* resolveStackIdentity({ projectRoot: project });
+
+        expect(identity.branchContext).toBe("refs/heads/main");
       }),
     ),
   );
@@ -232,27 +295,6 @@ describe("deterministic stack identity and state paths", () => {
 
         const identity = yield* resolveStackIdentity({ projectRoot: link });
         expect(identity.projectRoot).toBe(yield* fs.realPath(target));
-      }),
-    ),
-  );
-
-  it.live("rejects linked-worktree metadata whose commondir target is a file", () =>
-    withScope(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const { root, repository } = yield* makeGitWorkspace;
-        const sibling = path.join(root, "sibling");
-        const notDirectory = path.join(root, "not-a-directory");
-        yield* runGit(repository, ["worktree", "add", "--force", sibling, "main"]);
-        const gitEntry = yield* fs.readFileString(path.join(sibling, ".git"));
-        const target = gitEntry.trim().slice("gitdir:".length).trim();
-        const gitDirectory = yield* fs.realPath(path.resolve(sibling, target));
-        yield* fs.writeFileString(notDirectory, "not a directory\n");
-        yield* fs.writeFileString(path.join(gitDirectory, "commondir"), notDirectory);
-
-        const result = yield* resolveStackIdentity({ projectRoot: sibling }).pipe(Effect.exit);
-        expect(Exit.isFailure(result)).toBe(true);
       }),
     ),
   );

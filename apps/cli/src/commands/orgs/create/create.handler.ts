@@ -29,10 +29,9 @@ export const orgsCreate = Effect.fn("orgs.create")(function* (flags: OrgsCreateF
   const telemetryState = yield* TelemetryState;
 
   yield* Effect.gen(function* () {
-    // Spinner runs only in text mode — it would corrupt machine-readable
-    // stdout. The output-routing branches below dispatch on `goFmt`, but the
-    // spinner uses `output.format` because `--output pretty` keeps the format
-    // as "text" while requiring the table render; both paths need the spinner.
+    // Spinner only runs in text mode, since it would corrupt machine-readable stdout. It
+    // gates on output.format rather than goFmt because --output pretty keeps the format
+    // "text" while still rendering the table.
     const creating =
       output.format === "text" ? yield* output.task("Creating organization...") : undefined;
     const created: CreatedOrganization = yield* api.v1
@@ -45,10 +44,9 @@ export const orgsCreate = Effect.fn("orgs.create")(function* (flags: OrgsCreateF
 
     const goFmt = Option.getOrUndefined(goOutputFlag);
 
-    // `fmt.Println("Created organization:", id)` is printed once before the
-    // format switch. The preamble is repeated inside each Go-format branch
-    // rather than hoisted, so the TS `--output-format json` / `stream-json`
-    // paths (which emit a single structured event below) stay preamble-free.
+    // Printed once before the format switch, but only for the Go-format branches — the
+    // --output-format json/stream-json paths emit a single structured event instead and
+    // stay preamble-free.
     const preamble = `Created organization: ${created.id}\n`;
 
     if (goFmt === "json") {

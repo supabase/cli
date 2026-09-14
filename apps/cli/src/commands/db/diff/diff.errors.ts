@@ -76,9 +76,8 @@ export class DbDiffDbNotRunningError extends Data.TaggedError("DbDiffDbNotRunnin
   readonly suggestion?: string;
 }> {
   // Must stay character-identical to `LocalDbRunningError`'s classification
-  // (`legacy-db-bootstrap`'s equivalent local-db-not-running check) — the two are
-  // deliberately duplicated for this command's own `AssertSupabaseDbIsRunning`
-  // parity target, not shared, so keep them in sync by hand.
+  // (`legacy-db-bootstrap`'s equivalent local-db-not-running check). The two are kept in sync by
+  // hand rather than shared, since they serve separate parity targets.
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return this.daemonDown === true
       ? { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" }
@@ -87,17 +86,13 @@ export class DbDiffDbNotRunningError extends Data.TaggedError("DbDiffDbNotRunnin
 }
 
 /**
- * Classic "assertNever" exhaustiveness helper: with every literal of
- * `DbDiffPgAdminError["reason"]` handled by its own `case` below, `reason`
- * narrows to `never` by the time it reaches this call — so a FUTURE reason added
- * to the union without a matching `case` is a compile error here (its residual
- * type inside `default:` would no longer be `never`), not a silently-absorbed
- * classification. The parameter is intentionally unused at runtime: the drift
- * guard (`error-actionability-coverage.unit.test.ts`) evaluates every getter
- * against a field-less probe (`Object.create(prototype)`, no constructor args),
- * so `this.reason` is genuinely runtime-`undefined` there, bypassing the type
- * system entirely — this must still degrade to a valid declaration rather than
- * `undefined`/a crash, so it returns the SAME fallback as the "differ" case.
+ * Exhaustiveness helper: with every literal of `DbDiffPgAdminError["reason"]` handled by its own
+ * `case` below, `reason` narrows to `never` here — so a new reason added to the union without a
+ * matching `case` is a compile error, not a silently-absorbed classification.
+ *
+ * The drift guard (`error-actionability-coverage.unit.test.ts`) evaluates every getter against a
+ * field-less probe, so `this.reason` is genuinely `undefined` at runtime here; this must still
+ * return a valid declaration rather than crash, so it falls back to the "differ" case's value.
  */
 function pgAdminUnreachableReason(_reason: never): CliErrorActionabilityDeclaration {
   return actionability.dbFinding;

@@ -8,14 +8,10 @@ import {
 } from "../shared/telemetry/error-actionability.ts";
 import { apiUrl, dashboardUrl, isBuiltinProfileName, poolerHost, projectHost } from "./profile.ts";
 
-// `LoadProfile`, run from the root
-// `PersistentPreRunE` immediately BEFORE
-// `ChangeWorkDir` — so a profile Go cannot load aborts before the workdir
-// check, `ValidateRequiredFlags`, `ValidateFlagGroups`, and `RunE`, with no
-// API call ever made. Raised by `commandSettingsLayer` on every command's
-// profile resolution (supabase/cli#6091) and by the sso pflag reconciliation
-// (PR #5974 round 7). Message byte-matches Go for the deterministic failure
-// classes.
+/**
+ * A profile that fails to load, checked before the workdir check and any other flag
+ * validation or API call. Raised during every command's profile resolution.
+ */
 export class ProfileLoadError extends Data.TaggedError("ProfileLoadError")<{
   readonly message: string;
 }> {
@@ -25,79 +21,26 @@ export class ProfileLoadError extends Data.TaggedError("ProfileLoadError")<{
 }
 
 /**
- * Emulates `LoadProfile`
- * for a resolved profile token, returning the profile's endpoint set
- * (`LoadedProfile`) or failing exactly where — and, for the
- * deterministic classes, byte-for-byte how — the Go binary fails. Go runs
- * this from the root `PersistentPreRunE` BEFORE
- * `ChangeWorkDir`, so a load failure aborts the command before the workdir
- * check, the required-flag check, the mutex check, and any API request.
- *
- * Resolution, mirroring Go (binary-verified, PR #5974 review round 7):
- *
- * 1. A token that case-insensitively (`strings.EqualFold`) matches a built-in
- * profile name resolves to that profile's API URL.
- * 2. Anything else is a config-file path handed to viper (`SetConfigFile` +
- * `ReadInConfig`):
- * - viper ignores an empty path and falls into search mode, which fails
- * with `Config File "config" Not Found in "[]"`;
- * - a path whose extension (Go `filepath.Ext` semantics: last `.` in the
- * final path segment, ANY position — `.yml` alone is extension `yml`)
- * is not in viper's `SupportedExts` fails with
- * `Unsupported Config Type "<ext>"`;
- * - an unreadable path fails with the OS error
- * (`open <path>: no such file or directory`, `read <path>: is a
- * directory`, …).
- * 3. The content is parsed and decoded into `Profile` struct with
- * `UnmarshalExact` — unknown keys fail with mapstructure's
- * `'utils.Profile' has invalid keys: <sorted keys>` block. Viper decodes
- * with `WeaklyTypedInput`, so scalar YAML values (numbers, booleans) are
- * stringified, not rejected (binary-verified: `api_url: 123` reaches the
- * validator and fails the `http_url` tag, not decoding).
- * 4. `validator.StructCtx` checks the struct tags in field order and fails
- * with one `Key: 'Profile.<Field>' Error:Field validation for '<Field>'
- * failed on the '<tag>' tag` line per failing field.
- *
- * Multi-line Go errors are rendered with every line padded to the longest
- * line's width (lipgloss block layout, binary-verified) — the padding is baked
- * into the message so stderr matches the Go binary byte-for-byte. One caveat:
- * the shared error normalizer (`normalize-error.ts` `readString`) trims the
- * message ends, so the FINAL line's trailing padding is stripped before
- * rendering; interior lines (including blank ones) keep it. Binary-diffed:
- * only that final-line whitespace differs, on inputs where both CLIs already
- * exit 1 with zero requests.
- *
- * Accepted micro-divergences (all fail-closed: both sides exit 1 with no API
- * request; only the detail text can differ):
- * - YAML parse-failure detail text comes from the JS `yaml` package, not
- * go-yaml (the `failed to read profile: While parsing config: ` prefix
- * matches).
- * - Non-YAML/JSON `SupportedExts` contents (`.toml`, `.env`, `.ini`, …) are
- * parsed as YAML rather than with their native viper codecs.
- * - Array/object values on string fields render the offending value
- * approximately (`%v` formatting emulated, not guaranteed).
- * - The `http_url`/`hostname_rfc1123`/`uuid4` tag checks approximate
- * go-playground/validator with WHATWG `URL` parsing and the validator's own
- * published regexes.
+ * Resolves a profile token to its endpoint set, or fails with the CLI's established error
+ * text for each deterministic failure class (config-file-not-found, unsupported extension,
+ * unreadable file, unknown keys, missing/malformed required fields) — checked before the
+ * workdir check, the required-flag check, the mutex check, and any API request. A token that
+ * case-insensitively matches a built-in profile name resolves directly; anything else is
+ * read as a YAML config-file path.
  */
 export interface LoadedProfile {
   readonly apiUrl: string;
   /**
-   * `CurrentProfile.Name` — the canonical built-in name (EqualFold
-   * match) or the file's required `name:` field. Credential resolution keys
-   * the keyring account on this name, so the
-   * reconciled request must read the reconciled profile's token, not the
-   * config layer's (review r3684153345).
+   * The canonical built-in name or the file's required `name:` field. Credential resolution
+   * keys the keyring account on this name.
    */
   readonly name: string;
-  /** `Profile.ProjectHost` (`required`). */
   readonly projectHost: string;
   /**
-   * `Profile.PoolerHost` (`omitempty`): "" when absent, disabling the
-   * linked pooler MITM domain assertion — never falls back to `supabase.com`.
+   * Empty when absent, disabling the linked pooler MITM domain assertion (never falls back
+   * to `supabase.com`).
    */
   readonly poolerHost: string;
-  /** `Profile.DashboardURL` (`required`). */
   readonly dashboardUrl: string;
 }
 
@@ -106,8 +49,8 @@ export function loadProfile(
   fs: FileSystem.FileSystem,
 ): Effect.Effect<LoadedProfile, ProfileLoadError> {
   return Effect.gen(function* () {
-    // Go: `strings.EqualFold(p.Name, prof)` — the built-in names are all
-    // ASCII lower-case, so folding is plain lower-casing here.
+    // Built-in names are all ASCII lower-case, so case-insensitive matching is plain
+    // lower-casing.
     const folded = token.toLowerCase();
     if (isBuiltinProfileName(folded)) {
       return {
@@ -119,8 +62,7 @@ export function loadProfile(
       };
     }
 
-    // viper `SetConfigFile("")` is a no-op, so `ReadInConfig` falls back to
-    // its (empty) search-path mode — byte-exact per the Go binary.
+    // An empty token falls back to the established "no config file" search-path error.
     if (token === "") {
       return yield* failRead(`Config File "config" Not Found in "[]"`);
     }
@@ -156,25 +98,21 @@ export function loadProfile(
       parsed = {};
     }
     if (typeof parsed !== "object" || Array.isArray(parsed)) {
-      // Go: yaml unmarshals into `map[string]interface{}` and rejects
-      // non-mapping documents. Detail text is best-effort (see doc comment).
+      // A non-mapping YAML document (e.g. a scalar or list) is rejected; detail text is
+      // best-effort.
       return yield* failRead(
         `While parsing config: yaml: unmarshal errors:\n  cannot unmarshal into map[string]interface {}`,
       );
     }
-    // Viper lowercases configuration keys before decoding
-    // (`insensitiviseMap`), so `API_URL:` / `Name:` decode exactly like
-    // their lowercase spellings, and UnmarshalExact reports unknown keys
-    // LOWERCASED (probed: `BOGUS_KEY` → `bogus_key`; review r3689635101).
-    // A same-key case collision is nondeterministic in Go (map iteration
-    // order) — document order (last wins) is used here.
+    // Configuration keys are lowercased before decoding, so `API_URL:`/`Name:` behave like
+    // their lowercase spellings, and unknown-key errors report the lowercased form. A
+    // same-key case collision uses document order (last wins).
     const config: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
       config[key.toLowerCase()] = value;
     }
 
-    // `UnmarshalExact` — unknown keys abort decoding. mapstructure reports
-    // them sorted, in a padded multi-line block (binary-verified).
+    // Unknown keys abort decoding, reported sorted in a padded multi-line block.
     const invalidKeys = Object.keys(config)
       .filter((key) => !PROFILE_STRUCT_KEYS.has(key))
       .sort();
@@ -213,8 +151,7 @@ export function loadProfile(
       return yield* fail(padGoErrorBlock(`invalid profile: ${validationErrors.join("\n")}`));
     }
 
-    // All `required` fields passed validation above; `pooler_host` stays ""
-    // when absent (omitempty).
+    // All required fields passed validation above; pooler_host stays "" when absent.
     return {
       apiUrl: values.get("api_url") ?? "",
       name: values.get("name") ?? "",
@@ -229,7 +166,7 @@ const fail = (message: string) => Effect.fail(new ProfileLoadError({ message }))
 
 const failRead = (detail: string) => fail(`failed to read profile: ${detail}`);
 
-/** mapstructure's aggregate error template (`Decode` → `joinedError`). */
+/** Aggregate decode-error template: multiple failing fields render as one block. */
 const failDecode = (detail: string) =>
   fail(
     padGoErrorBlock(
@@ -237,7 +174,7 @@ const failDecode = (detail: string) =>
     ),
   );
 
-/** viper v1.21 `SupportedExts` (checked case-sensitively, like viper). */
+/** Recognized config file extensions, checked case-sensitively. */
 const VIPER_SUPPORTED_EXTS: ReadonlySet<string> = new Set([
   "json",
   "toml",
@@ -254,9 +191,8 @@ const VIPER_SUPPORTED_EXTS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Go `filepath.Ext` minus the leading dot: scans the final path segment from
- * the end and returns everything after the last `.` — including for
- * dot-files (`.yml` → `yml`), where Node's `path.extname` returns `""`.
+ * Returns everything after the last `.` in the final path segment, including for dot-files
+ * (`.yml` → `yml`), where Node's `path.extname` returns `""`.
  */
 function goFilepathExt(token: string): string {
   for (let i = token.length - 1; i >= 0 && token[i] !== "/"; i--) {
@@ -267,7 +203,7 @@ function goFilepathExt(token: string): string {
   return "";
 }
 
-/** Every mapstructure key of `Profile` struct. */
+/** Every recognized profile config key. */
 const PROFILE_STRUCT_KEYS: ReadonlySet<string> = new Set([
   "name",
   "api_url",
@@ -290,10 +226,8 @@ interface ProfileStringField {
 }
 
 /**
- * `Profile` string fields in struct order with
- * their `validate:` tags — the order determines the order of the validator's
- * error lines. `regions` (a slice, no validate tag) is exempt from weak
- * string decoding and never validated, matching Go.
+ * Profile string fields in validation order, which determines the order of error lines.
+ * `regions` (a slice) is exempt from weak string decoding and never validated.
  */
 const PROFILE_STRING_FIELDS: ReadonlyArray<ProfileStringField> = [
   { key: "name", goName: "Name", required: true },
@@ -310,10 +244,10 @@ function validatorLine(goName: string, tag: string): string {
   return `Key: 'Profile.${goName}' Error:Field validation for '${goName}' failed on the '${tag}' tag`;
 }
 
-/** validator v10's `hostnameRegexRFC1123`, copied verbatim. */
+/** RFC 1123 hostname pattern. */
 const HOSTNAME_RFC1123 = /^([a-zA-Z0-9][a-zA-Z0-9-]{0,62})(\.[a-zA-Z0-9][a-zA-Z0-9-]{0,62})*?$/;
 
-/** validator v10's `uuid4Regex`, copied verbatim (lower-case only). */
+/** Lower-case-only UUIDv4 pattern. */
 const UUID4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 const FORMAT_TAG_CHECKS: Record<FormatTag, (value: string) => boolean> = {
@@ -331,9 +265,9 @@ const FORMAT_TAG_CHECKS: Record<FormatTag, (value: string) => boolean> = {
 };
 
 /**
- * mapstructure `WeaklyTypedInput` string decoding: strings pass through,
- * bools become `"1"`/`"0"`, numbers are stringified, `null` decodes to the
- * zero value. Arrays/objects are unconvertible → `undefined` (decode error).
+ * Weak string coercion: strings pass through, booleans become `"1"`/`"0"`, numbers are
+ * stringified, and `null`/`undefined` decode to `""`. Arrays/objects are unconvertible
+ * (`undefined`, a decode error).
  */
 function weakString(value: unknown): string | undefined {
   if (value === null || value === undefined) return "";
@@ -349,7 +283,7 @@ function goTypeName(value: unknown): string {
   return typeof value;
 }
 
-/** Approximates `%v` for the YAML values reachable here. */
+/** Best-effort rendering of an invalid field's value for the error message. */
 function goValueString(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(goValueString).join(" ")}]`;
   if (typeof value === "object" && value !== null) {
@@ -362,10 +296,8 @@ function goValueString(value: unknown): string {
 }
 
 /**
- * Go renders these multi-line errors through a lipgloss block, which pads
- * every line (including blank ones) with trailing spaces to the longest
- * line's width (binary-verified via `od`). Baked into the message so the
- * final stderr bytes match the Go binary exactly.
+ * Pads every line (including blank ones) with trailing spaces to the longest line's width, to
+ * match the CLI's established multi-line error rendering exactly.
  */
 export function padGoErrorBlock(message: string): string {
   const lines = message.split("\n");

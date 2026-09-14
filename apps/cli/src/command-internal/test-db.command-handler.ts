@@ -9,24 +9,16 @@ import { withCommandTelemetry } from "../telemetry/command-telemetry.ts";
 import type { TestDbNoTestsError, TestDbRunError } from "./test-db.errors.ts";
 import { testDb } from "./test-db.handler.ts";
 
-/**
- * Short/description text shared verbatim by both Go-parity entry points
- * (`commands/test/db/db.command.ts`, `commands/db/test/test.command.ts`),
- * mirroring Go's own single-source (`cmd/test.go:19`: `Short: dbTestCmd.Short`).
- * Byte-matches Go's Short text (`cmd/db.go:425`).
- */
+/** Shared verbatim by both `test db` and its `db test` alias. */
 export const TEST_DB_DESCRIPTION = "Tests local database with pgTAP.";
 export const TEST_DB_SHORT = "Tests local database with pgTAP";
 
 /**
- * `test db` has no machine-format envelope: its entire output is the streamed
- * pg_prove TAP on stdout (Go has no `--output-format` for it). On a *run* failure
- * (failing tests, or a run that executed none), the default `withJsonErrorHandling`
- * would append a JSON error object to stdout — after the TAP already streamed —
- * corrupting machine consumers.
- * So in json/stream-json mode, send the diagnostic to stderr and exit 1 instead,
- * matching Go's `recoverAndExit` (stderr, exit 1). Text mode keeps the normal error
- * rendering; pre-stream errors still flow through `withJsonErrorHandling`.
+ * `test db`'s entire output is the streamed pg_prove TAP on stdout. A run
+ * failure (failing tests, or a run that executed none) sends its diagnostic
+ * to stderr and exits 1 in json/stream-json mode instead of the default JSON
+ * error handling, which would corrupt the already-streamed TAP on stdout.
+ * Text mode and pre-stream errors are unaffected.
  */
 const onRunFailure = (error: TestDbRunError | TestDbNoTestsError) =>
   Effect.gen(function* () {
@@ -38,22 +30,12 @@ const onRunFailure = (error: TestDbRunError | TestDbNoTestsError) =>
   });
 
 /**
- * Flag config shared verbatim by `supabase test db`
- * (`commands/test/db/db.command.ts`) and its hidden Go-parity alias
- * `supabase db test` (`commands/db/test/test.command.ts`). Go registers
- * an independent-but-identical flag set on each `cobra.Command` (`cmd/db.go:
- * 736-740`, `cmd/test.go:40-44`: same names, defaults, descriptions, and
- * `MarkFlagsMutuallyExclusive` group); the TS port reuses a single object
- * instead of declaring it twice.
+ * Flag config shared verbatim by `supabase test db` and its hidden alias
+ * `supabase db test`.
  *
- * Lives in `command-internal/` (not either command's own directory) because it —
- * along with `runTestDbCommand` below and `testDbRuntimeLayer`
- * (`./test-db.layers.ts`) — is consumed by TWO different top-level
- * command families (`db` and `test`); `code-structure.unit.test.ts` mechanically
- * forbids one `commands/<family>/` file from importing another family's
- * internals, so anything genuinely shared across families must live outside
- * `commands/` entirely (CLAUDE.md's "Hoist Before You Duplicate" rule,
- * CLI-1962).
+ * Lives in `command-internal/` because it (with `runTestDbCommand` and
+ * `testDbRuntimeLayer`) is shared across the `db` and `test` command
+ * families — see "Hoist Before You Duplicate" in `apps/cli/CLAUDE.md`.
  */
 export const testDbConfig = {
   paths: Argument.string("path").pipe(
@@ -91,10 +73,8 @@ export interface TestDbFlags {
 
 /**
  * Assembled `test db` / `db test` handler: telemetry, run-failure routing
- * (`onRunFailure`), and JSON-error-handling wiring shared verbatim by both
- * Go-parity entry points — mirroring `cmd/test.go:19-20`'s
- * `RunE: dbTestCmd.RunE`, which literally reuses the other command's handler
- * rather than re-implementing it.
+ * (`onRunFailure`), and JSON-error-handling wiring shared by both entry
+ * points.
  */
 export function runTestDbCommand(flags: CliCommand.Command.Config.Infer<typeof testDbConfig>) {
   return testDb({
@@ -111,13 +91,9 @@ export function runTestDbCommand(flags: CliCommand.Command.Config.Infer<typeof t
         local: flags.local,
         "project-ref": flags.projectRef,
       },
-      // TS-only flag with no Go telemetry-safety baseline; Go's nearest
-      // --project-ref registrations (cmd/pgdelta_catalog.go:44 and most
-      // others) are unmarked, so it stays redacted.
+      // No safe-flag whitelist entry for --project-ref here, so it stays redacted.
     }),
-    // Run failures (failing tests, or a run that executed none) must not corrupt the
-    // TAP stream on stdout in machine modes; other errors (pre-stream) still get the
-    // JSON envelope.
+    // Run failures must not corrupt the TAP stream in machine modes; see `onRunFailure`.
     Effect.catchTag(["TestDbRunError", "TestDbNoTestsError"], onRunFailure),
     withJsonErrorHandling,
   );

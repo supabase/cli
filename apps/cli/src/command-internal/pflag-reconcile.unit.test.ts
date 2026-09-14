@@ -17,8 +17,7 @@ import {
   resolvePflagProfile,
 } from "./pflag-reconcile.ts";
 
-// Go's SAML `nameid-format` enum, reused here only
-// as sample data for the generic enum-reconciliation helper under test.
+// Sample enum values for the generic enum-reconciliation helper under test.
 const NAME_ID_FORMATS = [
   "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
   "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified",
@@ -41,21 +40,18 @@ describe("pflagBoolValue", () => {
   });
 
   it("resolves repeats last-wins, not first-wins (pflag Sets every occurrence)", () => {
-    // `--skip-url-validation=false --skip-url-validation` — Go ends up true.
+    // --skip-url-validation=false --skip-url-validation
     expect(
       pflagBoolValue(occ([["skip-url-validation", ["false", "true"]]]), "skip-url-validation"),
     ).toEqual(Result.succeed(true));
-    // `--skip-url-validation --skip-url-validation=false` — Go ends up false.
+    // --skip-url-validation --skip-url-validation=false
     expect(
       pflagBoolValue(occ([["skip-url-validation", ["true", "false"]]]), "skip-url-validation"),
     ).toEqual(Result.succeed(false));
   });
 
   it("fails on an inline-empty occurrence exactly like Go's ParseBool", () => {
-    // `--skip-url-validation=false --skip-url-validation=` — the Effect
-    // parser resolves repeats first-wins and never validates the second
-    // occurrence, but pflag hands `""` to strconv.ParseBool and aborts
-    // ParseFlags before any request (binary-verified, PR #5974 round 5).
+    // --skip-url-validation=false --skip-url-validation=
     expect(
       pflagBoolValue(occ([["skip-url-validation", ["false", ""]]]), "skip-url-validation"),
     ).toEqual(
@@ -75,13 +71,11 @@ describe("pflagBoolValue", () => {
   });
 
   it("fails with pflag's byte-exact invalid-argument message on the first bad occurrence", () => {
-    // The Effect parser accepts `yes`/`no`; Go's strconv.ParseBool does not.
     expect(pflagBoolValue(occ([["skip-url-validation", ["yes"]]]), "skip-url-validation")).toEqual(
       Result.fail(
         `invalid argument "yes" for "--skip-url-validation" flag: strconv.ParseBool: parsing "yes": invalid syntax`,
       ),
     );
-    // A later invalid occurrence still fails — pflag Sets each one in order.
     expect(
       pflagBoolValue(occ([["skip-url-validation", ["true", "no"]]]), "skip-url-validation"),
     ).toEqual(
@@ -145,10 +139,7 @@ describe("pflagWorkdirValue", () => {
   });
 
   it("resolves pre-path repeats last-wins, like pflag (the parser is first-wins)", () => {
-    // `--workdir /existing --workdir /missing sso add …`: pflag uses the
-    // LAST pre-path occurrence (/missing → Go's chdir aborts) while the
-    // Effect parser bound the first (pre-path workdir twin of the profile
-    // fix, PR #5974 review round 11).
+    // --workdir /existing --workdir /missing sso add …
     expect(
       pflagWorkdirValue(
         scan([], [], [["workdir", ["/existing", "/missing"]]]),
@@ -183,8 +174,7 @@ describe("pflagWorkdirValue", () => {
   });
 
   it("prefers the scan's occurrence over the parsed flag and the env var", () => {
-    // `--workdir --metadata-file …`: pflag binds the flag-shaped token; the
-    // Effect parser refused it and left the flag unset (PR #5974 round 6).
+    // --workdir --metadata-file …
     expect(
       pflagWorkdirValue(scan([["workdir", ["--metadata-file"]]]), Option.none(), "/env"),
     ).toEqual(Option.some("--metadata-file"));
@@ -203,9 +193,7 @@ describe("pflagWorkdirValue", () => {
   });
 
   it("ignores the parsed flag when the --workdir token was consumed by another flag, falling to the env var", () => {
-    // `--domains --workdir /x`: pflag hands `--workdir` to `--domains` and
-    // never marks workdir changed, so viper falls to SUPABASE_WORKDIR
-    // (binary-verified, PR #5974 round 6).
+    // --domains --workdir /x
     expect(pflagWorkdirValue(scan([], ["workdir"]), Option.some("/x"), "/env")).toEqual(
       Option.some("/env"),
     );
@@ -219,9 +207,7 @@ describe("pflagWorkdirValue", () => {
   });
 
   it("treats a changed-but-empty flag as the walk-up default, shadowing the env var (viper precedence)", () => {
-    // `--workdir=`: viper returns the changed flag's empty value and Go falls
-    // through to the always-existing project root, never to SUPABASE_WORKDIR
-    // (binary-verified: the command proceeds to POST).
+    // --workdir=
     expect(pflagWorkdirValue(scan([["workdir", [""]]]), Option.none(), "/env")).toEqual(
       Option.none(),
     );
@@ -245,10 +231,7 @@ describe("pflagProfileValue", () => {
   });
 
   it("keeps a pre-path occurrence when the only post-path profile token was consumed", () => {
-    // `--profile A sso add --type saml --domains --profile`: pflag parsed A
-    // pre-path (cobra Find strips persistent flags while routing) and never
-    // parsed the consumed token, so A stays effective — falling through to
-    // env/default targeted a host Go never contacts (review r3686720491).
+    // --profile A sso add --type saml --domains --profile
     expect(
       pflagProfileValue(
         scan([], ["profile"], [["profile", ["a.yml"]]]),
@@ -283,9 +266,7 @@ describe("pflagProfileValue", () => {
   });
 
   it("prefers the scan's occurrence over the parsed flag and the env var", () => {
-    // `--profile --metadata-url …`: pflag binds the flag-shaped token; the
-    // Effect parser refused it and left the flag at its default (PR #5974
-    // round 7).
+    // --profile --metadata-url …
     expect(
       pflagProfileValue(scan([["profile", ["--metadata-url"]]]), Option.none(), "env.yml"),
     ).toEqual(Option.some("--metadata-url"));
@@ -298,9 +279,6 @@ describe("pflagProfileValue", () => {
   });
 
   it("keeps an explicit scanned `supabase` — pflag marks it changed, shadowing the env var", () => {
-    // viper: a changed flag wins even at its default value; the config layer
-    // cannot see this (its parsed flag can't distinguish default from
-    // explicit), so the scan is authoritative post-command-path.
     expect(pflagProfileValue(scan([["profile", ["supabase"]]]), Option.none(), "env.yml")).toEqual(
       Option.some("supabase"),
     );
@@ -319,10 +297,7 @@ describe("pflagProfileValue", () => {
   });
 
   it("ignores the parsed flag when the --profile token was consumed by another flag, falling to the env var", () => {
-    // `--domains --profile alternate.yml`: pflag hands `--profile` to
-    // `--domains` and never marks profile changed, so viper falls to
-    // SUPABASE_PROFILE (binary-verified, PR #5974
-    // round 7 — the demonstrated divergent input).
+    // --domains --profile alternate.yml
     expect(
       pflagProfileValue(scan([], ["profile"]), Option.some("alternate.yml"), "env.yml"),
     ).toEqual(Option.some("env.yml"));
@@ -362,10 +337,9 @@ describe("resolvePflagProfile", () => {
       mockRuntimeInfo({ homeDir }),
     );
 
-  // `--domains --profile supabase`: pflag consumes the `--profile` token, so
-  // Go keeps SUPABASE_PROFILE — but the config layer's raw scan shadowed the
-  // env with the swallowed occurrence. The reconcile must see the mismatch and
-  // re-run LoadProfile on the env profile, not return none.
+  // --domains --profile supabase: the config layer's raw scan shadows the env with the
+  // swallowed --profile token; the reconcile must see the mismatch and re-load on the env
+  // profile instead of returning none.
   it.effect(
     "re-loads the env profile when the layer's scan wrongly shadowed a consumed token",
     () => {

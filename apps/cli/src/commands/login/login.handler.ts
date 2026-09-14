@@ -36,14 +36,10 @@ export const login = Effect.fn("login")(function* (flags: LoginFlags) {
 
   const claudeHint = suggestClaudePlugin({ stdoutIsTty: tty.stdoutIsTty });
 
-  // Mirrors login's `PostRunE` (`cmd/login.go:42-48`): persist the chosen
-  // profile to `<SUPABASE_HOME or ~/.supabase>/profile` on success. The raw
-  // token is written so a YAML-path profile round-trips; a write failure is
-  // fatal. An explicitly passed flag counts even at its default value, and the
-  // LAST occurrence wins (pflag `Changed` + last-wins, same argv scan as the
-  // config layer), so `login --profile supabase` persists "supabase" —
-  // shadowing SUPABASE_PROFILE and healing a stale profile file like Go, never
-  // re-persisting the shadowed env value.
+  // Persists the chosen profile to `<SUPABASE_HOME or ~/.supabase>/profile` on success — the
+  // raw token, so a YAML-path profile round-trips; a write failure is fatal. An explicit flag
+  // counts even at its default value and the last occurrence wins, so `login --profile supabase`
+  // persists "supabase", shadowing SUPABASE_PROFILE without re-persisting it.
   const cliArgs = yield* Effect.serviceOption(CliArgs);
   const explicitProfileFlag = Option.match(cliArgs, {
     onNone: () => undefined,
@@ -85,8 +81,7 @@ export const login = Effect.fn("login")(function* (flags: LoginFlags) {
     });
 
   const body = Effect.gen(function* () {
-    // Token resolution priority: --token → SUPABASE_ACCESS_TOKEN → piped stdin
-    // (non-TTY only). Matches `cmd/login.go:31-39` + `login.go:236-247`.
+    // Token resolution priority: --token → SUPABASE_ACCESS_TOKEN → piped stdin (non-TTY only).
     const resolved = yield* resolveToken(flags);
     if (Option.isSome(resolved)) {
       return yield* tokenPath(resolved.value);
@@ -94,9 +89,8 @@ export const login = Effect.fn("login")(function* (flags: LoginFlags) {
     return yield* browserLogin({ openBrowser: !flags.noBrowser, tokenName: flags.name });
   });
 
-  // `Effect.tap` runs the profile save only on success (`PostRunE`);
-  // `Effect.ensuring` persists telemetry state on success and failure alike
-  // (`PersistentPostRun`, `cmd/root.go:176`).
+  // `Effect.tap` runs the profile save only on success; `Effect.ensuring` persists telemetry
+  // state on success and failure alike.
   return yield* body.pipe(
     Effect.tap(() => persistProfileName),
     Effect.ensuring(telemetryState.flush),

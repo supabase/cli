@@ -1,21 +1,18 @@
 /**
- * Shared `--fail-on` / `--level` machinery for `db lint` and `db advisors`.
+ * Shared `--fail-on`/`--level` machinery for `db lint` and `db advisors`.
  *
- * Both commands map a textual issue level to an ordinal so a minimum-level
- * filter (`--level`) and a fail-on threshold (`--fail-on`) become integer
- * comparisons, exactly like Go's `toEnum` (`internal/db/lint/lint.go:33-40`,
- * `internal/db/advisors/advisors.go:38-48`). The two commands differ only in how
- * a level string maps to an ordinal:
+ * Both commands map a textual issue level to an ordinal so a minimum-level filter (`--level`)
+ * and a fail-on threshold (`--fail-on`) become integer comparisons. The two commands differ only
+ * in how a level string maps to an ordinal:
  *
- *   - **lint** uses `strings.HasPrefix(level, allowed[i])` over
- *     `["warning", "error"]`, so `"warning extra"` still resolves to `warning`.
- *   - **advisors** uses an exact, case-insensitive switch over
- *     `["info", "warn", "error"]` matching only the lower- or upper-case form
- *     (`"info"`/`"INFO"`), so a mixed-case `"Info"` resolves to `-1`.
+ *   - **lint** uses a prefix match over `["warning", "error"]`, so `"warning extra"` still
+ *     resolves to `warning`.
+ *   - **advisors** uses an exact, case-insensitive match over `["info", "warn", "error"]`
+ *     matching only the lower- or upper-case form (`"info"`/`"INFO"`), so a mixed-case `"Info"`
+ *     resolves to `-1`.
  *
- * An unmatched level returns `-1` in both, which is below every real level — so
- * a `--fail-on` of `-1` (i.e. `none`) never triggers, and a `--level` of `-1`
- * keeps everything.
+ * An unmatched level returns `-1` in both, which is below every real level — so a `--fail-on` of
+ * `-1` (i.e. `none`) never triggers, and a `--level` of `-1` keeps everything.
  */
 
 /** How a level string maps to its ordinal — see module docs. */
@@ -53,9 +50,8 @@ export function makeLevelEnum(allowed: ReadonlyArray<string>, matcher: LevelMatc
 }
 
 /**
- * Whether any item's level meets or exceeds the `--fail-on` threshold, porting
- * the shared tail of Go's `Run` / `outputAndCheck` (`lint.go:67-76`,
- * `advisors.go:253-260`). A `failOnLevel` below 0 (`none`) never triggers.
+ * Whether any item's level meets or exceeds the `--fail-on` threshold. A `failOnLevel` below 0
+ * (`none`) never triggers.
  *
  * The caller flattens to the right granularity — lint checks every issue across
  * every result, advisors checks each lint — and supplies the fail message,

@@ -1,18 +1,16 @@
 /**
- * Computes the `@supabase/config` release plan via semantic-release's
- * dry-run JS API (CLI-2233) — the version-computation half of an otherwise
- * independent release pipeline for this package. Actual publishing (npm
- * publish, tag push, GitHub release) happens in later, separate workflow
- * steps; see `.github/workflows/release-config.yml`.
+ * Computes the `@supabase/config` release plan via semantic-release's dry-run
+ * JS API — the version-computation half of an otherwise independent release
+ * pipeline; actual publishing happens in later, separate workflow steps (see
+ * `.github/workflows/release-config.yml`).
  *
- * Commit analysis and release-notes generation are scoped to this package's
- * own history via `./semantic-release-path-filter.ts` (see that file for
- * why a plain `@semantic-release/commit-analyzer` run over the whole
- * monorepo history would be wrong here).
+ * Commit analysis and release-notes generation are scoped to this package's own
+ * history via `./semantic-release-path-filter.ts` (see that file for why a
+ * monorepo-wide run would be wrong here).
  *
- * Always exits 0 once semantic-release itself completes, whether or not a
- * release is due — a non-zero exit means this script itself failed to run
- * the plan, not that no release was found.
+ * Always exits 0 once semantic-release completes, whether or not a release is
+ * due — a non-zero exit means this script itself failed to run the plan, not
+ * that no release was found.
  */
 
 import { appendFile } from "node:fs/promises";
@@ -88,11 +86,10 @@ async function computeReleasePlan(isPrivate: boolean): Promise<ReleasePlan> {
   }
 
   // With no config-v* tag on the branch, semantic-release would cut 1.0.0
-  // analyzed from the ENTIRE monorepo history — the release notes (the human
-  // approver's artifact and the public GH release body) would be a changelog
-  // of every commit that ever touched packages/config/. Refuse until a
+  // analyzed from the entire monorepo history, so the release notes would be a
+  // changelog of every commit that ever touched packages/config/. Refuse until a
   // baseline tag exists (see AGENTS.md "One-time setup"); the escape hatch is
-  // for a deliberate, eyes-open first cut.
+  // for an intentional first cut.
   if (!result.lastRelease.gitTag && !process.env.CONFIG_RELEASE_ALLOW_NO_BASELINE) {
     throw new Error(
       "no config-v* baseline tag found on this branch: semantic-release would release " +
@@ -136,11 +133,10 @@ async function appendStepSummary(markdown: string): Promise<void> {
 }
 
 /**
- * A fence long enough that no backtick run inside `content` can close it —
- * the notes are commit-message-derived (squash-merge messages sourced from PR
- * titles/bodies, including external contributors'), and this summary is the
- * approver's evidence: rendering them as live markdown would let a crafted
- * commit message forge parts of it.
+ * A fence long enough that no backtick run inside `content` can close it.
+ * Notes are commit-message-derived (PR titles/bodies, including external
+ * contributors'), so rendering them as live markdown would let a crafted
+ * commit message forge parts of this summary.
  */
 function fenceFor(content: string): string {
   const longestRun = Math.max(0, ...[...content.matchAll(/`+/g)].map((match) => match[0].length));

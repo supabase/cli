@@ -44,7 +44,7 @@ interface SetupOpts {
   getBody?: unknown;
   /**
    * Serves the provider GET as a raw body + content type instead of
-   * `jsonResponse` — for the reconciled-profile raw GET's decode branches
+   * `jsonResponse`, for the reconciled-profile raw GET's decode branches
    * (invalid JSON, non-JSON content type).
    */
   getRaw?: { status: number; body: string; contentType: string };
@@ -52,18 +52,14 @@ interface SetupOpts {
   putBody?: unknown;
   upgradeGate?: "gated" | "notGated";
   /**
-   * Raw argv the handler sees via `Stdio.Stdio` — drives the pflag-faithful
-   * scan (`pflagArgvScan`) behind the arity check, the mutex checks, and the
-   * value reconciliation. Defaults to a bare invocation with no optional
-   * flags present; tests that pass flags must pass matching argv here
-   * (usually via `cliArgsFor`), exactly as the real parser guarantees.
+   * Raw argv the handler sees via `Stdio.Stdio`, driving the pflag-faithful
+   * scan behind the arity, mutex, and value-reconciliation checks. Keep in
+   * sync with the flags passed to `ssoUpdate` (usually via `cliArgsFor`).
    */
   cliArgs?: ReadonlyArray<string>;
   /**
-   * The Effect-parsed `--profile` value (`ProfileFlag`), which the real
-   * parser sets for any `--profile` it accepted. Tests whose `cliArgs` carry a
-   * `--profile` the parser would have consumed must provide it, exactly as the
-   * real CLI tree would.
+   * The Effect-parsed `--profile` value. Must be set whenever `cliArgs`
+   * carries a `--profile` the parser would have consumed.
    */
   profileFlag?: string;
   /**
@@ -160,9 +156,8 @@ function setup(opts: SetupOpts = {}) {
     },
   });
 
-  // Tracked identity stitcher: the reconciled-profile raw GET must stitch
-  // through the shared per-command guard exactly like the typed client's
-  // response transform.
+  // Tracks that the reconciled-profile raw GET stitches identity through the
+  // same shared guard as the typed client's response transform.
   let stitchedResponses = 0;
   const stitchLayer = Layer.succeed(IdentityStitch, {
     stitch: () =>
@@ -226,11 +221,9 @@ const defaultFlags = {
 };
 
 /**
- * Serializes a flags record into the raw argv the real CLI would have been
- * invoked with. The handler reconciles every value it acts on against a
- * pflag-faithful scan of this argv, so tests must keep the two consistent —
- * a flag passed in the record but absent from argv reconciles to "not set",
- * exactly as it would be for a real invocation.
+ * Serializes a flags record into matching raw argv, since the handler
+ * reconciles the values it acts on against a scan of argv, not the flags
+ * record itself.
  */
 function cliArgsFor(flags: typeof defaultFlags): ReadonlyArray<string> {
   const argv: string[] = ["sso", "update", flags.providerId];
@@ -321,9 +314,6 @@ describe("sso update integration", () => {
       if (Exit.isFailure(exit)) {
         const dump = JSON.stringify(exit.cause);
         expect(dump).toContain("SsoMutexFlagError");
-        // Byte-matches cobra's `validateExclusiveFlagGroups` template
-        // (`flag_groups.go:204`): group in registration order, changed flags
-        // sorted alphabetically — "add-domains" < "domains".
         expect(dump).toContain(
           "if any flags in the group [domains add-domains] are set none of the others can be; [add-domains domains] were all set",
         );
@@ -361,10 +351,6 @@ describe("sso update integration", () => {
   it.live(
     "mutex check: an explicit but empty --domains= still conflicts with --add-domains (changed, not truthy)",
     () => {
-      // `--domains=` parses to an empty array, but cobra's `pflag.Changed`
-      // tracks that the flag was passed at all, not the resulting value — the
-      // same "changed vs truthy" gap CLI-1860 fixed for `functions download`'s
-      // `--use-docker`. Gating on `.length > 0` would miss this combination.
       const { layer } = setup({
         cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--domains=", "--add-domains", "b.com"],
       });
@@ -383,9 +369,6 @@ describe("sso update integration", () => {
   it.live(
     "mutex check: --add-domains and --remove-domains together are not mutually exclusive",
     () => {
-      // Go only registers ("domains","add-domains") and ("domains","remove-domains")
-      // as separate 2-element groups (`cmd/sso.go:179-180`) — add-domains and
-      // remove-domains together, without --domains, is not a violation.
       const { layer } = setup({
         cliArgs: [
           "sso",
@@ -407,10 +390,6 @@ describe("sso update integration", () => {
   );
 
   it.live("mutex check: all three domain flags set reports the --add-domains group first", () => {
-    // Pins the `SSO_UPDATE_MUTEX_GROUPS` array order: cobra's sorted-key
-    // iteration ("domains add-domains" < "domains remove-domains") means the
-    // add-domains group is checked — and its error returned — first when all
-    // three domain flags collide at once.
     const { layer } = setup({
       cliArgs: [
         "sso",
@@ -445,10 +424,6 @@ describe("sso update integration", () => {
   });
 
   it.live("mutex check: a flag-group violation wins over an invalid provider ID", () => {
-    // Flag-group validation runs before the handler body, and the
-    // provider-ID format check lives inside the handler. So an invalid UUID
-    // combined with a mutex violation must surface the mutex error, not
-    // `SsoInvalidUuidError`.
     const { layer } = setup({
       cliArgs: ["sso", "update", "not-a-uuid", "--domains", "a.com", "--add-domains", "b.com"],
     });
@@ -496,10 +471,6 @@ describe("sso update integration", () => {
         if (Exit.isFailure(exit)) {
           const dump = JSON.stringify(exit.cause);
           expect(dump).toContain("SsoMutexFlagError");
-          // Go registers this pair too (`cmd/sso.go:178`) — it was left emitting
-          // a hand-written message alongside the domains groups' custom text
-          // before this fix; now all three of `sso update`'s mutex groups on
-          // this command share the same byte-exact cobra template.
           expect(dump).toContain(
             "if any flags in the group [metadata-file metadata-url] are set none of the others can be; [metadata-file metadata-url] were all set",
           );
@@ -511,16 +482,6 @@ describe("sso update integration", () => {
   it.live(
     "mutex check: a bare --metadata-file followed by --metadata-url is not a violation, and the consumed token is the file",
     () => {
-      // pflag's `--flag arg` branch consumes the very next argv token as the
-      // value unconditionally (`flag.go:1013-1031`), so real cobra parses this
-      // as `metadata-file` receiving the literal value `"--metadata-url"` —
-      // `metadata-url` is never parsed as its own flag and stays unset. The
-      // TS CLI's own parser (unlike pflag) never hands a dash-prefixed token
-      // to a non-boolean flag as a bare value, so here both flags resolve to
-      // `Option.none()` — the raw-argv scan must reach the same "not a
-      // violation" conclusion pflag does, and the handler must then behave
-      // like Go: try to open a file literally named `--metadata-url` instead
-      // of silently PUTting with no metadata at all.
       const { layer, api } = setup({
         cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--metadata-file", "--metadata-url"],
       });
@@ -540,11 +501,6 @@ describe("sso update integration", () => {
   it.live(
     "mutex check: a bare --add-domains followed by --domains=... is not a violation, and the consumed token is the domain",
     () => {
-      // Same consumed-value class as the metadata-file/metadata-url case
-      // above, but for the domains group: pflag hands `add-domains` the
-      // literal value `"--domains=x.com"` and never parses `--domains` at
-      // all — so Go merges that odd-looking string into the existing domain
-      // list and PUTs it. The reconciled handler must produce the same body.
       const { layer, api } = setup({
         cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--add-domains", "--domains=x.com"],
       });
@@ -561,15 +517,6 @@ describe("sso update integration", () => {
   it.live(
     "arity emulation: project-ref consuming --metadata-file orphans x.xml — fails ExactArgs like Go, no API calls",
     () => {
-      // `<id> --project-ref --metadata-file x.xml --metadata-url u`: pflag
-      // hands `--metadata-file` to `--project-ref` as its value, which makes
-      // `x.xml` a positional — cobra's `ValidateArgs`/`ExactArgs(1)`
-      // (`command.go:968`, `cmd/sso.go:87`) then rejects the arg count
-      // before any hook, mutex check, or request. The Effect parser read
-      // `--metadata-file x.xml` as a normal flag and saw exactly one
-      // positional, so the handler must re-count from the scan (PR #5974
-      // review; this refines the earlier ref-validation expectation — Go
-      // never even reaches the ref check here).
       const { layer, api } = setup({
         cliArgs: [
           "sso",
@@ -604,12 +551,6 @@ describe("sso update integration", () => {
   it.live(
     "arity emulation: a bare --domains consuming --metadata-url orphans the URL — fails ExactArgs like Go, no GET/PUT",
     () => {
-      // `--domains --metadata-url https://… <id>`: pflag consumes
-      // `--metadata-url` as the domains value, leaving BOTH the URL and the
-      // provider ID positional — Go rejects via `ExactArgs(1)` before any
-      // request. The Effect parser instead read the URL as metadata-url's
-      // value and saw one positional, so without the re-count the handler
-      // would GET and PUT (PR #5974 review, Codex thread).
       const { layer, api } = setup({
         cliArgs: [
           "sso",
@@ -641,10 +582,6 @@ describe("sso update integration", () => {
   it.live(
     "arity emulation: a bare --domains consuming a persistent global flag orphans its value",
     () => {
-      // Binary-verified Go behaviour: `--domains --profile staging <id>`
-      // arity-errors because pflag hands `--profile` to `--domains` and
-      // `staging` becomes positional. The scan must know the root's
-      // persistent value flags (`cmd/root.go:337-348`) to see this.
       const { layer, api } = setup({
         cliArgs: ["sso", "update", "--domains", "--profile", "staging", VALID_PROVIDER_ID],
       });
@@ -664,15 +601,6 @@ describe("sso update integration", () => {
   it.live(
     "arity emulation: persistent global value flags and -o do not miscount positionals",
     () => {
-      // Regression guards for the re-count: pflag consumes these globals'
-      // values (`--workdir .`, `--output-format json`, `-o json`), so none
-      // of them may register as a second positional — each invocation must
-      // sail through to the PUT exactly as before. The post-path
-      // `--log-level` variant pins issue #6482 (its value mis-counted as a
-      // positional); the pre-path variant already passed pre-fix via the
-      // unanchored fail-open scan and guards that the NEWLY ANCHORED path
-      // keeps accepting a valid invocation — the anchoring assertion itself
-      // lives in `cobra-flag-groups.unit.test.ts`.
       const argvVariants: ReadonlyArray<ReadonlyArray<string>> = [
         ["sso", "update", "--workdir", ".", VALID_PROVIDER_ID],
         ["sso", "update", "--output-format", "json", VALID_PROVIDER_ID],
@@ -691,11 +619,6 @@ describe("sso update integration", () => {
   );
 
   it.live("arity emulation: the arity error wins over a mutex violation", () => {
-    // cobra's `ValidateArgs` (`command.go:968`) runs before
-    // `ValidateFlagGroups` (`command.go:1010`): with `--domains` +
-    // `--add-domains` both set AND `--metadata-file` swallowing
-    // `--metadata-url` (orphaning `u` as a second positional), Go reports
-    // the arg-count error, not the mutex template.
     const { layer, api } = setup({
       cliArgs: [
         "sso",
@@ -732,12 +655,6 @@ describe("sso update integration", () => {
   it.live(
     "workdir emulation: --workdir consuming a trailing --metadata-file fails at Go's chdir, no GET/PUT",
     () => {
-      // `sso update <id> --project-ref <ref> --workdir --metadata-file`:
-      // pflag binds `"--metadata-file"` to the persistent `--workdir` (the
-      // positional count stays 1) and the workdir change exits before the
-      // handler runs with zero HTTP traffic. The Effect parser refused the
-      // flag-shaped value and left both flags unset — without the workdir
-      // emulation the handler proceeded to GET + PUT.
       const { layer, api } = setup({
         cliArgs: [
           "sso",
@@ -769,10 +686,6 @@ describe("sso update integration", () => {
   it.live(
     "workdir emulation: the chdir failure loses to an arity violation but wins over a mutex violation",
     () => {
-      // The workdir change runs after arity validation, before flag-group
-      // validation: `sso update a b --workdir /missing` reports the arity
-      // error, while `sso update <id> --workdir /missing --domains a
-      // --add-domains b` reports the chdir failure.
       const { layer, api } = setup({
         cliArgs: [
           "sso",
@@ -822,8 +735,6 @@ describe("sso update integration", () => {
   });
 
   it.live("arity emulation: the arity error wins over an invalid provider ID", () => {
-    // The provider-ID format check lives inside the handler, long after
-    // arity validation — a bad UUID must not mask the arg-count error.
     const { layer, api } = setup({
       cliArgs: ["sso", "update", "--domains", "--metadata-url", "u", "not-a-uuid"],
     });
@@ -848,11 +759,6 @@ describe("sso update integration", () => {
   it.live(
     "arity emulation: a consumed boolean global keeps the count at 1 and PUTs, like Go",
     () => {
-      // `--domains --yes <id>`: pflag hands `--yes` to `--domains` (a
-      // consumed token is a value no matter what it looks like), so only the
-      // provider ID stays positional — Go proceeds and PUTs
-      // `domains: ["--yes"]` (binary-verified). The re-count must not turn
-      // this into an arity error.
       const { layer, api } = setup({
         cliArgs: ["sso", "update", "--domains", "--yes", VALID_PROVIDER_ID],
       });
@@ -867,12 +773,6 @@ describe("sso update integration", () => {
   it.live(
     "missing-value emulation: a trailing bare --domains fails pflag parse, no GET/PUT",
     () => {
-      // Binary-verified: `sso update <id> --domains` errors
-      // `flag needs an argument: --domains` — pflag fails `ParseFlags`
-      // (cobra `command.go:919`) before `ValidateArgs`, every hook, and
-      // `RunE`, so Go makes no API call. The Effect parser accepts the argv
-      // (the flag parses as unset), so without this check the handler would
-      // GET and PUT with an empty domain list (PR #5974 review round 3).
       const { layer, api } = setup({
         cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--domains"],
       });
@@ -890,11 +790,6 @@ describe("sso update integration", () => {
   );
 
   it.live("missing-value emulation: the pflag parse error wins over an arity violation", () => {
-    // pflag fails parsing (`command.go:919`) before cobra's `ValidateArgs`
-    // (`command.go:968`), so when `--domains` swallows `--metadata-url`
-    // (orphaning `u` as a second positional) AND `--add-domains` trails
-    // bare, Go reports the missing argument, not the arg count
-    // (binary-verified: `sso update a b --domains`).
     const { layer, api } = setup({
       cliArgs: [
         "sso",
@@ -927,12 +822,6 @@ describe("sso update integration", () => {
   it.live(
     "anchoring: a persistent flag between sso and update still enforces arity, like Go",
     () => {
-      // Binary-verified: `sso --profile foo update --domains --metadata-url
-      // u <id>` errors `accepts 1 arg(s), received 2` — cobra routes through
-      // the interspersed persistent flag (`Find`/`stripFlags`) and pflag
-      // still hands `--metadata-url` to `--domains`. The scan must anchor
-      // across the interspersed flag or the arity re-count silently
-      // vanishes and the handler GETs/PUTs (PR #5974 review round 3).
       const { layer, api } = setup({
         cliArgs: [
           "sso",
@@ -964,9 +853,6 @@ describe("sso update integration", () => {
   );
 
   it.live("anchoring: a persistent flag between sso and update sails through to the PUT", () => {
-    // Regression guard for the anchor walk: a well-formed interspersed
-    // invocation (`sso --profile supabase update <id>`) must behave exactly
-    // like the contiguous one.
     const { layer, api } = setup({
       cliArgs: ["sso", "--profile", "supabase", "update", VALID_PROVIDER_ID],
     });
@@ -979,11 +865,6 @@ describe("sso update integration", () => {
   it.live(
     "value reconciliation: repeated --skip-url-validation resolves last-wins like pflag (=false then bare ends true, skips validation, PUTs)",
     () => {
-      // `--skip-url-validation=false --skip-url-validation --metadata-url
-      // http://…`: pflag Sets every occurrence in order, ending true, so Go
-      // skips URL validation and PUTs. The Effect parser resolves repeats
-      // first-wins (false) and would have validated — and rejected — the
-      // non-HTTPS URL (PR #5974 review round 4, binary-verified).
       const { layer, api } = setup({
         cliArgs: [
           "sso",
@@ -1012,10 +893,6 @@ describe("sso update integration", () => {
   it.live(
     "value reconciliation: bare then =false ends false like pflag — URL validation runs and rejects, no PUT",
     () => {
-      // The mirror case: `--skip-url-validation --skip-url-validation=false`
-      // is false to pflag (last-wins) but true to the Effect parser
-      // (first-wins), so without reconciliation the handler would skip the
-      // validation Go performs and PUT an unvalidated URL.
       const { layer, api } = setup({
         cliArgs: [
           "sso",
@@ -1041,7 +918,6 @@ describe("sso update integration", () => {
           expect(dump).toContain("SsoUpdateMetadataFileError");
           expect(dump).toContain("only HTTPS Metadata URLs are supported");
         }
-        // Go GETs first (`update.go:42`), then fails validation before the PUT.
         expect(api.requests.some((r) => r.method === "PUT")).toBe(false);
       }).pipe(Effect.provide(layer));
     },
@@ -1050,11 +926,6 @@ describe("sso update integration", () => {
   it.live(
     "value reconciliation: --domains consuming one --name-id-format leaves the other as pflag's effective value in the PUT",
     () => {
-      // `--domains --name-id-format=T --name-id-format P`: pflag hands the
-      // first name-id-format token to `--domains` as its value, so the only
-      // occurrence it Sets is P. The Effect parser read both and resolved
-      // first-wins to T — the PUT body must carry P, exactly what the Go
-      // binary sends (PR #5974 review round 4).
       const transient = "urn:oasis:names:tc:SAML:2.0:nameid-format:transient" as const;
       const persistent = "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent";
       const { layer, api } = setup({
@@ -1081,7 +952,6 @@ describe("sso update integration", () => {
         const putReq = api.requests.find((r) => r.method === "PUT");
         const body = putReq?.body as { name_id_format?: string; domains?: string[] };
         expect(body?.name_id_format).toBe(persistent);
-        // The consumed token is pflag's literal domains value.
         expect(body?.domains).toEqual([`--name-id-format=${transient}`]);
       }).pipe(Effect.provide(layer));
     },
@@ -1090,8 +960,6 @@ describe("sso update integration", () => {
   it.live(
     "invalid-value emulation: --skip-url-validation=yes fails with pflag's strconv.ParseBool error, no API calls",
     () => {
-      // The Effect parser accepts `yes`; pflag's strconv.ParseBool does not —
-      // pflag fails flag parsing before every hook and request.
       const { layer, api } = setup({
         cliArgs: [
           "sso",
@@ -1126,12 +994,6 @@ describe("sso update integration", () => {
   it.live(
     "invalid-value emulation: a later inline-empty --skip-url-validation= fails like pflag, no API calls",
     () => {
-      // `--skip-url-validation=false --skip-url-validation=`: the Effect
-      // parser resolves repeats first-wins and never validates the second
-      // occurrence, so it parses; pflag hands `""` to strconv.ParseBool
-      // (`flag.go:1014-1016`) and aborts ParseFlags before every hook and
-      // any GET/PUT — only a *bare* repeat means NoOptDefVal true
-      // (binary-verified, PR #5974 review round 5).
       const { layer, api } = setup({
         cliArgs: [
           "sso",
@@ -1167,10 +1029,6 @@ describe("sso update integration", () => {
   it.live(
     "invalid-value emulation: a later invalid --name-id-format occurrence fails like pflag, no API calls",
     () => {
-      // The Effect parser resolves repeats first-wins and never validates
-      // the rest, so `--name-id-format=<valid> --name-id-format=bogus`
-      // parses; pflag Sets every occurrence and aborts on `bogus`
-      // (binary-verified, PR #5974 review round 4).
       const persistent = "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent" as const;
       const { layer, api } = setup({
         cliArgs: [
@@ -1205,9 +1063,6 @@ describe("sso update integration", () => {
   it.live(
     "invalid-value emulation: an invalid occurrence beats a trailing missing value, matching pflag's sequential walk",
     () => {
-      // `--skip-url-validation=yes --domains`: pflag walks argv in order and
-      // rejects `yes` before ever reaching the bare trailing `--domains`
-      // (binary-verified: Go names the invalid argument, not the missing one).
       const { layer, api } = setup({
         cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--skip-url-validation=yes", "--domains"],
       });
@@ -1241,7 +1096,7 @@ describe("sso update integration", () => {
       yield* ssoUpdate(flags);
       const putReq = api.requests.find((r) => r.method === "PUT");
       const domains = (putReq?.body as { domains: string[] })?.domains;
-      // Go map iteration is unordered — sort before asserting.
+      // Order is unspecified; sort before asserting.
       expect([...domains].sort()).toEqual(["new.com", "old1.com", "old2.com"]);
     }).pipe(Effect.provide(layer));
   });
@@ -1258,16 +1113,14 @@ describe("sso update integration", () => {
   });
 
   it.live("no domain flag set → PUT still sends the recomputed existing domain set", () => {
-    // `--add-domains`/`--remove-domains` default to a non-nil empty array,
-    // so every `sso update` enters the merge and sends `domains`, even when
-    // no domain flag was passed. Established PUT body:
-    // `{"domains":["old1.com","old2.com"]}`.
+    // `--add-domains`/`--remove-domains` default to an empty array, so every
+    // update enters the merge and sends `domains`, even with no domain flag.
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* ssoUpdate(defaultFlags);
       const putReq = api.requests.find((r) => r.method === "PUT");
       const domains = (putReq?.body as { domains: string[] })?.domains;
-      // Go map iteration is unordered — sort before asserting.
+      // Order is unspecified; sort before asserting.
       expect([...domains].sort()).toEqual(["old1.com", "old2.com"]);
     }).pipe(Effect.provide(layer));
   });
@@ -1275,8 +1128,7 @@ describe("sso update integration", () => {
   it.live(
     "no domain flags + provider with no domains → PUT sends domains: [] (not omitted)",
     () => {
-      // `domains` is always populated (never omitted) — established PUT
-      // body is exactly `{"domains":[]}`.
+      // `domains` is always populated, never omitted, even when empty.
       const { layer, api } = setup({ getBody: { ...EXISTING_PROVIDER, domains: [] } });
       return Effect.gen(function* () {
         yield* ssoUpdate(defaultFlags);
@@ -1290,8 +1142,7 @@ describe("sso update integration", () => {
 
   it.live("no domain flags + GET response missing domains entirely → PUT sends domains: []", () => {
     // The seed loop is skipped when the GET response has no domains,
-    // leaving the merged set empty — same `{"domains":[]}` bytes as the
-    // empty-list case.
+    // leaving the merged set empty.
     const { domains: _omitted, ...providerWithoutDomains } = EXISTING_PROVIDER;
     const { layer, api } = setup({ getBody: providerWithoutDomains });
     return Effect.gen(function* () {
@@ -1304,10 +1155,8 @@ describe("sso update integration", () => {
   });
 
   it.live("explicit empty --domains= falls into the merge and resends the existing set", () => {
-    // `--domains=` parses to an empty slice, so the replace gate is false
-    // and the merge branch runs with no add/remove — the established PUT
-    // resends the existing domains, it does NOT replace them with an empty
-    // list.
+    // `--domains=` parses to an empty slice, so the replace gate is false and
+    // the merge branch resends the existing domains instead of replacing them.
     const { layer, api } = setup({
       cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--domains="],
     });
@@ -1320,9 +1169,8 @@ describe("sso update integration", () => {
   });
 
   it.live("merge keeps empty-string domains and skips entries without a domain field", () => {
-    // The seed check is nil-ness only: an empty-string domain from the GET
-    // response stays in the merged set, while an entry missing the field
-    // entirely is skipped.
+    // The seed check is nil-ness only: an empty-string domain stays in the
+    // merged set, while an entry missing the field entirely is skipped.
     const { layer, api } = setup({
       getBody: {
         ...EXISTING_PROVIDER,
@@ -1464,8 +1312,6 @@ describe("sso update integration", () => {
       if (Exit.isFailure(exit)) {
         const dump = JSON.stringify(exit.cause);
         expect(dump).toContain("SsoUpdateMetadataFileError");
-        // Error tail is `… Use --skip-url-validation to suppress this error.`
-        // (trailing period).
         expect(dump).toContain("Use --skip-url-validation to suppress this error.");
         expect(classifyCliCauseActionability(exit.cause)).toMatchObject({
           error_category: "invalid_input",
@@ -1497,17 +1343,10 @@ describe("sso update integration", () => {
       yield* ssoUpdate(flags);
       const putReq = api.requests.find((r) => r.method === "PUT");
       const domains = (putReq?.body as { domains: string[] })?.domains;
-      // Go uses map iteration → unordered; sort before asserting.
+      // Order is unspecified; sort before asserting.
       expect([...domains].sort()).toEqual(["new.com", "old2.com"]);
     }).pipe(Effect.provide(layer));
   });
-
-  // -------------------------------------------------------------------------
-  // Profile emulation: the effective `--profile`/`SUPABASE_PROFILE` is
-  // resolved immediately before the workdir change — it decides which API
-  // host receives the GET *and* the PUT (the same host targets both), and
-  // aborts the command when the profile cannot be loaded.
-  // -------------------------------------------------------------------------
 
   const writeProfileYaml = (name: string, apiUrl: string): string => {
     const path = join(tempRoot.current, name);
@@ -1549,11 +1388,6 @@ describe("sso update integration", () => {
   it.live(
     "profile emulation: repeated --profile resolves last-wins — GET and PUT both target the last file's host",
     () => {
-      // `sso update <id> --profile first.yml --profile second.yml`: the
-      // Effect parser is first-wins (the config layer — and the typed client
-      // — resolved first.yml) while pflag Sets every occurrence and ends on
-      // second.yml. Go GETs and PUTs second.yml's api_url (`update.go:42`);
-      // first.yml's host receives nothing.
       const first = writeProfileYaml("first.yml", "http://first.example");
       const second = writeProfileYaml("second.yml", "http://second.example");
       const restoreEnv = withProfileEnv(undefined);
@@ -1569,15 +1403,10 @@ describe("sso update integration", () => {
         const put = api.requests.find((r) => r.method === "PUT");
         expect(get?.url).toBe(providerUrl);
         expect(put?.url).toBe(providerUrl);
-        // The merge seeds from the reconciled host's GET response.
         const domains = (put?.body as { domains?: string[] })?.domains ?? [];
         expect([...domains].sort()).toEqual(["old1.com", "old2.com"]);
         expect(api.requests.some((r) => r.url.startsWith("http://first.example/"))).toBe(false);
-        // The raw GET stitches identity through the shared per-command
-        // guard, like every other Management API response.
         expect(testSetup.stitchedResponses).toBeGreaterThan(0);
-        // The linked-project cache fill targets the reconciled host too —
-        // it uses the process-wide profile.
         expect(cache.cachedApiUrl).toBe("http://second.example");
       }).pipe(Effect.ensuring(restoreEnv), Effect.provide(layer));
     },
@@ -1638,9 +1467,6 @@ describe("sso update integration", () => {
   it.live(
     "profile emulation: the reconciled GET narrows odd JSON shapes when merging domains",
     () => {
-      // Covers the raw GET's JSON-narrowing fallbacks: a `domains` entry
-      // that isn't an object and one whose `domain` isn't a string are
-      // skipped, matching the typed client's schema behavior.
       const first = writeProfileYaml("first-merge.yml", "http://first.example");
       const second = writeProfileYaml("second-merge.yml", "http://second.example");
       const restoreEnv = withProfileEnv(undefined);
@@ -1670,20 +1496,12 @@ describe("sso update integration", () => {
         );
         const domains = (put?.body as { domains?: string[] })?.domains ?? [];
         expect([...domains].sort()).toEqual(["new.com", "old1.com"]);
-        // The linked-project cache fill receives the RECONCILED profile's
-        // token explicitly (here the profile-independent env token) — the
-        // stale profile's keyring token must never follow the reconciled URL
-        // (review r3684524241). `undefined` would fall back to the config
-        // layer's credentials service.
         expect(cache.cachedAccessToken).toBeDefined();
       }).pipe(Effect.ensuring(restoreEnv), Effect.provide(layer));
     },
   );
 
   it.live("profile emulation: a reconciled profile with no resolvable token aborts like Go", () => {
-    // The token gate fires at first client use when the RECONCILED profile's
-    // lookup finds nothing — the stale profile's token must never be
-    // substituted, and no request may be issued.
     const first = writeProfileYaml("first-notoken.yml", "http://first.example");
     const second = writeProfileYaml("second-notoken.yml", "http://second.example");
     const restoreEnv = withProfileEnv(undefined);
@@ -1724,9 +1542,6 @@ describe("sso update integration", () => {
   });
 
   it.live("profile emulation: the missing-token gate fires AFTER the mutex check, like Go", () => {
-    // cobra: ParseFlags → PreRunE → required → GROUPS → RunE(GetSupabase) —
-    // the token gate lives in RunE, so a mutex violation must win even when
-    // the reconciled profile has no token (validation-order parity).
     const first = writeProfileYaml("first-order.yml", "http://first.example");
     const second = writeProfileYaml("second-order.yml", "http://second.example");
     const restoreEnv = withProfileEnv(undefined);
@@ -1790,9 +1605,6 @@ describe("sso update integration", () => {
   it.live(
     "profile emulation: --profile consuming a trailing flag token fails LoadProfile, never GETs",
     () => {
-      // `sso update <id> --profile --add-domains`: pflag binds
-      // `"--add-domains"` as the profile value (positional count stays 1);
-      // viper's extension gate rejects it before any request.
       const restoreEnv = withProfileEnv(undefined);
       const { layer, api } = setup({
         cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--profile", "--add-domains"],
@@ -1813,8 +1625,6 @@ describe("sso update integration", () => {
   it.live(
     "profile emulation: an undecodable 200 body from the reconciled GET aborts before the PUT",
     () => {
-      // The 200 JSON body is unmarshalled; a parse error exits with
-      // `failed to get sso provider: %w` before any PUT.
       const first = writeProfileYaml("first-badjson.yml", "http://first.example");
       const second = writeProfileYaml("second-badjson.yml", "http://second.example");
       const restoreEnv = withProfileEnv(undefined);
@@ -1843,8 +1653,6 @@ describe("sso update integration", () => {
   it.live(
     "profile emulation: a 200 without a JSON content type maps to the unexpected-status branch, like Go's nil JSON200",
     () => {
-      // A 200 whose content type isn't JSON runs the gate check and errors
-      // with the raw body — no PUT.
       const first = writeProfileYaml("first-nonjson.yml", "http://first.example");
       const second = writeProfileYaml("second-nonjson.yml", "http://second.example");
       const restoreEnv = withProfileEnv(undefined);
@@ -1869,9 +1677,6 @@ describe("sso update integration", () => {
   it.live(
     "profile emulation: a gated 4xx on the reconciled GET sends the fallback gate requests to the reconciled host",
     () => {
-      // The upgrade-suggestion path goes through the process-wide reconciled
-      // profile; the project + entitlement fallback GETs must hit the same
-      // host as the main call.
       const first = writeProfileYaml("first-gate.yml", "http://first.example");
       const second = writeProfileYaml("second-gate.yml", "http://second.example");
       const restoreEnv = withProfileEnv(undefined);
@@ -1901,10 +1706,6 @@ describe("sso update integration", () => {
   );
 
   it.live("profile emulation: the LoadProfile failure loses to the arity check, like Go", () => {
-    // cobra: `ValidateArgs` runs before every hook (`command.go:968`), so a
-    // wrong arg count is reported even when the profile is also unloadable
-    // (binary-verified for workdir in round 6; LoadProfile sits in the same
-    // PersistentPreRunE, before ChangeWorkDir).
     const restoreEnv = withProfileEnv(undefined);
     const { layer, api } = setup({
       cliArgs: ["sso", "update", "a", "b", "--profile", "--metadata-url", "u"],

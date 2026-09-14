@@ -11,20 +11,17 @@ export interface ColorStream {
 }
 
 /**
- * Port of termenv's colour-profile gate, which is what the established lipgloss default
- * renderer consults (`lipgloss/renderer.go` → `termenv.EnvColorProfile`):
+ * Colour-detection gate following the NO_COLOR/CLICOLOR convention the established CLI output
+ * uses:
  *
- * 1. `NO_COLOR` non-empty → no colour, beats everything (`EnvNoColor`).
- * 2. `CLICOLOR=0` → no colour, unless forced (`EnvNoColor`).
- * 3. `CLICOLOR_FORCE` set and not `"0"` → colour even when piped (the
- * Ascii→ANSI promotion).
+ * 1. `NO_COLOR` non-empty → no colour, beats everything.
+ * 2. `CLICOLOR=0` → no colour, unless forced.
+ * 3. `CLICOLOR_FORCE` set and not `"0"` → colour even when piped.
  * 4. `CI` non-empty → treated as non-TTY.
- * 5. Otherwise: the stream must be a colour-capable TTY. `hasColors()` is
- * faithful on Bun TTYs (it also covers `TERM=dumb`) and absent on piped
- * streams.
+ * 5. Otherwise: the stream must be a colour-capable TTY. `hasColors()` is faithful on Bun
+ *    TTYs (it also covers `TERM=dumb`) and absent on piped streams.
  *
- * termenv does NOT honor Node's `FORCE_COLOR` — only the `CLICOLOR*` pair —
- * so neither does this gate.
+ * Node's `FORCE_COLOR` is not honored — only the `CLICOLOR*` pair.
  */
 function supportsColor(stream: ColorStream): boolean {
   const env = process.env;
@@ -38,28 +35,20 @@ function supportsColor(stream: ColorStream): boolean {
 }
 
 /**
- * Ports of `utils.Aqua` / `utils.Bold`.
+ * Renders plain text when the stream is not a TTY (piped output, CI, tests). Node's
+ * `styleText` would handle that via `validateStream`, but Bun (1.3.14, the only runtime the
+ * CLI ships on) does not implement it — it styles unconditionally, even when the stream is
+ * piped and even under `NO_COLOR=1`. The gate is implemented here instead — see
+ * {@link supportsColor} — and `validateStream: false` is passed explicitly so this gate stays
+ * authoritative even if a future Bun starts validating.
  *
- * The established behavior uses lipgloss, which auto-detects the output profile and renders **plain**
- * text when the stream is not a TTY (piped output, CI, tests). Node's
- * `styleText` would mirror that via `validateStream`, but Bun (1.3.14, the
- * only runtime the CLI ships on) does not implement `validateStream`: it
- * styles unconditionally, even when the stream is piped and even under
- * `NO_COLOR=1`. The gate is therefore implemented here — see
- * {@link supportsColor} — and `validateStream: false` is passed
- * explicitly so that our gate stays authoritative even if a future Bun starts
- * validating.
+ * `stream` defaults to `process.stderr` because every call site styles progress/suggestion
+ * lines written to stderr. A caller styling content written to stdout (e.g. `status`'s pretty
+ * table) must pass `process.stdout` explicitly — otherwise the TTY check runs against the
+ * wrong stream, and piping stdout while stderr stays a TTY would corrupt the piped output
+ * with ANSI escapes.
  *
- * `stream` defaults to `process.stderr` because every original call site styles
- * progress/suggestion lines written to stderr. A caller styling content that is
- * itself written to **stdout** (e.g. `status`'s pretty table) must pass
- * `process.stdout` explicitly — otherwise the TTY check runs against the wrong
- * stream, and piping stdout while stderr stays a TTY (`supabase status | less`)
- * would corrupt the piped output with ANSI escapes (the same bug class CLI-1546
- * fixed for the progress spinner).
- *
- * lipgloss colour "14" is bright cyan; `"cyan"` is the closest faithful match,
- * matching `branches.prompt.ts`'s existing port of `utils.Aqua`.
+ * Uses `"cyan"`, the closest Node `styleText` colour to the established bright-cyan value.
  */
 export function aqua(text: string, stream: ColorStream = process.stderr): string {
   return supportsColor(stream) ? styleText("cyan", text, { validateStream: false }) : text;
@@ -69,17 +58,17 @@ export function bold(text: string, stream: ColorStream = process.stderr): string
   return supportsColor(stream) ? styleText("bold", text, { validateStream: false }) : text;
 }
 
-/** Port of `utils.Yellow` — lipgloss colour "11" (bright yellow). */
+/** Renders in bright yellow. */
 export function yellow(text: string, stream: ColorStream = process.stderr): string {
   return supportsColor(stream) ? styleText("yellow", text, { validateStream: false }) : text;
 }
 
-/** Port of `utils.Red` — lipgloss colour "9" (bright red). */
+/** Renders in bright red. */
 export function red(text: string, stream: ColorStream = process.stderr): string {
   return supportsColor(stream) ? styleText("red", text, { validateStream: false }) : text;
 }
 
-/** Port of `utils.Green` — lipgloss colour "10" (bright green). */
+/** Renders in bright green. */
 export function green(text: string, stream: ColorStream = process.stderr): string {
   return supportsColor(stream) ? styleText("green", text, { validateStream: false }) : text;
 }

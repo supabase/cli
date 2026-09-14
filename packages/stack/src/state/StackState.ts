@@ -32,13 +32,8 @@ import { DesiredStackLifecycleSchema, NetworkPortSchema, PORT_FIELDS } from "../
 export const STACK_STATE_FORMAT = "supabase-stack-state-v1" as const;
 
 const PersistedStackIdentitySchema = Schema.Struct({
-  stackId: Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/)),
   projectRoot: Schema.String,
-  checkoutRoot: Schema.String,
-  workspaceId: Schema.String,
-  checkoutId: Schema.String,
   branchContext: Schema.String,
-  localProjectKey: Schema.String,
   stackName: Schema.String,
 });
 export type PersistedStackIdentity = Schema.Schema.Type<typeof PersistedStackIdentitySchema>;
@@ -57,6 +52,11 @@ const PrivatePortAssignmentSchema = Schema.Struct({
   port: NetworkPortSchema,
 });
 export type PrivatePortAssignment = Schema.Schema.Type<typeof PrivatePortAssignmentSchema>;
+
+/** Stable identity for one durable private workload binding. */
+export const privateBindingKey = (
+  assignment: Pick<PrivatePortAssignment, "workloadId" | "binding">,
+): string => `${assignment.workloadId}\u0000${assignment.binding}`;
 
 const PersistedSecretEntrySchema = Schema.Struct({
   policy: Schema.Literals(["managed", "passthrough"] as const),
@@ -293,8 +293,7 @@ const PrivatePortAssignmentsSchema = Schema.Array(PrivatePortAssignmentSchema).p
   Schema.decode({
     decode: SchemaGetter.checkEffect((assignments) =>
       Effect.succeed(
-        new Set(assignments.map(({ workloadId, binding }) => `${workloadId}\u0000${binding}`))
-          .size === assignments.length &&
+        new Set(assignments.map(privateBindingKey)).size === assignments.length &&
           new Set(assignments.map(({ port }) => port)).size === assignments.length
           ? undefined
           : "Duplicate persisted private binding or port",
@@ -330,16 +329,8 @@ export const PersistedStackStateSchema = stateShape.pipe(
 );
 export type PersistedStackState = Schema.Schema.Type<typeof PersistedStackStateSchema>;
 
-export const toPersistedIdentity = (
-  identity: StackIdentity,
-  stackId: string,
-): PersistedStackIdentity => ({
-  stackId,
+export const toPersistedIdentity = (identity: StackIdentity): PersistedStackIdentity => ({
   projectRoot: identity.projectRoot,
-  checkoutRoot: identity.checkoutRoot,
-  workspaceId: identity.workspaceId,
-  checkoutId: identity.checkoutId,
   branchContext: identity.branchContext,
-  localProjectKey: identity.localProjectKey,
   stackName: identity.stackName,
 });

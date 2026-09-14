@@ -205,7 +205,8 @@ func TestUpdateAuthConfig(t *testing.T) {
 			Get("/v1/projects/test-project/config/auth").
 			Reply(http.StatusOK).
 			JSON(v1API.AuthConfigResponseOutput{
-				SiteUrl: nullable.NewNullableWithValue("http://localhost:3000"),
+				SiteUrl:        nullable.NewNullableWithValue("http://localhost:3000"),
+				SmtpAdminEmail: nullable.NewNullableWithValue(openapi_types.Email("abc@example.com")),
 			})
 		gock.New(server).
 			Patch("/v1/projects/test-project/config/auth").
@@ -224,7 +225,9 @@ func TestUpdateAuthConfig(t *testing.T) {
 		gock.New(server).
 			Get("/v1/projects/test-project/config/auth").
 			Reply(http.StatusOK).
-			JSON(v1API.AuthConfigResponseOutput{})
+			JSON(v1API.AuthConfigResponseOutput{
+				SmtpAdminEmail: nullable.NewNullableWithValue(openapi_types.Email("abc@example.com")),
+			})
 		// Run test
 		err := updater.UpdateAuthConfig(context.Background(), "test-project", auth{
 			Enabled:                true,
@@ -331,11 +334,6 @@ func TestUpdateRemoteConfig(t *testing.T) {
 			JSON(v1API.PostgresConfigResponseOutput{
 				MaxConnections: cast.Ptr(cast.UintToInt(100)),
 			})
-		// Network config
-		gock.New(server).
-			Get("/v1/projects/test-project/network-restrictions").
-			Reply(http.StatusOK).
-			JSON(v1API.V1GetNetworkRestrictionsResponse{})
 		// Auth config
 		gock.New(server).
 			Get("/v1/projects/test-project/config/auth").

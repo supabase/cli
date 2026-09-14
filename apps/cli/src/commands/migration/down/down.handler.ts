@@ -44,8 +44,7 @@ const runDown = Effect.fnUntraced(function* (
   const path = yield* Path.Path;
   const dnsResolver = yield* DnsResolverFlag;
 
-  // Flag-group mutual-exclusion first: validated at
-  // parse time, ahead of the root pre-run.
+  // Checked here, ahead of the root pre-run.
   if (target.setFlags.length > 1) {
     return yield* Effect.fail(
       new MigrationTargetFlagsError({
@@ -54,11 +53,10 @@ const runDown = Effect.fnUntraced(function* (
     );
   }
 
-  const connType = target.connType ?? "local"; // down defaults to `--local`.
+  const connType = target.connType ?? "local";
 
   // `--project-ref` never implies `--linked` and must not be silently
-  // discarded on a non-linked target — see push.handler.ts's identical guard
-  // (db push) for the full TS-only rationale.
+  // discarded on a non-linked target; see push.handler.ts's identical guard.
   if (Option.isSome(flags.projectRef) && connType !== "linked") {
     return yield* Effect.fail(
       new MigrationTargetFlagsError({
@@ -68,8 +66,8 @@ const runDown = Effect.fnUntraced(function* (
     );
   }
 
-  // Resolve the DB config BEFORE the `--last` validation, so an unlinked/invalid
-  // target surfaces before the `--last must be greater than 0` error.
+  // Resolves before `--last` validation, so an unlinked/invalid target error
+  // surfaces before the `--last must be greater than 0` error.
   const cfg = yield* resolver.resolve({
     dbUrl: flags.dbUrl,
     connType,
@@ -77,17 +75,13 @@ const runDown = Effect.fnUntraced(function* (
     linkedProjectRef: flags.projectRef,
   });
 
-  // The project .env loads after the parse-time flag-group validation above — so a
-  // SUPABASE_YES set only in supabase/.env auto-confirms, but a flag conflict still
-  // surfaces before any .env read. Resolve --yes against the project env here, not
-  // just process.env.
+  // Loads after the flag-group check above, so a flag conflict surfaces before
+  // any .env read; a SUPABASE_YES set only in supabase/.env still auto-confirms.
   const projectEnv = yield* loadProjectEnv(fs, path, cliSettings.workdir);
   const yes = yield* resolveYesWithProjectEnv(projectEnv);
 
-  // Linked down caches the project ref, gated on the ref loaded in pre-run, NOT
-  // on the handler's own failure. Load it now and attach the
-  // cache to the whole flow via `Effect.ensuring`, so it runs even on the `--last`/cancel
-  // failure paths.
+  // Attached to the whole flow via `Effect.ensuring` so the cache write still
+  // runs on the `--last`/cancel failure paths.
   const cacheLinkedRef =
     connType === "linked"
       ? yield* Effect.gen(function* () {
@@ -99,7 +93,6 @@ const runDown = Effect.fnUntraced(function* (
       : undefined;
 
   const downFlow = Effect.gen(function* () {
-    // `--last` zero-value validation runs after DB-config resolution.
     if (flags.last === 0) {
       return yield* Effect.fail(
         new MigrationLastZeroError({ message: "--last must be greater than 0" }),
@@ -111,8 +104,6 @@ const runDown = Effect.fnUntraced(function* (
 
     yield* Effect.scoped(
       Effect.gen(function* () {
-        // The connect diagnostic prints to stderr before dialing,
-        // local/remote per the resolved connection.
         yield* output.raw(
           `Connecting to ${cfg.isLocal ? "local" : "remote"} database...\n`,
           "stderr",
@@ -153,10 +144,8 @@ const runDown = Effect.fnUntraced(function* (
         yield* migrateAndSeed(session, fs, path, cliSettings.workdir, version, {
           migrationsEnabled: toml.migrationsEnabled,
           seed: toml.seed,
-          // `version` is always non-empty here (`migration down` reverts to a concrete
-          // target) — the empty-version half of `migrateAndSeed`'s declarative
-          // branch gate is therefore always false on this call site regardless of these
-          // three values, matching the file's own doc comment.
+          // `version` is always non-empty here, so `migrateAndSeed`'s empty-version
+          // branch never triggers regardless of these three flags.
           experimental: false,
           pgDeltaEnabled: false,
           schemaPaths: [],

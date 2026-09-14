@@ -26,17 +26,12 @@ export const sslEnforcementGetCommand = Command.make("get", config).pipe(
   Command.withShortDescription("Get SSL enforcement configuration"),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
-      // Cobra parses flags — rejecting an out-of-enum `-o` (`internal/utils/enum.go:21-27`)
-      // — before `PersistentPreRunE` ever runs (`cobra@v1.10.2/command.go:919,985`), so an
-      // invalid `-o` value must win over a missing `--experimental` flag.
+      // An invalid `-o` value must be rejected before the missing
+      // `--experimental` check, matching flag-parsing precedence.
       yield* validateOutputFormat(RESOURCE_OUTPUT_FORMATS);
-      // Go gates `sslEnforcementCmd` behind `--experimental` in PersistentPreRunE
-      // (root.go:91-96) BEFORE the `IsManagementAPI` login check (root.go:105-109).
-      // `managementApiRuntimeLayer` eagerly resolves an access token as part
-      // of building its `CommandPlatformApi` layer, so it must be provided AFTER
-      // the gate (inline here) rather than via `Command.provide` on the whole
-      // command — `Command.provide` would build the layer, and fail on a missing
-      // token, before this generator's first `yield*` ever runs.
+      // The --experimental gate must run before `managementApiRuntimeLayer` is
+      // provided (inline here, not via `Command.provide`) — that layer eagerly
+      // resolves an access token and would fail on a missing one first.
       yield* requireExperimental;
       return yield* sslEnforcementGet(flags).pipe(
         withCommandTelemetry({ flags }),

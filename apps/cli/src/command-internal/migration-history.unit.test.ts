@@ -35,8 +35,6 @@ describe("reconcileMigrations", () => {
   });
 
   it("reports missing only when both histories are empty", () => {
-    // Go checks for conflicts (extra remote/local) before the empty-local guard,
-    // so a remote-only migration is a conflict, not missing.
     expect(reconcileMigrations([], [])).toEqual({ kind: "missing" });
     expect(reconcileMigrations(["20240101000000"], []).kind).toBe("conflict");
   });
@@ -60,42 +58,28 @@ describe("reconcileMigrations", () => {
   });
 
   it("is in sync when an 8-digit and a 14-digit version share a prefix (#6036)", () => {
-    // Local versions arrive in file-name order, where `20260420010000_b.sql`
-    // precedes `20260420_a.sql` ('0' < '_') — the reverse of the `ORDER BY
-    // version` order `schema_migrations` is read back in. Unsorted, the walk
-    // desynchronises into a conflict whose repair suggestion asks for the same
-    // version to be marked both reverted and applied.
     expect(
       reconcileMigrations(["20260420", "20260420010000"], ["20260420010000", "20260420"]),
     ).toEqual({ kind: "in-sync" });
   });
 
   it("skips versions that do not parse as integers", () => {
-    // A non-numeric remote version is skipped (Go's Atoi-error continue), leaving
-    // the numeric ones in sync.
     expect(reconcileMigrations(["bogus", "20240101000000"], ["20240101000000"])).toEqual({
       kind: "in-sync",
     });
   });
 
   it("skips empty / whitespace versions (matches strconv.Atoi, not Number())", () => {
-    // `Number("")`/`Number(" ")` are 0; Go's Atoi errors on both → skip. The
-    // numeric entries still reconcile in-sync rather than spuriously conflicting.
     expect(reconcileMigrations(["", "20240101000000"], [" ", "20240101000000"])).toEqual({
       kind: "in-sync",
     });
   });
 
   it("treats a version within Go's int64 range as a real conflict (BigInt parity)", () => {
-    // 9999999999999999 (~1e16) is above Number.MAX_SAFE_INTEGER but within int64,
-    // so Go's strconv.Atoi accepts it and surfaces it as an extra-remote conflict.
-    // A Number-based parser would skip it (initial pull); BigInt compares exactly.
     expect(reconcileMigrations(["9999999999999999"], []).kind).toBe("conflict");
   });
 
   it("skips a version beyond Go's int64 range instead of hanging the scan", () => {
-    // A 19-digit value exceeds int64 max (9223372036854775807); Go's Atoi returns a
-    // range error and skips it, so the scan can't stall on the exhausted-side pin.
     expect(
       reconcileMigrations(["20240101000000", "9999999999999999999"], ["20240101000000"]),
     ).toEqual({ kind: "in-sync" });
@@ -146,9 +130,6 @@ describe("findPendingMigrations (Go TestPendingMigrations / TestIgnoreVersionMis
   });
 
   it("is up to date when an 8-digit and a 14-digit version share a prefix (#6036)", () => {
-    // Local files arrive in name order, where `20260420010000_…` precedes
-    // `20260420_…` ('0' < '_') — the reverse of the version order
-    // `schema_migrations` is read back in.
     const local = ["20260420010000", "20260420"].map(mig);
     const result = findPendingMigrations(local, ["20260420", "20260420010000"]);
     expect(result).toEqual({ kind: "pending", paths: [] });
@@ -207,10 +188,10 @@ describe("suggestRevertHistory", () => {
 describe("resolveMigrationFile (byte-ordered match, Go's sort.Strings via afero match.go:91)", () => {
   it("picks the UTF-8-byte-first match, not JS's default UTF-16 code-unit order", async () => {
     // A supplementary-plane character (U+1F600, a UTF-16 surrogate pair) alongside a BMP
-    // private-use character (U+E000): JS's default `.sort()` (no comparator) ranks the
-    // surrogate pair FIRST — its leading high-surrogate code unit (0xD83D) is less than
-    // the private-use code unit (0xE000). `sort.Strings` (UTF-8 byte order) ranks the
-    // private-use character first instead (0xEE... < 0xF0... in its UTF-8 encoding).
+    // private-use character (U+E000): JS's default `.sort()` ranks the surrogate pair first —
+    // its leading high-surrogate code unit (0xD83D) is less than the private-use code unit
+    // (0xE000) — while byte-wise UTF-8 order ranks the private-use character first instead
+    // (0xEE... < 0xF0...).
     const surrogatePair = "20240101000000_a\u{1f600}.sql";
     const privateUse = "20240101000000_a\u{e000}.sql";
     expect([surrogatePair, privateUse].sort()[0]).toBe(surrogatePair);

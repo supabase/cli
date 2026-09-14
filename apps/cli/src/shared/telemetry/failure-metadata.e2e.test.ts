@@ -47,11 +47,8 @@ describe("failed command telemetry", () => {
     capturedEvents.length = 0;
   });
 
-  // Both cases exercise the CLI (the only remaining shell). The
-  // `branches list` case needs a syntactically valid access token so the
-  // Management API auth gate builds successfully and the failure happens
-  // in-handler, during project-ref resolution, rather than at the auth gate
-  // (which deliberately keeps its existing no-event behavior).
+  // `branches list` needs a syntactically valid access token so the auth gate builds and the
+  // failure happens during project-ref resolution instead of at the auth gate itself.
   test.each([
     {
       args: ["branches", "list"],

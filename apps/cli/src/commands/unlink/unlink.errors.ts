@@ -19,10 +19,7 @@ export class UnlinkRefReadError extends Data.TaggedError("UnlinkRefReadError")<{
   }
 }
 
-/**
- * Removing the `supabase/.temp` directory failed. Byte-matches Go's
- * `"failed to remove temp directory: " + err` (`unlink.go:32`).
- */
+/** Removing the `supabase/.temp` directory failed. */
 export class UnlinkTempRemovalError extends Data.TaggedError("UnlinkTempRemovalError")<{
   readonly message: string;
 }> {

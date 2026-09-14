@@ -1,14 +1,17 @@
-import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "@effect/vitest";
+import { BunServices } from "@effect/platform-bun";
+import { Effect, FileSystem } from "effect";
 
 import { type CompletionShell, generateCompletionScript } from "./completion-scripts.ts";
 
 const fixturesDir = fileURLToPath(new URL("./__fixtures__", import.meta.url));
 
-function readFixture(shell: CompletionShell, variant: "desc" | "nodesc"): string {
-  return readFileSync(`${fixturesDir}/${shell}.${variant}.txt`, "utf8");
-}
+const readFixture = (shell: CompletionShell, variant: "desc" | "nodesc") =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    return yield* fs.readFileString(`${fixturesDir}/${shell}.${variant}.txt`);
+  }).pipe(Effect.provide(BunServices.layer));
 
 describe("generateCompletionScript", () => {
   describe("bash", () => {
@@ -113,30 +116,30 @@ describe("generateCompletionScript", () => {
     });
   });
 
-  // The substring/self-consistency checks above prove structural facts, but
-  // "byte-for-byte transcription of cobra v1.10.2" is the module's entire
-  // contract, and every one of the hundreds of hand-escaped `${…}`/backtick/
-  // `$'\t'` sequences in the four templates is otherwise unguarded — a
-  // well-intentioned "cleanup" of an escape could ship silently. These
-  // fixtures are the literal stdout of a real `apps/cli-go` binary (pinned to
-  // `spf13/cobra v1.10.2`, same version as `go.mod`) running
-  // `supabase completion <shell> [--no-descriptions]`, captured once and
-  // checked in — see `apps/cli/src/commands/completion/__fixtures__/`.
-  // Regenerate them (and re-verify byte equality by hand) only if cobra is
-  // ever upgraded.
+  // Fixtures are the literal stdout of a pinned cobra v1.10.2 binary running
+  // `supabase completion <shell> [--no-descriptions]`, captured once and checked in.
+  // Regenerate them only if cobra is upgraded.
   describe("byte-exact parity with real cobra v1.10.2 output", () => {
     const shells: ReadonlyArray<CompletionShell> = ["bash", "zsh", "fish", "powershell"];
 
     for (const shell of shells) {
-      it(`matches the real cobra ${shell} completion script byte-for-byte (with descriptions)`, () => {
-        const generated = generateCompletionScript(shell, { noDescriptions: false });
-        expect(generated).toBe(readFixture(shell, "desc"));
-      });
+      it.live(
+        `matches the real cobra ${shell} completion script byte-for-byte (with descriptions)`,
+        () =>
+          Effect.gen(function* () {
+            const generated = generateCompletionScript(shell, { noDescriptions: false });
+            expect(generated).toBe(yield* readFixture(shell, "desc"));
+          }),
+      );
 
-      it(`matches the real cobra ${shell} completion script byte-for-byte (--no-descriptions)`, () => {
-        const generated = generateCompletionScript(shell, { noDescriptions: true });
-        expect(generated).toBe(readFixture(shell, "nodesc"));
-      });
+      it.live(
+        `matches the real cobra ${shell} completion script byte-for-byte (--no-descriptions)`,
+        () =>
+          Effect.gen(function* () {
+            const generated = generateCompletionScript(shell, { noDescriptions: true });
+            expect(generated).toBe(yield* readFixture(shell, "nodesc"));
+          }),
+      );
     }
   });
 });

@@ -1,11 +1,9 @@
 import { goUrlParse } from "./storage-url.ts";
 
 /**
- * Local API URL derivation, mirroring Go's `config.go:634-644` + `misc.go:298`:
- * an explicit `api.external_url` wins, otherwise `<scheme>://<host>:<port>`
- * where the scheme follows `api.tls.enabled` and the port is `api.port`.
- * Hoisted here because `storage-credentials.ts` and
- * `local-config-values.ts` both need this exact computation.
+ * Derives the local API URL: an explicit `api.external_url` wins, otherwise
+ * `<scheme>://<host>:<port>` from `api.tls.enabled` and `api.port`. Hoisted here
+ * because `storage-credentials.ts` and `local-config-values.ts` both need it.
  */
 export function resolveApiExternalUrl(
   config: {
@@ -19,8 +17,7 @@ export function resolveApiExternalUrl(
     return config.external_url;
   }
   const scheme = config.tls.enabled ? "https" : "http";
-  // Go builds host:port with net.JoinHostPort (config.go:636-638), bracketing an
-  // IPv6 host.
+  // Brackets an IPv6 host, e.g. `[::1]:5432`.
   const hostPort = hostname.includes(":")
     ? `[${hostname}]:${config.port}`
     : `${hostname}:${config.port}`;
@@ -28,20 +25,9 @@ export function resolveApiExternalUrl(
 }
 
 /**
- * Go's `Config.Validate` rewrite of `Studio.ApiUrl` (`pkg/config/config.go:1074-1078`):
- * ```go
- * } else if parsed.Host == "" || parsed.Host == c.Hostname {
- *     c.Studio.ApiUrl = c.Api.ExternalUrl
- * }
- * ```
- * Runs as the last step of `Config.Load` (`config.go:882`), so by the time
- * `start` builds Studio's env, `studio.api_url` has already been rewritten to
- * the resolved API external URL (the Kong URL) whenever its host is empty
- * (a relative/schemeless value) or matches the bare local hostname exactly
- * (no port) — which is the default-config case, since `studio.api_url`
- * defaults to `http://127.0.0.1` and `Hostname` defaults to the same
- * `"127.0.0.1"`. An explicit, non-matching host (e.g. a custom domain, or a
- * host:port pair) is left untouched.
+ * Rewrites `studio.api_url` to the resolved API external URL when its host is empty or
+ * matches the bare local hostname with no port (the default-config case). An explicit
+ * non-matching host, or a host:port pair, is left untouched.
  */
 export function resolveStudioApiUrl(
   rawApiUrl: string,

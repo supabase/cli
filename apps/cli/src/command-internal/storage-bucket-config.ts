@@ -2,22 +2,16 @@ import { ramInBytes } from "./size-units.ts";
 import type { UpsertBucketProps } from "./storage-gateway.ts";
 
 /**
- * Pure helpers that turn a `[storage.buckets.*]` config entry into the
- * create/update bucket props the Storage gateway sends. Shared by `seed buckets`
- * (which seeds every configured bucket) and `storage cp` (which auto-creates a
- * bucket on a `Bucket not found` upload, reading the same config). Kept free of
- * Effect/services so the
- * established rules (size parsing, storage-level inheritance, `public` tri-state)
- * stay unit-testable.
+ * Pure helpers that turn a `[storage.buckets.*]` config entry into the create/update bucket
+ * props the Storage gateway sends. Shared by `seed buckets` and `storage cp` (which
+ * auto-creates a bucket on a `Bucket not found` upload). Kept free of Effect/services so the
+ * size-parsing, storage-level-inheritance, and `public` tri-state rules stay unit-testable.
  */
 
 /**
- * Parse a `file_size_limit` config string (e.g. `"50MiB"`) to the int64 byte
- * count sent in the create/update bucket body. `@supabase/config` keeps the
- * field as the raw
- * human-readable string, so the conversion normally done at config-load happens
- * here. Throws on an unparseable value (aborts config load), which the caller
- * maps to a config-load error.
+ * Parses a `file_size_limit` config string (e.g. `"50MiB"`) to the byte count sent in the
+ * create/update bucket body. Throws on an unparseable value; the caller maps that to a
+ * config-load error.
  */
 export function parseFileSizeLimit(sizeStr: string): number {
   return ramInBytes(sizeStr);
@@ -28,12 +22,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Whether the bucket's TOML entry explicitly declares `key`. Go reads `public`
- * into a `*bool` and `file_size_limit` into a pointer, so an absent key is
- * omitted (not the decoded schema default), and that "omitted" signal drives the
- * `public` tri-state and the storage-level `file_size_limit` inheritance.
- * `@supabase/config` loses it (decodes to the schema default), so recover
- * presence from the raw (post-`env()`) document.
+ * Whether the bucket's TOML entry explicitly declares `key`. The decoded config loses this
+ * signal (an absent key decodes to the schema default), but it drives the `public` tri-state
+ * and the storage-level `file_size_limit` inheritance, so recover presence from the raw
+ * (post-`env()`) document instead.
  */
 export function bucketHasKey(
   document: Record<string, unknown> | undefined,
@@ -56,15 +48,12 @@ interface BucketConfigEntry {
 }
 
 /**
- * Resolve a bucket's create/update props, mirroring `config.resolve()`
- * + the `sizeInBytes` decode at config-load:
- * - an omitted or zero `file_size_limit` inherits the (already-parsed)
- * storage-level limit;
- * - `public` is the explicit value only when the TOML declares it, else
- * `undefined` (`*bool` nil → omitted from the request body).
+ * Resolves a bucket's create/update props: an omitted or zero `file_size_limit` inherits the
+ * (already-parsed) storage-level limit; `public` is the explicit value only when the TOML
+ * declares it, else `undefined` (omitted from the request body).
  *
- * Throws on an unparseable bucket `file_size_limit` (the caller maps it to a
- * config-load error). `storageFileSizeLimitBytes` must already be parsed.
+ * Throws on an unparseable bucket `file_size_limit`, mapped by the caller to a config-load
+ * error. `storageFileSizeLimitBytes` must already be parsed.
  */
 export function resolveBucketProps(opts: {
   readonly document: Record<string, unknown> | undefined;

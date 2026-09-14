@@ -45,6 +45,9 @@ const optionalCapability = <S extends Schema.Top>(settings: S) =>
   ]);
 
 export const DatabaseCapabilityConfigSchema = Schema.Struct({
+  // PostgreSQL accepts an exact catalog release or a major selector such as
+  // "15"/"17". Major selectors are resolved to a concrete catalog release by
+  // the compiler, preserving a compatible previous pin when one exists.
   version: Schema.optionalKey(Schema.String),
   settings: Schema.optionalKey(DatabaseSettingsSchema),
 });

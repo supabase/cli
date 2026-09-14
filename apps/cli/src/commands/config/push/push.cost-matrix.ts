@@ -12,10 +12,8 @@ import {
   ConfigPushListAddonsStatusError,
 } from "./push.errors.ts";
 
-/**
- * Cost matrix entry: the addon variant's display name and price description,
- * used to render the cost-aware confirmation prompt (Go `push.CostItem`).
- */
+/** Cost matrix entry: the addon variant's display name and price description, used to render
+ *  the cost-aware confirmation prompt. */
 export interface CostItem {
   readonly name: string;
   readonly price: string;
@@ -93,7 +91,8 @@ interface ParsedAddon {
   }>;
 }
 
-/** Tolerantly extracts `available_addons` with a string `type` (Go uses `string`, not an enum). */
+/** Tolerantly extracts `available_addons` with a string `type`, since the API response itself
+ *  uses a plain string, not the enum the generated client declares. */
 function readAddons(parsed: unknown): ReadonlyArray<ParsedAddon> {
   if (typeof parsed !== "object" || parsed === null) return [];
   const available = (parsed as { available_addons?: unknown }).available_addons;

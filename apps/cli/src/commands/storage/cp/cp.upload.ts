@@ -2,21 +2,18 @@ import * as nodePath from "node:path";
 
 import { splitBucketPrefix, storageIsDir } from "../../../command-internal/storage-url.ts";
 
-/**
- * Pure destination-key resolution for `storage cp` recursive uploads. Kept
- * free of Effect/services so the branch matrix stays unit-testable.
- */
+/** Pure destination-key resolution for `storage cp` recursive uploads. */
 
 export interface UploadDstPathInput {
-  /** The destination object path (`dstParsed.Path`, e.g. `/private/dir/`). */
+  /** The destination object path (e.g. `/private/dir/`). */
   readonly remotePath: string;
-  /** `filepath.Rel(localPath, filePath)` — `"."` when `localPath` is the file itself. */
+  /** Path of the current file relative to `localPath`; `"."` when `localPath` is the file itself. */
   readonly relPath: string;
-  /** Base name of the current file (`info.Name()`), used in the single-file branch. */
+  /** Base name of the current file, used in the single-file branch. */
   readonly fileName: string;
-  /** Base name of the walk root (`filepath.Base(localPath)`). */
+  /** Base name of the walk root. */
   readonly baseName: string;
-  /** `strings.TrimSuffix(remotePath, "/")`. */
+  /** `remotePath` with any trailing slash removed. */
   readonly noSlash: string;
   /** Whether `base(noSlash)` exists as a directory at the destination. */
   readonly dirExists: boolean;
@@ -25,15 +22,13 @@ export interface UploadDstPathInput {
 }
 
 /**
- * Resolve the remote destination key for one walked file (`cp.go:135-148`):
- *  - single file (`relPath === "."`): append the file name only when the
- *    destination prefix is itself a directory, or the destination dir exists and
- *    no same-named file does;
- *  - otherwise: nest under `baseName` when the destination dir exists (or the
- *    destination is a bare bucket), then append the relative path.
+ * Resolves the remote destination key for one walked file:
+ *  - single file (`relPath === "."`): append the file name only when the destination prefix is
+ *    itself a directory, or the destination dir exists and no same-named file does;
+ *  - otherwise: nest under `baseName` when the destination dir exists (or the destination is a
+ *    bare bucket), then append the relative path.
  *
- * Remote keys are joined with POSIX semantics (Go uses `path.Join`); the relative
- * segment's OS separators are normalised to `/`.
+ * Remote keys use POSIX join semantics; the relative segment's OS separators are normalized to `/`.
  */
 export function resolveUploadDstPath(input: UploadDstPathInput): string {
   let dstPath = input.remotePath;

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { detectContentType } from "./detect-content-type.ts";
 
-/** Latin-1 byte view of a string (matches Go's []byte("…") for our fixtures). */
+/** Latin-1 byte view of a string for fixture inputs. */
 function bytes(s: string): Uint8Array {
   const out = new Uint8Array(s.length);
   for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i) & 0xff;
@@ -10,8 +10,8 @@ function bytes(s: string): Uint8Array {
 }
 
 describe("detectContentType", () => {
-  // Expected values produced by running Go's `http.DetectContentType` (go1.x)
-  // over the identical byte inputs — this locks the port to byte-exact parity.
+  // Expected values were produced by running Go's `http.DetectContentType` over these same
+  // byte inputs.
   const corpus: ReadonlyArray<readonly [string, string, string]> = [
     ["png", "\x89PNG\x0D\x0A\x1A\x0A\x00\x00", "image/png"],
     ["pdf", "%PDF-1.4\n...", "application/pdf"],
@@ -43,8 +43,6 @@ describe("detectContentType", () => {
   }
 
   it("considers only the first 512 bytes (a PNG magic past 512 is ignored)", () => {
-    // 600 bytes of plain text then a PNG magic — beyond the sniff window, so it
-    // stays text/plain (Go truncates to data[:512]).
     const padded = "a".repeat(600) + "\x89PNG\x0D\x0A\x1A\x0A";
     expect(detectContentType(bytes(padded))).toBe("text/plain; charset=utf-8");
   });

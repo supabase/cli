@@ -98,9 +98,9 @@ interface ProvisionedDeclarativeShadow {
 }
 
 /**
- * Bypass pg-delta's same-database guard when both shadows share one snapshot
- * key and the declarative side was restored from that tar. A cold-exported
- * migrations handle is still that tar's lineage.
+ * Bypass pg-delta's same-database guard when both shadows share one snapshot key and the
+ * declarative side was restored from that tar — a cold-exported migrations handle is still
+ * that tar's lineage.
  */
 export function allowSameDatabaseIdentityForPlanShadows(opts: {
   readonly declarativeRestoredFromPgDataSnapshot: boolean;
@@ -120,11 +120,7 @@ const setupRunInput = (input: NativeShadowInput, handle: ShadowAcquiredHandle) =
   setup: input.base.setup,
 });
 
-/**
- * Scoped, native TypeScript shadow orchestration for pg-delta next. The command
- * workflows and this specialized two-shadow planner share the same bootstrap
- * primitives; no Go command or shadow handoff protocol is involved.
- */
+/** Scoped, native TypeScript shadow orchestration for pg-delta next. */
 export const pgDeltaNextShadowLayer = Layer.effect(
   PgDeltaNextShadow,
   Effect.gen(function* () {
@@ -307,11 +303,10 @@ export const pgDeltaNextShadowLayer = Layer.effect(
               ? cache
               : { ...cache, precomputedKeyInputs: peek.keyInputs };
           const strategy = resolvePlanShadowStrategy(migrationsPeek, declarativePeek);
-          // Peeked inputs are reused only where the acquire follows the peek immediately: the
-          // migrations acquire always does, the declarative one only under `parallel`. Delayed
-          // declarative acquires (handoff / sequential) re-resolve so a mid-run `roles.sql`
-          // edit cannot publish a baseline under a stale key. Identity still uses the acquired
-          // handles' snapshot keys, so a delayed re-resolve cannot lie about lineage.
+          // Peeked inputs are reused only when acquire immediately follows peek: always for
+          // migrations, only under `parallel` for declarative. Delayed declarative acquires
+          // re-resolve so a mid-run `roles.sql` edit can't publish under a stale key — identity
+          // still comes from the acquired handles' snapshot keys, so this can't lie about lineage.
           const migrationsOpts = withPeek(cacheOpts(opts, "config"), migrationsPeek);
           const declarativeOpts =
             strategy === "parallel"

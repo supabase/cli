@@ -17,10 +17,8 @@ import { branchesUpdate } from "./update.handler.ts";
 
 type UpdatedBranch = typeof V1UpdateABranchConfigOutput.Type;
 
-// V1UpdateABranchConfigInput.branch_id_or_ref is a oneOf [project-ref, uuid] union.
-// A 20-lowercase project ref matches BOTH branches → schema rejects.
-// HTTP-level mock tests pass a v4 UUID so the schema picks exactly one branch.
-// HTTP-level mock tests pass a v4 UUID so the schema picks exactly one branch.
+// Tests use a UUID so branch_id_or_ref's oneOf union stays unambiguous; a lowercase ref
+// could match either variant.
 const BRANCH_UUID = "11111111-1111-4111-8111-111111111111";
 const BRANCH_REF = "cccccccccccccccccccc";
 
@@ -66,9 +64,8 @@ function entitlementResponse(opts: { readonly featureKey: string; readonly hasAc
   };
 }
 
-// V1GetABranchConfigOutput body — used by the resolver's UUID path. The
-// returned `ref` becomes the `branch_id_or_ref` for the PATCH call, so it must
-// be a value that schema-validates against the oneOf union — UUID-shaped.
+// Resolver's UUID-path response; its `ref` feeds the PATCH's branch_id_or_ref, so it must
+// stay UUID-shaped to satisfy the oneOf union.
 const BRANCH_CONFIG = {
   ref: BRANCH_UUID,
   postgres_version: "15",
@@ -258,12 +255,8 @@ describe("branches update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // -------------------------------------------------------------------------
-  // Upgrade-suggest path uses the direct service mock so we can exercise the
-  // production-shape branchRef (20-letter project ref) end-to-end. This is the
-  // Go-parity assertion: the helper must be called with the resolved branch's
-  // project ref, not the parent project ref. Mirrors `update.go:26`.
-  // -------------------------------------------------------------------------
+  // Exercises the production-shape branchRef end-to-end; the upgrade-suggest helper must
+  // receive the resolved branch's project ref, not the parent ref.
   it.live(
     "fires cli_upgrade_suggested with the branch ref + branching_persistent on 4xx gated",
     () => {
@@ -271,12 +264,9 @@ describe("branches update integration", () => {
       const analytics = mockAnalytics();
       const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
 
-      // `suggestUpgrade` bypasses the typed Management API client to GET
-      // the project + entitlements (see its file-level comment — required so
-      // cli-e2e replay fixtures with `__PROJECT_REF__` placeholders don't trip
-      // strict schema decode). Route all three URLs through `mockCommandPlatformApi`'s
-      // handler so the assertion covers the request log produced by the same
-      // HttpClient the production code uses.
+      // suggestUpgrade bypasses the typed API client (so cli-e2e replay fixtures with
+      // `__PROJECT_REF__` placeholders don't trip strict schema decode), so all three URLs
+      // route through the same mockCommandPlatformApi handler the production HttpClient uses.
       const apiMock = mockCommandPlatformApi({
         handler: (request) =>
           Effect.sync(() => {
@@ -318,8 +308,6 @@ describe("branches update integration", () => {
             persistent: Option.some(true),
           }),
         );
-        // The branch ref the resolver returned is what `suggestUpgrade`
-        // should query getProject with.
         const projectCall = apiMock.requests.find(
           (r) => r.method === "GET" && r.url.endsWith(`/v1/projects/${BRANCH_REF}`),
         );

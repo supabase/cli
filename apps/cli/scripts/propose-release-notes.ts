@@ -1,42 +1,11 @@
 #!/usr/bin/env bun
-// Generate a user-centric GitHub Release body for a Supabase CLI tag
-// by running the Claude Agent SDK against tools/release/release-notes-prompt.md
-// with the raw semantic-release block substituted in.
+// Generates a user-centric GitHub Release body for a Supabase CLI tag by running the Claude Agent
+// SDK against tools/release/release-notes-prompt.md, then opens a PR proposing the notes for
+// approval (unless --dry-run or --render-only). See the PR body template below for the approval
+// workflow.
 //
-// Pipeline shape:
-//   1. `backfill-release-notes.ts --tag <tag>` produces the raw semantic-release
-//      markdown (without writing anything to the GH release). We always
-//      re-derive this so the proposer is decoupled from whatever happens to
-//      sit in the release body at the moment.
-//   2. The raw block is inlined into tools/release/release-notes-prompt.md in
-//      place of the {{PASTE_SEMANTIC_RELEASE_BLOCK_HERE}} placeholder.
-//   3. The Claude Agent SDK runs the rendered prompt with WebFetch + Bash so
-//      it can investigate PR bodies, linked issues, and changed files (the
-//      prompt's investigation step is real work, not boilerplate).
-//   4. The agent's final assistant message is written to
-//      release-notes/v<VERSION>.md.
-//   5. Unless --dry-run is passed, the script commits the file on a branch
-//      `release-notes/v<VERSION>` and opens a PR. Approving the PR (as a
-//      supabase/cli team member) triggers apply-release-notes.yml, which
-//      pushes the file's contents to the GH release body and closes the PR
-//      without merging. The PR targets `develop` (not `main`) so an
-//      accidental merge can never rewrite `main`'s history; in practice the
-//      file never lands on any branch.
-//
-// Usage:
-//   bun apps/cli/scripts/propose-release-notes.ts --tag v2.101.0 --dry-run
-//   bun apps/cli/scripts/propose-release-notes.ts --tag v2.101.0 --apply
-//
-//   --tag      Required. Release tag (e.g. v2.101.0 or v2.99.0-beta.1).
-//   --dry-run  Print the proposed notes to stdout. Does not write any files,
-//              does not touch git.
-//   --apply    Write release-notes/v<VERSION>.md, commit on a branch, push,
-//              and open a PR. Default behavior when neither flag is passed
-//              is `--dry-run`.
-//   --render-only  Print the rendered prompt (template + raw notes block)
-//              and exit before any LLM call. Useful for prompt iteration
-//              and for verifying the pipeline shape without spending tokens.
-//   --model    Optional. Override the Claude model (default: claude-haiku-4-5-20251001).
+// Usage: bun apps/cli/scripts/propose-release-notes.ts --tag v2.101.0 [--dry-run] [--apply]
+//        [--render-only] [--model <name>]
 import { query, type Options } from "@anthropic-ai/claude-agent-sdk";
 import { $ } from "bun";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -93,13 +62,11 @@ if (values["render-only"]) {
 console.error(`==> Running Claude Agent SDK (model=${values.model})`);
 const options: Options = {
   model: values.model,
-  // The agent needs WebFetch / WebSearch to investigate PR bodies and linked
-  // issues per the prompt's step 3, and Bash so it can use `gh` for
-  // authenticated GitHub queries instead of HTML scraping. Edit/Write are
-  // intentionally excluded — the script owns the final file output.
+  // WebFetch/WebSearch investigate PR bodies and linked issues; Bash uses `gh` for
+  // authenticated GitHub queries instead of HTML scraping. Edit/Write are excluded — the
+  // script owns the final file output.
   allowedTools: ["WebFetch", "WebSearch", "Bash"],
-  // Don't load the repo's CLAUDE.md or settings.json — the prompt is
-  // self-contained and we don't want unrelated agent context bleeding in.
+  // Skips the repo's CLAUDE.md and settings.json — the prompt is self-contained.
   settingSources: [],
   cwd: repoRoot,
   effort: "low",
@@ -126,7 +93,6 @@ if (!finalText.trim()) {
   process.exit(1);
 }
 
-// Append the raw notes to the final text to ensure the output is complete.
 const normalized = finalText.endsWith("\n") ? finalText : `${finalText}\n`;
 console.error(`==> Agent finished (cost ~$${cost.toFixed(4)})`);
 
@@ -147,15 +113,9 @@ await writeFile(notesPath, normalized);
 console.error(`==> Wrote ${path.relative(repoRoot, notesPath)}`);
 
 const branch = `release-notes/v${version}`;
-// Always cut the notes branch from origin/develop — the PR base. The workflow
-// can be dispatched from an arbitrary feature branch that has diverged from
-// the base by many commits; branching off the checked-out ref would drag
-// every one of those commits into the PR (so the PR shows N changed files
-// instead of just the proposed notes). The notes file is untracked at this
-// point, so resetting HEAD to origin/develop leaves it untouched in the
-// working tree. We target `develop` rather than `main` so that an accidental
-// merge of this approval-only PR lands on the integration branch instead of
-// rewriting `main`'s history.
+// Branches from origin/develop, not the checked-out ref, so a feature branch that has diverged
+// doesn't drag its commits into the PR; the notes file is untracked, so this leaves it in place.
+// Targets develop rather than main so an accidental merge can't rewrite main's history.
 await $`git fetch --no-tags origin develop`.cwd(repoRoot).nothrow();
 await $`git checkout -B ${branch} origin/develop`.cwd(repoRoot);
 await $`git add ${notesPath}`.cwd(repoRoot);
@@ -179,10 +139,8 @@ if (!pushed) {
   process.exit(1);
 }
 
-// Idempotently ensure the `do not merge` label exists on the repo, then attach
-// it on PR creation. The label is a visual reminder for reviewers — the
-// approval-based apply workflow never invokes the merge button — but the
-// publish flow itself does not depend on it.
+// Ensures the `do not merge` label exists before attaching it — a reminder for reviewers; the
+// approval workflow never actually merges.
 const labelName = "do not merge";
 await $`gh label create ${labelName} --color B60205 --description ${"Approve to apply; do not merge."} --force`
   .cwd(repoRoot)

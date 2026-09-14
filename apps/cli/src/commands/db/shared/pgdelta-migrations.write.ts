@@ -32,33 +32,16 @@ export class PgDeltaMigrationWriteError extends Data.TaggedError("PgDeltaMigrati
 
 /**
  * Bounds the base-timestamp bump retry so a directory already full of same-second
- * migrations can't spin forever. Mirrors Go's `maxVersionCollisionAttempts`.
+ * migrations can't spin forever.
  */
 const MAX_VERSION_COLLISION_ATTEMPTS = 60;
 
 /**
- * Port of Go's `WritePgDeltaMigrations` (`apps/cli-go/internal/db/diff/pgdelta_migrations.go`).
- *
- * Writes one ordered migration file per plan unit. A single-unit plan (the common
- * case) keeps the exact `<ts>_<name>.sql` filename; multi-unit plans append the
- * unit name and give each file a strictly increasing timestamp (real time
- * arithmetic on the base millis, never string increment) so their execution order
- * and migration-history order stay stable.
- *
- * Before writing anything the FULL set of generated versions is collision-checked
- * against the migrations directory: if any version is already used, the base is
- * advanced by one second and every version recomputed, so the set stays strictly
- * ascending AND unique against pre-existing migrations regardless of their names.
- * The base only ever moves forward — never backdated below the caller's wall clock,
- * since backdating could sort a new file before pre-existing migrations. The
- * resulting ≤N−1s future-dating is inherent to second-granularity versions and
- * acceptable once uniqueness is enforced.
- *
- * Each file is written with the exclusive `"wx"` flag so a race between the
- * collision check and the write can still never silently overwrite an existing
- * migration. If any open/write fails mid-loop, every file already written by THIS
- * invocation is best-effort removed before the error surfaces (a removal failure
- * never masks the original error).
+ * Writes one migration file per plan unit, giving multi-unit plans strictly increasing
+ * timestamps so execution and history order stay stable. The full version set is
+ * collision-checked against the migrations directory up front, advancing the base timestamp
+ * forward only (never backdated) until unique. Each file opens with the exclusive `"wx"`
+ * flag against overwrite races; a failed write removes every file this call already wrote.
  */
 export const writePgDeltaMigrations = (
   fs: FileSystem.FileSystem,

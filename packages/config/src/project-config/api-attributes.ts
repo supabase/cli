@@ -1,94 +1,14 @@
 import { Schema } from "effect";
 
 /**
- * A deliberately lenient mirror of the Management API v2 project-config
- * resource's `data.attributes` shape (`packages/api/src/generated/
- * contracts.ts:10809-11402`, `V2GetProjectConfigOutput`). Hand-mirrored
- * rather than imported from `packages/api`: `@supabase/config` must not
- * depend on `packages/api` (CLI-2230's decoupling requirement — the config
- * package ships to npm on its own, independent of the generated API client).
- *
- * Leniency, per ADR 0019 rule 2 ("lenient decode, applied before the strict
- * generated schema sees the body"):
- * - Every section and every field is `Schema.optionalKey`, all the way down —
- *   an API-ahead-of-package field the package doesn't know about yet is
- *   simply absent from the decoded value, never a decode failure.
- * - No range/pattern checks (`isInt`, `isGreaterThanOrEqualTo`, `isPattern`,
- *   …) even where the real contract has them: an out-of-range or
- *   differently-shaped value must still decode and reach the mapping layer,
- *   which is the thing actually responsible for narrowing it.
- * - Closed string unions in the real contract (`Schema.Literals`) are widened
- *   to plain `Schema.String` here — `pooler.pool_mode`,
- *   `database.network_restrictions.allowed_cidrs[].type`,
- *   `database.postgres_settings.session_replication_role` — so a new enum
- *   member the platform starts returning never fails THIS decode. `pool_mode`
- *   and `session_replication_role` carry that leniency all the way through:
- *   their rows (`./registry.ts`) silently omit an unrecognized value rather
- *   than throwing. `allowed_cidrs[].type` does not — it decodes fine here,
- *   but its row (`filterCidrAddresses`, `./registry.ts`) deliberately
- *   hard-fails the mapping on an unrecognized type, since this field is a
- *   security allowlist where loud beats silent (that file's own docstring).
- *   So a new CIDR `type` member still surfaces as a `ProjectConfigParseError`
- *   overall — just one this schema's decode step isn't the one that throws.
- * - `auth` is the real contract's own `Schema.Record(Schema.String,
- *   Schema.Json)` (a flat record keyed by lowercased GoTrue setting name) —
- *   already maximally lenient in the real contract, so no widening needed.
- * - **Registry validates, decode only carries the key-set guard.** Every
- *   field this file's sibling registries (`./registry.ts`,
- *   `./registry-auth.ts`) actually map keeps a concrete leaf type — decode
- *   is this package's one chance to reject a genuinely malformed value for a
- *   field it cares about, before the registry's `transform`s run. Every field
- *   with NO registry row is `Schema.optionalKey(Schema.Unknown)` instead: a
- *   platform-side type change on a field this package doesn't map (e.g.
- *   `storage.capabilities.list_v2` growing a third state, `api.db_pool`
- *   changing shape) must never fail this decode, since `fromApiProjectConfig`
- *   is contractually lenient toward exactly that kind of API-ahead-of-package
- *   skew (ADR 0019 rule 2) — a concretely-typed unmapped field would
- *   contradict that contract by turning an irrelevant platform change into a
- *   decode failure for every consumer. `Schema.Unknown` keeps the key
- *   present (rather than dropping the field, which `Schema.Struct`'s default
- *   `onExcessProperty: "ignore"` would do for a field not declared at all) so
- *   the key-set drift guard
- *   (`apps/cli/src/shared/config/project-config-api-drift.unit.test.ts`'s
- *   `AssertNever<Exclude<keyof …, keyof …>>` pairs) still catches the real
- *   contract adding, removing, or renaming that key, and so the raw value is
- *   still reachable at that path for `unmappedApiFields`/`_apiResponse`
- *   passthrough — only its *type* is no longer load-bearing at decode time.
- *
- * Excess top-level/nested keys beyond what's declared below are silently
- * dropped, not rejected: Effect v4's `Schema.Struct` decode defaults
- * `onExcessProperty` to `"ignore"` (`.repos/effect/packages/effect/src/
- * SchemaAST.ts:446,477-483`), so a plain `Schema.decodeUnknownSync` call
- * needs no extra options to get this behavior. Tolerated keys are not lost,
- * though — `fromApiProjectConfig` (`./project-config.ts`) attaches the raw,
- * pre-decode attributes object verbatim as `_apiResponse` (ADR 0019 rule 1),
- * so `unmappedApiFields` can still see them.
- *
- * Every field from the real contract's six sections is mirrored below
- * (including every never-mapped field, now `Schema.Unknown`) so this
- * schema's key set matches the real contract's field-for-field, rather than
- * being pieced together from a hand-maintained comment.
- *
- * This shape is also the operand of the type-level assignability guard in
- * `apps/cli/src/shared/config/project-config-api-drift.unit.test.ts`
- * (`_typeDriftGuard`), but that guard only catches the real contract
- * *widening* a field's type out from under this deliberately narrower mirror
- * — a field the real contract adds, removes, or renames passes an
- * assignability check silently, since TypeScript structural assignability
- * doesn't require the source type to have no extra/differently-named
- * properties. That same test file's type-level key-set assertions
- * (`AssertNever<Exclude<keyof …, keyof …>>`, one pair per nesting level) are
- * the guard against additions, removals, and renames; this schema's job is
- * only to stay a faithful, maximally-lenient mirror of whatever shape those
- * two guards jointly pin down.
+ * A lenient, hand-mirrored copy of the v2 project-config API's `data.attributes` shape (not
+ * imported from `packages/api`, so this package has no dependency on the generated client).
+ * Every field is optional, unranged, and never a closed union, so an API-ahead-of-package value
+ * always decodes; `./registry.ts`/`./registry-auth.ts` narrow and map it. Unmapped fields stay
+ * `Schema.Unknown`, not omitted, so drift detection and passthrough can still see them.
  */
 
-// Mapped (23 of 38): the STRING-passthrough keys (`DB_SETTINGS_STRING_KEYS`),
-// `session_replication_role` (widened to `String`, `sessionReplicationRoleRow`),
-// `track_commit_timestamp` (`Boolean`), and the UINT-clamped keys
-// (`DB_SETTINGS_UINT_KEYS`) — see `./registry.ts`. Every other key below is
-// `Schema.Unknown`: unmapped, per that file's own "Deliberately unmapped"
-// comment.
+// See `./registry.ts` for which of these fields are mapped; the rest are `Schema.Unknown`.
 const postgresSettingsAttributes = Schema.Struct({
   effective_cache_size: Schema.optionalKey(Schema.String),
   logical_decoding_work_mem: Schema.optionalKey(Schema.String),
@@ -130,9 +50,7 @@ const postgresSettingsAttributes = Schema.Struct({
   cron_log_statement: Schema.optionalKey(Schema.Unknown),
 });
 
-// `allowed_cidrs` stays typed — it's mapped (`filterCidrAddresses`,
-// `./registry.ts`). `entitlement`/`status`/`updated_at`/`applied_at` are
-// unmapped (that file's "Deliberately unmapped" comment).
+// `allowed_cidrs` is mapped (`filterCidrAddresses`, `./registry.ts`); the rest are unmapped.
 const networkRestrictionsAttributes = Schema.Struct({
   entitlement: Schema.optionalKey(Schema.Unknown),
   status: Schema.optionalKey(Schema.Unknown),
@@ -155,9 +73,7 @@ const databaseAttributes = Schema.Struct({
   postgres_settings: Schema.optionalKey(postgresSettingsAttributes),
 });
 
-// `pool_mode`/`default_pool_size`/`max_client_conn` stay typed — all three
-// are mapped (`./registry.ts`). The other five are unmapped (that file's
-// "Deliberately unmapped" comment).
+// `pool_mode`/`default_pool_size`/`max_client_conn` are mapped (`./registry.ts`); the rest aren't.
 const poolerAttributes = Schema.Struct({
   pool_mode: Schema.optionalKey(Schema.String),
   ignore_startup_parameters: Schema.optionalKey(Schema.Unknown),
@@ -169,15 +85,9 @@ const poolerAttributes = Schema.Struct({
   max_client_conn: Schema.optionalKey(Schema.Number),
 });
 
-// `db_schema`/`db_extra_search_path`/`max_rows` stay typed — all three are
-// mapped (`./registry.ts`). `db_pool`/`db_pool_acquisition_timeout` are
-// unmapped (that file's "Deliberately unmapped" comment) — including
-// `db_pool`, whose real-contract shape is a nullable number: preserving that
-// as `Schema.Union([Schema.Number, Schema.Null])` here would still fail
-// decode the moment the platform widens it to anything else, exactly the
-// hazard this file's unmapped-fields rule exists to avoid, so it is
-// `Schema.Unknown` like every other unmapped field rather than a special
-// case.
+// `db_schema`/`db_extra_search_path`/`max_rows` are mapped (`./registry.ts`); the rest aren't.
+// `db_pool`'s real shape is a nullable number, but it stays `Schema.Unknown` like every other
+// unmapped field rather than a more precise type that could fail decode if the platform widens it.
 const apiAttributes = Schema.Struct({
   db_schema: Schema.optionalKey(Schema.String),
   db_extra_search_path: Schema.optionalKey(Schema.String),
@@ -186,11 +96,8 @@ const apiAttributes = Schema.Struct({
   db_pool: Schema.optionalKey(Schema.Unknown),
 });
 
-// Zero rows map any `realtime.*` field (`./registry.ts`'s "=== realtime
-// ===" comment) — every field is `Schema.Unknown`. The keys themselves stay
-// declared (rather than dropping the whole section) so the key-set drift
-// guard still catches the real contract adding/removing/renaming one of
-// them.
+// No `realtime.*` field is mapped; keys stay declared as `Schema.Unknown` (rather than dropping
+// the section) so the drift guard still catches the API adding, removing, or renaming one.
 const realtimeAttributes = Schema.Struct({
   private_only: Schema.optionalKey(Schema.Unknown),
   max_concurrent_users: Schema.optionalKey(Schema.Unknown),
@@ -206,11 +113,8 @@ const realtimeAttributes = Schema.Struct({
   postgres_changes_pool: Schema.optionalKey(Schema.Unknown),
 });
 
-// `purge_cache` is unmapped (`./registry.ts`'s "Deliberately unmapped"
-// comment) — collapsed to `Schema.Unknown` rather than kept as a nested
-// `{enabled}` struct, same rule as every other unmapped field.
-// `image_transformation`/`s3_protocol`/`iceberg_catalog`/`vector_buckets` all
-// stay typed — every field inside them is mapped.
+// `image_transformation`/`s3_protocol`/`iceberg_catalog`/`vector_buckets` are fully mapped;
+// `purge_cache` is unmapped and collapsed to `Schema.Unknown` like every other unmapped field.
 const storageFeaturesAttributes = Schema.Struct({
   image_transformation: Schema.optionalKey(
     Schema.Struct({ enabled: Schema.optionalKey(Schema.Boolean) }),
@@ -234,14 +138,12 @@ const storageFeaturesAttributes = Schema.Struct({
   ),
 });
 
-// Unmapped in full (`./registry.ts`'s "Deliberately unmapped" comment) —
-// collapsed to `Schema.Unknown` rather than kept as a `{list_v2,
-// iceberg_catalog}` struct, same rule as every other unmapped field.
+// Unmapped in full; collapsed to `Schema.Unknown` rather than kept as a `{list_v2,
+// iceberg_catalog}` struct, like every other unmapped field.
 const storageCapabilitiesAttributes = Schema.Unknown;
 
-// `file_size_limit` stays typed — mapped. `upstream_target`/
-// `migration_version`/`database_pool_mode`/`capabilities` are unmapped
-// (`./registry.ts`'s "Deliberately unmapped" comment).
+// `file_size_limit` is mapped; `capabilities`/`upstream_target`/`migration_version`/
+// `database_pool_mode` aren't.
 const storageAttributes = Schema.Struct({
   file_size_limit: Schema.optionalKey(Schema.Number),
   features: Schema.optionalKey(storageFeaturesAttributes),
@@ -263,12 +165,8 @@ export const ProjectConfigApiAttributesSchema = Schema.Struct({
 export type ProjectConfigApiAttributes = typeof ProjectConfigApiAttributesSchema.Type;
 
 /**
- * The per-service block keys of the v2 project-config resource's
- * `data.attributes`, in alphabetical order — derived from the mirror schema's
- * own key set so consumers never hand-copy the block list (a hand-copied list
- * reports a newly-learned block "not returned" forever, test-green). The
- * package owns the response shape; a consumer rendering comparison scope
- * (CLI-2156's scope line) reads it from here.
+ * The per-service block keys of the v2 project-config `data.attributes`, in alphabetical order —
+ * derived from this schema's own key set so consumers never hand-copy a list that could go stale.
  */
 export const projectConfigApiBlockKeys: ReadonlyArray<string> = Object.keys(
   ProjectConfigApiAttributesSchema.fields,

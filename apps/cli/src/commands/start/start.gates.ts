@@ -10,32 +10,15 @@ import { envOverrideBool } from "../../command-internal/local-config-values.ts";
 import { START_SERVICES } from "./start.services.ts";
 
 /**
- * Every per-service "should this container actually start" boolean, minus
- * Postgres (always-on, unconditional — handled directly by the caller,
- * before any other service). Each boolean is `<section>.enabled` (resolved
- * through {@link envOverrideBool}'s `SUPABASE_<SECTION>_ENABLED`
- * override — the same mechanism `status-values.ts`'s
- * `resolveStatusLocalState` already uses for its own overlapping subset
- * of these fields) AND-ed with "not excluded" (the service's `--exclude` key
- * absent from `excludedKeys`, per `partitionStartExcludeFlags`'s
- * `valid` set).
+ * Every per-service start gate except Postgres (always-on, handled by the caller) and Edge
+ * Runtime (bypasses the generic bring-up path; `start.handler.ts` reads its `enabled` flag
+ * directly instead of going through {@link resolveStartImagePlan}). Each boolean is
+ * `<section>.enabled` AND-ed with "not excluded".
  *
- * `storage-api`'s exclude key backs BOTH `storage` and (compounded further)
- * `imgproxy` — `imgproxy` is additionally gated on `storage` already being
- * enabled (ImgProxy mounts Storage's own volumes) and on
- * `storage.image_transformation.enabled` — the SAME boolean feeds both the
- * actual container gate here and `storage.service.ts`'s
- * `StorageEnvInput.imageTransformationEnabled`
- * (`ENABLE_IMAGE_TRANSFORMATION`), so callers must reuse `gates.imgproxy`,
- * not recompute a second, possibly-diverging boolean.
- *
- * `edgeRuntime` is deliberately excluded from `GATE_KEY_BY_SERVICE`/
- * `DOCKERFILE_ALIAS_BY_SERVICE`/{@link resolveStartImagePlan} below —
- * Edge Runtime doesn't go through the generic `StartContainerSpec`
- * bring-up path (`services/edge-runtime.service.ts`'s header explains why it
- * doesn't map cleanly), so `start.handler.ts` reads this boolean directly and
- * calls `startStackEdgeRuntimeContainer` itself, in its real
- * container-start position (between ImgProxy and pg-meta).
+ * `imgproxy` is also gated on `storage` being enabled and on
+ * `storage.image_transformation.enabled` — the same boolean feeds
+ * `StorageEnvInput.imageTransformationEnabled`, so callers must reuse `gates.imgproxy` rather than
+ * recompute a second, possibly-diverging value.
  */
 export interface StartGates {
   readonly kong: boolean;
@@ -68,10 +51,8 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 }
 
 /**
- * Evaluates all 12 excludable "should this container actually start" gates in
- * one pass (Postgres and Edge Runtime are handled separately by the caller —
- * see this module's header). Pure — no Effect, no I/O — so every gate
- * combination is unit-testable without a Docker mock.
+ * Evaluates every excludable start gate in one pass. Postgres and Edge Runtime are handled
+ * separately by the caller (see this module's header).
  */
 export function resolveStartGates(inputs: StartGateInputs): StartGates {
   const { config, projectEnvValues, excludedKeys, document } = inputs;
@@ -113,16 +94,9 @@ export function resolveStartGates(inputs: StartGateInputs): StartGates {
     "storage.enabled",
     projectEnvValues,
   );
-  // With no `[storage.image_transformation]` table in config.toml, the field
-  // never becomes an overridable key at all, so
-  // `SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED` alone can never flip it
-  // on — the section must be present first. `@supabase/config`'s decoded
-  // `config.storage.image_transformation` can't be used as a presence proxy
-  // either — it always decodes to a defaulted `{enabled: false}`, never
-  // `undefined` — so presence must come from the raw document, same
-  // `asRecord(document?.[...])` gate `resolveAuthEmailSmtp`/
-  // `resolveGotruePasskeyWebauthn`/`resolveAuthSms` already use for the
-  // identical optional-section shape.
+  // The section must be present in the raw document before the env override can flip it on:
+  // `@supabase/config` always decodes `storage.image_transformation` to a defaulted
+  // `{enabled: false}`, never `undefined`, so presence can't be read off the typed config.
   const imageTransformationSectionPresent =
     asRecord(asRecord(document?.["storage"])?.["image_transformation"]) !== undefined;
   const configuredImageTransformationEnabled =
@@ -205,10 +179,9 @@ const DOCKERFILE_ALIAS_BY_SERVICE: Readonly<Record<string, string>> = {
 };
 
 /**
- * `START_SERVICES`' `service` key -> `services.shared.ts`'s
- * `LocalServiceVersionName`, for the subset of start's services that have a
- * `supabase/.temp/*-version` linked-project pin. Kong and ImgProxy have no
- * such pin and are deliberately absent here.
+ * `START_SERVICES`' `service` key -> `LocalServiceVersionName`, for services that have a
+ * `supabase/.temp/*-version` linked-project pin. Kong and ImgProxy have no such pin, so they're
+ * absent here.
  */
 const START_SERVICE_TO_LOCAL_VERSION_NAME: Readonly<Record<string, LocalServiceVersionName>> = {
   gotrue: "auth",
@@ -229,18 +202,13 @@ export interface StartImagePlanEntry {
 }
 
 /**
- * The ordered list of non-Postgres, non-EdgeRuntime services that will
- * actually start this run, each paired with its default image reference.
- * Iterates `START_SERVICES` (already in the real container-start
- * order) so the returned order IS the order the caller should both pre-pull
- * images in and create+start containers in.
+ * The ordered list of non-Postgres, non-EdgeRuntime services that will actually start this run,
+ * each paired with its default image reference, in the real container-start order (the order the
+ * caller should both pre-pull images in and create+start containers in).
  *
- * Deliberately gates `imgproxy`'s image on the SAME compound
- * `gates.imgproxy` boolean the actual container-start gate uses, rather than
- * pre-pulling it whenever Storage alone is enabled: pre-pulling an image for
- * a container that will never be created has no user-visible benefit, and
- * this port has no compose-based best-effort pre-pull pass to mirror in the
- * first place (see `lib/image-prepull.ts`'s header).
+ * Gates `imgproxy`'s image on the same `gates.imgproxy` boolean the container-start gate uses,
+ * rather than pre-pulling it whenever Storage alone is enabled — pre-pulling an image for a
+ * container that will never be created has no user-visible benefit.
  */
 export function resolveStartImagePlan(
   gates: StartGates,

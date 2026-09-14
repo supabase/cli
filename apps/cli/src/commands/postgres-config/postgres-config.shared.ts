@@ -31,9 +31,8 @@ function sortConfigEntries(config: PostgresConfigMap): Array<[string, unknown]> 
 
 function formatPrettyValue(value: unknown): string {
   if (typeof value === "string") return value;
-  // Go renders each cell with `%+v` (`get.go:32-35`) on values from
-  // `json.Unmarshal` into `map[string]any` — every JSON number is a `float64`,
-  // so e.g. `1000000` prints as `1e+06`, not `1000000`.
+  // Every number renders using float64 formatting, matching established output, so e.g.
+  // 1000000 prints as 1e+06, not 1000000.
   if (typeof value === "number") return goFormatFloat(value);
   if (typeof value === "boolean") return String(value);
   if (value === null) return "<nil>";
@@ -51,19 +50,16 @@ function encodeTomlScalar(value: unknown): string {
   if (typeof value === "string") return JSON.stringify(value);
   if (typeof value === "boolean") return value ? "true" : "false";
   if (typeof value === "number") {
-    // The reference decoder unmarshals the API response into `map[string]any`,
-    // so every JSON number becomes a `float64`. Its TOML marshaller then prints
-    // integral floats with a `.0` suffix (e.g. `max_connections = 100.0`). The
-    // shared `encodeToml` (smol-toml) would emit `100` instead, so this command
-    // cannot use it without breaking byte-for-byte compatibility.
+    // Every number renders as a float64, so an integral value gets a `.0` suffix (e.g.
+    // `max_connections = 100.0`); the shared encodeToml (smol-toml) would emit `100`
+    // instead, breaking established output.
     return Number.isInteger(value) ? `${value}.0` : String(value);
   }
   if (value === null) return JSON.stringify("<nil>");
   return JSON.stringify(JSON.stringify(value));
 }
 
-// Hand-rolled to reproduce `float64` TOML rendering (see `encodeTomlScalar`).
-// Intentionally does not delegate to the shared `encodeToml`/smol-toml encoder.
+// See encodeTomlScalar: this can't delegate to the shared encodeToml without breaking output.
 function encodePostgresConfigToml(config: PostgresConfigMap): string {
   const lines = sortConfigEntries(config).map(
     ([key, value]) => `${key} = ${encodeTomlScalar(value)}`,
@@ -71,28 +67,22 @@ function encodePostgresConfigToml(config: PostgresConfigMap): string {
   return lines.length === 0 ? "" : lines.join("\n") + "\n";
 }
 
-// `strconv.Atoi` parses into a 64-bit int (`update.go:43`).
+// Parses config values as 64-bit integers.
 const INT64_MIN = -(2n ** 63n);
 const INT64_MAX = 2n ** 63n - 1n;
 
-// Exactly `strconv.ParseBool`'s accepted sets. `1`/`0` are also in them, but
-// the integer branch below wins first, since `Atoi` runs before `ParseBool`
-// (`update.go:43-48`).
+// The literal sets that count as boolean values. `1`/`0` also match, but the integer branch
+// above claims them first.
 const GO_TRUE_LITERALS = new Set(["1", "t", "T", "TRUE", "true", "True"]);
 const GO_FALSE_LITERALS = new Set(["0", "f", "F", "FALSE", "false", "False"]);
 
 /**
- * Coercion chain for `--config key=value` (`update.go:41-49`):
- * `strconv.Atoi` → `strconv.ParseBool` → keep as string. `Atoi` fails with
- * `ErrRange` on digits beyond int64, and a pure digit string is not a
- * `ParseBool` literal (only bare `1`/`0` are, and those fit in int64), so an
- * overflowing integer falls through to the verbatim string. `ParseBool` is
- * case-SENSITIVE over a fixed set — `tRuE` stays a string.
+ * Coerces a `--config key=value` value: integer, then boolean, then string.
  *
- * Residual divergence: digits in `(2^53, 2^63)` fit int64, so the reference
- * implementation sends an exact JSON integer, while JS `Number` loses
- * precision there — `encodeGoStructJsonBody` is `JSON.stringify`, which
- * cannot emit exact int64 tokens beyond `Number.MAX_SAFE_INTEGER`.
+ * An integer outside the 64-bit range falls through to the string; boolean matching is
+ * case-sensitive over a fixed literal set (`tRuE` stays a string). Integers between `2^53`
+ * and `2^63` still lose precision here, since the JSON encoder is `JSON.stringify`, which
+ * can't emit exact integers beyond `Number.MAX_SAFE_INTEGER`.
  */
 export function parseConfigValue(value: string): string | number | boolean {
   if (/^[+-]?\d+$/.test(value)) {
@@ -188,11 +178,9 @@ export const fetchCurrentPostgresConfig = Effect.fn("postgres-config.fetch-curre
 });
 
 /**
- * Per-operation error wiring for {@link putPostgresConfig}. Both `update` and
- * `delete` issue the same PUT, but tag failures with their own error types and
- * Go-parity message verbs. Passing the constructors and message templates as
- * arguments (mirroring `mapHttpError`) keeps each call site's error
- * channel precise instead of widening it to the union of both operations.
+ * Per-operation error wiring for {@link putPostgresConfig}. Both `update` and `delete` issue
+ * the same PUT but tag failures with their own error types and message verbs (mirroring
+ * `mapHttpError`), keeping each call site's error channel precise.
  */
 export interface PutPostgresConfigErrors<SerErr, NetErr, StatErr, UnmErr> {
   readonly serializeError: (args: { readonly message: string }) => SerErr;
@@ -218,9 +206,8 @@ export const putPostgresConfig = <SerErr, NetErr, StatErr, UnmErr>(
     const cliSettings = yield* CommandSettings;
     const tokenOpt = yield* resolveAccessToken;
 
-    // Use raw HTTP instead of the generated input schema: Go accepts arbitrary
-    // config keys from repeated `--config key=value`, while the typed client
-    // only models the currently known OpenAPI fields.
+    // Uses raw HTTP instead of the generated input schema, since --config accepts arbitrary
+    // keys the typed client's OpenAPI-modeled fields don't cover.
     const encodedBody = yield* Effect.try({
       try: () => encodeGoStructJsonBody(config),
       catch: (cause) =>
@@ -268,9 +255,8 @@ export const writePostgresConfigOutput = Effect.fn("postgres-config.write-output
   const outputFlag = yield* OutputFlag;
   const goOutput = Option.getOrUndefined(outputFlag);
 
-  // The `--output` flag takes priority over the TS `--output-format` flag.
-  // `pretty` (and an unset flag) fall through to the human-readable table /
-  // structured-success path below.
+  // --output takes priority over --output-format; pretty (or unset) falls through to the
+  // table / structured-success path below.
   if (goOutput === "json") {
     yield* output.raw(encodeGoJson(config));
     return;

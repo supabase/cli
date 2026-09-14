@@ -57,7 +57,7 @@ its own curated error only when invoked (see "Entrypoints" below).
 - `CliConfig` — the config _document_ (`supabase/config.toml`/`.json`) — the full local superset
   the CLI reads and writes.
 - `ProjectConfig` — the hosted-project subset: a sparse overlay of the hosted sections (`api`,
-  `auth`, `db`, `realtime`, `storage`, `workers`, `experimental`) describing what a Supabase
+  `auth`, `db`, `realtime`, `storage`, `compute`, `experimental`) describing what a Supabase
   project looks like on the platform. Produced by `toProjectConfig` from either a `CliConfig`
   document or a Management API response — see "ProjectConfig: producing and validating values"
   below.
@@ -203,7 +203,7 @@ Effect:
 - `toProjectConfig(source)` — thin dispatcher over the two normalizers below; pass `{ cliConfig }`
   or `{ apiResponse }`. Throws `ProjectConfigParseError` when `source` carries neither key or both.
 - `fromConfigDocument(cliConfig)` — projection of a `CliConfig` document (or any `EffectiveConfig`)
-  onto the hosted sections (`api`, `auth`, `db`, `realtime`, `storage`, `workers`, `experimental`),
+  onto the hosted sections (`api`, `auth`, `db`, `realtime`, `storage`, `compute`, `experimental`),
   omitting every `x-secret` leaf and canonicalizing duration/byte-size fields the same way the API
   side would. **Not a verbatim rendering of the document** — see
   [ADR 0021](https://github.com/supabase/cli/blob/develop/docs/adr/0021-projectconfig-convergence-semantics.md) for the push-precedence

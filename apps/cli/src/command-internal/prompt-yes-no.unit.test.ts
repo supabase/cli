@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import { parseYesNo } from "./prompt-yes-no.ts";
 
-// Port of Go's `parseYesNo` (`apps/cli-go/internal/utils/console.go:84-93`).
 describe("parseYesNo", () => {
   it("parses affirmative answers (case-insensitive, trimmed)", () => {
     for (const input of ["y", "Y", "yes", "YES", " Yes ", "yEs"]) {

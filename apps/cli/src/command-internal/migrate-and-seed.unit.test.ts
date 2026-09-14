@@ -141,8 +141,6 @@ describe("migrateAndSeed experimental declarative-schema branch", () => {
           Effect.sync(() => {
             expect(execs).toContain("create table schema_marker ()");
             expect(execs).not.toContain("create table migration_marker ()");
-            // `applyMigrationFiles` prints "Applying migration ...", which
-            // `applySchemaFiles` never does — confirms the migration branch didn't run too.
             expect(out.rawChunks.map((c) => c.text).join("")).not.toContain("Applying migration");
             rmSync(workdir, { recursive: true, force: true });
           }),
@@ -267,9 +265,7 @@ describe("migrateAndSeed experimental declarative-schema branch", () => {
         experimental: true,
         pgDeltaEnabled: false,
         schemaPaths: ["supabase/schemas/a.sql"],
-        // Both `schemaPaths` and `SeedConfig.sqlPaths` arrive already
-        // `supabase/`-prefixed by their real caller (`db-config.toml-read.ts`) — see
-        // its own doc comment. Neither field does its own path-shape work anymore.
+        // schemaPaths/sqlPaths arrive already `supabase/`-prefixed from their real caller.
         seed: { enabled: true, sqlPaths: ["supabase/seed.sql"] },
       },
       session,
@@ -285,7 +281,6 @@ describe("migrateAndSeed experimental declarative-schema branch", () => {
     );
   });
 
-  // Same two scenarios as the original test suite this was ported from.
   it.effect(
     "expands a directory schema_paths entry to its .sql files, recursively, in declared order",
     () => {
@@ -349,9 +344,8 @@ describe("migrateAndSeed experimental declarative-schema branch", () => {
   it.effect.skipIf(isRoot)(
     "fails a matched schema_paths directory that cannot be traversed, instead of treating it as empty",
     () => {
-      // `walkMatchedDir` returns `failed to walk matched directory: %w` on a read
-      // error; `applySchemaFiles` propagates it when nothing else matched either. Mode
-      // 000 makes `stat` (parent-directory lookup) succeed but `readdir` fail with EACCES.
+      // Mode 000 makes `stat` (parent-directory lookup) succeed but `readdir` fail with EACCES,
+      // which `applySchemaFiles` propagates as "failed to walk matched directory".
       const workdir = makeWorkdir();
       const lockedDir = join(workdir, "supabase", "schemas", "locked");
       mkdirSync(lockedDir, { recursive: true });
@@ -388,10 +382,9 @@ describe("migrateAndSeed experimental declarative-schema branch", () => {
   it.effect(
     "skips a symlinked .sql file and an entire symlinked subdirectory inside a matched schema_paths directory",
     () => {
-      // `walkMatchedDir` (`fs.WalkDir` + `entry.Type().IsRegular()`) never follows a
-      // symlinked `DirEntry` — a symlinked `.sql` file is excluded regardless of target, and a
-      // symlinked subdirectory is never even descended into. Both live OUTSIDE the matched
-      // directory here, so applying either would mean executing SQL Go would never touch.
+      // Symlinked files and directories are never followed, regardless of target; both live
+      // outside the matched directory here, so applying either would mean executing SQL that
+      // should never run.
       const workdir = makeWorkdir();
       const outsideDir = mkdtempSync(join(tmpdir(), "migrate-and-seed-outside-"));
       writeFileSync(join(outsideDir, "escaped.sql"), "select 999;");
@@ -542,10 +535,8 @@ describe("migrateAndSeed local pg_net remediation", () => {
 describe("migrateAndSeed apply order", () => {
   it.effect("applies mixed-width versions in version order, like db push (#6036)", () => {
     const workdir = makeWorkdir();
-    // `20260420010000_b.sql` precedes `20260420_a.sql` in file-name order
-    // ('0' < '_'), the reverse of the version order `db push` applies in since
-    // #6038. Unsorted, `db reset`/`db start` replay `b` before `a` locally while
-    // `db push` sends `a` before `b` remotely.
+    // File-name order would sort `20260420010000_b.sql` before `20260420_a.sql` ('0' < '_'),
+    // the reverse of version order — this asserts the migrations replay in version order.
     writeFile(workdir, "supabase/migrations/20260420_a.sql", "create table t (id int);");
     writeFile(workdir, "supabase/migrations/20260420010000_b.sql", "alter table t add c int;");
     const { session, execs } = fakeSession();

@@ -1,43 +1,16 @@
 /**
- * Faithful port of Go's `strconv.ParseUint(s, 0, 64)` (`parseUintBase0`)
- * and `strconv.ParseInt(s, 0, 64)` (`isValidBase0Int64`) — the exact
- * parsers pflag runs for `UintVarP`/`UintVar` and `Int64VarP`/`Int64Var`
- * flags respectively (`uintValue.Set`/`int64Value.Set`, `pflag/{uint,int64}.go`).
- * Hoisted here (from its original home under `commands/storage/cp/`, CLI-1965
- * review) once a second family needed it: `complete.ts` validates
- * `functions deploy --jobs`/`migration down --last`/`db reset --last` (uint) and
- * `backups restore --timestamp` (int64) — all declared `Flag.integer` in TS but
- * a Go pflag numeric type with a narrower, sign-and-range-sensitive parser —
- * the same way `storage cp --jobs` already does at parse time. Operating on
- * the RAW flag token (instead of a pre-normalized number) is load-bearing for
- * parity:
- *
- * - every sign prefix is rejected, including `-0` and `+1` (a numeric
- * normalization turns `-0` into negative zero, for which `value < 0` is
- * false, silently accepting what Go rejects);
- * - error messages carry the ORIGINAL spelling (`-01`, not `-1`);
- * - base 0 enables Go's prefix/underscore forms: `0x10` → 16, `0o10`/`010` →
- * 8 (octal!), `0b10` → 2, and `1_0` → 10 — all of which Go accepts.
- *
- * All verdicts below are verified against go1.26 (`strconv.ParseUint(s, 0, 64)`):
- * `-0`/`-01`/`+1`/`3.5`/`abc`/`09`/`0x`/`_1`/`1_`/`1__0`/` 1` → invalid
- * syntax; `0x_10` → 16; `18446744073709551616` → value out of range.
- *
- * Go iterates bytes where this iterates UTF-16 code units, but every non-ASCII
- * unit (and every byte of a multibyte rune) falls outside the digit/letter
- * ranges in both, so the verdict is identical.
- *
- * Known residual: values above 2^53 lose precision in the `Number` conversion
- * (Go carries the exact uint64). They still PARSE identically; only the
- * resulting parallel-job count differs, in territory where Go's own behavior
- * (an `int` conversion of a near-2^64 uint) is already degenerate.
+ * Parses a numeric flag token the way `pflag`'s `uint64`/`int64` types do: base-0 prefixes
+ * (`0x`, `0o`/leading `0`, `0b`), underscore digit separators, and strict int64/uint64 range
+ * checks, rejecting any sign on an unsigned value (including `-0`, which a naive numeric parse
+ * would treat as non-negative) and preserving the original token spelling. Used by shell
+ * completion so candidate values are accepted/rejected the same way these flags always have.
  */
 
 const MAX_UINT64 = (1n << 64n) - 1n;
 const MAX_INT64 = (1n << 63n) - 1n;
-// `strconv.ParseInt`'s negative bound has one MORE representable magnitude
-// than the positive bound (two's complement) — `-9223372036854775808` is a
-// valid `int64`, but `9223372036854775808` (its positive magnitude) is not.
+// int64's negative bound has one more representable magnitude than the positive bound
+// (two's complement): -9223372036854775808 is valid, but its positive magnitude,
+// 9223372036854775808, is not.
 const MAX_INT64_NEGATIVE_MAGNITUDE = 1n << 63n;
 
 export type ParseUintResult =
@@ -45,25 +18,11 @@ export type ParseUintResult =
   | { readonly cause: "invalid syntax" | "value out of range" };
 
 /**
- * The base-0 digit grammar shared by `parseUintBase0` (`ParseUint`,
- * unsigned) and `isValidBase0Int64` (`ParseInt`, signed) — base
- * detection (`0x`/`0o`/`0b` prefixes, else a leading `0` for octal, else
- * decimal), digit accumulation, and underscore placement, all per
- * `strconv/atoi.go`. Bounds the accumulated magnitude at `MAX_UINT64` — the
- * widest of the two callers' limits, and therefore a safe SUPERSET bound for
- * both (`MAX_INT64`/`MAX_INT64_NEGATIVE_MAGNITUDE` are both smaller): a
- * magnitude that already exceeds `MAX_UINT64` is "value out of range" for
- * either caller, so the exit can live here once. A value between the int64
- * bound and `MAX_UINT64` (this finding's own repro,
- * `9223372036854775808` — one past int64 max, comfortably under uint64 max)
- * parses successfully here and is bounded by `isValidBase0Int64`'s
- * OWN, narrower check afterward instead.
- *
- * `token` is the value with any sign prefix already stripped by the caller
- * (a sign character reaching this loop directly would fail as a non-digit,
- * exactly like Go's own digit loop) — `originalToken` (WITH the sign, when
- * the caller has one to give) is threaded through only for `underscoreOk`'s
- * separator check, which inspects the full original spelling.
+ * Base-0 digit grammar shared by `parseUintBase0` (unsigned) and `isValidBase0Int64` (signed):
+ * detects the base (`0x`/`0o`/`0b`, else leading `0` for octal, else decimal), accumulates
+ * digits, and checks underscore placement. Bounds the magnitude at `MAX_UINT64` so the
+ * range-check exit lives here once; `isValidBase0Int64` applies its own narrower int64 bound
+ * afterward. `originalToken` keeps the sign (stripped from `token`) for the underscore check.
  */
 function parseBase0Digits(
   token: string,
@@ -71,9 +30,8 @@ function parseBase0Digits(
 ): { readonly n: bigint } | { readonly cause: "invalid syntax" | "value out of range" } {
   if (token.length === 0) return { cause: "invalid syntax" };
 
-  // Base detection for base 0 (`strconv/atoi.go`): `0x`/`0b`/`0o` prefixes
-  // (only when at least one more character follows), else a leading `0` means
-  // octal, else decimal.
+  // Base detection: `0x`/`0b`/`0o` prefixes (only when at least one more character follows),
+  // else a leading `0` means octal, else decimal.
   let s = token;
   let base = 10n;
   if (s[0] === "0") {
@@ -119,27 +77,17 @@ function parseBase0Digits(
 
 export function parseUintBase0(token: string): ParseUintResult {
   const parsed = parseBase0Digits(token, token);
+  // Magnitudes above 2^53 lose precision when converted to Number; only the accept/reject
+  // verdict is guaranteed exact for values that large.
   return "cause" in parsed ? parsed : { value: Number(parsed.n) };
 }
 
 /**
- * Faithful port of Go's `strconv.ParseInt(s, 0, 64)` — the exact parser
- * pflag runs for an `Int64VarP`/`Int64Var` flag (`int64Value.Set`,
- * `pflag/int64.go`), e.g. `backups restore --timestamp`. Only a syntax-and-range VERDICT is
- * needed for completion (not the parsed value), so this returns a boolean
- * rather than mirroring `ParseUintResult`'s shape.
- *
- * Reuses {@link parseBase0Digits} for the base/digit grammar (the
- * same one `parseUintBase0` runs) on the sign-stripped remainder, then
- * applies `ParseInt`'s own two-step design: strip an optional leading
- * `+`/`-`, parse the magnitude, and bound it against `int64`'s asymmetric
- * two's-complement range — `-9223372036854775808` is valid, but that same
- * magnitude, `9223372036854775808`, is NOT (it is one past `int64`'s
- * positive bound, `9223372036854775807`) — verified empirically: `backups restore --timestamp
- * 9223372036854775808 --p` returns zero candidates with the Default
- * directive, while `--timestamp 9223372036854775807` (`int64` max) and
- * `--timestamp -9223372036854775808` (`int64` min) both still offer
- * `--profile`/`--project-ref` — CLI-1965 review finding.
+ * Parses a numeric flag token as a signed base-0 int64, returning only the accept/reject
+ * verdict (used by shell completion for e.g. `backups restore --timestamp`). Reuses
+ * {@link parseBase0Digits} on the sign-stripped remainder, then bounds the magnitude against
+ * int64's asymmetric two's-complement range: `-9223372036854775808` is valid, but that same
+ * magnitude on the positive side, `9223372036854775808`, is one past int64 max.
  */
 export function isValidBase0Int64(token: string): boolean {
   const isNegative = token[0] === "-";
@@ -150,14 +98,10 @@ export function isValidBase0Int64(token: string): boolean {
 }
 
 /**
- * `underscoreOK` (`strconv/atoi.go`): underscores must sit between
- * digits, or between the base prefix and the first digit (`0x_10` is valid).
- * The sign skip is unreachable through `parseUintBase0` (a sign already
- * fails the digit loop before `underscoreOk` is ever reached) but IS reachable
- * through `isValidBase0Int64`, which passes the original, still-signed
- * token through for this check specifically (see that function's doc
- * comment) — kept unconditionally rather than split per-caller so both stay
- * governed by one port of Go's source.
+ * Underscores must sit between digits, or between the base prefix and the first digit
+ * (`0x_10` is valid). Takes the original, possibly-signed token so `isValidBase0Int64`'s
+ * leading sign doesn't throw off the prefix/digit boundary check; `parseUintBase0` never
+ * reaches a sign here since one already fails the digit loop first.
  */
 function underscoreOk(token: string): boolean {
   // `saw` tracks the class of the previous character: `^` start-of-number,

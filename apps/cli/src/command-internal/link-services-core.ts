@@ -14,9 +14,8 @@ import {
 export interface LinkServicesInput {
   readonly ref: string;
   /**
-   * Tenant API key used for the service version probes. `link` passes the
-   * service-role key; `bootstrap` passes the anon key (mirroring Go's
-   * `link.LinkServices(ctx, ref, tenant.NewApiKey(keys).Anon, …)`).
+   * Tenant API key used for the service version probes: `link` passes the
+   * service-role key, `bootstrap` passes the anon key.
    */
   readonly serviceKey: string;
   readonly skipPooler: boolean;
@@ -32,13 +31,12 @@ export interface LinkServicesInput {
 type WriteTempFile = (filePath: string, content: string) => Effect.Effect<void, PlatformError>;
 
 /**
- * Ports `link.LinkServices`: the
- * best-effort portion of linking that writes `supabase/.temp/{storage-migration,
- * pooler-url,rest-version,gotrue-version,storage-version}`. Every probe is
- * best-effort — a single unreachable service never fails the caller. This core
- * does NOT write `project-ref`, the linked-project cache, or fire
- * `cli_project_linked`; `link.Run` (the standalone command) owns those, and
- * `bootstrap` deliberately skips them by calling `LinkServices` directly.
+ * Writes the best-effort portion of linking:
+ * `supabase/.temp/{storage-migration,pooler-url,rest-version,gotrue-version,
+ * storage-version}`. Each probe is independently best-effort — an
+ * unreachable service never fails the caller. Does not write `project-ref`,
+ * the linked-project cache, or fire `cli_project_linked`; the `link` command
+ * owns those, and `bootstrap` calls this directly to skip them.
  */
 export const linkServicesCore = Effect.fnUntraced(function* (input: LinkServicesInput) {
   const api = yield* CommandPlatformApi;

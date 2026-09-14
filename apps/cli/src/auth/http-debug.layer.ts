@@ -30,19 +30,10 @@ const PRESIGNED_QUERY_KEYS = [
 ];
 
 /**
- * The URL as it should appear in a debug log: unchanged, unless its query string
- * carries a signature, in which case the query is replaced wholesale.
- *
- * Redacting the whole query rather than the matched parameters keeps the
- * decision simple and cannot leak a sibling parameter that turns out to matter.
- * The path survives, which is what makes the line useful for debugging in the
- * first place.
- *
- * A denylist of known signature parameters, so it is by nature incomplete: a
- * provider spelling its signature something new would log verbatim until the
- * list learns about it. The alternative — redacting every query string — would
- * cost the debug log its usefulness on the Management API calls that are the
- * whole reason `--debug` exists. Add spellings here as they turn up.
+ * The URL as it should appear in a debug log: unchanged, unless its query string carries a
+ * signature, in which case the whole query is replaced — not just the matched parameter, so a
+ * sibling parameter can't leak — while the path survives for debugging. The signature denylist
+ * is inherently incomplete; add new spellings as they turn up.
  */
 export function redactHttpUrl(url: string): string {
   let parsed: URL;
@@ -65,12 +56,9 @@ export function redactHttpUrl(url: string): string {
 }
 
 /**
- * Wraps `FetchHttpClient.layer` so every HTTP request goes through the CLI's
- * debug side channel. The logger itself owns the `--debug` guard and the
- * line formatting.
- *
- * `dohFetchLayer` overrides `FetchHttpClient.Fetch` with a
- * DNS-over-HTTPS-aware fetch when `--dns-resolver https` is set.
+ * Wraps `FetchHttpClient.layer` so every HTTP request goes through the CLI's debug side channel;
+ * the logger owns the `--debug` guard and line formatting. `dohFetchLayer` overrides
+ * `FetchHttpClient.Fetch` with a DNS-over-HTTPS-aware fetch when `--dns-resolver https` is set.
  */
 export const httpClientLayer = Layer.effect(
   HttpClient.HttpClient,

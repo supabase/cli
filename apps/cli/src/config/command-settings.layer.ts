@@ -18,18 +18,9 @@ function unknownMessage(error: unknown): string {
 }
 
 /**
- * Profile resolution precedence: explicit `--profile` flag →
- * `SUPABASE_PROFILE` env → persisted `~/.supabase/profile` file →
- * `supabase` — then loads the token via `loadProfile`, failing instead
- * of falling back to the built-in `supabase` profile, which silently
- * targeted the wrong keyring token and API (supabase/cli#6091).
- *
- * `explicitFlagValue` mirrors pflag: the LAST explicit `--profile` occurrence
- * wins (the Effect parser is first-wins), and an explicit `--profile supabase`
- * shadows env and file even at the default value, which the parsed value
- * alone cannot detect. The persisted file's content is trimmed — a deliberate
- * divergence from the raw file bytes, compensated by the sso pflag
- * reconciliation (`pflag-reconcile.ts`).
+ * Resolves the profile: explicit `--profile` (last occurrence wins) → `SUPABASE_PROFILE` env →
+ * persisted `~/.supabase/profile` file (trimmed) → `supabase`, then loads its token — failing
+ * rather than silently falling back to the `supabase` profile's token.
  */
 function resolveProfile(
   flagValue: string,
@@ -47,12 +38,11 @@ function resolveProfile(
       yield* debugLogger.debug(`Loading profile from flag: ${flag}`);
       token = flag;
     } else if (envValue !== undefined && envValue.length > 0) {
-      // Go reads SUPABASE_PROFILE through viper's PROFILE key, so debug output
-      // cannot distinguish env from an explicitly changed flag.
+      // Debug output can't distinguish an env value from an explicitly set flag; both log
+      // the same message.
       yield* debugLogger.debug(`Loading profile from flag: ${envValue}`);
       token = envValue;
     } else {
-      // Lowest precedence: the persisted `~/.supabase/profile` file.
       const filePath = profileFilePath(path, homeDir);
       const content = yield* fs.readFileString(filePath).pipe(
         Effect.tap(() => debugLogger.debug(`Loading profile from file: ${filePath}`)),
@@ -75,31 +65,14 @@ function resolveProfile(
 }
 
 /**
- * `--workdir`/`SUPABASE_WORKDIR` can be a relative string (e.g. `.`), but
- * every later reader of the resolved workdir (including the
- * `Config.ProjectId` cwd-basename default, run on every config load) must
- * see the real ABSOLUTE directory, never the raw configured string. This
- * resolves the flag/env value against the real process `cwd`, so
- * `CommandSettings.workdir` is always absolute — the invariant that
- * basename-ing it (e.g. `resolveLocalProjectId`'s workdir-basename
- * fallback) operates on a real directory name, not a relative-path fragment
- * like `.` (which would sanitize to an empty project id and build a bare,
- * all-projects-matching Docker label filter).
+ * Resolves `--workdir`/`SUPABASE_WORKDIR` to an absolute path: it may be given as a relative
+ * string (e.g. `.`), but downstream readers such as the project-id cwd-basename fallback need
+ * a real directory name, not a relative fragment that would sanitize to an empty project id.
  *
- * The returned `explicit` flag is what lets JSON-capable config loads
- * (`config diff`/`config push`/`config pull`/`gen types`/etc — sites that do
- * NOT pass `tomlOnly: true`) skip the second ancestor search that
- * `@supabase/config`'s `loadCliConfig`/`findCliProjectPaths` would otherwise
- * perform by default. It is true iff this function used the flag/env value
- * verbatim without climbing.
- *
- * `pflagWorkdirValue` (`command-internal/pflag-reconcile.ts`) is
- * a similar-looking pflag-semantics predicate used for a different purpose
- * (SSO/dotenv precedence) and deliberately handles a changed-but-empty
- * `--workdir=` differently (treats it as explicit-but-falls-through-to-walk-up,
- * never to env) — the two are intentionally NOT unified.
+ * `explicit` is true only when the flag/env value was used verbatim, without walking up to find
+ * `supabase/config.toml`; some config loads use it to skip a redundant ancestor search.
  */
-function resolveWorkdir(
+export function resolveWorkdir(
   flagValue: Option.Option<string>,
   envValue: string | undefined,
   cwd: string,
@@ -114,7 +87,6 @@ function resolveWorkdir(
       return { workdir: path.resolve(cwd, envValue), explicit: true };
     }
     let current = cwd;
-    // Walk up until we hit a directory containing supabase/config.toml or the FS root.
     while (true) {
       const candidate = path.join(current, "supabase", "config.toml");
       if (yield* configTomlExists(candidate)) {
@@ -143,8 +115,8 @@ export const commandSettingsLayer = Layer.unwrap(
         const runtimeInfo = yield* RuntimeInfo;
         const env = process.env;
 
-        // `serviceOption`: tests without argv default to "not explicit". The
-        // empty command path scans all of argv up to `--`, like pflag.
+        // Optional service: tests without argv default to "not explicit". An empty command
+        // path scans all of argv up to `--`, matching pflag.
         const cliArgs = yield* Effect.serviceOption(CliArgs);
         const explicitProfileFlag = Option.match(cliArgs, {
           onNone: () => undefined,

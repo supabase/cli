@@ -1,39 +1,20 @@
 /**
- * Faithful, BYTE-level port of Go's stdlib `path.Match` (`$GOROOT/src/path/match.go`),
- * used by the seed-file globber to expand `[db.seed] sql_paths` exactly like the Go
- * CLI's `config.Glob.Files` → `io/fs.Glob` → `path.Match` chain.
+ * Matches a glob pattern against a path the way Go's `path.Match` does, for the seed-file
+ * globber's `[db.seed] sql_paths` expansion. Hand-ported rather than compiled to a `RegExp`,
+ * since glob character classes diverge from JS regex classes and a malformed pattern must
+ * report `badPattern` instead of being silently reinterpreted.
  *
- * Why byte-level, not code-point-level: Go strings are raw byte slices — every index,
- * slice, and length in `path.Match` operates on UTF-8 BYTES, not decoded characters.
- * This matters most in the `*`-retry loop (`pathMatch`'s inner `for` below):
- * Go retries the starred chunk at every BYTE offset of `name`, including offsets that
- * land in the middle of a multibyte UTF-8 character. When that happens, Go's
- * `unicode/utf8.DecodeRuneInString` decodes the LEADING (invalid, mid-character)
- * continuation byte as a single-byte `U+FFFD` "rune" — it never throws and never
- * consumes more than one byte for invalid input — so a `?` operator in the retried
- * chunk can advance past exactly one such byte and let the retry succeed where a
- * code-point-stepping port would not. Verified empirically against `apps/cli-go`
- * (a `path.Match` scratch probe): `Match("*??.sql", "！.sql")` — a single fullwidth
- * exclamation mark, U+FF01, 3 UTF-8 bytes — returns `true`: the second `?` in the
- * retried chunk lands on the fullwidth character's 2nd and 3rd bytes (both mid-character
- * continuation bytes, each decoded as one `U+FFFD` "rune"), not on a real code point. A
- * prior code-point-based port of this file returned `false` for that same case.
- *
- * Why a hand port instead of a JS `RegExp`: Go's glob grammar and JS regex character
- * classes diverge — POSIX classes (`[[:alpha:]]`), `\d`/`\w`, and a leading `^` mean
- * different things, and Go reports a malformed class as an error (`path.ErrBadPattern`)
- * where JS would silently reinterpret it. Compiling each segment to a `RegExp` leaked
- * those JS-only semantics; porting the algorithm keeps seed globbing byte-compatible
- * with Go, including the malformed-pattern handling and the byte-offset retry above.
+ * Byte-wise (UTF-8), not UTF-16 code units: the `*`-retry loop can land mid-character, whose
+ * byte decodes as a single invalid rune that a `?` in the retried chunk can then consume.
  */
 
-/** Mirrors Go's `path.Match` return `(matched bool, err error)`; `badPattern` ↔ `path.ErrBadPattern`. */
+/** `badPattern` reports a malformed pattern instead of throwing. */
 export interface PathMatchResult {
   readonly matched: boolean;
   readonly badPattern: boolean;
 }
 
-/** Go's `path.ErrBadPattern.Error()` text, surfaced verbatim in seed glob warnings. */
+/** Error message surfaced verbatim in seed glob warnings for a malformed pattern. */
 export const BAD_PATTERN_MESSAGE = "syntax error in pattern";
 
 const BAD_PATTERN: PathMatchResult = { matched: false, badPattern: true };
@@ -41,10 +22,9 @@ const BAD_PATTERN: PathMatchResult = { matched: false, badPattern: true };
 const UTF8_ENCODER = new TextEncoder();
 
 /**
- * `TextEncoder.encode` returns `Uint8Array<ArrayBuffer>` (never a
- * `SharedArrayBuffer`-backed view) — naming that explicitly so every `.subarray()`
- * slice threaded through this module's helpers keeps that narrower type instead of
- * widening to the generic `Uint8Array<ArrayBufferLike>` default.
+ * `TextEncoder.encode` never returns a `SharedArrayBuffer`-backed view; naming that keeps
+ * every `.subarray()` slice threaded through this module's helpers narrowly typed instead of
+ * widening to `Uint8Array<ArrayBufferLike>`.
  */
 type Bytes = Uint8Array<ArrayBuffer>;
 
@@ -64,14 +44,9 @@ interface DecodedRune {
 }
 
 /**
- * Port of Go's `unicode/utf8.DecodeRuneInString`, decoding the rune starting at byte
- * offset `i` of `b`. Any invalid or truncated sequence decodes as `(RuneError, 1)` —
- * never throws, never consumes more than the single invalid lead byte — matching Go's
- * documented behaviour exactly (`$GOROOT/src/unicode/utf8/utf8.go`'s `first` table and
- * `acceptRanges`, transcribed here as explicit range checks per lead byte rather than
- * the table itself, for readability; verified to agree with the table for every lead
- * byte class, including the overlong/surrogate/out-of-range exclusions on `0xE0`,
- * `0xED`, `0xF0`, and `0xF4`).
+ * Decodes the UTF-8 rune starting at byte offset `i` of `b`. Any invalid or truncated
+ * sequence decodes as `(RUNE_ERROR, 1)` — never throws, and never consumes more than the
+ * single invalid lead byte.
  */
 const decodeRune = (b: Bytes, i: number): DecodedRune => {
   const n = b.length - i;
@@ -135,7 +110,7 @@ interface ScanChunk {
   readonly rest: Bytes;
 }
 
-/** Go's `scanChunk`: the next non-`*` segment, possibly preceded by a `*`. */
+/** The next non-`*` segment of the pattern, possibly preceded by a `*`. */
 const scanChunk = (pattern: Bytes): ScanChunk => {
   let star = false;
   let p = pattern;
@@ -165,7 +140,7 @@ interface GetEsc {
   readonly bad: boolean;
 }
 
-/** Go's `getEsc`: a possibly-escaped character from inside a class. */
+/** A possibly-escaped character from inside a bracket class. */
 const getEsc = (chunk: Bytes): GetEsc => {
   if (chunk.length === 0 || chunk[0] === HYPHEN || chunk[0] === RBRACKET) {
     return { r: 0, rest: chunk, bad: true };
@@ -176,8 +151,7 @@ const getEsc = (chunk: Bytes): GetEsc => {
     if (c.length === 0) return { r: 0, rest: c, bad: true };
   }
   const { r, size } = decodeRune(c, 0);
-  // Go: `if r == utf8.RuneError && n == 1 { err = ErrBadPattern }` — a genuinely
-  // invalid byte, not a literal (valid, 3-byte-encoded) U+FFFD character.
+  // A genuinely invalid byte, not a literal (valid, 3-byte-encoded) U+FFFD character.
   if (r === RUNE_ERROR && size === 1) return { r, rest: c.subarray(1), bad: true };
   const rest = c.subarray(size);
   return { r, rest, bad: rest.length === 0 };
@@ -193,9 +167,9 @@ const EMPTY_BYTES = new Uint8Array(0);
 const BAD_CHUNK: MatchChunk = { rest: EMPTY_BYTES, ok: false, bad: true };
 
 /**
- * Go's `matchChunk`: match the all-single-char-operators `chunk` against the
- * start of `s`. Once the match fails the loop keeps walking `chunk` (no longer
- * reading `s`) so a malformed pattern is still reported.
+ * Matches the all-single-char-operators `chunk` against the start of `s`. Once the match
+ * fails, the loop keeps walking `chunk` (no longer reading `s`) so a malformed pattern is
+ * still reported.
  */
 const matchChunk = (chunkIn: Bytes, sIn: Bytes): MatchChunk => {
   let chunk = chunkIn;
@@ -265,9 +239,8 @@ const matchChunk = (chunkIn: Bytes, sIn: Bytes): MatchChunk => {
 };
 
 /**
- * Reports whether `name` matches the shell pattern `pattern`, using Go's
- * `path.Match` semantics. `badPattern` is set (instead of throwing) when the
- * pattern is malformed, mirroring Go's `path.ErrBadPattern`.
+ * Reports whether `name` matches the shell pattern `pattern`, using Go's `path.Match`
+ * semantics. `badPattern` is set (instead of throwing) for a malformed pattern.
  */
 export const pathMatch = (pattern: string, name: string): PathMatchResult => {
   let pat = UTF8_ENCODER.encode(pattern);
@@ -276,9 +249,8 @@ export const pathMatch = (pattern: string, name: string): PathMatchResult => {
     const scan = scanChunk(pat);
     pat = scan.rest;
     if (scan.star && scan.chunk.length === 0) {
-      // Trailing `*` matches the rest of the name unless it contains a `/`. `/` is
-      // never a UTF-8 continuation byte, so a raw byte scan is safe here regardless
-      // of any multibyte characters elsewhere in `nm`.
+      // A trailing `*` matches the rest of the name unless it contains a `/`; a raw byte
+      // scan for `/` is safe since it's never a UTF-8 continuation byte.
       return { matched: !nm.includes(SLASH), badPattern: false };
     }
     const m = matchChunk(scan.chunk, nm);
@@ -290,8 +262,8 @@ export const pathMatch = (pattern: string, name: string): PathMatchResult => {
       continue;
     }
     if (scan.star) {
-      // Look for a match skipping one BYTE at a time (see this file's top comment
-      // for why byte-, not code-point-, stepping matters here); `*` cannot cross `/`.
+      // Retries at every byte offset (not code point) so a `?` can land on a mid-character
+      // byte; `*` cannot cross `/`.
       let advanced = false;
       for (let i = 0; i < nm.length && nm[i] !== SLASH; i++) {
         const skip = matchChunk(scan.chunk, nm.subarray(i + 1));
@@ -305,7 +277,7 @@ export const pathMatch = (pattern: string, name: string): PathMatchResult => {
       }
       if (advanced) continue;
     }
-    // No match: still verify the rest of the pattern is well-formed (Go does).
+    // No match: still verify the rest of the pattern is well-formed.
     while (pat.length > 0) {
       const tail = scanChunk(pat);
       pat = tail.rest;

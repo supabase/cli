@@ -1,7 +1,3 @@
-/**
- * Unit tests for push.encoders.ts.
- */
-
 import type { CliConfig, ConfigChange, ProjectConfig } from "@supabase/config";
 import { comparableProjectConfigPaths, getDefaultCliConfig } from "@supabase/config";
 import { AUTH_HOOK_NAMES, projectConfigMappingRows } from "@supabase/config/internal";
@@ -149,8 +145,6 @@ describe("encodeApiBody", () => {
         remote: { api: { enabled: true, schemas: ["public"] } },
       }),
     );
-    // remote says enabled=true, so schemas ship even though local's own
-    // `enabled` (a schema default the file never declared) says false.
     expect(result.body).toEqual({ db_schema: "public,private" });
     expect(result.forced).toEqual([]);
   });
@@ -306,8 +300,7 @@ describe("encodeNetworkRestrictionsBody", () => {
   });
 
   it("routes both CIDR paths to unencodable (REASON_GROUP_INCOMPLETE), not an empty array, when a companion cannot be resolved from remote or local", () => {
-    // Remote and local both lack `allowed_cidrs_v6` entirely — the whole
-    // group is incomplete, so nothing should be substituted with `[]`.
+    // allowed_cidrs_v6 is missing from both remote and local.
     const local: ProjectConfig = {
       db: { network_restrictions: { allowed_cidrs: ["10.0.0.0/8"] } },
     };
@@ -435,11 +428,9 @@ describe("encodeStorageBody", () => {
         },
       },
     };
-    // The real pipeline drops a disabled `storage.analytics`'s max_* siblings
-    // from the local projection (`DISABLED_SENTINEL_PRUNES`, leaving only
-    // `{enabled: false}`) — this directly exercises the encoder with that
-    // pruned shape, as a change constructed by hand rather than through the
-    // full diff pipeline.
+    // The real pipeline drops a disabled storage.analytics's max_* siblings from the local
+    // projection (DISABLED_SENTINEL_PRUNES); this constructs that pruned shape by hand instead
+    // of running the full diff pipeline.
     const result = encodeStorageBody(
       storageInput({ changes: [change(["storage", "analytics", "enabled"], false)], config }),
     );
@@ -813,8 +804,6 @@ describe("encodeAuthBody", () => {
     });
 
     it("a secret-only trigger whose group is incomplete is reported unencodable, not silently dropped", () => {
-      // No ordinary change at all — only the `pass` secret is `send` — and the
-      // group's other companions cannot be resolved from remote or local.
       const local: ProjectConfig = { auth: { email: { smtp: { enabled: true } } } };
       const secrets: ReadonlyArray<PushSecretDecision> = [
         secretDecision({
@@ -1296,10 +1285,6 @@ describe("encodeAuthBody", () => {
     });
 
     it("keeps encoding twilio when content_sid is unset everywhere (optional companion)", () => {
-      // `content_sid` is an `optionalKey` with no materialized default; a
-      // project that never set it must still be able to push its other
-      // twilio settings instead of the whole provider block becoming
-      // unencodable.
       const local: ProjectConfig = {
         auth: {
           sms: {
@@ -1491,22 +1476,17 @@ describe("encodeAuthBody", () => {
 
 describe("auth encoder key-name drift guard", () => {
   /**
-   * Every `(configPath, apiKey)` pair the auth encoder maps, across the flat
-   * leaf table AND every string-built container (smtp, captcha, hooks,
-   * external providers, sms-provider credentials, email template
-   * subjects, email notification enabled+subject). For each pair, asserts
-   * the apiKey matches the registry's OWN `apiPath` for that configPath
-   * (`@supabase/config/internal`'s `projectConfigMappingRows`) — a guard
-   * against `push.encoders.ts` silently drifting from the registry `config
-   * pull`/`config diff` also read.
+   * Every `(configPath, apiKey)` pair the auth encoder maps, across the flat leaf table and
+   * every string-built container (smtp, captcha, hooks, external providers, sms-provider
+   * credentials, email template subjects, email notification enabled+subject). For each pair,
+   * asserts the apiKey matches the registry's own `apiPath` for that configPath
+   * (`@supabase/config/internal`'s `projectConfigMappingRows`), guarding against
+   * `push.encoders.ts` drifting from the registry `config pull`/`config diff` also read.
    *
-   * The leaf table (`PUSH_AUTH_LEAF_MAP`) is imported, not
-   * re-declared, so this guard tests the actual source of truth the encoder
-   * iterates — a change to that table is exercised here automatically. The
-   * container groups build their `apiKey` from a string template instead
-   * (`smtp_${field}`, `hook_${name}_enabled`, `external_${id}_client_id`,
-   * `sms_${provider}_${key}`, `mailer_subjects_${name}`, …), so their pairs
-   * are enumerated directly against the registry below.
+   * The leaf table (`PUSH_AUTH_LEAF_MAP`) is imported, not re-declared, so this guard tests the
+   * actual source of truth the encoder iterates. The container groups build their `apiKey` from
+   * a string template instead, so their pairs are enumerated directly against the registry
+   * below.
    */
   interface LeafPair {
     readonly configPath: ReadonlyArray<string>;
@@ -1639,16 +1619,12 @@ describe("auth encoder key-name drift guard", () => {
 
 describe("encoder exhaustiveness drift guard", () => {
   /**
-   * Feeds every {@link comparableProjectConfigPaths} entry that
-   * `pushResourceForPath` routes to a resource (excluding the two
-   * intentionally-unsupported prefixes, covered by `push.plan.unit.test.ts`'s
-   * own drift guard) to that resource's encoder as a single synthetic
-   * `update` change, and asserts the path lands in `encoded`, `unencodable`,
-   * or `extras` — never silently in none of the three. The classification
-   * itself doesn't matter (an incomplete container correctly reports
-   * `unencodable`); what matters is that every encoder's own switch/branch
-   * logic accounts for every path it can ever receive, backstopped by each
-   * encoder's `withExhaustiveness` wrapper (`push.encoders.ts`).
+   * Feeds every {@link comparableProjectConfigPaths} entry that `pushResourceForPath` routes to
+   * a resource (excluding the two intentionally-unsupported prefixes) to that resource's encoder
+   * as a single synthetic `update` change, and asserts the path lands in `encoded`,
+   * `unencodable`, or `extras` — never silently in none of the three. The classification itself
+   * doesn't matter; what matters is that every encoder's own switch/branch logic accounts for
+   * every path it can receive, backstopped by each encoder's `withExhaustiveness` wrapper.
    */
   const ENCODE_BY_RESOURCE: Readonly<
     Record<PushResource, (changes: ReadonlyArray<ConfigChange>) => PushEncoded<unknown>>

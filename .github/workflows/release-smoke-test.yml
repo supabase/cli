@@ -21,8 +21,10 @@ on:
 permissions:
   # release-shared.yml declares privileged publish jobs. They are gated by
   # dry_run here, but GitHub validates nested-workflow permissions at startup.
+  actions: read
   contents: write
   id-token: write
+  pull-requests: write
 
 jobs:
   smoke:

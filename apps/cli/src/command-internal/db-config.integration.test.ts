@@ -154,8 +154,8 @@ describe("dbConfigResolver (local + db-url)", () => {
             user: "postgres",
             password: "hunter2",
             database: "postgres",
-            // The resolver attaches the connect-failure suggestion context (Go's
-            // ambient CurrentProfile) to every resolved connection.
+            // The resolver attaches the connect-failure suggestion context to every resolved
+            // connection.
             suggestionContext: {
               dashboardUrl: "https://supabase.com/dashboard",
               profileName: "supabase",
@@ -169,7 +169,6 @@ describe("dbConfigResolver (local + db-url)", () => {
   });
 
   it.effect("local mode: honors SUPABASE_SERVICES_HOSTNAME for the connection host", () => {
-    // Dev-container / remote-Docker parity (Go's utils.Config.Hostname).
     process.env["SUPABASE_SERVICES_HOSTNAME"] = "host.docker.internal";
     const dir = withWorkdir();
     return resolve(dir, localFlags).pipe(
@@ -233,8 +232,6 @@ describe("dbConfigResolver (local + db-url)", () => {
   });
 
   it.effect("db-url mode: a passwordless local url fills the password from config", () => {
-    // Go's ConnectLocalPostgres fills an empty password from `[db].password`
-    // for local connections, so a passwordless local DSN still authenticates.
     const dir = withWorkdir(["[db]", "port = 54322", 'password = "hunter2"', ""].join("\n"));
     return resolve(dir, dbUrlFlags("postgres://postgres@127.0.0.1:54322/postgres")).pipe(
       Effect.tap((r) =>
@@ -276,8 +273,6 @@ describe("dbConfigResolver (local + db-url)", () => {
     return resolve(dir, dbUrlFlags(url)).pipe(
       Effect.tap((r) =>
         Effect.sync(() => {
-          // Go's `pgconn.ParseConfig` keeps both in `pgconn.Config`; the URL
-          // parser must not discard the query string.
           expect(r.conn.sslmode).toBe("verify-full");
           expect(r.conn.options).toBe("reference=abcdefghijklmnop");
           rmSync(dir, { recursive: true, force: true });
@@ -291,7 +286,6 @@ describe("dbConfigResolver (local + db-url)", () => {
     return resolve(dir, dbUrlFlags("host=pg.example.com port=6543 user=admin dbname=app")).pipe(
       Effect.tap((r) =>
         Effect.sync(() => {
-          // Go's `pgconn.ParseConfig` accepts keyword/value DSNs, not just URLs.
           expect(r.conn.host).toBe("pg.example.com");
           expect(r.conn.port).toBe(6543);
           expect(r.conn.user).toBe("admin");
@@ -332,12 +326,9 @@ describe("dbConfigResolver (linked config ordering)", () => {
   it.effect(
     "validates the ref-merged config before any network work (Go ParseDatabaseConfig order)",
     () => {
-      // `ParseDatabaseConfig` runs LoadProjectRef → LoadConfig → NewDbConfigWithPassword,
-      // so an invalid `[remotes.<ref>]`-merged db.major_version
-      // fails as a config error before the TCP probe / pooler / Management API. The
-      // ref is sourced from the config's top-level project_id; the matching remote
-      // block sets an unsupported major_version. If validation happened after the
-      // connection work, mockDbConnection.connect() would die first.
+      // The ref is sourced from the config's top-level project_id; the matching remote block
+      // sets an unsupported major_version. If validation happened after the connection work,
+      // `mockDbConnection.connect()` would die first.
       const ref = "abcdefghijklmnopqrst";
       const dir = withWorkdir(
         [
@@ -372,10 +363,8 @@ describe("dbConfigResolver (linked config ordering)", () => {
   );
 
   it.effect("surfaces a project-ref read failure instead of reporting not-linked", () => {
-    // `ParseDatabaseConfig`'s linked branch uses the hard LoadProjectRef,
-    // which returns `failed to load project ref` on a real `.temp/project-ref` read error
-    // rather than masking it as not-linked. With no project_id /
-    // env and the ref file seeded as a DIRECTORY, the resolver must surface that.
+    // The ref file is seeded as a directory (not a file), with no project_id or env fallback,
+    // to force a real read error.
     const dir = withWorkdir();
     mkdirSync(join(dir, "supabase", ".temp", "project-ref"), { recursive: true });
     return resolve(dir, linkedFlags).pipe(
@@ -831,11 +820,10 @@ describe("dbConfigResolver (linked config ordering)", () => {
   });
 });
 
-// CLI P1 fix (codex review, db-config.types.ts:81): an explicit
-// `--project-ref`/`linkedProjectRef` on a NON-ad-hoc `db` command must
-// independently unlock the Management API pooler fetch on an IPv4-only
-// network — it must not stay confined to the workdir's saved
-// `.temp/pooler-url` the way the plain `--linked` default path is.
+// An explicit `--project-ref`/`linkedProjectRef` on a non-ad-hoc `db` command must
+// independently unlock the Management API pooler fetch on an IPv4-only network — it must not
+// stay confined to the workdir's saved `.temp/pooler-url` the way the plain `--linked` default
+// path is.
 describe("dbConfigResolver (--project-ref pooler fetch decoupled from adHocProjectRef)", () => {
   it.effect(
     "an unlinked workdir + explicit --project-ref resolves via the API pooler config, honoring the ambient password with no login-role mint",
@@ -917,8 +905,6 @@ describe("dbConfigResolver (--project-ref pooler fetch decoupled from adHocProje
               },
             });
             expect(r.ref).toEqual(Option.some(ref));
-            // Only the pooler-config GET fires — no `cli/login-role` POST, since
-            // the ambient password takes precedence once the pooler is resolved.
             expect(requests).toEqual([
               { method: "GET", path: `/v1/projects/${ref}/config/database/pooler` },
             ]);
@@ -1028,9 +1014,6 @@ describe("dbConfigResolver (--project-ref pooler fetch decoupled from adHocProje
               },
             });
             expect(r.ref).toEqual(Option.some(targetRef));
-            // The saved URL is read (not skipped — `ignoreSavedUrl` stays tied to
-            // `adHocProjectRef` only) but rejected by the tenant-ref check, so a
-            // second-chance API fetch for `targetRef` follows.
             expect(requests).toEqual([
               { method: "GET", path: `/v1/projects/${targetRef}/config/database/pooler` },
             ]);
@@ -1053,10 +1036,6 @@ describe("dbConfigResolver (--project-ref pooler fetch decoupled from adHocProje
   it.effect(
     "the plain --linked path (no --project-ref) keeps the IPv6 error when no pooler URL is saved",
     () => {
-      // Pins the untouched default path: `linkedProjectRef` is absent, so
-      // `fetchPoolerFromApi` stays false and an unreachable direct host with no
-      // saved `.temp/pooler-url` still fails with Go's IPv6 suggestion — the fix
-      // only widens the explicit `--project-ref` path, not this default one.
       const ref = "plainlinkedrefabcdef";
       const dir = withWorkdir(
         [`project_id = "${ref}"`, "[db]", "major_version = 15", ""].join("\n"),

@@ -1,11 +1,6 @@
 /**
- * Unit tests for `configProjectConfigTry` — the shared try-helper for
- * `@supabase/config`'s convergence calls (`config.project-config.ts`).
- *
- * Every real call site (`config diff`, `config pull`, `config push`) is
- * covered end to end by its own integration suite; the one branch integration
- * coverage cannot exercise directly is the defect arm, so it gets its own
- * focused test here.
+ * Unit tests for `configProjectConfigTry`. Real call sites are covered by their own
+ * integration suites; the defect arm isn't reachable there, so it gets a focused test here.
  */
 
 import { describe, expect, it } from "@effect/vitest";

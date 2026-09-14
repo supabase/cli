@@ -47,9 +47,7 @@ export const inspectReportCommand = Command.make("report", config).pipe(
           "project-ref": flags.projectRef,
           "output-dir": flags.outputDir,
         },
-        // TS-only flag with no Go telemetry-safety baseline; Go's nearest
-        // --project-ref registrations (cmd/pgdelta_catalog.go:44 and most
-        // others) are unmarked, so it stays redacted.
+        // `--project-ref` has no telemetry-safety baseline, so it stays redacted.
       }),
       withJsonErrorHandling,
     ),

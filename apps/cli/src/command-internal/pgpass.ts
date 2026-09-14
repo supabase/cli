@@ -3,11 +3,9 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 /**
- * libpq `.pgpass` password lookup, a 1:1 port of `jackc/pgpassfile`
- * (`ParsePassfile` + `FindPassword`) as used by `pgconn.ParseConfig`:
- * when a connection string omits the password, pgconn
- * reads the passfile and returns the first entry matching host/port/database/
- * user (with `*` wildcards). For a unix-socket host pgconn matches `localhost`.
+ * libpq `.pgpass` password lookup: when a connection string omits the password, this reads
+ * the passfile and returns the first entry matching host/port/database/user (with `*`
+ * wildcards). A unix-socket host matches `localhost`.
  */
 
 const TMP_BACKSLASH = "\r";
@@ -81,15 +79,13 @@ type PassfileEnv = (name: string) => string | undefined;
 const processEnv: PassfileEnv = (name) => process.env[name];
 
 /**
- * Resolve the passfile path with pgconn's precedence: an
- * explicit `passfile=` connection-string setting wins, then `PGPASSFILE`, then the
- * libpq per-OS default (`~/.pgpass`, or `%APPDATA%/postgresql/pgpass.conf`).
+ * Resolves the passfile path with libpq precedence: an explicit `passfile=`
+ * connection-string setting wins, then `PGPASSFILE`, then the per-OS default (`~/.pgpass`, or
+ * `%APPDATA%/postgresql/pgpass.conf`).
  *
- * A *present* `passfile` (even an empty string) is authoritative: an empty value
- * resolves to no usable passfile (`undefined`) rather than falling back to
- * `PGPASSFILE`/the default, mirroring pgconn calling `ReadPassfile("")` (→
- * `os.Open("")` fails → no `.pgpass` lookup → empty password). Only an *absent*
- * (`undefined`) setting falls through to `PGPASSFILE`/the default.
+ * A *present* `passfile` (even an empty string) is authoritative: an empty value resolves to
+ * no usable passfile (`undefined`) rather than falling back to `PGPASSFILE`/the default. Only
+ * an *absent* (`undefined`) setting falls through.
  */
 function pgpassFilePath(env: PassfileEnv, passfile: string | undefined): string | undefined {
   if (passfile !== undefined) {
@@ -110,12 +106,12 @@ function pgpassFilePath(env: PassfileEnv, passfile: string | undefined): string 
 }
 
 /**
- * Resolve a password from the `.pgpass` file for the given connection, or `""`
- * when the file is absent/unreadable or has no matching entry. A unix-socket
- * host (a path) matches `localhost`, mirroring pgconn's `NetworkAddress`.
+ * Resolves a password from the `.pgpass` file for the given connection, or `""` when the
+ * file is absent/unreadable or has no matching entry. A unix-socket host (a path) matches
+ * `localhost`.
  *
- * `env` supplies `PGPASSFILE`/`APPDATA` (defaults to `process.env`); `passfile` is
- * an explicit connection-string `passfile=` setting that takes precedence.
+ * `env` supplies `PGPASSFILE`/`APPDATA` (defaults to `process.env`); `passfile` is an
+ * explicit connection-string `passfile=` setting that takes precedence.
  */
 export function pgpassPassword(
   host: string,

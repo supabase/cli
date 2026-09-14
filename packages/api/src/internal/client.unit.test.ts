@@ -468,9 +468,8 @@ describe("makeSupabaseApiClient", () => {
     ]);
   });
 
-  // Both payloads are the shapes reported against 2.112.0, where the spec's
-  // Z-anchored pattern rejected them and broke `link` and `branches list`
-  // outright (supabase/cli#6115).
+  // Regression payloads: the spec's Z-anchored pattern used to reject these and
+  // break `link` and `branches list` outright.
   test("decodes timestamps with a numeric UTC offset", async () => {
     const apiKeys = await Effect.runPromise(
       makeSupabaseApiClient(config).pipe(
@@ -723,10 +722,8 @@ describe("makeSupabaseApiClient", () => {
       makeSupabaseApiClient(config).pipe(
         Effect.flatMap((client) =>
           client.execute<"v1DiffABranch">(operationDefinitions.v1DiffABranch, {
-            // 20-letter project ref. Used to be "branch-ref" but the UUID
-            // branch of the oneOf union now has an actual pattern check, so
-            // free-form strings like "branch-ref" no longer match either
-            // branch.
+            // Must satisfy the oneOf union's project-ref/uuid pattern; a free-form
+            // string like "branch-ref" doesn't match either branch.
             branch_id_or_ref: "abcdefghijklmnopqrst",
           }),
         ),

@@ -1,4 +1,3 @@
-// oxlint-disable effecttsgo/prefer-schema-over-json -- generated shell fixtures use protocol JSON quoting, not product serialization.
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
@@ -17,9 +16,8 @@ import {
   Stream,
 } from "effect";
 import * as TestClock from "effect/testing/TestClock";
-// oxlint-disable-next-line effecttsgo/node-builtin-import
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- fixture controls raw HTTP responses and connection failure timing.
 import { createServer, type ServerResponse } from "node:http";
-// oxlint-disable-next-line effecttsgo/node-builtin-import
 import { createServer as createNetServer } from "node:net";
 import type { StackLogEntry } from "../public/Logs.ts";
 import type { CapabilityName } from "../public/Capability.ts";
@@ -68,6 +66,9 @@ import type { RuntimeEnvFileOwner } from "./RuntimeEnvFile.ts";
 import { makeRuntimeEnvFileOwner } from "./RuntimeEnvFile.ts";
 import { probeReadiness } from "./ReadinessProbe.ts";
 
+const encodeJson = (value: unknown): string =>
+  Schema.encodeSync(Schema.fromJsonString(Schema.Unknown))(value);
+
 const stackId = StackIdSchema.make("a".repeat(64));
 
 const stateFor = (
@@ -76,13 +77,8 @@ const stateFor = (
 ): PersistedStackState => ({
   format: "supabase-stack-state-v1",
   identity: {
-    stackId,
     projectRoot: "/tmp/production-runtime",
-    checkoutRoot: "/tmp/production-runtime",
-    workspaceId: "/tmp/production-runtime",
-    checkoutId: "/tmp/production-runtime",
     branchContext: "ordinary-workspace",
-    localProjectKey: ".",
     stackName: "production-runtime",
   },
   runtime,
@@ -170,7 +166,7 @@ const writeNativeDatabaseFixture = (
       'const net = require("node:net");',
       "const args = process.argv.slice(1);",
       'const port = Number(args[args.indexOf("-p") + 1]);',
-      `fs.appendFileSync(${JSON.stringify(eventsPath)}, "postgres-start|data=" + process.env.PGDATA + "|user=" + process.env.POSTGRES_USER + "|db=" + process.env.POSTGRES_DB + "|password=" + process.env.POSTGRES_PASSWORD + "|args=" + args.join(" ") + "\\n");`,
+      `fs.appendFileSync(${encodeJson(eventsPath)}, "postgres-start|data=" + process.env.PGDATA + "|user=" + process.env.POSTGRES_USER + "|db=" + process.env.POSTGRES_DB + "|password=" + process.env.POSTGRES_PASSWORD + "|args=" + args.join(" ") + "\\n");`,
       "const server = net.createServer((socket) => socket.end());",
       'server.listen(port, "127.0.0.1");',
       "const stop = () => server.close(() => process.exit(0));",
@@ -181,7 +177,7 @@ const writeNativeDatabaseFixture = (
       main,
       `#!/bin/sh
 set -eu
-exec ${JSON.stringify(process.execPath)} -e ${JSON.stringify(helperScript)} -- "$@"
+exec ${encodeJson(process.execPath)} -e ${encodeJson(helperScript)} -- "$@"
 `,
     );
     yield* fs.chmod(main, 0o755);
@@ -210,7 +206,7 @@ fi
       migrate,
       `#!/bin/sh
 . "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)/.runtime-env.sh"
-printf 'realtime-migrate|RELEASE_DISTRIBUTION=%s\\n' "\${RELEASE_DISTRIBUTION:-missing}" >> ${JSON.stringify(eventsPath)}
+printf 'realtime-migrate|RELEASE_DISTRIBUTION=%s\\n' "\${RELEASE_DISTRIBUTION:-missing}" >> ${encodeJson(eventsPath)}
 `,
     );
     yield* fs.chmod(migrate, 0o755);
@@ -400,9 +396,6 @@ describe("production runtime", () => {
             identity: {
               ...stateFor({}).identity,
               projectRoot: root,
-              checkoutRoot: root,
-              workspaceId: root,
-              checkoutId: root,
             },
             definition: previous.definition,
             secrets: previousSecrets.persisted,
@@ -468,9 +461,6 @@ describe("production runtime", () => {
             identity: {
               ...stateFor({}).identity,
               projectRoot: root,
-              checkoutRoot: root,
-              workspaceId: root,
-              checkoutId: root,
             },
           },
         } satisfies { value: PersistedStackState | undefined };
@@ -552,9 +542,6 @@ describe("production runtime", () => {
             identity: {
               ...stateFor({}).identity,
               projectRoot: root,
-              checkoutRoot: root,
-              workspaceId: root,
-              checkoutId: root,
             },
             desiredLifecycle: "running" as const,
             definition: compiled.definition,
@@ -657,9 +644,6 @@ describe("production runtime", () => {
             identity: {
               ...stateFor({}).identity,
               projectRoot: root,
-              checkoutRoot: root,
-              workspaceId: root,
-              checkoutId: root,
             },
             desiredLifecycle: "running" as const,
             definition: compiled.definition,
@@ -712,6 +696,112 @@ describe("production runtime", () => {
           expect(error?.message).toContain("OIDC discovery request failed");
           expect(error?.cause).toBeInstanceOf(StackPreparationError);
         }
+        yield* runtime.driver.stop({ stackId, workloadId: database.id });
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("follows redirects while resolving Auth OIDC metadata", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-production-oidc-lazy-",
+        });
+        const oidc = createServer((request, response) => {
+          if (request.url === "/.well-known/openid-configuration") {
+            response.writeHead(302, { Location: "/discovery" }).end();
+          } else if (request.url === "/discovery") {
+            response.setHeader("content-type", "application/json");
+            response.end(JSON.stringify({ jwks_uri: `${issuer}/keys` }));
+          } else if (request.url === "/keys") {
+            response.writeHead(302, { Location: "/keys-final" }).end();
+          } else {
+            response.setHeader("content-type", "application/json");
+            response.end(JSON.stringify({ keys: [{ kty: "RSA", n: "n", e: "AQAB" }] }));
+          }
+        });
+        yield* listenForNativeReadiness(oidc);
+        const oidcAddress = oidc.address();
+        if (typeof oidcAddress !== "object" || oidcAddress === null)
+          return yield* Effect.die("OIDC server did not expose an address");
+        const issuer = `http://127.0.0.1:${oidcAddress.port}`;
+        const readinessServer = createNetServer((socket) => socket.end());
+        yield* listenForNativeReadiness(readinessServer);
+        const address = readinessServer.address();
+        if (typeof address !== "object" || address === null)
+          return yield* Effect.die("Database readiness server did not expose an address");
+        const compiled = yield* compileStack({
+          projectRoot: root,
+          runtime: { kind: "container", engine: "docker" },
+          config: {
+            capabilities: {
+              auth: {
+                enabled: true,
+                settings: {
+                  third_party: {
+                    workos: { enabled: true, issuer_url: issuer },
+                  },
+                },
+              },
+            },
+          },
+        });
+        const resolved = yield* resolveSecrets(
+          { declarations: compiled.secrets },
+          undefined,
+          "stopped",
+        );
+        const current = {
+          value: {
+            ...stateFor(resolved.persisted, { kind: "container", engine: "docker" }),
+            identity: {
+              ...stateFor({}).identity,
+              projectRoot: root,
+            },
+            desiredLifecycle: "running" as const,
+            definition: compiled.definition,
+            privatePorts: [
+              { workloadId: "database:database", binding: "primary", port: address.port },
+              { workloadId: "auth:auth", binding: "primary", port: oidcAddress.port },
+            ],
+          },
+        } satisfies { value: PersistedStackState };
+        const database = compiled.executionPlan.workloads.find(
+          ({ id }) => id === "database:database",
+        );
+        const auth = compiled.executionPlan.workloads.find(({ id }) => id === "auth:auth");
+        if (database === undefined || auth === undefined)
+          return yield* Effect.die("Expected database and Auth workloads");
+        const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
+        const runtime = yield* makeProductionRuntime({
+          stateRoot: root,
+          stackId,
+          ownerSessionId: "oidc-lazy",
+          stateStore: stateStoreFor(current),
+          context,
+          ingress,
+          containerEngine: ownerInputContainerEngine([]),
+          artifactPreparer: {
+            prepare: (_runtime, workload) =>
+              Effect.succeed({
+                workloadId: workload.id,
+                capability: workload.capability,
+                version: "test",
+                outcome: "cached" as const,
+                image: workload.selected.kind === "container" ? workload.selected.image : undefined,
+              }),
+          },
+          logStore: memoryLogStore([]),
+          bootstrapDatabase: () => Effect.void,
+        });
+        const databaseReady = yield* runtime.driver.start(
+          { stackId, workloadId: database.id },
+          database,
+        );
+        expect(databaseReady.state).toBe("ready");
+        const authResult = yield* runtime.driver.start({ stackId, workloadId: auth.id }, auth);
+        expect(authResult.state).toBe("ready");
         yield* runtime.driver.stop({ stackId, workloadId: database.id });
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
@@ -800,9 +890,6 @@ describe("production runtime", () => {
             identity: {
               ...stateFor({}).identity,
               projectRoot: root,
-              checkoutRoot: root,
-              workspaceId: root,
-              checkoutId: root,
             },
             desiredLifecycle: "running" as const,
             definition: compiled.definition,
@@ -936,9 +1023,6 @@ describe("production runtime", () => {
               identity: {
                 ...stateFor({}).identity,
                 projectRoot: root,
-                checkoutRoot: root,
-                workspaceId: root,
-                checkoutId: root,
               },
               desiredLifecycle: "running" as const,
               definition: compiled.definition,
@@ -1039,9 +1123,6 @@ describe("production runtime", () => {
             identity: {
               ...stateFor({}).identity,
               projectRoot: root,
-              checkoutRoot: root,
-              workspaceId: root,
-              checkoutId: root,
             },
             definition: compiled.definition,
             secrets: resolved.persisted,
@@ -1172,9 +1253,6 @@ describe("production runtime", () => {
             identity: {
               ...stateFor({}).identity,
               projectRoot: root,
-              checkoutRoot: root,
-              workspaceId: root,
-              checkoutId: root,
             },
             desiredLifecycle: "running" as const,
             definition: compiled.definition,
@@ -1273,9 +1351,6 @@ describe("production runtime", () => {
             identity: {
               ...stateFor({}).identity,
               projectRoot: root,
-              checkoutRoot: root,
-              workspaceId: root,
-              checkoutId: root,
             },
             desiredLifecycle: "running" as const,
             definition: compiled.definition,
@@ -1360,9 +1435,6 @@ describe("production runtime", () => {
             identity: {
               ...stateFor({}).identity,
               projectRoot: root,
-              checkoutRoot: root,
-              workspaceId: root,
-              checkoutId: root,
             },
             desiredLifecycle: "running" as const,
             definition: compiled.definition,
@@ -1437,9 +1509,6 @@ describe("production runtime", () => {
             identity: {
               ...stateFor({}).identity,
               projectRoot: root,
-              checkoutRoot: root,
-              workspaceId: root,
-              checkoutId: root,
             },
             desiredLifecycle: "running" as const,
             definition: compiled.definition,
@@ -1527,9 +1596,6 @@ describe("production runtime", () => {
             identity: {
               ...stateFor({}).identity,
               projectRoot: root,
-              checkoutRoot: root,
-              workspaceId: root,
-              checkoutId: root,
             },
             desiredLifecycle: "running" as const,
             definition: compiled.definition,
@@ -1610,9 +1676,6 @@ describe("production runtime", () => {
             identity: {
               ...stateFor({}).identity,
               projectRoot: root,
-              checkoutRoot: root,
-              workspaceId: root,
-              checkoutId: root,
             },
             desiredLifecycle: "running" as const,
             definition: compiled.definition,
@@ -1693,9 +1756,6 @@ describe("production runtime", () => {
             identity: {
               ...stateFor({}).identity,
               projectRoot: root,
-              checkoutRoot: root,
-              workspaceId: root,
-              checkoutId: root,
             },
             desiredLifecycle: "running" as const,
             definition: compiled.definition,
@@ -1978,9 +2038,6 @@ describe("production runtime", () => {
             identity: {
               ...stateFor({}).identity,
               projectRoot: root,
-              checkoutRoot: root,
-              workspaceId: root,
-              checkoutId: root,
             },
             definition: compiled.definition,
             secrets,
@@ -2067,9 +2124,6 @@ describe("production runtime", () => {
             identity: {
               ...stateFor({}).identity,
               projectRoot: root,
-              checkoutRoot: root,
-              workspaceId: root,
-              checkoutId: root,
             },
             definition: compiled.definition,
             ports: [{ field: "database", port, intent: "automatic" }],
@@ -2145,6 +2199,92 @@ describe("production runtime", () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.live("ignores obsolete inspector bindings while retaining requested bindings", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-native-private-preflight-",
+        });
+        const occupied = createNetServer();
+        yield* listenForNativeReadiness(occupied);
+        const address = occupied.address();
+        if (address === null || typeof address === "string")
+          return yield* Effect.die("occupied listener has no TCP address");
+        const port = yield* Schema.decodeEffect(NetworkPortSchema)(address.port).pipe(Effect.orDie);
+        const previous = yield* compileStack({
+          projectRoot: root,
+          runtime: { kind: "native" },
+          config: { capabilities: { functions: { settings: { inspector: { mode: "run" } } } } },
+        });
+        const disabled = yield* compileStack({
+          projectRoot: root,
+          runtime: { kind: "native" },
+        });
+        const requestedLazy = yield* compileStack({
+          projectRoot: root,
+          runtime: { kind: "native" },
+          config: { capabilities: { functions: { settings: { inspector: { mode: "run" } } } } },
+        });
+        const secrets = Object.fromEntries(
+          disabled.secrets.map((entry) => [
+            entry.slot,
+            { policy: entry.policy, value: "test-secret" },
+          ]),
+        );
+        const current = {
+          value: {
+            ...stateFor(secrets),
+            identity: {
+              ...stateFor({}).identity,
+              projectRoot: root,
+            },
+            definition: previous.definition,
+            privatePorts: [{ workloadId: "functions:edge-runtime", binding: "inspector", port }],
+            secrets,
+          },
+        } satisfies { value: PersistedStackState };
+        const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
+        const runtime = yield* makeProductionRuntime({
+          stateRoot: root,
+          stackId,
+          ownerSessionId: "private-port-preflight",
+          stateStore: stateStoreFor(current),
+          context,
+          ingress,
+          envFileOwner: envFiles,
+          functionsBootstrapOwner: bootstrap,
+          logStore: memoryLogStore([]),
+          artifactPreparer: {
+            prepare: (_runtime, workload) =>
+              Effect.succeed({
+                workloadId: workload.id,
+                capability: workload.capability,
+                version: "test",
+                outcome: "cached" as const,
+              }),
+          },
+          bootstrapDatabase: () => Effect.void,
+        });
+        const input = (candidate: typeof disabled) => ({
+          stackId,
+          state: current.value,
+          definition: candidate.definition,
+          secrets,
+          plan: candidate.executionPlan,
+        });
+        const obsolete = yield* runtime.preflight(input(disabled)).pipe(Effect.exit);
+        expect(Exit.isSuccess(obsolete)).toBe(true);
+        const requested = yield* runtime.preflight(input(requestedLazy)).pipe(Effect.exit);
+        expect(Exit.isFailure(requested)).toBe(true);
+        if (Exit.isFailure(requested)) {
+          const error = Option.getOrUndefined(Cause.findErrorOption(requested.cause));
+          expect(error).toBeInstanceOf(PortUnavailableError);
+        }
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.live("rejects native database lock evidence owned by a live process", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -2167,9 +2307,6 @@ describe("production runtime", () => {
             identity: {
               ...stateFor({}).identity,
               projectRoot: root,
-              checkoutRoot: root,
-              workspaceId: root,
-              checkoutId: root,
             },
             definition: compiled.definition,
             secrets,
@@ -2300,286 +2437,299 @@ describe("production runtime", () => {
     ),
   );
 
-  it.live("wires owner material into container workloads", () =>
+  const makeOwnerMaterialFixture = () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-production-inputs-" });
+      const template = path.join(root, "templates", "confirmation.html");
+      yield* fs.makeDirectory(path.dirname(template), { recursive: true });
+      yield* fs.writeFileString(template, "confirmation");
+      const gcpCredentials = path.join(root, "gcp.json");
+      yield* fs.writeFileString(gcpCredentials, "{}");
+      const compiled = yield* compileStack({
+        projectRoot: root,
+        runtime: { kind: "container", engine: "docker" },
+        config: {
+          capabilities: {
+            auth: {
+              settings: {
+                email: {
+                  template: { confirmation: { content_path: "templates/confirmation.html" } },
+                },
+              },
+            },
+            pooler: { enabled: true },
+            rest: { enabled: false },
+            realtime: { enabled: false },
+            storage: { enabled: false },
+            functions: {
+              enabled: true,
+              settings: {
+                edge_runtime: { secrets: { FACTORY_SECRET: Redacted.make("factory-secret") } },
+              },
+            },
+            studio: { enabled: false },
+            mail: { enabled: false },
+            analytics: {
+              enabled: true,
+              settings: { backend: "bigquery", gcp_jwt_path: "gcp.json" },
+            },
+          },
+          listeners: {
+            database: { enabled: false },
+            studio: { enabled: false },
+            mailUi: { enabled: false },
+            smtp: { enabled: false },
+            pop3: { enabled: false },
+            functionsInspector: { enabled: false },
+          },
+        },
+      }).pipe(Effect.provide(NodeServices.layer));
+      const authServer = createServer((_request, response) => {
+        response.statusCode = 200;
+        response.setHeader("Connection", "close");
+        response.end("ok");
+      });
+      yield* listenForNativeReadiness(authServer);
+      const authAddress = authServer.address();
+      if (typeof authAddress !== "object" || authAddress === null)
+        return yield* Effect.die("Auth readiness server did not expose an address");
+      const functionsServer = createServer((_request, response) => {
+        response.statusCode = 200;
+        response.setHeader("Connection", "close");
+        response.end("ok");
+      });
+      yield* listenForNativeReadiness(functionsServer);
+      const functionsAddress = functionsServer.address();
+      if (typeof functionsAddress !== "object" || functionsAddress === null)
+        return yield* Effect.die("Functions readiness server did not expose an address");
+      const analyticsServer = createServer((_request, response) => {
+        response.statusCode = 200;
+        response.setHeader("Connection", "close");
+        response.end("ok");
+      });
+      yield* listenForNativeReadiness(analyticsServer);
+      const analyticsAddress = analyticsServer.address();
+      if (typeof analyticsAddress !== "object" || analyticsAddress === null)
+        return yield* Effect.die("Analytics readiness server did not expose an address");
+      const poolerServer = createServer((_request, response) => {
+        response.statusCode = 204;
+        response.end();
+      });
+      yield* listenForNativeReadiness(poolerServer);
+      const poolerAddress = poolerServer.address();
+      if (typeof poolerAddress !== "object" || poolerAddress === null)
+        return yield* Effect.die("Pooler readiness server did not expose an address");
+      const current = {
+        value: {
+          ...stateFor(
+            {
+              "secret:database.internal.password": { policy: "managed", value: "db-secret" },
+              "secret:auth.settings.jwt_secret": { policy: "managed", value: "jwt-secret" },
+              "secret:auth.settings.publishable_key": {
+                policy: "managed",
+                value: "sb_publishable_test",
+              },
+              "secret:auth.settings.secret_key": {
+                policy: "managed",
+                value: "sb_secret_test",
+              },
+              "secret:functions.settings.edge_runtime.secrets.FACTORY_SECRET": {
+                policy: "managed",
+                value: "factory-secret",
+              },
+            },
+            { kind: "container", engine: "docker" },
+          ),
+          identity: {
+            ...stateFor({}).identity,
+            projectRoot: root,
+          },
+          desiredLifecycle: "running" as const,
+          definition: compiled.definition,
+          ports: [{ field: "api" as const, port: 40_000, intent: "exact" as const }],
+          privatePorts: [
+            {
+              workloadId: "auth:auth",
+              binding: "primary",
+              port: authAddress.port,
+            },
+            {
+              workloadId: "pooler:pooler",
+              binding: "primary",
+              port: poolerAddress.port + 1,
+            },
+            {
+              workloadId: "pooler:pooler",
+              binding: "admin",
+              port: poolerAddress.port,
+            },
+            {
+              workloadId: "functions:edge-runtime",
+              binding: "primary",
+              port: functionsAddress.port,
+            },
+            {
+              workloadId: "functions:edge-runtime",
+              binding: "inspector",
+              port: functionsAddress.port + 1,
+            },
+            {
+              workloadId: "analytics:analytics",
+              binding: "primary",
+              port: analyticsAddress.port,
+            },
+          ],
+        },
+      } satisfies { value: PersistedStackState };
+      const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
+      const createdSpecs: ContainerContainerSpec[] = [];
+      const copiedFiles: Array<Readonly<{ source: string; destination: string }>> = [];
+      const engine = ownerInputContainerEngine(createdSpecs, copiedFiles);
+      const runtime = yield* makeProductionRuntime({
+        stateRoot: root,
+        stackId,
+        ownerSessionId: "owner",
+        stateStore: stateStoreFor(current),
+        context,
+        ingress,
+        containerEngine: engine,
+        artifactPreparer: {
+          prepare: (_runtime, workload) =>
+            Effect.succeed({
+              workloadId: workload.id,
+              capability: workload.capability,
+              version: "test",
+              outcome: "cached" as const,
+              image: workload.selected.kind === "container" ? workload.selected.image : undefined,
+            }),
+        },
+        logStore: memoryLogStore([]),
+        bootstrapDatabase: () => Effect.void,
+      });
+      return { fs, runtime, createdSpecs, copiedFiles, compiled };
+    }).pipe(Effect.provide(NodeServices.layer));
+
+  it.live("writes Auth owner material and confirmation template settings", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-production-inputs-" });
-        const template = path.join(root, "templates", "confirmation.html");
-        yield* fs.makeDirectory(path.dirname(template), { recursive: true });
-        yield* fs.writeFileString(template, "confirmation");
-        const gcpCredentials = path.join(root, "gcp.json");
-        yield* fs.writeFileString(gcpCredentials, "{}");
-        const compiled = yield* compileStack({
-          projectRoot: root,
-          runtime: { kind: "container", engine: "docker" },
-          config: {
-            capabilities: {
-              auth: {
-                settings: {
-                  email: {
-                    template: { confirmation: { content_path: "templates/confirmation.html" } },
-                  },
-                },
-              },
-              pooler: { enabled: true },
-              rest: { enabled: false },
-              realtime: { enabled: false },
-              storage: { enabled: false },
-              functions: {
-                enabled: true,
-                settings: {
-                  edge_runtime: { secrets: { FACTORY_SECRET: Redacted.make("factory-secret") } },
-                },
-              },
-              studio: { enabled: false },
-              mail: { enabled: false },
-              analytics: {
-                enabled: true,
-                settings: { backend: "bigquery", gcp_jwt_path: "gcp.json" },
-              },
-            },
-            listeners: {
-              database: { enabled: false },
-              studio: { enabled: false },
-              mailUi: { enabled: false },
-              smtp: { enabled: false },
-              pop3: { enabled: false },
-              functionsInspector: { enabled: false },
-            },
-          },
-        }).pipe(Effect.provide(NodeServices.layer));
-        const authServer = createServer((_request, response) => {
-          response.statusCode = 200;
-          response.setHeader("Connection", "close");
-          response.end("ok");
-        });
-        yield* listenForNativeReadiness(authServer);
-        const authAddress = authServer.address();
-        if (typeof authAddress !== "object" || authAddress === null)
-          return yield* Effect.die("Auth readiness server did not expose an address");
-        const functionsServer = createServer((_request, response) => {
-          response.statusCode = 200;
-          response.setHeader("Connection", "close");
-          response.end("ok");
-        });
-        yield* listenForNativeReadiness(functionsServer);
-        const functionsAddress = functionsServer.address();
-        if (typeof functionsAddress !== "object" || functionsAddress === null)
-          return yield* Effect.die("Functions readiness server did not expose an address");
-        const analyticsServer = createServer((_request, response) => {
-          response.statusCode = 200;
-          response.setHeader("Connection", "close");
-          response.end("ok");
-        });
-        yield* listenForNativeReadiness(analyticsServer);
-        const analyticsAddress = analyticsServer.address();
-        if (typeof analyticsAddress !== "object" || analyticsAddress === null)
-          return yield* Effect.die("Analytics readiness server did not expose an address");
-        const poolerServer = createServer((_request, response) => {
-          response.statusCode = 204;
-          response.end();
-        });
-        yield* listenForNativeReadiness(poolerServer);
-        const poolerAddress = poolerServer.address();
-        if (typeof poolerAddress !== "object" || poolerAddress === null)
-          return yield* Effect.die("Pooler readiness server did not expose an address");
-        const current = {
-          value: {
-            ...stateFor(
-              {
-                "secret:database.internal.password": { policy: "managed", value: "db-secret" },
-                "secret:auth.settings.jwt_secret": { policy: "managed", value: "jwt-secret" },
-                "secret:auth.settings.publishable_key": {
-                  policy: "managed",
-                  value: "sb_publishable_test",
-                },
-                "secret:auth.settings.secret_key": {
-                  policy: "managed",
-                  value: "sb_secret_test",
-                },
-                "secret:functions.settings.edge_runtime.secrets.FACTORY_SECRET": {
-                  policy: "managed",
-                  value: "factory-secret",
-                },
-              },
-              { kind: "container", engine: "docker" },
-            ),
-            identity: {
-              ...stateFor({}).identity,
-              projectRoot: root,
-              checkoutRoot: root,
-              workspaceId: root,
-              checkoutId: root,
-            },
-            desiredLifecycle: "running" as const,
-            definition: compiled.definition,
-            ports: [{ field: "api" as const, port: 40_000, intent: "exact" as const }],
-            privatePorts: [
-              {
-                workloadId: "auth:auth",
-                binding: "primary",
-                port: authAddress.port,
-              },
-              {
-                workloadId: "pooler:pooler",
-                binding: "primary",
-                port: poolerAddress.port + 1,
-              },
-              {
-                workloadId: "pooler:pooler",
-                binding: "admin",
-                port: poolerAddress.port,
-              },
-              {
-                workloadId: "functions:edge-runtime",
-                binding: "primary",
-                port: functionsAddress.port,
-              },
-              {
-                workloadId: "functions:edge-runtime",
-                binding: "inspector",
-                port: functionsAddress.port + 1,
-              },
-              {
-                workloadId: "analytics:analytics",
-                binding: "primary",
-                port: analyticsAddress.port,
-              },
-            ],
-          },
-        } satisfies { value: PersistedStackState };
-        const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
-        const createdSpecs: ContainerContainerSpec[] = [];
-        const copiedFiles: Array<Readonly<{ source: string; destination: string }>> = [];
-        const engine = ownerInputContainerEngine(createdSpecs, copiedFiles);
-        const runtime = yield* makeProductionRuntime({
-          stateRoot: root,
-          stackId,
-          ownerSessionId: "owner",
-          stateStore: stateStoreFor(current),
-          context,
-          ingress,
-          containerEngine: engine,
-          artifactPreparer: {
-            prepare: (_runtime, workload) =>
-              Effect.succeed({
-                workloadId: workload.id,
-                capability: workload.capability,
-                version: "test",
-                outcome: "cached" as const,
-                image: workload.selected.kind === "container" ? workload.selected.image : undefined,
-              }),
-          },
-          logStore: memoryLogStore([]),
-          bootstrapDatabase: () => Effect.void,
-        });
+        const { fs, runtime, createdSpecs, compiled } = yield* makeOwnerMaterialFixture();
         const auth = compiled.executionPlan.workloads.find(
           (workload) => workload.id === "auth:auth",
         );
-        const pooler = compiled.executionPlan.workloads.find(
-          (workload) => workload.id === "pooler:pooler",
-        );
-        if (auth === undefined || pooler === undefined)
-          return yield* Effect.die("Expected Auth and Pooler workloads");
-        yield* runtime.driver.start(
-          {
-            stackId,
-            workloadId: auth.id,
-          },
-          auth,
-        );
+        if (auth === undefined) return yield* Effect.die("Expected Auth workload");
+
+        yield* runtime.driver.start({ stackId, workloadId: auth.id }, auth);
         const authSpec = createdSpecs.find((spec) => spec.labels.workloadId === auth.id);
-        if (authSpec === undefined || authSpec.envFile === undefined)
+        if (authSpec?.envFile === undefined)
           return yield* Effect.die("Auth container was not captured");
-        const authEnv = yield* fs.readFileString(authSpec.envFile);
-        expect(authEnv).toContain("GOTRUE_JWT_SECRET=jwt-secret");
-        expect(authEnv).toContain(
+        const authEnvironment = yield* fs.readFileString(authSpec.envFile);
+
+        expect(authEnvironment).toContain("GOTRUE_JWT_SECRET=jwt-secret");
+        expect(authEnvironment).toContain(
           "GOTRUE_MAILER_TEMPLATES_CONFIRMATION=http://host.docker.internal:40000/email/confirmation.html",
         );
+      }),
+    ),
+  );
+
+  it.live("writes Functions owner material and bootstrap source", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { fs, runtime, createdSpecs, copiedFiles, compiled } =
+          yield* makeOwnerMaterialFixture();
         const functions = compiled.executionPlan.workloads.find(
           (workload) => workload.id === "functions:edge-runtime",
         );
-        const analytics = compiled.executionPlan.workloads.find(
-          (workload) => workload.id === "analytics:analytics",
-        );
-        if (functions === undefined || analytics === undefined)
-          return yield* Effect.die("Expected Functions and Analytics workloads");
-        yield* runtime.driver.start(
-          {
-            stackId,
-            workloadId: functions.id,
-          },
-          functions,
-        );
+        if (functions === undefined) return yield* Effect.die("Expected Functions workload");
+
+        yield* runtime.driver.start({ stackId, workloadId: functions.id }, functions);
         const functionsSpec = createdSpecs.find((spec) => spec.labels.workloadId === functions.id);
         if (functionsSpec?.envFile === undefined)
           return yield* Effect.die("Functions container was not captured");
         const firstBootstrap = copiedFiles.at(-1);
         if (firstBootstrap === undefined)
           return yield* Effect.die("Functions bootstrap was not captured");
-        const firstBootstrapPath = firstBootstrap.source;
-        expect(yield* fs.exists(firstBootstrapPath)).toBe(true);
-        expect(yield* fs.readFileString(functionsSpec.envFile)).toContain(
-          "FACTORY_SECRET=factory-secret",
+        const functionsEnvironment = yield* fs.readFileString(functionsSpec.envFile);
+
+        expect(functionsEnvironment).toContain("FACTORY_SECRET=factory-secret");
+        expect(yield* fs.exists(firstBootstrap.source)).toBe(true);
+      }),
+    ),
+  );
+
+  it.live("mounts the Analytics credentials file for the owner", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { runtime, createdSpecs, compiled } = yield* makeOwnerMaterialFixture();
+        const analytics = compiled.executionPlan.workloads.find(
+          (workload) => workload.id === "analytics:analytics",
         );
-        yield* runtime.driver.start(
-          {
-            stackId,
-            workloadId: analytics.id,
-          },
-          analytics,
-        );
+        if (analytics === undefined) return yield* Effect.die("Expected Analytics workload");
+
+        yield* runtime.driver.start({ stackId, workloadId: analytics.id }, analytics);
         const analyticsSpec = createdSpecs.find((spec) => spec.labels.workloadId === analytics.id);
+
         expect(analyticsSpec?.mounts).toContainEqual({
           source: expect.stringContaining("gcp.json"),
           target: "/opt/app/rel/logflare/bin/gcloud.json",
           readOnly: true,
         });
-        yield* runtime.driver.start(
-          {
-            stackId,
-            workloadId: pooler.id,
-          },
-          pooler,
+      }),
+    ),
+  );
+
+  it.live("starts Pooler with its owner startup entrypoints", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { runtime, createdSpecs, compiled } = yield* makeOwnerMaterialFixture();
+        const pooler = compiled.executionPlan.workloads.find(
+          (workload) => workload.id === "pooler:pooler",
         );
+        if (pooler === undefined) return yield* Effect.die("Expected Pooler workload");
+
+        yield* runtime.driver.start({ stackId, workloadId: pooler.id }, pooler);
         const poolerSpec = createdSpecs.find(
           (spec) => spec.labels.workloadId === pooler.id && spec.labels.startup !== true,
         );
         const poolerStartupSpecs = createdSpecs.filter(
           (spec) => spec.labels.workloadId === pooler.id && spec.labels.startup === true,
         );
+
         expect(poolerSpec?.mounts).toEqual([]);
         expect(poolerStartupSpecs.map((spec) => spec.entrypoint)).toEqual([
           "/app/bin/prepare",
           "/app/bin/provision-tenant",
         ]);
-        yield* runtime.driver.stop({
-          stackId,
-          workloadId: pooler.id,
-        });
-        yield* runtime.driver.start(
-          {
-            stackId,
-            workloadId: pooler.id,
-          },
-          pooler,
+      }),
+    ),
+  );
+
+  it.live("removes and recreates the Functions bootstrap across container cleanup", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { fs, runtime, copiedFiles, compiled } = yield* makeOwnerMaterialFixture();
+        const functions = compiled.executionPlan.workloads.find(
+          (workload) => workload.id === "functions:edge-runtime",
         );
+        if (functions === undefined) return yield* Effect.die("Expected Functions workload");
+
+        yield* runtime.driver.start({ stackId, workloadId: functions.id }, functions);
+        const firstBootstrap = copiedFiles.at(-1);
+        if (firstBootstrap === undefined)
+          return yield* Effect.die("Functions bootstrap was not captured");
+        expect(yield* fs.exists(firstBootstrap.source)).toBe(true);
+
         yield* runtime.driver.cleanup({ stackId, destroy: false });
-        expect(yield* fs.exists(firstBootstrapPath)).toBe(false);
-        yield* runtime.driver.start(
-          {
-            stackId,
-            workloadId: functions.id,
-          },
-          functions,
-        );
+        expect(yield* fs.exists(firstBootstrap.source)).toBe(false);
+
+        yield* runtime.driver.start({ stackId, workloadId: functions.id }, functions);
         const restartedBootstrap = copiedFiles.at(-1);
         if (restartedBootstrap === undefined || restartedBootstrap === firstBootstrap)
           return yield* Effect.die("Restarted Functions bootstrap was not captured");
         expect(yield* fs.exists(restartedBootstrap.source)).toBe(true);
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }),
     ),
   );
 
@@ -2645,9 +2795,6 @@ describe("production runtime", () => {
             identity: {
               ...stateFor({}).identity,
               projectRoot: root,
-              checkoutRoot: root,
-              workspaceId: root,
-              checkoutId: root,
             },
             desiredLifecycle: "running" as const,
             definition: compiled.definition,

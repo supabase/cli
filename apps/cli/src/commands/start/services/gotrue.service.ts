@@ -1,47 +1,26 @@
 /**
  * GoTrue/Auth env + container spec builder, gated on `config.auth.enabled`
- * and `!isContainerExcluded(config.auth.image, excluded)` — see
- * `service-catalog.ts`'s `gotrue` entry (`excludeKey: "gotrue"`, gated
- * on `auth.enabled`). Gating and image resolution/pre-pull are the caller's
- * job (a future `start.handler.ts`); this module only assembles the
- * env/container spec once the caller has already decided to start it.
+ * and `!isContainerExcluded(config.auth.image, excluded)`. Gating and image
+ * resolution/pre-pull are the caller's job; this module only assembles the
+ * env/container spec once the caller has decided to start it.
  *
- * {@link buildGotrueEnv} deliberately reproduces the FULL env surface
- * GoTrue's container actually receives, including every conditional env var
- * on top of the base set: JWT signing keys, SMTP/Mailpit fallback, mailer
- * template/notification URLs, the fixed-priority SMS provider switch,
- * CAPTCHA, the six auth hooks, MFA phone extras, passkey/WebAuthn, external
- * OAuth providers, Web3, OAuth server. See `gotrue.service.unit.test.ts` for
- * coverage.
+ * {@link buildGotrueEnv} reproduces the full env surface GoTrue's container
+ * receives, including every conditional var: JWT signing keys, SMTP/Mailpit
+ * fallback, mailer URLs, the fixed-priority SMS provider switch, CAPTCHA,
+ * auth hooks, MFA phone extras, passkey/WebAuthn, external OAuth providers,
+ * Web3, OAuth server. See `gotrue.service.unit.test.ts` for coverage.
  *
- * `@supabase/config` schema gaps this module works around (all pre-existing,
- * not introduced here — see each input field's own doc comment):
- *   - `auth.external_url` has no schema field at all, so the caller reads it
- *     off the raw TOML document (same pattern as the gaps below) and passes
- *     the resolved value in as {@link BuildGotrueEnvInput.authExternalUrl}
- *     — when set, it wins over the `apiUrl`-derived fallback for
- *     `API_EXTERNAL_URL`/`GOTRUE_JWT_ISSUER`'s default/the mailer verify URL/
- *     OAuth redirect-URI fallbacks. `config push`'s auth update body has no
- *     such gap to share: it has no `external_url`/`jwt_issuer` field at all,
- *     so there's nothing for that command to derive or resolve.
+ * `@supabase/config` schema gaps this module's inputs work around (see each
+ * field's own doc comment for detail):
+ *   - `auth.external_url` has no schema field; the caller reads it off the
+ *     raw TOML document and passes it as {@link BuildGotrueEnvInput.authExternalUrl}.
  *   - `auth.captcha`/`auth.passkey`/`auth.webauthn`/`auth.email.smtp`'s
- *     presence-and-default quirks (an explicitly-omitted `enabled` is
- *     treated differently depending on whether the surrounding TOML table is
- *     present at all) can't be recovered from the decoded `CliConfig`
- *     alone — the caller resolves these the same way
- *     `local-config-values.ts` already does (reading the raw TOML
- *     document) and passes the final, presence-resolved values in.
- *   - `auth.external` decodes as a FIXED struct of ~19 known providers, each
- *     always present with `enabled: false` when unconfigured — but the real
- *     provider set is whatever a user's `config.toml` actually mentions, and
- *     `appendGotrueExternalProviderEnv` iterates that real map
- *     unconditionally (emitting `_ENABLED=false` etc. for a
- *     configured-but-disabled provider, never for an unconfigured one).
- *     {@link BuildGotrueEnvInput.externalProviders} must therefore
- *     already be presence-filtered by the caller (only the providers whose
- *     `[auth.external.<name>]` section actually exists in the TOML
- *     document), the same way `local-config-values.ts`'s
- *     `validateAuthExternalProviders` already filters for its own purposes.
+ *     presence-vs-default quirks can't be recovered from the decoded
+ *     `CliConfig` alone, so the caller resolves them from the raw TOML
+ *     document, the same way `local-config-values.ts` does.
+ *   - `auth.external` always decodes all ~19 known providers with
+ *     `enabled: false`, so {@link BuildGotrueEnvInput.externalProviders}
+ *     must already be filtered to only the providers present in the TOML.
  */
 
 import type { CliConfig } from "@supabase/config";
@@ -76,17 +55,10 @@ const GOTRUE_DEFAULT_INBUCKET_SENDER_NAME = "Admin";
 const GOTRUE_DB_ROLE = "supabase_auth_admin";
 
 /**
- * RFC 7517 JWK fields, in the exact field declaration order — needed so
- * {@link buildGotrueEnv}'s `JSON.stringify` reproduces a stable,
- * canonical serialization byte-for-byte (`JSON.stringify` serializes object
- * keys in insertion order).
- * Structurally near-identical to `command-internal/go-jwt.ts`'s `Jwk`
- * (the only difference is `key_ops`'s mutable `string[]` there, needed for
- * assignability into Node's `createPrivateKey`/`JsonWebKey` input — see that
- * type's own doc comment) and a superset of `shared/auth/jwks.ts`'s `JwkLike`
- * (which omits the private-key fields `d`/`p`/`q`/`dp`/`dq`/`qi`) — kept local
- * rather than reusing either shared type, since neither of their existing
- * callers needs the union of all seventeen fields.
+ * RFC 7517 JWK fields in fixed declaration order, so {@link buildGotrueEnv}'s
+ * `JSON.stringify` produces a stable, canonical serialization. Kept separate
+ * from `go-jwt.ts`'s `Jwk` and `shared/auth/jwks.ts`'s `JwkLike` since
+ * neither covers this full field set.
  */
 export interface GotrueSigningKey {
   readonly kty: string;
@@ -109,11 +81,9 @@ export interface GotrueSigningKey {
 }
 
 /**
- * The default single signing key — used whenever `auth.signing_keys_path`
- * is unset. Hoisted to `go-jwt.ts` (as `DEFAULT_SIGNING_KEY`)
- * so `resolveLocalJwks` publishes the exact same key's public form in
- * the JWKS this default signs with — the two must never disagree on which
- * key is "the" default.
+ * The default single signing key, used whenever `auth.signing_keys_path` is
+ * unset. Hoisted to `go-jwt.ts` so `resolveLocalJwks` publishes this same
+ * key's public form in the JWKS it signs with.
  */
 const GOTRUE_DEFAULT_SIGNING_KEY: GotrueSigningKey = DEFAULT_SIGNING_KEY;
 
@@ -208,9 +178,7 @@ export interface BuildGotrueEnvInput {
 
   /**
    * `config.auth.email.smtp`, already presence-and-default resolved by the
-   * caller (`@supabase/config` can't reproduce the "TOML table present,
-   * `enabled` key absent → true" default on its own, see this module's
-   * header). `undefined` means the SMTP section is absent or disabled — the
+   * caller. `undefined` means the SMTP section is absent or disabled — the
    * mailpit fallback below applies instead.
    */
   readonly smtp?: {
@@ -254,12 +222,9 @@ export interface BuildGotrueEnvInput {
   };
 
   /**
-   * `config.auth.captcha`, already presence-resolved AND env-override-resolved
-   * by the caller (`resolveAuthCaptcha` — `SUPABASE_AUTH_CAPTCHA_ENABLED`/
-   * `_PROVIDER`/`_SECRET`, `secret` decrypted like every other `Secret`-typed
-   * field). `@supabase/config`'s `withDecodingDefaultKey` fills in `{enabled:
-   * false}` even when `[auth.captcha]` is absent — see this module's header.
-   * `undefined` means the section itself is absent.
+   * `config.auth.captcha`, already presence-resolved and
+   * env-override-resolved by the caller (`resolveAuthCaptcha`). `undefined`
+   * means the section itself is absent.
    */
   readonly captcha?: {
     readonly enabled: boolean;
@@ -281,9 +246,8 @@ function trimTrailingSlashes(value: string): string {
 }
 
 /**
- * Two INDEPENDENT presence gates for passkey/WebAuthn env vars — config
- * validation requires `Auth.Webauthn` whenever `Auth.Passkey.Enabled`, but
- * this function doesn't assume that invariant.
+ * Passkey and WebAuthn env vars are gated independently, even though config
+ * validation requires `webauthn` whenever `passkey.enabled` is set.
  */
 function appendGotruePasskeyEnv(
   env: Record<string, string>,
@@ -489,11 +453,8 @@ export function buildGotrueEnv(input: BuildGotrueEnvInput): Record<string, strin
     }
   }
 
-  // Mailer template/notification URLs and subjects. `subject !== undefined`
-  // is the "explicit empty string" vs "absent" distinction: the caller
-  // (`resolveAuthEmail`) has already recovered it from the raw
-  // document, so `undefined` here means omit the env var entirely and `""`
-  // means an explicit blank subject (still emit it).
+  // `subject !== undefined` distinguishes an explicit empty string (still
+  // emitted) from an absent value (omitted) — already resolved by the caller.
   const addMailerEnvVars = (id: string, contentPath: string, subject: string | undefined): void => {
     if (contentPath.length > 0) {
       env[`GOTRUE_MAILER_TEMPLATES_${id.toUpperCase()}`] =

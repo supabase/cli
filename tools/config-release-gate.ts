@@ -1,36 +1,28 @@
 /**
- * Gates an `@supabase/config` npm release on its compiled `.d.ts` surface —
- * diffs the freshly built `packages/config/dist/**\/*.d.ts` against the
- * previously published npm tarball's declarations, so a human approving
- * `npm publish` sees the surface diff before signing off (CLI-2233; the
- * release-time counterpart to the PR-time advisory compare in
- * `tools/config-api-compare.ts`).
+ * Gates an `@supabase/config` npm release on its compiled `.d.ts` surface — diffs the freshly
+ * built `packages/config/dist/**\/*.d.ts` against the previously published npm tarball's
+ * declarations, so a human approving `npm publish` sees the surface diff before signing off. The
+ * PR-time counterpart is the advisory compare in `tools/config-api-compare.ts`.
  *
  * Usage:
  *   bun tools/config-release-gate.ts --version <next version> [--registry <url>] [--tarball <path>] [--local-dist <dir>]
  *
- * `--version` is the version semantic-release computed for this release.
- * `--registry` defaults to `npm config get registry` (the same
- * probe-matches-publish-target alignment `apps/cli/scripts/publish.ts` uses,
- * so the local Verdaccio harness works here too), falling back to the public
- * npm registry. `--tarball` points at a local `.tgz` to use as the
- * "published" side instead of querying the registry — for local testing and
- * pipeline rehearsal. A registry-downloaded tarball is verified against the
- * registry's `dist.integrity` and refused if its URL points off-registry.
- * `--local-dist` overrides the "next release" side (default:
- * `packages/config/dist`) — the release workflow points it at the dist tree
- * extracted from the packed release tarball, so the approver's evidence is
- * generated from the exact artifact the publish job ships.
+ * `--version` is the version semantic-release computed for this release. `--registry` defaults to
+ * `npm config get registry` (so a local Verdaccio harness works here too), falling back to the
+ * public npm registry. `--tarball` points at a local `.tgz` to use as the "published" side instead
+ * of querying the registry; a registry-downloaded tarball is verified against its
+ * `dist.integrity` and refused if its URL points off-registry. `--local-dist` overrides the "next
+ * release" side (default: `packages/config/dist`); the release workflow points it at the dist tree
+ * extracted from the packed release tarball, so the evidence matches the exact artifact shipped.
  *
- * This tool never builds `packages/config/dist` itself — run the package
- * build first. When the package has never been published (npm view returns
- * E404), the full surface ships as-is and there is nothing to diff against.
+ * This tool never builds `packages/config/dist` itself — run the package build first. When the
+ * package has never been published (npm view returns E404), the full surface ships as-is.
  *
- * Deliberately never exits 1 on a surface diff: the gate IS the human
- * approval step reading this summary, not an automatic pass/fail check.
+ * Never exits 1 on a surface diff: the gate is the human approval step reading this summary, not
+ * an automatic pass/fail check.
  *
- * Exit codes: 0 the gate ran (including a first release with nothing
- * published yet), 2 tool failure.
+ * Exit codes: 0 the gate ran (including a first release with nothing published yet), 2 tool
+ * failure.
  */
 
 import { mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
@@ -79,9 +71,8 @@ function requireBinaries(names: readonly string[]): void {
 }
 
 /**
- * Same probe-matches-publish-target alignment as `apps/cli/scripts/publish.ts`:
- * the local Verdaccio harness (`pnpm local-registry`) rewrites npm's registry
- * config, and the gate must read the registry the publish would target.
+ * Reads the ambient npm registry so a local Verdaccio harness, which rewrites npm's registry
+ * config, is honored instead of assuming the public registry.
  */
 async function ambientNpmRegistry(): Promise<string> {
   const result = await runCommand(["npm", "config", "get", "registry"]);
@@ -194,13 +185,9 @@ type PublishedSide =
   | { readonly kind: "resolved"; readonly version: string; readonly distDir: string };
 
 /**
- * Resolves the "published" side of the diff: an explicit `--tarball` wins;
- * otherwise queries `<registry>` for the current `dist-tags.latest` and
- * downloads that tarball, verifying it against the registry's own
- * `dist.integrity` and refusing a tarball URL pointing off-registry. An
- * `E404` (or an existing package with no `latest` dist-tag) means there is
- * nothing published to compare against — reported as `"first-publish"`
- * rather than an error.
+ * Resolves the "published" side of the diff: an explicit `--tarball` wins; otherwise downloads
+ * `dist-tags.latest` from `<registry>`, verified against its `dist.integrity` and refused if its
+ * URL points off-registry. No published version (or no `latest` tag) resolves to `"first-publish"`.
  */
 async function resolvePublishedSide(
   registry: string,
@@ -275,14 +262,10 @@ function parseVersionParts(version: string): VersionParts | null {
 }
 
 /**
- * Numeric major/minor/patch comparison only — this train is stable-only, so
- * plain "x.y.z" is the expected shape on both sides. The published side comes
- * from outside this pipeline though (`dist-tags.latest`, or `--tarball`), so
- * an unparseable version degrades to `"unknown"` (warnings skipped, noted in
- * the summary) instead of failing the plan job. Ordering matters, not just
- * inequality: an equal or LOWER next version means tag/registry skew (a
- * hand-pushed or deleted `config-v*` tag), which deserves its own warning
- * rather than a spurious "major bump".
+ * Numeric major/minor/patch comparison; an unparseable version (the published side can come from
+ * outside this pipeline) degrades to `"unknown"` rather than failing the job. Ordering matters,
+ * not just inequality: an equal or lower next version signals tag/registry skew (a hand-pushed or
+ * deleted `config-v*` tag), which gets its own warning instead of a spurious "major bump".
  */
 function computeBumpClass(publishedVersion: string, nextVersion: string): BumpClass {
   const published = parseVersionParts(publishedVersion);
@@ -301,10 +284,9 @@ function hasRemovedDeclarationLines(entries: readonly FileEntry[]): boolean {
 }
 
 /**
- * Only lines inside hunks (after the first `@@`) count — a prefix test alone
- * would both miss a removed content line that itself starts with `--` (its
- * hunk rendering starts with `---`) and false-positive on the old-file
- * header.
+ * Only lines inside hunks (after the first `@@`) count — a bare prefix test would miss a removed
+ * content line that itself starts with `--` (its hunk rendering is `---`) and false-positive on
+ * the old-file header.
  */
 function unifiedDiffRemovesLines(diff: string): boolean {
   let inHunk = false;
@@ -485,13 +467,9 @@ async function main(): Promise<number> {
       return 0;
     }
 
-    // A published tarball without declarations means "no baseline", not a
-    // tool failure — the .gitignore/packlist trap that motivated
-    // packages/config/.npmignore (CLI-2234) is exactly how such a tarball
-    // could exist, and it must not block every subsequent release. Diff
-    // against an empty tree instead of skipping, so the approver still sees
-    // the next release's full surface (as additions) rather than approving
-    // sight unseen.
+    // A published tarball without declarations means "no baseline", not a tool failure — diff
+    // against an empty tree instead of skipping, so the approver still sees the next release's
+    // full surface (as additions) rather than approving sight unseen.
     let publishedDistDir = published.distDir;
     const extraWarnings: string[] = [];
     if ((await countDeclarationFiles(publishedDistDir)) === 0) {

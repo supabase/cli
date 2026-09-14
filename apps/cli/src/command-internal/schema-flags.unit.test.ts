@@ -7,7 +7,6 @@ describe("parseSchemaFlags (pflag StringSlice CSV parity)", () => {
   });
 
   it("keeps a quoted value with embedded comma as a single element", () => {
-    // pflag TestSSWithComma: `"tenant,one"` → one element "tenant,one"
     expect(parseSchemaFlags(['"tenant,one"'])).toEqual(["tenant,one"]);
   });
 
@@ -28,7 +27,6 @@ describe("parseSchemaFlags (pflag StringSlice CSV parity)", () => {
   });
 
   it("unescapes doubled double-quote inside quoted field", () => {
-    // Go csv: `"a""b"` → field is `a"b`
     expect(parseSchemaFlags(['"a""b"'])).toEqual(['a"b']);
   });
 
@@ -37,32 +35,25 @@ describe("parseSchemaFlags (pflag StringSlice CSV parity)", () => {
   });
 
   it("preserves whitespace (Go does not trim)", () => {
-    // Go csv passes raw field values; pflag does not trim
     expect(parseSchemaFlags([" public , private "])).toEqual([" public ", " private "]);
   });
 
-  // --- malformed inputs: must THROW ---
-
   it("throws on an unterminated quoted field", () => {
-    // `"tenant` — opening quote but no closing quote
     expect(() => parseSchemaFlags(['"tenant'])).toThrow(SchemaFlagParseError);
     expect(() => parseSchemaFlags(['"tenant'])).toThrow(/extraneous or missing " in quoted-field/);
   });
 
   it("throws on extra bytes after a closing quote", () => {
-    // `"a"b` — closing quote followed by a non-comma character
     expect(() => parseSchemaFlags(['"a"b'])).toThrow(SchemaFlagParseError);
     expect(() => parseSchemaFlags(['"a"b'])).toThrow(/extraneous or missing " in quoted-field/);
   });
 
   it("throws on a bare quote inside an unquoted field", () => {
-    // `a"b` — bare " in a field that did not start with a quote
     expect(() => parseSchemaFlags(['a"b'])).toThrow(SchemaFlagParseError);
     expect(() => parseSchemaFlags(['a"b'])).toThrow(/bare " in non-quoted-field/);
   });
 
   it("throws on the first malformed value in a multi-value list", () => {
-    // The valid "public" comes before the malformed one; the error is still thrown
     expect(() => parseSchemaFlags(["public", '"broken'])).toThrow(SchemaFlagParseError);
   });
 });
@@ -89,7 +80,6 @@ describe("schemaToCsvField (inverse — re-encode one value as a CSV field)", ()
   });
 
   it("round-trips through the parser for awkward values", () => {
-    // parse(encode(x)) === [x] for the cases a delegated child would otherwise split.
     for (const value of ["public", "tenant,one", 'a"b', " leading", "a,b,c", ""]) {
       expect(parseSchemaFlags([schemaToCsvField(value)])).toEqual(value === "" ? [] : [value]);
     }

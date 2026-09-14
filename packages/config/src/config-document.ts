@@ -5,7 +5,6 @@ import type { ConfigFormat } from "./config-format.ts";
 import { getDefaultCliConfig, setOwnProperty, subtractValue } from "./sparse.ts";
 import type { CliProjectEnvironment } from "./project.ts";
 
-/** Shared with `io.ts`'s `getSchemaRef`, which reads this key back off a raw document. */
 export const cliConfigSchemaKey = "$schema";
 
 export type CliConfigValueSource = "environment" | "local" | "remote";
@@ -28,45 +27,30 @@ export interface LoadedCliConfig {
   readonly schemaRef?: string;
   readonly ignoredPaths: ReadonlyArray<string>;
   /**
-   * The raw, post-`env()`-interpolation document the `config` was decoded from,
-   * with any matching `[remotes.*]` override already merged in (see
-   * {@link LoadCliConfigOptions.projectRef}). Lets callers inspect key
-   * presence — which the decoded `config` loses because the schema defaults
-   * optional sections — without re-reading the file. Present whenever the file
-   * parsed to an object.
+   * The raw, post-`env()`-interpolation document `config` was decoded from, with any matching
+   * `[remotes.*]` override merged in. Lets callers inspect key presence that the decoded
+   * `config` loses (the schema defaults optional sections). Present whenever the file parsed to
+   * an object.
    */
   readonly document?: Record<string, unknown>;
   /**
-   * The raw document as parsed from disk: pre-`env()`-interpolation, pre-
-   * `[remotes.*]`-merge, but post-`[inbucket]`→`[local_smtp]` normalization
-   * (see `normalizeDeprecatedSMTPSections`). Unlike {@link document}, whose
-   * `remotes` key has already been merged/stripped by `applyRemoteOverride`,
-   * `remotes` (when present) is still intact here. A caller deciding WHERE to
-   * write a value — e.g. matching a `[remotes.*]` block by its literal
-   * `project_id` via `remoteNameForProjectRef` (`./io.ts`) — must use this,
-   * never {@link document}: the loader itself matches `[remotes.*]` against
-   * the raw literal, before `env(...)` resolution (see `applyRemoteOverride`'s
-   * doc comment). Present whenever the file parsed to an object.
+   * The raw document as parsed from disk: pre-`env()`-interpolation, pre-`[remotes.*]`-merge
+   * (unlike {@link document}, whose `remotes` key has already been merged/stripped). Callers
+   * matching a `[remotes.*]` block by its literal `project_id` must use this, not `document`.
+   * Present whenever the file parsed to an object.
    */
   readonly rawDocument?: Record<string, unknown>;
   /**
-   * The exact file text {@link loadCliConfigFile} parsed `rawDocument`/`config`
-   * from — present whenever the file was read (both `.toml` and `.json`).
-   * Lets a caller that needs to edit the file (e.g. `config pull`'s surgical
-   * `applyConfigEdits`) use this as its write-baseline instead of re-reading
-   * the file a second time, so the plan it computed against and the bytes it
-   * edits can never diverge out from under it. `undefined` from
-   * `saveCliConfig`, which regenerates the file's content rather than parsing
-   * existing text.
+   * The exact file text `rawDocument`/`config` were parsed from, present whenever the file was
+   * read. Lets a caller that edits the file use this as its write-baseline instead of re-reading
+   * it, so the plan it computed against can't diverge from the bytes it edits. `undefined` from
+   * `saveCliConfig`, which regenerates content rather than parsing existing text.
    */
   readonly rawText?: string;
   /**
-   * The already-`env()`-interpolated `remotes` subtree — the same map
-   * `checkRemoteProjectIdFormat` (`./io.ts`) validates a remote's resolved
-   * `project_id` against. Lets a caller read a remote's EFFECTIVE
-   * `project_id` (e.g. to display it) without re-running interpolation
-   * itself. Present whenever a `remotes` table exists in the document,
-   * regardless of whether any block matched `projectRef`.
+   * The already-`env()`-interpolated `remotes` subtree, letting a caller read a remote's
+   * effective `project_id` without re-running interpolation itself. Present whenever a
+   * `remotes` table exists, regardless of whether any block matched `projectRef`.
    */
   readonly interpolatedRemotes?: Record<string, unknown>;
   /**
@@ -76,15 +60,10 @@ export interface LoadedCliConfig {
    */
   readonly appliedRemote?: string;
   /**
-   * The top-level `auth.external.{linkedin,slack}` sub-objects that were stripped from
-   * {@link document} before it was returned (provider id → the removed object), keyed by
-   * provider id. Empty when neither deprecated block was present. See
-   * `normalizeDeprecatedExternalProviders`'s doc comment for why a caller doing its own
-   * Go-parity scan over `document` (e.g. a decrypt-or-abort secret check) may need to fold
-   * this back in — Go's decode-time decrypt hook sees these blocks before its later
-   * validate-time deletion, so `document` alone under-reports what Go would have decrypted.
-   * Present (possibly `{}`) whenever {@link document} is; absent from `saveCliConfig`'s
-   * result, which has no document to strip from.
+   * The `auth.external.{linkedin,slack}` sub-objects stripped from {@link document} before it
+   * was returned, keyed by provider id (empty when neither was present). A caller scanning
+   * `document` on its own may need to fold this back in, since `document` alone under-reports
+   * what was originally there. Present whenever {@link document} is.
    */
   readonly removedDeprecatedExternalProviders?: Readonly<Record<string, unknown>>;
   /** The source that supplied each explicitly configured effective leaf value. */
@@ -102,41 +81,23 @@ export const cliConfigValueSourceAt = (
   )?.source;
 
 /**
- * When `projectRef` is set, the matching `[remotes.<name>]` block (the one
- * whose `project_id` equals it) is merged over the base config before decode,
- * mirroring Go's `config.Load` with `Config.ProjectId` set
- * (`apps/cli-go/pkg/config/config.go:503-562`). Omitting it loads the base
- * config verbatim (no merge), so existing callers are unaffected. Go's
- * duplicate-`project_id`/project-ref-format checks across every
- * `[remotes.*]` block (`config.go:594-602,996-1001`) run unconditionally on
- * every config load in Go, not only when a caller ends up selecting a
- * remote — but here they only run when {@link InternalLoadCliConfigOptions.goViperCompat}
- * is `true`, regardless of whether `projectRef` is set, so non-Go-parity
- * callers that never select a remote (and never opt into Go parity) aren't
- * broken by an unrelated duplicate/malformed `[remotes.*]` block.
+ * When `projectRef` is set, the matching `[remotes.<name>]` block is merged over the base
+ * config before decode; omitting it loads the base config verbatim. Duplicate-`project_id` and
+ * project-ref-format checks across every `[remotes.*]` block only run when
+ * {@link InternalLoadCliConfigOptions.goViperCompat} is `true`, so callers that never opt into
+ * that mode aren't broken by an unrelated malformed remote block.
  */
 export interface LoadCliConfigOptions {
   readonly projectRef?: string;
   /**
-   * Pre-resolved project environment used to interpolate `env()` references.
-   * When omitted, the environment is resolved internally from `.env`/`.env.local`
-   * layered over `process.env` (the default for most callers). Callers that need
-   * Go-accurate, environment-specific resolution (e.g. `functions serve`, which
-   * also reads `.env.<SUPABASE_ENV>` files) resolve it themselves and pass it in
-   * so loading does not re-read those files or depend on `process.env` mutation.
+   * Pre-resolved project environment used to interpolate `env()` references. When omitted,
+   * it's resolved internally from `.env`/`.env.local` layered over `process.env`. Callers
+   * needing environment-specific resolution can resolve it themselves and pass it in instead.
    */
   readonly cliProjectEnv?: CliProjectEnvironment;
   /** See {@link FindCliProjectPathsOptions.search}. */
   readonly search?: boolean;
-  /**
-   * Skip the `config.json`-over-`config.toml` preference below and only ever
-   * load `config.toml`. Go's `Config.Load`/`NewPathBuilder`
-   * (`apps/cli-go/pkg/config/utils.go:43-48`) has no concept of a JSON project
-   * config file — it always resolves `supabase/config.toml` and treats a
-   * missing file as defaults — so Go-parity callers (the legacy `status`/`stop`
-   * ports) must set this to avoid picking up a stray `config.json` that Go
-   * would never see.
-   */
+  /** Skip the `config.json`-over-`config.toml` preference and only ever load `config.toml`. */
   readonly tomlOnly?: boolean;
 }
 
@@ -146,22 +107,11 @@ export interface LoadCliConfigOptions {
  */
 export interface InternalLoadCliConfigOptions extends LoadCliConfigOptions {
   /**
-   * Opt into the Go/viper-parity decode+validation semantics this loader
-   * otherwise omits, so only the Go-parity CLI (and shared modules
-   * invoked exclusively by it) pays for them. Defaults to `false` = pre-PR-#5765
-   * behavior, which `packages/stack` and the functions manifest rely
-   * on. When `true`, mirrors Go's `config.Load` exactly:
-   *  - runs the unconditional duplicate-`project_id` and project-ref-format
-   *    checks across every `[remotes.*]` block (`config.go:594-602,996-1001`),
-   *    even when no `projectRef` is requested;
-   *  - warns on stderr for deprecated `auth.external.{linkedin,slack}` blocks
-   *    (`config.go:1418-1423`) — the block is stripped from the decoded config
-   *    either way, since the schema ignores excess properties;
-   *  - matches `env(...)` references case-agnostically (`^env\((.*)\)$`)
-   *    rather than the strict SCREAMING_SNAKE_CASE form;
-   *  - splits a comma-separated string into a `[]string`-typed field (Go's
-   *    `mapstructure.StringToSliceHookFunc(",")`, `config.go:775-784`), not
-   *    just an `env()`-substituted one.
+   * Opts into Go/viper-parity decode and validation semantics: duplicate-`project_id` and
+   * project-ref-format checks run across every `[remotes.*]` block even without a `projectRef`,
+   * deprecated `auth.external.{linkedin,slack}` blocks warn on stderr, `env(...)` matching is
+   * case-agnostic, and comma-separated strings coerce into `[]string`-typed fields regardless of
+   * origin. Defaults to `false`, which `packages/stack` and the functions manifest rely on.
    */
   readonly goViperCompat?: boolean;
 }
@@ -173,11 +123,6 @@ export interface SaveCliConfigOptions {
   readonly schemaRef?: string;
 }
 
-/**
- * Shared with `io.ts`, which uses it to inspect raw (pre-decode) config
- * documents while resolving `[remotes.*]` overrides and stripping deprecated
- * sections.
- */
 export function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -186,10 +131,7 @@ const encodeCliConfig = Schema.encodeSync(CliConfigSchema);
 
 let defaultEncodedCliConfig: ReturnType<typeof encodeCliConfig> | undefined;
 
-/**
- * Memoized like `getDefaultCliConfig` — only the save path needs the
- * encoded defaults, so importing the package pays for no schema decode.
- */
+/** Memoized lazily, like `getDefaultCliConfig`, so importing the package doesn't pay for the encode. */
 function getDefaultEncodedCliConfig(): ReturnType<typeof encodeCliConfig> {
   defaultEncodedCliConfig ??= encodeCliConfig(getDefaultCliConfig());
   return defaultEncodedCliConfig;
@@ -248,7 +190,6 @@ export function encodeCliConfigToToml(config: CliConfig): string {
   return encodeCliConfigToTomlDocument(config, undefined);
 }
 
-/** Shared with `io.ts`'s `saveCliConfig`, which needs the `schemaRef`-carrying variant. */
 export function encodeCliConfigToJsonDocument(
   config: CliConfig,
   schemaRef: string | undefined,
@@ -256,7 +197,6 @@ export function encodeCliConfigToJsonDocument(
   return `${JSON.stringify(toConfigDocument(config, schemaRef), null, 2)}\n`;
 }
 
-/** Shared with `io.ts`'s `saveCliConfig`, which needs the `schemaRef`-carrying variant. */
 export function encodeCliConfigToTomlDocument(
   config: CliConfig,
   schemaRef: string | undefined,

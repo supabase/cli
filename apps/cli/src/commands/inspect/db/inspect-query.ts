@@ -16,11 +16,9 @@ import { resolveDbTargetFlags } from "../../../command-internal/db-target-flags.
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 
 /**
- * The connection selector flags every `inspect db` subcommand inherits from the
- * `inspect` persistent flag set:
- * `--db-url` / `--linked` / `--local`, mutually exclusive. `--linked` is the
- * default; the runner derives that default from the absence of the others
- * while keeping the exclusivity check keyed off the raw (explicitly-set) flags.
+ * The connection selector flags every `inspect db` subcommand inherits: `--db-url` / `--linked`
+ * / `--local`, mutually exclusive, with `--linked` as the default. Exclusivity is keyed off the
+ * raw explicitly-set flags, not the resolved boolean values.
  */
 export interface InspectConnectionFlags {
   readonly dbUrl: Option.Option<string>;
@@ -31,12 +29,9 @@ export interface InspectConnectionFlags {
 }
 
 /**
- * A single `inspect db` subcommand: the SQL it runs, the query parameters, the
- * markdown table headers, and how each result row projects to clean table cells.
- *
- * `project` reproduces the per-column formatting (via the cell formatters below)
- * minus backtick code-spans and `\|` pipe escaping, since `renderGlamourTable`
- * takes already-clean cell strings.
+ * A single `inspect db` subcommand: the SQL it runs, the query parameters, table headers, and
+ * how each result row projects to clean table cells (already stripped of backtick code-spans
+ * and pipe escaping, since `renderGlamourTable` takes already-clean strings).
  */
 export interface InspectQuerySpec {
   /** The subcommand's own name, e.g. `"db-stats"`. */
@@ -52,12 +47,9 @@ export interface InspectQuerySpec {
 }
 
 /**
- * Raised when more than one of `--db-url` / `--linked` / `--local` is explicitly
- * set. The message matches the established mutually-exclusive-flags text.
- *
- * Not reusing `test db`'s identical error type: hoisting it would drag that
- * command's test surface into scope for a single shared string. Revisit if a
- * third consumer appears.
+ * Raised when more than one of `--db-url` / `--linked` / `--local` is explicitly set, with the
+ * established mutually-exclusive-flags message. Not reused from `test db`'s identical error
+ * type: hoisting would drag that command's test surface into scope for one shared string.
  */
 export class InspectMutuallyExclusiveFlagsError extends Data.TaggedError(
   "InspectMutuallyExclusiveFlagsError",
@@ -67,22 +59,10 @@ export class InspectMutuallyExclusiveFlagsError extends Data.TaggedError(
   }
 }
 
-// ---------------------------------------------------------------------------
-// Cell formatters — pure, exported, unit-tested. They branch on `typeof`
-// rather than casting, so an unexpected driver type degrades to a string
-// instead of throwing.
-// ---------------------------------------------------------------------------
-
 /**
- * The backtick-wrapped `` `…` `` text cell — the shape of almost every `inspect
- * db` string column.
- *
- * Glamour's `AsciiStyle` strips the backticks from a non-empty inline code span,
- * so a populated cell renders as its bare value. But an EMPTY code span (`` `` ``)
- * is not a valid token, so glamour passes the two backtick characters through
- * literally. We therefore render an empty/null value as the two literal backticks
- * (so the cell contributes width 2, matching a populated one). The
- * few UNWRAPPED columns (no code span) use `inspectPlainText`.
+ * The backtick-wrapped `` `…` `` text cell. An empty code span isn't a valid glamour token, so
+ * empty/null values render as the two literal backticks too, keeping the same column width as
+ * a populated cell. Unwrapped columns use `inspectPlainText` instead.
  */
 export function inspectText(value: unknown): string {
   const text = value === null || value === undefined ? "" : String(value);
@@ -90,10 +70,9 @@ export function inspectText(value: unknown): string {
 }
 
 /**
- * The UNWRAPPED text cell (no backtick code span): an empty/null value
- * renders as the empty string. Only the `vacuum_stats` timestamp columns
- * (`Last_vacuum`/`Last_autovacuum`/`Last_analyze`/`Last_autoanalyze`) are written
- * bare; every other string column is wrapped (use `inspectText`).
+ * The unwrapped text cell (no backtick code span): an empty/null value renders as the empty
+ * string. Only the `vacuum_stats` timestamp columns are written bare; every other string
+ * column is wrapped (use `inspectText`).
  */
 export function inspectPlainText(value: unknown): string {
   if (value === null || value === undefined) return "";
@@ -131,28 +110,21 @@ export function inspectFloat1(value: unknown): string {
 }
 
 /**
- * A statement/query cell (locks, blocking, outliers, calls): collapse every run
- * of whitespace to a single space. Pipes are left as-is here since
- * `renderGlamourTable` takes literal cells.
- *
- * Note: `long-running-queries.query` is NOT normalized, so its spec uses
- * `inspectText`, not this.
+ * A statement/query cell (locks, blocking, outliers, calls): collapses every whitespace run to
+ * a single space, leaving pipes as-is since `renderGlamourTable` takes literal cells.
+ * `long-running-queries.query` isn't normalized this way and uses `inspectText` instead.
  */
 export function inspectStmt(value: unknown): string {
   if (value === null || value === undefined) return "";
-  // Collapse runs of `[\t\n\f\r ]` and replace each vertical tab individually
-  // with a single space — the exact character set this must match, since
-  // JS's `\s` differs (it includes `\v` AND Unicode spaces like nbsp, U+2028)
-  // and a naive `/\s+/g` would over-collapse runs this must leave alone.
+  // Matches `[\t\n\f\r ]+|\v` exactly, not `\s+`: JS's `\s` also matches nbsp/U+2028, which
+  // must not collapse here.
   return String(value).replace(/[\t\n\f\r ]+|\v/g, " ");
 }
 
 /**
- * A whitespace-collapsed statement cell that is ALSO wrapped in backticks
- * (used for `calls`/`outliers`'s `query` column and `blocking`'s
- * `blocking_statement` — unlike `locks` and `blocking`'s `blocked_statement`,
- * which stay bare). Same empty-code-span rule as `inspectText`: an
- * empty value surfaces as the two literal backticks.
+ * A whitespace-collapsed statement cell also wrapped in backticks (used for `calls`/`outliers`'s
+ * `query` column and `blocking`'s `blocking_statement`). Same empty-code-span rule as
+ * `inspectText`: an empty value surfaces as the two literal backticks.
  */
 export function inspectBacktickStmt(value: unknown): string {
   const stmt = inspectStmt(value);
@@ -160,12 +132,9 @@ export function inspectBacktickStmt(value: unknown): string {
 }
 
 /**
- * Runs an `inspect db` subcommand's query and renders the result.
- *
- * The shared shape: resolve the connection, connect (which prints "Connecting
- * to <local|remote> database..." to stderr), run the query, then render the
- * table. In `json`/`stream-json` mode the raw driver rows are emitted as a
- * structured result instead.
+ * Runs an `inspect db` subcommand's query and renders the result: resolve the connection,
+ * connect (printing "Connecting to <local|remote> database..." to stderr), run the query, then
+ * render the table — or, in `json`/`stream-json` mode, emit the raw driver rows instead.
  */
 export const runInspectQuery = Effect.fnUntraced(function* (
   spec: InspectQuerySpec,
@@ -177,10 +146,8 @@ export const runInspectQuery = Effect.fnUntraced(function* (
   const dbConn = yield* DbConnection;
   const cliArgs = yield* CliArgs;
 
-  // Mutual exclusivity is keyed off raw argv (which flags were explicitly
-  // passed), not the parsed boolean value. `--local=false` was explicitly
-  // passed even though its value is false; value-based detection would miss
-  // it and route to linked incorrectly.
+  // Mutual exclusivity is keyed off raw argv (which flags were explicitly passed), not the
+  // parsed boolean value — `--local=false` counts as explicitly set.
   const target = resolveDbTargetFlags(cliArgs.args);
   if (target.setFlags.length > 1) {
     return yield* Effect.fail(
@@ -190,9 +157,8 @@ export const runInspectQuery = Effect.fnUntraced(function* (
     );
   }
 
-  // `--linked` is the default, so absence of `--db-url`/`--local` resolves
-  // to the linked project. Exclusivity above is already keyed off the raw flags,
-  // so deriving the connType here does not re-trigger it.
+  // `--linked` is the default; exclusivity above is already keyed off the raw flags, so
+  // deriving the connType here does not re-trigger it.
   const connType = target.connType ?? "linked";
 
   // `--project-ref` never implies `--linked` and must not be silently
@@ -216,10 +182,8 @@ export const runInspectQuery = Effect.fnUntraced(function* (
 
   const rows = yield* Effect.scoped(
     Effect.gen(function* () {
-      // "Connecting to <local|remote> database..." is written to stderr before
-      // dialing. stdout is reserved for the rendered table (the machine
-      // payload in json modes), so this diagnostic always goes to stderr
-      // regardless of output mode.
+      // Always written to stderr, even in json/stream-json modes, since stdout is reserved
+      // for the rendered table / machine payload.
       yield* output.raw(
         `Connecting to ${cfg.isLocal ? "local" : "remote"} database...\n`,
         "stderr",
@@ -249,12 +213,9 @@ export function inspectDeprecationNotice(alias: string, target: string): string 
 }
 
 /**
- * Builds an `inspect db <name>` handler from its spec. Each active subcommand and
- * each deprecated alias gets its own `Effect.fn` trace span (`legacy.inspect.db.<name>`)
- * and flushes telemetry on completion (success or failure) —
- * callers must NOT add a second `Effect.ensuring(flush)` at
- * the command level. Deprecated aliases pass `deprecation`, the exact stderr
- * line (build it with `inspectDeprecationNotice`) emitted before the query runs.
+ * Builds an `inspect db <name>` handler from its spec, with its own `Effect.fn` trace span and
+ * telemetry flush on completion — callers must not add a second `Effect.ensuring(flush)`.
+ * `deprecation` (see {@link inspectDeprecationNotice}) is the stderr line emitted first.
  */
 export function makeInspectDbHandler(
   spec: InspectQuerySpec,

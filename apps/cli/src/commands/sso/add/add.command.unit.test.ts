@@ -45,9 +45,6 @@ describe("sso add --domains flag (pflag StringSlice parity)", () => {
   });
 
   test("keeps only the first CSV record of a multiline value (pflag reads ONE record)", async () => {
-    // Go-verified (CLI-2005): `sso add --domains $'a.com\nb"c'` raises no
-    // parse error — pflag calls `csv.Reader.Read()` once, so the malformed
-    // second line is silently dropped.
     const [, domains] = await Effect.runPromise(
       ssoAddDomainsFlag
         .parse({
@@ -80,8 +77,6 @@ describe("sso add --domains flag (pflag StringSlice parity)", () => {
   });
 
   test("rejects a blank-only value with pflag's EOF diagnostic", async () => {
-    // Go-verified (CLI-2005): `sso add --domains $'\n'` →
-    // `invalid argument "\n" for "--domains" flag: EOF`.
     const exit = await Effect.runPromise(
       ssoAddDomainsFlag
         .parse({

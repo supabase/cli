@@ -1,12 +1,11 @@
 import { Cause, Data, Effect, Exit, FiberSet, Option, Queue, Scope } from "effect";
-// oxlint-disable-next-line effecttsgo/node-builtin-import
 import {
   createServer,
   request as proxyRequest,
   type IncomingMessage,
   type Server,
   type ServerResponse,
-  // oxlint-disable-next-line effecttsgo/node-builtin-import
+  // oxlint-disable-next-line effecttsgo/node-builtin-import -- transparent upgrade proxying needs raw handshake bytes; Effect upgrades terminate WebSockets.
 } from "node:http";
 import { Socket } from "node:net";
 import type { Duplex } from "node:stream";
@@ -27,7 +26,7 @@ import type {
   HostListener,
   HostListenerHttpEvent,
   HostListenerHttpEvents,
-} from "../state/PortCoordinator.ts";
+} from "../supervisor/HostListener.ts";
 
 class GatewayBackendError extends Data.TaggedError("GatewayBackendError")<{
   readonly cause?: unknown;
@@ -444,8 +443,8 @@ const handleUpgrade = (
     socket.destroy();
     return;
   }
-  // Observe EOF on a paused upgrade without consuming any queued protocol bytes. The observer is
-  // removed before the backend tunnel starts so it cannot interfere with flowing-mode piping.
+  // Observes EOF on a paused upgrade without consuming queued protocol bytes; removed before
+  // the backend tunnel starts so it can't interfere with flowing-mode piping.
   const onSocketReadable = () => {
     socket.read(0);
   };

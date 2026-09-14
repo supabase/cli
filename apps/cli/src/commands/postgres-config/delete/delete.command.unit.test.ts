@@ -32,9 +32,6 @@ describe("postgres-config delete --config flag (pflag StringSlice parity)", () =
   });
 
   test("keeps only the first CSV record of a multiline value (pflag reads ONE record)", async () => {
-    // Go-verified (CLI-2005): `postgres-config delete --config $'a\nb"c'`
-    // raises no parse error — pflag calls `csv.Reader.Read()` once, so the
-    // malformed second line is silently dropped.
     const [, values] = await Effect.runPromise(
       postgresConfigDeleteConfigFlag
         .parse({
@@ -60,7 +57,7 @@ describe("postgres-config delete --config flag (pflag StringSlice parity)", () =
 
     expect(Exit.isFailure(exit)).toBe(true);
     if (Exit.isFailure(exit)) {
-      // Matches pflag's own diagnostic (bare quote at byte 4 of `max"connections`).
+      // Bare quote at byte 4 of `max"connections`.
       expect(normalizeCause(exit.cause).message).toBe(
         'invalid argument "max\\"connections" for "--config" flag: parse error on line 1, column 4: bare " in non-quoted-field',
       );
@@ -68,8 +65,6 @@ describe("postgres-config delete --config flag (pflag StringSlice parity)", () =
   });
 
   test("rejects a blank-only value with pflag's EOF diagnostic", async () => {
-    // Go-verified (CLI-2005): `postgres-config delete --config $'\n'` →
-    // `invalid argument "\n" for "--config" flag: EOF`.
     const exit = await Effect.runPromise(
       postgresConfigDeleteConfigFlag
         .parse({

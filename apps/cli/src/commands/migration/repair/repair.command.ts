@@ -62,9 +62,8 @@ export const migrationRepairCommand = Command.make("repair", config).pipe(
           // `password` is a credential — always reaches telemetry as `<redacted>`.
           password: flags.password,
         },
-        // --status is Flag.choice and is auto-detected as safe via `config`
-        // below; password stays redacted. --project-ref has no established
-        // telemetry-safety baseline either, so it stays redacted too.
+        // --status is auto-detected as safe via config below; password and
+        // --project-ref stay redacted.
         config,
         aliases: { p: "password" },
       }),

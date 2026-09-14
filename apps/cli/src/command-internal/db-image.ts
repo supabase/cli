@@ -4,17 +4,12 @@ import { postgresImageForDbMajorVersion } from "../shared/services/services.shar
 import { slimImageForCurrentPin } from "../shared/services/slim-images.ts";
 
 /**
- * Resolves the local Postgres Docker image the way `config.Load` does,
- * for commands that run a
- * pg_dump / shadow-DB container (`db dump`, declarative). Promote/extend this if
- * the full service-image resolution is ever needed.
- *
- * The default PG image is read from the same embedded Dockerfile manifest Go parses
- * into `config.Images`, so the TS port tracks Dependabot bumps in that source.
+ * Resolves the local Postgres Docker image for commands that run a pg_dump/shadow-DB container
+ * (`db dump`, declarative). Promote/extend this if full service-image resolution is ever needed.
  */
 
-// Read per call, not captured at import time, so `SUPABASE_USE_SLIM_IMAGES` is
-// observed by the resolver (and by tests that stub the env).
+// Read per call, not at import time, so `SUPABASE_USE_SLIM_IMAGES` is observed by the resolver
+// and by tests that stub the env.
 const pgImageRaw = () => dockerfileServiceImageRaw("pg");
 
 /** Replace everything after the first `:` with `tag`. */
@@ -24,8 +19,7 @@ function replaceImageTag(image: string, tag: string): string {
 }
 
 /**
- * `VersionCompare`: compares semver, treating a
- * 4th+ dotted component as a build suffix. Returns <0, 0, or >0.
+ * Compares semver, treating a 4th+ dotted component as a build suffix. Returns <0, 0, or >0.
  */
 function versionCompare(a: string, b: string): number {
   const split = (v: string): [string, string] => {
@@ -55,10 +49,9 @@ function compareSemver(a: string, b: string): number {
 }
 
 /**
- * Resolve the Postgres image for `majorVersion`, honoring the pinned version
- * written by `supabase start` to `supabase/.temp/postgres-version` (Go reads
- * `builder.PostgresVersionPath` and only replaces the tag when the configured
- * image is at/above 15.1.0.55).
+ * Resolves the Postgres image for `majorVersion`, honoring the pinned version written by
+ * `supabase start` to `supabase/.temp/postgres-version`. The tag is only replaced when the
+ * configured image is at/above 15.1.0.55.
  */
 export const resolveDbImage = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
@@ -67,9 +60,8 @@ export const resolveDbImage = Effect.fnUntraced(function* (
   majorVersion: number,
   orioledbVersion?: string,
 ) {
-  // OrioleDB override (`config.Validate`): on a
-  // 15/17 project with `experimental.orioledb_version` set, the Postgres image is
-  // replaced with the OrioleDB tag, taking precedence over the default/pinned image.
+  // OrioleDB override: on a 15/17 project with `experimental.orioledb_version` set, the Postgres
+  // image is replaced with the OrioleDB tag, taking precedence over the default/pinned image.
   if (
     orioledbVersion !== undefined &&
     orioledbVersion.length > 0 &&

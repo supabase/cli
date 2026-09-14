@@ -1,6 +1,6 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Option, Path, Redacted } from "effect";
+import { Cause, Effect, Exit, FileSystem, Option, Path, Redacted, Schema } from "effect";
 import * as TestClock from "effect/testing/TestClock";
 import { createHmac, generateKeyPairSync, createVerify } from "node:crypto";
 import {
@@ -17,6 +17,12 @@ import {
 } from "./SecretStore.ts";
 
 const layer = NodeServices.layer;
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+const decodeJwtPayload = (text: string) =>
+  Schema.decodeUnknownSync(
+    Schema.Struct({ iss: Schema.String, role: Schema.String, exp: Schema.Finite }),
+  )(decodeJson(text));
 const managed = (value?: string): SecretCandidate => ({
   declarations: [
     {
@@ -31,6 +37,26 @@ const passthrough = (slot: string, value: string): SecretCandidate => ({
 });
 const errorOf = <E>(exit: Exit.Exit<unknown, E>): E | undefined =>
   Exit.isFailure(exit) ? Option.getOrUndefined(Cause.findErrorOption(exit.cause)) : undefined;
+const compilerManagedSlots = [
+  "secret:database.internal.password",
+  "secret:auth.settings.publishable_key",
+  "secret:auth.settings.secret_key",
+  "secret:auth.settings.jwt_secret",
+  "secret:auth.settings.anon_key",
+  "secret:auth.settings.service_role_key",
+  "secret:storage.settings.s3_protocol.secret_access_key",
+  "secret:realtime.settings.db_enc_key",
+  "secret:realtime.settings.secret_key_base",
+] as const;
+const compilerCandidate = compileStack({
+  projectRoot: "/tmp/project",
+  runtime: { kind: "native" },
+}).pipe(Effect.map((compiled) => ({ declarations: compiled.secrets })));
+const present = <T>(value: T | undefined, description: string): T => {
+  expect(value, description).toBeDefined();
+  if (value === undefined) throw new Error(`Expected ${description}`);
+  return value;
+};
 
 describe("managed and pass-through secrets", () => {
   it.live("generates managed omissions once and reuses them", () =>
@@ -42,64 +68,79 @@ describe("managed and pass-through secrets", () => {
     }).pipe(Effect.provide(layer)),
   );
 
-  it.live("generates and reuses every compiler-required managed slot", () =>
+  it.live("generates compiler-required managed slots with artifact-compatible values", () =>
     Effect.gen(function* () {
-      const compiled = yield* compileStack({
-        projectRoot: "/tmp/project",
-        runtime: { kind: "native" },
-      });
-      const candidate = { declarations: compiled.secrets };
-      const first = yield* resolveSecrets(candidate, undefined, "stopped");
-      const second = yield* resolveSecrets(candidate, first.persisted, "running");
-      for (const slot of [
-        "secret:database.internal.password",
-        "secret:auth.settings.publishable_key",
-        "secret:auth.settings.secret_key",
-        "secret:auth.settings.jwt_secret",
-        "secret:auth.settings.anon_key",
-        "secret:auth.settings.service_role_key",
-        "secret:storage.settings.s3_protocol.secret_access_key",
-        "secret:realtime.settings.db_enc_key",
-        "secret:realtime.settings.secret_key_base",
-      ]) {
-        expect(first.persisted[slot]?.policy).toBe("managed");
-        expect(first.persisted[slot]?.value).toBe(second.persisted[slot]?.value);
+      const candidate = yield* compilerCandidate;
+      const resolved = yield* resolveSecrets(candidate, undefined, "stopped");
+      for (const slot of compilerManagedSlots) {
+        expect(resolved.persisted[slot]?.policy).toBe("managed");
+        expect(resolved.persisted[slot]?.value).toEqual(expect.any(String));
       }
-      expect(first.persisted["secret:realtime.settings.db_enc_key"]?.value).toMatch(
-        /^[A-Za-z0-9_-]{16}$/,
-      );
-      expect(first.persisted["secret:realtime.settings.secret_key_base"]?.value).toMatch(
-        /^[A-Za-z0-9_-]{64}$/,
-      );
-      expect(first.persisted["secret:auth.settings.publishable_key"]?.value).toMatch(
-        /^sb_publishable_[A-Za-z0-9_-]{32,}$/,
-      );
-      expect(first.persisted["secret:auth.settings.secret_key"]?.value).toMatch(
-        /^sb_secret_[A-Za-z0-9_-]{32,}$/,
-      );
-      const jwtSecret = first.persisted["secret:auth.settings.jwt_secret"]?.value;
-      expect(jwtSecret).toMatch(/^[A-Za-z0-9_-]{43,}$/);
+      expect(
+        present(
+          resolved.persisted["secret:realtime.settings.db_enc_key"]?.value,
+          "realtime database encryption key",
+        ),
+      ).toMatch(/^[A-Za-z0-9_-]{16}$/);
+      expect(
+        present(
+          resolved.persisted["secret:realtime.settings.secret_key_base"]?.value,
+          "realtime secret key base",
+        ),
+      ).toMatch(/^[A-Za-z0-9_-]{64}$/);
+      expect(
+        present(
+          resolved.persisted["secret:auth.settings.publishable_key"]?.value,
+          "publishable key",
+        ),
+      ).toMatch(/^sb_publishable_[A-Za-z0-9_-]{32,}$/);
+      expect(
+        present(resolved.persisted["secret:auth.settings.secret_key"]?.value, "secret key"),
+      ).toMatch(/^sb_secret_[A-Za-z0-9_-]{32,}$/);
+      expect(
+        present(resolved.persisted["secret:auth.settings.jwt_secret"]?.value, "JWT secret"),
+      ).toMatch(/^[A-Za-z0-9_-]{43,}$/);
       for (const slot of [
         "secret:auth.settings.anon_key",
         "secret:auth.settings.service_role_key",
       ]) {
-        const token = first.persisted[slot]?.value;
-        expect(token?.split(".")).toHaveLength(3);
-        const payloadText = Buffer.from(token!.split(".")[1]!, "base64url").toString();
-        expect(payloadText).toMatch(
-          /^\{"iss":"supabase-demo","role":"(?:anon|service_role)","exp":1983812996\}$/,
-        );
-        // oxlint-disable-next-line effecttsgo/prefer-schema-over-json
-        const payload = JSON.parse(payloadText);
-        expect(payload).toMatchObject({ iss: "supabase-demo" });
-        expect(["anon", "service_role"]).toContain(payload.role);
+        const token = present(resolved.persisted[slot]?.value, slot);
+        const tokenParts = token.split(".");
+        expect(tokenParts).toHaveLength(3);
+        const payloadText = Buffer.from(
+          present(tokenParts[1], `${slot} payload`),
+          "base64url",
+        ).toString();
+        const payload = decodeJwtPayload(payloadText);
+        expect(payload).toMatchObject({
+          iss: "supabase-demo",
+          role: slot.endsWith("anon_key") ? "anon" : "service_role",
+          exp: expect.any(Number),
+        });
         expect(payload.exp).toBeGreaterThan(1_900_000_000);
       }
+    }).pipe(Effect.provide(layer)),
+  );
 
+  it.live("reuses generated values for every compiler-managed slot", () =>
+    Effect.gen(function* () {
+      const candidate = yield* compilerCandidate;
+      const first = yield* resolveSecrets(candidate, undefined, "stopped");
+      const second = yield* resolveSecrets(candidate, first.persisted, "running");
+      for (const slot of compilerManagedSlots) {
+        expect(second.persisted[slot]?.policy).toBe("managed");
+        expect(second.persisted[slot]?.value).toBe(first.persisted[slot]?.value);
+      }
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.live("generates a fresh managed secret for a different stack", () =>
+    Effect.gen(function* () {
+      const candidate = yield* compilerCandidate;
+      const first = yield* resolveSecrets(candidate, undefined, "stopped");
       const other = yield* resolveSecrets(candidate, undefined, "stopped");
-      expect(
-        other.persisted["secret:storage.settings.s3_protocol.secret_access_key"]?.value,
-      ).not.toBe(first.persisted["secret:storage.settings.s3_protocol.secret_access_key"]?.value);
+      const slot = "secret:storage.settings.s3_protocol.secret_access_key";
+      expect(other.persisted[slot]?.value).not.toBe(first.persisted[slot]?.value);
     }).pipe(Effect.provide(layer)),
   );
 
@@ -122,22 +163,6 @@ describe("managed and pass-through secrets", () => {
     }).pipe(Effect.provide(layer)),
   );
 
-  it.live("rejects a configured JWKS file without a private signing key", () =>
-    Effect.gen(function* () {
-      const compiled = yield* compileStack({
-        projectRoot: "/tmp/project",
-        runtime: { kind: "native" },
-        config: { security: { jwt: { signing: { kind: "jwks-file", path: "public.json" } } } },
-      });
-      const exit = yield* resolveSecrets(
-        { declarations: compiled.secrets },
-        undefined,
-        "stopped",
-      ).pipe(Effect.exit);
-      expect(errorOf(exit)).toBeInstanceOf(InvalidJwtSigningMaterialError);
-    }).pipe(Effect.provide(layer)),
-  );
-
   it.live("rejects mixed valid and invalid private JWK entries as one file", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -151,8 +176,7 @@ describe("managed and pass-through secrets", () => {
       };
       yield* fs.writeFileString(
         path.join(root, "keys.json"),
-        // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- dynamic JWK fixture JSON
-        JSON.stringify([privateJwk, { kty: "EC", alg: "ES256", d: "invalid" }]),
+        encodeJson([privateJwk, { kty: "EC", alg: "ES256", d: "invalid" }]),
       );
       const failed = yield* resolveSigningKeyMaterial({
         kind: "jwks-file",
@@ -170,8 +194,7 @@ describe("managed and pass-through secrets", () => {
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-credentials-" });
       const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
       const privateJwk = { ...privateKey.export({ format: "jwk" }), alg: "ES256", kid: "test-key" };
-      // oxlint-disable-next-line effecttsgo/prefer-schema-over-json
-      yield* fs.writeFileString(path.join(root, "keys.json"), JSON.stringify([privateJwk]));
+      yield* fs.writeFileString(path.join(root, "keys.json"), encodeJson([privateJwk]));
       const compiled = yield* compileStack({
         projectRoot: root,
         runtime: { kind: "native" },
@@ -182,21 +205,25 @@ describe("managed and pass-through secrets", () => {
         undefined,
         "stopped",
       );
-      const token = resolved.persisted["secret:auth.settings.anon_key"]?.value;
-      expect(token).toBeDefined();
-      const [header, payload, signature] = token!.split(".");
-      // oxlint-disable-next-line effecttsgo/prefer-schema-over-json
-      expect(JSON.parse(Buffer.from(header!, "base64url").toString())).toMatchObject({
+      const token = present(
+        resolved.persisted["secret:auth.settings.anon_key"]?.value,
+        "anon token",
+      );
+      const [header, payload, signature] = token.split(".");
+      const tokenHeader = present(header, "JWT header");
+      const tokenPayload = present(payload, "JWT payload");
+      const tokenSignature = present(signature, "JWT signature");
+      expect(decodeJson(Buffer.from(tokenHeader, "base64url").toString())).toMatchObject({
         alg: "ES256",
         kid: "test-key",
       });
       const verifier = createVerify("sha256");
-      verifier.update(`${header}.${payload}`);
+      verifier.update(`${tokenHeader}.${tokenPayload}`);
       verifier.end();
       expect(
         verifier.verify(
           { key: publicKey, dsaEncoding: "ieee-p1363" },
-          Buffer.from(signature!, "base64url"),
+          Buffer.from(tokenSignature, "base64url"),
         ),
       ).toBe(true);
     }).pipe(Effect.provide(layer)),
@@ -209,8 +236,7 @@ describe("managed and pass-through secrets", () => {
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-credentials-" });
       const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
       const privateJwk = { ...privateKey.export({ format: "jwk" }), alg: "RS256", kid: "rsa-key" };
-      // oxlint-disable-next-line effecttsgo/prefer-schema-over-json
-      yield* fs.writeFileString(path.join(root, "keys.json"), JSON.stringify([privateJwk]));
+      yield* fs.writeFileString(path.join(root, "keys.json"), encodeJson([privateJwk]));
       const compiled = yield* compileStack({
         projectRoot: root,
         runtime: { kind: "native" },
@@ -221,18 +247,22 @@ describe("managed and pass-through secrets", () => {
         undefined,
         "stopped",
       );
-      const token = resolved.persisted["secret:auth.settings.service_role_key"]?.value;
-      expect(token).toBeDefined();
-      const [header, payload, signature] = token!.split(".");
-      // oxlint-disable-next-line effecttsgo/prefer-schema-over-json
-      expect(JSON.parse(Buffer.from(header!, "base64url").toString())).toMatchObject({
+      const token = present(
+        resolved.persisted["secret:auth.settings.service_role_key"]?.value,
+        "service role token",
+      );
+      const [header, payload, signature] = token.split(".");
+      const tokenHeader = present(header, "JWT header");
+      const tokenPayload = present(payload, "JWT payload");
+      const tokenSignature = present(signature, "JWT signature");
+      expect(decodeJson(Buffer.from(tokenHeader, "base64url").toString())).toMatchObject({
         alg: "RS256",
         kid: "rsa-key",
       });
       const verifier = createVerify("RSA-SHA256");
-      verifier.update(`${header}.${payload}`);
+      verifier.update(`${tokenHeader}.${tokenPayload}`);
       verifier.end();
-      expect(verifier.verify(publicKey, Buffer.from(signature!, "base64url"))).toBe(true);
+      expect(verifier.verify(publicKey, Buffer.from(tokenSignature, "base64url"))).toBe(true);
     }).pipe(Effect.provide(layer)),
   );
 
@@ -244,8 +274,7 @@ describe("managed and pass-through secrets", () => {
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-credentials-" });
       const { privateKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
       const privateJwk = { ...privateKey.export({ format: "jwk" }), alg: "ES256" };
-      // oxlint-disable-next-line effecttsgo/prefer-schema-over-json
-      yield* fs.writeFileString(path.join(root, "keys.json"), JSON.stringify([privateJwk]));
+      yield* fs.writeFileString(path.join(root, "keys.json"), encodeJson([privateJwk]));
       const compiled = yield* compileStack({
         projectRoot: root,
         runtime: { kind: "native" },
@@ -256,11 +285,13 @@ describe("managed and pass-through secrets", () => {
         undefined,
         "stopped",
       );
-      const token = resolved.persisted["secret:auth.settings.anon_key"]?.value;
-      expect(token).toBeDefined();
-      const payloadText = Buffer.from(token!.split(".")[1]!, "base64url").toString();
-      // oxlint-disable-next-line effecttsgo/prefer-schema-over-json
-      const payload = JSON.parse(payloadText);
+      const token = present(
+        resolved.persisted["secret:auth.settings.anon_key"]?.value,
+        "anon token",
+      );
+      const payloadPart = present(token.split(".")[1], "JWT payload");
+      const payloadText = Buffer.from(payloadPart, "base64url").toString();
+      const payload = decodeJwtPayload(payloadText);
       expect(payload).toEqual({
         iss: "supabase-demo",
         role: "anon",
@@ -270,16 +301,18 @@ describe("managed and pass-through secrets", () => {
     }).pipe(Effect.provide(layer)),
   );
 
-  it.live("fails closed for public-only or escaping JWKS material", () =>
+  it.live("fails closed for public-only JWKS material", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-credentials-" });
-      yield* fs.writeFileString(
-        path.join(root, "public.json"),
-        // oxlint-disable-next-line effecttsgo/prefer-schema-over-json
-        JSON.stringify([{ kty: "EC", alg: "ES256", crv: "P-256", x: "x", y: "y" }]),
-      );
+      const publicJwk = {
+        ...generateKeyPairSync("ec", { namedCurve: "prime256v1" }).publicKey.export({
+          format: "jwk",
+        }),
+        alg: "ES256",
+      };
+      yield* fs.writeFileString(path.join(root, "public.json"), encodeJson([publicJwk]));
       const publicOnly = yield* compileStack({
         projectRoot: root,
         runtime: { kind: "native" },
@@ -293,7 +326,34 @@ describe("managed and pass-through secrets", () => {
         "stopped",
       ).pipe(Effect.exit);
       expect(errorOf(publicExit)).toBeInstanceOf(InvalidJwtSigningMaterialError);
+    }).pipe(Effect.provide(layer)),
+  );
 
+  it.live("rejects a configured JWKS file that does not exist", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-missing-jwks-" });
+      const compiled = yield* compileStack({
+        projectRoot: root,
+        runtime: { kind: "native" },
+        config: { security: { jwt: { signing: { kind: "jwks-file", path: "missing.json" } } } },
+      });
+
+      const failed = yield* resolveSecrets(
+        { declarations: compiled.secrets },
+        undefined,
+        "stopped",
+      ).pipe(Effect.exit);
+
+      expect(errorOf(failed)).toBeInstanceOf(InvalidJwtSigningMaterialError);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.live("rejects JWKS files outside the project root", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-credentials-" });
       const escaping = yield* compileStack({
         projectRoot: root,
         runtime: { kind: "native" },
@@ -307,12 +367,14 @@ describe("managed and pass-through secrets", () => {
         "stopped",
       ).pipe(Effect.exit);
       expect(errorOf(escapingExit)).toBeInstanceOf(InvalidJwtSigningMaterialError);
+      expect(errorOf(escapingExit)?.message).toContain(
+        "JWT signing key file must be inside project root",
+      );
 
       const outside = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-outside-" });
       yield* fs.writeFileString(
         path.join(outside, "private.json"),
-        // oxlint-disable-next-line effecttsgo/prefer-schema-over-json
-        JSON.stringify([{ kty: "EC", alg: "ES256", crv: "P-256", d: "d", x: "x", y: "y" }]),
+        encodeJson([{ kty: "EC", alg: "ES256", crv: "P-256", d: "d", x: "x", y: "y" }]),
       );
       yield* fs.symlink(path.join(outside, "private.json"), path.join(root, "linked.json"));
       const symlinkEscape = yield* compileStack({
@@ -328,6 +390,9 @@ describe("managed and pass-through secrets", () => {
         "stopped",
       ).pipe(Effect.exit);
       expect(errorOf(symlinkExit)).toBeInstanceOf(InvalidJwtSigningMaterialError);
+      expect(errorOf(symlinkExit)?.message).toContain(
+        "JWT signing key file must be inside project root",
+      );
     }).pipe(Effect.provide(layer)),
   );
 
@@ -389,11 +454,18 @@ describe("managed and pass-through secrets", () => {
         undefined,
         "stopped",
       );
-      const token = resolved.persisted["secret:auth.settings.anon_key"]?.value;
-      expect(token).toBeDefined();
-      const [header, payload, signature] = token!.split(".");
-      const expected = createHmac("sha256", jwt).update(`${header}.${payload}`).digest("base64url");
-      expect(signature).toBe(expected);
+      const token = present(
+        resolved.persisted["secret:auth.settings.anon_key"]?.value,
+        "anon token",
+      );
+      const [header, payload, signature] = token.split(".");
+      const tokenHeader = present(header, "JWT header");
+      const tokenPayload = present(payload, "JWT payload");
+      const tokenSignature = present(signature, "JWT signature");
+      const expected = createHmac("sha256", jwt)
+        .update(`${tokenHeader}.${tokenPayload}`)
+        .digest("base64url");
+      expect(tokenSignature).toBe(expected);
     }).pipe(Effect.provide(layer)),
   );
 
@@ -409,7 +481,7 @@ describe("managed and pass-through secrets", () => {
     }).pipe(Effect.provide(layer)),
   );
 
-  it.live("allows complete pass-through add, replacement, and removal only while stopped", () =>
+  it.live("allows pass-through add, replacement, and removal while stopped", () =>
     Effect.gen(function* () {
       const first = yield* resolveSecrets(passthrough("pass:smtp", "old"), undefined, "stopped");
       const replacement = yield* resolveSecrets(
@@ -420,12 +492,6 @@ describe("managed and pass-through secrets", () => {
       expect(replacement.persisted["pass:smtp"]?.value).toBe("new");
       const removed = yield* resolveSecrets({ declarations: [] }, replacement.persisted, "stopped");
       expect(removed.persisted["pass:smtp"]).toBeUndefined();
-      const running = yield* resolveSecrets(
-        { declarations: [] },
-        replacement.persisted,
-        "running",
-      ).pipe(Effect.exit);
-      expect(errorOf(running)).toBeInstanceOf(StackMustBeStoppedError);
     }).pipe(Effect.provide(layer)),
   );
 

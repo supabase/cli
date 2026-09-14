@@ -19,13 +19,19 @@ import { routeCatalogFor, type GatewayApiMaterial } from "../gateway/RouteCatalo
 import { GatewayRouteNotFoundError, makeGateway } from "../gateway/Gateway.ts";
 import {
   makePortCoordinator,
-  type HostListener,
   type ListenerIntents,
   type PortReservation,
 } from "../state/PortCoordinator.ts";
+import type { HostListener } from "./HostListener.ts";
 import type { StackStateStore } from "../state/StackStateStore.ts";
 import { privateBindingIntentsFor } from "../runtime/WorkloadRuntimeSpec.ts";
-import { bindHostListener, checkHostPort, isHttpPortField } from "./HostListener.ts";
+import {
+  bindHeldPort,
+  bindHostListener,
+  hostListenerCoversAddress,
+  isHttpPortField,
+  type HeldPort,
+} from "./HostListener.ts";
 import {
   AUTH_ANON_KEY_SLOT,
   AUTH_PUBLISHABLE_KEY_SLOT,
@@ -62,17 +68,16 @@ export interface SupervisorIngressOptions {
   readonly stateRoot: string;
   readonly store: StackStateStore;
   readonly context: Context.Context<Crypto.Crypto | FileSystem.FileSystem | Path.Path>;
-  /** Optional host-port seams for embedding tests; production uses native listeners. */
-  readonly checkHostPort?: (
-    address: string,
-    port: number,
-    field: string,
-  ) => Effect.Effect<void, PortUnavailableError>;
   readonly bindHost?: (
     address: string,
     port: number,
     field: PortField,
   ) => Effect.Effect<HostListener, PortUnavailableError, Scope.Scope>;
+  readonly bindPrivate?: (
+    address: string,
+    port: number,
+    binding: string,
+  ) => Effect.Effect<HeldPort, PortUnavailableError, Scope.Scope>;
   /** Resolves an internal host bind address for container callbacks when required. */
   readonly resolveInternalApiBindAddress?: () => Effect.Effect<string | undefined>;
   /** Resolver may be replaced by the production credential owner. */
@@ -90,16 +95,23 @@ export interface SupervisorIngressOptions {
   >;
 }
 
-const listenerIntents = (input: LifecycleInput): ListenerIntents => ({
-  api: input.definition.listeners.api,
-  database: input.definition.listeners.database,
-  pooler: input.definition.listeners.pooler,
-  studio: input.definition.listeners.studio,
-  mailUi: input.definition.listeners.mailUi,
-  smtp: input.definition.listeners.smtp,
-  pop3: input.definition.listeners.pop3,
-  functionsInspector: input.definition.listeners.functionsInspector,
-});
+const listenerIntents = (input: LifecycleInput): ListenerIntents => {
+  const usable = new Set(input.plan.routes.map(({ listener }) => listener));
+  const select = <K extends keyof ListenerIntents>(field: K): ListenerIntents[K] =>
+    usable.has(field)
+      ? input.definition.listeners[field]
+      : { ...input.definition.listeners[field], enabled: false };
+  return {
+    api: select("api"),
+    database: select("database"),
+    pooler: select("pooler"),
+    studio: select("studio"),
+    mailUi: select("mailUi"),
+    smtp: select("smtp"),
+    pop3: select("pop3"),
+    functionsInspector: select("functionsInspector"),
+  };
+};
 
 const defaultApiMaterial = (
   state: LifecycleInput["state"],
@@ -187,8 +199,8 @@ export const makeSupervisorIngress = (
     const coordinator = makePortCoordinator({
       stateRoot: options.stateRoot,
       store: options.store,
-      checkHostPort: options.checkHostPort ?? checkHostPort,
       bindHost: options.bindHost ?? bindHostListener,
+      bindPrivate: options.bindPrivate ?? bindHeldPort,
     });
     const acquire = (
       input: LifecycleInput,
@@ -202,9 +214,11 @@ export const makeSupervisorIngress = (
           if (existing !== undefined) return { ...existing.reservation, fresh: false };
           const reservationScope = Scope.forkUnsafe(ownerScope);
           const reservation = yield* coordinator
-            .planAndReserve(options.stackId, listenerIntents(input), {
-              privateBindings: privateBindingIntentsFor(input.plan),
-            })
+            .acquire(
+              options.stackId,
+              listenerIntents(input),
+              privateBindingIntentsFor(input.plan, input.state),
+            )
             .pipe(
               Effect.provideContext(options.context),
               Effect.provideService(Scope.Scope, reservationScope),
@@ -334,27 +348,35 @@ export const makeSupervisorIngress = (
               : undefined;
           let internalApi: HostListener | undefined;
           if (internalApiAddress !== undefined && reservation.assignments.api !== undefined) {
-            internalApi = yield* (options.bindHost ?? bindHostListener)(
-              internalApiAddress,
-              reservation.assignments.api.port,
-              "api",
-            ).pipe(Effect.provideService(Scope.Scope, entry.scope));
-            http.push({
-              field: "api",
-              key: "api:internal",
-              options: {
-                listener: internalApi,
-                routes:
-                  templateRoute !== undefined
-                    ? [templateRoute, ...(catalog.http.get("api") ?? [])]
-                    : (catalog.http.get("api") ?? []),
-                resolveBackend: (
-                  route: GatewayProxyRoute,
-                  _request: GatewayRouteRequest,
-                  result: ActivationResult,
-                ) => routeBackend(input, reservation, route, result),
-              },
-            });
+            const covered = reservation.hostListeners.some(
+              (listener) =>
+                listener.field === "api" &&
+                listener.port === reservation.assignments.api?.port &&
+                hostListenerCoversAddress(listener, internalApiAddress),
+            );
+            if (!covered) {
+              internalApi = yield* (options.bindHost ?? bindHostListener)(
+                internalApiAddress,
+                reservation.assignments.api.port,
+                "api",
+              ).pipe(Effect.provideService(Scope.Scope, entry.scope));
+              http.push({
+                field: "api",
+                key: "api:internal",
+                options: {
+                  listener: internalApi,
+                  routes:
+                    templateRoute !== undefined
+                      ? [templateRoute, ...(catalog.http.get("api") ?? [])]
+                      : (catalog.http.get("api") ?? []),
+                  resolveBackend: (
+                    route: GatewayProxyRoute,
+                    _request: GatewayRouteRequest,
+                    result: ActivationResult,
+                  ) => routeBackend(input, reservation, route, result),
+                },
+              });
+            }
           }
           const tcp = reservation.hostListeners
             .filter((listener) => !isHttpPortField(listener.field))

@@ -170,7 +170,6 @@ describe("storage mv", () => {
         mvFlags({ src: "ss:///private", dst: "ss:///private/docs", recursive: true }),
       ).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
-      // Nested file moved with the sub/ prefix rewritten under docs/.
       const nested = requests.find(
         (r) => r.url.includes(MOVE) && (r.body as { sourceKey?: string }).sourceKey === "sub/b.txt",
       );
@@ -255,8 +254,7 @@ describe("storage mv", () => {
   });
 
   it.live("moves within the project given via --project-ref, overriding VALID_REF", () => {
-    // `opts.projectRef` (the fake's own fallback) is left at its default
-    // (VALID_REF) — the flag must win over it and drive the gateway host.
+    // The fake's default projectRef is VALID_REF; the flag must win over it.
     const FLAG_REF = "flagflagflagflagflag";
     const { layer, requests, linkedCache } = setupStorage(tmp.current, {
       routes: [{ method: "POST", match: MOVE, body: { message: "Successfully moved" } }],

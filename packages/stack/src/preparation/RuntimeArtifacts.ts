@@ -31,7 +31,7 @@ export interface PreparedWorkloadArtifact {
   readonly capability: PlannedWorkload["capability"];
   readonly version: string;
   readonly outcome: "cached" | "downloaded" | "pulled";
-  /** Native installation root. Container preparation deliberately has no root. */
+  /** Native installation root; container preparation has no root. */
   readonly artifactRoot?: string;
   readonly executablePath?: string;
   readonly image?: string;

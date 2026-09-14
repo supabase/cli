@@ -74,13 +74,10 @@ function generateCommandDocs() {
 }
 
 /**
- * Copies `@supabase/config`'s already post-processed (metadata + number-
- * union-collapsed) `dist/*.json` schema artifact straight to its docs-site
- * public path, rather than re-rendering `toCliConfigJsonSchema()`/
- * `toProjectConfigJsonSchema()` here (CLI-2234) — re-rendering would bypass
- * `json-schema-postprocess.ts` and produce a document whose `$id` doesn't
- * match what actually gets published. Requires `@supabase/config#build` to
- * have already run (wired via `turbo.json`).
+ * Copies `@supabase/config`'s post-processed `dist/*.json` schema artifact to its docs-site
+ * public path rather than re-rendering it here, since re-rendering would bypass
+ * `json-schema-postprocess.ts` and produce a mismatched `$id`. Requires
+ * `@supabase/config#build` to have already run (wired via `turbo.json`).
  */
 function copyConfigSchemaAsset(schemaUrl: string, distFileName: string) {
   const schemaPathname = new URL(schemaUrl).pathname.replace(/^\/docs/, "");

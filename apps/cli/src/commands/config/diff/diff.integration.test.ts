@@ -48,12 +48,8 @@ function writeProjectEnv(dotenv: string): void {
   writeFileSync(join(dir, ".env"), dotenv);
 }
 
-/**
- * Schema-valid v2 project-config body whose managed values all sit at the
- * local schema defaults, so an empty config.toml diffs clean against it.
- * Hoisted to `tests/helpers/config-fixtures.ts` so `config push`'s own
- * integration suite can share it (CLI-2313 shard 5a).
- */
+/** Schema-valid v2 project-config body whose managed values all sit at the local schema
+ *  defaults, so an empty config.toml diffs clean against it. */
 const v2Response = v2ProjectConfigResponse;
 
 /** V1GetABranch body for the branch-name `--project-ref` lookup. */
@@ -176,7 +172,6 @@ describe("config diff integration", () => {
     return Effect.gen(function* () {
       yield* configDiff(noFlags);
 
-      // Never writes: mtime and contents unchanged after a run with differences.
       expect(statSync(configPath).mtimeMs).toBe(before.mtimeMs);
       expect(readFileSync(configPath, "utf8")).toBe(before.contents);
 
@@ -190,7 +185,6 @@ describe("config diff integration", () => {
       expect(out.stdoutText).toContain(
         "1 difference found (1 update, 0 remote-only, 0 local-only).",
       );
-      // Differences without --exit-code leave the exit status alone.
       expect(processControl.exitCode).toBeUndefined();
       expect(telemetry.flushed).toBe(true);
       expect(linkedProjectCache.cachedRef).toBe(VALID_REF);
@@ -207,9 +201,6 @@ describe("config diff integration", () => {
   });
 
   it.live("--exit-code sets exit 2 when differences are found", () => {
-    // Drift gets its own exit code (2) so scripts can tell it from failure
-    // (1) — `config diff --exit-code || alert` must not fire on an expired
-    // token.
     const { layer, processControl } = setup({
       toml: 'project_id = "test"\n[api]\nmax_rows = 500\n',
     });
@@ -220,9 +211,6 @@ describe("config diff integration", () => {
   });
 
   it.live("--exit-code in text mode prints a stderr reason line before exiting 2", () => {
-    // A CI log that shows only "exit code 2" with no explanation is a
-    // regression — the reason line makes the drift-vs-failure distinction
-    // visible in the log itself, without touching machine-format bytes.
     const { layer, out, processControl } = setup({
       toml: 'project_id = "test"\n[api]\nmax_rows = 500\n',
     });
@@ -252,8 +240,7 @@ describe("config diff integration", () => {
         status: 200,
         body: v2Response({
           attributes: (attributes) => {
-            // Drop site_url from the otherwise-complete auth record so the
-            // response genuinely does not carry the declared property.
+            // Drop site_url so the response genuinely omits the declared property.
             const { site_url: _siteUrl, ...auth } = attributes["auth"] as Record<string, unknown>;
             return { ...attributes, auth };
           },
@@ -299,8 +286,7 @@ describe("config diff integration", () => {
             auth: {
               external_github_enabled: true,
               external_github_client_id: "id",
-              // The platform reports secret fields as HMAC digests, never
-              // plaintext — the digest must not surface either.
+              // The platform reports secret fields as HMAC digests, not plaintext.
               external_github_secret: "v1,whmac-sha256-digest-of-the-secret",
             },
           }),
@@ -313,9 +299,6 @@ describe("config diff integration", () => {
       expect(out.stdoutText).toContain(
         "Note: 1 credential value not compared (masked by the API): auth.external.github.secret",
       );
-      // The secret STRING never leaks — neither the local plaintext resolved
-      // from the env var nor the API-reported HMAC digest, on either stream.
-      // Pins the "secrets never leak" claim against formatter changes.
       const everything = out.stdoutText + out.stderrText;
       expect(everything).not.toContain("shh");
       expect(everything).not.toContain("whmac-sha256");
@@ -355,8 +338,6 @@ describe("config diff integration", () => {
       const serialized = JSON.stringify(success);
       expect(serialized).not.toContain("shh");
       expect(serialized).not.toContain("whmac-sha256");
-      // The message itself carries the masked caveat, so `.message` echoers
-      // never claim full sync.
       expect(success?.message).toContain("masked by the API");
     }).pipe(Effect.provide(layer));
   });
@@ -379,8 +360,6 @@ describe("config diff integration", () => {
       expect(out.stderrText).toContain(
         `Comparing against project ${VALID_REF} using [remotes.staging]`,
       );
-      // The merged branch operand (max_rows = 1000) matches the remote, so the
-      // base config's 500 must NOT surface as drift.
       expect(out.stdoutText).toContain("No config differences found.");
     }).pipe(Effect.provide(layer));
   });
@@ -388,12 +367,6 @@ describe("config diff integration", () => {
   it.live(
     "an env()-resolving [remotes.*] project_id does not match the target and does not double-warn (CLI-2287)",
     () => {
-      // The raw `project_id = "env(REMOTE_REF)"` literal never equals the
-      // resolved ref, even though the INTERPOLATED value does — matching the
-      // resolved value would both compare against the WRONG operand (Go's
-      // `loadFromFile` selection loop reads viper's raw values, before
-      // `env(...)` resolves) and reload the file a second time, printing the
-      // `[inbucket]` deprecation warning twice.
       const { layer, out } = setup({
         toml: [
           'project_id = "test"',
@@ -439,10 +412,8 @@ describe("config diff integration", () => {
   });
 
   it.live("branch-name resolution uses the linked PARENT, not a branch ref in project-ref", () => {
-    // After `link <branch>`, `.temp/project-ref` holds the BRANCH's own ref,
-    // and the parent-scoped branches endpoint rejects branch refs — the
-    // parent must come from the parent-scoped resolver (which prefers the
-    // linked-project.json parent recovery), never the file verbatim.
+    // project-ref holds the branch's own ref; linked-project.json recovers the parent, which the
+    // parent-scoped branches endpoint requires.
     const temp = join(tempRoot.current, "supabase", ".temp");
     mkdirSync(temp, { recursive: true });
     writeFileSync(join(temp, "project-ref"), BRANCH_REF);
@@ -463,9 +434,6 @@ describe("config diff integration", () => {
   });
 
   it.live("a UUID --project-ref resolves directly, even in an unlinked directory", () => {
-    // The UUID endpoint (`GET /v1/branches/{id}`) does not use a parent
-    // project ref, so the lookup must not demand a linked directory — the
-    // parent is only resolved (lazily) for branch-NAME lookups.
     const { layer, api, out } = setup({
       toml: 'project_id = "test"\n',
       v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
@@ -476,7 +444,7 @@ describe("config diff integration", () => {
       const urls = api.requests.map((request) => request.url);
       expect(urls.some((url) => url.includes(`/v1/branches/${BRANCH_UUID}`))).toBe(true);
       expect(urls.some((url) => url.includes(`/v2/projects/${BRANCH_REF}/config`))).toBe(true);
-      // A UUID is an identifier, not a display name — never quoted as one.
+      // A UUID is an identifier, not a display name, so it isn't quoted.
       expect(out.stderrText).toContain(
         `Comparing against branch ${BRANCH_UUID} (project ref ${BRANCH_REF})`,
       );
@@ -510,8 +478,8 @@ describe("config diff integration", () => {
       expect(rendered).toContain("ConfigDiffBranchNotFoundError");
       expect(rendered).toContain('Branch \\"ghost\\" not found');
       expect(rendered).toContain("supabase branches list");
-      // CLI Invariant #1: telemetry flushes on failure too; the
-      // linked-project cache stays untouched because no target ref resolved.
+      // Telemetry still flushes on failure; the linked-project cache stays untouched since no
+      // ref resolved.
       expect(telemetry.flushed).toBe(true);
       expect(linkedProjectCache.cachedRef).toBeUndefined();
     }).pipe(Effect.provide(layer));
@@ -538,11 +506,9 @@ describe("config diff integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       const rendered = JSON.stringify(exit);
       expect(rendered).toContain("ConfigDiffLoadConfigError");
-      // `loadCliConfig` probes both filenames (`findCliProjectPaths`), so the
-      // message must not claim only `config.toml` was checked.
+      // loadCliConfig probes both config.toml and config.json, so the message names both.
       expect(rendered).toContain("supabase/config.toml or supabase/config.json: file not found");
       expect(rendered).toContain("supabase init");
-      // The load runs before any network call, and telemetry still flushes.
       expect(api.requests).toHaveLength(0);
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -551,13 +517,8 @@ describe("config diff integration", () => {
   it.live(
     "does not climb to an ancestor project's config when --workdir names a subdirectory with no config of its own",
     () => {
-      // CLI-2285 regression: an explicit --workdir is authoritative and must
-      // never let `loadCliConfig` climb past it — otherwise `config diff
-      // --workdir ./sub` from a project whose subdirectory has no
-      // supabase/ of its own would silently diff an unrelated PARENT
-      // project's config. The ancestor (tempRoot) genuinely has a valid
-      // config.toml and the subdirectory genuinely has none, so this
-      // exercises the real climb, not a tautology.
+      // The ancestor (tempRoot) genuinely has a config.toml and the subdirectory genuinely has
+      // none, so this exercises a real climb, not a tautology.
       writeConfig('project_id = "test"\n');
       const sub = join(tempRoot.current, "nested", "dir");
       mkdirSync(sub, { recursive: true });
@@ -568,15 +529,13 @@ describe("config diff integration", () => {
         const rendered = JSON.stringify(exit);
         expect(rendered).toContain("ConfigDiffLoadConfigError");
         expect(rendered).toContain("file not found");
-        // An EXPLICIT workdir never gets the ancestor-search-exhausted
-        // `supabase init` hint — it names the resolved directory instead, and
-        // points at the flag/env var that must change.
+        // An explicit workdir skips the ancestor-search "supabase init" hint; it names the
+        // resolved directory and the flag/env var to change instead.
         expect(rendered).not.toContain("supabase init");
         expect(rendered).toContain("--workdir/SUPABASE_WORKDIR");
         expect(rendered).toContain(sub);
-        // The ancestor genuinely has a valid project, so the message also
-        // hints at it — `missingProjectConfigMessageEffect`'s "Did you
-        // mean" enrichment, only reachable because the search above is real.
+        // The ancestor has a valid project, so the message also hints at it via the "Did you
+        // mean" enrichment.
         expect(rendered).toContain(`Did you mean --workdir ${tempRoot.current}?`);
         expect(api.requests).toHaveLength(0);
         expect(telemetry.flushed).toBe(true);
@@ -587,9 +546,6 @@ describe("config diff integration", () => {
   it.live(
     "does not hint at an ancestor when explicit --workdir has no project anywhere above it",
     () => {
-      // Negative counterpart of the regression above: no ancestor, all the
-      // way up, has a project of its own — so the "Did you mean" enrichment
-      // must never fire (or crash) when its best-effort probe finds nothing.
       const { layer, api } = setup({ explicitWorkdir: true });
       return Effect.gen(function* () {
         const exit = yield* configDiff(noFlags).pipe(Effect.exit);
@@ -605,9 +561,6 @@ describe("config diff integration", () => {
   it.live(
     "an explicit --workdir naming a directory that does not exist at all fails before any config load",
     () => {
-      // Distinct from the "exists but holds no project" regression above:
-      // this path was never created, so `validateWorkdirIsDirectory`
-      // must fail first, before `loadCliConfig` is ever reached.
       const missing = join(tempRoot.current, "does-not-exist");
       const { layer, api } = setup({ workdir: missing, explicitWorkdir: true });
       return Effect.gen(function* () {
@@ -624,10 +577,6 @@ describe("config diff integration", () => {
   it.live(
     "a defaulted workdir still resolves a config.json project root above a config-less subdirectory",
     () => {
-      // Complements the regression above: a defaulted (unset) --workdir must
-      // keep climbing so a config.json-only project invoked from a
-      // subdirectory still resolves — proving the fix didn't break the
-      // legitimate default-climb case.
       const dir = join(tempRoot.current, "supabase");
       mkdirSync(dir, { recursive: true });
       writeFileSync(join(dir, "config.json"), JSON.stringify({ project_id: "test" }));
@@ -643,17 +592,14 @@ describe("config diff integration", () => {
   );
 
   it.live("a malformed config aborts before any network call, even with a branch target", () => {
-    // A broken TOML must not burn a branch-resolution round trip — the local
-    // document is parsed and validated first.
     const { layer, api, telemetry } = setup({ toml: "not [valid toml\n" });
     return Effect.gen(function* () {
       const exit = yield* configDiff({ ...noFlags, projectRef: Option.some("staging") }).pipe(
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
-      // The message names the REAL file that failed to parse (`cause.path`),
-      // not a hardcoded `.toml` guess — rendered workdir-relative so it reads
-      // the same regardless of invocation cwd.
+      // The message names the actual file that failed to parse, workdir-relative regardless of
+      // invocation cwd.
       expect(JSON.stringify(exit)).toContain(`failed to parse ${join("supabase", "config.toml")}`);
       expect(api.requests).toHaveLength(0);
       expect(telemetry.flushed).toBe(true);
@@ -693,17 +639,13 @@ describe("config diff integration", () => {
       const exit = yield* configDiff(noFlags).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(JSON.stringify(exit)).toContain("ConfigDiffReadNetworkError");
-      // Telemetry still flushes on failure via Effect.ensuring.
+      // Telemetry still flushes even on failure.
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
   it.live("an out-of-domain mapped value in the response keeps its typed parse error", () => {
-    // Wire-valid but semantically impossible: the registry's typed throw
-    // (ADR 0021 API-arm family) stays in the typed channel as
-    // ProjectConfigParseError, keeping its upstream suggestion and its
-    // purpose-built actionability adapter instead of masquerading as a
-    // network failure.
+    // See ADR 0021: this stays a typed ProjectConfigParseError, not a network failure.
     const { layer } = setup({
       toml: 'project_id = "test"\n',
       v2: {
@@ -725,18 +667,13 @@ describe("config diff integration", () => {
       const rendered = JSON.stringify(exit);
       expect(rendered).toContain("ProjectConfigParseError");
       expect(rendered).toContain("Could not read the project config");
-      // The upstream remedy survives to the renderer instead of being
-      // stringified away.
       expect(rendered).toContain("suggestion");
     }).pipe(Effect.provide(layer));
   });
 
   it.live("an unknown enum value in the response degrades instead of failing", () => {
-    // ADR 0019 rule 2: the fetch goes through executeRaw, so the generated
-    // contract's closed enums (pooler.pool_mode is three literals there)
-    // never gate the response — a new platform enum member reaches the
-    // lenient config mirror, whose registry row omits the unrecognized value
-    // rather than failing the whole diff.
+    // ADR 0019: executeRaw bypasses the generated client's closed enums, so a new platform enum
+    // value degrades instead of failing.
     const { layer, out } = setup({
       toml: 'project_id = "test"\n',
       v2: {
@@ -768,8 +705,7 @@ describe("config diff integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       const rendered = JSON.stringify(exit);
       expect(rendered).toContain("ConfigDiffReadStatusError");
-      // 403 gets a purpose-written message naming the project instead of the
-      // raw `unexpected status 403: {"message":"forbidden"}` body dump.
+      // 403 gets a purpose-written message naming the project instead of the raw status/body dump.
       expect(rendered).toContain("Access denied");
       expect(rendered).toContain(VALID_REF);
     }).pipe(Effect.provide(layer));
@@ -835,8 +771,8 @@ describe("config diff integration", () => {
         project_ref: VALID_REF,
         local_scope: "base",
       });
-      // `schema_version` is the PAYLOAD contract's version; the user's
-      // `$schema` document reference travels separately as `config_schema`.
+      // schema_version is the payload contract's version; the user's $schema reference travels
+      // separately as config_schema.
       expect(data["schema_version"]).toBe(CONFIG_DIFF_PAYLOAD_VERSION);
       expect(data["schema_version"]).toBe(1);
       expect(typeof data["config_schema"]).toBe("string");
@@ -863,13 +799,8 @@ describe("config diff integration", () => {
   });
 
   it.live("every -o/--output value is rejected outright before any work happens", () => {
-    // Net-new TS command, no Go parity contract: every value the shared
-    // global `-o`/`--output` flag can carry — the machine formats, `pretty`,
-    // and the `db query`-only `table`/`csv` values alike — is rejected with
-    // the exact message pointing at `--output-format` (CLI-2156, per Colum),
-    // before any config load, target resolution, or network call.
-    // Iterates the flag's own choice list, so a value added to the global
-    // flag automatically extends this rejection coverage.
+    // Iterates every value the global `-o`/`--output` flag can carry, so a value added there
+    // automatically extends this coverage.
     const values = GLOBAL_OUTPUT_FORMATS;
     const run = (goOutput: (typeof values)[number]) => {
       const { layer, api } = setup({
@@ -959,10 +890,9 @@ describe("config diff integration", () => {
   });
 
   it.live("remote-only drift on a defaulted path shows the local schema default", () => {
-    // The someone-changed-it-in-the-dashboard case: the file never declares
-    // api.max_rows, the remote reports 250, and a `config push` would write
-    // the schema default 1000 over it — the output must say so instead of
-    // implying the key exists only remotely.
+    // The file never declares api.max_rows, so a config push would overwrite the remote's 250
+    // with the schema default 1000; the output must say so, not imply the key exists only
+    // remotely.
     const { layer, out } = setup({
       toml: 'project_id = "test"\n',
       v2: {
@@ -986,12 +916,8 @@ describe("config diff integration", () => {
   });
 
   it.live("the config file is read relative to --workdir, not the invoking directory", () => {
-    // `--workdir ../other` must compare `../other`'s config.toml against
-    // `../other`'s linked project — reading the invoking directory's file
-    // would silently diff the WRONG config (the resolver and linked-project
-    // cache already use the workdir). The ambient cwd here points somewhere
-    // with no supabase/ directory at all; only cliSettings.workdir knows
-    // where the project lives.
+    // The ambient cwd points at a directory with no supabase/ project at all, so only
+    // cliSettings.workdir can resolve it.
     const elsewhere = join(tempRoot.current, "unrelated-cwd");
     mkdirSync(elsewhere, { recursive: true });
     const { layer, out } = setup({
@@ -1005,10 +931,8 @@ describe("config diff integration", () => {
   });
 
   it.live("hostile names cannot inject ANSI or forge output lines in text mode", () => {
-    // Path segments are attacker-influenced ([remotes.*] names and
-    // sms.test_otp keys are unconstrained TOML keys) — a name carrying an
-    // escape byte or newline must not reach the terminal raw, where it could
-    // recolor output or append a fake "No config differences found." line.
+    // [remotes.*] names are unconstrained TOML keys an attacker could control, so escape bytes
+    // must not reach the terminal raw.
     const { layer, out } = setup({
       toml: [
         'project_id = "test"',
@@ -1028,9 +952,6 @@ describe("config diff integration", () => {
   });
 
   it.live("an empty block record is reported not-returned, not silently compared", () => {
-    // A permission-truncated `auth: {}` is schema-valid; claiming it was
-    // compared while every auth key silently vanishes would make a red CI
-    // unfixable by any file edit.
     const { layer, out } = setup({
       toml: 'project_id = "test"\n',
       v2: {
@@ -1047,9 +968,6 @@ describe("config diff integration", () => {
   });
 
   it.live("a missing block's not-compared caveat travels with the machine `.message`", () => {
-    // A partial API response (e.g. a scoped token returning `auth: {}`) must
-    // not report an unqualified "No config differences found." — an agent
-    // echoing just `.message` would otherwise wrongly claim a full compare.
     const { layer, out } = setup({
       toml: 'project_id = "test"\n',
       format: "json",
@@ -1085,12 +1003,9 @@ describe("config diff integration", () => {
   });
 
   it.live("a declared path push cannot communicate surfaces in the unmanaged note", () => {
-    // `auth.oauth_server.enabled` is now an ordinary comparable path
-    // (CLI-2314), so it no longer demonstrates this. Its sibling
-    // `authorization_url_path` still does: `DISABLED_SENTINEL_PRUNES` drops
-    // it from the local projection while the container is declared
-    // disabled, so a declared value disagreeing with the remote's cannot be
-    // a change entry — but it must not vanish silently either.
+    // DISABLED_SENTINEL_PRUNES drops authorization_url_path from the local projection while the
+    // container is declared disabled, so a disagreeing remote value can't be a change entry but
+    // must not vanish silently either.
     const { layer, out } = setup({
       toml: 'project_id = "test"\n[auth.oauth_server]\nenabled = false\nauthorization_url_path = "/consent"\n',
       v2: {
@@ -1119,11 +1034,6 @@ describe("config diff integration", () => {
   it.live(
     "a branch-NAME --project-ref in an unlinked dir fails immediately, naming the value",
     () => {
-      // Before the fix this fell through to `resolver.resolve`'s interactive
-      // project picker under a live "Resolving branch..." spinner and, in a
-      // non-interactive environment, surfaced the generic "Cannot find
-      // project ref. Have you run supabase link?" instead of a link-grade
-      // error naming the value the user actually passed.
       const { layer, api, telemetry, linkedProjectCache } = setup({
         toml: 'project_id = "test"\n',
         linked: false,
@@ -1137,8 +1047,6 @@ describe("config diff integration", () => {
         const rendered = JSON.stringify(exit);
         expect(rendered).toContain("ConfigDiffBranchNotLinkedError");
         expect(rendered).toContain('\\"somebranch\\"');
-        // Fails purely from local file/env state — no branches lookup, no
-        // project-picker prompt, no config-read call.
         expect(api.requests).toHaveLength(0);
         expect(telemetry.flushed).toBe(true);
         expect(linkedProjectCache.cachedRef).toBeUndefined();
@@ -1179,16 +1087,14 @@ describe("config diff integration", () => {
       const rendered = JSON.stringify(exit);
       expect(rendered).toContain("ConfigDiffBranchNotReadyError");
       expect(rendered).toContain("has no project ref yet");
-      // The placeholder ref never reaches the config-read call.
       expect(api.requests.some((request) => request.url.includes("/v2/projects/"))).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 });
 
 describe("config diff telemetry wiring", () => {
-  // Drives the exact `Command.withHandler` wiring (configDiffHandler)
-  // rather than the bare handler: the safeFlags guard lives in the wiring,
-  // and nothing validates `--project-ref` before instrumentation fires.
+  // Uses configDiffHandler (not the bare handler) since the safeFlags guard lives in the command
+  // wiring, not the handler itself.
   const wiringLayer = (analytics: ReturnType<typeof mockContextualAnalytics>, projectRef: string) =>
     Layer.mergeAll(
       setup({ toml: 'project_id = "test"\n', analytics }).layer,
@@ -1210,8 +1116,8 @@ describe("config diff telemetry wiring", () => {
   });
 
   it.live("redacts a branch-name-shaped --project-ref", () => {
-    // `--project-ref` accepts branch names too (CLI-2167 vocabulary) — a
-    // user-created branch name must never reach PostHog verbatim.
+    // --project-ref also accepts branch names; a user-created name must never reach PostHog
+    // verbatim.
     const analytics = mockContextualAnalytics();
     return Effect.gen(function* () {
       yield* Effect.exit(
@@ -1224,14 +1130,9 @@ describe("config diff telemetry wiring", () => {
 });
 
 describe("config diff -o/--output wrapper wiring", () => {
-  // The wrapper's own per-command `-o` enum check (`withCommandTelemetry`)
-  // defaults to the resource-command set (`env|pretty|json|toml|yaml`), which
-  // excludes `table`/`csv` — without `diff.command.ts`'s `outputFormats`
-  // override widening that set to the full global choice list, a `-o table`
-  // invocation would be rejected by the wrapper's generic pflag-style
-  // message before ever reaching this command's own, more specific
-  // rejection. Drives the real `configDiffHandler` wiring (not the bare
-  // handler) so this actually exercises that override.
+  // diff.command.ts's `outputFormats` override widens the flag's enum to the full choice list;
+  // without it, `-o table` would hit the wrapper's own generic rejection before reaching this
+  // command's specific one. Uses the real configDiffHandler wiring so this exercises that override.
   it.live("-o table reaches this command's own message, not the wrapper's generic one", () => {
     const { layer, api } = setup({ toml: 'project_id = "test"\n', goOutput: "table" });
     return Effect.gen(function* () {

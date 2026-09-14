@@ -17,9 +17,8 @@ import {
 } from "./edge-runtime-script.service.ts";
 
 /**
- * Asks the OS for an unused TCP port on 127.0.0.1, like `getFreeHostPort`.
- * On failure the caller drops the `--port` flag (Go preserves prior behaviour),
- * so this resolves to `None` rather than failing the whole run.
+ * Asks the OS for an unused TCP port on 127.0.0.1. Resolves to `None` on failure so the caller
+ * can drop the `--port` flag instead of failing the whole run.
  */
 const allocateFreeHostPort = Effect.callback<Option.Option<number>>((resume) => {
   const server = Net.createServer();
@@ -32,15 +31,13 @@ const allocateFreeHostPort = Effect.callback<Option.Option<number>>((resume) => 
 });
 
 /**
- * Real `EdgeRuntimeScript`: runs the Deno program in the edge-runtime
- * container via `DockerRun.runCapture`, overriding the image entrypoint
- * with `sh -c <heredoc>` (`RunEdgeRuntimeScript`). The image (from the
- * caller's effective `deno_version`) and a fresh free port are resolved per run,
- * so layer construction reads no config (it would validate base config before a
- * linked command resolves its ref).
+ * Real `EdgeRuntimeScript`: runs the Deno program in the edge-runtime container via
+ * `DockerRun.runCapture`, overriding the image entrypoint with `sh -c <heredoc>`. The image
+ * (from the caller's effective `deno_version`) and a fresh free port are resolved per run, so
+ * layer construction reads no config.
  *
- * NOTE: the non-zero-exit message string is approximated from the docker exit
- * code and should be golden-verified against the Go binary.
+ * NOTE: the non-zero-exit message string is approximated from the docker exit code and may not
+ * exactly match real edge-runtime output.
  */
 export const edgeRuntimeScriptLayer = Layer.effect(
   EdgeRuntimeScript,
@@ -52,20 +49,15 @@ export const edgeRuntimeScriptLayer = Layer.effect(
     const debug = yield* DebugFlag;
     const networkIdFlag = yield* NetworkIdFlag;
     const runtimeInfo = yield* RuntimeInfo;
-    // `DockerStart` appends `host.docker.internal:host-gateway` to every
-    // container's ExtraHosts on Linux only (build-tag `extraHosts` in
-    // `apps/cli-go/internal/utils/docker_linux.go:8`; the append at `docker.go:266`
-    // is unconditional but the slice is empty on macOS/Windows). The pg-delta
-    // container needs it so a `host.docker.internal` local DB host (from
-    // SUPABASE_SERVICES_HOSTNAME) resolves inside the container on Linux/dev-container.
+    // The pg-delta container needs `host.docker.internal:host-gateway` on Linux only, so a
+    // `host.docker.internal` local DB host (from SUPABASE_SERVICES_HOSTNAME) resolves inside the
+    // container on Linux/dev-container; Docker Desktop already provides this on macOS/Windows.
     const extraHosts =
       runtimeInfo.platform === "linux" ? ["host.docker.internal:host-gateway"] : [];
 
-    // Go requests host networking for the edge-runtime container, but `DockerStart`
-    // overrides any network mode (host included) with `--network-id` when set.
-    // Mirror the sibling pattern in
-    // `db dump` / `gen types` / `test db` so declarative pg-delta runs reach the
-    // local stack on custom networks.
+    // Host networking is the default so pg-delta reaches the local stack directly, but an
+    // explicit `--network-id` overrides it — matching the same pattern used by
+    // `db dump`/`gen types`/`test db`.
     const networkId = Option.getOrUndefined(networkIdFlag);
     const network =
       networkId !== undefined && networkId.length > 0
@@ -75,24 +67,14 @@ export const edgeRuntimeScriptLayer = Layer.effect(
     return EdgeRuntimeScript.of({
       run: (opts) =>
         Effect.gen(function* () {
-          // Resolve the image per-run from the caller's effective `deno_version` —
-          // the remote-merged value the handler resolved AFTER the linked ref. The
-          // config read happens here, not at layer acquisition, so merely composing
-          // the db diff/pull runtime never validates the base config before the
-          // linked ref is known (Go validates the `[remotes.<ref>]`-merged config,
-          // and even `db diff --use-pgadmin --linked` — a native path since CLI-1968,
-          // reading config directly rather than exec'ing a Go child, and never calling
-          // this layer's `run` at all — must not fail at layer build). Every pg-delta/
-          // migra caller passes `opts.denoVersion`, so the base read is a defensive
-          // fallback that does not run for them.
+          // Resolved per-run, not at layer acquisition, so merely composing this runtime never
+          // validates the base config before a linked ref is known. Every pg-delta/migra caller
+          // passes `opts.denoVersion`, so this read only runs as a defensive fallback.
           //
-          // Same per-run override for `workdir`: `cliSettings.workdir` is fixed at
-          // layer-build time, before a command's own `process.chdir` (bootstrap's
-          // real target directory only exists once its handler runs — see
-          // `bootstrap.handler.ts`), so every pg-delta/migra caller passes its own
-          // `ctx.cwd` here too, keeping the image-pin lookup and the base-config
-          // fallback read consistent with the workdir the rest of the run actually
-          // targets.
+          // `workdir` follows the same pattern: `cliSettings.workdir` is fixed at layer-build
+          // time, before a command's own `process.chdir` runs, so callers pass their own
+          // directory to keep the image-pin lookup and config fallback consistent with the rest
+          // of the run.
           const workdir = opts.workdir ?? cliSettings.workdir;
           const denoVersion =
             opts.denoVersion ??
@@ -116,20 +98,18 @@ export const edgeRuntimeScriptLayer = Layer.effect(
               env,
               binds: opts.binds,
               workingDir: Option.none(),
-              // SELinux-enforcing hosts (e.g. Fedora + rootless Podman) block the
-              // container from reading CLI-generated files under the `/workspace`
-              // bind, like the pg-delta CA bundle (supabase/cli#5989). Disable label
-              // separation for this helper container instead of relabeling the
-              // user's project files — same as `db test`'s pg_prove run; Bitbucket CI clears it
-              // via `applyBitbucketDockerFilter`.
+              // SELinux-enforcing hosts (e.g. Fedora + rootless Podman) block the container from
+              // reading CLI-generated files under the `/workspace` bind, like the pg-delta CA
+              // bundle. Disable label separation for this helper container instead of relabeling
+              // the user's project files — same as `db test`'s pg_prove run; Bitbucket CI clears
+              // it via `applyBitbucketDockerFilter`.
               securityOpt: ["label:disable"],
               extraHosts,
               network,
             })
-            // A spawn failure (e.g. Docker not installed) carries no container
-            // stderr; wrap it with the caller's prefix like `%s: %w`.
-            // Thread the docker discriminant so a daemon-down / registry-pull
-            // failure at the docker boundary is not misclassified as user SQL.
+            // A spawn failure (e.g. Docker not installed) carries no container stderr, so wrap
+            // it with the caller's prefix. Threading the docker discriminant keeps a
+            // daemon-down/registry-pull failure from being misclassified as user SQL.
             .pipe(
               Effect.mapError(
                 (cause) =>
@@ -145,9 +125,9 @@ export const edgeRuntimeScriptLayer = Layer.effect(
               ),
             );
 
-          // Go ignores the error when stderr reports the runtime tore down its
-          // worker after the script completed (the script's output is still
-          // valid). Any other non-zero exit is a real failure.
+          // A non-zero exit is ignored when stderr reports the runtime tore down its worker
+          // after the script completed — the script's output is still valid. Any other
+          // non-zero exit is real.
           if (result.exitCode !== 0 && !result.stderr.includes("main worker has been destroyed")) {
             return yield* Effect.fail(
               new EdgeRuntimeScriptError({
@@ -156,13 +136,10 @@ export const edgeRuntimeScriptLayer = Layer.effect(
             );
           }
 
-          // The pg-delta templates force the worker to exit by throwing, so a
-          // script crash is masked by the "main worker has been destroyed"
-          // suppression above. The sentinel — printed only by the templates'
-          // catch blocks — marks a real failure so the collected stderr (which
-          // holds the real error) reaches the user instead of looking like an
-          // empty diff. Byte-for-byte port of Go's check in
-          // apps/cli-go/internal/utils/edgeruntime.go.
+          // A script crash is otherwise masked by the "main worker has been destroyed"
+          // suppression above, since the templates force the worker to exit by throwing. The
+          // sentinel — printed only by the templates' catch blocks — marks that real failure so
+          // the collected stderr reaches the user instead of looking like an empty diff.
           if (result.stderr.includes(EDGE_RUNTIME_SCRIPT_ERROR_SENTINEL)) {
             return yield* Effect.fail(
               new EdgeRuntimeScriptError({

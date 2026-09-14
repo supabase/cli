@@ -21,8 +21,8 @@ import {
 import { networkRestrictionsUpdateDbAllowCidrFlag } from "./update.command.ts";
 import { networkRestrictionsUpdate } from "./update.handler.ts";
 
-// Runs the real `--db-allow-cidr` flag pipeline (pflag StringSlice CSV parity —
-// `cmd/restrictions.go:40`) so these scenarios cover raw CLI values → request body.
+// Runs the real --db-allow-cidr flag pipeline so these scenarios cover raw CLI values
+// through to the request body.
 const parseDbAllowCidr = (rawValues: ReadonlyArray<string>) =>
   networkRestrictionsUpdateDbAllowCidrFlag
     .parse({ flags: { "db-allow-cidr": rawValues }, arguments: [] })
@@ -336,9 +336,8 @@ describe("network-restrictions update integration", () => {
   });
 
   it.live("rejects an IPv4-mapped private IPv6 input (security regression guard)", () => {
-    // Without IPv4-mapped detection, ::ffff:10.0.0.0/104 would slip past the
-    // private check because the IPv6 first-byte is 0, not 0xfc. parseCidr now
-    // reclassifies these as v4 via `net.IP.To4()` semantics; the v4 path
+    // Without IPv4-mapped detection, ::ffff:10.0.0.0/104 would slip past the private check
+    // (its IPv6 first byte is 0, not 0xfc); parseCidr reclassifies it as v4 so the v4 path
     // catches 10.0.0.0/8.
     const { layer } = setup();
     return Effect.gen(function* () {
@@ -528,7 +527,7 @@ describe("network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // Output modes — PATCH (cover encoders against V2 response shape)
+  // Output modes — PATCH
 
   it.live("emits a structured JSON success payload via --output-format=json after PATCH", () => {
     const { layer, out } = setup({ format: "json", patchResponse: PATCH_APPLIED });
@@ -641,7 +640,7 @@ describe("network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // PersistentPostRun parity (telemetry + linked-project cache)
+  // Telemetry and linked-project cache
 
   it.live("flushes telemetry and writes linked-project cache on success", () => {
     const { layer, telemetry, cache } = setupTracked({ postResponse: POST_APPLIED });

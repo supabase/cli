@@ -8,13 +8,9 @@ import {
 
 /**
  * Raised by the `activate` and `check-availability` handlers when
- * `--desired-subdomain` is omitted. Go marks the flag required
- * (`cmd/vanitySubdomains.go:67,69`) but cobra validates required flags only
- * AFTER `PersistentPreRunE` (`cobra@v1.10.2/command.go:985,1005`) — i.e. after
- * the `--experimental` gate, login check, and project-ref resolution
- * (`cmd/root.go:93-117`) — so the flag is optional at parse time and enforced
- * in the handler instead. Byte-matches cobra's required-flag wording
- * (`command.go:1198`), same pattern as `ProjectRefRequiredError`.
+ * `--desired-subdomain` is omitted. The flag stays optional at parse time so the
+ * `--experimental` gate, login check, and project-ref resolution run first, and this
+ * error enforces it in the handler instead.
  */
 export class DesiredSubdomainRequiredError extends Data.TaggedError(
   "DesiredSubdomainRequiredError",
@@ -47,8 +43,8 @@ export class VanitySubdomainsGetUnexpectedStatusError extends Data.TaggedError(
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    // Unlike check/activate, this gated wrapper does not yet retain the typed
-    // entitlement result. Keep 404 conservative rather than masking a plan gate.
+    // This wrapper doesn't retain the typed entitlement result yet, so a 404 stays
+    // conservative rather than risk masking a plan gate.
     return statusCodeActionability(this.status);
   }
 }

@@ -1,6 +1,6 @@
 module github.com/supabase/cli/pkg
 
-go 1.25.0
+go 1.26.0
 
 require (
 	github.com/BurntSushi/toml v1.6.0
@@ -25,7 +25,7 @@ require (
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.12.1
 	github.com/tidwall/jsonc v0.3.3
-	golang.org/x/mod v0.40.0
+	golang.org/x/mod v0.41.0
 	google.golang.org/grpc v1.83.2
 )
 

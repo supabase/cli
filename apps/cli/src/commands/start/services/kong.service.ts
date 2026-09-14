@@ -1,52 +1,22 @@
 /**
  * Kong container spec builder, gated on
- * `!isContainerExcluded(config.api.kong_image, excluded)` (Kong has no
- * `enabled` flag of its own — it is the stack's mandatory gateway) — see
- * `service-catalog.ts`'s `kong` entry (`excludeKey: "kong"`). Gating and
- * image resolution/pre-pull are the caller's job (a future `start.handler.ts`);
- * this module only assembles the container spec once the caller has already
- * decided to start it, matching `docker-create-args.ts`'s "image already
- * resolved/pulled" contract.
+ * `!isContainerExcluded(config.api.kong_image, excluded)` — Kong has no
+ * `enabled` flag of its own; it's the stack's mandatory gateway.
  *
- * How `kong.yml`/`custom_nginx.template`/the TLS cert+key get injected into
- * the container: a single `sh -c` entrypoint script could chain FOUR
- * `cat <<'EOF' > <path> && \` heredocs (joined by shell line-continuation
- * into one logical command line), landing all four bodies — including
- * `kong.yml`'s embedded service-role-key-derived bearer/query tokens and the
- * TLS private key — directly in the container's own `Cmd`. THIS PORT SHELLS
- * OUT to a real `docker create`, where that `Cmd` string would become a
- * subprocess's own argv and leak via `ps aux`/`/proc/<pid>/cmdline`
- * (CWE-214/522), so it deliberately diverges here: `kong.yml` (the
- * service-role key) and the TLS cert/key (the highest-value secret — a
- * private key) travel via {@link StartContainerSpec.secretFiles}
- * instead — an in-memory tar entry, mode `0644` (world-readable —
- * Kong's image runs its process as uid 100 `kong`, a non-root user, and
- * `0600` would make it unreadable in-container; see
- * `copyStartSecretFilesIntoContainer`'s doc comment), streamed via
- * `docker cp - <id>:/` into the container at the exact fixed paths
- * `KONG_DECLARATIVE_CONFIG`/`KONG_SSL_CERT`/`KONG_SSL_CERT_KEY` already
- * reference — and never appear in this process's own argv. Only
- * `custom_nginx.template`, which carries no secret content, still travels
- * via the heredoc entrypoint script.
+ * `kong.yml` and the TLS cert/key travel via
+ * {@link StartContainerSpec.secretFiles} (an in-memory `docker cp` tar
+ * entry), not the entrypoint script: embedding them in a heredoc would put
+ * the service-role key and the TLS private key into the container's own
+ * `Cmd`, leaking via `ps aux`/`/proc/<pid>/cmdline` (CWE-214/522). These
+ * `secretFiles` entries are always present, since `KONG_SSL_CERT`/
+ * `KONG_SSL_CERT_KEY` reference fixed in-container paths unconditionally and
+ * their content is never empty (see {@link KongContainerSpecInput.tlsCertContent}).
+ * `custom_nginx.template` carries no secret content, so it still travels via
+ * {@link buildKongEntrypointScript}'s heredoc, `exec`'d so Kong runs as PID 1.
  *
- * The TLS cert/key `secretFiles` entries are still ALWAYS present — never a
- * conditional bind — because `KONG_SSL_CERT`/`KONG_SSL_CERT_KEY` reference
- * fixed in-container paths unconditionally. Their content is never empty
- * either: the default config seeds `Api.Tls.{CertContent,KeyContent}` with
- * the embedded default localhost cert/key, and only overwrites them from
- * disk when TLS is enabled AND both `cert_path`/`key_path` are configured —
- * see {@link KongContainerSpecInput.tlsCertContent}'s doc comment.
- * {@link buildKongEntrypointScript} reproduces the remaining
- * `custom_nginx.template` heredoc; the final command is `exec`'d so Kong
- * is PID 1 and `docker stop` reaches it directly.
- *
- * Kong mints no JWTs of its own: `BearerToken`/`QueryToken` are Kong
- * `request-transformer`/lua expression STRINGS built from the four
- * already-generated API keys (`secretKey`/`serviceRoleKey`/`publishableKey`/
- * `anonKey` — see `local-config-values.ts`'s `LocalConfigValues`,
- * which already resolves all four). {@link buildKongBearerToken}/
- * {@link buildKongQueryToken} build those two strings; nothing in this
- * module calls `generateGoJwt` itself.
+ * Kong mints no JWTs itself: {@link buildKongBearerToken}/
+ * {@link buildKongQueryToken} build lua-expression strings from the four
+ * already-generated API keys.
  */
 
 import * as nodePath from "node:path";
@@ -106,18 +76,11 @@ export function buildKongQueryToken(apiKeys: KongApiKeys): string {
 }
 
 /**
- * `KONG_NGINX_WORKER_PROCESSES`, env-or-default: the operator's own shell
- * value wins when set (e.g. `KONG_NGINX_WORKER_PROCESSES=auto` for one
- * worker per CPU core), otherwise a default of a single worker to minimize
- * local-stack memory usage (Ref: supabase/cli#1271). `projectEnvValues` is
- * the merged (dotenv + ambient shell, ambient-wins) view, so a
- * `KONG_NGINX_WORKER_PROCESSES` set only in a project dotenv file (not the
- * ambient shell) is honored too, matching Storage's identical `VECTOR_*`-env
- * handling (`storage.service.ts`). Kept separate from
- * {@link buildKongContainerSpec} (which stays a pure function of
- * already-resolved values, matching every other `start`-service builder) so
- * this one ambient-env read is independently testable and the builder itself
- * never touches `process.env`.
+ * `KONG_NGINX_WORKER_PROCESSES`, env-or-default: honors an operator's own
+ * value (from a project dotenv file or the ambient shell), defaulting to a
+ * single worker to minimize local-stack memory use (supabase/cli#1271). Kept
+ * separate from {@link buildKongContainerSpec} so that builder never touches
+ * `process.env`.
  */
 export function resolveKongNginxWorkerProcesses(
   projectEnvValues?: Readonly<Record<string, string>>,
@@ -127,51 +90,37 @@ export function resolveKongNginxWorkerProcesses(
 
 export interface KongEmailTemplateMount {
   /**
-   * The raw `config.auth.email.template` key for a template mount, or
-   * `<key>_notification` for an enabled `config.auth.email.notification`
-   * entry — the caller is responsible for that suffixing and for filtering
-   * notifications down to `enabled` ones; this module only derives the
-   * per-mount path.
+   * The `config.auth.email.template` key, or `<key>_notification` for a
+   * notification entry — suffixing and enabled-filtering are the caller's job.
    */
   readonly id: string;
   /**
-   * Absolute HOST path, already resolved, containment-checked, AND
-   * read-verified by the caller (`start.handler.ts`'s
-   * `resolveKongEmailTemplateMounts`, via `resolveEmailTemplateContentPath`
-   * plus a discarded `readFileSync`) — never a raw, unresolved
-   * `content_path`. There is no "not configured" sentinel here: the caller
-   * omits an entry entirely instead of including one with an empty path.
+   * Absolute host path, already resolved, containment-checked, and
+   * read-verified by the caller. Omitted entirely (not an empty string) when
+   * not configured.
    */
   readonly resolvedPath: string;
   /**
-   * `true` for a mount derived from an ENABLED `auth.email.notification.*`
-   * entry (vs a `auth.email.template.*` entry) — caller-side bookkeeping
-   * only; this module no longer branches on it, since resolution (including
-   * the notification-specific legacy `supabase/`-relative fallback) already
-   * happened upstream, once, before `resolvedPath` was set.
+   * `true` for a mount derived from an enabled `auth.email.notification.*`
+   * entry — caller-side bookkeeping only; this module doesn't branch on it.
    */
   readonly notification?: boolean;
 }
 
 /**
- * Formats one email-template bind mount: joins `mount.resolvedPath` onto the
- * fixed in-container email-template directory as `<id><ext-of-resolvedPath>`
- * (POSIX — the container is always Linux regardless of the host OS, hence
- * `nodePath.posix.join`, not the platform-dependent `nodePath.join`), and
- * formats the `rw` bind.
- *
- * A pure formatter over an already-validated path — it makes no containment
- * or existence claims of its own. `start.handler.ts` resolves, confines to
- * the project root, and read-verifies every mount's `resolvedPath` exactly
- * once, before any Docker work runs (see
- * `KongEmailTemplateMount.resolvedPath`'s doc comment).
+ * Formats one email-template bind mount at
+ * `<KONG_NGINX_EMAIL_TEMPLATE_DIR>/<id><ext-of-resolvedPath>`, using the
+ * shared `z` SELinux relabel (not the private `Z`) since these are
+ * user-owned project files remounted across `start`/`db reset`. Assumes
+ * `resolvedPath` is already validated; makes no containment or existence
+ * checks of its own.
  */
 export function buildKongEmailTemplateBind(mount: KongEmailTemplateMount): string {
   const dockerPath = nodePath.posix.join(
     KONG_NGINX_EMAIL_TEMPLATE_DIR,
     `${mount.id}${nodePath.extname(mount.resolvedPath)}`,
   );
-  return `${mount.resolvedPath}:${dockerPath}:rw`;
+  return `${mount.resolvedPath}:${dockerPath}:rw,z`;
 }
 
 const KONG_ENTRYPOINT_HEAD =
@@ -179,13 +128,10 @@ const KONG_ENTRYPOINT_HEAD =
   "exec ./docker-entrypoint.sh kong docker-start --nginx-conf /home/kong/custom_nginx.template\n";
 
 /**
- * Builds the surviving (non-secret) half of the Kong entrypoint: only the
- * `custom_nginx.template` heredoc and the final `docker-entrypoint.sh` exec
- * line — `KONG_ENTRYPOINT_HEAD + nginxTemplate + "\nEOF\n"`. The
- * other three heredocs that could otherwise chain ahead of this one
- * (`kong.yml`, the TLS cert, the TLS key) don't travel through this script
- * at all — see this module's header comment for why (`secretFiles`,
- * CWE-214/522).
+ * Builds the non-secret half of the Kong entrypoint: the
+ * `custom_nginx.template` heredoc plus the final `docker-entrypoint.sh` exec
+ * line. `kong.yml` and the TLS cert/key travel via `secretFiles` instead —
+ * see this module's header.
  */
 export function buildKongEntrypointScript(nginxTemplate: string): string {
   return KONG_ENTRYPOINT_HEAD + nginxTemplate + "\nEOF\n";
@@ -209,12 +155,9 @@ export interface KongContainerSpecInput {
   /** `config.api.tls.enabled`, post-override — selects the published container port (`8443` vs `8000`). */
   readonly apiTlsEnabled: boolean;
   /**
-   * The resolved TLS cert content. NOT empty-by-default: the default config
-   * seeds this with the embedded default cert (`KONG_LOCAL_TLS_CERT`)
-   * and only config validation overwrites it from `api.tls.cert_path` when
-   * TLS is enabled AND both `cert_path`/`key_path` are configured — the
-   * caller must pass the embedded default here otherwise, since this field
-   * is always written to `/home/kong/localhost.crt` unconditionally.
+   * The resolved TLS cert content. Never empty: defaults to the embedded
+   * cert, only overwritten from `cert_path` when TLS is enabled and both
+   * paths are configured. Always written to `/home/kong/localhost.crt`.
    */
   readonly tlsCertContent: string;
   /** The resolved TLS key content — see {@link tlsCertContent} for the same embedded-default requirement. */
@@ -226,11 +169,8 @@ export interface KongContainerSpecInput {
   /** PostgREST's own container name. */
   readonly restId: string;
   /**
-   * `config.realtime.tenant_id` — NOT Realtime's container name/id.
-   * Realtime is reachable under this same value because it is ALSO
-   * Realtime's own network alias (`["realtime", tenantId]`), so
-   * `kong.yml`'s `url: http://{{ .RealtimeId }}:4000/...` resolves via that
-   * alias, not via `serviceContainerName("realtime", projectId)`.
+   * `config.realtime.tenant_id`, not Realtime's container name. Realtime is
+   * reachable under this value because it's also Realtime's own network alias.
    */
   readonly realtimeTenantId: string;
   /** Storage's own container name. */
@@ -245,18 +185,11 @@ export interface KongContainerSpecInput {
   readonly logflareId: string;
   /** Supavisor's own container name. */
   readonly poolerId: string;
-  /**
-   * `envOrDefault("KONG_NGINX_WORKER_PROCESSES", "1")` — already resolved by
-   * the caller via {@link resolveKongNginxWorkerProcesses}, keeping
-   * this builder a pure function of its `input`.
-   */
+  /** Already resolved by the caller via {@link resolveKongNginxWorkerProcesses}, keeping this builder pure. */
   readonly nginxWorkerProcesses: string;
   /**
-   * Every `config.auth.email.template.*`/enabled
-   * `config.auth.email.notification.*` entry the caller has already
-   * gathered — see {@link KongEmailTemplateMount}'s doc comment for
-   * the notification `id` suffixing/filtering the caller owns. Defaults to
-   * `[]` (no email template mounts).
+   * Every `config.auth.email.template.*`/enabled `notification.*` entry the
+   * caller has gathered — see {@link KongEmailTemplateMount}. Defaults to `[]`.
    */
   readonly emailTemplateMounts?: ReadonlyArray<KongEmailTemplateMount>;
 }

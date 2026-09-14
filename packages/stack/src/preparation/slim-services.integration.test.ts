@@ -11,6 +11,13 @@ import {
   type ZstdDecompressor,
 } from "./SlimServicesSource.ts";
 import type { NativeWorkloadArtifact } from "../model/WorkloadCatalog.ts";
+import { StackPreparationError } from "../public/Errors.ts";
+
+const waitForAbort = (signal?: AbortSignal | null): Promise<never> =>
+  Effect.runPromise(Effect.never, { signal: signal ?? undefined });
+
+const waitForRelease = (released: Deferred.Deferred<void>): Promise<void> =>
+  Effect.runPromise(Deferred.await(released));
 
 const artifact: NativeWorkloadArtifact = {
   provider: "supabase/slim-services",
@@ -154,7 +161,7 @@ describe("slim-services artifact source", () => {
         const fs = yield* FileSystem.FileSystem;
         const destination = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-unsafe-" });
         const failed = yield* source.materialize(request, destination, expected).pipe(Effect.exit);
-        expect(errorOf(failed)).toBeDefined();
+        expect(errorOf(failed)).toBeInstanceOf(StackPreparationError);
         expect(yield* fs.exists(`${destination}/outside`)).toBe(false);
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
@@ -211,7 +218,7 @@ describe("slim-services artifact source", () => {
         const failed = yield* makeSlimServicesSource(() => artifact, malformedFetcher)
           .materialize(request, destination, malformedDigest)
           .pipe(Effect.exit);
-        expect(errorOf(failed)).toBeDefined();
+        expect(errorOf(failed)).toBeInstanceOf(StackPreparationError);
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
   );
@@ -246,7 +253,7 @@ describe("slim-services artifact source", () => {
         const failed = yield* makeSlimServicesSource(() => artifact, fetcher)
           .materialize(request, destination, expected)
           .pipe(Effect.exit);
-        expect(errorOf(failed)).toBeDefined();
+        expect(errorOf(failed)).toBeInstanceOf(StackPreparationError);
         expect(yield* fs.exists(`${destination}/outside`)).toBe(false);
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
@@ -270,12 +277,8 @@ describe("slim-services artifact source", () => {
               new Response("0".repeat(64) + "  demo-v1.0.0-linux-amd64.tar.zst\n"),
             );
           signal = init?.signal ?? undefined;
-          // oxlint-disable-next-line effecttsgo/run-effect-inside-effect -- signal the test's injected fetch boundary
-          void Effect.runPromise(Deferred.succeed(started, undefined));
-          // oxlint-disable-next-line effecttsgo/new-promise -- fetch fixture intentionally remains pending until abort
-          return new Promise<Response>((_resolve, reject) => {
-            signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
-          });
+          Deferred.doneUnsafe(started, Effect.void);
+          return waitForAbort(signal);
         };
         const fs = yield* FileSystem.FileSystem;
         const destination = yield* fs.makeTempDirectoryScoped({
@@ -356,6 +359,7 @@ describe("slim-services artifact source", () => {
             );
           signal = init?.signal ?? undefined;
           let pulls = 0;
+          const released = Deferred.makeUnsafe<void>();
           const body = new ReadableStream<Uint8Array>({
             pull(controller) {
               pulls += 1;
@@ -363,14 +367,13 @@ describe("slim-services artifact source", () => {
                 controller.enqueue(new Uint8Array([1]));
                 return;
               }
-              // oxlint-disable-next-line effecttsgo/run-effect-inside-effect -- signal the stream fixture's external Deferred
-              void Effect.runPromise(Deferred.succeed(started, undefined));
-              // oxlint-disable-next-line effecttsgo/new-promise -- hold the stream pull until cancellation
-              return new Promise<void>(() => undefined);
+              Deferred.doneUnsafe(started, Effect.void);
+              return waitForRelease(released);
             },
             cancel() {
               canceled = true;
               pulls = 99;
+              Deferred.doneUnsafe(released, Effect.void);
             },
           });
           return Promise.resolve(new Response(body));
@@ -405,8 +408,7 @@ describe("slim-services artifact source", () => {
         const decompressor: ZstdDecompressor = {
           decompress: () =>
             Effect.callback((_resume) => {
-              // oxlint-disable-next-line effecttsgo/run-effect-inside-effect -- test boundary signal
-              void Effect.runPromise(Deferred.succeed(started, undefined));
+              Deferred.doneUnsafe(started, Effect.void);
               return Effect.sync(() => {
                 destroyed = true;
               });

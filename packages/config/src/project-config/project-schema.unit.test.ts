@@ -36,10 +36,8 @@ describe("ProjectConfigSchema acceptance", () => {
   });
 
   test("a sparse overlay leaving required-looking siblings unset still validates", () => {
-    // `db.pooler`'s own fields (`pool_mode`, `default_pool_size`, …) are all
-    // present in `CliConfigSchema`, but this schema wraps every one of them
-    // `optionalKey` — a fragment naming only `enabled` must not fail just
-    // because it says nothing about the rest of the section.
+    // `db.pooler`'s sibling fields are all wrapped `optionalKey`, so naming only `enabled` must
+    // not fail.
     expect(() => decodeProjectConfig({ db: { pooler: { enabled: true } } })).not.toThrow();
   });
 
@@ -73,13 +71,6 @@ describe("ProjectConfigSchema acceptance", () => {
     expect(() => decodeProjectConfig(projected)).not.toThrow();
   });
 
-  // `db.vault` is dropped from the schema entirely (an all-secret
-  // `Record<string, secret()>` container, project-schema.ts's
-  // `isAllSecretCollapsedContainer`) rather than kept as an empty,
-  // accept-anything node — so under this schema's permissive-excess design
-  // (never `additionalProperties: false`, never `onExcessProperty: "error"`),
-  // a `db.vault` of ANY shape is simply excess input: it validates, but is
-  // silently dropped from the decoded result rather than rejected.
   test("db.vault of any shape validates but is dropped, since the schema no longer knows the key", () => {
     expect(decodeProjectConfig({ db: { vault: 42 } })).toEqual({ db: {} });
     expect(decodeProjectConfig({ db: { vault: {} } })).toEqual({ db: {} });
@@ -105,12 +96,8 @@ describe("ProjectConfigSchema rejection", () => {
 });
 
 describe("ProjectConfigSchema secret-strip exhaustiveness", () => {
-  // Schema-derived, exhaustive counterpart to a hand-picked field list
-  // (matching `project-config.unit.test.ts`'s own exhaustive-probe
-  // precedent): every `x-secret` path pattern the schema declares, rooted in
-  // one of the seven hosted sections, must be structurally absent from
-  // `ProjectConfigSchema`'s own AST — not merely absent from one hand-picked
-  // example.
+  // Exhaustive counterpart to a hand-picked field list: every `x-secret` path pattern rooted in a
+  // hosted section must be structurally absent from `ProjectConfigSchema`'s own AST.
   const reachablePatterns = secretPathPatterns.filter((pattern) =>
     HOSTED_SECTION_KEYS.some((key) => key === (pattern[0] ?? "")),
   );
@@ -124,12 +111,9 @@ describe("ProjectConfigSchema secret-strip exhaustiveness", () => {
   });
 
   /**
-   * Walks {@link ProjectConfigSchema}'s own AST along `pattern`, treating a
-   * `"*"` segment as "descend into the node's own index signature" and every
-   * other segment as "descend into the property signature of that name" —
-   * returns `undefined` the moment the path can no longer be followed, which
-   * is exactly the outcome a dropped secret property/index-signature
-   * produces.
+   * Walks {@link ProjectConfigSchema}'s AST along `pattern` (`"*"` descends into an index
+   * signature, anything else into a same-named property signature); returns `undefined` once the
+   * path can no longer be followed.
    */
   function findAtPattern(
     ast: SchemaAST.AST,
@@ -154,19 +138,11 @@ describe("ProjectConfigSchema secret-strip exhaustiveness", () => {
     }
   });
 
-  // Guards against a vacuous pass: if an ANCESTOR of `pattern` vanished
-  // (e.g. a whole section got dropped by an unrelated bug), `findAtPattern`
-  // for the full secret path also returns `undefined` — indistinguishable,
-  // from that assertion alone, from the secret leaf being correctly
-  // stripped. Asserting the parent path is still reachable rules that out —
-  // EXCEPT for a known all-secret collapsed container (`db.vault`, a
-  // `Record<string, secret()>` — project-schema.ts's
-  // `isAllSecretCollapsedContainer`), whose own immediate parent is dropped
-  // entirely rather than kept as an empty node. That one case is accepted
-  // explicitly (checking the GRANDPARENT is reachable instead, and that the
-  // container's own name no longer survives as a property there) rather
-  // than by walking arbitrarily far up the ancestor chain, which would mask
-  // an unrelated regression dropping some other, unexpected ancestor.
+  // Guards against a vacuous pass: if an ancestor of `pattern` vanished entirely, the leaf lookup
+  // also returns `undefined`, indistinguishable from a correctly-stripped secret. Asserting the
+  // immediate parent is still reachable rules that out, except for a known all-secret collapsed
+  // container (`db.vault`), whose own parent is dropped entirely — checked via its grandparent
+  // instead.
   const KNOWN_ALL_SECRET_COLLAPSED_CONTAINER_PARENTS: ReadonlyArray<ReadonlyArray<string>> = [
     ["db", "vault"],
   ];
@@ -210,14 +186,9 @@ describe("ProjectConfigSchema secret-strip exhaustiveness", () => {
   });
 
   /**
-   * Recursively collects the dotted path of every reachable `Objects` node
-   * with zero properties AND zero index signatures — the shape both a
-   * genuinely source-empty struct (`storage.analytics.buckets.*`,
-   * `storage.vector.buckets.*` — see `project-schema.ts`'s own doc comment)
-   * and (before CLI-2234's fix) an all-secret collapsed container would
-   * produce. `db.vault` is dropped entirely rather than emptied now, so it
-   * must NOT appear in this list — this is the "double-check no OTHER
-   * container becomes stripped-empty besides vault" guard.
+   * Recursively collects the dotted path of every reachable `Objects` node with zero properties
+   * and zero index signatures — the shape a genuinely source-empty struct produces, and what an
+   * all-secret collapsed container would also produce if it weren't dropped entirely instead.
    */
   function collectEmptyObjectPaths(
     ast: SchemaAST.AST,
@@ -262,11 +233,8 @@ describe("ProjectConfigSchema secret-strip exhaustiveness", () => {
 });
 
 describe("ProjectConfigSchema hosted-section keys", () => {
-  // Moved from an import-time throw in `project-schema.ts` (CLI-2234): a
-  // schema-module import should never be able to crash a consumer's
-  // process for a condition a test already covers. Asserts against the
-  // PUBLIC, observable `ProjectConfigSchema.ast` rather than reaching into
-  // the module's private `hostedSectionsStruct`.
+  // Asserts against the schema's own public AST rather than the module's private struct, so a
+  // schema-module import can't crash a consumer for a condition this test already covers.
   test("the schema's own top-level property names are exactly HOSTED_SECTION_KEYS", () => {
     if (!SchemaAST.isObjects(ProjectConfigSchema.ast)) {
       throw new Error("expected ProjectConfigSchema.ast to be an Objects node");
@@ -279,15 +247,9 @@ describe("ProjectConfigSchema hosted-section keys", () => {
 });
 
 describe("ProjectConfigSchema derivation AST-walk exhaustiveness", () => {
-  // CLI-2234 group 7c/7d: `toDeepOptionalHostedAst` (`project-schema.ts`)
-  // enumerates AST node kinds explicitly rather than through a generic
-  // recursion helper (see that module's doc comment for why) and
-  // deliberately leaves `Suspend` unhandled. This walks the ACTUAL derived
-  // `ProjectConfigSchema.ast` and fails loudly the moment a node kind
-  // outside the set that derivation is written to understand appears,
-  // rather than letting a future schema addition silently fall through
-  // `toDeepOptionalHostedAst`'s final `return ast` (correct for a true
-  // leaf, silently wrong for an unhandled container/recursive kind).
+  // `toDeepOptionalHostedAst` (project-schema.ts) enumerates AST node kinds explicitly and leaves
+  // `Suspend` unhandled; this walks the actual derived AST and fails loudly if a node kind outside
+  // that set appears, instead of silently falling through to the leaf case.
   const HANDLED_CONTAINER_TAGS = new Set(["Objects", "Arrays", "Union"]);
   const HANDLED_LEAF_TAGS = new Set(["String", "Number", "Boolean", "Literal"]);
 
@@ -377,13 +339,9 @@ describe("ProjectConfigSchema Standard Schema interop", () => {
 
 describe("toProjectConfigJsonSchema", () => {
   const typedDocument = toProjectConfigJsonSchema();
-  // `JsonSchema.JsonSchema` (`effect`) is an open `[x: string]: unknown`
-  // record with no named properties, so TypeScript can't statically type
-  // `typedDocument`'s nested `properties`/`required`/… fields — the same
-  // reason `io.unit.test.ts`'s own `toCliConfigJsonSchema` coverage asserts
-  // through a stringified rendering rather than typed property access. A
-  // JSON round trip gives every assertion below a plainly-navigable value
-  // without an `as` cast.
+  // `JsonSchema.JsonSchema` has no named properties, so TypeScript can't statically type the
+  // nested fields; round-tripping through JSON gives a plainly-navigable value without an `as`
+  // cast.
   const document = JSON.parse(JSON.stringify(typedDocument));
 
   test("declares the draft 2020-12 dialect", () => {
@@ -411,25 +369,11 @@ describe("toProjectConfigJsonSchema", () => {
 });
 
 describe("ProjectConfigSchema type-level pin", () => {
-  // Compile-time drift guard (CLI-2234 design requirement, mirroring
-  // `apps/cli/src/shared/config/project-config-api-drift.unit.test.ts`'s
-  // `_typeDriftGuard`/`AssertNever` style): `ProjectConfigSchema`'s own
-  // generic annotation (`project-schema.ts`) and `ProjectConfig`
-  // (`project-config.ts`) are independent expressions of the same shape —
-  // this file re-derives the expected shape from `ProjectConfig` itself
-  // (rather than importing `project-schema.ts`'s private type alias) so a
-  // future edit to either side that silently drifts fails to compile here.
-  //
-  // Both directions hold because the only structural difference between the
-  // two sides is optional-property PRESENCE: `ProjectConfigSchema`'s Type
-  // never carries an `_apiResponse` key at all (never modeled, ADR 0019), and
-  // `ProjectConfig` types every `x-secret` leaf as present-but-optional even
-  // though the runtime derivation drops those keys entirely from the schema.
-  // TypeScript's structural assignability does not require a source type to
-  // have (or lack) an optional property the target also lacks (or has), so a
-  // missing or extra OPTIONAL property never blocks assignability in either
-  // direction — verified by actually compiling both functions below, not
-  // merely asserted in prose.
+  // Compile-time drift guard: re-derives the expected shape from `ProjectConfig` itself, so a
+  // future edit to either side that silently drifts fails to compile here. Both directions hold
+  // because the only structural difference is optional-property presence (`_apiResponse` vs.
+  // `x-secret` leaves), and TypeScript's structural assignability doesn't require a source to have
+  // or lack an optional property the target lacks or has.
   type ExpectedProjectConfigSchemaType = Omit<ProjectConfig, "_apiResponse">;
   type DerivedProjectConfigSchemaType = typeof ProjectConfigSchema.Type;
 

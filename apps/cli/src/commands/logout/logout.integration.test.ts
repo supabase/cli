@@ -62,8 +62,6 @@ describe("logout integration", () => {
     return Effect.gen(function* () {
       yield* logout();
       expect(credentials.deletedAll).toBe(true);
-      // The `viper.GetBool("YES")` branch still echoes the accepted prompt to
-      // stderr (`console.go:70-72`) — `--yes` runs must not be silent (CLI-1974).
       expect(out.stderrText).toContain(
         "Do you want to log out? This will remove the access token from your system. [y/N] y\n",
       );
@@ -86,9 +84,6 @@ describe("logout integration", () => {
   });
 
   it.live("empty non-interactive stdin takes Go's default (false) and cancels", () => {
-    // `PromptYesNo(..., false)` scans stdin and falls back to the default when
-    // the scan is empty (`logout.go:16`, `console.go:64-82`). With no piped input
-    // logout cancels — without hanging on the clack confirm.
     const { layer, credentials } = setupLogout({ stdinIsTty: false });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(logout());
@@ -101,8 +96,6 @@ describe("logout integration", () => {
   });
 
   it.live("honors a piped 'y' on non-interactive stdin and logs out", () => {
-    // Regression: Go scans piped stdin before defaulting (`console.go:74-82`), so
-    // `printf 'y\n' | supabase logout` deletes the token even on a non-terminal.
     const { layer, credentials } = setupLogout({ stdinIsTty: false, pipedAnswers: ["y"] });
     return Effect.gen(function* () {
       yield* logout();
@@ -111,10 +104,6 @@ describe("logout integration", () => {
   });
 
   it.live("honors SUPABASE_YES and logs out even when a piped 'n' is present", () => {
-    // Go reads `viper.GetBool("YES")` (incl. the SUPABASE_YES env var) BEFORE
-    // scanning stdin (`console.go:71`), so `SUPABASE_YES=1 printf 'n\n' | supabase
-    // logout` auto-confirms and deletes rather than consuming the piped `n`. The
-    // handler resolves `yes` via resolveYes, not the raw --yes flag.
     const prev = process.env["SUPABASE_YES"];
     process.env["SUPABASE_YES"] = "1";
     const { layer, credentials } = setupLogout({ stdinIsTty: false, pipedAnswers: ["n"] });

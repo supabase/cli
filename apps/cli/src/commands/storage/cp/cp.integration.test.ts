@@ -60,7 +60,7 @@ describe("storage cp", () => {
       expect(Exit.isSuccess(exit)).toBe(true);
       const upload = requests.find((r) => r.url.includes(OBJECT("private/readme.md")));
       expect(upload?.method).toBe("POST");
-      // Single upload does NOT set x-upsert (Overwrite stays false).
+      // Single upload doesn't set x-upsert (overwrite stays false).
       expect(upload?.headers["x-upsert"]).toBeUndefined();
       expect(upload?.headers["cache-control"]).toBe("max-age=3600");
       expect(upload?.headers["content-type"]).toContain("text/plain");
@@ -456,8 +456,8 @@ describe("storage cp", () => {
   });
 
   it.live("uploads to the project given via --project-ref, overriding VALID_REF", () => {
-    // `opts.projectRef` (the fake's own fallback) is left at its default
-    // (VALID_REF) — the flag must win over it and drive the gateway host.
+    // The fake's own fallback stays at its default (VALID_REF); the flag must win and drive
+    // the gateway host.
     const FLAG_REF = "flagflagflagflagflag";
     writeFileSync(join(tmp.current, "readme.md"), "hello world");
     const { layer, requests, linkedCache } = setupStorage(tmp.current, {

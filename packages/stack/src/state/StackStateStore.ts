@@ -10,7 +10,7 @@ import {
   Schedule,
   Schema,
 } from "effect";
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- native rmdir preserves non-recursive recovery semantics.
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- FileSystem.remove cannot atomically remove only an empty directory.
 import { rmdir } from "node:fs/promises";
 import {
   InvalidProjectRootError,
@@ -79,7 +79,7 @@ export interface StackStateStore {
   ) => Effect.Effect<
     void,
     InvalidProjectRootError | StackStateInvalidError,
-    FileSystem.FileSystem | Path.Path
+    FileSystem.FileSystem | Path.Path | Crypto.Crypto
   >;
   /** Removes only an empty runtime-only remnant and its now-empty identity root. */
   readonly recoverRuntimeRemnant: (
@@ -87,12 +87,41 @@ export interface StackStateStore {
   ) => Effect.Effect<
     void,
     InvalidProjectRootError | StackStateInvalidError,
-    FileSystem.FileSystem | Path.Path
+    FileSystem.FileSystem | Path.Path | Crypto.Crypto
   >;
 }
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+const withoutKeys = (
+  value: Readonly<Record<string, unknown>>,
+  keys: ReadonlyArray<string>,
+): Record<string, unknown> => {
+  const result = { ...value };
+  for (const key of keys) delete result[key];
+  return result;
+};
+
+/** Drops settings removed from the local model when reading older durable state. */
+const normalizeDurableState = (raw: Readonly<Record<string, unknown>>): unknown => {
+  const identity = isRecord(raw.identity) ? withoutKeys(raw.identity, ["stackId"]) : raw.identity;
+  const definition = raw.definition;
+  if (!isRecord(definition) || !isRecord(definition.capabilities)) return { ...raw, identity };
+  const capabilities: Record<string, unknown> = { ...definition.capabilities };
+  const obsolete: ReadonlyArray<readonly [string, ReadonlyArray<string>]> = [
+    ["database", ["network_restrictions", "ssl_enforcement", "vault"]],
+    ["rest", ["auto_expose_new_tables", "tls"]],
+    ["storage", ["analytics"]],
+    ["analytics", ["vector_port"]],
+  ];
+  for (const [capability, keys] of obsolete) {
+    const module = capabilities[capability];
+    if (!isRecord(module) || !isRecord(module.settings)) continue;
+    capabilities[capability] = { ...module, settings: withoutKeys(module.settings, keys) };
+  }
+  return { ...raw, identity, definition: { ...definition, capabilities } };
+};
 
 const stateError = (message: string, cause?: unknown) =>
   new StackStateInvalidError({ message, ...(cause === undefined ? {} : { cause }) });
@@ -134,12 +163,11 @@ const decodeState = (
   }
   if (!isRecord(raw.secrets))
     return Effect.fail(stateError("Persisted secret values must be a record"));
-  // Schema.Record validates values but does not enforce dynamic object-key checks
-  // while decoding JSON, so retain this format-level slot-name guard.
+  // Schema.Record doesn't enforce key-format checks while decoding JSON, so validate slot names here.
   for (const slot of Object.keys(raw.secrets))
     if (!/^[A-Za-z0-9_.:/-]+$/.test(slot))
       return Effect.fail(stateError(`Persisted secret slot key is invalid: ${slot}`));
-  return Schema.decodeUnknownEffect(PersistedStackStateSchema)(raw, {
+  return Schema.decodeUnknownEffect(PersistedStackStateSchema)(normalizeDurableState(raw), {
     onExcessProperty: "error",
   }).pipe(
     Effect.mapError((error) => stateError(`Invalid persisted stack state: ${String(error)}`)),
@@ -155,13 +183,12 @@ const validateIdentityForStackId = (
   identity: PersistedStackState["identity"],
   stackId: string,
 ): Effect.Effect<void, StackStateInvalidError, Crypto.Crypto> => {
-  const { stackId: persistedStackId, ...tuple } = identity;
-  return deriveStackId(tuple).pipe(
+  return deriveStackId(identity).pipe(
     Effect.mapError((error) =>
       stateError(`Unable to validate persisted identity: ${error.message}`),
     ),
     Effect.flatMap((derived) =>
-      persistedStackId === stackId && derived === stackId
+      derived === stackId
         ? Effect.void
         : Effect.fail(stateError("Persisted identity does not match its StackId directory")),
     ),
@@ -281,10 +308,15 @@ const persistValidatedState = (
 export const withRegistryLock = <A, E, R>(
   stateRoot: string,
   action: Effect.Effect<A, E, R>,
-): Effect.Effect<A, E | StackStateInvalidError, R | FileSystem.FileSystem | Path.Path> =>
+): Effect.Effect<
+  A,
+  E | StackStateInvalidError,
+  R | FileSystem.FileSystem | Path.Path | Crypto.Crypto
+> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const crypto = yield* Crypto.Crypto;
     const root = path.resolve(stateRoot);
     yield* fs
       .makeDirectory(root, { recursive: true, mode: 0o700 })
@@ -312,14 +344,11 @@ export const withRegistryLock = <A, E, R>(
           ),
         );
         const install = Effect.gen(function* () {
-          const token = yield* Effect.try({
-            // Registry tokens are ephemeral identity labels; ownership is proven
-            // by the held loopback lease and atomic canonical link.
-            // oxlint-disable-next-line effecttsgo/crypto-random-uuid-in-effect
-            try: () => globalThis.crypto.randomUUID(),
-            catch: (cause) =>
-              stateError(`Unable to allocate registry lock token: ${String(cause)}`),
-          });
+          const token = yield* crypto.randomUUIDv4.pipe(
+            Effect.mapError((error) =>
+              stateError(`Unable to allocate registry lock token: ${error.message}`),
+            ),
+          );
           const lock: OwnerLock = { format: OWNER_LOCK_FORMAT, token, port: held.port };
           const temporary = yield* writeLockTemp(fs, path, lockPath, lock);
           yield* installLease({ fs, lockPath, temporary, observed: existing }).pipe(
@@ -341,8 +370,7 @@ export const withRegistryLock = <A, E, R>(
       ),
       Effect.retry({
         while: (error) => Predicate.isTagged(error, "RegistryBusyError"),
-        // Registry transactions include port leasing and atomic state writes; allow a few
-        // seconds for a concurrent owner to finish before failing closed.
+        // Allow a few seconds for a concurrent owner's port lease and state write to finish.
         schedule: Schedule.spaced("25 millis").pipe(Schedule.upTo({ times: 80 })),
       }),
       Effect.mapError((error) =>
@@ -517,10 +545,9 @@ export const makeStackStateStore = (options: {
       FileSystem.FileSystem | Path.Path | Crypto.Crypto
     > => withRegistryLock(options.stateRoot, replaceUnlocked(stackId, next));
 
-    // FileSystem.remove({ recursive: false }) maps to fs.rm, which refuses to
-    // remove directories on Node. Native rmdir is intentionally used here so
-    // a concurrent child creation fails with ENOTEMPTY instead of recursively
-    // deleting a newly-created lease or control file.
+    // fs.remove({ recursive: false }) maps to Node's fs.rm, which refuses to remove directories.
+    // Native rmdir is used instead so a concurrent child creation fails with ENOTEMPTY rather
+    // than recursively deleting a newly created lease or control file.
     const removeEmptyDirectory = (directory: string, label: string) =>
       Effect.tryPromise({
         try: () => rmdir(directory),
@@ -537,7 +564,7 @@ export const makeStackStateStore = (options: {
     ): Effect.Effect<
       void,
       InvalidProjectRootError | StackStateInvalidError,
-      FileSystem.FileSystem | Path.Path
+      FileSystem.FileSystem | Path.Path | Crypto.Crypto
     > =>
       Effect.gen(function* () {
         const paths = yield* pathsFor(stackId);
@@ -603,7 +630,7 @@ export const makeStackStateStore = (options: {
     ): Effect.Effect<
       void,
       InvalidProjectRootError | StackStateInvalidError,
-      FileSystem.FileSystem | Path.Path
+      FileSystem.FileSystem | Path.Path | Crypto.Crypto
     > => withRegistryLock(options.stateRoot, recoverRuntimeRemnantUnlocked(stackId));
 
     const cleanup = (
@@ -611,7 +638,7 @@ export const makeStackStateStore = (options: {
     ): Effect.Effect<
       void,
       InvalidProjectRootError | StackStateInvalidError,
-      FileSystem.FileSystem | Path.Path
+      FileSystem.FileSystem | Path.Path | Crypto.Crypto
     > =>
       withRegistryLock(
         options.stateRoot,

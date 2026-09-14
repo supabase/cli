@@ -4,7 +4,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { ImagePrepullError, ensureImagesCached } from "./image-prepull.ts";
 
-/** Matches the standing `mockSpawner` shape in `docker-lifecycle.unit.test.ts`, generalized to a per-call handler so each argv can respond differently (needed for "some images cached, others not"). */
+/** Per-call variant of `docker-lifecycle.unit.test.ts`'s `mockSpawner`, so each argv can respond differently. */
 function mockSpawner(
   handler: (args: ReadonlyArray<string>) => { exitCode: number; stdout?: string; stderr?: string },
 ) {
@@ -56,9 +56,7 @@ describe("ensureImagesCached", () => {
         const cached =
           image === "public.ecr.aws/supabase/postgres:15" ||
           image === "public.ecr.aws/supabase/kong:3";
-        // A confirmed "no such image" (not merely a non-zero exit) is what tells
-        // `hasLocalImage` this candidate is a genuine cache miss rather than some other
-        // inspect failure, which now fails fast instead of falling through to a pull.
+        // This stderr text is what `hasLocalImage` treats as a confirmed cache miss.
         return cached
           ? { exitCode: 0 }
           : { exitCode: 1, stderr: `Error response from daemon: No such image: ${image}` };
@@ -78,7 +76,6 @@ describe("ensureImagesCached", () => {
             ["supabase/kong:3", "public.ecr.aws/supabase/kong:3"],
           ]),
         );
-        // One `image inspect` call per UNIQUE image, not one per (duplicated) input entry.
         const inspectCalls = mock.spawned.filter(
           (call) => call[0] === "image" && call[1] === "inspect",
         );
@@ -98,10 +95,8 @@ describe("ensureImagesCached", () => {
           if (args[0] === "image" && args[1] === "inspect") {
             const count = yield* Ref.updateAndGet(started, (n) => n + 1);
             if (count < 2) {
-              // A sequential (non-concurrent) implementation would never let the
-              // second image's `image inspect` call start until this one
-              // returns, so awaiting here would hang forever — proving
-              // concurrency is what lets this test complete at all.
+              // A sequential implementation would hang here forever, since the second call
+              // never starts until this one returns.
               yield* Deferred.await(bothStarted);
             } else {
               yield* Deferred.succeed(bothStarted, undefined);
@@ -130,9 +125,8 @@ describe("ensureImagesCached", () => {
     }),
   );
 
-  // Every pull attempt fails, so this drives the real DOCKER_PULL_RETRY_DELAYS_MS
-  // backoff (4s + 8s) to exhaustion across all 3 registry candidates (~36s) —
-  // needs more than Vitest's 5s default.
+  // Every pull attempt fails, driving the real `DOCKER_PULL_RETRY_DELAYS_MS` backoff to
+  // exhaustion across all 3 registry candidates (~36s) — needs more than Vitest's 5s default.
   it.live(
     "aggregates every failed image's message into one combined error",
     () => {

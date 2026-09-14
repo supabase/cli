@@ -122,29 +122,22 @@ function normalizeIssue(value: unknown): LintIssue {
 }
 
 /**
- * Parses the `plpgsql_check_function(... format:='json')` payload for one
- * function and overrides `function` with `<schema>.<proname>`.
- *
- * Throws on malformed JSON; the handler maps that to `DbLintMalformedJsonError`.
- *
- * Structurally strict: a top-level `null` decodes to the zero value, but any
- * other non-object (array / string / number), a present-but-not-array
- * `issues`, or a non-object issue entry throws — rather than being silently
- * coerced to an empty result, which would report a malformed payload as "no
- * lint errors". Missing/unknown fields stay tolerated.
+ * Parses the `plpgsql_check_function(... format:='json')` payload for one function and
+ * overrides `function` with `<schema>.<proname>`. Throws on malformed JSON (mapped to
+ * `DbLintMalformedJsonError` by the handler): a top-level `null` decodes to the zero
+ * value, but any other non-object, a present-but-not-array `issues`, or a non-object
+ * issue entry throws instead of being silently coerced to an empty ("no lint errors")
+ * result.
  */
 export function parseLintResult(jsonText: string, functionName: string): LintResult {
   const parsed: unknown = JSON.parse(jsonText);
-  // A top-level `null` leaves the result at its zero value (no error).
   if (parsed === null) {
     return { function: functionName, issues: [] };
   }
-  // A top-level array / string / number throws.
   if (typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new TypeError("cannot unmarshal payload into lint.Result");
   }
   const record = parsed as Record<string, unknown>;
-  // `issues` missing/null → zero value; present-but-not-array → throw.
   const issuesField = record["issues"];
   let issuesRaw: ReadonlyArray<unknown>;
   if (issuesField === undefined || issuesField === null) {
@@ -154,17 +147,15 @@ export function parseLintResult(jsonText: string, functionName: string): LintRes
   } else {
     throw new TypeError("cannot unmarshal issues into []lint.Issue");
   }
-  // Each entry decodes into an issue; a scalar/array entry fails. A null entry
-  // decodes to the zero-value issue (all fields empty strings) and is included
-  // in the slice — normalizeIssue handles null via its record fallback.
+  // A null entry decodes to a zero-value issue (handled by `normalizeIssue`'s
+  // fallback), not skipped.
   for (const entry of issuesRaw) {
     if (entry !== null && (typeof entry !== "object" || Array.isArray(entry))) {
       throw new TypeError("cannot unmarshal issue into lint.Issue");
     }
   }
-  // `function` is a string field, so a present non-string value throws BEFORE
-  // the code overrides it with `<schema>.<name>`. Validate the type, then
-  // discard it for the override.
+  // Validates `function`'s type (throwing if non-string) before discarding it for
+  // the override below.
   requireLintString(record["function"], "function");
   return { function: functionName, issues: issuesRaw.map(normalizeIssue) };
 }

@@ -20,8 +20,8 @@ import {
 } from "../state/SecretStore.ts";
 
 /**
- * The runtime-facing contract deliberately contains no Docker/native concepts. Concrete drivers
- * own resources; this controller owns accepted durable intent and lifecycle transitions.
+ * The runtime-facing contract has no Docker/native concepts. Concrete drivers own resources;
+ * this controller owns accepted durable intent and lifecycle transitions.
  */
 export interface LifecycleInput {
   readonly stackId: StackId;
@@ -55,11 +55,8 @@ export interface LifecycleController {
   readonly start: (
     options?: LifecycleStartOptions,
   ) => Effect.Effect<PersistedStackState, StackError, LifecycleRequirements>;
-  // Each invocation builds a fresh read/transition effect while sharing the controller semaphore.
-  // oxlint-disable-next-line effecttsgo/lazy-effect
-  readonly stop: () => Effect.Effect<PersistedStackState, StackError, LifecycleRequirements>;
-  // oxlint-disable-next-line effecttsgo/lazy-effect
-  readonly destroy: () => Effect.Effect<void, StackError, LifecycleRequirements>;
+  readonly stop: Effect.Effect<PersistedStackState, StackError, LifecycleRequirements>;
+  readonly destroy: Effect.Effect<void, StackError, LifecycleRequirements>;
 }
 
 type LifecycleRequirements = Crypto.Crypto | FileSystem.FileSystem | Path.Path;
@@ -298,27 +295,29 @@ export const makeLifecycleController = (
       });
     };
 
-    const stop = (): Effect.Effect<PersistedStackState, StackError, LifecycleRequirements> =>
-      Effect.gen(function* () {
-        const current = yield* read();
-        if (current.desiredLifecycle === "unconfigured") {
-          // Even an unconfigured stack may have exact runtime remnants from an interrupted
-          // first start. Stop is the explicit retry boundary for that cleanup.
+    const stop: Effect.Effect<PersistedStackState, StackError, LifecycleRequirements> =
+      Effect.suspend(() =>
+        Effect.gen(function* () {
+          const current = yield* read();
+          if (current.desiredLifecycle === "unconfigured") {
+            // Even an unconfigured stack may have exact runtime remnants from an interrupted
+            // first start. Stop is the explicit retry boundary for that cleanup.
+            yield* options.backend.cleanup;
+            return current;
+          }
+          if (current.desiredLifecycle === "destroying")
+            return yield* lifecycleConflict("Stack is being destroyed");
+          const stopped: PersistedStackState =
+            current.desiredLifecycle === "stopped"
+              ? current
+              : { ...current, desiredLifecycle: "stopped" };
+          if (stopped !== current) yield* options.stateStore.replace(options.stackId, stopped);
           yield* options.backend.cleanup;
-          return current;
-        }
-        if (current.desiredLifecycle === "destroying")
-          return yield* lifecycleConflict("Stack is being destroyed");
-        const stopped: PersistedStackState =
-          current.desiredLifecycle === "stopped"
-            ? current
-            : { ...current, desiredLifecycle: "stopped" };
-        if (stopped !== current) yield* options.stateStore.replace(options.stackId, stopped);
-        yield* options.backend.cleanup;
-        return stopped;
-      });
+          return stopped;
+        }),
+      );
 
-    const destroy = (): Effect.Effect<void, StackError, LifecycleRequirements> =>
+    const destroy: Effect.Effect<void, StackError, LifecycleRequirements> = Effect.suspend(() =>
       Effect.gen(function* () {
         const current = yield* read();
         const destroying: PersistedStackState =
@@ -327,7 +326,8 @@ export const makeLifecycleController = (
             : { ...current, desiredLifecycle: "destroying" };
         if (destroying !== current) yield* options.stateStore.replace(options.stackId, destroying);
         yield* destroyRuntime;
-      });
+      }),
+    );
 
     const destroyRuntime: Effect.Effect<void, StackError, LifecycleRequirements> = Effect.gen(
       function* () {

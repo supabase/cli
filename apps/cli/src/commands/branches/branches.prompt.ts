@@ -22,19 +22,12 @@ const mapListError = mapHttpError({
 });
 
 /**
- * Prompts for a branch identifier when the positional `[name]` argument is
- * omitted:
+ * Prompts for a branch identifier when the positional `[name]` argument is omitted: non-TTY
+ * reads stdin with a git-branch default, failing with "branch name cannot be empty" if both are
+ * empty; TTY lists branches and presents a `promptSelect`, failing with "branching is disabled"
+ * if none exist.
  *
- *   - Non-TTY: read from stdin via `Output.promptText`. The prompt label
- *     includes the current git branch as a default when one is detected.
- *     If the user enters an empty string and no git branch is available,
- *     fail with "branch name cannot be empty".
- *   - TTY: call the list endpoint; if empty, fail with "branching is disabled".
- *     Otherwise present a `promptSelect` and write `"Selected branch ID: <ref>"`
- *     to stderr (text mode only).
- *
- * Used by `get`, `update`, `pause`, `unpause`, `delete` whenever the positional
- * `[name]` argument is omitted.
+ * Used by `get`, `update`, `pause`, `unpause`, `delete`.
  */
 export const promptBranchId = Effect.fnUntraced(function* (
   input: Option.Option<string>,
@@ -48,11 +41,9 @@ export const promptBranchId = Effect.fnUntraced(function* (
   const output = yield* Output;
 
   if (!tty.stdinIsTty) {
-    // Non-TTY path: read once from stdin, optionally with a git-branch default.
     const gitBranch = yield* detectGitBranch();
     const defaultBranch = Option.getOrElse(gitBranch, () => "");
-    // Established styling: the default is colorized (lipgloss color "14" maps
-    // to ANSI bright cyan; `styleText("cyan", ...)` is the closest faithful match).
+    // Cyan matches the established color for this default value.
     const label =
       defaultBranch.length > 0
         ? `Enter the name of your branch (or leave blank to use ${styleText("cyan", defaultBranch)}): `
@@ -69,8 +60,6 @@ export const promptBranchId = Effect.fnUntraced(function* (
     return resolved;
   }
 
-  // TTY path: list branches via the same endpoint as `branches list`, then
-  // present a select prompt keyed by branch ref.
   const api = yield* CommandPlatformApi;
   const branches = yield* api.v1
     .listAllBranches({ ref: projectRef })
@@ -78,7 +67,7 @@ export const promptBranchId = Effect.fnUntraced(function* (
   if (branches.length === 0) {
     return yield* new BranchesBranchingDisabledError({
       message: "branching is disabled",
-      // The command name is wrapped in lipgloss color "14" (ANSI cyan).
+      // Cyan matches the established color for the suggested command.
       suggestion: `Create your first branch with: ${styleText("cyan", "supabase branches create")}`,
     });
   }

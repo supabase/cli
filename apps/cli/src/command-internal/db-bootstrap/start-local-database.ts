@@ -1,28 +1,11 @@
 /**
- * A plain local-database start — Go's `start.Run(ctx, "", fsys)` (the DB-only start path
- * `supabase db start` and, on the declarative `--local` paths, `ensureLocalDatabaseStarted`
- * both call — `apps/cli-go/cmd/db_schema_declarative.go:149-158`, deleted in CLI-1970; last
- * present at commit 7b469f5b3). Hoisted out of `commands/db/start/start.handler.ts` (CLI-1970)
- * so it is callable in-process by any Effect context that provides the services below, following
- * the same precedent `reset-local-database.ts` established for `db reset`: resolves every
- * service it needs itself (self-contained, not passed in by the caller), emits progress via
- * `output.raw` only, and never flushes telemetry — that stays the top-level command's own
- * concern (`db start`'s handler wraps this call in its own `Effect.ensuring(telemetryState.flush)`;
- * the declarative seam's `ensureLocalDatabaseStarted` does not flush at all, matching Go, where
- * `ensureLocalDatabaseStarted` runs inside the OUTER `db schema declarative generate`/`sync`
- * command's own `PersistentPostRun`, not a second, independent one).
+ * Plain local-database start shared by `supabase db start` and the declarative `--local` paths.
+ * Self-contained: resolves its own services, reports progress via `output.raw` only, and never
+ * flushes telemetry.
  *
- * Unlike `resetLocalDatabase`, "the database is already running" is a normal, successful
- * outcome here, not a failure — and the two real callers want different observable behavior on
- * that outcome: `db start`'s own handler prints "Postgres database is already running." (Go's
- * `db start` binary), while the declarative seam's `ensureLocalDatabaseStarted` must stay
- * silent (Go's `ensureLocalDatabaseStarted` never runs `start.Run` at all when
- * `AssertSupabaseDbIsRunning` reports the container is up, so nothing it wraps ever prints
- * anything on that path). So this function itself never prints the terminal-state line — it
- * returns a {@link StartLocalDatabaseResult} discriminator and leaves the print (or lack of
- * one) to the caller, exactly like `db start`'s own pre-existing `output.success` on completion is
- * also the caller's concern (see this module's own precedent: `startDatabase`'s header,
- * "Rollback ... is ALSO the caller's concern, not this function's").
+ * "Already running" is a success here, and callers print it differently (`db start` prints a
+ * message, the declarative seam stays silent), so this returns a
+ * {@link StartLocalDatabaseResult} discriminator instead of printing the terminal line itself.
  */
 
 import { Effect, FileSystem, Option, Path } from "effect";
@@ -104,12 +87,11 @@ interface StartLocalDatabaseResult {
 
 /**
  * Starts the local Postgres database, or no-ops when it is already running. See this module's
- * own header for the full design rationale. Mirrors Go's `start.Run(ctx, "", fsys)` — the DB-only
- * `internal/db/start.Run`, not the full `supabase start` stack.
+ * own header for the full design rationale.
  *
- * `fromBackupFlag` is `db start`'s own `--from-backup` value, resolved against the CALLER's cwd
+ * `fromBackupFlag` is `db start`'s own `--from-backup` value, resolved against the caller's cwd
  * before being passed in; the declarative seam's `ensureLocalDatabaseStarted` always calls with
- * no argument, matching Go's `start.Run(ctx, "", fsys)` empty-backup-path literal.
+ * no argument.
  */
 export const startLocalDatabase = Effect.fnUntraced(function* (fromBackupFlag?: string) {
   const output = yield* Output;
@@ -120,47 +102,34 @@ export const startLocalDatabase = Effect.fnUntraced(function* (fromBackupFlag?: 
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const networkIdFlag = yield* NetworkIdFlag;
 
-  // Config is loaded first thing: a missing config is tolerated (defaults), but a present
-  // config that is malformed, references an undecryptable `encrypted:` secret, or fails
-  // validation aborts before any container work. `checkDbToml` is that exact
-  // load+validate — call it here (not via `isLocalDbRunning`'s best-effort read, which
-  // swallows config errors) so a start fails fast on a broken config.
+  // Config is loaded first thing: a missing config is tolerated (defaults), but a present config
+  // that is malformed, references an undecryptable `encrypted:` secret, or fails validation
+  // aborts before any container work. `checkDbToml` does that load+validate, not
+  // `isLocalDbRunning`'s best-effort read, which swallows config errors.
   const dbTomlValues = yield* checkDbToml(fs, path, cliSettings.workdir);
 
-  // Threaded into `rollbackStart`'s own `dockerRemoveAll` teardown —
-  // `--debug` gates that function's `Pruned …:` stderr reports, matching
-  // `supabase start`'s own handler — and into
-  // `buildLocalDbContainerInputs`'s own `setup.debug`, so a failed fresh-volume
-  // Realtime/Storage/Auth migrate job tees its own stderr (`db-setup.ts`'s
-  // `runStartMigrateJob`). Resolved with the `SUPABASE_DEBUG` shell/project-`.env`
-  // fallback, not the bare flag: every Go debug read on this path went through
-  // `viper.GetBool("DEBUG")` under `AutomaticEnv`.
+  // Threaded into `rollbackStart`'s own teardown (gates its `Pruned …:` stderr reports) and into
+  // `buildLocalDbContainerInputs`'s own `setup.debug`, so a failed fresh-volume migrate job tees
+  // its own stderr. Resolved with the `SUPABASE_DEBUG` shell/project-`.env` fallback, not the
+  // bare flag.
   const debug = yield* resolveDebugWithProjectEnv(dbTomlValues.projectEnv);
 
-  // The rest of config loading — full config decode/resolution (`loadLocalProjectContext`)
-  // plus the eager duration-field validation right below — ALSO runs before the
-  // already-running check, so a malformed `auth.*` duration field must fail this call even
-  // when Postgres is already running, not just on a fresh start.
+  // The rest of config loading — full decode/resolution plus the eager duration-field
+  // validation right below — also runs before the already-running check, so a malformed
+  // `auth.*` duration field must fail this call even when Postgres is already running.
   const context = yield* loadLocalProjectContext(
     cliSettings.workdir,
     (message) => new DbConfigLoadError({ message }),
   );
-  // `projectId`/`hostname` are NOT destructured under their bare names here — the not-running
-  // branch below passes this SAME `context` into `buildLocalDbContainerInputs` as its
-  // `preloadedContext` param (reused, not reloaded — a second `loadLocalProjectContext`
-  // call would run `@supabase/config`'s `loadCliConfig` again, which unconditionally
-  // prints deprecated-config-section WARN lines to stderr, doubling them for one invocation),
-  // and that function returns the SAME context back verbatim as `inputs.context`, later
-  // destructured under `context.projectId`/`context.hostname` — re-declaring those same bare
-  // names here, in this same function scope, would still collide with that later
-  // destructuring. `hostnameForValidation` is still needed here, for the eager, discarded
-  // `resolveLocalConfigValues` call further down.
+  // This same `context` is passed into `buildLocalDbContainerInputs` below as
+  // `preloadedContext`, since a second `loadCliConfig` call would double-print
+  // deprecated-config-section warnings; that function returns the same context back verbatim.
+  // `hostnameForValidation` here still feeds the discarded `resolveLocalConfigValues` call below.
   const { config, projectEnvValues, loaded, hostname: hostnameForValidation } = context;
 
-  // Every duration config field — including these 5 — is decoded in the same single,
-  // unconditional config-load pass, before Docker is touched (or even whether Postgres is
-  // already running is checked) at all. Discarding the parsed values: only the fail-fast
-  // behavior matters here.
+  // Every duration config field is decoded in this same unconditional pass, before Docker is
+  // touched or the already-running check runs. The parsed values are discarded; only the
+  // fail-fast behavior matters.
   const authDocForValidation = asRecord(loaded?.document?.["auth"]);
   const resolvedEmailForValidation = yield* wrapDbConfigOverride("auth.email", () =>
     resolveAuthEmail(config.auth.email, authDocForValidation, projectEnvValues),
@@ -582,15 +551,12 @@ export const startLocalDatabase = Effect.fnUntraced(function* (fromBackupFlag?: 
     );
   }
 
-  // Closes an entire recurring class of gaps in the battery above, rather than adding another
-  // one-off field check: `resolveLocalConfigValues` is the SAME resolver
-  // `buildLocalDbContainerInputs` calls again below, in the not-running branch, to build
-  // the REAL `values` the container bring-up needs — calling it EAGERLY here too, before the
-  // already-running shortcut, forces its internal decode-time throws (auth.captcha,
-  // auth.jwt_secret length, auth.signing_keys_path, api.tls cert/key reads,
-  // auth.external.* required-field validation, auth.email/notification template reads) to
-  // surface early. Its result is discarded here — only the fail-fast behavior matters — and
-  // `buildLocalDbContainerInputs` below re-resolves the REAL `values`.
+  // `resolveLocalConfigValues` is the same resolver `buildLocalDbContainerInputs` calls again
+  // below to build the real `values`. Calling it eagerly here too forces its internal
+  // decode-time throws (auth.captcha, jwt_secret length, signing_keys_path, api.tls cert/key
+  // reads, auth.external required fields, email/notification template reads) to surface before
+  // the already-running shortcut. The result is discarded; `buildLocalDbContainerInputs` below
+  // re-resolves the real values.
   yield* Effect.try({
     try: () =>
       resolveLocalConfigValues(
@@ -606,9 +572,8 @@ export const startLocalDatabase = Effect.fnUntraced(function* (fromBackupFlag?: 
       }),
   });
 
-  // If the db container is already up, tell the caller and stop here. Runs AFTER the config
-  // load/validation above, matching the established order of loading config before the
-  // already-running check.
+  // If the db container is already up, tell the caller and stop here. Runs after the config
+  // load/validation above.
   const running = yield* isLocalDbRunning(
     spawner,
     fs,
@@ -620,7 +585,7 @@ export const startLocalDatabase = Effect.fnUntraced(function* (fromBackupFlag?: 
     return { status: "already-running" } satisfies StartLocalDatabaseResult;
   }
 
-  // Resolve a relative `--from-backup` against the CALLER's cwd, captured before any workdir
+  // Resolve a relative `--from-backup` against the caller's cwd, captured before any workdir
   // change. An empty `--from-backup ""` is a normal no-backup start, so treat it as absent
   // rather than joining it to a directory path.
   const fromBackup =
@@ -630,11 +595,10 @@ export const startLocalDatabase = Effect.fnUntraced(function* (fromBackupFlag?: 
         ? fromBackupFlag
         : path.join(runtimeInfo.cwd, fromBackupFlag);
 
-  // Not running → bring up the container natively. `context` (loaded eagerly above) is
-  // threaded through as `preloadedContext` — no `projectRef`/`remoteOverrideKeys` (`db start`
-  // never has either) — so this call reuses it instead of calling
-  // `loadLocalProjectContext` a second time, which would otherwise double-print any
-  // deprecated-config-section stderr warning for this single invocation.
+  // Not running → bring up the container natively. `context` (loaded eagerly above) is threaded
+  // through as `preloadedContext` so this call reuses it instead of calling
+  // `loadLocalProjectContext` a second time, which would double-print deprecated-config-section
+  // warnings.
   const inputs = yield* buildLocalDbContainerInputs(
     spawner,
     cliSettings.workdir,
@@ -666,8 +630,8 @@ export const startLocalDatabase = Effect.fnUntraced(function* (fromBackupFlag?: 
 
   // Runs the exact start-database sequence (network -> volume probe -> container create+start
   // -> health wait -> fresh-volume setup -> `_current_branch`) — shared with `supabase start`,
-  // see `startDatabase`'s own header. Any failure rolls back via the SAME
-  // `Effect.onError` wrapper `supabase start` uses.
+  // see `startDatabase`'s own header. Any failure rolls back via the same `Effect.onError`
+  // wrapper `supabase start` uses.
   yield* startDatabase(spawner, {
     fs,
     path,

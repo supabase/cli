@@ -22,7 +22,7 @@ type BranchLookupBranches = typeof V1ListAllBranchesOutput.Type;
  * `SchemaError` rejecting the response body), surfaces through the
  * caller-supplied network-error factory/message.
  *
- * Each caller supplies its OWN error classes and message templates, so the
+ * Each caller supplies its own error classes and message templates, so the
  * exact wording stays theirs — this helper only owns the status/transport
  * dispatch, not the message text. Pair with `Effect.asSome` so the 404 case
  * collapses cleanly into `Option.none()`:
@@ -45,8 +45,8 @@ export function classifyProjectLookupError<S, N>(opts: {
       }
       return cause.response.text.pipe(
         Effect.orElseSucceed(() => ""),
-        // Cap + strip control chars, matching `mapHttpError`'s defence-in-depth
-        // so an oversized / control-char body can't bloat JSON output or inject ANSI.
+        // Caps and strips control chars so an oversized or control-char body can't
+        // bloat JSON output or inject ANSI.
         Effect.map(sanitizeErrorBody),
         Effect.flatMap((body) =>
           Effect.fail(
@@ -72,23 +72,11 @@ export function classifyProjectLookupError<S, N>(opts: {
 }
 
 /**
- * Acquires a Management API client for a best-effort branch-name lookup,
- * total (never fails, resolves `None` on any acquisition failure):
- *
- *   1. `Effect.serviceOption(CommandPlatformApi)` — the cheapest path; existing
- *      tests provide this directly, and any runtime that eagerly built the
- *      typed client (e.g. `link`/`branches`) already has it in scope.
- *   2. Otherwise `Effect.serviceOption(CommandPlatformApiFactory)` → `factory.make`,
- *      with every failure (no token, invalid token, network, decode) caught.
- *      This is the path a token-optional runtime like `status`'s needs: the
- *      factory's own layer build never resolves a token or touches the
- *      network — that only happens here, lazily, exactly when a branch lookup
- *      is actually attempted.
- *
- * Neither service being in scope (a runtime that wires up neither) also
- * degrades to `None` rather than a compile-time requirement — this effect's
- * own type carries no `CommandPlatformApi`/`CommandPlatformApiFactory`
- * requirement at all, thanks to `Effect.serviceOption`.
+ * Acquires a Management API client for a best-effort branch lookup; never fails, resolving
+ * `None` on any acquisition failure. Prefers an already-built `CommandPlatformApi`; falls
+ * back to `CommandPlatformApiFactory` for a token-optional runtime like `status`'s, since the
+ * factory only resolves a token and touches the network here, lazily, when a lookup is
+ * actually attempted.
  */
 const acquireBranchLookupApi = Effect.fnUntraced(function* () {
   const direct = yield* Effect.serviceOption(CommandPlatformApi);
@@ -103,29 +91,23 @@ const acquireBranchLookupApi = Effect.fnUntraced(function* () {
   );
 });
 
-// A branch-name lookup is pure decoration for any caller and must never
-// dominate its latency. The generated client's own retry policy (60s
-// attempts × 5 transport retries — `packages/api/src/internal/client.ts:208-229`)
-// would otherwise let a single blackholed API stall a caller for ~6 minutes.
-// Exported so other bounded-but-best-effort probes in this codebase (e.g.
-// `push.branch-target.ts`'s live `getProject` target-detection probe) share
-// the same duration + rationale instead of re-deriving it.
+/**
+ * A branch-name lookup is pure decoration and must never dominate a caller's latency —
+ * without this bound, the generated client's own retry policy could stall a caller for
+ * several minutes against a blackholed API. Shared with other bounded, best-effort probes
+ * (e.g. `push.branch-target.ts`'s `getProject` probe) so they don't re-derive the duration.
+ */
 export const BRANCH_LOOKUP_TIMEOUT = Duration.seconds(5);
 
 /**
- * Best-effort branch-name lookup against `parentRef`'s branches, returning
- * the matching branch's `name` (or `undefined` on no match/any failure — the
- * degradation point every caller relies on). Shows `options.spinnerLabel` in
- * text mode when supplied, but only once an API client is actually
- * available — an acquisition failure degrades silently, before ever touching
- * the spinner.
+ * Best-effort branch-name lookup against `parentRef`'s branches, returning the matching
+ * branch's `name`, or `undefined` on no match or any failure. Shows `options.spinnerLabel`
+ * in text mode once an API client is available; an acquisition failure degrades silently,
+ * before the spinner is shown.
  *
- * The WHOLE acquisition-and-listing attempt is hard-bounded by
- * {@link BRANCH_LOOKUP_TIMEOUT}; a timeout degrades exactly like any
- * other failure. The spinner's cleanup runs via `Effect.ensuring` (not a
- * plain sequential `yield*`) so it's guaranteed to fire even when the timeout
- * interrupts the in-flight listing call, not just on its normal
- * success/failure completion.
+ * The whole acquisition-and-listing attempt is bounded by {@link BRANCH_LOOKUP_TIMEOUT}; a
+ * timeout degrades like any other failure. Spinner cleanup runs via `Effect.ensuring` so it
+ * still fires when the timeout interrupts the in-flight listing call.
  */
 export const findBranchName = Effect.fnUntraced(function* (
   parentRef: string,
@@ -148,8 +130,8 @@ export const findBranchName = Effect.fnUntraced(function* (
       .pipe(Effect.map(Option.some), Effect.ensuring(task?.clear() ?? Effect.void));
   }).pipe(
     Effect.timeout(BRANCH_LOOKUP_TIMEOUT),
-    // Best-effort: any transport/status/decode failure OR the timeout above
-    // degrades below — this helper must never fail on a flaky/slow lookup.
+    // Any failure or the timeout above degrades to `None`; this helper never fails on a
+    // flaky or slow lookup.
     Effect.catch(() => Effect.succeed(Option.none<BranchLookupBranches>())),
   );
 

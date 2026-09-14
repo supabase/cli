@@ -1,15 +1,10 @@
 /**
- * Terminal display width, matching `mattn/go-runewidth` with
- * `EastAsianWidth=false` — the default in a modern terminal, which is how
- * `olekukonko/tablewriter` measures cells (`db query`'s table/CSV writer). East Asian
- * Wide/Fullwidth code points count as 2 columns, zero-width / combining marks as 0,
- * and everything else (including East-Asian *Ambiguous*, which is narrow by default)
- * as 1. Counting JS code points (`Array.from(s).length`) instead would under-measure
- * CJK/emoji cells and misalign the table borders versus Go.
- *
- * The range tables cover the assigned Unicode East Asian Wide/Fullwidth blocks and the
- * common combining/zero-width ranges; unassigned/exotic code points fall through to
- * width 1, matching runewidth's default.
+ * Terminal display width with `EastAsianWidth=false` (the modern-terminal default): East
+ * Asian Wide/Fullwidth code points count as 2 columns, zero-width/combining marks as 0, and
+ * everything else (including ambiguous-width code points) as 1. Counting JS code points
+ * (`Array.from(s).length`) would under-measure CJK/emoji cells and misalign table borders.
+ * Range tables cover the assigned Wide/Fullwidth and zero-width blocks; unassigned code
+ * points fall back to width 1.
  */
 
 // Sorted, non-overlapping [lo, hi] inclusive code-point ranges.

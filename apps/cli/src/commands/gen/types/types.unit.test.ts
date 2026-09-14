@@ -171,8 +171,6 @@ describe("resolvePgmetaImage", () => {
   });
 
   it("honors SUPABASE_INTERNAL_IMAGE_REGISTRY for a non docker.io registry (e.g. ghcr.io)", () => {
-    // Regression: setup-cli exports `ghcr.io` on shared CI runners to dodge ECR
-    // rate limits, but gen types used to ignore it and still pull from ECR.
     const image = withEnv("SUPABASE_INTERNAL_IMAGE_REGISTRY", "ghcr.io", () =>
       resolvePgmetaImage("1.2.3"),
     );
@@ -205,9 +203,7 @@ describe("resolvePgmetaImage", () => {
 
 describe("schema and id helpers", () => {
   it("normalizes comma separated and repeated schema flags", () => {
-    // pflag's StringSlice parses each value via encoding/csv with NO
-    // trimming, and an empty value yields no field. Whitespace is preserved
-    // verbatim.
+    // pflag's StringSlice parses via encoding/csv with no trimming; an empty value yields no field.
     expect(parseSchemaFlags(["public, auth", " storage ", ""])).toEqual([
       "public",
       " auth",

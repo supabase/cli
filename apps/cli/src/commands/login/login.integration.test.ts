@@ -199,7 +199,6 @@ describe("login integration", () => {
     const { layer, out } = setupLogin({ isTTY: true });
     return Effect.gen(function* () {
       yield* login(flags());
-      // mockLoginCrypto default token name.
       expect(out.stdoutText).toContain("Token cli_test@host_123 created successfully.");
     }).pipe(Effect.provide(layer));
   });
@@ -210,7 +209,6 @@ describe("login integration", () => {
       yield* login(flags());
       expect(out.stderrText).toContain("Retry (1/2): ");
       expect(out.stderrText).toContain("Retry (2/2): ");
-      // 2 failures + 1 success = 3 poll attempts.
       expect(loginApi.loginCallCount).toBe(3);
       expect(out.stdoutText).toContain("You are now logged in. Happy coding!");
     }).pipe(Effect.provide(layer));
@@ -224,7 +222,6 @@ describe("login integration", () => {
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain("LoginFailedError");
       }
-      // The 3rd (final) failure gives up without printing a Retry notice.
       expect(out.stderrText).toContain("Retry (2/2): ");
       expect(out.stderrText).not.toContain("Retry (3/2): ");
     }).pipe(Effect.provide(layer));
@@ -345,7 +342,6 @@ describe("login integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // The shadowed env value must never be re-persisted (Go: pflag `Changed`).
   it.live("explicit --profile supabase persists 'supabase', shadowing SUPABASE_PROFILE", () => {
     const prev = process.env["SUPABASE_PROFILE"];
     process.env["SUPABASE_PROFILE"] = "rogue-profile";
@@ -368,7 +364,6 @@ describe("login integration", () => {
     );
   });
 
-  // Permanently heals a file persisted by an older lenient version (#6091).
   it.live("explicit --profile supabase heals a stale persisted profile file", () => {
     mkdirSync(join(tempRoot.current, ".supabase"), { recursive: true });
     writeFileSync(join(tempRoot.current, ".supabase", "profile"), "resms");

@@ -25,9 +25,6 @@ describe("storageChangedTargetFlags", () => {
   });
 
   it("skips the value of `storage cp` value-consuming flags (content-type/cache-control/jobs)", () => {
-    // The value following a bare `--content-type`/`--cache-control`/`--jobs`/`-j`
-    // is consumed as that flag's argument, so a `--local`/`--linked` token there
-    // must NOT be detected as a selector.
     expect(
       storageChangedTargetFlags(["storage", "cp", "--content-type", "--local", "a", "b"]),
     ).toEqual([]);

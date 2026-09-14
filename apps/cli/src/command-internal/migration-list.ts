@@ -47,23 +47,15 @@ export const listLocalMigrations = Effect.fnUntraced(function* (
     ),
   );
   if (names.length === 0) return NO_MIGRATIONS;
-  // Entries must sort byte-wise over each name's UTF-8 encoding — NOT JS's default
-  // `Array.prototype.sort()`, which compares UTF-16 code units and disagrees with byte/codepoint
-  // order for a supplementary-plane filename character alongside a BMP private-use one (see
-  // {@link compareUtf8Bytes}'s own doc comment). Left uncorrected, such a migrations
-  // directory would replay in a different order than previous releases, and a dependent
-  // migration could fail or produce a different shadow schema.
   const sorted = [...names].sort(compareUtf8Bytes);
   const result: Array<string> = [];
   for (let index = 0; index < sorted.length; index++) {
     const name = sorted[index]!;
     const entryPath = path.join(migrationsDir, name);
-    // Directory entries are classified from their own type without following symlinks: a
-    // `.sql` symlink whose target is a directory is never skipped as a directory here — it
-    // only fails later, when the migration is read as a regular file. `fs.stat` below follows
-    // symlinks, so it would misclassify a symlink-to-directory as a plain directory and
-    // silently skip it. Check `readLink` (which only succeeds for a symlink) first and skip
-    // the directory check entirely for symlinks.
+    // Classified from the entry's own type without following symlinks: `fs.stat` below follows
+    // symlinks and would misclassify a symlink-to-directory as a plain directory, silently
+    // skipping it. Check `readLink` first (only succeeds for a symlink) and skip the directory
+    // check entirely for symlinks.
     const isSymlink = Option.isSome(yield* fs.readLink(entryPath).pipe(Effect.option));
     if (!isSymlink) {
       const stat = yield* fs.stat(entryPath).pipe(Effect.option);

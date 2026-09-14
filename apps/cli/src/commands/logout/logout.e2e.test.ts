@@ -17,9 +17,8 @@ function seedTokenFile(home: string): string {
 }
 
 describe("supabase logout", () => {
-  // Deliberate Go quirk (parity note 1): under SUPABASE_NO_KEYRING=1 the profile
-  // keyring delete is unsupported, so logout removes the file token yet still
-  // reports "not logged in" and exits 0.
+  // Under SUPABASE_NO_KEYRING=1, keyring delete is unsupported, so logout removes the file
+  // token yet still reports "not logged in" and exits 0.
   test(
     "logout --yes removes a file token but reports not-logged-in under no-keyring",
     { timeout: E2E_TIMEOUT_MS },
@@ -36,10 +35,6 @@ describe("supabase logout", () => {
     },
   );
 
-  // Declining the confirmation must print a single `context canceled` line on
-  // stderr and exit 1, with NO `--debug` troubleshooting hint —
-  // `recoverAndExit` skips `SuggestDebugFlag` for `context.Canceled`
-  // (apps/cli-go/cmd/root.go:287-303). CLI-1973.
   test(
     "declining the logout prompt prints only context canceled, no --debug hint",
     { timeout: E2E_TIMEOUT_MS },
@@ -58,7 +53,6 @@ describe("supabase logout", () => {
     },
   );
 
-  // No token at all: same not-logged-in message, exit 0.
   test(
     "logout --yes with no token reports not-logged-in and exits 0",
     { timeout: E2E_TIMEOUT_MS },

@@ -11,17 +11,15 @@ import { storageGatewayRuntimeLayer } from "../../../command-internal/storage-ru
 import { seedBuckets } from "./buckets.handler.ts";
 
 const config = {
-  // TS-only override of the linked project ref — see push.command.ts (db push).
-  // No Go equivalent: `seed.go` never registers `--project-ref` on this command.
+  // TS-only flag; see push.command.ts (db push) for the same pattern.
   projectRef: Flag.string("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
 };
 
-// `--linked`/`--local` are scoped globals on the `seed` group (`seed.flags.ts`),
-// so this leaf only owns `--project-ref` above; the handler selects the target
-// from the changed argv set, not these parsed values.
+// `--linked`/`--local` are scoped globals on the `seed` group (`seed.flags.ts`); the handler
+// selects the target from the changed argv set, not these parsed values.
 export type BucketsFlags = {
   readonly linked: boolean;
   readonly local: boolean;
@@ -33,13 +31,12 @@ export const bucketsCommand = Command.make("buckets", config).pipe(
   Command.withShortDescription("Seed buckets declared in [storage.buckets]"),
   Command.withHandler((leafFlags) =>
     Effect.gen(function* () {
-      // Enforce --local/--linked mutual exclusivity BEFORE instrumentation, so a
-      // flag-validation rejection doesn't emit `cli_command_executed` (Go rejects
-      // it at cobra flag validation, before RunE/PostRun).
+      // Enforce --local/--linked mutual exclusivity before instrumentation, so a
+      // flag-validation rejection doesn't emit `cli_command_executed`.
       const cliArgs = yield* CliArgs;
       yield* assertSeedTargetsExclusive(cliArgs.args);
-      // Read the persistent seed-group flags for the telemetry flags map (Go logs
-      // the resolved flag values); target selection itself uses the changed set.
+      // Persistent seed-group flags for the telemetry flags map; target selection
+      // itself uses the changed set above.
       const flags: BucketsFlags = {
         linked: yield* SeedLinkedFlag,
         local: yield* SeedLocalFlag,
@@ -52,9 +49,7 @@ export const bucketsCommand = Command.make("buckets", config).pipe(
             local: flags.local,
             "project-ref": flags.projectRef,
           },
-          // TS-only flag with no Go telemetry-safety baseline; Go's nearest
-          // --project-ref registrations (cmd/pgdelta_catalog.go:44 and most
-          // others) are unmarked, so it stays redacted.
+          // Not in the safe-flags allowlist, so this stays redacted.
         }),
       );
     }).pipe(withJsonErrorHandling),

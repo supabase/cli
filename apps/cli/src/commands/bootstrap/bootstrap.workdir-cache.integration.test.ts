@@ -60,12 +60,9 @@ const ORGS = [{ id: "org-1", slug: "acme", name: "Acme Inc" }];
 const API_KEYS = [{ name: "anon", api_key: "anon-key" }];
 const HEALTHY = [{ name: "db", healthy: true, status: "ACTIVE_HEALTHY" }];
 
-// Drives the handler through the *prompt* workdir path (no `--workdir` flag and no
-// `SUPABASE_WORKDIR` env) with the real config + linked-project-cache layers. This is
-// the case the rest of the suite never covers: when the workdir comes from the prompt,
-// `cliSettings.workdir` (the cwd-walk result) diverges from the bootstrap workdir, and the
-// cache must follow the bootstrap workdir so `linked-project.json` lands beside
-// `project-ref` (matching the established config-load-after-chdir ordering).
+// Drives the handler through the prompt workdir path (no `--workdir` flag, no `SUPABASE_WORKDIR`
+// env): `cliSettings.workdir` (the cwd-walk result) then diverges from the bootstrap workdir, so
+// the cache must follow the bootstrap workdir for `linked-project.json` to land beside `project-ref`.
 describe("bootstrap linked-project cache location", () => {
   it.live(
     "writes linked-project.json into the prompted bootstrap workdir, not cliSettings.workdir",
@@ -74,18 +71,14 @@ describe("bootstrap linked-project cache location", () => {
       const subdir = "myproj";
       const bootstrapWorkdir = join(parent, subdir);
 
-      // Pre-seed a migration file at the bootstrap workdir (before it even exists) so
-      // the push step's migrations lookup is empirically provable: `dbPushCore`
-      // must find it via the `workdir` local variable — the prompted bootstrap
-      // workdir — never `cliSettings.workdir` (the cwd-walk result from `parent`, which
-      // has no `supabase/migrations` of its own and would wrongly report "up to date").
+      // Pre-seeds a migration file at the bootstrap workdir (before it exists) so the push step
+      // must find it via the `workdir` local variable, never `cliSettings.workdir` (the cwd-walk
+      // result from `parent`, which has no `supabase/migrations` and would report "up to date").
       const migrationsDir = join(bootstrapWorkdir, "supabase", "migrations");
       mkdirSync(migrationsDir, { recursive: true });
       writeFileSync(join(migrationsDir, "20240101000000_test.sql"), "create table t ();");
-      // Also pre-seed `supabase/roles.sql` so the push step's `includeRoles: true`
-      // (bootstrap always passes it) is actually pinned under test — without a
-      // roles.sql file present, the
-      // custom-roles branch is a no-op and `includeRoles`'s value is unasserted.
+      // Also pre-seeds `supabase/roles.sql` so `includeRoles: true` is pinned under test; without
+      // it, the custom-roles branch is a no-op and that value goes unasserted.
       writeFileSync(join(bootstrapWorkdir, "supabase", "roles.sql"), "create role app;");
 
       // Token via env => ensure-login is a no-op and the cache has a bearer token.
@@ -110,13 +103,9 @@ describe("bootstrap linked-project cache location", () => {
         if (url.includes("/v1/organizations")) {
           return Effect.succeed(jsonResponse(request, 200, ORGS));
         }
-        // Pooler config: the direct db host is never reachable in-process, so
-        // `resolveLinkedConn`'s push-connection resolution always falls
-        // back to the IPv4 pooler (CLI-1953). `linkServicesCore`'s own
-        // `linkPooler` step (step I) fetches this same route and saves it to
-        // `<bootstrapWorkdir>/supabase/.temp/pooler-url`, which the fallback reads.
-        // Checked before the broader `/v1/projects/{ref}` GET below, which would
-        // otherwise also match this path.
+        // Pooler config: the direct db host is never reachable in-process, so `resolveLinkedConn`
+        // falls back to the IPv4 pooler fed by the saved pooler-url file. Checked before the
+        // broader `/v1/projects/{ref}` GET below, which would otherwise also match this path.
         if (recorded.method === "GET" && url.includes("/config/database/pooler")) {
           return Effect.succeed(
             jsonResponse(request, 200, [
@@ -145,9 +134,8 @@ describe("bootstrap linked-project cache location", () => {
       };
       const api = mockCommandPlatformApi({ handler });
 
-      // Native push (CLI-1953): `dbPushCore` needs a `DbConnection` —
-      // tracked here so the test can assert it targets the created project's ref,
-      // not a divergent one.
+      // `dbPushCore` needs a `DbConnection`; tracked here so the test can assert it targets the
+      // created project's ref, not a divergent one.
       const pushConnectCalls: Array<PgConnInput> = [];
       const dbConnectionLayer = Layer.succeed(DbConnection, {
         connect: (conn: PgConnInput) =>
@@ -168,8 +156,8 @@ describe("bootstrap linked-project cache location", () => {
         download: () => Effect.void,
       });
 
-      // GlobalFlag services don't cross sibling boundaries in Layer.mergeAll
-      // (apps/cli/CLAUDE.md item 5), so provide them explicitly into the real config layer.
+      // GlobalFlag services don't cross sibling boundaries in `Layer.mergeAll` (CLAUDE.md
+      // invariant 5), so provide them explicitly into the real config layer.
       const flagsLayer = Layer.mergeAll(
         Layer.succeed(ProfileFlag, "supabase"),
         Layer.succeed(WorkdirFlag, Option.none()),
@@ -194,9 +182,8 @@ describe("bootstrap linked-project cache location", () => {
         Layer.provide(configLayer),
         Layer.provide(credentials.layer),
         Layer.provide(api.httpClientLayer),
-        // The cache GET stitches identity from X-Gotrue-Id (the established
-        // identityTransport) via the single `IdentityStitch` service. Consent "denied" makes the
-        // stitch a no-op so this workdir-caching test's assertions are unchanged.
+        // Stitches identity from X-Gotrue-Id via the single `IdentityStitch` service; consent
+        // "denied" makes the stitch a no-op, so this test's assertions are unchanged.
         Layer.provide(
           identityStitchLayer.pipe(
             Layer.provide(mockAnalytics().layer),
@@ -204,8 +191,7 @@ describe("bootstrap linked-project cache location", () => {
             Layer.provide(BunServices.layer),
           ),
         ),
-        // The cache also fires org/project groupIdentify, reading
-        // Analytics directly.
+        // The cache also fires org/project groupIdentify, reading Analytics directly.
         Layer.provide(mockAnalytics().layer),
         Layer.provide(BunServices.layer),
       );
@@ -249,41 +235,24 @@ describe("bootstrap linked-project cache location", () => {
         const cacheInWorkdir = join(bootstrapWorkdir, "supabase", ".temp", "linked-project.json");
         const cacheInParent = join(parent, "supabase", ".temp", "linked-project.json");
 
-        // project-ref already goes to the right place...
         expect(existsSync(projectRef)).toBe(true);
-        // ...so linked-project.json must land beside it (Go writes both into workdir).
         expect(existsSync(cacheInWorkdir)).toBe(true);
         expect(existsSync(cacheInParent)).toBe(false);
 
-        // Native push (CLI-1953) correctness: `dbPushCore` connects to the
-        // just-created project (the `projectRef` bootstrap already holds in
-        // memory, never re-resolved via `ProjectRefResolver`) and finds the
-        // pre-seeded migration under `<bootstrapWorkdir>/supabase/migrations` — the
-        // `workdir` local variable, not `cliSettings.workdir` (which cwd-walks from
-        // `parent` and would find nothing, wrongly reporting "up to date"). The
-        // direct db host is never reachable in-process, so `resolveLinkedConn`
-        // falls back to the IPv4 pooler (CLI-1953) — reading the saved
-        // `<bootstrapWorkdir>/supabase/.temp/pooler-url` `linkServicesCore`
-        // (step I) wrote, which is itself proof the fallback is workdir-scoped
-        // correctly too.
         expect(pushConnectCalls).toHaveLength(1);
         expect(pushConnectCalls[0]?.host).toBe("aws-0-us-east-1.pooler.supabase.com");
         expect(pushConnectCalls[0]?.user).toBe(`postgres.${VALID_REF}`);
         expect(out.stderrText).toContain("Applying migration 20240101000000_test.sql...");
-        // Pins `includeRoles: true` (the pre-seeded `supabase/roles.sql` above):
-        // without it, the custom-roles prompt/apply below is unreachable and
-        // `includeRoles`'s value goes unasserted. The confirm prompt itself is
-        // interactive UI (clack), not `output.raw` text, so it's recorded in
-        // `promptConfirmCalls`, not `stderrText`.
+        // The confirm prompt is interactive UI (clack), not `output.raw` text, so it's recorded
+        // in `promptConfirmCalls`, not `stderrText`.
         expect(
           out.promptConfirmCalls.some((c) =>
             c.message.includes("Do you want to create custom roles in the database cluster?"),
           ),
         ).toBe(true);
         expect(out.stderrText).toContain("Seeding globals from roles.sql...");
-        // Pins `includeSeed: true`: with no `supabase/seed.sql` file, the seed
-        // glob matches nothing, so the push step reports seeds up to date — a
-        // line that only prints at all when `includeSeed` is true.
+        // With no `supabase/seed.sql` file, the seed glob matches nothing, so this line only
+        // prints when `includeSeed` is true.
         expect(out.stderrText).toContain("Seed files are up to date.");
       }).pipe(
         Effect.provide(layer),

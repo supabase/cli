@@ -238,8 +238,6 @@ describe("functions new integration", () => {
     const { layer, out, workdir } = setup({ yes: false });
     return Effect.gen(function* () {
       yield* functionsNew({ functionName: "with-env-yes", auth: "apikey" });
-      // Established `--yes` branch bytes, reached through the env var —
-      // not just the --yes flag.
       expect(out.stderrText).toContain("Generate VS Code settings for Deno? [Y/n] y");
       expect(existsSync(join(workdir, ".vscode", "settings.json"))).toBe(true);
     }).pipe(
@@ -254,9 +252,8 @@ describe("functions new integration", () => {
   });
 
   it.live("piped `n` then `y` declines VS Code and writes IntelliJ settings (Go parity)", () => {
-    // Established non-TTY prompt behavior scans one piped line per
-    // question, so `printf 'n\ny\n'` answers VS Code=no, IntelliJ=yes
-    // instead of hardcoding the VS Code default.
+    // Scans one piped line per question, so "n\ny\n" answers VS Code=no,
+    // IntelliJ=yes.
     const { layer, out, workdir } = setup({ stdinIsTty: false, stdinInput: "n\ny\n" });
     return Effect.gen(function* () {
       yield* functionsNew({ functionName: "piped-idea", auth: "apikey" });
@@ -292,8 +289,6 @@ describe("functions new integration", () => {
         auth: "apikey",
       });
       expect(out.stdoutText).toBe("");
-      // Machine formats are payload-only: the IDE prompt is suppressed and no IDE settings
-      // are scaffolded as an undisclosed side effect.
       expect(out.stderrText).not.toContain("Generate VS Code settings");
       expect(existsSync(join(workdir, ".vscode", "settings.json"))).toBe(false);
       expect(existsSync(join(workdir, ".idea", "deno.xml"))).toBe(false);
@@ -350,10 +345,6 @@ describe("functions new integration", () => {
   it.live(
     "fails without scaffolding anything when --workdir names a directory that does not exist at all",
     () => {
-      // Before this fix, a typo'd --workdir would have silently created a
-      // fresh supabase/functions/... tree (plus a new config.toml) at the
-      // wrong path — the critical safety assertion here is that NOTHING was
-      // scaffolded once the workdir check fails first.
       const badWorkdir = join(tempRoot.current, "does-not-exist");
       const { layer, telemetry } = setup({ workdir: badWorkdir, explicitWorkdir: true });
       return Effect.gen(function* () {
