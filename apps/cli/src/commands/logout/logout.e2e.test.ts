@@ -30,7 +30,9 @@ describe("supabase logout", () => {
         const tokenPath = yield* seedTokenFile(home.dir);
         const { exitCode, stderr } = yield* runSupabaseEffect(["logout", "--yes"], {
           home: home.dir,
-          env: { HOME: home.dir, SUPABASE_ACCESS_TOKEN: undefined },
+          // Pin ambient runner state out of the child; the harness's SUPABASE_NO_KEYRING=1
+          // is load-bearing safety here (without it `logout --yes` sweeps the real keychain).
+          env: { HOME: home.dir, SUPABASE_ACCESS_TOKEN: undefined, SUPABASE_PROFILE: undefined },
         });
         expect(exitCode).toBe(0);
         expect(stderr).toContain("You were not logged in, nothing to do.");
@@ -48,7 +50,12 @@ describe("supabase logout", () => {
         yield* seedTokenFile(home.dir);
         const { exitCode, stderr } = yield* runSupabaseEffect(["logout"], {
           home: home.dir,
-          env: { HOME: home.dir },
+          env: {
+            HOME: home.dir,
+            SUPABASE_ACCESS_TOKEN: undefined,
+            SUPABASE_PROFILE: undefined,
+            SUPABASE_YES: undefined,
+          },
           stdin: "n\n",
         });
         expect(exitCode).toBe(1);
@@ -66,8 +73,7 @@ describe("supabase logout", () => {
         const home = yield* tempHomeScoped;
         const { exitCode, stderr } = yield* runSupabaseEffect(["logout", "--yes"], {
           home: home.dir,
-          // The runner may export a real token; not-logged-in needs it absent.
-          env: { HOME: home.dir, SUPABASE_ACCESS_TOKEN: undefined },
+          env: { HOME: home.dir, SUPABASE_ACCESS_TOKEN: undefined, SUPABASE_PROFILE: undefined },
         });
         expect(exitCode).toBe(0);
         expect(stderr).toContain("You were not logged in, nothing to do.");

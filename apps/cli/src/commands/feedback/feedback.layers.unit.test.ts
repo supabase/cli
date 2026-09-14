@@ -16,10 +16,10 @@ function recordingLogger() {
 }
 
 function recordingInnerFetch() {
-  const requests: Array<{ url: string; method: string | undefined }> = [];
+  const requests: Array<{ url: string; method: string | undefined; hasInit: boolean }> = [];
   const fetch: typeof globalThis.fetch = Object.assign(
     (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
-      requests.push({ url: String(input), method: init?.method });
+      requests.push({ url: String(input), method: init?.method, hasInit: init !== undefined });
       return Promise.resolve(new Response("ok"));
     },
     { preconnect: () => Promise.resolve() },
@@ -41,7 +41,7 @@ describe("feedbackFetch", () => {
       expect(yield* Effect.promise(() => response.text())).toBe("ok");
       expect(httpLines).toEqual(["POST https://feedback.supabase.co/rest/v1/rpc/x"]);
       expect(inner.requests).toEqual([
-        { url: "https://feedback.supabase.co/rest/v1/rpc/x", method: "POST" },
+        { url: "https://feedback.supabase.co/rest/v1/rpc/x", method: "POST", hasInit: true },
       ]);
     }),
   );
@@ -52,11 +52,19 @@ describe("feedbackFetch", () => {
       const inner = recordingInnerFetch();
       const fetch = feedbackFetch({ dnsResolver: "native", logger, innerFetch: inner.fetch });
 
-      yield* Effect.promise((signal) =>
-        fetch("https://feedback.supabase.co/rest/v1/interfaces_feedback", { signal }),
+      // Deliberately no init at all: pins the undefined-init passthrough to the transport.
+      yield* Effect.promise(() =>
+        fetch("https://feedback.supabase.co/rest/v1/interfaces_feedback"),
       );
 
       expect(httpLines).toEqual(["GET https://feedback.supabase.co/rest/v1/interfaces_feedback"]);
+      expect(inner.requests).toEqual([
+        {
+          url: "https://feedback.supabase.co/rest/v1/interfaces_feedback",
+          method: undefined,
+          hasInit: false,
+        },
+      ]);
     }),
   );
 
@@ -78,7 +86,7 @@ describe("feedbackFetch", () => {
           "?select=feedback&delete_token=eq.redacted",
       ]);
       // The transport still receives the original, unredacted URL.
-      expect(inner.requests).toEqual([{ url, method: "DELETE" }]);
+      expect(inner.requests).toEqual([{ url, method: "DELETE", hasInit: true }]);
     }),
   );
 });
