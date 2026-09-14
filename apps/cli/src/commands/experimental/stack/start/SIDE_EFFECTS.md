@@ -1,5 +1,8 @@
 # `supabase stack start`
 
+The command is available only when the `experimental.stack` feature flag is enabled. The
+top-level `supabase start` command uses this handler when the same flag is enabled.
+
 This command creates or resumes the managed stack identified by the current
 project and optional `--stack`, or opens an existing stack with `--stack-id`.
 It loads `supabase/config.toml` for the target project when present and uses
