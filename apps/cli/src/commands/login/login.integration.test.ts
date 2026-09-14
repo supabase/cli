@@ -53,6 +53,8 @@ interface SetupOpts {
   readonly homeDir?: string;
   /** Raw argv for explicit `--profile` detection. */
   readonly argv?: ReadonlyArray<string>;
+  /** Raw `SUPABASE_PROFILE` value the settings layer captured. */
+  readonly profileEnvValue?: string;
 }
 
 function flags(overrides: Partial<LoginFlags> = {}): LoginFlags {
@@ -82,6 +84,7 @@ function setupLogin(opts: SetupOpts = {}) {
   const analytics = mockAnalytics();
   const cliSettings = mockCommandSettings({
     workdir: tempRoot.current,
+    profileEnvValue: opts.profileEnvValue,
     accessToken:
       opts.accessTokenEnv !== undefined
         ? Option.some(Redacted.make(opts.accessTokenEnv))
@@ -348,23 +351,20 @@ describe("login integration", () => {
     const { layer } = setupLogin({
       argv: ["login", "--token", VALID_TOKEN],
       homeDir: tempRoot.current,
+      profileEnvValue: "supabase-staging",
     });
     return withEnvVar(
       "SUPABASE_HOME",
       undefined,
-      withEnvVar(
-        "SUPABASE_PROFILE",
-        "supabase-staging",
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          yield* login(flags({ token: Option.some(VALID_TOKEN) }));
-          const persisted = yield* fs.readFileString(
-            path.join(tempRoot.current, ".supabase", "profile"),
-          );
-          expect(persisted).toBe("supabase-staging");
-        }).pipe(Effect.provide(layer)),
-      ),
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* login(flags({ token: Option.some(VALID_TOKEN) }));
+        const persisted = yield* fs.readFileString(
+          path.join(tempRoot.current, ".supabase", "profile"),
+        );
+        expect(persisted).toBe("supabase-staging");
+      }).pipe(Effect.provide(layer)),
     );
   });
 
@@ -372,22 +372,19 @@ describe("login integration", () => {
     const { layer } = setupLogin({
       argv: ["login", "--profile", "supabase", "--token", VALID_TOKEN],
       homeDir: tempRoot.current,
+      profileEnvValue: "rogue-profile",
     });
     return withEnvVar(
       "SUPABASE_HOME",
       undefined,
-      withEnvVar(
-        "SUPABASE_PROFILE",
-        "rogue-profile",
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          yield* login(flags({ token: Option.some(VALID_TOKEN) }));
-          const profilePath = path.join(tempRoot.current, ".supabase", "profile");
-          const persisted = yield* fs.readFileString(profilePath);
-          expect(persisted).toBe("supabase");
-        }).pipe(Effect.provide(layer)),
-      ),
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* login(flags({ token: Option.some(VALID_TOKEN) }));
+        const profilePath = path.join(tempRoot.current, ".supabase", "profile");
+        const persisted = yield* fs.readFileString(profilePath);
+        expect(persisted).toBe("supabase");
+      }).pipe(Effect.provide(layer)),
     );
   });
 

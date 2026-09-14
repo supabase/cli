@@ -81,6 +81,7 @@ describe("commandSettingsLayer", () => {
     Effect.gen(function* () {
       const config = yield* CommandSettings;
       expect(config.profile).toBe("supabase");
+      expect(config.profileEnvValue).toBeUndefined();
       expect(config.apiUrl).toBe("https://api.supabase.com");
       expect(config.projectHost).toBe("supabase.co");
       expect(config.poolerHost).toBe("supabase.com");
@@ -92,12 +93,21 @@ describe("commandSettingsLayer", () => {
     Effect.gen(function* () {
       const config = yield* CommandSettings;
       expect(config.profile).toBe("supabase-staging");
+      expect(config.profileEnvValue).toBe("supabase-staging");
       expect(config.apiUrl).toBe("https://api.supabase.green");
       expect(config.projectHost).toBe("supabase.red");
       expect(config.poolerHost).toBe("supabase.green");
     }).pipe(
       Effect.provide(makeLayer({ env: { SUPABASE_PROFILE: "supabase-staging" }, cwd: tempRoot })),
     ),
+  );
+
+  it.effect("captures an empty SUPABASE_PROFILE as undefined", () =>
+    Effect.gen(function* () {
+      const config = yield* CommandSettings;
+      expect(config.profile).toBe("supabase");
+      expect(config.profileEnvValue).toBeUndefined();
+    }).pipe(Effect.provide(makeLayer({ env: { SUPABASE_PROFILE: "" }, cwd: tempRoot }))),
   );
 
   it.effect("uses supabase-local profile and localhost API URL", () =>
@@ -270,6 +280,7 @@ describe("commandSettingsLayer", () => {
     return Effect.gen(function* () {
       const config = yield* CommandSettings;
       expect(config.profile).toBe("cli-e2e");
+      expect(config.profileEnvValue).toBe(profilePath);
       expect(config.apiUrl).toBe("http://127.0.0.1:9999");
       expect(config.projectHost).toBe("localhost");
       expect(config.poolerHost).toBe("staging.example.com");

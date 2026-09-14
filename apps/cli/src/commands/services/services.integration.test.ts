@@ -85,6 +85,7 @@ function setup(
       Layer.succeed(
         CommandSettings,
         CommandSettings.of({
+          profileEnvValue: undefined,
           profile: "supabase",
           apiUrl: opts.apiUrl ?? "https://api.supabase.com",
           projectHost: "supabase.co",
