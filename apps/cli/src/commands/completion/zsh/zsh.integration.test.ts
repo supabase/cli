@@ -54,7 +54,7 @@ describe("completion zsh", () => {
       return Effect.gen(function* () {
         yield* Command.runWith(testRoot(), { version: "0.0.0-test" })(["zsh", "--no-descriptions"]);
         expect(out.stdoutText).toContain("__completeNoDesc");
-      }).pipe(Effect.provide(layer)) as Effect.Effect<void>;
+      }).pipe(Effect.provide(layer));
     },
   );
 
@@ -73,7 +73,7 @@ describe("completion zsh", () => {
         yield* Command.runWith(testRoot(), { version: "0.0.0-test" })(["zsh"]);
         const event = analytics.captured.find((entry) => entry.event === EventCommandExecuted);
         expect(event).toBeDefined();
-      }).pipe(Effect.provide(layer)) as Effect.Effect<void>;
+      }).pipe(Effect.provide(layer));
     },
   );
 });

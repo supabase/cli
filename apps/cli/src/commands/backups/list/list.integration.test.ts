@@ -1,10 +1,6 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
 import { type V1ListAllBackupsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, FileSystem, Option, Path } from "effect";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
@@ -231,34 +227,32 @@ WalgEnabled = true
   });
 
   it.live("reads supabase/.temp/project-ref when env and flag are unset", () => {
-    const localTempRoot = mkdtempSync(join(tmpdir(), "supabase-backups-list-int-fileref-"));
     const fileRef = "filerefabcdefghijklm";
-    mkdirSync(join(localTempRoot, "supabase", ".temp"), { recursive: true });
-    writeFileSync(join(localTempRoot, "supabase", ".temp", "project-ref"), fileRef);
-
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 200, body: PITR_RESPONSE } });
     const cliSettings = mockCommandSettings({
-      workdir: localTempRoot,
+      workdir: tempRoot.current,
       projectId: Option.none(),
     });
     const layer = buildTestRuntime({ out, api, cliSettings });
 
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = path.join(tempRoot.current, "supabase", ".temp");
+      yield* fs.makeDirectory(tempDir, { recursive: true });
+      yield* fs.writeFileString(path.join(tempDir, "project-ref"), fileRef);
+
       yield* backupsList({ projectRef: Option.none() });
       expect(api.requests[0]?.url).toContain(`/v1/projects/${fileRef}/`);
-    }).pipe(
-      Effect.provide(layer),
-      Effect.ensuring(Effect.sync(() => rmSync(localTempRoot, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.provide(layer));
   });
 
   it.live("fails with ProjectRefNotLinkedError when no ref source matches off-TTY", () => {
-    const localTempRoot = mkdtempSync(join(tmpdir(), "supabase-backups-list-int-no-ref-"));
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 200, body: PITR_RESPONSE } });
     const cliSettings = mockCommandSettings({
-      workdir: localTempRoot,
+      workdir: tempRoot.current,
       projectId: Option.none(),
     });
     const layer = buildTestRuntime({ out, api, cliSettings });
@@ -269,11 +263,9 @@ WalgEnabled = true
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("ProjectRefNotLinkedError");
+        expect(Cause.pretty(exit.cause)).toContain("ProjectRefNotLinkedError");
       }
-    }).pipe(
-      Effect.ensuring(Effect.sync(() => rmSync(localTempRoot, { recursive: true, force: true }))),
-    );
+    });
   });
 
   it.live("fails with InvalidProjectRefError when the resolved ref is malformed", () => {
@@ -282,7 +274,7 @@ WalgEnabled = true
       const exit = yield* Effect.exit(backupsList({ projectRef: Option.some("BADREF") }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("InvalidProjectRefError");
+        expect(Cause.pretty(exit.cause)).toContain("InvalidProjectRefError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -293,9 +285,9 @@ WalgEnabled = true
       const exit = yield* Effect.exit(backupsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
-        expect(errorJson).toContain("BackupListUnexpectedStatusError");
-        expect(errorJson).toContain("unexpected list backup status 503");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("BackupListUnexpectedStatusError");
+        expect(causeText).toContain("unexpected list backup status 503");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -306,9 +298,9 @@ WalgEnabled = true
       const exit = yield* Effect.exit(backupsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
-        expect(errorJson).toContain("BackupListNetworkError");
-        expect(errorJson).toContain("failed to list physical backups");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("BackupListNetworkError");
+        expect(causeText).toContain("failed to list physical backups");
       }
     }).pipe(Effect.provide(layer));
   });

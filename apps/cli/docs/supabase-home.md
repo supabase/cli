@@ -106,8 +106,12 @@ supervisor and are not written to the document.
   report only a live owner as running.
 - `supabase stop` asks the owner to stop, waits for `stopped` and control release, and keeps the
   document by default. `--no-backup` removes it after deterministic cleanup.
-- `supabase stack list` enumerates healthy managed documents and checks control ownership for live
-  status; `--project-dir` scopes the result to one checkout.
+- `supabase stack list` enumerates the global persisted managed-stack inventory, including stopped
+  and unconfigured stacks, and includes corrupt or unsupported registry entries with their IDs and
+  error reasons. Missing state remnants are ignored during enumeration. It reads registry state
+  without contacting live owners and has no checkout-scoping option; use
+  [`supabase stack status`](./stack-commands.md) to inspect live owner state. See [local stack
+  commands](./stack-commands.md).
 
 ## Auth, telemetry, and binaries
 

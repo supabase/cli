@@ -9,6 +9,7 @@ import { stackStopCommand as stackStopCommandBase } from "./stop/stop.command.ts
 import { stackStatusCommand as stackStatusCommandBase } from "./status/status.command.ts";
 import { stackDestroyCommand as stackDestroyCommandBase } from "./destroy/destroy.command.ts";
 import { stackLogsCommand as stackLogsCommandBase } from "./logs/logs.command.ts";
+import { stackListCommand as stackListCommandBase } from "./list/list.command.ts";
 import { stackApiLayer, stackTargetResolverLayer } from "./stack.shared.ts";
 
 export const stackRuntimeLayer = Layer.mergeAll(
@@ -33,6 +34,9 @@ const stackDestroyCommand = stackDestroyCommandBase.pipe(
 const stackLogsCommand = stackLogsCommandBase.pipe(
   Command.provide(commandRuntimeLayer(["stack", "logs"])),
 );
+const stackListCommand = stackListCommandBase.pipe(
+  Command.provide(commandRuntimeLayer(["stack", "list"])),
+);
 
 export const stackCommand = Command.make("stack").pipe(
   Command.withDescription(
@@ -40,11 +44,12 @@ export const stackCommand = Command.make("stack").pipe(
   ),
   Command.withShortDescription("Manage experimental local stacks"),
   Command.withSubcommands([
+    stackDestroyCommand,
+    stackListCommand,
+    stackLogsCommand,
     stackStartCommand,
     stackStatusCommand,
     stackStopCommand,
-    stackDestroyCommand,
-    stackLogsCommand,
   ]),
   Command.provide(stackRuntimeLayer),
 );
