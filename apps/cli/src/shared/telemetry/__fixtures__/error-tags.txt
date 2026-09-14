@@ -234,6 +234,7 @@ ExperimentalRequiredError
 ExperimentalStackDestroyError
 ExperimentalStackListError
 ExperimentalStackLogsError
+ExperimentalStackRestartError
 ExperimentalStackStartError
 ExperimentalStackStatusError
 ExperimentalStackStopError

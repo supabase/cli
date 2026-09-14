@@ -149,4 +149,23 @@ describe("stack command telemetry", () => {
       Effect.ensuring(Effect.sync(() => rmSync(fixture.root, { recursive: true, force: true }))),
     );
   });
+
+  it.live("records the restart command identity on invalid target input", () => {
+    const fixture = setup();
+    const command = stackCommand.pipe(Command.provide(fixture.layer));
+    return Effect.gen(function* () {
+      yield* Command.runWith(command, { version: "0.0.0-test" })([
+        "restart",
+        "--stack-id",
+        "invalid",
+      ]).pipe(Effect.flip);
+      const event = fixture.analytics.captured.find(
+        (candidate) => candidate.event === EventCommandExecuted,
+      );
+      expect(event?.properties[PropCommand]).toBe("stack restart");
+    }).pipe(
+      Effect.provide(fixture.layer),
+      Effect.ensuring(Effect.sync(() => rmSync(fixture.root, { recursive: true, force: true }))),
+    );
+  });
 });

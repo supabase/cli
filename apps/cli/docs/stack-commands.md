@@ -12,6 +12,7 @@ native runtimes.
 | `supabase stack start`   | Create or resume the project's stack.                                             |
 | `supabase stack status`  | Show identity, readiness, and drift, or export connection variables with `--env`. |
 | `supabase stack logs`    | Read retained or live stack logs.                                                 |
+| `supabase stack restart` | Prepare the current project configuration, then restart an existing stack.        |
 | `supabase stack stop`    | Stop a stack while retaining its data.                                            |
 
 Use each command's `--help` for its available targeting and runtime options.
@@ -150,6 +151,13 @@ excluded from hosted project configuration. Routing applies the CLI's working-di
 including `--workdir` and `SUPABASE_WORKDIR`, and prefers JSON when both files exist.
 
 ## Service selection and shutdown
+
+`supabase stack restart` applies the current project configuration to an existing stack. It
+prepares required artifacts before stopping, then stops and starts the same stack identity. Stack
+data and durable identity are preserved. Select a stack with `--stack <name>` or `--stack-id <id>`;
+the selected stack's persisted project root supplies the configuration for ID targets. Restart does
+not retain one-off `start` flags such as `--exclude`, `--eager`, or `--preparation`; those settings
+fall back to the project's configuration and runtime defaults.
 
 `supabase stack start --exclude studio,analytics -x mail` disables those services in the effective
 start configuration without changing the project file. Valid names are `rest`, `auth`, `realtime`,
