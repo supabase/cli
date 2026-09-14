@@ -74,7 +74,7 @@ updates:
     cooldown:
       default-days: 7
   - package-ecosystem: "docker"
-    directory: "/apps/cli-go/pkg/config/templates"
+    directory: "/apps/cli/src/shared/services"
     schedule:
       interval: "cron"
       cronjob: "0 0 * * *"
