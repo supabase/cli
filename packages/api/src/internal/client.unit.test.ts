@@ -1142,4 +1142,43 @@ describe("makeSupabaseApiClient", () => {
     expect(result.data.attributes.storage.upstream_target).toBe("main");
     expect(result.data.attributes.api.db_pool).toBeNull();
   });
+  // `style: deepObject` — every object-valued query parameter in the spec — is
+  // one `param[key]=value` pair per entry. Serialized as a JSON blob instead,
+  // the server reads no page size and no cursor, so a paginated walk silently
+  // returns the first default-sized page forever.
+  test("expands deepObject query parameters into one pair per entry", async () => {
+    let seenRequest: HttpClientRequest.HttpClientRequest | undefined;
+
+    const client = await Effect.runPromise(
+      makeSupabaseApiClient(config).pipe(
+        Effect.provide(
+          httpClientLayer((request) => {
+            seenRequest = request;
+            return Effect.succeed(
+              jsonResponse(request, 200, {
+                data: [],
+                links: { first: null, last: null, prev: null, next: null },
+              }),
+            );
+          }),
+        ),
+      ),
+    );
+
+    await Effect.runPromise(
+      client.execute(operationDefinitions.v2ListNotebooks, {
+        ref: "abcdefghijklmnopqrst",
+        page: { size: 100, after: "cursor-1" },
+        filter: { name: "sales" },
+      }),
+    );
+
+    expect(seenRequest).toBeDefined();
+    expect(requestUrlParam(seenRequest!, "page[size]")).toBe("100");
+    expect(requestUrlParam(seenRequest!, "page[after]")).toBe("cursor-1");
+    expect(requestUrlParam(seenRequest!, "filter[name]")).toBe("sales");
+    // The un-expanded names never reach the wire.
+    expect(requestUrlParam(seenRequest!, "page")).toBeUndefined();
+    expect(requestUrlParam(seenRequest!, "filter")).toBeUndefined();
+  });
 });

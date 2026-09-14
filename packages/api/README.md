@@ -157,10 +157,10 @@ because the upstream documents differ between environments — staging's `v2-jso
 served by two backend variants that disagree about some paths. Entries may carry a `$comment`
 field to document why an override exists.
 
-### Known limitation: `deepObject` query parameters
+### `deepObject` query parameters
 
-Three v2 operations declare object-valued query parameters with `style: deepObject`:
-`v2-list-organization-members`, `v2-list-organization-projects`, and
-`v2-list-organization-github-connections`. The client currently serializes these as JSON strings
-rather than the expected `page[size]=...` form. Do not rely on those parameters until this is
-fixed.
+Several v2 list operations declare object-valued query parameters with `style: deepObject`
+(`page`, `filter`). The client expands each own entry into its own `param[key]=value` pair, so
+`{ page: { size: 100, after: cursor } }` reaches the wire as `page[size]=100&page[after]=…`. Every
+object-valued query parameter in the spec is `deepObject`, so the expansion is applied to all of
+them rather than driven by a per-parameter style recorded in the generated contract.
