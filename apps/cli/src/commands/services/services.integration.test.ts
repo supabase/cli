@@ -1,7 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
 import { CliOutput, Command } from "effect/unstable/cli";
-import { Stdio } from "effect";
 import {
   Cause,
   Data,
@@ -14,6 +13,7 @@ import {
   Predicate,
   Redacted,
   Schema,
+  Stdio,
 } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { CommandCredentials } from "../../auth/command-credentials.service.ts";
@@ -179,12 +179,9 @@ function postgresVersionForDbMajorVersion(majorVersion: number): string {
 }
 
 class ServicesTestServerError extends Data.TaggedError("ServicesTestServerError")<{
+  readonly message: string;
   readonly cause: unknown;
-}> {
-  override get message(): string {
-    return this.cause instanceof Error ? this.cause.message : String(this.cause);
-  }
-}
+}> {}
 
 function expectFailureTag(exit: Exit.Exit<unknown, unknown>, tag: string) {
   expect(Exit.isFailure(exit)).toBe(true);
@@ -374,7 +371,8 @@ major_version = 15
 
       const server = yield* Effect.acquireRelease(
         Effect.try({
-          catch: (cause) => new ServicesTestServerError({ cause }),
+          catch: (cause) =>
+            new ServicesTestServerError({ message: "test API server failed to start", cause }),
           try: () =>
             Bun.serve({
               hostname: "127.0.0.1",
@@ -418,7 +416,14 @@ major_version = 15
               },
             }),
         }),
-        (running) => Effect.promise(() => running.stop(true)),
+        (running) =>
+          // `acquireRelease` types the release as `Effect<unknown, never, _>`, so die instead
+          // of fail; the tagged wrapper keeps a failed stop attributable.
+          Effect.tryPromise({
+            try: () => running.stop(true),
+            catch: (cause) =>
+              new ServicesTestServerError({ message: "test API server failed to stop", cause }),
+          }).pipe(Effect.orDie),
       );
 
       const { layer, out } = setup({

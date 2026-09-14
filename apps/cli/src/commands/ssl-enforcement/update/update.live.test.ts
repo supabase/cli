@@ -165,10 +165,10 @@ test(
         // The restore runs whatever the toggle did; neither failure hides the other.
         const toggleExit = yield* Effect.exit(toggle);
         const restoreExit = yield* Effect.exit(restore);
-        throwWithCleanup(
-          Exit.isFailure(toggleExit) ? Cause.squash(toggleExit.cause) : undefined,
-          Exit.isFailure(restoreExit) ? [Cause.squash(restoreExit.cause)] : [],
-        );
+        return {
+          toggleError: Exit.isFailure(toggleExit) ? Cause.squash(toggleExit.cause) : undefined,
+          restoreErrors: Exit.isFailure(restoreExit) ? [Cause.squash(restoreExit.cause)] : [],
+        };
       }),
-    ),
+    ).then(({ toggleError, restoreErrors }) => throwWithCleanup(toggleError, restoreErrors)),
 );
