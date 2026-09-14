@@ -27,7 +27,12 @@ One piece of the old Go CLI's `start` remains explicitly **out of scope**:
 1. **Linked-project version-check suggestion** — a best-effort Management API call, made
    only when a project happens to be linked _and_ the user is logged in, purely to print
    an "update available" hint. Omitted entirely — this port has zero Management API
-   dependency for `start`, by design.
+   dependency for `start`, by design. The runtime layer does compose the lazy
+   Management-API factory — a static requirement of the shared storage-credentials
+   resolver whose hosted branch `start` never reaches — so building the layer loads the
+   credential subsystem: the keyring module import (skipped under `SUPABASE_NO_KEYRING=1`
+   and on WSL) and the WSL probe's read of `/proc/sys/kernel/osrelease`. No access token
+   is read or validated, and no Management API call is ever made.
 
 ### Fresh-volume DB setup (`startSetupLocalDatabase`)
 

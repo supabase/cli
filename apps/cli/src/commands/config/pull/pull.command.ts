@@ -76,5 +76,7 @@ export const configPullCommand = Command.make("pull", config).pipe(
     },
   ]),
   Command.withHandler(configPullHandler),
+  // `stdinLayer`: the apply confirmation reads piped stdin via `promptYesNo`
+  // on a non-TTY stdin.
   Command.provide(Layer.mergeAll(managementApiRuntimeLayer(["config", "pull"]), stdinLayer)),
 );

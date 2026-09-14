@@ -32,5 +32,8 @@ export const stackDestroyCommand = Command.make("destroy", config).pipe(
   Command.withHandler((flags) =>
     stackDestroy(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),
   ),
+  // `stdinLayer` satisfies `promptYesNo`'s `Stdin` requirement. destroy either rejects a
+  // non-TTY run up front or short-circuits the prompt via `--yes`, so the layer is here for
+  // the effect's type requirements only.
   Command.provide(stdinLayer),
 );

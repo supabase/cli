@@ -5,11 +5,14 @@ import type * as CliCommand from "effect/unstable/cli/Command";
 import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
 import { stdinLayer } from "../../shared/runtime/stdin.layer.ts";
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
+import { commandCredentialsLayer } from "../../auth/command-credentials.layer.ts";
+import { commandPlatformApiFactoryLayer } from "../../auth/command-platform-api-factory.layer.ts";
 import { httpClientLayer } from "../../auth/http-debug.layer.ts";
 import { commandSettingsLayer } from "../../config/command-settings.layer.ts";
 import { dbConnectionLayer } from "../../command-internal/db-connection.layer.ts";
 import { debugLoggerLayer } from "../../command-internal/debug-logger.layer.ts";
 import { dockerRunLayer } from "../../command-internal/docker-run.layer.ts";
+import { identityStitchLayer } from "../../command-internal/identity-stitch.ts";
 import { stringSliceFlag } from "../../command-internal/string-slice-flag.ts";
 import { telemetryStateLayer } from "../../telemetry/telemetry-state.layer.ts";
 import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
@@ -41,12 +44,28 @@ const config = {
 
 export type StartFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-// `start` talks directly to Docker with no Management API calls, so it composes its own runtime
-// instead of `managementApiRuntimeLayer`. `httpClientLayer` is included explicitly because the
-// root runtime doesn't supply `HttpClient.HttpClient`; `dockerRunLayer`/`dbConnectionLayer` back
-// the fresh-volume database setup (one-shot migrate jobs plus direct-connection schema SQL).
+// `start` talks directly to Docker and makes no Management API calls, so it composes its own
+// runtime instead of `managementApiRuntimeLayer`. `httpClientLayer` is included explicitly
+// because the root runtime doesn't supply `HttpClient.HttpClient`;
+// `dockerRunLayer`/`dbConnectionLayer` back the fresh-volume database setup (one-shot migrate
+// jobs plus direct-connection schema SQL).
 const cliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
 const httpClient = httpClientLayer.pipe(Layer.provide(debugLoggerLayer));
+const credentials = commandCredentialsLayer.pipe(
+  Layer.provide(cliSettings),
+  Layer.provide(debugLoggerLayer),
+);
+
+// Exposed because the shared `resolveStorageCredentials` statically requires the (lazy)
+// Management-API factory for its hosted branch, even though `start` always passes
+// `projectRef: ""` and never reaches it. Mirrors `db reset`'s wiring; laziness keeps the
+// local path from ever resolving an access token.
+const platformApiFactory = commandPlatformApiFactoryLayer.pipe(
+  Layer.provide(credentials),
+  Layer.provide(cliSettings),
+  Layer.provide(debugLoggerLayer),
+  Layer.provide(identityStitchLayer),
+);
 
 const startRuntimeLayer = Layer.mergeAll(
   cliSettings,
@@ -55,6 +74,10 @@ const startRuntimeLayer = Layer.mergeAll(
   dockerRunLayer,
   dbConnectionLayer,
   httpClient,
+  platformApiFactory,
+  // `stdinLayer` satisfies `promptYesNo`'s `Stdin` requirement (seed-buckets runs with
+  // `yes: true`), so `start` never reads a piped line at runtime — type requirements only.
+  stdinLayer,
 );
 
 export const startCommand = Command.make("start", config).pipe(
@@ -64,5 +87,4 @@ export const startCommand = Command.make("start", config).pipe(
     start(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
   Command.provide(startRuntimeLayer),
-  Command.provide(stdinLayer),
 );
