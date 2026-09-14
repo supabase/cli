@@ -27,11 +27,6 @@ import { outputLayerFor } from "../output/output.layer.ts";
 import { normalizeCause } from "../output/normalize-error.ts";
 import type { OutputFormat } from "../output/types.ts";
 import { Output } from "../output/output.service.ts";
-import { GoChildExitError } from "../../command-internal/go-child-exit.error.ts";
-import {
-  GoProxyInvocation,
-  goProxyInvocationLayer,
-} from "../../command-internal/go-proxy-invocation.ts";
 import { cliSettingsLayer } from "../config/cli-settings.layer.ts";
 import { cliProjectHomeLayer } from "../config/cli-project-home.layer.ts";
 import { CliProjectLocalServiceVersions } from "../config/cli-project-local-service-versions.service.ts";
@@ -347,15 +342,10 @@ export function exitCodeForFailure(cause: Cause.Cause<unknown>): number {
 
 /**
  * Whether `handledProgram` should render its generic `output.fail` stderr line for a failed run.
- * False for a clean exit (`0`), an interrupt (`130`), and a `GoChildExitError` — a delegated Go
- * child already wrote its own failure to the inherited stderr, so a second line here would be
- * redundant. Checked by concrete type rather than Effect's shared `[Runtime.errorReported]`
- * marker, since `CliError.ShowHelp` also sets that marker `false` for an unrelated reason and
- * would otherwise suppress real error rendering too.
+ * False only for a clean exit (`0`) or an interrupt (`130`); every other exit code reports.
  */
-export function shouldReportFailure(cause: Cause.Cause<unknown>, exitCode: number): boolean {
-  if (exitCode === 0 || exitCode === 130) return false;
-  return !(Cause.squash(cause) instanceof GoChildExitError);
+export function shouldReportFailure(exitCode: number): boolean {
+  return exitCode !== 0 && exitCode !== 130;
 }
 
 /**
@@ -546,7 +536,6 @@ export interface RunCliOptions {
     args: ReadonlyArray<string>,
     info: {
       readonly cleanShowHelp: boolean;
-      readonly delegatedToGo: boolean;
       readonly workingDirectory?: string;
       /** Value-taking-token predicate for this argv (global + resolved leaf flags) — see `valueTakingFlagTokenPredicateForArgv`. */
       readonly isValueTakingFlagToken: (token: string) => boolean;
@@ -686,7 +675,6 @@ export async function runCli<
   ): Effect.Effect<never, unknown, never> =>
     Effect.gen(function* () {
       const processControl = yield* ProcessControl;
-      const goProxyInvocation = yield* GoProxyInvocation;
       const output = yield* Output;
       const successTrailer = yield* SuccessTrailer;
       const exit = yield* program.pipe(Effect.exit);
@@ -701,11 +689,9 @@ export async function runCli<
                     Effect.andThen(
                       Effect.gen(function* () {
                         if (afterSuccessHook !== undefined) {
-                          const delegatedToGo = yield* goProxyInvocation.wasDelegated;
                           const workingDirectory = yield* successTrailer.workingDirectory;
                           yield* afterSuccessHook(args, {
                             cleanShowHelp,
-                            delegatedToGo,
                             workingDirectory,
                             isValueTakingFlagToken: valueTakingFlagTokenPredicateForArgv(
                               rootCommand,
@@ -728,7 +714,7 @@ export async function runCli<
         const exitCode = exitCodeForFailure(exit.cause);
         // See `shouldReportFailure` and `exitCodeForFailure` for the exit-code/reporting rules; a
         // literal `--help` never reaches this branch — it exits 0 via the success path below.
-        if (shouldReportFailure(exit.cause, exitCode)) {
+        if (shouldReportFailure(exitCode)) {
           yield* output.fail(normalizeCause(exit.cause, suggestionContext));
         }
         yield* afterSuccess(exitCode, true);
@@ -747,7 +733,6 @@ export async function runCli<
       Effect.provide(runtimeInfoLayer),
       Effect.provide(ttyLayer),
       Effect.provide(BunServices.layer),
-      Effect.provide(goProxyInvocationLayer),
       Effect.provide(successTrailerLayer),
     );
 

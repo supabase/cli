@@ -48,26 +48,13 @@ import { whoamiCommand } from "../commands/whoami/whoami.command.ts";
 import { OutputFormatFlag } from "../shared/cli/global-flags.ts";
 import { outputLayerFor } from "../shared/output/output.layer.ts";
 import { quietProgressTextOutputLayer } from "../output/quiet-progress-text-output.layer.ts";
-import { makeGoProxyLayer } from "../command-internal/go-proxy.layer.ts";
 import { AiTool } from "../shared/telemetry/ai-tool.service.ts";
 import { aiToolLayer } from "../shared/telemetry/ai-tool.layer.ts";
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
 import { commandRuntimeLayer } from "../shared/runtime/command-runtime.layer.ts";
 import type { CliRootCommand } from "../shared/cli/run.ts";
 import { isBuiltInTextRequest, resolveAgentOutputFormat } from "../shared/cli/agent-output.ts";
-import {
-  GLOBAL_FLAGS,
-  AgentFlag,
-  CreateTicketFlag,
-  DebugFlag,
-  DnsResolverFlag,
-  ExperimentalFlag,
-  NetworkIdFlag,
-  OutputFlag,
-  ProfileFlag,
-  WorkdirFlag,
-  YesFlag,
-} from "../command-internal/global-flags.ts";
+import { GLOBAL_FLAGS, AgentFlag, OutputFlag } from "../command-internal/global-flags.ts";
 
 const stackStartAliasCommand = stackStartCommand.pipe(
   Command.provide(commandRuntimeLayer(["start"])),
@@ -137,15 +124,7 @@ export const rootCommandForFeatures = (
       Layer.unwrap(
         Effect.gen(function* () {
           const explicitOutputFormat = yield* OutputFormatFlag;
-          const goOutput = yield* OutputFlag;
-          const profile = yield* ProfileFlag;
-          const debug = yield* DebugFlag;
-          const workdir = yield* WorkdirFlag;
-          const experimental = yield* ExperimentalFlag;
-          const networkId = yield* NetworkIdFlag;
-          const yes = yield* YesFlag;
-          const dnsResolver = yield* DnsResolverFlag;
-          const createTicket = yield* CreateTicketFlag;
+          const resourceOutput = yield* OutputFlag;
           const agent = yield* AgentFlag;
           const cliArgs = yield* CliArgs;
 
@@ -154,41 +133,23 @@ export const rootCommandForFeatures = (
           // human table), so the agent JSON default only applies when it's absent.
           const outputFormat = resolveAgentOutputFormat({
             explicitOutputFormat,
-            goOutputFormat: goOutput,
+            goOutputFormat: resourceOutput,
             agentOverride: agent,
             detectedAgentName: aiTool.name,
             isBuiltInTextRequest: isBuiltInTextRequest(cliArgs.args),
           });
 
-          const globalArgs: string[] = [];
-          if (Option.isSome(goOutput)) {
-            globalArgs.push("--output", goOutput.value);
-          } else if (outputFormat !== "text") {
-            globalArgs.push("--output", "json");
-          }
-          if (profile !== "supabase") globalArgs.push("--profile", profile);
-          if (debug) globalArgs.push("--debug");
-          if (Option.isSome(workdir)) globalArgs.push("--workdir", workdir.value);
-          if (experimental) globalArgs.push("--experimental");
-          if (Option.isSome(networkId)) globalArgs.push("--network-id", networkId.value);
-          if (yes) globalArgs.push("--yes");
-          if (dnsResolver !== "native") globalArgs.push("--dns-resolver", dnsResolver);
-          if (createTicket) globalArgs.push("--create-ticket");
-          if (agent !== "auto") globalArgs.push("--agent", agent);
-
           // Machine formats keep the text layer's error rendering but suppress the progress
           // spinner, which would otherwise corrupt the stdout payload. `-o pretty`/`-o table`
           // (db query's human default) and no `-o` keep the normal text/json layers.
-          const goFmt = Option.getOrUndefined(goOutput);
-          const isGoMachineFormat = goFmt !== undefined && goFmt !== "pretty" && goFmt !== "table";
-          const outputLayer = isGoMachineFormat
+          const resourceFormat = Option.getOrUndefined(resourceOutput);
+          const isMachineResourceFormat =
+            resourceFormat !== undefined &&
+            resourceFormat !== "pretty" &&
+            resourceFormat !== "table";
+          return isMachineResourceFormat
             ? quietProgressTextOutputLayer
             : outputLayerFor(outputFormat);
-
-          return Layer.mergeAll(
-            outputLayer,
-            makeGoProxyLayer({ globalArgs, parentOwnsCapturedSuccessTail: true }),
-          );
         }),
       ),
     ),

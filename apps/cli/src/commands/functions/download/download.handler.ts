@@ -1,14 +1,11 @@
 import { join } from "node:path";
 import { Effect, Option, Stdio } from "effect";
-import {
-  downloadFunctions,
-  makeGoProxyLegacyBundleArgs,
-} from "../../../shared/functions/download.ts";
+import { downloadFunctions } from "../../../shared/functions/download.ts";
 import { resolveEdgeRuntimeVersionPin } from "../../../shared/functions/functions.shared.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { GoProxy } from "../../../command-internal/go-proxy.service.ts";
 import { aqua, bold, yellow } from "../../../command-internal/colors.ts";
 import { functionsGoConfigCompat } from "../../../command-internal/functions-go-config.ts";
+import { removedFlag } from "../../../command-internal/removed-command.ts";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
@@ -19,12 +16,17 @@ import type { FunctionsDownloadFlags } from "./download.command.ts";
 export const functionsDownload = Effect.fn("functions.download")(function* (
   flags: FunctionsDownloadFlags,
 ) {
+  if (flags.legacyBundle) {
+    return yield* removedFlag(
+      "--legacy-bundle",
+      "Retry with `supabase functions download --use-api <slug>` to unbundle server-side without Docker.",
+    );
+  }
   const api = yield* CommandPlatformApi;
   const cliSettings = yield* CommandSettings;
   const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
-  const proxy = yield* GoProxy;
   const output = yield* Output;
   const stdio = yield* Stdio.Stdio;
   const rawArgs = yield* stdio.args;
@@ -54,25 +56,7 @@ export const functionsDownload = Effect.fn("functions.download")(function* (
             }),
           ),
         ),
-      // Suppresses the delegated binary's own `cli_command_executed` so a
-      // proxied invocation fires exactly one event. In machine-output mode its
-      // stdout is captured and discarded instead of inherited, since
-      // `downloadFunctions` emits the `Output` envelope itself.
-      proxyDownload: (proxyFlags, projectRef, captureOutput) => {
-        const args = makeGoProxyLegacyBundleArgs(proxyFlags.functionName, projectRef);
-        const env = { SUPABASE_TELEMETRY_DISABLED: "1" };
-        return captureOutput
-          ? Effect.asVoid(
-              proxy.execCapture(args, { env, stdin: "ignore", suppressChildTelemetry: true }),
-            )
-          : proxy.exec(args, { env, suppressChildTelemetry: true });
-      },
     });
-
-    // `--legacy-bundle` emits its own final summary inside `downloadFunctions`.
-    if (flags.legacyBundle) {
-      return;
-    }
 
     if (result.empty) {
       if (output.format === "text") {
