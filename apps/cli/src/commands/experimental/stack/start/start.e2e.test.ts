@@ -23,6 +23,9 @@ const nativeSupported =
 
 const minimalConfig = `project_id = "compiled-stack-start-e2e"
 
+[experimental]
+stack = true
+
 [api]
 enabled = false
 
@@ -206,6 +209,7 @@ describe("stack start (compiled e2e)", () => {
       const stop = await runSupabase(["stack", "stop", "--stack-id", idText], {
         cwd: projectRoot,
         home: homeDir.dir,
+        env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
         exitTimeoutMs: CLEANUP_TIMEOUT_MS,
       });
       expect(stop.exitCode, `stdout:\n${stop.stdout}\nstderr:\n${stop.stderr}`).toBe(0);
@@ -220,6 +224,7 @@ describe("stack start (compiled e2e)", () => {
       const stoppedStatus = await runSupabase(["stack", "status", "--stack-id", idText], {
         cwd: projectRoot,
         home: homeDir.dir,
+        env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
         exitTimeoutMs: CLEANUP_TIMEOUT_MS,
       });
       expect(
@@ -233,6 +238,7 @@ describe("stack start (compiled e2e)", () => {
       const stoppedEnv = await runSupabase(["stack", "status", "--env", "--stack-id", idText], {
         cwd: projectRoot,
         home: homeDir.dir,
+        env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
         exitTimeoutMs: CLEANUP_TIMEOUT_MS,
       });
       expect(stoppedEnv.exitCode).not.toBe(0);

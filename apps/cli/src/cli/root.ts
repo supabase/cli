@@ -122,7 +122,7 @@ export const rootCommandForFeatures = (
       snippetsCommand,
       sslEnforcementCommand,
       ssoCommand,
-      stackCommand,
+      ...(options.stackBackend === "stack" ? [stackCommand] : []),
       options.stackBackend === "stack" ? stackStartAliasCommand : startCommand,
       options.stackBackend === "stack" ? stackStatusAliasCommand : statusCommand,
       options.stackBackend === "stack" ? stackStopAliasCommand : stopCommand,

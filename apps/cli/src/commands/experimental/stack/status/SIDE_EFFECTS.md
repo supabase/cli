@@ -4,6 +4,13 @@ Reports the persisted identity and current owner state of a managed local stack.
 The command is read-only: it never creates, starts, prepares, stops, or destroys
 a stack, and opens a stack handle only when `--env` is used.
 
+The command is available only when the `experimental.stack` feature flag is
+enabled. The top-level `supabase status` command uses this handler when the
+same flag is enabled. Command routing may read `supabase/config.toml` or
+`supabase/config.json` to select the experimental backend; set
+`SUPABASE_EXPERIMENTAL_STACK=1` to inspect a stack addressed with `--stack-id`
+when project configuration is missing or invalid.
+
 Target selection accepts the current project, `--stack <name>`, or
 `--stack-id <id>`. `--stack` and `--stack-id` are mutually exclusive. Any
 explicit legacy `-o/--output` value is rejected; use `--output-format` instead,

@@ -1,5 +1,7 @@
 # `supabase stack destroy`
 
+The command is available only when the `experimental.stack` feature flag is enabled.
+
 Permanently stops and removes one managed stack, including its persisted data.
 
 The command targets the current project stack by default, or an explicit `--stack` name or
