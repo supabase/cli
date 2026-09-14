@@ -46,6 +46,7 @@ import { resolveStackPaths } from "../state/Paths.ts";
 import { StackRpcGroup, type StackRpcError } from "../control/StackRpc.ts";
 import { makeSupervisor, type Supervisor, type SupervisorRuntime } from "./Supervisor.ts";
 import type { SupervisorIngress } from "./Ingress.ts";
+import type { LifecycleInput } from "./Lifecycle.ts";
 
 const identity = {
   projectRoot: "/tmp/supabase-supervisor",
@@ -86,6 +87,7 @@ const makeFixture = (
     readonly activationGate?: Deferred.Deferred<void>;
     readonly activationStarted?: Deferred.Deferred<void>;
     readonly activationCalls?: Ref.Ref<number>;
+    readonly activationInputs?: Ref.Ref<ReadonlyArray<LifecycleInput>>;
     readonly activationFailFirst?: Ref.Ref<boolean>;
     readonly startFailures?: Ref.Ref<number>;
     readonly preflightFailFirst?: Ref.Ref<boolean>;
@@ -392,8 +394,10 @@ const makeFixture = (
         fixtureOptions.artifactStatuses === undefined
           ? Effect.succeed([])
           : Ref.get(fixtureOptions.artifactStatuses),
-      activate: () =>
+      activate: (_capability, input) =>
         Effect.gen(function* () {
+          if (fixtureOptions.activationInputs !== undefined)
+            yield* Ref.update(fixtureOptions.activationInputs, (current) => [...current, input]);
           if (fixtureOptions.activationCalls !== undefined)
             yield* Ref.update(fixtureOptions.activationCalls, (count) => count + 1);
           if (fixtureOptions.activationStarted !== undefined)
@@ -1729,6 +1733,66 @@ describe("Supervisor composition", () => {
           (yield* fixture.supervisor.status).capabilities.find(({ name }) => name === "functions")
             ?.state,
         ).toBe("ready");
+      }),
+    ),
+  );
+
+  it.live("replaces Functions with transient settings without persisting them", () =>
+    run(
+      Effect.gen(function* () {
+        const timeline = yield* Ref.make<ReadonlyArray<string>>([]);
+        const activationInputs = yield* Ref.make<ReadonlyArray<LifecycleInput>>([]);
+        const fixture = yield* makeFixture({ timeline, activationInputs });
+        yield* fixture.supervisor.start({
+          config: {
+            capabilities: {
+              functions: {
+                activation: "lazy",
+                settings: {
+                  edge_runtime: { secrets: { TOKEN: Redacted.make("durable") } },
+                },
+              },
+            },
+          },
+        });
+        const durable = yield* fixture.store.read(fixture.id);
+
+        const first = yield* fixture.supervisor.serveFunctions({
+          config: {
+            capabilities: {
+              functions: {
+                settings: {
+                  debug: true,
+                  edge_runtime: { secrets: { TOKEN: Redacted.make("invocation") } },
+                },
+              },
+            },
+          },
+        });
+        expect(first.capabilities.find(({ name }) => name === "functions")?.state).toBe("ready");
+        const firstInput = (yield* Ref.get(activationInputs))[0];
+        expect(firstInput?.definition.capabilities.functions.settings.debug).toBe(true);
+        expect(
+          firstInput?.state.secrets["secret:functions.settings.edge_runtime.secrets.TOKEN"]?.value,
+        ).toBe("invocation");
+        expect(yield* fixture.store.read(fixture.id)).toEqual(durable);
+
+        yield* fixture.supervisor.serveFunctions({
+          config: {
+            capabilities: {
+              functions: {
+                settings: {
+                  debug: false,
+                  edge_runtime: { secrets: { TOKEN: Redacted.make("next") } },
+                },
+              },
+            },
+          },
+        });
+        const events = yield* Ref.get(timeline);
+        expect(events.filter((event) => event === "start:functions:edge-runtime")).toHaveLength(2);
+        expect(events.filter((event) => event === "stop:functions:edge-runtime")).toHaveLength(1);
+        expect(yield* fixture.store.read(fixture.id)).toEqual(durable);
       }),
     ),
   );

@@ -11,9 +11,13 @@ import { makeSessionLauncher } from "./SessionLauncher.ts";
 
 const stackId = StackIdSchema.make("b".repeat(64));
 
-const workload = (id: string, dependencies: ReadonlyArray<string> = []): PlannedWorkload => ({
+const workload = (
+  id: string,
+  dependencies: ReadonlyArray<string> = [],
+  capability: CapabilityName = "database",
+): PlannedWorkload => ({
   id,
-  capability: "database",
+  capability,
   dependencies,
   readiness: {},
   artifacts: {
@@ -144,6 +148,30 @@ describe("session launcher", () => {
       yield* Deferred.await(restEntered);
       yield* Deferred.succeed(releaseMail, undefined);
       yield* Fiber.join(launching);
+    }),
+  );
+
+  it.live("resets only workloads owned by one capability", () =>
+    Effect.gen(function* () {
+      const calls: string[] = [];
+      const database = workload("database:database");
+      const functions = workload("functions:edge-runtime", [database.id], "functions");
+      const driver: RuntimeDriver = {
+        observe: () => Effect.succeed([]),
+        start: (_key, current) => Effect.succeed(ready(current)),
+        stop: (key) => Effect.sync(() => calls.push(`stop:${key.workloadId}`)),
+        remove: (key) => Effect.sync(() => calls.push(`remove:${key.workloadId}`)),
+        cleanup: () => Effect.void,
+      };
+      const launcher = yield* makeSessionLauncher({ stackId, driver });
+      yield* launcher.launch(plan([database, functions]));
+      yield* launcher.resetCapability("functions");
+      yield* launcher.launch(plan([database, functions]));
+
+      expect(calls).toEqual([
+        "stop:functions:edge-runtime",
+        "remove:functions:edge-runtime",
+      ]);
     }),
   );
 

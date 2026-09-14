@@ -61,6 +61,7 @@ function setup(options: {
     credentials: Effect.die("unused"),
     prepare: () => Effect.die("unused"),
     start: () => Effect.die("unused"),
+    serveFunctions: () => Effect.die("unused"),
     stop: Effect.die("unused"),
     destroy: options.destroyContainerFailure
       ? Effect.fail(new ContainerEngineError({ message: "container engine unavailable" }))

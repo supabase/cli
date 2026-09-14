@@ -146,6 +146,7 @@ const withServer = <A, E, R>(
             },
           }),
         start: () => Effect.succeed(status),
+        serveFunctions: () => Effect.succeed(status),
         destroy: () => Effect.void,
         logs: () => Effect.succeed({ entries: [], cursor: { opaque: "v1_0" }, running: false }),
       };

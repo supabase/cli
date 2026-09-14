@@ -65,6 +65,7 @@ const makeStack = (
     Effect.sync(() => {
       calls.start += 1;
     }).pipe(Effect.flatMap(() => Effect.die("start should not be called"))),
+  serveFunctions: () => Effect.die("serveFunctions should not be called"),
   stop: Effect.sync(() => {
     calls.stop += 1;
   }),

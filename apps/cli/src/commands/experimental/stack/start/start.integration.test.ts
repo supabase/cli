@@ -107,6 +107,7 @@ function fakeStack(
     credentials: Effect.die("credentials not used in start test"),
     prepare: () => Effect.die("prepare not used in start test"),
     start,
+    serveFunctions: () => Effect.die("serveFunctions not used in start test"),
     stop: Effect.void,
     destroy: Effect.die("destroy not used in start test"),
     logs: () => Effect.die("logs not used in start test"),
