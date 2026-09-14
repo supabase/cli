@@ -6,18 +6,21 @@ configuration or `SUPABASE_EXPERIMENTAL_STACK=1`. It has no top-level alias.
 ## Files Read
 
 Reads the selected stack's descriptor and `<SUPABASE_HOME>/managed/stacks/<id>/state.json`,
-plus owner metadata in `control.json` when present. Configuration comes from the
-selected descriptor's project root: `supabase/config.toml` or `supabase/config.json`,
-project environment input through the config loader, configured signing material,
-and enabled function dotenv files under `supabase/functions/`.
+plus owner metadata in `control.json` when present. Restart does not load project
+configuration; it uses the selected stack's saved effective configuration and preparation policy.
+Feature routing and workdir discovery may still read `supabase/config.toml` or
+`supabase/config.json`. Use `SUPABASE_EXPERIMENTAL_STACK=1` with `--stack-id` when
+project configuration is invalid or unavailable. Runtime startup can read files
+referenced by the saved definition, such as signing material.
 
 ## Files Written
 
 The CLI does not rewrite project configuration. The stack package updates its
 state record, owner metadata, runtime files, logs, and service data beneath the
-selected stack directory. Preparation may populate the package's artifact cache
-or the container engine's image store. Restart preserves the stack ID and data;
-it never calls create or destroy.
+selected stack directory. Restart preserves the stack ID and data; it never calls
+create or destroy. There is no explicit `prepare()` call. Runtime startup reuses
+cached artifacts and may fetch missing ones; the saved `background` preparation
+policy can also prefetch enabled lazy services, while `on-demand` skips that prefetch.
 
 ## API Routes
 
@@ -29,18 +32,18 @@ Artifact URLs and registry requests depend on the selected runtime and releases.
 
 - `SUPABASE_HOME`: managed state location; defaults to the user's `.supabase` directory.
 - `HOME`: participates in default home resolution.
-- Environment references in project configuration and function dotenv files are
-  resolved by the shared config loader. Their secret values are not emitted.
+- Project configuration and function dotenv overrides are not reloaded by the
+  restart handler. Saved secret values are not emitted.
 - Standard CLI settings, output, and telemetry environment controls apply through
   the existing CLI layers; restart adds no command-specific environment variables.
 
 ## Exit Codes
 
-| Code  | Condition                                                                                            |
-| ----- | ---------------------------------------------------------------------------------------------------- |
-| `0`   | The selected stack restarted successfully.                                                           |
-| `1`   | Invalid flags, missing stack/configuration, or a configuration, preparation, stop, or start failure. |
-| `130` | The CLI waiter was interrupted.                                                                      |
+| Code  | Condition                                                 |
+| ----- | --------------------------------------------------------- |
+| `0`   | The selected stack restarted successfully.                |
+| `1`   | Invalid flags, missing stack, or a stop or start failure. |
+| `130` | The CLI waiter was interrupted.                           |
 
 ## Telemetry Events Fired
 
@@ -63,11 +66,11 @@ Legacy `-o/--output` is rejected with guidance to use `--output-format`.
 ## Notes
 
 Targets one existing stack through `--stack`, `--stack-id`, or the current
-project. Configuration validation and preparation precede stop. A preparation
-failure leaves the running stack untouched; stop failure prevents start; start
-failure leaves the same stack stopped and available for recovery. Interrupting
+project. The command stops and starts without an explicit configuration. Stop failure prevents
+start; start failure leaves the same stack stopped and available for recovery. Interrupting
 the CLI waiter follows the package's owner lifecycle contract and does not invoke
 destroy from the command handler.
+An unconfigured stack must be initialized with `supabase stack start` before it can be restarted.
 
-Restart does not retain one-off `start` flags such as `--exclude`, `--eager`, or
-`--preparation`; it uses the current project configuration and runtime defaults.
+Restart reuses saved one-off `start` flags such as `--exclude`, `--eager`, and
+`--preparation`; a normal `start` reloads project configuration and current flags.

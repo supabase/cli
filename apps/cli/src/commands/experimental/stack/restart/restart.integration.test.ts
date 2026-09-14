@@ -9,26 +9,29 @@ import { Effect, Layer, Option, Stream } from "effect";
 import {
   StackIdSchema,
   StackPreparationError,
+  StackRuntimeError,
   StackStateInvalidError,
+  StackCleanupError,
   type EffectStack,
   type StackStatus,
+  type StackConfig,
 } from "@supabase/stack/effect";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
   mockCommandSettings,
   mockTelemetryStateTracked,
 } from "../../../../../tests/helpers/command-mocks.ts";
-import { StackApi } from "../stack.shared.ts";
+import { StackApi, StackTargetResolver } from "../stack.shared.ts";
 import { stackRestart } from "./restart.handler.ts";
+import { stackStart } from "../start/start.handler.ts";
+import { stackStop } from "../stop/stop.handler.ts";
+import { OutputFlag } from "../../../../command-internal/global-flags.ts";
 
 const id = StackIdSchema.make("a".repeat(64));
-const project = (projectId = "restart-test") => {
+const project = () => {
   const root = mkdtempSync(join(tmpdir(), "supabase-stack-restart-"));
   mkdirSync(join(root, "supabase"), { recursive: true });
-  writeFileSync(
-    join(root, "supabase", "config.toml"),
-    `[api]\nmax_rows = ${projectId === "id-project" ? 2345 : 1234}\n`,
-  );
+  writeFileSync(join(root, "supabase", "config.toml"), "[api]\nmax_rows = 1234\n");
   return root;
 };
 const status = (): StackStatus => ({
@@ -49,21 +52,20 @@ const flags = (overrides: Partial<Parameters<typeof stackRestart>[0]> = {}) => (
 });
 
 const fixture = (options: {
-  prepare?: "ok" | "fail";
   stop?: "ok" | "fail";
   start?: "ok" | "fail";
-  idProject?: boolean;
   format?: "text" | "json";
   config?: "valid" | "invalid";
   found?: boolean;
+  unconfigured?: boolean;
+  startRuntimeFailure?: boolean;
+  inspectFailure?: boolean;
 }) => {
   const root = project();
   if (options.config === "invalid")
     writeFileSync(join(root, "supabase", "config.toml"), 'project_id = "unterminated\n');
-  const idRoot = options.idProject === true ? project("id-project") : root;
   const calls: string[] = [];
   let lifecycle: StackStatus["lifecycle"] = "running";
-  let preparedConfig: unknown;
   let startedConfig: unknown;
   let selectedName: string | undefined;
   const output = mockOutput({ format: options.format });
@@ -72,21 +74,10 @@ const fixture = (options: {
     id,
     status: Effect.sync(() => ({ ...status(), lifecycle })),
     credentials: Effect.die("unused"),
-    prepare: (input) =>
-      Effect.sync(() => {
-        calls.push("prepare");
-        preparedConfig = input?.config;
-      }).pipe(
-        Effect.flatMap(() =>
-          options.prepare === "fail"
-            ? Effect.fail(new StackPreparationError({ message: "prepare failed" }))
-            : Effect.succeed({ capabilities: [] }),
-        ),
-      ),
+    prepare: () => Effect.die("restart must not prepare explicitly"),
     stop: Effect.gen(function* () {
       calls.push("stop");
-      if (options.stop === "fail")
-        return yield* new StackStateInvalidError({ message: "stop failed" });
+      if (options.stop === "fail") return yield* new StackCleanupError({ message: "stop failed" });
       lifecycle = "stopped";
     }),
     start: (input) =>
@@ -98,7 +89,11 @@ const fixture = (options: {
         ),
         Effect.flatMap(() =>
           options.start === "fail"
-            ? Effect.fail(new StackPreparationError({ message: "start failed" }))
+            ? Effect.fail(
+                options.startRuntimeFailure === true
+                  ? new StackRuntimeError({ message: "runtime failed" })
+                  : new StackPreparationError({ message: "start failed" }),
+              )
             : Effect.sync(() => {
                 lifecycle = "running";
                 return status();
@@ -125,39 +120,39 @@ const fixture = (options: {
                 name: name ?? "restart-test",
                 branchContext: "default",
                 runtime: { kind: "native" as const },
-                desiredLifecycle: "running" as const,
+                desiredLifecycle: options.unconfigured
+                  ? ("unconfigured" as const)
+                  : ("running" as const),
               });
         }),
       createStack: () => Effect.die("create must not run"),
       openStack: () => Effect.succeed(stack),
       inspectStack: () =>
-        options.idProject === true
-          ? Effect.succeed({
+        options.inspectFailure
+          ? Effect.fail(new StackStateInvalidError({ message: "inspect failed" }))
+          : Effect.succeed({
               descriptor: {
                 id,
-                projectRoot: idRoot,
-                name: "id-project",
+                projectRoot: root,
+                name: "restart-test",
                 branchContext: "default",
                 runtime: { kind: "native" as const },
-                desiredLifecycle: "running" as const,
+                desiredLifecycle: options.unconfigured
+                  ? ("unconfigured" as const)
+                  : ("running" as const),
               },
               owner: "running" as const,
-            })
-          : Effect.die("inspect unused"),
+            }),
       discoverStacks: () => Effect.succeed({ stacks: [], errors: [] }),
     }),
     BunServices.layer,
   );
   return {
     root,
-    idRoot,
     calls,
     output,
     telemetry,
     layer,
-    get preparedConfig() {
-      return preparedConfig;
-    },
     get lifecycle() {
       return lifecycle;
     },
@@ -169,42 +164,22 @@ const fixture = (options: {
     },
     cleanup: () => {
       rmSync(root, { recursive: true, force: true });
-      if (idRoot !== root) rmSync(idRoot, { recursive: true, force: true });
     },
   };
 };
 
 describe("stack restart", () => {
-  it.live("prepares before stopping and starts the same stack", () => {
+  it.live("stops and starts the saved stack configuration", () => {
     const setup = fixture({});
     return stackRestart(flags()).pipe(
       Effect.provide(setup.layer),
       Effect.tap(() =>
         Effect.sync(() => {
-          expect(setup.calls).toEqual(["prepare", "stop", "start"]);
-          expect(setup.preparedConfig).toMatchObject({
-            capabilities: { rest: { settings: { max_rows: 1234 } } },
-          });
+          expect(setup.calls).toEqual(["stop", "start"]);
           expect(setup.lifecycle).toBe("running");
-          expect(setup.startedConfig).toBe(setup.preparedConfig);
+          expect(setup.startedConfig).toBeUndefined();
           expect(setup.telemetry.flushed).toBe(true);
           expect(setup.output.stdoutText).toContain(`Stack ${id}`);
-        }),
-      ),
-      Effect.ensuring(Effect.sync(setup.cleanup)),
-    );
-  });
-
-  it.live("does not stop when preparation fails", () => {
-    const setup = fixture({ prepare: "fail" });
-    return stackRestart(flags()).pipe(
-      Effect.provide(setup.layer),
-      Effect.flip,
-      Effect.tap((error) =>
-        Effect.sync(() => {
-          expect(error.message).toContain("prepare failed");
-          expect(setup.calls).toEqual(["prepare"]);
-          expect(setup.telemetry.flushed).toBe(true);
         }),
       ),
       Effect.ensuring(Effect.sync(setup.cleanup)),
@@ -219,7 +194,10 @@ describe("stack restart", () => {
       Effect.tap((error) =>
         Effect.sync(() => {
           expect(error.message).toContain("stop failed");
-          expect(setup.calls).toEqual(["prepare", "stop"]);
+          expect(error.reason).toBe("unknown");
+          expect(error.suggestion).toContain("--debug");
+          expect(error.suggestion).toContain("cleanup");
+          expect(setup.calls).toEqual(["stop"]);
         }),
       ),
       Effect.ensuring(Effect.sync(setup.cleanup)),
@@ -234,7 +212,7 @@ describe("stack restart", () => {
       Effect.tap((error) =>
         Effect.sync(() => {
           expect(error.message).toContain("start failed");
-          expect(setup.calls).toEqual(["prepare", "stop", "start"]);
+          expect(setup.calls).toEqual(["stop", "start"]);
           expect(setup.lifecycle).toBe("stopped");
           expect(setup.telemetry.flushed).toBe(true);
         }),
@@ -243,34 +221,17 @@ describe("stack restart", () => {
     );
   });
 
-  it.live("loads configuration from the persisted project root for an id target", () => {
-    const setup = fixture({ idProject: true, format: "json" });
+  it.live("reuses saved configuration for an id target", () => {
+    const setup = fixture({ format: "json", config: "invalid" });
     return stackRestart(flags({ stackId: Option.some(id) })).pipe(
       Effect.provide(setup.layer),
       Effect.tap(() =>
         Effect.sync(() => {
-          expect(setup.preparedConfig).toMatchObject({
-            capabilities: { rest: { settings: { max_rows: 2345 } } },
-          });
+          expect(setup.startedConfig).toBeUndefined();
           expect(setup.output.messages.find(({ type }) => type === "success")?.data).toMatchObject({
             id,
             lifecycle: "running",
           });
-        }),
-      ),
-      Effect.ensuring(Effect.sync(setup.cleanup)),
-    );
-  });
-
-  it.live("fails invalid configuration before preparing or stopping", () => {
-    const setup = fixture({ config: "invalid" });
-    return stackRestart(flags()).pipe(
-      Effect.provide(setup.layer),
-      Effect.flip,
-      Effect.tap((error) =>
-        Effect.sync(() => {
-          expect(error.reason).toBe("invalid-config");
-          expect(setup.calls).toEqual([]);
         }),
       ),
       Effect.ensuring(Effect.sync(setup.cleanup)),
@@ -316,4 +277,200 @@ describe("stack restart", () => {
       Effect.ensuring(Effect.sync(setup.cleanup)),
     );
   });
+
+  it.live("rejects an unconfigured current stack before stopping", () => {
+    const setup = fixture({ unconfigured: true });
+    return stackRestart(flags()).pipe(
+      Effect.provide(setup.layer),
+      Effect.flip,
+      Effect.tap((error) =>
+        Effect.sync(() => {
+          expect(error.reason).toBe("lifecycle");
+          expect(error.suggestion).toContain("Run supabase stack start");
+          expect(setup.calls).toEqual([]);
+        }),
+      ),
+      Effect.ensuring(Effect.sync(setup.cleanup)),
+    );
+  });
+
+  it.live("rejects an unconfigured id target before stopping", () => {
+    const setup = fixture({ unconfigured: true });
+    return stackRestart(flags({ stackId: Option.some(id) })).pipe(
+      Effect.provide(setup.layer),
+      Effect.flip,
+      Effect.tap((error) =>
+        Effect.sync(() => {
+          expect(error.reason).toBe("lifecycle");
+          expect(setup.calls).toEqual([]);
+        }),
+      ),
+      Effect.ensuring(Effect.sync(setup.cleanup)),
+    );
+  });
+
+  it.live("provides retry guidance for runtime failures", () => {
+    const setup = fixture({ start: "fail", startRuntimeFailure: true });
+    return stackRestart(flags()).pipe(
+      Effect.provide(setup.layer),
+      Effect.flip,
+      Effect.tap((error) =>
+        Effect.sync(() => {
+          expect(error.reason).toBe("unknown");
+          expect(error.suggestion).toContain("--debug");
+        }),
+      ),
+      Effect.ensuring(Effect.sync(setup.cleanup)),
+    );
+  });
+
+  it.live("short circuits invalid target and output flags before lifecycle", () => {
+    const setup = fixture({});
+    const invalidTarget = stackRestart(
+      flags({ stack: Option.some("named"), stackId: Option.some(id) }),
+    ).pipe(Effect.provide(setup.layer), Effect.flip);
+    const outputRejected = stackRestart(flags()).pipe(
+      Effect.provide(Layer.merge(setup.layer, Layer.succeed(OutputFlag, Option.some("json")))),
+      Effect.flip,
+    );
+    return Effect.gen(function* () {
+      expect((yield* invalidTarget).reason).toBe("flags");
+      expect((yield* outputRejected).reason).toBe("flags");
+      expect(setup.calls).toEqual([]);
+    }).pipe(Effect.ensuring(Effect.sync(setup.cleanup)));
+  });
+
+  it.live("short circuits an ID inspection failure before lifecycle", () => {
+    const setup = fixture({ inspectFailure: true });
+    return stackRestart(flags({ stackId: Option.some(id) })).pipe(
+      Effect.provide(setup.layer),
+      Effect.flip,
+      Effect.tap((error) =>
+        Effect.sync(() => {
+          expect(error.reason).toBe("invalid-config");
+          expect(setup.calls).toEqual([]);
+        }),
+      ),
+      Effect.ensuring(Effect.sync(setup.cleanup)),
+    );
+  });
+
+  it.live(
+    "preserves effective start options through restart and reloads them on plain start",
+    () => {
+      const root = project();
+      const output = mockOutput({ format: "json" });
+      const telemetry = mockTelemetryStateTracked();
+      const calls: string[] = [];
+      let lifecycle: StackStatus["lifecycle"] = "stopped";
+      const persisted: { config?: StackConfig } = {};
+      const state = () => ({
+        id,
+        lifecycle,
+        desiredLifecycle: "running" as const,
+        runtime: { kind: "native" as const },
+        endpoints: {},
+        versions: {},
+        capabilities: [],
+        artifacts: [],
+      });
+      const stack: EffectStack = {
+        id,
+        status: Effect.sync(state),
+        credentials: Effect.die("unused"),
+        prepare: () => Effect.die("restart must not prepare explicitly"),
+        stop: Effect.sync(() => {
+          calls.push("stop");
+          lifecycle = "stopped";
+        }),
+        start: (input) =>
+          Effect.sync(() => {
+            calls.push("start");
+            if (input?.config !== undefined) persisted.config = input.config;
+            lifecycle = "running";
+            return state();
+          }),
+        destroy: Effect.die("unused"),
+        logs: () => Effect.die("unused"),
+        followLogs: () => Stream.empty,
+      };
+      const descriptor = {
+        id,
+        projectRoot: root,
+        name: "restart-flow",
+        branchContext: "default",
+        runtime: { kind: "native" as const },
+        desiredLifecycle: "running" as const,
+      };
+      const layer = Layer.mergeAll(
+        output.layer,
+        telemetry.layer,
+        mockCommandSettings({ workdir: root }),
+        Layer.succeed(StackTargetResolver, {
+          resolve: ({ id: targetId }) =>
+            Effect.succeed({
+              projectRoot: root,
+              ...(targetId === undefined ? {} : { id: StackIdSchema.make(targetId) }),
+            }),
+        }),
+        Layer.succeed(StackApi, {
+          findStack: () => Effect.succeed(Option.some(descriptor)),
+          createStack: () => Effect.succeed(stack),
+          openStack: () => Effect.succeed(stack),
+          inspectStack: () => Effect.die("inspect unused"),
+          discoverStacks: () => Effect.succeed({ stacks: [], errors: [] }),
+        }),
+        BunServices.layer,
+      );
+      const initialStart = {
+        exclude: ["studio"],
+        stack: Option.none<string>(),
+        stackId: Option.none<string>(),
+        runtime: "auto" as const,
+        preparation: "on-demand" as const,
+        eager: true,
+      };
+      const plainStart = {
+        exclude: [],
+        stack: Option.none<string>(),
+        stackId: Option.none<string>(),
+        runtime: "auto" as const,
+        preparation: "background" as const,
+        eager: false,
+      };
+      const stopFlags = {
+        all: Option.none<boolean>(),
+        stack: Option.none<string>(),
+        stackId: Option.none<string>(),
+      };
+      return Effect.gen(function* () {
+        yield* stackStart(initialStart);
+        expect(persisted.config).toMatchObject({
+          preparation: "on-demand",
+          capabilities: {
+            studio: { enabled: false },
+            rest: { activation: "eager" },
+          },
+        });
+        const saved = persisted.config;
+        yield* stackRestart(flags());
+        expect(persisted.config).toBe(saved);
+        yield* stackStop(stopFlags);
+        yield* stackStart(plainStart);
+        expect(persisted.config).toMatchObject({
+          preparation: "background",
+          capabilities: {
+            studio: { settings: {} },
+            rest: { settings: { max_rows: 1234 } },
+          },
+        });
+        expect(persisted.config?.capabilities?.studio?.enabled).not.toBe(false);
+        expect(persisted.config?.capabilities?.rest).not.toHaveProperty("activation", "eager");
+        expect(calls).toEqual(["start", "stop", "start", "stop", "start"]);
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+      );
+    },
+  );
 });
