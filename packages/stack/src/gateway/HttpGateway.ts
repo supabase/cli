@@ -22,6 +22,7 @@ import type {
   PreparedGatewayRoute,
 } from "./Gateway.ts";
 import { GatewayRouteNotFoundError, isGatewayProxyRoute } from "./Gateway.ts";
+import type { GatewayActivity } from "./ActivityTracker.ts";
 import type {
   HostListener,
   HostListenerHttpEvent,
@@ -47,6 +48,7 @@ export interface HttpGatewayOptions {
   ) => Effect.Effect<BackendEndpoint, GatewayActivationError>;
   readonly cors?: Readonly<Record<string, string>>;
   readonly healthPaths?: ReadonlyArray<string>;
+  readonly activity?: GatewayActivity;
 }
 
 export interface HttpGateway {
@@ -230,9 +232,9 @@ const proxy = (
     const onIncomingError = (cause: Error) => {
       if (settled) return;
       settled = true;
-      cleanup();
       outgoing?.destroy();
       incoming?.destroy();
+      cleanup();
       resume(Effect.fail(new GatewayBackendError({ cause })));
     };
     const onIncomingAborted = () => onIncomingError(new Error("backend response aborted"));
@@ -249,7 +251,6 @@ const proxy = (
       onIncomingError(new Error("response closed"));
     };
     const cleanup = () => {
-      if (outgoing !== undefined) outgoing.off("error", onOutgoingError);
       request.off("aborted", onRequestAborted);
       response.off("close", onResponseClose);
       if (incoming !== undefined) {
@@ -294,9 +295,10 @@ const proxy = (
     response.once("close", onResponseClose);
     request.pipe(outgoing);
     return Effect.sync(() => {
-      cleanup();
+      settled = true;
       outgoing.destroy();
       incoming?.destroy();
+      cleanup();
     });
   });
 
@@ -380,9 +382,10 @@ const handleRequest = (
       proxy(request, response, backend, options, path, headers),
     ),
   );
+  const tracked = options.activity?.track(route.capability, activation) ?? activation;
   // Node invokes this handler outside Effect; use the owner-scoped FiberSet
   // runtime so cancellation of the gateway interrupts in-flight activation.
-  const fiber = runFork(activation);
+  const fiber = runFork(tracked);
   cancelOnRequestClose(request, response, fiber);
   fiber.addObserver((exit) => {
     if (!Exit.isFailure(exit) || response.writableEnded || response.destroyed) return;
@@ -514,6 +517,7 @@ const handleUpgrade = (
       }),
     ),
   );
+  const tracked = options.activity?.track(route.capability, activation) ?? activation;
   const onSocketClose = () => fiber.interruptUnsafe();
   const onSocketEnd = () => fiber.interruptUnsafe();
   const onSocketError = () => fiber.interruptUnsafe();
@@ -522,7 +526,7 @@ const handleUpgrade = (
     socket.off("end", onSocketEnd);
     request.off("aborted", onRequestAborted);
   };
-  const fiber = runFork(activation);
+  const fiber = runFork(tracked);
   socket.once("close", onSocketClose);
   socket.once("end", onSocketEnd);
   socket.once("error", onSocketError);

@@ -177,6 +177,17 @@ background task for callers that want full lazy preparation. Eager capability
 activation remains independent of this setting.
 That runtime session owns the shared preparation fibers.
 
+Lazy traffic capabilities may retire independently after their configured idle timeout (see the
+package [traffic stopping documentation](../../packages/stack/README.md)). The traffic policy is
+per capability: supported lazy capabilities default to 60 seconds, `false` disables retirement,
+eager capabilities never retire, and unsupported capabilities remain opted out. Activity covers
+in-flight HTTP requests and streams plus open WebSocket or TCP connections; idle HTTP keep-alive
+sockets do not count. The Supervisor serializes workload retirement with activation and lifecycle
+operations, and fences new requests for the retiring capability. Unrelated ingress continues;
+dependencies stay running while their dependants are active, and Studio with `pg-meta` retires
+together. Retained data and listeners let the next request wake the capability and restart its
+workloads.
+
 In both modes, lazy activation prepares the requested dependency closure with
 bounded concurrency before starting its workloads. Explicit
 `stack.prepare(...)` remains available as a cache-only warmup for callers that
@@ -268,7 +279,7 @@ Tests follow consumed boundaries:
 - stack integration covers identity, sticky ports, durable lifecycle,
   ownership, stale-owner recovery, and interrupted cleanup;
 - supervisor integration covers detached ownership, RPC, stop, and
-  destroy; and
+  destroy; dedicated idle-stop integration covers retirement and wake-up; and
 - one shared stack-package E2E journey runs in native and Docker modes, starts
   with PostgreSQL alone, activates every other service through realistic
   traffic, verifies cross-service behavior, then exercises
