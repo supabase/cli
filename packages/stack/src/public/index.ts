@@ -10,6 +10,10 @@ export * from "./Config.ts";
 export { excludeStackCapabilities } from "../model/Exclusions.ts";
 export type { ExcludableCapabilityName } from "../model/Exclusions.ts";
 export {
+  selectDefaultRuntime,
+  ContainerEngineResolver,
+} from "../runtime/ContainerEngineResolver.ts";
+export {
   createStack,
   openStack,
   findStack,

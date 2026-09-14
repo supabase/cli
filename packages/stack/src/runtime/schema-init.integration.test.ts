@@ -1,6 +1,7 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Option, Redacted, Stream } from "effect";
+import { Cause, Effect, Exit, FileSystem, Option, Redacted, Schema, Sink, Stream } from "effect";
+import { ChildProcessSpawner } from "effect/unstable/process";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- capture env-file contents before the scoped workspace is removed
 import { readFileSync } from "node:fs";
 import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
@@ -129,6 +130,10 @@ const fakePreparer: RuntimeArtifactPreparer = {
 const liveStackId = StackIdSchema.make("b".repeat(64));
 const password = Redacted.make("s3cret");
 const jwtSecret = Redacted.make("jwt-secret-value-that-is-long-enough");
+const nativeLaunchEnvSchema = Schema.Struct({
+  executable: Schema.optionalKey(Schema.String),
+  env: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+});
 
 const envFromFile = (text: string): Record<string, string> =>
   Object.fromEntries(
@@ -450,4 +455,66 @@ describe("schemaInit", () => {
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );
+
+  it.live("omits SEED_SELF_HOST from native realtime schema-init", () => {
+    const recorded: Array<{ readonly executable: string; readonly env: Record<string, string> }> =
+      [];
+    const decoder = new TextDecoder();
+    const spawner = ChildProcessSpawner.make(() =>
+      Effect.succeed(
+        ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(999_999),
+          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+          isRunning: Effect.succeed(false),
+          kill: () => Effect.void,
+          stdin: Sink.drain,
+          stdout: Stream.empty,
+          stderr: Stream.empty,
+          all: Stream.empty,
+          getInputFd: (fd) =>
+            fd === 4
+              ? Sink.forEach((chunk: Uint8Array) =>
+                  Effect.sync(() => {
+                    const decoded = Schema.decodeOption(
+                      Schema.fromJsonString(nativeLaunchEnvSchema),
+                    )(decoder.decode(chunk));
+                    if (Option.isNone(decoded)) return;
+                    recorded.push({
+                      executable: decoded.value.executable ?? "",
+                      env: { ...decoded.value.env },
+                    });
+                  }),
+                )
+              : Sink.drain,
+          getOutputFd: () => Stream.empty,
+          unref: Effect.succeed(Effect.void),
+        }),
+      ),
+    );
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const projectRoot = yield* fs.makeTempDirectoryScoped({ prefix: "schema-init-native-" });
+        yield* schemaInitWorkloads(
+          ["realtime"],
+          {
+            kind: "ephemeral",
+            projectRoot,
+            runtime: { kind: "native" },
+            config: {},
+            databaseUrl: "postgresql://postgres:s3cret@127.0.0.1:54322/postgres",
+            secrets: { databasePassword: password, jwtSecret },
+          },
+          { artifactPreparer: fakePreparer },
+        );
+        expect(recorded).toHaveLength(1);
+        expect(recorded[0]?.executable.endsWith("bin/prepare")).toBe(true);
+        expect(recorded[0]?.env.SEED_SELF_HOST).toBeUndefined();
+        expect(recorded[0]?.env.APP_NAME).toBe("realtime");
+      }),
+    ).pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.provide(NodeServices.layer),
+    );
+  });
 });

@@ -552,15 +552,19 @@ export const schemaInitWorkloads = (
               );
               yield* Effect.forEach(
                 startups,
-                (startup) =>
-                  runNativeStartup(
+                (startup) => {
+                  // Native prepare seeds when SEED_SELF_HOST is set; this one-shot must only migrate.
+                  const nativeEnv = { ...env, ...startup.env };
+                  delete nativeEnv.SEED_SELF_HOST;
+                  return runNativeStartup(
                     {
                       ...startup,
                       timeout: STARTUP_TIMEOUT,
-                      env: { ...env, ...startup.env },
+                      env: nativeEnv,
                     },
                     key,
-                  ),
+                  );
+                },
                 { discard: true },
               );
               return;

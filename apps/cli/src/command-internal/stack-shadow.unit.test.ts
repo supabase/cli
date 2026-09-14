@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
+import { databaseBootstrapIdentity } from "@supabase/stack/effect";
 import {
   stackShadowBaselineTarFileName,
   stackShadowCacheKey,
@@ -28,7 +29,7 @@ const base = {
   dbPassword: "postgres",
   dbSettings: {},
   rolesSql: "",
-  bootstrapIdentity: "bootstrap-v1",
+  bootstrapIdentity: databaseBootstrapIdentity,
   ...overlay,
 };
 

@@ -9,7 +9,7 @@ import {
 } from "./SchemaInit.ts";
 
 describe("parseSchemaInitDatabaseUrl", () => {
-  it("keeps user, database name, host, port, and password", () => {
+  it("keeps host, port, password, and database name", () => {
     const parsed = parseSchemaInitDatabaseUrl(
       "postgresql://supabase_auth_admin:s3cret%40x@127.0.0.1:54322/_supabase",
     );

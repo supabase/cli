@@ -2,7 +2,7 @@ import { type CliConfig, validateCliConfig } from "@supabase/config/effect";
 import { Effect, Data, FileSystem, Option, Path, Redacted, Schema, SchemaIssue } from "effect";
 import { StackConfigSchema, type StackConfig } from "@supabase/stack/effect";
 
-import { loadLocalProjectContext } from "./local-project-context.ts";
+import { loadLocalProjectContext, type LocalProjectContext } from "./local-project-context.ts";
 import { parseDotEnv } from "./dotenv.ts";
 import {
   envOverride,
@@ -1387,14 +1387,17 @@ const configValidationError = (
   return undefined;
 };
 
-/** Loads and translates the effective project config for all stack commands. */
-export const loadStackConfig = (projectRoot: string): StackConfigEffect =>
+/** Loads and translates the effective project config for all stack commands.
+ * Pass `opts.context` to reuse an already-loaded project context. */
+export const loadStackConfig = (
+  projectRoot: string,
+  opts?: { readonly context?: LocalProjectContext },
+): StackConfigEffect =>
   Effect.gen(function* () {
     const path = yield* Path.Path;
-    const context = yield* loadLocalProjectContext(
-      projectRoot,
-      (message) => new StackConfigError({ message }),
-    );
+    const context =
+      opts?.context ??
+      (yield* loadLocalProjectContext(projectRoot, (message) => new StackConfigError({ message })));
     const effectiveInput = yield* Effect.try({
       try: () =>
         resolveEffectiveCliConfig(

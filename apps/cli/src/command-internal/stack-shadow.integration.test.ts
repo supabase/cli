@@ -3,10 +3,13 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, Fiber, FileSystem, Layer, Option, Path, Redacted, Schema } from "effect";
 import {
+  ContainerEngineResolver,
   EphemeralPostgresError,
   databaseBootstrapIdentity,
+  schemaInitArtifactIdentity,
   type CreateEphemeralPostgresOptions,
   type EffectEphemeralPostgres,
+  type StackConfig,
 } from "@supabase/stack/effect";
 import { mockOutput } from "../../tests/helpers/mocks.ts";
 import {
@@ -16,6 +19,7 @@ import {
 } from "../../tests/helpers/command-mocks.ts";
 import { SHADOW_CACHE_ENV } from "./db-bootstrap/shadow-cache.ts";
 import { DbConnection } from "./db-connection.service.ts";
+import { loadLocalProjectContext } from "./local-project-context.ts";
 import { stackBackendLayer } from "./stack-backend.ts";
 import {
   StackEphemeralPostgres,
@@ -32,15 +36,19 @@ import {
 
 const tmp = useTempWorkdir("stack-shadow-");
 const defaultConfig: CliConfig = Schema.decodeSync(CliConfigSchema)({});
+const nativeRuntime = { kind: "native" as const };
+const nativeAcquire = { runtime: nativeRuntime };
 
 const mockEphemeral = () => {
   const restores: Array<string | undefined> = [];
   const exports: Array<string> = [];
+  const runtimes: Array<CreateEphemeralPostgresOptions["runtime"]> = [];
   const create = (
     options: CreateEphemeralPostgresOptions,
   ): Effect.Effect<EffectEphemeralPostgres> =>
     Effect.sync(() => {
       restores.push(options.restoreFrom);
+      runtimes.push(options.runtime);
       return {
         host: "127.0.0.1",
         port: 59999,
@@ -61,6 +69,7 @@ const mockEphemeral = () => {
   return {
     restores,
     exports,
+    runtimes,
     layer: Layer.succeed(StackEphemeralPostgres, {
       create,
       resolveRelease: () => Effect.succeed({ version: "17.6.1", image: "postgres:17.6.1" }),
@@ -129,7 +138,9 @@ const withShadowCacheHome = <A, E, R>(
 ): Effect.Effect<A, E, R> =>
   withEnvVar("SUPABASE_HOME", home, withEnvVar(SHADOW_CACHE_ENV, value, body));
 
-const expectedCacheKey = () =>
+const expectedCacheKey = (
+  overrides: Partial<Parameters<typeof stackShadowCacheKey>[0]> = {},
+): string =>
   stackShadowCacheKey({
     artifactIdentity: "native:17.6.1",
     majorVersion: 17,
@@ -151,6 +162,18 @@ const expectedCacheKey = () =>
     authArtifact: "",
     storageArtifact: "",
     realtimeArtifact: "",
+    ...overrides,
+  });
+
+const catalogAuthEnabled = (config: StackConfig): boolean => {
+  const cap = config.capabilities?.auth;
+  return cap === undefined || cap.enabled !== false;
+};
+
+const engineResolver = (installed: boolean) =>
+  Layer.succeed(ContainerEngineResolver, {
+    isInstalled: () => Effect.succeed(installed),
+    resolve: () => Effect.die("unused"),
   });
 
 describe("stackAcquireShadowDatabase", () => {
@@ -169,7 +192,7 @@ describe("stackAcquireShadowDatabase", () => {
             home,
             "1",
             Effect.gen(function* () {
-              const first = yield* stackAcquireShadowDatabase(input(fs, path));
+              const first = yield* stackAcquireShadowDatabase(input(fs, path), nativeAcquire);
               expect(first.baselinePresent).toBe(false);
               expect(catalog.applied).toEqual(["ephemeral"]);
               expect(first.artifactIdentity).toBe("native:17.6.1");
@@ -185,7 +208,7 @@ describe("stackAcquireShadowDatabase", () => {
               expect(names[0]?.startsWith("stack-shadow-baseline-")).toBe(true);
               expect(names[0]).toBe(stackShadowBaselineTarFileName(expectedCacheKey()));
 
-              const warm = yield* stackAcquireShadowDatabase(input(fs, path));
+              const warm = yield* stackAcquireShadowDatabase(input(fs, path), nativeAcquire);
               expect(warm.baselinePresent).toBe(true);
               expect(ephemeral.restores[1]?.endsWith(names[0] ?? "")).toBe(true);
               expect(catalog.applied).toEqual(["ephemeral"]);
@@ -220,7 +243,7 @@ describe("stackAcquireShadowDatabase", () => {
           home,
           "0",
           Effect.gen(function* () {
-            const handle = yield* stackAcquireShadowDatabase(input(fs, path));
+            const handle = yield* stackAcquireShadowDatabase(input(fs, path), nativeAcquire);
             expect(handle.baselinePresent).toBe(false);
             expect(ephemeral.exports).toHaveLength(0);
             const names = yield* fs
@@ -278,7 +301,7 @@ describe("stackAcquireShadowDatabase", () => {
           home,
           "1",
           Effect.gen(function* () {
-            const handle = yield* stackAcquireShadowDatabase(input(fs, path));
+            const handle = yield* stackAcquireShadowDatabase(input(fs, path), nativeAcquire);
             expect(handle.baselinePresent).toBe(false);
             expect(handle.snapshotKey).toBeUndefined();
             expect(restores).toEqual([undefined]);
@@ -347,7 +370,7 @@ describe("stackAcquireShadowDatabase", () => {
           home,
           "1",
           Effect.gen(function* () {
-            const handle = yield* stackAcquireShadowDatabase(input(fs, path));
+            const handle = yield* stackAcquireShadowDatabase(input(fs, path), nativeAcquire);
             expect(handle.baselinePresent).toBe(false);
             expect(restores).toHaveLength(2);
             expect(restores[0]?.endsWith(tarName)).toBe(true);
@@ -405,7 +428,11 @@ describe("stackAcquireShadowDatabase", () => {
         const path = yield* Path.Path;
         const home = yield* fs.makeTempDirectoryScoped();
         const fiber = yield* Effect.forkChild(
-          withShadowCacheHome(home, "0", stackAcquireShadowDatabase(input(fs, path))).pipe(
+          withShadowCacheHome(
+            home,
+            "0",
+            stackAcquireShadowDatabase(input(fs, path), nativeAcquire),
+          ).pipe(
             Effect.scoped,
             Effect.provide(
               Layer.mergeAll(
@@ -426,4 +453,246 @@ describe("stackAcquireShadowDatabase", () => {
       }),
     ).pipe(Effect.provide(BunServices.layer));
   });
+
+  it.live("hashes and creates a docker runtime when Docker is installed", () => {
+    const ephemeral = mockEphemeral();
+    const out = mockOutput();
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.makeTempDirectoryScoped();
+        return yield* withShadowCacheHome(
+          home,
+          "1",
+          Effect.gen(function* () {
+            yield* stackAcquireShadowDatabase(input(fs, path));
+            expect(ephemeral.runtimes[0]).toEqual({ kind: "container", engine: "docker" });
+            const names = (yield* fs.readDirectory(
+              path.join(home, "cache", "shadow-baseline"),
+            )).filter((name) => name.endsWith(".tar") && !name.includes(".partial"));
+            expect(names).toEqual([
+              stackShadowBaselineTarFileName(
+                expectedCacheKey({
+                  artifactIdentity: "container:docker:postgres:17.6.1",
+                  runtimeKind: "container:docker",
+                }),
+              ),
+            ]);
+          }),
+        );
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          BunServices.layer,
+          out.layer,
+          db,
+          mockCommandSettings({ workdir: tmp.current }),
+          stackBackendLayer("stack"),
+          ephemeral.layer,
+          noopStackCatalogSetupLayer,
+          engineResolver(true),
+        ),
+      ),
+    );
+  });
+
+  it.live("hashes and creates a native runtime when Docker is not installed", () => {
+    const ephemeral = mockEphemeral();
+    const out = mockOutput();
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.makeTempDirectoryScoped();
+        return yield* withShadowCacheHome(
+          home,
+          "1",
+          Effect.gen(function* () {
+            yield* stackAcquireShadowDatabase(input(fs, path));
+            expect(ephemeral.runtimes[0]).toEqual({ kind: "native" });
+            const names = (yield* fs.readDirectory(
+              path.join(home, "cache", "shadow-baseline"),
+            )).filter((name) => name.endsWith(".tar") && !name.includes(".partial"));
+            expect(names).toEqual([stackShadowBaselineTarFileName(expectedCacheKey())]);
+          }),
+        );
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          BunServices.layer,
+          out.layer,
+          db,
+          mockCommandSettings({ workdir: tmp.current }),
+          stackBackendLayer("stack"),
+          ephemeral.layer,
+          noopStackCatalogSetupLayer,
+          engineResolver(false),
+        ),
+      ),
+    );
+  });
+
+  it.live("overlays remotes-disabled auth onto ephemeral catalog and the cache key", () => {
+    const ephemeral = mockEphemeral();
+    const out = mockOutput();
+    const catalog = recordingStackCatalogSetup((applied) => applied.target.config);
+    const remoteRef = "abcdefghijklmnopqrst";
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.makeTempDirectoryScoped();
+        const scratch = yield* fs.makeTempDirectoryScoped();
+        yield* fs.makeDirectory(path.join(scratch, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(scratch, "supabase", "config.toml"),
+          [
+            'project_id = "stack-shadow-remotes"',
+            "[auth]",
+            "enabled = true",
+            'jwt_secret = "super-secret-jwt-token-with-at-least-32-characters-long"',
+            "",
+            "[remotes.prod]",
+            `project_id = "${remoteRef}"`,
+            "[remotes.prod.auth]",
+            "enabled = false",
+            "",
+          ].join("\n"),
+        );
+        const context = yield* loadLocalProjectContext(
+          scratch,
+          (message) => new Error(message),
+          remoteRef,
+        );
+        const setup = input(fs, path);
+        const remotesInput = {
+          ...setup,
+          workdir: scratch,
+          context,
+          setup: { ...setup.setup, authEnabledForSetup: false },
+        };
+        return yield* withShadowCacheHome(
+          home,
+          "1",
+          Effect.gen(function* () {
+            yield* stackAcquireShadowDatabase(remotesInput, nativeAcquire);
+            expect(catalog.applied).toHaveLength(1);
+            const applied = catalog.applied[0];
+            expect(applied).toBeDefined();
+            if (applied === undefined) return;
+            expect(catalogAuthEnabled(applied)).toBe(false);
+            const names = (yield* fs.readDirectory(
+              path.join(home, "cache", "shadow-baseline"),
+            )).filter((name) => name.endsWith(".tar") && !name.includes(".partial"));
+            expect(names).toEqual([
+              stackShadowBaselineTarFileName(
+                expectedCacheKey({ authEnabled: catalogAuthEnabled(applied) }),
+              ),
+            ]);
+          }),
+        );
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          BunServices.layer,
+          out.layer,
+          db,
+          mockCommandSettings({ workdir: tmp.current }),
+          stackBackendLayer("stack"),
+          ephemeral.layer,
+          catalog.layer,
+        ),
+      ),
+    );
+  });
+
+  it.live(
+    "still schema-inits auth when remotes enable it and SUPABASE_AUTH_ENABLED is false",
+    () => {
+      const ephemeral = mockEphemeral();
+      const out = mockOutput();
+      const catalog = recordingStackCatalogSetup((applied) => applied.target.config);
+      const remoteRef = "abcdefghijklmnopqrst";
+      const authArtifact = schemaInitArtifactIdentity("auth") ?? "missing";
+      return Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const home = yield* fs.makeTempDirectoryScoped();
+          const scratch = yield* fs.makeTempDirectoryScoped();
+          yield* fs.makeDirectory(path.join(scratch, "supabase"), { recursive: true });
+          yield* fs.writeFileString(
+            path.join(scratch, "supabase", "config.toml"),
+            [
+              'project_id = "stack-shadow-remotes-on"',
+              "[auth]",
+              "enabled = true",
+              'jwt_secret = "super-secret-jwt-token-with-at-least-32-characters-long"',
+              "",
+              "[remotes.prod]",
+              `project_id = "${remoteRef}"`,
+              "[remotes.prod.auth]",
+              "enabled = true",
+              "",
+            ].join("\n"),
+          );
+          yield* fs.writeFileString(
+            path.join(scratch, "supabase", ".env"),
+            "SUPABASE_AUTH_ENABLED=false\n",
+          );
+          const context = yield* loadLocalProjectContext(
+            scratch,
+            (message) => new Error(message),
+            remoteRef,
+          );
+          const setup = input(fs, path);
+          const remotesInput = {
+            ...setup,
+            workdir: scratch,
+            context,
+            setup: { ...setup.setup, authEnabledForSetup: true },
+          };
+          return yield* withShadowCacheHome(
+            home,
+            "1",
+            Effect.gen(function* () {
+              yield* stackAcquireShadowDatabase(remotesInput, nativeAcquire);
+              expect(catalog.applied).toHaveLength(1);
+              const applied = catalog.applied[0];
+              expect(applied).toBeDefined();
+              if (applied === undefined) return;
+              expect(catalogAuthEnabled(applied)).toBe(true);
+              const names = (yield* fs.readDirectory(
+                path.join(home, "cache", "shadow-baseline"),
+              )).filter((name) => name.endsWith(".tar") && !name.includes(".partial"));
+              expect(names).toEqual([
+                stackShadowBaselineTarFileName(
+                  expectedCacheKey({
+                    authEnabled: catalogAuthEnabled(applied),
+                    authArtifact,
+                  }),
+                ),
+              ]);
+            }),
+          );
+        }),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            BunServices.layer,
+            out.layer,
+            db,
+            mockCommandSettings({ workdir: tmp.current }),
+            stackBackendLayer("stack"),
+            ephemeral.layer,
+            catalog.layer,
+          ),
+        ),
+      );
+    },
+  );
 });

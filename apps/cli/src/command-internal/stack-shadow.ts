@@ -18,10 +18,12 @@ import {
 } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import {
+  ContainerEngineResolver,
   createEphemeralPostgres,
   databaseBootstrapIdentity,
   resolveEphemeralPostgresRelease,
   schemaInitArtifactIdentity,
+  selectDefaultRuntime,
   type CreateEphemeralPostgresOptions,
   type EffectEphemeralPostgres,
   type EphemeralPostgresRelease,
@@ -238,9 +240,43 @@ const postgresSettings = (value: unknown): EphemeralPostgresSettings | undefined
   );
 };
 
+const overlaySetupEnabled = <C extends { readonly enabled?: boolean } | undefined>(
+  current: C,
+  enabled: boolean,
+): C | { readonly enabled: false } | { readonly enabled: true } => {
+  if (!enabled) return { enabled: false };
+  if (current === undefined || current.enabled === false) return { enabled: true };
+  return current;
+};
+
+const overlaySetupTrio = (
+  config: StackConfig,
+  setup: {
+    readonly authEnabledForSetup: boolean;
+    readonly storageEnabledForSetup: boolean;
+    readonly realtimeEnabledForSetup: boolean;
+  },
+): StackConfig => ({
+  ...config,
+  capabilities: {
+    ...config.capabilities,
+    auth: overlaySetupEnabled(config.capabilities?.auth, setup.authEnabledForSetup),
+    storage: overlaySetupEnabled(config.capabilities?.storage, setup.storageEnabledForSetup),
+    realtime: overlaySetupEnabled(config.capabilities?.realtime, setup.realtimeEnabledForSetup),
+  },
+});
+
+const loadEphemeralCatalogConfig = (
+  input: ShadowSetupInput<unknown>,
+): Effect.Effect<StackConfig, ShadowDbError, FileSystem.FileSystem | Path.Path> =>
+  loadStackConfig(input.workdir, { context: input.context }).pipe(
+    Effect.map((config) => overlaySetupTrio(config, input.setup)),
+    Effect.mapError((cause) => new ShadowDbError({ message: cause.message, reason: "filesystem" })),
+  );
+
 const createOptions = (
   input: ShadowSetupInput<unknown>,
-  runtime: StackRuntimePreference | undefined,
+  runtime: StackRuntime,
   restoreFrom: string | undefined,
   port: number | undefined,
 ): CreateEphemeralPostgresOptions => ({
@@ -250,7 +286,7 @@ const createOptions = (
   postgresSettings: postgresSettings(input.db.settings),
   healthTimeout: `${String(input.healthTimeoutSeconds)}s`,
   version: String(input.setup.majorVersion),
-  ...(runtime === undefined ? {} : { runtime }),
+  runtime,
   ...(port === undefined ? {} : { port }),
   ...(restoreFrom === undefined ? {} : { restoreFrom }),
 });
@@ -275,11 +311,7 @@ const applyColdCatalog = (
         message: "stack catalog setup is unavailable",
         reason: "database",
       });
-    const config = yield* loadStackConfig(input.workdir).pipe(
-      Effect.mapError(
-        (cause) => new ShadowDbError({ message: cause.message, reason: "filesystem" }),
-      ),
-    );
+    const config = yield* loadEphemeralCatalogConfig(input);
     yield* catalog.value
       .apply({
         target: {
@@ -308,14 +340,8 @@ const applyColdCatalog = (
       );
   });
 
-const artifactIdentityFor = (
-  runtime: StackRuntimePreference | undefined,
-  version: string,
-  image: string,
-): string =>
-  runtime?.kind === "container"
-    ? `container:${runtime.engine ?? "docker"}:${image}`
-    : `native:${version}`;
+const artifactIdentityFor = (runtime: StackRuntime, version: string, image: string): string =>
+  runtime.kind === "container" ? `container:${runtime.engine}:${image}` : `native:${version}`;
 
 const sweepAbandonedPartials = (
   fs: FileSystem.FileSystem,
@@ -440,8 +466,8 @@ const mapCreateError = (cause: unknown): ShadowDbError =>
     reason: "database",
   });
 
-const runtimeKindFor = (runtime: StackRuntimePreference | undefined): string =>
-  runtime?.kind === "container" ? `container:${runtime.engine ?? "docker"}` : "native";
+const runtimeKindFor = (runtime: StackRuntime): string =>
+  runtime.kind === "container" ? `container:${runtime.engine}` : "native";
 
 const ephemeralApis = (): Effect.Effect<{
   readonly create: typeof createEphemeralPostgres;
@@ -480,7 +506,15 @@ export const stackAcquireShadowDatabase = <E>(
     const path = yield* Path.Path;
     const apis = yield* ephemeralApis();
     const projectRuntime = yield* stackProjectRuntime;
-    const runtime = runtimePreference(projectRuntime, opts.runtime);
+    const preference = runtimePreference(projectRuntime, opts.runtime);
+    const runtime: StackRuntime =
+      preference?.kind === "container"
+        ? { kind: "container", engine: preference.engine ?? "docker" }
+        : preference?.kind === "native"
+          ? { kind: "native" }
+          : yield* selectDefaultRuntime(
+              Option.getOrUndefined(yield* Effect.serviceOption(ContainerEngineResolver)),
+            ).pipe(Effect.mapError(mapCreateError));
     const rolesSql = yield* readRolesSql(input.fs, input.path, input.workdir);
     const cacheOn = cacheEnabled(input.setup.projectEnvValues, opts.bypassCache === true);
     const cacheDir = shadowBaselineCacheDir(path);
@@ -519,13 +553,7 @@ export const stackAcquireShadowDatabase = <E>(
       input.setup.authEnabledForSetup ||
       input.setup.storageEnabledForSetup ||
       input.setup.realtimeEnabledForSetup;
-    const stackConfig = trioEnabled
-      ? yield* loadStackConfig(input.workdir).pipe(
-          Effect.mapError(
-            (cause) => new ShadowDbError({ message: cause.message, reason: "filesystem" }),
-          ),
-        )
-      : undefined;
+    const stackConfig = trioEnabled ? yield* loadEphemeralCatalogConfig(input) : undefined;
     const key = stackShadowCacheKey({
       artifactIdentity: identity,
       majorVersion: input.setup.majorVersion,
