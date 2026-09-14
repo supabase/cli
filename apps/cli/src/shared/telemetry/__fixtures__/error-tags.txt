@@ -228,6 +228,7 @@ DomainsNetworkError
 DomainsUnexpectedStatusError
 DuplicateRemoteProjectIdError
 EdgeRuntimeContainerCrashedError
+EdgeRuntimeLogStreamLostError
 EdgeRuntimeScriptError
 EncryptionNetworkError
 EncryptionUnexpectedStatusError
@@ -444,6 +445,8 @@ SeedConfigLoadError
 SeedMissingProjectConfigError
 SeedMutuallyExclusiveFlagsError
 SeedWorkdirError
+ServeLocalDbInspectError
+ServeLocalDbNotRunningError
 ServiceVersionNotFoundError
 ServicesEnvNotSupportedError
 ShadowDbError

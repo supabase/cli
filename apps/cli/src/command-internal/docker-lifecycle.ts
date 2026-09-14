@@ -248,6 +248,7 @@ export const inspectContainerState = (spawner: Spawner, containerId: string) =>
 function parseContainerState(stdout: string): {
   readonly running: boolean;
   readonly status: string;
+  readonly exitCode: number;
   readonly health?: string;
 } {
   const trimmed = stdout.trim();
@@ -263,12 +264,13 @@ function parseContainerState(stdout: string): {
   // status text; `status` is kept only for error message text.
   const status = typeof state["Status"] === "string" ? state["Status"] : "";
   const running = state["Running"] === true;
+  const exitCode = typeof state["ExitCode"] === "number" ? state["ExitCode"] : 0;
   const health = state["Health"];
   const healthStatus =
     isJsonRecord(health) && typeof health["Status"] === "string" ? health["Status"] : undefined;
   return healthStatus !== undefined
-    ? { running, status, health: healthStatus }
-    : { running, status };
+    ? { running, status, exitCode, health: healthStatus }
+    : { running, status, exitCode };
 }
 
 function isJsonRecord(value: unknown): value is { readonly [key: string]: unknown } {

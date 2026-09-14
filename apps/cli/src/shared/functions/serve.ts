@@ -38,18 +38,18 @@ import {
   Option,
   Queue,
   Redacted,
+  Result,
   Schema,
   Stream,
 } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import {
   describeContainerCliFailure,
+  isContainerNotFoundMessage,
   spawnContainerCli,
 } from "../../command-internal/container-cli.ts";
-import {
-  SUGGEST_DOCKER_INSTALL,
-  isDockerDaemonUnreachable,
-} from "../../command-internal/docker-suggest.ts";
+import { inspectContainerState } from "../../command-internal/docker-lifecycle.ts";
+import { isDockerDaemonUnreachable } from "../../command-internal/docker-suggest.ts";
 import { parseDotEnv } from "../../command-internal/dotenv.ts";
 import { viperEnvStringWithProjectFallback } from "../../command-internal/viper-env.ts";
 import {
@@ -92,7 +92,13 @@ import {
 } from "./functions-docker.ts";
 import { loadFunctionsCliConfig, type FunctionsGoConfigCompat } from "./functions-config.ts";
 import { edgeRuntimeImage, resolveEdgeRuntimeVersionPin } from "./functions.shared.ts";
-import { DockerLogsStreamError, EdgeRuntimeContainerCrashedError } from "./serve.errors.ts";
+import {
+  DockerLogsStreamError,
+  EdgeRuntimeContainerCrashedError,
+  EdgeRuntimeLogStreamLostError,
+  ServeLocalDbInspectError,
+  ServeLocalDbNotRunningError,
+} from "./serve.errors.ts";
 const decodeCliConfig = Schema.decodeUnknownSync(CliConfigSchema);
 const defaultCliConfig = decodeCliConfig({});
 
@@ -124,9 +130,20 @@ const ignoredDirNames = new Set([
 ]);
 const dockerLogRetryDelay = Duration.millis(400);
 const dockerLogDiagnosticTailLength = 4_096;
-// Ctrl-C hits this process and the un-detached `docker logs -f` child at once, so a shutdown
-// signal and a log-stream failure can become ready microseconds apart — this is their tie-break.
+// On Windows, `CTRL_C_EVENT` reaches every console-attached process, so the CLI's own shutdown
+// signal and a child spawn/stream failure can land microseconds apart — this is their tie-break.
 const shutdownSignalGracePeriod = Duration.millis(50);
+// Exit codes a supervisor uses to tear a container down (`supabase stop`, CI cancellation),
+// not a self-raised crash signal; 137 is excluded because it gets its own OOM-kill retry.
+const externalTerminationExitCodes = new Set([
+  129, // SIGHUP
+  130, // SIGINT
+  131, // SIGQUIT
+  143, // SIGTERM
+]);
+// Consecutive re-attaches to `docker logs -f` without forwarding a new line before giving up on
+// the stream and failing loudly instead of flooding replayed history forever.
+const containerLogReattachCap = 5;
 const defaultSupabaseEnv = "development";
 const serveMainDir = "/root";
 const shellVariableNamePattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -175,6 +192,14 @@ export interface FunctionsServeDependencies {
    * Distinct from `goViperCompat` above, which only gates `env(...)` interpolation.
    */
   readonly goConfigCompat: FunctionsGoConfigCompat | undefined;
+  /** Overrides the shutdown-grace and log-retry timers; production leaves this unset. */
+  readonly timers?: FunctionsServeTimers;
+}
+
+/** @see {@link FunctionsServeDependencies.timers} */
+export interface FunctionsServeTimers {
+  readonly shutdownSignalGracePeriod?: Duration.Duration;
+  readonly dockerLogRetryDelay?: Duration.Duration;
 }
 
 interface PlainServeAuthConfig {
@@ -1246,16 +1271,6 @@ function forwardByteStream(
   ).pipe(Effect.andThen(write(decoder.decode(), streamName)));
 }
 
-function isRetriableDockerLogsError(stderr: string) {
-  const normalized = stderr.toLowerCase();
-  return (
-    normalized.includes("no such container") ||
-    normalized.includes("no such object") ||
-    normalized.includes("conflict") ||
-    normalized.includes("can not get logs from container which is dead or marked for removal")
-  );
-}
-
 function appendDiagnosticTail(existing: string, text: string) {
   const combined = existing + text;
   return combined.length <= dockerLogDiagnosticTailLength
@@ -1263,106 +1278,201 @@ function appendDiagnosticTail(existing: string, text: string) {
     : combined.slice(combined.length - dockerLogDiagnosticTailLength);
 }
 
-interface ContainerState {
-  readonly running: boolean;
-  readonly exitCode: number;
+/**
+ * Extracts the RFC3339 timestamp leading the last complete line in `buffer` (docker's
+ * `--timestamps` prefixes every line with one), returning the still-incomplete tail to prepend
+ * to the next chunk.
+ */
+function consumeCompleteLines(buffer: string): {
+  readonly timestamp: string | undefined;
+  readonly remainder: string;
+} {
+  const lastNewline = buffer.lastIndexOf("\n");
+  if (lastNewline === -1) {
+    return { timestamp: undefined, remainder: buffer };
+  }
+  const remainder = buffer.slice(lastNewline + 1);
+  const completedLines = buffer
+    .slice(0, lastNewline)
+    .split("\n")
+    .filter((line) => line.length > 0);
+  const lastLine = completedLines.at(-1);
+  const timestamp = lastLine === undefined ? undefined : /^\S+/u.exec(lastLine)?.[0];
+  return { timestamp, remainder };
 }
 
-const inspectContainerState = Effect.fnUntraced(function* (containerId: string) {
-  const result = yield* runChildProcess(
-    "docker",
-    ["container", "inspect", "--format", "{{.State.Running}} {{.State.ExitCode}}", containerId],
-    {
-      stdout: "pipe",
-      stderr: "pipe",
-    },
+/** Why `streamContainerLogs` stopped following the container without failing. */
+type ContainerLogsEndReason =
+  | { readonly _tag: "containerExited" }
+  | { readonly _tag: "supervisorTerminated"; readonly exitCode: number }
+  | { readonly _tag: "containerGone" };
+
+type Spawner = ChildProcessSpawner.ChildProcessSpawner["Service"];
+
+/**
+ * One `docker logs -f --timestamps` attach, scoped so its handle's finalizer runs when this
+ * attempt ends instead of accumulating for the whole `functions serve` session.
+ */
+function attachToContainerLogsOnce(
+  spawner: Spawner,
+  output: Output["Service"],
+  containerId: string,
+  since: string | undefined,
+) {
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const args = [
+        "logs",
+        "-f",
+        "--timestamps",
+        ...(since === undefined ? [] : ["--since", since]),
+        containerId,
+      ];
+      const child = yield* spawnContainerCli(spawner, args, {
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+        extendEnv: true,
+      });
+
+      let stderrText = "";
+      let lineBuffer = "";
+      let lastTimestamp: string | undefined;
+      const [exitCode] = yield* Effect.all(
+        [
+          child.exitCode.pipe(Effect.map(Number)),
+          forwardByteStream(
+            child.stdout,
+            (text, streamName) => {
+              lineBuffer += text;
+              const parsed = consumeCompleteLines(lineBuffer);
+              lineBuffer = parsed.remainder;
+              if (parsed.timestamp !== undefined) lastTimestamp = parsed.timestamp;
+              return output.raw(text, streamName);
+            },
+            "stdout",
+          ),
+          forwardByteStream(
+            child.stderr,
+            (text, streamName) => {
+              stderrText = appendDiagnosticTail(stderrText, text);
+              return output.raw(text, streamName);
+            },
+            "stderr",
+          ),
+        ],
+        { concurrency: "unbounded" },
+      );
+
+      return { exitCode, stderrText, lastTimestamp };
+    }),
   );
+}
 
-  if (result.exitCode !== 0) {
-    const detail = result.stderr.trim() || result.stdout.trim() || "failed to inspect container";
-    return yield* Effect.fail(new Error(detail));
-  }
-
-  const [runningToken, exitCodeToken] = result.stdout.trim().split(/\s+/);
-  const exitCode = Number.parseInt(exitCodeToken ?? "", 10);
-  if ((runningToken !== "true" && runningToken !== "false") || Number.isNaN(exitCode)) {
-    return yield* Effect.fail(
-      new Error(`failed to parse container state: ${result.stdout.trim()}`),
-    );
-  }
-
-  return { running: runningToken === "true", exitCode } satisfies ContainerState;
-});
-
-const streamContainerLogs = Effect.fnUntraced(function* (containerId: string) {
+const streamContainerLogs = Effect.fnUntraced(function* (
+  containerId: string,
+  retryDelay: Duration.Duration,
+) {
   const output = yield* Output;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
+  let sinceTimestamp: string | undefined;
+  let consecutiveReattaches = 0;
+
+  const reattach = Effect.suspend(() => {
+    consecutiveReattaches += 1;
+    if (consecutiveReattaches > containerLogReattachCap) {
+      return Effect.fail(
+        new EdgeRuntimeLogStreamLostError({
+          message: `lost the Edge Runtime log stream ${containerLogReattachCap} times; container ${containerId} is still running`,
+          containerId,
+        }),
+      );
+    }
+    return Effect.sleep(retryDelay);
+  });
+
   for (;;) {
-    const child = yield* spawnContainerCli(spawner, ["logs", "-f", "--timestamps", containerId], {
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
-      extendEnv: true,
-    });
+    const attempt = yield* attachToContainerLogsOnce(spawner, output, containerId, sinceTimestamp);
+    if (attempt.lastTimestamp !== undefined) {
+      if (attempt.lastTimestamp !== sinceTimestamp) consecutiveReattaches = 0;
+      sinceTimestamp = attempt.lastTimestamp;
+    }
 
-    let stderrText = "";
-    const [exitCode] = yield* Effect.all(
-      [
-        child.exitCode.pipe(Effect.map(Number)),
-        forwardByteStream(child.stdout, (text, stream) => output.raw(text, stream), "stdout"),
-        forwardByteStream(
-          child.stderr,
-          (text, stream) => {
-            stderrText = appendDiagnosticTail(stderrText, text);
-            return output.raw(text, stream);
-          },
-          "stderr",
-        ),
-      ],
-      { concurrency: "unbounded" },
-    );
-
-    if (exitCode === 0) {
-      const containerState = yield* inspectContainerState(containerId);
-      if (containerState.running) {
-        // `docker logs -f` exiting 0 doesn't mean the container stopped —
-        // the daemon can close the stream while it keeps running; re-attach.
-        yield* Effect.sleep(dockerLogRetryDelay);
+    if (attempt.exitCode === 0) {
+      // `docker logs -f` exiting 0 doesn't necessarily mean the container stopped — the daemon
+      // can close the stream while it keeps running — so inspect the container to find out why.
+      const inspected = yield* inspectContainerState(spawner, containerId).pipe(Effect.result);
+      if (Result.isFailure(inspected)) {
+        if (isContainerNotFoundMessage(inspected.failure.message)) {
+          return { _tag: "containerGone" } satisfies ContainerLogsEndReason;
+        }
+        return yield* Effect.fail(inspected.failure);
+      }
+      const state = inspected.success;
+      if (state.running) {
+        yield* reattach;
         continue;
       }
-      if (containerState.exitCode === 0) {
-        // The edge runtime container stopped on its own with a clean exit
-        // code — not a failure, so `serveFunctions` ends the session normally.
-        return;
+      if (externalTerminationExitCodes.has(state.exitCode)) {
+        return {
+          _tag: "supervisorTerminated",
+          exitCode: state.exitCode,
+        } satisfies ContainerLogsEndReason;
       }
-      if (containerState.exitCode === 137) {
-        yield* Effect.sleep(dockerLogRetryDelay);
+      if (state.exitCode === 0) {
+        return { _tag: "containerExited" } satisfies ContainerLogsEndReason;
+      }
+      if (state.exitCode === 137) {
+        yield* reattach;
         continue;
       }
       return yield* Effect.fail(
         new EdgeRuntimeContainerCrashedError({
-          message: `error running container: exit ${containerState.exitCode}`,
+          message: `error running container ${containerId}: exit ${state.exitCode}`,
           containerId,
-          exitCode: containerState.exitCode,
+          exitCode: state.exitCode,
         }),
       );
     }
 
-    const trimmedStderr = stderrText.trim();
-    if (!isRetriableDockerLogsError(trimmedStderr)) {
+    // The `docker logs -f` process itself errored. A follow-up inspect distinguishes a container
+    // that no longer exists (end of session) from one still running (transient — re-attach) from
+    // anything else (a real, fatal stream failure), and sources `daemonDown` from docker's own
+    // inspect failure instead of the container's own stderr text.
+    const trimmedStderr = attempt.stderrText.trim();
+    const inspected = yield* inspectContainerState(spawner, containerId).pipe(Effect.result);
+    if (Result.isFailure(inspected)) {
+      if (isContainerNotFoundMessage(inspected.failure.message)) {
+        return { _tag: "containerGone" } satisfies ContainerLogsEndReason;
+      }
       return yield* Effect.fail(
         new DockerLogsStreamError({
-          message: trimmedStderr.length > 0 ? trimmedStderr : `docker logs exited with ${exitCode}`,
+          message:
+            trimmedStderr.length > 0
+              ? trimmedStderr
+              : `docker logs exited with ${attempt.exitCode}`,
           containerId,
-          exitCode,
+          exitCode: attempt.exitCode,
           stderr: trimmedStderr,
-          daemonDown: isDockerDaemonUnreachable(trimmedStderr),
+          daemonDown: inspected.failure.daemonDown === true,
         }),
       );
     }
-
-    yield* Effect.sleep(dockerLogRetryDelay);
+    if (inspected.success.running) {
+      yield* reattach;
+      continue;
+    }
+    return yield* Effect.fail(
+      new DockerLogsStreamError({
+        message:
+          trimmedStderr.length > 0 ? trimmedStderr : `docker logs exited with ${attempt.exitCode}`,
+        containerId,
+        exitCode: attempt.exitCode,
+        stderr: trimmedStderr,
+        daemonDown: false,
+      }),
+    );
   }
 });
 
@@ -1385,20 +1495,17 @@ const assertLocalDbRunning = Effect.fnUntraced(function* (projectId: string) {
   }
 
   if (result.stderr.includes("No such container") || result.stderr.includes("No such object")) {
-    return yield* Effect.fail(new Error("supabase start is not running."));
+    return yield* Effect.fail(
+      new ServeLocalDbNotRunningError({ message: "supabase start is not running." }),
+    );
   }
 
   const message =
     result.stderr.trim().length > 0
       ? `failed to inspect service: ${result.stderr.trim()}`
       : "failed to inspect service";
-  // Mirrored here by the `suggestion` property, which
-  // `normalizeCliError`/`Output.fail` render on their own stderr line after
-  // the red error.
   return yield* Effect.fail(
-    isDockerDaemonUnreachable(result.stderr)
-      ? Object.assign(new Error(message), { suggestion: SUGGEST_DOCKER_INSTALL })
-      : new Error(message),
+    new ServeLocalDbInspectError({ message, daemonDown: isDockerDaemonUnreachable(result.stderr) }),
   );
 });
 
@@ -1453,6 +1560,22 @@ const reloadKong = Effect.fnUntraced(function* (projectId: string) {
 const writeStoppedServingMessage = Effect.fnUntraced(function* () {
   const output = yield* Output;
   yield* output.raw(`Stopped serving ${styleText("bold", functionsDirName)}\n`, "stdout");
+});
+
+/**
+ * Distinct from {@link writeStoppedServingMessage}: the container ended the session on its own
+ * rather than the user requesting a shutdown, which matters for a `functions serve &` CI step
+ * that greps scrollback for whether the runtime is still up.
+ */
+const writeContainerEndedMessage = Effect.fnUntraced(function* (reason: ContainerLogsEndReason) {
+  const output = yield* Output;
+  const prefix =
+    reason._tag === "containerExited"
+      ? "Edge Runtime exited (code 0)."
+      : reason._tag === "supervisorTerminated"
+        ? `Edge Runtime container stopped (exit ${reason.exitCode}).`
+        : "Edge Runtime container is no longer available.";
+  yield* output.raw(`${prefix} Stopped serving ${styleText("bold", functionsDirName)}\n`, "stdout");
 });
 
 export function buildServeEntrypointCommand(
@@ -1932,6 +2055,26 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
   );
 });
 
+/**
+ * Downgrades `self`'s failure to `onShutdown()`'s success when a shutdown signal arrives
+ * within `gracePeriod` of that failure — the Windows console-signal tie-break in
+ * {@link shutdownSignalGracePeriod}'s doc comment.
+ */
+const withShutdownGrace = <A, E, R>(
+  self: Effect.Effect<A, E, R>,
+  shutdownRequested: Deferred.Deferred<void>,
+  gracePeriod: Duration.Duration,
+  onShutdown: () => A,
+): Effect.Effect<A, E, R> =>
+  self.pipe(
+    Effect.catch((error) =>
+      Effect.raceFirst(
+        Deferred.await(shutdownRequested).pipe(Effect.as(onShutdown())),
+        Effect.sleep(gracePeriod).pipe(Effect.andThen(Effect.fail(error))),
+      ),
+    ),
+  );
+
 export const serveFunctions = Effect.fn("functions.serve")(function* (
   flags: FunctionsServeFlags,
   dependencies: FunctionsServeDependencies,
@@ -1945,6 +2088,8 @@ export const serveFunctions = Effect.fn("functions.serve")(function* (
     },
     catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
   });
+  const gracePeriod = dependencies.timers?.shutdownSignalGracePeriod ?? shutdownSignalGracePeriod;
+  const retryDelay = dependencies.timers?.dockerLogRetryDelay ?? dockerLogRetryDelay;
 
   const loop = Effect.gen(function* () {
     // Hoisted to the loop's lifetime (not per-race) so a signal arriving
@@ -1952,18 +2097,26 @@ export const serveFunctions = Effect.fn("functions.serve")(function* (
     const shutdownRequested = yield* Deferred.make<void>();
     yield* processControl
       .awaitSignal()
-      .pipe(Effect.andThen(Deferred.succeed(shutdownRequested, void 0)), Effect.forkScoped);
+      .pipe(
+        Effect.andThen(Deferred.succeed(shutdownRequested, void 0)),
+        Effect.forkScoped({ startImmediately: true }),
+      );
 
     for (;;) {
-      const startOutcome = yield* Effect.raceFirst(
-        Deferred.await(shutdownRequested).pipe(Effect.as("shutdown" as const)),
-        startEdgeRuntime({
-          flags,
-          dependencies,
-          debug: dependencies.debug,
-          networkId: dependencies.networkId,
-          inspectMode,
-        }).pipe(Effect.map((started) => ({ _tag: "started" as const, started }))),
+      const startOutcome = yield* withShutdownGrace(
+        Effect.raceFirst(
+          Deferred.await(shutdownRequested).pipe(Effect.as("shutdown" as const)),
+          startEdgeRuntime({
+            flags,
+            dependencies,
+            debug: dependencies.debug,
+            networkId: dependencies.networkId,
+            inspectMode,
+          }).pipe(Effect.map((started) => ({ _tag: "started" as const, started }))),
+        ),
+        shutdownRequested,
+        gracePeriod,
+        () => "shutdown" as const,
       );
 
       if (startOutcome === "shutdown") {
@@ -1973,28 +2126,33 @@ export const serveFunctions = Effect.fn("functions.serve")(function* (
 
       const started = startOutcome.started;
 
-      const outcome = yield* Effect.raceFirst(
+      const outcome = yield* withShutdownGrace(
         Effect.raceFirst(
-          Deferred.await(shutdownRequested).pipe(Effect.as("shutdown" as const)),
-          waitForRestartSignal(started.watchSpecs).pipe(Effect.as("restart" as const)),
-        ),
-        streamContainerLogs(started.containerId).pipe(Effect.as("exited" as const)),
-      ).pipe(
-        // raceFirst already interrupted the restart listener, so only a shutdown
-        // signal — not a restart — can still downgrade this failure here.
-        Effect.catch((error) =>
           Effect.raceFirst(
-            Deferred.await(shutdownRequested).pipe(Effect.as("shutdown" as const)),
-            Effect.sleep(shutdownSignalGracePeriod).pipe(Effect.andThen(Effect.fail(error))),
+            Deferred.await(shutdownRequested).pipe(Effect.as({ _tag: "shutdown" as const })),
+            waitForRestartSignal(started.watchSpecs).pipe(Effect.as({ _tag: "restart" as const })),
+          ),
+          streamContainerLogs(started.containerId, retryDelay).pipe(
+            Effect.map((reason) => ({ _tag: "exited" as const, reason })),
           ),
         ),
+        // raceFirst above already interrupted the restart listener, so only a shutdown
+        // signal — not a restart — can still downgrade this failure here.
+        shutdownRequested,
+        gracePeriod,
+        () => ({ _tag: "shutdown" as const }),
+      ).pipe(
         Effect.ensuring(
           bestEffortRemoveContainer(started.containerId).pipe(Effect.ensuring(started.cleanup)),
         ),
       );
 
-      if (outcome === "shutdown" || outcome === "exited") {
+      if (outcome._tag === "shutdown") {
         yield* writeStoppedServingMessage();
+        return;
+      }
+      if (outcome._tag === "exited") {
+        yield* writeContainerEndedMessage(outcome.reason);
         return;
       }
     }

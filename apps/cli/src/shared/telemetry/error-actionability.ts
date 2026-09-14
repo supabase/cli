@@ -385,11 +385,13 @@ export const actionability = {
     suggestion_type: CliSuggestionType.RerunDebug,
   },
   /**
-   * A runtime the CLI launched and supervises died on its own — the process
-   * itself failed rather than the CLI code around it, so neither
-   * {@link actionability.internalPanic} nor {@link actionability.impossibleState}
-   * describes it. Still our bug: the user did nothing wrong and has nothing to
-   * fix, so it belongs in the internal-bug counter-metric rather than `unknown`.
+   * A long-running runtime the CLI supervises, such as the edge-runtime
+   * container behind `functions serve`, died on its own. Still our bug, so it
+   * belongs in the internal-bug counter-metric rather than `unknown`.
+   *
+   * Short-lived tool containers emit the same `error running container: exit N`
+   * but their exit reflects the user's data or connection; those use
+   * {@link actionability.dbConnection}.
    */
   runtimeCrash: {
     error_kind: CliErrorKind.InternalBug,

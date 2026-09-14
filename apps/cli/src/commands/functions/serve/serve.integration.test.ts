@@ -33,23 +33,34 @@ import {
   mockProcessControl,
   mockRuntimeInfo,
 } from "../../../../tests/helpers/mocks.ts";
+import { CommandSettings } from "../../../config/command-settings.service.ts";
+import { functionsGoConfigCompat } from "../../../command-internal/functions-go-config.ts";
 import { DebugFlag, NetworkIdFlag } from "../../../command-internal/global-flags.ts";
 import { FileWatcher, type FileWatchEvent } from "../../../shared/runtime/file-watcher.service.ts";
 import {
   ProcessControl,
   type CliProcessSignal,
 } from "../../../shared/runtime/process-control.service.ts";
+import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { dockerfileServiceImage } from "../../../shared/services/dockerfile-images.ts";
 import { getRegistryImageUrl } from "../../../command-internal/docker-registry.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import {
   DockerLogsStreamError,
   EdgeRuntimeContainerCrashedError,
+  EdgeRuntimeLogStreamLostError,
+  ServeLocalDbInspectError,
+  ServeLocalDbNotRunningError,
 } from "../../../shared/functions/serve.errors.ts";
 import {
   actionability,
   ErrorActionabilityId,
 } from "../../../shared/telemetry/error-actionability.ts";
-import type { FunctionsServeFlags } from "../../../shared/functions/serve.ts";
+import {
+  serveFunctions,
+  type FunctionsServeFlags,
+  type FunctionsServeTimers,
+} from "../../../shared/functions/serve.ts";
 
 const deployMockState = vi.hoisted(() => ({
   runCalls: [] as Array<{
@@ -410,6 +421,33 @@ function setupServe(options: SetupOptions = {}) {
   );
 
   return { layer, out, telemetry, processControl, fileWatcher, childSpawner };
+}
+
+/**
+ * Mirrors `serve.handler.ts`'s wiring but calls `serveFunctions` directly so a test can override
+ * its shutdown-grace/log-retry timers, which the handler's own signature doesn't expose.
+ */
+function serveWithTimers(flags: FunctionsServeFlags, timers: FunctionsServeTimers) {
+  return Effect.gen(function* () {
+    const cliSettings = yield* CommandSettings;
+    const runtimeInfo = yield* RuntimeInfo;
+    const telemetryState = yield* TelemetryState;
+    const debug = yield* DebugFlag;
+    const networkId = yield* NetworkIdFlag;
+
+    yield* serveFunctions(flags, {
+      projectRoot: cliSettings.workdir,
+      supabaseDir: join(cliSettings.workdir, "supabase"),
+      flagCwd: runtimeInfo.cwd,
+      platform: runtimeInfo.platform,
+      debug,
+      networkId,
+      projectIdOverride: cliSettings.projectId,
+      goViperCompat: true,
+      goConfigCompat: functionsGoConfigCompat,
+      timers,
+    }).pipe(Effect.ensuring(telemetryState.flush));
+  });
 }
 
 async function writeCliConfig(content: string) {
@@ -793,6 +831,16 @@ describe("functions serve integration", () => {
           {
             command: "docker",
             args: ["logs", "-f", "--timestamps", "supabase_edge_runtime_test-project"],
+          },
+          {
+            command: "docker",
+            args: [
+              "container",
+              "inspect",
+              "supabase_edge_runtime_test-project",
+              "--format",
+              "{{json .State}}",
+            ],
           },
         ]);
       });
@@ -2046,17 +2094,15 @@ describe("functions serve integration", () => {
   );
 
   describe("shutdown vs. container-exit outcomes", () => {
-    function baseDockerRunHandler(inspectExitCode = "0", inspectRunning = false) {
+    function baseDockerRunHandler() {
       return (command: string, args: ReadonlyArray<string>) => {
         if (command !== "docker") {
           throw new Error(`unexpected process: ${command}`);
         }
+        // The plain pre-create DB check and stale-container removal, never the
+        // `--format`-qualified `inspectContainerState` calls: those go through
+        // `childSpawner`, the same `ChildProcessSpawner` `docker logs -f` uses.
         if (args[0] === "container" && args[1] === "inspect") {
-          // `inspectContainerState` passes `--format`; the pre-create DB
-          // check and pre-create stale-container removal do not.
-          if (args[2] === "--format") {
-            return { exitCode: 0, stdout: `${inspectRunning} ${inspectExitCode}\n`, stderr: "" };
-          }
           return { exitCode: 0, stdout: "", stderr: "" };
         }
         if (args[0] === "container" && args[1] === "rm") {
@@ -2072,6 +2118,26 @@ describe("functions serve integration", () => {
       };
     }
 
+    // Models `inspectContainerState`'s `docker container inspect --format {{json .State}}` reply.
+    function inspectStateBehavior(running: boolean, exitCode = 0): LogProcessBehavior {
+      return {
+        exitCode: 0,
+        stdout: JSON.stringify({
+          Status: running ? "running" : "exited",
+          Running: running,
+          ExitCode: exitCode,
+        }),
+        stderr: "",
+      };
+    }
+
+    function containerInspectCalls(childSpawner: ReturnType<typeof mockDockerLogSpawner>) {
+      return childSpawner.spawned.filter(
+        (call) =>
+          call.command === "docker" && call.args[0] === "container" && call.args[1] === "inspect",
+      );
+    }
+
     async function writeHelloFunction() {
       await writeCliConfig(['project_id = "test-project"', ""].join("\n"));
       await writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n');
@@ -2079,13 +2145,12 @@ describe("functions serve integration", () => {
     }
 
     it.live(
-      "exits cleanly on SIGINT even when the docker-logs stream fails around the same time",
+      "exits cleanly when a shutdown signal and a docker-logs failure land in the same tick (Windows console-signal tie-break)",
       () => {
         deployMockState.runHandler = baseDockerRunHandler();
         const processControl = mockQueuedProcessControl();
-        // The same Ctrl-C reaches both the CLI and the un-detached
-        // `docker logs -f` child, so signaling from `onSpawn` models the
-        // two events as concurrent.
+        // Signaling from `onSpawn` fires the instant the mocked `docker logs -f` spawns,
+        // forcing the shutdown signal and its failure into the same tick.
         const childSpawner = mockDockerLogSpawner([
           {
             exitCode: 1,
@@ -2116,12 +2181,13 @@ describe("functions serve integration", () => {
     );
 
     it.live(
-      "exits cleanly when SIGINT arrives shortly after the docker-logs stream has already failed",
+      "downgrades a docker-logs failure to a clean shutdown when the signal lands within the grace window",
       () => {
         deployMockState.runHandler = baseDockerRunHandler();
         const processControl = mockQueuedProcessControl();
-        // Delays SIGINT past the log-stream failure so only the shutdown
-        // grace period, not a same-tick race, can produce a clean exit.
+        // Delays the signal past the log-stream failure so only the grace window, not a
+        // same-tick race, can produce a clean exit. A generous injected grace period keeps
+        // this margin independent of the real clock.
         const childSpawner = mockDockerLogSpawner([
           {
             exitCode: 1,
@@ -2140,10 +2206,55 @@ describe("functions serve integration", () => {
           yield* Effect.promise(writeHelloFunction);
 
           const { layer, out } = setupServe({ processControl, childSpawner });
-          const fiber = yield* functionsServe(baseFlags()).pipe(
-            Effect.provide(layer),
-            Effect.forkChild({ startImmediately: true }),
-          );
+          const fiber = yield* serveWithTimers(baseFlags(), {
+            shutdownSignalGracePeriod: Duration.seconds(2),
+          }).pipe(Effect.provide(layer), Effect.forkChild({ startImmediately: true }));
+
+          const exit = yield* Fiber.await(fiber);
+          expect(Exit.isSuccess(exit)).toBe(true);
+          expect(
+            out.stdoutText
+              .replaceAll("\u001b[1m", "")
+              .replaceAll("\u001b[22m", "")
+              .replaceAll("\\", "/"),
+          ).toContain("Stopped serving supabase/functions\n");
+        });
+      },
+    );
+
+    it.live(
+      "downgrades a startup failure to a clean shutdown when the signal lands within the grace window",
+      () => {
+        const processControl = mockQueuedProcessControl();
+        // Delays the signal past the startup failure so only the grace window, not a
+        // same-tick race, can produce a clean exit. A generous injected grace period keeps
+        // this margin independent of the real clock.
+        deployMockState.runHandler = (command, args) => {
+          if (command !== "docker") {
+            throw new Error(`unexpected process: ${command}`);
+          }
+          if (args[0] === "container" && args[1] === "inspect") {
+            Effect.runFork(
+              Effect.sleep(Duration.millis(15)).pipe(
+                Effect.andThen(Effect.sync(() => processControl.signal("SIGINT"))),
+              ),
+            );
+            return {
+              exitCode: 1,
+              stdout: "",
+              stderr: "Error: No such container: supabase_db_test-project",
+            };
+          }
+          throw new Error(`unexpected docker args: ${args.join(" ")}`);
+        };
+
+        return Effect.gen(function* () {
+          yield* Effect.promise(writeHelloFunction);
+
+          const { layer, out } = setupServe({ processControl });
+          const fiber = yield* serveWithTimers(baseFlags(), {
+            shutdownSignalGracePeriod: Duration.seconds(2),
+          }).pipe(Effect.provide(layer), Effect.forkChild({ startImmediately: true }));
 
           const exit = yield* Fiber.await(fiber);
           expect(Exit.isSuccess(exit)).toBe(true);
@@ -2160,10 +2271,13 @@ describe("functions serve integration", () => {
     it.live(
       "still fails with a tagged error when the container crashes with a non-zero exit code",
       () => {
-        deployMockState.runHandler = baseDockerRunHandler("1");
-        // `docker logs -f` itself exits 0 (the container it tails stopped),
-        // so `streamContainerLogs` inspects the container's own exit code.
-        const childSpawner = mockDockerLogSpawner([{ exitCode: 0 }]);
+        deployMockState.runHandler = baseDockerRunHandler();
+        // `docker logs -f` itself exits 0 (the container it tails stopped), so
+        // `streamContainerLogs` inspects the container's own exit code next.
+        const childSpawner = mockDockerLogSpawner([
+          { exitCode: 0 },
+          inspectStateBehavior(false, 1),
+        ]);
 
         return Effect.gen(function* () {
           yield* Effect.promise(writeHelloFunction);
@@ -2174,7 +2288,8 @@ describe("functions serve integration", () => {
           expect(error).toBeInstanceOf(EdgeRuntimeContainerCrashedError);
           if (error instanceof EdgeRuntimeContainerCrashedError) {
             expect(error.exitCode).toBe(1);
-            expect(error.message).toContain("error running container: exit 1");
+            expect(error.message).toContain("supabase_edge_runtime_test-project");
+            expect(error.message).toContain("exit 1");
             // A runtime we launched died on its own: our bug, not the user's,
             // and specifically not `unknown`.
             expect(error[ErrorActionabilityId]).toEqual(actionability.runtimeCrash);
@@ -2184,10 +2299,35 @@ describe("functions serve integration", () => {
     );
 
     it.live(
-      "still fails, but as user-cancelled rather than an internal bug, when the container exits 143 (SIGTERM)",
+      "ends the session successfully, with a distinct message, when a supervisor tears the container down (exit 143)",
       () => {
-        deployMockState.runHandler = baseDockerRunHandler("143");
-        const childSpawner = mockDockerLogSpawner([{ exitCode: 0 }]);
+        deployMockState.runHandler = baseDockerRunHandler();
+        const childSpawner = mockDockerLogSpawner([
+          { exitCode: 0 },
+          inspectStateBehavior(false, 143),
+        ]);
+
+        return Effect.gen(function* () {
+          yield* Effect.promise(writeHelloFunction);
+
+          const { layer, out } = setupServe({ childSpawner });
+          const exit = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.exit);
+
+          expect(Exit.isSuccess(exit)).toBe(true);
+          expect(out.stdoutText).toContain("Edge Runtime container stopped (exit 143).");
+          expect(out.stdoutText).toContain("Stopped serving");
+        });
+      },
+    );
+
+    it.live(
+      "still fails as an internal runtime crash for a real crash signal (SIGSEGV, 139)",
+      () => {
+        deployMockState.runHandler = baseDockerRunHandler();
+        const childSpawner = mockDockerLogSpawner([
+          { exitCode: 0 },
+          inspectStateBehavior(false, 139),
+        ]);
 
         return Effect.gen(function* () {
           yield* Effect.promise(writeHelloFunction);
@@ -2197,64 +2337,21 @@ describe("functions serve integration", () => {
 
           expect(error).toBeInstanceOf(EdgeRuntimeContainerCrashedError);
           if (error instanceof EdgeRuntimeContainerCrashedError) {
-            expect(error.exitCode).toBe(143);
-            expect(error[ErrorActionabilityId]).toEqual({
-              ...actionability.cancelled,
-              fingerprint_suffix: "cancelled",
-            });
+            expect(error.exitCode).toBe(139);
+            expect(error[ErrorActionabilityId]).toEqual(actionability.runtimeCrash);
           }
         });
       },
     );
 
-    it.live("ends the session normally when the container exits gracefully (exit 0)", () => {
-      deployMockState.runHandler = baseDockerRunHandler("0");
-      const childSpawner = mockDockerLogSpawner([{ exitCode: 0 }]);
-
-      return Effect.gen(function* () {
-        yield* Effect.promise(writeHelloFunction);
-
-        const { layer, out } = setupServe({ childSpawner });
-        const exit = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.exit);
-
-        expect(Exit.isSuccess(exit)).toBe(true);
-        expect(out.stdoutText).toContain("Stopped serving");
-      });
-    });
-
     it.live(
-      "re-attaches instead of reporting a graceful exit when docker logs exits 0 but the container is still running",
+      "ends the session normally, with a distinct message, when the container exits gracefully (exit 0)",
       () => {
-        let inspectCalls = 0;
-        deployMockState.runHandler = (command, args) => {
-          if (command !== "docker") {
-            throw new Error(`unexpected process: ${command}`);
-          }
-          if (args[0] === "container" && args[1] === "inspect") {
-            if (args[2] === "--format") {
-              inspectCalls += 1;
-              // The first `docker logs -f` exit is a stream EOF while the
-              // container keeps running; only the second is its real stop.
-              return {
-                exitCode: 0,
-                stdout: inspectCalls === 1 ? "true 0\n" : "false 0\n",
-                stderr: "",
-              };
-            }
-            return { exitCode: 0, stdout: "", stderr: "" };
-          }
-          if (args[0] === "container" && args[1] === "rm") {
-            return { exitCode: 0, stdout: "", stderr: "" };
-          }
-          if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
-            return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
-          }
-          if (args[0] === "exec") {
-            return { exitCode: 0, stdout: "", stderr: "" };
-          }
-          throw new Error(`unexpected docker args: ${args.join(" ")}`);
-        };
-        const childSpawner = mockDockerLogSpawner([{ exitCode: 0 }, { exitCode: 0 }]);
+        deployMockState.runHandler = baseDockerRunHandler();
+        const childSpawner = mockDockerLogSpawner([
+          { exitCode: 0 },
+          inspectStateBehavior(false, 0),
+        ]);
 
         return Effect.gen(function* () {
           yield* Effect.promise(writeHelloFunction);
@@ -2263,13 +2360,128 @@ describe("functions serve integration", () => {
           const exit = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.exit);
 
           expect(Exit.isSuccess(exit)).toBe(true);
+          expect(out.stdoutText).toContain("Edge Runtime exited (code 0).");
+          expect(out.stdoutText).toContain("Stopped serving");
+        });
+      },
+    );
+
+    it.live(
+      "ends the session normally when the container is removed before the follow-up inspect can run",
+      () => {
+        deployMockState.runHandler = baseDockerRunHandler();
+        const childSpawner = mockDockerLogSpawner([
+          { exitCode: 0 },
+          {
+            exitCode: 1,
+            stderr:
+              "Error response from daemon: No such container: supabase_edge_runtime_test-project",
+          },
+        ]);
+
+        return Effect.gen(function* () {
+          yield* Effect.promise(writeHelloFunction);
+
+          const { layer, out } = setupServe({ childSpawner });
+          const exit = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.exit);
+
+          expect(Exit.isSuccess(exit)).toBe(true);
+          expect(out.stdoutText).toContain("Edge Runtime container is no longer available.");
+          expect(out.stdoutText).toContain("Stopped serving");
+        });
+      },
+    );
+
+    it.live(
+      "re-attaches instead of reporting a graceful exit when docker logs exits 0 but the container is still running",
+      () => {
+        deployMockState.runHandler = baseDockerRunHandler();
+        // The first `docker logs -f` exit is a stream EOF while the container
+        // keeps running; only the second is its real stop.
+        const childSpawner = mockDockerLogSpawner([
+          { exitCode: 0 },
+          inspectStateBehavior(true, 0),
+          { exitCode: 0 },
+          inspectStateBehavior(false, 0),
+        ]);
+
+        return Effect.gen(function* () {
+          yield* Effect.promise(writeHelloFunction);
+
+          const { layer, out } = setupServe({ childSpawner });
+          const exit = yield* serveWithTimers(baseFlags(), {
+            dockerLogRetryDelay: Duration.millis(1),
+          }).pipe(Effect.provide(layer), Effect.exit);
+
+          expect(Exit.isSuccess(exit)).toBe(true);
           expect(out.stdoutText).toContain("Stopped serving");
           expect(
             childSpawner.spawned.filter(
               (call) => call.command === "docker" && call.args[0] === "logs",
             ),
           ).toHaveLength(2);
-          expect(inspectCalls).toBe(2);
+          expect(containerInspectCalls(childSpawner)).toHaveLength(2);
+        });
+      },
+    );
+
+    it.live(
+      "re-attaches on the second consecutive-since timestamp when logs resume with progress",
+      () => {
+        deployMockState.runHandler = baseDockerRunHandler();
+        const childSpawner = mockDockerLogSpawner([
+          { exitCode: 0, stdout: "2024-01-01T00:00:00.000000000Z hello\n" },
+          inspectStateBehavior(true, 0),
+          { exitCode: 0 },
+          inspectStateBehavior(false, 0),
+        ]);
+
+        return Effect.gen(function* () {
+          yield* Effect.promise(writeHelloFunction);
+
+          const { layer } = setupServe({ childSpawner });
+          const exit = yield* serveWithTimers(baseFlags(), {
+            dockerLogRetryDelay: Duration.millis(1),
+          }).pipe(Effect.provide(layer), Effect.exit);
+
+          expect(Exit.isSuccess(exit)).toBe(true);
+          const logsCalls = childSpawner.spawned.filter(
+            (call) => call.command === "docker" && call.args[0] === "logs",
+          );
+          expect(logsCalls).toHaveLength(2);
+          expect(logsCalls[0]?.args).not.toContain("--since");
+          expect(logsCalls[1]?.args).toContain("--since");
+          expect(logsCalls[1]?.args).toContain("2024-01-01T00:00:00.000000000Z");
+        });
+      },
+    );
+
+    it.live(
+      "fails with a tagged error after repeatedly losing the log stream while the container stays running",
+      () => {
+        deployMockState.runHandler = baseDockerRunHandler();
+        const reattachPair: ReadonlyArray<LogProcessBehavior> = [
+          { exitCode: 1, stderr: "docker logs connection reset" },
+          inspectStateBehavior(true, 0),
+        ];
+        const childSpawner = mockDockerLogSpawner(
+          Array.from({ length: 6 }, () => reattachPair).flat(),
+        );
+
+        return Effect.gen(function* () {
+          yield* Effect.promise(writeHelloFunction);
+
+          const { layer } = setupServe({ childSpawner });
+          const error = yield* serveWithTimers(baseFlags(), {
+            dockerLogRetryDelay: Duration.millis(1),
+          }).pipe(Effect.provide(layer), Effect.flip);
+
+          expect(error).toBeInstanceOf(EdgeRuntimeLogStreamLostError);
+          if (error instanceof EdgeRuntimeLogStreamLostError) {
+            expect(error.containerId).toBe("supabase_edge_runtime_test-project");
+            expect(error.message).toContain("supabase_edge_runtime_test-project");
+            expect(error.message).toContain("5 times");
+          }
         });
       },
     );
@@ -3184,9 +3396,10 @@ describe("functions serve integration", () => {
       const { layer } = setupServe();
       const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
-      expect(error).toBeInstanceOf(Error);
-      if (error instanceof Error) {
+      expect(error).toBeInstanceOf(ServeLocalDbNotRunningError);
+      if (error instanceof ServeLocalDbNotRunningError) {
         expect(error.message).toContain("supabase start is not running.");
+        expect(error[ErrorActionabilityId]).toEqual(actionability.startStack);
       }
     });
   });
@@ -3217,10 +3430,15 @@ describe("functions serve integration", () => {
       const { layer } = setupServe();
       const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
-      expect(error).toBeInstanceOf(Error);
-      if (error instanceof Error) {
+      expect(error).toBeInstanceOf(ServeLocalDbInspectError);
+      if (error instanceof ServeLocalDbInspectError) {
         expect(error.message).toBe(`failed to inspect service: ${daemonDownStderr}`);
         expect(error.message).not.toContain("failed to run docker");
+        expect(error.daemonDown).toBe(true);
+        expect(error[ErrorActionabilityId]).toEqual({
+          ...actionability.dockerNotRunning,
+          fingerprint_suffix: "docker_not_running",
+        });
       }
       expect(error).toHaveProperty(
         "suggestion",
@@ -3264,10 +3482,11 @@ describe("functions serve integration", () => {
       const { layer } = setupServe();
       const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
-      expect(error).toBeInstanceOf(Error);
-      if (error instanceof Error) {
+      expect(error).toBeInstanceOf(ServeLocalDbInspectError);
+      if (error instanceof ServeLocalDbInspectError) {
         expect(error.message).toBe(`failed to inspect service: ${runtimeNotFoundMessage}`);
         expect(error.message).not.toContain("failed to run docker");
+        expect(error.daemonDown).toBe(true);
       }
       expect(error).toHaveProperty(
         "suggestion",
@@ -3343,9 +3562,10 @@ describe("functions serve integration", () => {
       const { layer } = setupServe();
       const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
-      expect(error).toBeInstanceOf(Error);
-      if (error instanceof Error) {
+      expect(error).toBeInstanceOf(ServeLocalDbInspectError);
+      if (error instanceof ServeLocalDbInspectError) {
         expect(error.message).toBe(`failed to inspect service: ${daemonDownStderr}`);
+        expect(error.daemonDown).toBe(true);
       }
       expect(fetchMock).not.toHaveBeenCalled();
     });
