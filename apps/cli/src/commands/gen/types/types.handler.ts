@@ -27,6 +27,7 @@ import { DbConfigResolver } from "../../../command-internal/db-config.service.ts
 import type { DbConfigFlags } from "../../../command-internal/db-config.types.ts";
 import { poolerConfigFromConnectionString } from "../../../command-internal/db-config.parse.ts";
 import { applyProjectEnv, readDbToml } from "../../../command-internal/db-config.toml-read.ts";
+import { getHostname } from "../../../command-internal/hostname.ts";
 import type { PgConnInput } from "../../../command-internal/db-connection.service.ts";
 import { toPostgresURL } from "../../../command-internal/postgres-url.ts";
 import { tempPaths } from "../../../command-internal/temp-paths.ts";
@@ -62,6 +63,7 @@ import {
   defaultSchemas,
   buildPostgresUrl,
   localDbContainerId,
+  localDbPassword,
   localNetworkId,
   parseDatabaseUrl,
   parseQueryTimeoutSeconds,
@@ -644,34 +646,52 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       const includedSchemas = (
         schemas.length > 0 ? schemas : defaultSchemas(config.apiSchemas)
       ).join(",");
-      const resolved = yield* dbConfig.resolve({
-        dbUrl: Option.none(),
-        connType: "local",
-        dnsResolver,
-      });
-      if (backend.kind !== "stack") yield* assertLocalDbRunning(projectId);
-      const usesHostNetwork = toolContainerUsesHostNetwork(Option.getOrUndefined(networkId));
-      const toolHost =
-        backend.kind === "stack"
-          ? rewriteDumpHostForToolContainer(resolved.conn.host, {
-              platform: runtimeInfo.platform,
-              usesHostNetwork,
-            })
-          : "db";
-      const toolPort = backend.kind === "stack" ? resolved.conn.port : 5432;
+      if (backend.kind === "stack") {
+        const resolved = yield* dbConfig.resolve({
+          dbUrl: Option.none(),
+          connType: "local",
+          dnsResolver,
+        });
+        const usesHostNetwork = toolContainerUsesHostNetwork(Option.getOrUndefined(networkId));
+        const toolHost = rewriteDumpHostForToolContainer(resolved.conn.host, {
+          platform: runtimeInfo.platform,
+          usesHostNetwork,
+        });
+        yield* runPgMeta({
+          url: buildPostgresUrl({
+            host: toolHost,
+            port: resolved.conn.port,
+            user: resolved.conn.user,
+            password: resolved.conn.password,
+            database: resolved.conn.database,
+          }),
+          host: toolHost,
+          port: resolved.conn.port,
+          probeHost: resolved.conn.host,
+          probePort: resolved.conn.port,
+          networkMode: "host",
+          includedSchemas,
+          postgrestV9Compat: flags.postgrestV9Compat || forcedV9,
+          pgmetaVersionOverride,
+          projectEnv: config.projectEnv,
+        });
+        return;
+      }
+
+      yield* assertLocalDbRunning(projectId);
       yield* runPgMeta({
         url: buildPostgresUrl({
-          host: toolHost,
-          port: toolPort,
-          user: resolved.conn.user,
-          password: resolved.conn.password,
-          database: resolved.conn.database,
+          host: "db",
+          port: 5432,
+          user: "postgres",
+          password: localDbPassword(),
+          database: "postgres",
         }),
-        host: toolHost,
-        port: toolPort,
-        probeHost: resolved.conn.host,
-        probePort: resolved.conn.port,
-        networkMode: backend.kind === "stack" ? "host" : localNetworkId(projectId),
+        host: "db",
+        port: 5432,
+        probeHost: getHostname(),
+        probePort: config.port,
+        networkMode: localNetworkId(projectId),
         includedSchemas,
         postgrestV9Compat: flags.postgrestV9Compat || forcedV9,
         pgmetaVersionOverride,

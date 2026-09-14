@@ -1293,7 +1293,7 @@ describe("Effect stack lifecycle handoff", () => {
             .prepare({
               config: {
                 capabilities: {
-                  analytics: { enabled: false },
+                  rest: { enabled: false },
                   studio: { enabled: true },
                 },
               },

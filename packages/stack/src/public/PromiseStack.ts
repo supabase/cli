@@ -233,12 +233,14 @@ export const makePromiseApi = (
               Effect.flatMap((config) => inspectEffectStack(id, { config })),
             ),
       ),
+    // Promise facade at the published edge; the Effect API owns cluster lifetime.
+    // oxlint-disable-next-line effecttsgo/async-function -- public Promise API
     createEphemeralPostgres: async (options) => {
       const scope = await Effect.runPromise(Scope.make());
       const close = () =>
         Effect.runPromise(Scope.close(scope, Exit.void).pipe(Effect.provide(providedLayer)));
-      const invoke = <A>(
-        effect: Effect.Effect<A, unknown, RuntimeRequirements | Scope.Scope>,
+      const invoke = <A, E>(
+        effect: Effect.Effect<A, E, RuntimeRequirements | Scope.Scope>,
       ): Promise<A> =>
         Effect.runPromise(
           effect.pipe(Effect.provideService(Scope.Scope, scope), Effect.provide(providedLayer)),
