@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer, Option, Stream } from "effect";
+import { Effect, Layer, Option, Redacted, Stream } from "effect";
 import {
   StackIdSchema,
   StackPreparationError,
@@ -25,7 +25,10 @@ import { StackApi, StackTargetResolver } from "../stack.shared.ts";
 import { stackRestart } from "./restart.handler.ts";
 import { stackStart } from "../start/start.handler.ts";
 import { stackStop } from "../stop/stop.handler.ts";
-import { OutputFlag } from "../../../../command-internal/global-flags.ts";
+import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
+import { ExperimentalFlag, OutputFlag } from "../../../../command-internal/global-flags.ts";
+import { DbConnection } from "../../../../command-internal/db-connection.service.ts";
+import { noopStackCatalogSetupLayer } from "../../../../command-internal/stack-catalog-setup.ts";
 
 const id = StackIdSchema.make("a".repeat(64));
 const project = () => {
@@ -75,6 +78,7 @@ const fixture = (options: {
     status: Effect.sync(() => ({ ...status(), lifecycle })),
     credentials: Effect.die("unused"),
     prepare: () => Effect.die("restart must not prepare explicitly"),
+    resetDatabase: Effect.die("unused"),
     stop: Effect.gen(function* () {
       calls.push("stop");
       if (options.stop === "fail") return yield* new StackCleanupError({ message: "stop failed" });
@@ -377,8 +381,14 @@ describe("stack restart", () => {
       const stack: EffectStack = {
         id,
         status: Effect.sync(state),
-        credentials: Effect.die("unused"),
+        credentials: Effect.succeed({
+          database: {
+            url: Redacted.make("postgresql://postgres:secret@127.0.0.1:54329/postgres"),
+            password: Redacted.make("secret"),
+          },
+        }),
         prepare: () => Effect.die("restart must not prepare explicitly"),
+        resetDatabase: Effect.die("unused"),
         stop: Effect.sync(() => {
           calls.push("stop");
           lifecycle = "stopped";
@@ -421,6 +431,20 @@ describe("stack restart", () => {
           discoverStacks: () => Effect.succeed({ stacks: [], errors: [] }),
         }),
         BunServices.layer,
+        noopStackCatalogSetupLayer,
+        Layer.succeed(ExperimentalFlag, false),
+        Layer.succeed(CliArgs, { args: ["stack", "start"] }),
+        Layer.succeed(DbConnection, {
+          connect: () =>
+            Effect.succeed({
+              exec: () => Effect.void,
+              query: () => Effect.succeed([]),
+              execBatch: () => Effect.void,
+              extensionExists: () => Effect.succeed(false),
+              copyToCsv: () => Effect.succeed(new Uint8Array()),
+              queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
+            }),
+        }),
       );
       const initialStart = {
         exclude: ["studio"],
