@@ -107,8 +107,9 @@ supervisor and are not written to the document.
 - `supabase stop` asks the owner to stop, waits for `stopped` and control release, and keeps the
   document by default. `--no-backup` removes it after deterministic cleanup.
 - `supabase stack list` enumerates all persisted managed stacks, including stopped and unconfigured
-  stacks, and reports each registry descriptor's desired lifecycle. It reads registry state without
-  contacting live owners and has no checkout-scoping option. See [local stack commands](./stack-commands.md).
+  stacks, and includes corrupt or unsupported registry entries with their IDs and error reasons.
+  It reads registry state without contacting live owners and has no checkout-scoping option. See
+  [local stack commands](./stack-commands.md).
 
 ## Auth, telemetry, and binaries
 

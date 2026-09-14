@@ -14,9 +14,11 @@ native runtimes.
 
 Use each command's `--help` for its available targeting and runtime options.
 
-`supabase stack list` reads the global managed-stack registry and reports each stack's project,
-branch, runtime, and desired lifecycle. Use `--output-format json` or `--output-format stream-json`
-for structured output.
+`supabase stack list` reads the global managed-stack registry and reports each readable stack's
+project, branch, runtime, and desired lifecycle. Corrupt or unsupported registry entries are
+included as `Unreadable stack (<id>)` records with their error reasons, and do not hide readable
+entries. Use `--output-format json` or `--output-format stream-json` for the complete structured
+inventory.
 
 ## Selecting the top-level commands
 

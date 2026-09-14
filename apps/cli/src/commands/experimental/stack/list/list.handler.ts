@@ -2,6 +2,7 @@ import { Effect, Match } from "effect";
 import {
   type StackDescriptor,
   type StackDiscoveryError,
+  type StackDiscoveryIssue,
   type StackRuntime,
 } from "@supabase/stack/effect";
 import { Output } from "../../../../shared/output/output.service.ts";
@@ -10,8 +11,9 @@ import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts
 import { StackApi, rejectStackOutput } from "../stack.shared.ts";
 import { StackCommandListError } from "./list.errors.ts";
 
-const entry = (descriptor: StackDescriptor) => ({
+const readableEntry = (descriptor: StackDescriptor) => ({
   id: descriptor.id,
+  readable: true as const,
   project_root: descriptor.projectRoot,
   name: descriptor.name,
   branch_context: descriptor.branchContext,
@@ -19,13 +21,23 @@ const entry = (descriptor: StackDescriptor) => ({
   desired_lifecycle: descriptor.desiredLifecycle,
 });
 
+const unreadableEntry = ({ id, error }: StackDiscoveryIssue) => ({
+  id,
+  readable: false as const,
+  error: {
+    code: error._tag,
+    message: error.message,
+  },
+});
+
+type ReadableEntry = ReturnType<typeof readableEntry>;
+type UnreadableEntry = ReturnType<typeof unreadableEntry>;
+type StackEntry = ReadableEntry | UnreadableEntry;
+
 const compareCodeunit = (left: string, right: string): number =>
   left === right ? 0 : left < right ? -1 : 1;
 
-const compareEntries = (
-  left: ReturnType<typeof entry>,
-  right: ReturnType<typeof entry>,
-): number => {
+const compareEntries = (left: ReadableEntry, right: ReadableEntry): number => {
   const project = compareCodeunit(left.project_root, right.project_root);
   if (project !== 0) return project;
   const name = compareCodeunit(left.name, right.name);
@@ -48,15 +60,19 @@ const renderRuntime = (runtime: StackRuntime): string =>
     Match.exhaustive,
   );
 
-const render = (stacks: ReadonlyArray<ReturnType<typeof entry>>): string => {
+const render = (stacks: ReadonlyArray<StackEntry>): string => {
   if (stacks.length === 0) return "No managed stacks found.\n";
   const lines = stacks.flatMap((stack, index) => [
     ...(index === 0 ? [] : [""]),
-    `${stack.name} (${stack.id})`,
-    `  Project: ${stack.project_root}`,
-    `  Branch: ${stack.branch_context}`,
-    `  Runtime: ${renderRuntime(stack.runtime)}`,
-    `  Desired lifecycle: ${stack.desired_lifecycle}`,
+    ...(stack.readable
+      ? [
+          `${stack.name} (${stack.id})`,
+          `  Project: ${stack.project_root}`,
+          `  Branch: ${stack.branch_context}`,
+          `  Runtime: ${renderRuntime(stack.runtime)}`,
+          `  Desired lifecycle: ${stack.desired_lifecycle}`,
+        ]
+      : [`Unreadable stack (${stack.id})`, `  Error: ${stack.error.message}`]),
   ]);
   return `${lines.join("\n")}\n`;
 };
@@ -79,9 +95,11 @@ export const stackList = Effect.fn("experimental.stack.list")(function* () {
     );
     const api = yield* StackApi;
     const result = yield* api.discoverStacks().pipe(Effect.mapError(mapStackError));
-    const stacks = result.stacks.map(entry).sort(compareEntries);
-    const firstError = result.errors[0];
-    if (firstError !== undefined) return yield* mapStackError(firstError.error);
+    const readable = result.stacks.map(readableEntry).sort(compareEntries);
+    const unreadable = result.errors
+      .map(unreadableEntry)
+      .sort((left, right) => compareCodeunit(left.id, right.id));
+    const stacks: ReadonlyArray<StackEntry> = [...readable, ...unreadable];
     if (output.format === "text") yield* output.raw(render(stacks));
     else yield* output.success("", { stacks });
     return stacks;
