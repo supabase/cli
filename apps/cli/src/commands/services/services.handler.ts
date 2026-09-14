@@ -176,11 +176,9 @@ export const services = Effect.fn("services")(function* (_flags: ServicesFlags) 
     const goOutput = Option.getOrUndefined(goOutputFlag);
 
     if (goOutput === "env") {
-      return yield* Effect.fail(
-        new ServicesEnvNotSupportedError({
-          message: "--output env flag is not supported",
-        }),
-      );
+      return yield* new ServicesEnvNotSupportedError({
+        message: "--output env flag is not supported",
+      });
     }
 
     if (goOutput === "json") {
