@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect } from "effect";
 
-import { runSupabaseEffect, tempHomeScoped } from "../../../../tests/helpers/cli.ts";
+import { runSupabaseEffect, withTempHome } from "../../../../tests/helpers/cli.ts";
 
 import { FEEDBACK_EMPTY_MESSAGE } from "./add.errors.ts";
 
@@ -17,17 +17,18 @@ describe("supabase feedback", () => {
   it.live(
     "feedback add fails with the empty-message error when nothing is provided",
     () =>
-      Effect.gen(function* () {
-        const home = yield* tempHomeScoped;
-        const result = yield* runSupabaseEffect(["feedback", "add"], {
-          home: home.dir,
-          env: { HOME: home.dir },
-          stdin: "   \n",
-        });
-        expect(result.exitCode).toBe(1);
-        expect(result.stderr).toContain(FEEDBACK_EMPTY_MESSAGE);
-        expect(result.stdout).toBe("");
-      }).pipe(Effect.scoped),
+      withTempHome((home) =>
+        Effect.gen(function* () {
+          const result = yield* runSupabaseEffect(["feedback", "add"], {
+            home: home.dir,
+            env: { HOME: home.dir },
+            stdin: "   \n",
+          });
+          expect(result.exitCode).toBe(1);
+          expect(result.stderr).toContain(FEEDBACK_EMPTY_MESSAGE);
+          expect(result.stdout).toBe("");
+        }),
+      ),
     E2E_TIMEOUT_MS,
   );
 });
