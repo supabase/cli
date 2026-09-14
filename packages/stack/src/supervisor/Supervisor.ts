@@ -647,10 +647,9 @@ export const makeSupervisor = (
                 result: Exit.succeed(current.result),
               } satisfies ActivationToken;
             if (current?._tag === "pending")
-              return {
-                _tag: config === undefined ? "deferred" : "wait-then-replace",
-                result: current.result,
-              } satisfies ActivationToken;
+              return config === undefined
+                ? ({ _tag: "deferred", result: current.result } satisfies ActivationToken)
+                : ({ _tag: "wait-then-replace", result: current.result } satisfies ActivationToken);
             // Validate durable lifecycle state only for a new activation. Ready
             // entries above are already fenced by the in-memory phase checks.
             yield* ensureActivationStateAllowed();
