@@ -15,26 +15,75 @@ interface State {
 const BEGIN_ATOMIC = "ATOMIC";
 const END_ATOMIC = "END";
 
-// `\p{Nd}` (decimal digits only), not `\p{N}` (all Unicode numbers): `\p{N}` would wrongly
-// accept `No`/`Nl` runes like superscript-2 (`²`) as a valid identifier/dollar-tag character.
-const isIdentifierRune = (rune: string): boolean => /[\p{L}\p{Nd}_$]/u.test(rune);
+// PostgreSQL's scan.l treats every code point at or above 0x80 as an identifier/dollar-tag
+// character (`ident_cont`/`dolq_cont`), whatever its Unicode category.
+const isIdentifierRune = (rune: string): boolean => {
+  const codePoint = rune.codePointAt(0);
+  return codePoint !== undefined && (codePoint >= 0x80 || /[A-Za-z0-9_$]/u.test(rune));
+};
+
+// A code point spans at most two UTF-16 units, so the last one before `offset` lies within
+// the preceding two.
+const hasIdentifierRuneBefore = (data: string, offset: number): boolean => {
+  if (offset <= 0) return false;
+  const rune = Array.from(data.slice(Math.max(0, offset - 2), offset)).at(-1);
+  return rune !== undefined && isIdentifierRune(rune);
+};
+
+const asciiUpper = (text: string): string => text.replace(/[a-z]/g, (c) => c.toUpperCase());
+
+function endsWithKeyword(data: string, keyword: string): boolean {
+  const offset = data.length - keyword.length;
+  if (offset < 0 || asciiUpper(data.slice(offset)) !== keyword) return false;
+  return !hasIdentifierRuneBefore(data, offset);
+}
+
+const isSqlWhitespace = (rune: string): boolean => " \t\n\r\f\v".includes(rune);
 
 function isBeginAtomic(data: string): boolean {
-  let offset = data.length - BEGIN_ATOMIC.length;
-  if (offset < 0 || data.slice(offset).toUpperCase() !== BEGIN_ATOMIC) return false;
-  if (offset > 0 && isIdentifierRune(data[offset - 1]!)) return false;
-  const prefix = data.slice(0, offset).replace(/\s+$/u, "");
-  offset = prefix.length - "BEGIN".length;
-  if (offset < 0 || prefix.slice(offset).toUpperCase() !== "BEGIN") return false;
-  if (offset === 0) return true;
-  return !isIdentifierRune(prefix[offset - 1]!);
+  if (!endsWithKeyword(data, BEGIN_ATOMIC)) return false;
+  let end = data.length - BEGIN_ATOMIC.length;
+  while (end > 0 && isSqlWhitespace(data[end - 1]!)) end -= 1;
+  return endsWithKeyword(data.slice(0, end), "BEGIN");
+}
+
+function isCommentsAndWhitespace(text: string): boolean {
+  let i = 0;
+  while (i < text.length) {
+    if (isSqlWhitespace(text[i]!)) {
+      i += 1;
+    } else if (text.startsWith("--", i)) {
+      const newline = text.indexOf("\n", i + 2);
+      if (newline === -1) return true;
+      i = newline + 1;
+    } else if (text.startsWith("/*", i)) {
+      // Match `BlockState`'s sliding-window scan so both agree on overlapping delimiters.
+      let depth = 1;
+      i += 2;
+      while (i < text.length && depth > 0) {
+        const window = text.slice(i - 1, i + 1);
+        if (window === "/*") depth += 1;
+        else if (window === "*/") depth -= 1;
+        i += 1;
+      }
+      if (depth > 0) return true;
+    } else {
+      return false;
+    }
+  }
+  return true;
 }
 
 class ReadyState implements State {
   next(rune: string, data: string): State | null {
     switch (rune) {
-      case "$":
-        return new TagState(data.length - rune.length);
+      case "$": {
+        // A `$` after an identifier rune continues the identifier (`pending$$foo$`), not a
+        // dollar quote. A digit counts too (`1$$`), unlike PostgreSQL; valid SQL never has that.
+        const offset = data.length - rune.length;
+        if (hasIdentifierRuneBefore(data, offset)) return this;
+        return new TagState(offset);
+      }
       case "'":
       case '"':
         return new QuoteState(rune);
@@ -47,10 +96,10 @@ class ReadyState implements State {
       case ";":
         return null;
       case "(":
-        return new AtomicState(new ReadyState(), ")");
+        return new ParenState(new ReadyState());
       case "c":
       case "C":
-        if (isBeginAtomic(data)) return new AtomicState(new ReadyState(), END_ATOMIC);
+        if (isBeginAtomic(data)) return new AtomicState(new ReadyState(), data.length);
         return this;
       default:
         return this;
@@ -112,9 +161,7 @@ class TagState implements State {
   constructor(private readonly offset: number) {}
   next(rune: string, data: string): State | null {
     if (rune === "$") return new DollarState(data.slice(this.offset));
-    // Valid dollar-tag characters — see `isIdentifierRune`'s comment on why `\p{Nd}`,
-    // not `\p{N}`.
-    if (/[\p{L}\p{Nd}_]/u.test(rune)) return this;
+    if (isIdentifierRune(rune)) return this;
     return new ReadyState().next(rune, data);
   }
 }
@@ -125,18 +172,54 @@ class EscapeState implements State {
   }
 }
 
+class ParenState implements State {
+  constructor(private prev: State) {}
+  next(rune: string, data: string): State | null {
+    const curr = this.prev.next(rune, data);
+    if (curr === null) {
+      this.prev = new ReadyState();
+      return this;
+    }
+    this.prev = curr;
+    if (!(this.prev instanceof ReadyState)) return this;
+    return rune === ")" ? new ReadyState() : this;
+  }
+}
+
 class AtomicState implements State {
+  private pendingEnd = false;
+  private statementStart: number;
+  private statementHasContent = false;
   constructor(
     private prev: State,
-    private readonly delimiter: string,
-  ) {}
+    start: number,
+  ) {
+    this.statementStart = start;
+  }
   next(rune: string, data: string): State | null {
-    // A delimiter inside a nested quote/comment doesn't count.
+    const pendingEnd = this.pendingEnd;
+    this.pendingEnd = false;
+    if (pendingEnd && !isIdentifierRune(rune)) return new ReadyState().next(rune, data);
+    // An `END` inside a nested quote/comment doesn't count.
     const curr = this.prev.next(rune, data);
-    if (curr !== null) this.prev = curr;
-    if (this.prev instanceof ReadyState) {
-      const window = data.slice(-this.delimiter.length);
-      if (window.toUpperCase() === this.delimiter.toUpperCase()) return new ReadyState();
+    if (curr === null) {
+      this.prev = new ReadyState();
+      this.statementStart = data.length;
+      this.statementHasContent = false;
+      return this;
+    }
+    this.prev = curr;
+    if (!(this.prev instanceof ReadyState)) return this;
+    // PostgreSQL requires each inner statement to end with `;`, so the closing `END` is
+    // always the first token of a statement; a later `END` is expression text.
+    if (!this.statementHasContent && endsWithKeyword(data, END_ATOMIC)) {
+      if (
+        isCommentsAndWhitespace(data.slice(this.statementStart, data.length - END_ATOMIC.length))
+      ) {
+        this.pendingEnd = true;
+      } else {
+        this.statementHasContent = true;
+      }
     }
     return this;
   }

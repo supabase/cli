@@ -11,6 +11,7 @@ import { stackDestroyCommand as stackDestroyCommandBase } from "./destroy/destro
 import { stackLogsCommand as stackLogsCommandBase } from "./logs/logs.command.ts";
 import { stackListCommand as stackListCommandBase } from "./list/list.command.ts";
 import { stackRestartCommand as stackRestartCommandBase } from "./restart/restart.command.ts";
+import { stackPrepareCommand as stackPrepareCommandBase } from "./prepare/prepare.command.ts";
 import { stackApiLayer, stackTargetResolverLayer } from "./stack.shared.ts";
 
 export const stackRuntimeLayer = Layer.mergeAll(
@@ -41,6 +42,9 @@ const stackListCommand = stackListCommandBase.pipe(
 const stackRestartCommand = stackRestartCommandBase.pipe(
   Command.provide(commandRuntimeLayer(["stack", "restart"])),
 );
+const stackPrepareCommand = stackPrepareCommandBase.pipe(
+  Command.provide(commandRuntimeLayer(["stack", "prepare"])),
+);
 
 export const stackCommand = Command.make("stack").pipe(
   Command.withDescription(
@@ -51,6 +55,7 @@ export const stackCommand = Command.make("stack").pipe(
     stackDestroyCommand,
     stackListCommand,
     stackLogsCommand,
+    stackPrepareCommand,
     stackRestartCommand,
     stackStartCommand,
     stackStatusCommand,
