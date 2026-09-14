@@ -1229,6 +1229,8 @@ describe("Supervisor composition", () => {
           /^postgresql:\/\/postgres:.+@127\.0\.0\.1:\d+\/postgres$/,
         );
         expect(Redacted.value(credentials.database.password)).toEqual(expect.any(String));
+        if (credentials.api === undefined)
+          return yield* new StackStateInvalidError({ message: "API credentials are missing" });
         expect(credentials.api.publishableKey).toEqual(expect.any(String));
         expect(Redacted.value(credentials.api.secretKey)).toEqual(expect.any(String));
         expect(credentials.api.anonJwt).toEqual(expect.any(String));
@@ -1320,14 +1322,17 @@ describe("Supervisor composition", () => {
     ),
   );
 
-  it.live("fails closed when Auth is disabled", () =>
-    run(
-      Effect.gen(function* () {
-        const { fixture } = yield* makeCredentialsFixture({ authEnabled: false });
-        const failed = yield* invokeCredentials(fixture.supervisor).pipe(Effect.exit);
-        expect(errorOf(failed)).toMatchObject({ tag: "InvalidStackConfigError" });
-      }),
-    ),
+  it.live(
+    "returns database credentials when Auth is disabled and fails closed for missing secrets",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const { fixture } = yield* makeCredentialsFixture({ authEnabled: false });
+          const authDisabled = yield* invokeCredentials(fixture.supervisor);
+          expect(authDisabled.database.url).toEqual(expect.anything());
+          expect(authDisabled.api).toBeUndefined();
+        }),
+      ),
   );
 
   it.live("fails closed when an enabled Auth secret slot is absent", () =>

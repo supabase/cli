@@ -6,6 +6,7 @@ import { debugLoggerLayer } from "../../../command-internal/debug-logger.layer.t
 import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts";
 import { stackStartCommand as stackStartCommandBase } from "./start/start.command.ts";
 import { stackStopCommand as stackStopCommandBase } from "./stop/stop.command.ts";
+import { stackStatusCommand as stackStatusCommandBase } from "./status/status.command.ts";
 import { stackDestroyCommand as stackDestroyCommandBase } from "./destroy/destroy.command.ts";
 import { stackLogsCommand as stackLogsCommandBase } from "./logs/logs.command.ts";
 import { stackApiLayer, stackTargetResolverLayer } from "./stack.shared.ts";
@@ -23,6 +24,9 @@ const stackStartCommand = stackStartCommandBase.pipe(
 const stackStopCommand = stackStopCommandBase.pipe(
   Command.provide(commandRuntimeLayer(["stack", "stop"])),
 );
+const stackStatusCommand = stackStatusCommandBase.pipe(
+  Command.provide(commandRuntimeLayer(["stack", "status"])),
+);
 const stackDestroyCommand = stackDestroyCommandBase.pipe(
   Command.provide(commandRuntimeLayer(["stack", "destroy"])),
 );
@@ -37,6 +41,7 @@ export const stackCommand = Command.make("stack").pipe(
   Command.withShortDescription("Manage experimental local stacks"),
   Command.withSubcommands([
     stackStartCommand,
+    stackStatusCommand,
     stackStopCommand,
     stackDestroyCommand,
     stackLogsCommand,
