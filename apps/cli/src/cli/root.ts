@@ -15,7 +15,7 @@ import { stackStatusCommand } from "../commands/experimental/stack/status/status
 import type { StackBackend } from "../commands/experimental/stack/stack-backend.ts";
 import { computeCommand } from "../commands/experimental/compute/compute.command.ts";
 import { feedbackCommand } from "../commands/feedback/feedback.command.ts";
-import { functionsCommand } from "../commands/functions/functions.command.ts";
+import { functionsCommandForBackend } from "../commands/functions/functions.command.ts";
 import { genCommand } from "../commands/gen/gen.command.ts";
 import { initCommand } from "../commands/init/init.command.ts";
 import { inspectCommand } from "../commands/inspect/inspect.command.ts";
@@ -101,7 +101,7 @@ export const rootCommandForFeatures = (
       domainsCommand,
       encryptionCommand,
       feedbackCommand,
-      functionsCommand,
+      functionsCommandForBackend(options.stackBackend),
       genCommand,
       initCommand,
       inspectCommand,

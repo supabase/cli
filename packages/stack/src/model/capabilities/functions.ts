@@ -37,6 +37,7 @@ export type FunctionsInspectorSettings = Schema.Schema.Type<
 
 export const FunctionsSettingsSchema = Schema.Struct({
   functions_root: Schema.optionalKey(Schema.String),
+  debug: Schema.optionalKey(Schema.Boolean),
   /** Edge Runtime behavior; capability enabled and functionsInspector port are public fields. */
   edge_runtime: Schema.optionalKey(EdgeRuntimeSettingsSchema),
   inspector: Schema.optionalKey(FunctionsInspectorSettingsSchema),

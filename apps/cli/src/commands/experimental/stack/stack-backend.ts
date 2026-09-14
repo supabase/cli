@@ -44,9 +44,13 @@ export const resolveStackBackend = (input: {
       commandPath[0] === "__complete" || commandPath[0] === "__completeNoDesc"
         ? commandPath.slice(1)
         : commandPath;
-    const command = completePath[0] === "help" ? completePath[1] : completePath[0];
+    const routedPath = completePath[0] === "help" ? completePath.slice(1) : completePath;
+    const command = routedPath[0];
+    const subcommand = routedPath[1];
+    const isFunctionsServe = command === "functions" && subcommand === "serve";
     if (
       command !== undefined &&
+      !isFunctionsServe &&
       command !== "stack" &&
       command !== "start" &&
       command !== "stop" &&

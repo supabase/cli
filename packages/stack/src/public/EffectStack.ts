@@ -86,6 +86,7 @@ import {
   type StackCredentialsError,
   type PrepareStackError,
   type StackStartError,
+  type ServeFunctionsError,
   type StackStopError,
   type StackLogsError,
   type DestroyStackError,
@@ -97,6 +98,7 @@ import {
   STACK_STATUS_ERROR_TAGS,
   STACK_CREDENTIALS_ERROR_TAGS,
   STACK_START_ERROR_TAGS,
+  SERVE_FUNCTIONS_ERROR_TAGS,
   STACK_STOP_ERROR_TAGS,
   STACK_LOGS_ERROR_TAGS,
   DESTROY_STACK_ERROR_TAGS,
@@ -132,6 +134,10 @@ import {
 } from "../preparation/RuntimeArtifacts.ts";
 
 export interface StartStackOptions {
+  readonly config?: StackConfig;
+}
+/** Invocation-only configuration for activating Functions on a running stack. */
+export interface ServeFunctionsOptions {
   readonly config?: StackConfig;
 }
 export interface PrepareStackOptions {
@@ -192,6 +198,10 @@ export interface EffectStack {
     options?: PrepareStackOptions,
   ) => Effect.Effect<PrepareStackResult, PrepareStackError>;
   readonly start: (options?: StartStackOptions) => Effect.Effect<StackStatus, StackStartError>;
+  /** Replaces the Functions workload without changing durable stack configuration. */
+  readonly serveFunctions: (
+    options?: ServeFunctionsOptions,
+  ) => Effect.Effect<StackStatus, ServeFunctionsError>;
   readonly stop: Effect.Effect<void, StackStopError>;
   readonly destroy: Effect.Effect<void, DestroyStackError>;
   readonly logs: (query?: LogQuery) => Effect.Effect<StackLogBatch, StackLogsError>;
@@ -307,6 +317,10 @@ const credentialsError = (error: ControlError): StackCredentialsError =>
   );
 const startError = (error: ControlError): StackStartError =>
   narrowError(error, STACK_START_ERROR_TAGS, (message) => new StackStateInvalidError({ message }));
+const serveFunctionsError = (error: ControlError): ServeFunctionsError =>
+  narrowError(error, SERVE_FUNCTIONS_ERROR_TAGS, (message) =>
+    new StackStateInvalidError({ message }),
+  );
 const stopError = (error: ControlError): StackStopError =>
   narrowError(
     error,
@@ -611,6 +625,33 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
         ),
       );
     };
+    const serveFunctions = (serveOptions?: ServeFunctionsOptions) =>
+      invoke(
+        (rpc) =>
+          serveOptions?.config === undefined
+            ? rpc.serveFunctions({})
+            : rpc.serveFunctions({ config: serveOptions.config }),
+        serveFunctionsError,
+      ).pipe(
+        Effect.catchTag("StackOwnershipConflictError", (ownershipError) =>
+          options.readOfflineState.pipe(
+            Effect.mapError(serveFunctionsError),
+            Effect.flatMap((state): Effect.Effect<never, ServeFunctionsError> =>
+              Option.isNone(state)
+                ? Effect.fail(stackNotFound())
+                : isStoppedState(state.value)
+                  ? Effect.fail(
+                      new StackNotRunningError({
+                        stackId: id,
+                        message: "Stack must be running before serving Functions",
+                      }),
+                    )
+                  : Effect.fail(ownershipError),
+            ),
+            Effect.catchTag("StackOwnershipConflictError", () => Effect.fail(ownershipError)),
+          ),
+        ),
+      );
     const logsStateError = (error: StackError): StackLogsError =>
       isNarrowError(error, STACK_LOGS_ERROR_TAGS)
         ? error
@@ -696,6 +737,7 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
       credentials,
       prepare,
       start,
+      serveFunctions,
       stop,
       destroy,
       logs,

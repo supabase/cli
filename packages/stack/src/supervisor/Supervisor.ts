@@ -49,6 +49,7 @@ import { isMissingStateRemnantError, type StackStateStore } from "../state/Stack
 import { makeSessionLauncher, type SessionLauncher } from "./SessionLauncher.ts";
 import {
   makeLifecycleController,
+  materializeLifecycleCandidate,
   type LifecycleBackend,
   type LifecycleInput,
 } from "./Lifecycle.ts";
@@ -102,6 +103,9 @@ export interface SupervisorRuntime {
 export interface Supervisor {
   readonly status: Effect.Effect<StackStatus, StackError>;
   readonly start: (options?: {
+    readonly config?: StackConfig;
+  }) => Effect.Effect<StackStatus, StackError>;
+  readonly serveFunctions: (options?: {
     readonly config?: StackConfig;
   }) => Effect.Effect<StackStatus, StackError>;
   readonly destroy: Effect.Effect<void, StackError>;
@@ -331,6 +335,67 @@ export const makeSupervisor = (
       PersistedStackState,
       GatewayActivationError | StackError
     > => ensureActivationPhaseAllowed().pipe(Effect.andThen(ensureActivationStateAllowed()));
+    const transientFunctionsInput = (
+      config: StackConfig,
+    ): Effect.Effect<LifecycleInput, GatewayActivationError | StackError> =>
+      Effect.gen(function* () {
+        const state = yield* ensureActivationStateAllowed();
+        const definition = state.definition;
+        if (definition === undefined)
+          return yield* new StackStateInvalidError({
+            stackId: options.stackId,
+            message: "Stack Functions activation requires a stack definition",
+          });
+        if (!definition.capabilities.functions.enabled)
+          return yield* new GatewayActivationError({
+            capability: "functions",
+            message: "Capability functions is not enabled in the running stack",
+          });
+        const candidate = yield* materializeLifecycleCandidate(
+          { ...state, desiredLifecycle: "unconfigured" },
+          state.runtime,
+          config,
+        ).pipe(Effect.provideContext(options.context));
+        if (!candidate.definition.capabilities.functions.enabled)
+          return yield* new GatewayActivationError({
+            capability: "functions",
+            message: "Capability functions is disabled in project configuration",
+          });
+        const functionSecrets = Object.fromEntries(
+          Object.entries(candidate.secrets).filter(([slot]) => slot.startsWith("secret:functions.")),
+        );
+        const durableSecrets = Object.fromEntries(
+          Object.entries(state.secrets).filter(([slot]) => !slot.startsWith("secret:functions.")),
+        );
+        const transientDefinition = {
+          ...definition,
+          capabilities: {
+            ...definition.capabilities,
+            functions: {
+              ...definition.capabilities.functions,
+              settings: candidate.definition.capabilities.functions.settings,
+            },
+          },
+        };
+        const transientState: PersistedStackState = {
+          ...state,
+          definition: transientDefinition,
+          secrets: { ...durableSecrets, ...functionSecrets },
+        };
+        const plan = yield* rebuildExecutionPlan(state.runtime, transientDefinition).pipe(
+          Effect.provideContext(options.context),
+          Effect.mapError(
+            (error) => new StackStateInvalidError({ message: error.message, cause: error }),
+          ),
+        );
+        return {
+          stackId: options.stackId,
+          state: transientState,
+          definition: transientDefinition,
+          secrets: transientState.secrets,
+          plan,
+        };
+      });
     const shutdownSignal = yield* Deferred.make<void, never>();
     const signalShutdown = Deferred.succeed(shutdownSignal, undefined).pipe(Effect.asVoid);
     const ensureAcceptingOperations = Deferred.poll(shutdownSignal).pipe(
@@ -504,23 +569,26 @@ export const makeSupervisor = (
 
     const activateOperation = (
       capability: CapabilityName,
+      inputOverride?: LifecycleInput,
     ): Effect.Effect<ActivationResult, GatewayActivationError | StackError> =>
       Effect.gen(function* () {
-        const state = yield* ensureActivationAllowed();
+        const state = inputOverride?.state ?? (yield* ensureActivationAllowed());
         const definition = state.definition;
         if (definition === undefined || !definition.capabilities[capability].enabled)
           return yield* new GatewayActivationError({
             message: `Capability ${capability} is not enabled`,
           });
-        const plan = yield* rebuildExecutionPlan(state.runtime, definition).pipe(
-          Effect.provideContext(options.context),
-          Effect.mapError(
-            (error) => new StackStateInvalidError({ message: error.message, cause: error }),
-          ),
-        );
+        const plan =
+          inputOverride?.plan ??
+          (yield* rebuildExecutionPlan(state.runtime, definition).pipe(
+            Effect.provideContext(options.context),
+            Effect.mapError(
+              (error) => new StackStateInvalidError({ message: error.message, cause: error }),
+            ),
+          ));
         const previousActive = yield* Ref.get(active);
         const next = new Set([...previousActive, ...dependencyClosure(plan, [capability])]);
-        const input: LifecycleInput = {
+        const input: LifecycleInput = inputOverride ?? {
           stackId: options.stackId,
           state,
           definition,
@@ -553,22 +621,34 @@ export const makeSupervisor = (
       | {
           readonly _tag: "deferred";
           readonly result: Deferred.Deferred<ActivationExit, never>;
+        }
+      | {
+          readonly _tag: "wait-then-replace";
+          readonly result: Deferred.Deferred<ActivationExit, never>;
         };
     const activate = (
       capability: CapabilityName,
+      config?: StackConfig,
     ): Effect.Effect<ActivationResult, GatewayActivationError | StackError> =>
       Effect.gen(function* () {
         const token = yield* admission.withPermit(
           Effect.gen(function* () {
             yield* ensureActivationPhaseAllowed();
             const current = activationOwned.get(capability);
-            if (current?._tag === "ready" && (yield* Ref.get(phase)) === "running")
+            if (
+              config === undefined &&
+              current?._tag === "ready" &&
+              (yield* Ref.get(phase)) === "running"
+            )
               return {
                 _tag: "exit",
                 result: Exit.succeed(current.result),
               } satisfies ActivationToken;
             if (current?._tag === "pending")
-              return { _tag: "deferred", result: current.result } satisfies ActivationToken;
+              return {
+                _tag: config === undefined ? "deferred" : "wait-then-replace",
+                result: current.result,
+              } satisfies ActivationToken;
             // Validate durable lifecycle state only for a new activation. Ready
             // entries above are already fenced by the in-memory phase checks.
             yield* ensureActivationStateAllowed();
@@ -590,7 +670,27 @@ export const makeSupervisor = (
                     .pipe(
                       Effect.flatMap((stillAdmitted) =>
                         stillAdmitted
-                          ? activateOperation(capability)
+                          ? Effect.gen(function* () {
+                              const input =
+                                config === undefined
+                                  ? undefined
+                                  : yield* transientFunctionsInput(config);
+                              if (input !== undefined) {
+                                const reset = yield* launcher
+                                  .resetCapability(capability)
+                                  .pipe(Effect.mapError(mapCleanupError), Effect.exit);
+                                if (Exit.isFailure(reset)) {
+                                  yield* Ref.set(phase, "stopping");
+                                  return yield* Effect.failCause(reset.cause);
+                                }
+                                yield* Ref.update(active, (current) => {
+                                  const next = new Set(current);
+                                  next.delete(capability);
+                                  return next;
+                                });
+                              }
+                              return yield* activateOperation(capability, input);
+                            })
                           : Effect.fail(
                               new StackLifecycleConflictError({
                                 stackId: options.stackId,
@@ -628,9 +728,16 @@ export const makeSupervisor = (
         );
         if (token._tag === "deferred")
           return yield* Deferred.await(token.result).pipe(Effect.flatMap(joinExit));
+        if (token._tag === "wait-then-replace") {
+          yield* Deferred.await(token.result);
+          return yield* activate(capability, config);
+        }
         return yield* joinExit(token.result);
       });
     yield* Deferred.succeed(activationHandler, activate);
+
+    const serveFunctions = (serveOptions?: { readonly config?: StackConfig }) =>
+      activate("functions", serveOptions?.config).pipe(Effect.andThen(snapshot()));
 
     const startOperation = (startOptions?: { readonly config?: StackConfig }) =>
       Effect.gen(function* () {
@@ -903,12 +1010,15 @@ export const makeSupervisor = (
       status: () => operation(status),
       credentials: () => credentials,
       start: ({ config }: { readonly config?: StackConfig }) => operation(start({ config })),
+      serveFunctions: ({ config }: { readonly config?: StackConfig }) =>
+        operation(serveFunctions({ config })),
       destroy: () => operation(destroy),
       logs: (query: LogQuery) => operation(logs(query)),
     });
     return {
       status,
       start,
+      serveFunctions,
       destroy,
       shutdown: Deferred.await(shutdownSignal),
       shutdownIfIdle,

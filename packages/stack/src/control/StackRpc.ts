@@ -9,7 +9,7 @@ import { StackStatusSchema } from "../public/Status.ts";
 import { STACK_ERROR_TAGS } from "../public/Errors.ts";
 
 /** Pinned release identifier used to detect incompatible live owners. */
-export const STACK_RPC_RELEASE = "stack-rpc-v1@0.1.0" as const;
+export const STACK_RPC_RELEASE = "stack-rpc-v2@0.1.0" as const;
 
 const StackRpcErrorTagSchema = Schema.Literals([...STACK_ERROR_TAGS] as const);
 
@@ -30,6 +30,11 @@ const StackRpc = {
     success: StackStatusSchema,
     error: StackRpcErrorSchema,
   }),
+  serveFunctions: Rpc.make("serveFunctions", {
+    payload: Schema.Struct({ config: Schema.optionalKey(StackConfigSchema) }),
+    success: StackStatusSchema,
+    error: StackRpcErrorSchema,
+  }),
   destroy: Rpc.make("destroy", { success: Schema.Void, error: StackRpcErrorSchema }),
   logs: Rpc.make("logs", {
     payload: LogQuerySchema,
@@ -42,6 +47,7 @@ export const StackRpcGroup = RpcGroup.make(
   StackRpc.status,
   StackRpc.credentials,
   StackRpc.start,
+  StackRpc.serveFunctions,
   StackRpc.destroy,
   StackRpc.logs,
 );

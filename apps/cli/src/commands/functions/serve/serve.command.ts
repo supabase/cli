@@ -21,7 +21,7 @@ const functionsServeRuntimeLayer = Layer.mergeAll(
   commandRuntimeLayer(["functions", "serve"]),
 );
 
-const config = {
+export const functionsServeFlagConfig = {
   noVerifyJwt: Flag.boolean("no-verify-jwt").pipe(
     Flag.withDescription("Disable JWT verification for the Function."),
     Flag.optional,
@@ -55,19 +55,22 @@ const config = {
   ),
 } as const;
 
-const commandConfig = {
-  ...config,
+export const functionsServeCommandConfig = {
+  ...functionsServeFlagConfig,
   functionNames: Argument.string("Function name").pipe(
     Argument.withDescription("Legacy Function names. All Functions are served."),
     Argument.variadic(),
   ),
 } as const;
 
-export const functionsServeCommand = Command.make("serve", commandConfig).pipe(
+export const functionsServeCommand = Command.make("serve", functionsServeCommandConfig).pipe(
   Command.withDescription("Serve all Functions locally."),
   Command.withShortDescription("Serve all Functions locally"),
   Command.withHandler((flags) =>
-    functionsServe(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),
+    functionsServe(flags).pipe(
+      withCommandTelemetry({ flags, config: functionsServeFlagConfig }),
+      withJsonErrorHandling,
+    ),
   ),
   Command.provide(functionsServeRuntimeLayer),
 );

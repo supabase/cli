@@ -1079,6 +1079,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
       EDGE_RUNTIME_DENO_VERSION: valueAt(state, "functions", "edge_runtime.deno_version"),
       INSPECTOR_MODE: valueAt(state, "functions", "inspector.mode"),
       INSPECTOR_MAIN: valueAt(state, "functions", "inspector.main"),
+      SUPABASE_INTERNAL_DEBUG: valueAt(state, "functions", "debug"),
     }),
     containerArgs: (state, _workload, port) => [
       "start",
