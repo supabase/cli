@@ -25,12 +25,13 @@ import {
   NotebooksPaginationError,
 } from "./notebooks.errors.ts";
 import { notebooksPullHandler } from "./pull/pull.command.ts";
+import { notebooksPushHandler } from "./push/push.command.ts";
 
 const temp = useTempWorkdir("supabase-notebooks-regression-");
 const ID = "44444444-4444-4444-8444-444444444444";
 const OTHER_ID = "55555555-5555-4555-8555-555555555555";
 const LOCAL = '{"content":{"cells":[{"type":"markdown","text":"local edits"}]}}';
-const commands = ["pull"] as const;
+const commands = ["pull", "push"] as const;
 type Command = (typeof commands)[number];
 
 const run = Effect.fnUntraced(function* (
@@ -38,9 +39,14 @@ const run = Effect.fnUntraced(function* (
   name?: string,
   projectRef: Option.Option<string> = Option.some(NOTEBOOKS_PROJECT_REF),
 ) {
-  return yield* notebooksPullHandler({
+  if (command === "pull")
+    return yield* notebooksPullHandler({
+      projectRef,
+      notebookId: Option.fromUndefinedOr(name),
+    });
+  return yield* notebooksPushHandler({
     projectRef,
-    notebookId: Option.fromUndefinedOr(name),
+    notebookName: Option.fromUndefinedOr(name),
   });
 });
 
@@ -79,6 +85,70 @@ function downloaded(name: string, id = ID) {
 }
 
 describe("notebook file preservation", () => {
+  it.live("round-trips notebook metadata, cell identities, charts, and log ranges", () => {
+    const cells = [
+      { id: "markdown-cell", type: "markdown", text: "# Report", collapsed: true },
+      {
+        id: "database-cell",
+        type: "database",
+        sql: "select 1",
+        view: "chart",
+        chart: {
+          cumulative: false,
+          scale: "linear",
+          show_labels: true,
+          type: "line",
+          x_column: "time",
+          y_series: [{ column: "count", color: "green" }],
+        },
+      },
+      {
+        id: "log-cell",
+        type: "log",
+        sql: "select timestamp from postgres_logs",
+        time_range: {
+          type: "absolute",
+          start: "2026-01-01T00:00:00Z",
+          end: "2026-01-02T00:00:00Z",
+        },
+      },
+    ];
+    const pulling = setup("pull", {
+      routes: {
+        [`GET ${notebooksRoute()}`]: list([remote("sales")]),
+        [`GET ${notebooksRoute(`/${ID}`)}`]: {
+          status: 200,
+          body: {
+            data: notebookResource({
+              id: ID,
+              name: "sales",
+              description: "Shared report",
+              favorite: true,
+              cells,
+            }),
+          },
+        },
+      },
+    });
+    const pushing = setup("push", {
+      routes: {
+        [`GET ${notebooksRoute()}`]: list([remote("sales")]),
+        [`PATCH ${notebooksRoute(`/${ID}`)}`]: downloaded("sales"),
+      },
+    });
+    return Effect.gen(function* () {
+      yield* run("pull").pipe(Effect.provide(pulling.layer));
+      yield* run("push", "sales").pipe(Effect.provide(pushing.layer));
+      const request = pushing.http.requests.find((entry) => entry.method === "PATCH");
+      expect(JSON.parse(request?.body ?? "{}").data.attributes).toEqual({
+        name: "sales",
+        description: "Shared report",
+        favorite: true,
+        content: { cells },
+      });
+    });
+  });
+
   it.live.each([
     { local: "Sales", name: "sales" },
     { local: "café", name: "cafe\u0301" },
@@ -207,6 +277,24 @@ describe("notebook file preservation", () => {
 });
 
 describe("notebook reconciliation preflight", () => {
+  it.live("reports a local read failure without uploading notebooks", () => {
+    write("sales");
+    const { layer, http } = setup("push");
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const error = yield* run("push").pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          readFileString: (path) => fs.readFileString(`${path}.missing`),
+        }),
+        Effect.flip,
+      );
+      expect(error).toBeInstanceOf(NotebookFileError);
+      expect(read("sales")).toBe(LOCAL);
+      expect(http.requests).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("reports a failed local deletion without losing the notebook", () => {
     write("sales");
     const { layer, cache, telemetry } = setup("pull", { promptSelectResponses: ["delete"] });
@@ -226,6 +314,65 @@ describe("notebook reconciliation preflight", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live.each(["keep", "delete"])(
+    "can %s remote notebooks with unsupported filenames",
+    (choice) => {
+      write("sales");
+      const { layer, http } = setup("push", {
+        promptSelectResponses: [choice],
+        routes: {
+          [`GET ${notebooksRoute()}`]: list([remote("sales"), remote("reports/weekly", OTHER_ID)]),
+          [`PATCH ${notebooksRoute(`/${ID}`)}`]: downloaded("sales"),
+          [`DELETE ${notebooksRoute(`/${OTHER_ID}`)}`]: { status: 204 },
+        },
+      });
+      return Effect.gen(function* () {
+        yield* run("push");
+        expect(http.requests.filter((request) => request.method === "PATCH")).toHaveLength(1);
+        expect(http.requests.filter((request) => request.method === "DELETE")).toHaveLength(
+          choice === "delete" ? 1 : 0,
+        );
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live.each(["reports/weekly", "Sales"])(
+    "validates copying %s before uploading local edits",
+    (name) => {
+      write("sales");
+      const { layer, http } = setup("push", {
+        promptSelectResponses: ["copy"],
+        routes: { [`GET ${notebooksRoute()}`]: list([remote("sales"), remote(name, OTHER_ID)]) },
+      });
+      return Effect.gen(function* () {
+        expect(Exit.isFailure(yield* run("push").pipe(Effect.exit))).toBe(true);
+        expect(read("sales")).toBe(LOCAL);
+        expect(http.requests).toHaveLength(1);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live("pushes a selected notebook despite unrelated duplicate names", () => {
+    write("sales");
+    const { layer, http } = setup("push", {
+      routes: {
+        [`GET ${notebooksRoute()}`]: list([
+          remote("sales"),
+          remote("other", OTHER_ID),
+          remote("other", "66666666-6666-4666-8666-666666666666"),
+        ]),
+        [`PATCH ${notebooksRoute(`/${ID}`)}`]: downloaded("sales"),
+      },
+    });
+    return Effect.gen(function* () {
+      yield* run("push", "sales");
+      expect(http.routeKeys).toEqual([
+        `GET ${notebooksRoute()}`,
+        `PATCH ${notebooksRoute(`/${ID}`)}`,
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("validates all local files before creating any during pull reconciliation", () => {
     write("a-good");
     write("z-broken", "{}");
@@ -237,9 +384,9 @@ describe("notebook reconciliation preflight", () => {
   });
 
   it.live.each(commands)("leaves divergence alone when the %s prompt is cancelled", (command) => {
-    write("local");
+    if (command === "pull") write("local");
     const { layer, http, cache, telemetry } = setup(command, {
-      routes: { [`GET ${notebooksRoute()}`]: list([]) },
+      routes: { [`GET ${notebooksRoute()}`]: list(command === "push" ? [remote("remote")] : []) },
     });
     return Effect.gen(function* () {
       const output = yield* Output;
@@ -298,10 +445,12 @@ describe.each(commands)("notebooks %s command wiring", (command) => {
   it.live.each([{ interactive: false }, { goOutput: "json" as const }])(
     "keeps divergence without prompting in unattended text output (%j)",
     (options) => {
-      write("local");
+      if (command === "pull") write("local");
       const { layer, out, http } = setup(command, {
         ...options,
-        routes: { [`GET ${notebooksRoute()}`]: list([]) },
+        routes: {
+          [`GET ${notebooksRoute()}`]: list(command === "push" ? [remote("reports/weekly")] : []),
+        },
       });
       return Effect.gen(function* () {
         yield* run(command);

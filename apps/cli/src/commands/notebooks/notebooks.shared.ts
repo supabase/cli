@@ -15,11 +15,11 @@ import {
 } from "./notebooks.errors.ts";
 
 /**
- * The shared half of the `supabase notebooks` commands: where notebooks live on
- * disk, what a notebook file is, and the Management API routes the commands
- * drive. The handlers own the flow — which side is copied where, and what to do
- * about the notebooks only one side has. This module provides the shared
- * reconciliation prompt.
+ * The shared half of `supabase notebooks push` / `pull`: where notebooks live on
+ * disk, what a notebook file is, and the five Management API routes both
+ * commands drive. The handlers own the flow — which side is copied where, and
+ * what to do about the notebooks only one side has. This module provides the
+ * shared reconciliation prompt.
  *
  * A notebook's identity across the two sides is its **name**, which is the file
  * name: the API assigns a uuid, but a checkout is shared through git and a uuid
@@ -442,8 +442,21 @@ export const uploadNotebook = Effect.fnUntraced(function* (options: {
   return "updated" as const;
 });
 
+export const deleteRemoteNotebook = Effect.fnUntraced(function* (
+  api: ApiClient,
+  ref: string,
+  notebook: RemoteNotebook,
+) {
+  yield* api.v2
+    .deleteNotebook({ ref, id: notebook.id })
+    .pipe(
+      Effect.catch(mapNotebookHttpError(`delete notebook ${notebook.name}`)),
+      withNotebookTask(`Deleting notebook ${notebook.name}`),
+    );
+});
+
 /** What to do about the notebooks only one of the two sides has. */
-type NotebooksReconcileChoice = "keep" | "delete" | "copy";
+export type NotebooksReconcileChoice = "keep" | "delete" | "copy";
 
 /**
  * Asks what should happen to the notebooks the other side does not have.
