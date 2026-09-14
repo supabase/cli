@@ -36,6 +36,7 @@ export const CliErrorCategory = {
   PlanLimit: "plan_limit",
   ProjectPaused: "project_paused",
   InvalidInput: "invalid_input",
+  ResourceLimit: "resource_limit",
   Network: "network",
   ApiStatus: "api_status",
   Cancelled: "cancelled",
@@ -86,6 +87,7 @@ const CLI_ERROR_FINGERPRINT_SUFFIXES = [
   "cancelled",
   "connect",
   "container_configuration",
+  "container_killed",
   "daemon_start",
   "daemon_protocol",
   "daemon_status",
@@ -106,6 +108,7 @@ const CLI_ERROR_FINGERPRINT_SUFFIXES = [
   "invalid_config",
   "network",
   "not_found",
+  "out_of_memory",
   "plan_limit",
   "platform_error",
   "port_allocation",
@@ -132,7 +135,8 @@ type UserActionableErrorCategory =
   | typeof CliErrorCategory.Permission
   | typeof CliErrorCategory.PlanLimit
   | typeof CliErrorCategory.ProjectPaused
-  | typeof CliErrorCategory.InvalidInput;
+  | typeof CliErrorCategory.InvalidInput
+  | typeof CliErrorCategory.ResourceLimit;
 
 type CliErrorKindCategory =
   | {
@@ -354,6 +358,16 @@ export const actionability = {
     suggestion_type: CliSuggestionType.RunCommand,
     suggested_command: "supabase stop",
   },
+  /**
+   * A container was killed for exceeding its memory limit — the user can raise
+   * the runtime's memory allocation, so this is not an internal bug.
+   */
+  resourceLimit: {
+    error_kind: CliErrorKind.UserActionable,
+    error_category: CliErrorCategory.ResourceLimit,
+    has_suggestion: true,
+    suggestion_type: CliSuggestionType.UpdateConfig,
+  },
   externalNetwork: {
     error_kind: CliErrorKind.ExternalService,
     error_category: CliErrorCategory.Network,
@@ -479,7 +493,8 @@ function isUserActionableCategory(value: unknown): value is UserActionableErrorC
     value === CliErrorCategory.Permission ||
     value === CliErrorCategory.PlanLimit ||
     value === CliErrorCategory.ProjectPaused ||
-    value === CliErrorCategory.InvalidInput
+    value === CliErrorCategory.InvalidInput ||
+    value === CliErrorCategory.ResourceLimit
   );
 }
 
