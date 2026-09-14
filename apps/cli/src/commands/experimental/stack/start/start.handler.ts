@@ -2,7 +2,6 @@ import { Effect, Match, Option } from "effect";
 import {
   excludeStackCapabilities,
   isStackError,
-  type StackStatus,
   type StackRuntimePreference,
 } from "@supabase/stack/effect";
 import { Output } from "../../../../shared/output/output.service.ts";
@@ -14,42 +13,14 @@ import {
   StackTargetError,
   StackTargetResolver,
   rejectStackOutput,
+  renderStackStatus,
+  stackStatusPayload,
   validateStackTarget,
 } from "../stack.shared.ts";
 import { loadStackConfig } from "../stack-config.ts";
 import type { StackStartFlags } from "./start.command.ts";
 import { StackCommandStartError } from "./start.errors.ts";
 import { STACK_START_EXCLUDABLE_CAPABILITIES } from "./start.options.ts";
-
-const statusPayload = (status: StackStatus) => ({
-  id: status.id,
-  lifecycle: status.lifecycle,
-  desired_lifecycle: status.desiredLifecycle,
-  runtime: status.runtime,
-  endpoints: status.endpoints,
-  versions: status.versions,
-  capabilities: status.capabilities,
-  artifacts: status.artifacts,
-});
-
-const renderStatus = (status: StackStatus): string => {
-  const lines = [
-    `Stack ${status.id}`,
-    `Runtime: ${status.runtime.kind}`,
-    `Lifecycle: ${status.lifecycle}`,
-  ];
-  const endpoints = Object.entries(status.endpoints);
-  if (endpoints.length > 0) {
-    lines.push("Endpoints:");
-    for (const [name, endpoint] of endpoints) {
-      if (endpoint !== undefined) lines.push(`  ${name}: ${endpoint.url}`);
-    }
-  }
-  const dormant = status.capabilities.filter((capability) => capability.state === "dormant");
-  if (dormant.length > 0)
-    lines.push(`Dormant capabilities: ${dormant.map(({ name }) => name).join(", ")}`);
-  return `${lines.join("\n")}\n`;
-};
 
 const eagerlyActivate = <
   T extends { readonly enabled?: boolean; readonly activation?: "eager" | "lazy" },
@@ -184,9 +155,9 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       Effect.mapError(stackStartError),
     );
     if (output.format === "text") {
-      yield* output.raw(renderStatus(status));
+      yield* output.raw(renderStackStatus(status));
     } else {
-      yield* output.success("", statusPayload(status));
+      yield* output.success("", stackStatusPayload(status));
     }
     return status;
   });
