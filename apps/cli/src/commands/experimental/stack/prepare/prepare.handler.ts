@@ -70,17 +70,6 @@ export const stackPrepare = Effect.fn("experimental.stack.prepare")(function* (
           }),
       ),
     );
-    const disabledCapability = flags.capability.find((capability) => {
-      const configured = config.capabilities?.[capability];
-      return configured !== undefined && "enabled" in configured && configured.enabled === false;
-    });
-    if (disabledCapability !== undefined) {
-      return yield* new StackCommandPrepareError({
-        reason: "invalid-config",
-        message: `Capability ${disabledCapability} is disabled in config`,
-        suggestion: "Enable the capability in config or omit --capability.",
-      });
-    }
     const runtime: StackRuntimePreference | undefined = target.runtime;
     const stack =
       target.id !== undefined
@@ -103,7 +92,7 @@ export const stackPrepare = Effect.fn("experimental.stack.prepare")(function* (
           Exit.isSuccess(exit)
             ? task.clear()
             : Option.match(Cause.findErrorOption(exit.cause), {
-                onNone: () => task.cancel(),
+                onNone: () => (Cause.hasInterruptsOnly(exit.cause) ? task.cancel() : task.fail()),
                 onSome: (error) => task.fail(error.message),
               }),
         ),

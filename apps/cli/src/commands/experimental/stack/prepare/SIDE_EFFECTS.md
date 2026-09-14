@@ -2,13 +2,16 @@
 
 The command is available only when the `experimental.stack` family is enabled. It resolves the
 selected project and stack, loads the effective project configuration, and delegates immutable
-artifact preparation to `@supabase/stack`. It downloads or pulls artifacts without starting,
-stopping, destroying, or activating any service.
+artifact preparation to `@supabase/stack`. If the target does not exist, it creates and registers
+the stack so it appears in `supabase stack list` and can later be removed with `supabase stack
+destroy`. It downloads or pulls artifacts without starting, stopping, destroying, or activating
+any service.
 
 ## Files read
 
-- `<workdir>/supabase/config.toml` or `config.json`, plus project dotenv files and supported
-  `SUPABASE_*` overrides used by the shared stack config loader.
+- `<workdir>/supabase/config.toml`, plus project dotenv files and supported `SUPABASE_*` overrides
+  used by the shared stack config loader. The feature gate may inspect `config.json`; it does not
+  supply prepare settings.
 - `<SUPABASE_HOME or ~/.supabase>/managed/stacks/<stack-id>/state.json` for an existing stack.
 - `<SUPABASE_HOME or ~/.supabase>/profile` and an explicitly selected profile when shared settings
   resolve them.
@@ -43,8 +46,9 @@ dependency selection, cache, and cancellation behavior.
 existing stacks reuse their persisted runtime, and an explicit runtime that differs from an existing
 stack fails. When no project configuration exists, the stack package's default settings are used.
 With no `--capability`, all enabled capabilities are
-prepared. Repeated `--capability` values are passed to the package, which includes dependencies and
-rejects unknown capabilities; explicitly disabled capabilities are rejected before preparation.
+prepared. `--capability` is a bounded repeatable choice flag with at most ten occurrences; each
+occurrence names one capability, and the package includes dependencies and deduplicates its closure.
+Unknown capability names are rejected by the flag parser; disabled capabilities are rejected by the package.
 The legacy `-o/--output` flag is rejected; use
 `--output-format`.
 
@@ -56,6 +60,7 @@ use typed actionability and retain package diagnostics.
 ## Exit codes
 
 - `0` when preparation completes.
+- `130` when preparation is interrupted.
 - `1` for invalid targets/configuration, unavailable runtime or registry, preparation failures, or
   rejected output flags.
 

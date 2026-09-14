@@ -46,7 +46,8 @@ export const stackPrepareError = (error: unknown): StackCommandPrepareError => {
       : Match.value(stackError).pipe(
           Match.tag("ContainerEngineError", () => ({
             reason: "runtime" as const,
-            suggestion: "Ensure the selected container engine is running and retry the command.",
+            suggestion:
+              "Check that the selected container engine is installed and its daemon is running, then retry the command.",
           })),
           Match.tag("ContainerPullError", () => ({
             reason: "registry" as const,
@@ -63,10 +64,17 @@ export const stackPrepareError = (error: unknown): StackCommandPrepareError => {
             "StackVersionUnsupportedError",
             "InvalidStackIdentityError",
             "InvalidProjectRootError",
-            "StackStateInvalidError",
-            "StackStateFormatUnsupportedError",
             () => ({ reason: "invalid-config" as const }),
           ),
+          Match.tag("StackStateInvalidError", () => ({
+            reason: "invalid-config" as const,
+            suggestion:
+              "Inspect the reported state error and restore a valid state record before retrying.",
+          })),
+          Match.tag("StackStateFormatUnsupportedError", () => ({
+            reason: "invalid-config" as const,
+            suggestion: "Use a CLI version compatible with the persisted stack state.",
+          })),
           Match.tag("StackNotFoundError", () => ({
             reason: "flags" as const,
           })),

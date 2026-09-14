@@ -25,7 +25,7 @@ export type StackPrepareFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const stackPrepareCommand = Command.make("prepare", config).pipe(
   Command.withDescription(
-    "Download artifacts for a managed local Supabase stack without starting its services.",
+    "Download artifacts for a managed local Supabase stack without starting its services. If the target does not exist, it is created and registered for later listing or destruction.",
   ),
   Command.withShortDescription("Prepare a managed local stack"),
   Command.withExamples([

@@ -1237,24 +1237,79 @@ describe("Effect stack lifecycle handoff", () => {
     ),
   );
 
-  it.live("rejects a disabled capability before preparing artifacts", () =>
+  it.live("rejects a directly disabled capability before preparing artifacts", () =>
     withRuntimeRoot((project) =>
       Effect.gen(function* () {
+        const env = yield* StackRuntimeEnvironment;
+        const fs = yield* FileSystem.FileSystem;
         const stack = yield* createStack({ projectRoot: project });
+        const paths = yield* resolveStackPaths({ stateRoot: env.stateRoot, stackId: stack.id });
+        const before = yield* fs.readFileString(paths.stateDocument);
+        const progress: Array<ArtifactPreparationStatus> = [];
         const result = yield* stack
           .prepare({
             config: { capabilities: { pooler: { enabled: false } } },
             capabilities: ["pooler"],
+            onProgress: (status) => progress.push(status),
           })
           .pipe(Effect.exit);
         expect(Exit.isFailure(result)).toBe(true);
         if (Exit.isFailure(result)) {
           const failure = Cause.findErrorOption(result.cause);
           expect(Option.isSome(failure)).toBe(true);
-          if (Option.isSome(failure)) expect(failure.value).toBeInstanceOf(StackPreparationError);
+          if (Option.isSome(failure)) {
+            expect(failure.value).toBeInstanceOf(InvalidStackConfigError);
+            expect(failure.value).toMatchObject({
+              stackId: stack.id,
+              capability: "pooler",
+              message: "Capability pooler is disabled",
+            });
+          }
         }
+        expect(progress).toEqual([]);
+        expect(yield* fs.readFileString(paths.stateDocument)).toBe(before);
+        expect(yield* readOwnerMetadata(env.stateRoot, stack.id, env)).toBeUndefined();
+        expect(yield* ownerLockExists(env.stateRoot, stack.id)).toBe(false);
       }),
     ),
+  );
+
+  it.live(
+    "rejects an enabled capability with a disabled dependency before preparing artifacts",
+    () =>
+      withRuntimeRoot((project) =>
+        Effect.gen(function* () {
+          const env = yield* StackRuntimeEnvironment;
+          const fs = yield* FileSystem.FileSystem;
+          const stack = yield* createStack({ projectRoot: project });
+          const paths = yield* resolveStackPaths({ stateRoot: env.stateRoot, stackId: stack.id });
+          const before = yield* fs.readFileString(paths.stateDocument);
+          const progress: Array<ArtifactPreparationStatus> = [];
+          const result = yield* stack
+            .prepare({
+              config: {
+                capabilities: {
+                  analytics: { enabled: false },
+                  studio: { enabled: true },
+                },
+              },
+              capabilities: ["studio"],
+              onProgress: (status) => progress.push(status),
+            })
+            .pipe(Effect.exit);
+          expect(Exit.isFailure(result)).toBe(true);
+          if (Exit.isFailure(result)) {
+            const failure = Cause.findErrorOption(result.cause);
+            expect(Option.isSome(failure)).toBe(true);
+            if (Option.isSome(failure))
+              expect(failure.value).toBeInstanceOf(InvalidStackConfigError);
+          }
+          expect(progress).toEqual([]);
+          expect(yield* fs.readFileString(paths.stateDocument)).toBe(before);
+          expect(yield* readOwnerMetadata(env.stateRoot, stack.id, env)).toBeUndefined();
+          expect(yield* ownerLockExists(env.stateRoot, stack.id)).toBe(false);
+        }),
+      ),
   );
 
   it.live("uses persisted pins and dependency closure for prospective preparation", () =>

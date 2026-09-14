@@ -18,8 +18,10 @@ native runtimes.
 Use each command's `--help` for its available targeting and runtime options.
 
 `supabase stack prepare` downloads or pulls artifacts for the selected stack without starting
-services. Omit `--capability` to prepare every enabled capability, or repeat it to select specific
-capabilities:
+services. If the target does not exist, prepare creates and registers it; the stack then appears in
+`supabase stack list` and can be removed with `supabase stack destroy`. Omit `--capability` to
+prepare every enabled capability, or repeat `--capability` up to ten times to select specific
+capabilities. Each occurrence names one capability; use separate flags rather than CSV.
 
 ```sh
 supabase stack prepare

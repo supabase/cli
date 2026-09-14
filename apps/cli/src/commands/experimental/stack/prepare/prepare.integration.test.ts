@@ -21,6 +21,7 @@ import {
   Stream,
 } from "effect";
 import {
+  InvalidStackConfigError,
   StackIdSchema,
   StackPreparationError,
   StackRuntimeMismatchError,
@@ -223,14 +224,26 @@ describe("stack prepare", () => {
     );
   });
 
-  it.live("rejects an explicitly disabled capability before creating a stack", () => {
+  it.live("maps a package config error for a disabled capability", () => {
     const root = makeProject("[studio]\nenabled = false\n");
     let created = false;
     let prepared = false;
-    const stack = makeStack("2".repeat(64), () => {
-      prepared = true;
-      return Effect.die("must not prepare");
-    });
+    let receivedConfig: unknown;
+    const calls = { start: 0, stop: 0, destroy: 0 };
+    const stack = makeStack(
+      "2".repeat(64),
+      (options) => {
+        prepared = true;
+        receivedConfig = options?.config;
+        return Effect.fail(
+          new InvalidStackConfigError({
+            message: "Capability studio is disabled",
+            capability: "studio",
+          }),
+        );
+      },
+      calls,
+    );
     const telemetry = mockTelemetryStateTracked();
     const fixture = handlerLayer({
       root,
@@ -255,10 +268,12 @@ describe("stack prepare", () => {
           expect(error).toBeInstanceOf(StackCommandPrepareError);
           expect(error.reason).toBe("invalid-config");
           expect(error[ErrorActionabilityId]).toEqual(actionability.invalidConfig);
-          expect(error.message).toContain("Capability studio is disabled in config");
-          expect(error.suggestion).toContain("Enable the capability in config");
-          expect(created).toBe(false);
-          expect(prepared).toBe(false);
+          expect(error.message).toContain("Capability studio is disabled");
+          expect(error.suggestion).toBeUndefined();
+          expect(receivedConfig).toMatchObject({ capabilities: { studio: { enabled: false } } });
+          expect(created).toBe(true);
+          expect(prepared).toBe(true);
+          expect(calls).toEqual({ start: 0, stop: 0, destroy: 0 });
           expect(telemetry.flushed).toBe(true);
         }),
       ),
@@ -596,8 +611,8 @@ describe("stack prepare", () => {
         if (Result.isSuccess(defect)) expect(defect.success).toBe("preparation defect");
       }
       expect(taskOutput.state.settled).toBe(true);
-      expect(taskOutput.state.canceled).toBe(true);
-      expect(taskOutput.state.failed).toBe(false);
+      expect(taskOutput.state.canceled).toBe(false);
+      expect(taskOutput.state.failed).toBe(true);
     }).pipe(Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))));
   });
 });
