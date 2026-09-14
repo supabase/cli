@@ -109,8 +109,8 @@ export const containerCliExitCode = (
     ),
   );
 
-/** Folds a byte stream into a decoded string. */
-export function collectText(stream: Stream.Stream<Uint8Array, unknown>) {
+/** Folds a byte stream into a decoded string, preserving the stream's own failure type. */
+export function collectText<E>(stream: Stream.Stream<Uint8Array, E>) {
   const decoder = new TextDecoder();
   return Stream.runFold(
     stream,
