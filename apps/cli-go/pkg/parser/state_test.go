@@ -77,6 +77,14 @@ func TestDollarQuote(t *testing.T) {
 		checkSplit(t, sql)
 	})
 
+	t.Run("non-ASCII named tag", func(t *testing.T) {
+		for _, tag := range []string{"a²", "a😀", "á"} {
+			t.Run(tag, func(t *testing.T) {
+				checkSplit(t, []string{"$" + tag + "$ any ; END; string$" + tag + "$;", " SELECT 2;"})
+			})
+		}
+	})
+
 	t.Run("anonymous tag", func(t *testing.T) {
 		sql := []string{"$$\"Dane's horse\"$$"}
 		checkSplit(t, sql)
@@ -191,6 +199,81 @@ SELECT 1;`,
 				checkSplit(t, sql)
 			})
 		}
+	})
+
+	t.Run("ignores end inside identifiers", func(t *testing.T) {
+		for _, name := range []string{"pending", "pending_change", "append", "legend", "𐐀end", "😀end", "́end", "²end", "pending$$foo$"} {
+			t.Run(name, func(t *testing.T) {
+				body := `CREATE FUNCTION f() RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT 1 AS ` + name + `; END;`
+				checkSplit(t, []string{body, ` SELECT 2;`})
+			})
+		}
+	})
+
+	t.Run("ignores identifiers starting with end", func(t *testing.T) {
+		for _, name := range []string{"endpoint", "end_date", "ended_at", "end𐐀", "end😀", "end́", "end²", "end$$foo$"} {
+			t.Run(name, func(t *testing.T) {
+				body := `CREATE FUNCTION f() RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT ` + name + `; SELECT 1; END;`
+				checkSplit(t, []string{body, ` SELECT 2;`})
+			})
+		}
+	})
+
+	t.Run("ignores end inside inner statements", func(t *testing.T) {
+		for _, expr := range []string{
+			"CASE WHEN true THEN 1 ELSE 0 END",
+			"case when true then 1 end",
+			"CASE WHEN true THEN 1 END AS ended",
+			"CASE WHEN CASE WHEN true THEN true END THEN 1 END",
+			"(CASE WHEN (true) THEN 1 END)",
+			"coalesce(CASE WHEN length('a') > 0 THEN 1 END, 0)",
+			"CASE(1)WHEN 1 THEN 1 END",
+			"1 AS case",
+			"1 case",
+			"1 AS end",
+			"1 end",
+			"'end'",
+		} {
+			t.Run(expr, func(t *testing.T) {
+				body := `CREATE FUNCTION f() RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT ` + expr + `; SELECT 1; END;`
+				checkSplit(t, []string{body, ` SELECT 2;`})
+			})
+		}
+	})
+
+	t.Run("closes at end preceded only by comments", func(t *testing.T) {
+		for _, comment := range []string{"-- note END\n", "/* note; */ ", "\n/* a /* b; */ */ -- c\n"} {
+			t.Run(comment, func(t *testing.T) {
+				body := `CREATE FUNCTION f() RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT 1; ` + comment + `END;`
+				checkSplit(t, []string{body, ` SELECT 2;`})
+			})
+		}
+	})
+
+	t.Run("ignores non-ASCII begin atomic lookalikes", func(t *testing.T) {
+		// atomıc (dotless ı) case-folds to ATOMIC but is a plain identifier in SQL.
+		checkSplit(t, []string{"BEGIN atomıc;", " SELECT 'end';", " SELECT 2;"})
+	})
+
+	t.Run("closes atomic body at end right after a positional parameter", func(t *testing.T) {
+		checkSplit(t, []string{"CREATE FUNCTION f(int) RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT $1;END;", " SELECT 2;"})
+	})
+
+	t.Run("requires sql whitespace between begin and atomic", func(t *testing.T) {
+		for _, gap := range []string{"\u00A0", "\uFEFF", "\u0085"} {
+			t.Run(gap, func(t *testing.T) {
+				checkSplit(t, []string{"BEGIN " + gap + " ATOMIC;", " SELECT 1;", " end;", " SELECT 2;"})
+			})
+		}
+	})
+
+	t.Run("closes nested atomic body inside parentheses", func(t *testing.T) {
+		checkSplit(t, []string{"DO (BEGIN ATOMIC SELECT 1; END; );", " SELECT 2;"})
+	})
+
+	t.Run("ignores end after overlapping block comment", func(t *testing.T) {
+		body := `CREATE FUNCTION f() RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT 1; /* a /*/ b */ SELECT 2 END; SELECT 3; END;`
+		checkSplit(t, []string{body, ` SELECT 4;`})
 	})
 
 	t.Run("does not treat schema-qualified atomic function names as begin atomic", func(t *testing.T) {
