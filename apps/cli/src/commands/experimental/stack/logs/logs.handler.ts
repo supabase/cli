@@ -9,6 +9,7 @@ import { Output } from "../../../../shared/output/output.service.ts";
 import { OutputFlag } from "../../../../command-internal/global-flags.ts";
 import { CommandSettings } from "../../../../config/command-settings.service.ts";
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
+import { stripControlSequences } from "../../../../shared/output/strip-control-sequences.ts";
 import {
   StackApi,
   StackTargetError,
@@ -68,7 +69,7 @@ const logsError = (
 };
 
 const renderEntry = (entry: StackLogEntry) =>
-  `${entry.timestamp} ${entry.source}/${entry.stream}: ${entry.message}\n`;
+  `${entry.timestamp} ${entry.source}/${entry.stream}: ${stripControlSequences(entry.message)}\n`;
 
 const eventForEntry = (entry: StackLogEntry, source: "history" | "live") => ({
   type: "log-entry" as const,
@@ -115,6 +116,7 @@ export const stackLogs = Effect.fn("experimental.stack.logs")(function* (flags: 
         return yield* new StackCommandLogsError({
           reason: "flags",
           message: `No managed stack named "${flags.stack.value}" was found for this project.`,
+          suggestion: "Choose an existing --stack name or omit --stack for the current project.",
         });
       yield* output.success("No managed stack found for this context.", {
         found: false,

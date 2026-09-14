@@ -21,7 +21,10 @@ import type {
   StackDiscoveryError,
   StackStatus,
 } from "@supabase/stack/effect";
-import { mockCommandSettings } from "../../../../../tests/helpers/command-mocks.ts";
+import {
+  mockCommandSettings,
+  mockTelemetryStateLayer,
+} from "../../../../../tests/helpers/command-mocks.ts";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import { OutputFlag } from "../../../../command-internal/global-flags.ts";
 import {
@@ -32,7 +35,6 @@ import { StackApi } from "../stack.shared.ts";
 import { stackLogs } from "./logs.handler.ts";
 import { StackCommandLogsError } from "./logs.errors.ts";
 import { stackLogsCommand } from "./logs.command.ts";
-import { mockTelemetryStateLayer } from "../../../../../tests/helpers/command-mocks.ts";
 import { textCliOutputFormatter } from "../../../../shared/output/text-formatter.ts";
 
 const id = StackIdSchema.make("a".repeat(64));
@@ -226,6 +228,42 @@ describe("experimental stack logs", () => {
     );
   });
 
+  it.live("sanitizes text messages while preserving structured log content", () => {
+    const root = mkdtempSync(join(tmpdir(), "supabase-stack-logs-sanitize-"));
+    const message = "safe\u001b]0;title\u0007\u001b[31m-red\u001b[0m\tcolumn\rnext\u0000\u000bend";
+    const sanitized = "safe-red\tcolumnnextend";
+    const setupResult = setup({
+      root,
+      logs: () =>
+        Effect.succeed({
+          entries: [{ ...entries[0]!, message }],
+          cursor: { opaque: "1" },
+          running: false,
+        }),
+    });
+    const text = mockOutput();
+    const json = mockOutput({ format: "json" });
+    const structured = mockOutput({ format: "stream-json" });
+    return Effect.gen(function* () {
+      yield* stackLogs(flags()).pipe(Effect.provide(Layer.mergeAll(setupResult.layer, text.layer)));
+      expect(text.stdoutText).toContain(sanitized);
+      expect(text.stdoutText).not.toContain("\u001b");
+
+      yield* stackLogs(flags()).pipe(Effect.provide(Layer.mergeAll(setupResult.layer, json.layer)));
+      const jsonResult = json.messages.find((entry) => entry.type === "success")?.data;
+      expect(jsonResult).toEqual(
+        expect.objectContaining({ entries: [expect.objectContaining({ message })] }),
+      );
+
+      yield* stackLogs(flags()).pipe(
+        Effect.provide(Layer.mergeAll(setupResult.layer, structured.layer)),
+      );
+      expect(structured.events).toEqual([
+        expect.objectContaining({ type: "log-entry", line: message, source: "history" }),
+      ]);
+    }).pipe(Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))));
+  });
+
   it.live("rejects conflicting targets before resolving a stack", () => {
     const root = mkdtempSync(join(tmpdir(), "supabase-stack-logs-conflict-"));
     const setupResult = setup({ root });
@@ -281,12 +319,14 @@ describe("experimental stack logs", () => {
           Effect.succeed({ entries: [entries[0]!], cursor: { opaque: "1" }, running: true }),
         followLogs: (query) => {
           expect(query).toEqual({ cursor: { opaque: "1" } });
-          return Stream.fromIterable([entries[1]!]);
+          return Stream.fromIterable([
+            { ...entries[1]!, message: "function\u001b[2K failed\rretry" },
+          ]);
         },
       });
       return Effect.gen(function* () {
         yield* stackLogs(flags({ follow: true }));
-        expect(setupResult.out.stdoutText).toContain("function failed");
+        expect(setupResult.out.stdoutText).toContain("function failedretry");
         const followStarted = yield* Deferred.make<void>();
         let finalized = false;
         const interrupted = setup({

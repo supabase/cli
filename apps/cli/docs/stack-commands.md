@@ -8,6 +8,7 @@ native runtimes.
 | Command                  | Purpose                                    |
 | ------------------------ | ------------------------------------------ |
 | `supabase stack start`   | Create or resume the project's stack.      |
+| `supabase stack logs`    | Read retained or live stack logs.          |
 | `supabase stack destroy` | Permanently delete one stack and its data. |
 | `supabase stack stop`    | Stop a stack while retaining its data.     |
 
@@ -39,6 +40,66 @@ For temporary selection, set `SUPABASE_EXPERIMENTAL_STACK=1` to select the new b
 `SUPABASE_EXPERIMENTAL_STACK=0` to select the legacy backend. This environment variable takes
 precedence over `experimental.stack`; an unset or empty value falls back to the file setting.
 Other values are rejected. The override is applied before reading the project configuration.
+
+## Reading stack logs
+
+`supabase stack logs` reads retained logs without starting or stopping the selected stack. Use
+`--stack <name>` or `--stack-id <id>` to select a stack, `--service <name>` to filter services,
+and `--tail <count>` to bound retained history. Add `--follow` (or `-f`) to continue with new
+entries; `--tail 0` starts with live entries only. Follow mode leaves the stack running when
+interrupted.
+
+The default text output is one `<timestamp> <service>/<stream>: <message>` line per entry.
+`--output-format json` returns one bounded object. A found stack has this shape, with the raw
+entry message preserved:
+
+```json
+{
+  "found": true,
+  "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "entries": [
+    {
+      "cursor": { "opaque": "1" },
+      "timestamp": "2026-09-08T00:00:00.000Z",
+      "source": "database",
+      "stream": "stdout",
+      "message": "database ready"
+    }
+  ],
+  "cursor": { "opaque": "1" },
+  "running": false,
+  "message": ""
+}
+```
+
+When no default stack exists, JSON output is:
+
+```json
+{
+  "found": false,
+  "entries": [],
+  "message": "No managed stack found for this context."
+}
+```
+
+`--output-format stream-json` emits one `log-entry` event for each history or live entry, with
+the original message in `line`. For an absent default stack it emits the standard empty result
+envelope:
+
+```json
+{
+  "type": "result",
+  "data": {
+    "found": false,
+    "entries": [],
+    "message": "No managed stack found for this context."
+  },
+  "timestamp": "..."
+}
+```
+
+A found stack with no entries emits no events. The command is available only while
+`experimental.stack` is enabled.
 
 ## Data and configuration
 
