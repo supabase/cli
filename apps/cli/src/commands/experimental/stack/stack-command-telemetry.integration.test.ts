@@ -110,4 +110,24 @@ describe("stack command telemetry", () => {
       Effect.ensuring(Effect.sync(() => rmSync(fixture.root, { recursive: true, force: true }))),
     );
   });
+
+  it.live("records the logs command identity when no stack exists", () => {
+    const fixture = setup();
+    const command = stackCommand.pipe(Command.provide(fixture.layer));
+    return Effect.gen(function* () {
+      yield* Command.runWith(command, { version: "0.0.0-test" })(["logs"]);
+      const event = fixture.analytics.captured.find(
+        (candidate) => candidate.event === EventCommandExecuted,
+      );
+      expect(event?.properties[PropCommand]).toBe("stack logs");
+      expect(fixture.output.messages).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ type: "success", data: { found: false, entries: [] } }),
+        ]),
+      );
+    }).pipe(
+      Effect.provide(fixture.layer),
+      Effect.ensuring(Effect.sync(() => rmSync(fixture.root, { recursive: true, force: true }))),
+    );
+  });
 });
