@@ -13,7 +13,7 @@ import {
   Semaphore,
 } from "effect";
 import { NodeSocket, NodeSocketServer } from "@effect/platform-node";
-// oxlint-disable-next-line effecttsgo/node-builtin-import
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- FileSystem.stat follows symlinks; control-path validation must reject them.
 import { lstat } from "node:fs/promises";
 import * as RpcClient from "effect/unstable/rpc/RpcClient";
 import { RpcClientError } from "effect/unstable/rpc/RpcClientError";
@@ -536,10 +536,8 @@ export const startControlServer = (
       concurrency: MAINTENANCE_MAX_CONCURRENT_REQUESTS,
     }).pipe(
       Effect.provideService(RpcServer.Protocol, patchedProtocol),
-      // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context
       Effect.provide(StackRpcGroup.toLayer(options.rpcHandlers)),
     );
-    // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context
     yield* Effect.forkScoped(rpcProgram);
     return {
       endpoint: options.endpoint,
@@ -624,17 +622,8 @@ export interface ControlClientOptions extends ControlIdentity {
 }
 
 export interface ControlClient {
-  // oxlint-disable-next-line effecttsgo/lazy-effect -- each call opens a fresh scoped socket.
-  readonly probe: () => Effect.Effect<
-    MaintenanceResponse,
-    Socket.SocketError | MaintenanceProtocolError
-  >;
-  // oxlint-disable-next-line effecttsgo/lazy-effect -- each call opens a fresh scoped socket.
-  readonly stop: () => Effect.Effect<
-    MaintenanceResponse,
-    Socket.SocketError | MaintenanceProtocolError
-  >;
-  // oxlint-disable-next-line effecttsgo/lazy-effect -- each call opens a fresh scoped socket.
+  readonly probe: Effect.Effect<MaintenanceResponse, Socket.SocketError | MaintenanceProtocolError>;
+  readonly stop: Effect.Effect<MaintenanceResponse, Socket.SocketError | MaintenanceProtocolError>;
   /** Connects with an RPC preface and completes when the owner closes the socket. */
   readonly awaitClose: (onOpen?: Effect.Effect<void>) => Effect.Effect<void, Socket.SocketError>;
   readonly rpc: Effect.Effect<StackRpcClient, RpcClientError, Scope.Scope>;
@@ -736,22 +725,23 @@ export const makeControlClient = (
         return yield* wait;
       }),
     );
+  const probe = maintenance("probe").pipe(
+    Effect.timeoutOrElse({
+      duration: MAINTENANCE_REQUEST_DEADLINE_MS,
+      orElse: () =>
+        Effect.fail(
+          new MaintenanceProtocolError({
+            message: "Control request timed out",
+            reason: "transport",
+          }),
+        ),
+    }),
+  );
+  const stop = maintenance("stop");
 
   return {
-    probe: () =>
-      maintenance("probe").pipe(
-        Effect.timeoutOrElse({
-          duration: MAINTENANCE_REQUEST_DEADLINE_MS,
-          orElse: () =>
-            Effect.fail(
-              new MaintenanceProtocolError({
-                message: "Control request timed out",
-                reason: "transport",
-              }),
-            ),
-        }),
-      ),
-    stop: () => maintenance("stop"),
+    probe,
+    stop,
     awaitClose: (onOpen = Effect.void) =>
       Effect.scoped(
         Effect.gen(function* () {

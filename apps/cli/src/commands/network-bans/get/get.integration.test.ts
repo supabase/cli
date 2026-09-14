@@ -1,6 +1,6 @@
 import { type V1ListAllNetworkBansOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Option } from "effect";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
@@ -136,9 +136,9 @@ describe("network-bans get integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       expect(out.stderrText).toBe("DB banned IPs:\n");
       if (Exit.isFailure(exit)) {
-        const errJson = JSON.stringify(exit.cause);
-        expect(errJson).toContain("NetworkBansEnvNotSupportedError");
-        expect(errJson).toContain("--output env flag is not supported");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("NetworkBansEnvNotSupportedError");
+        expect(causeText).toContain("--output env flag is not supported");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -203,9 +203,9 @@ describe("network-bans get integration", () => {
       const exit = yield* Effect.exit(networkBansGet({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errJson = JSON.stringify(exit.cause);
-        expect(errJson).toContain("NetworkBansGetUnexpectedStatusError");
-        expect(errJson).toContain("unexpected list bans status 503");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("NetworkBansGetUnexpectedStatusError");
+        expect(causeText).toContain("unexpected list bans status 503");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -216,9 +216,9 @@ describe("network-bans get integration", () => {
       const exit = yield* Effect.exit(networkBansGet({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errJson = JSON.stringify(exit.cause);
-        expect(errJson).toContain("NetworkBansGetNetworkError");
-        expect(errJson).toContain("failed to list network bans:");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("NetworkBansGetNetworkError");
+        expect(causeText).toContain("failed to list network bans:");
       }
     }).pipe(Effect.provide(layer));
   });

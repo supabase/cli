@@ -10,7 +10,7 @@ import {
   Schedule,
   Schema,
 } from "effect";
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- native rmdir preserves non-recursive recovery semantics.
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- FileSystem.remove cannot atomically remove only an empty directory.
 import { rmdir } from "node:fs/promises";
 import {
   InvalidProjectRootError,
@@ -79,7 +79,7 @@ export interface StackStateStore {
   ) => Effect.Effect<
     void,
     InvalidProjectRootError | StackStateInvalidError,
-    FileSystem.FileSystem | Path.Path
+    FileSystem.FileSystem | Path.Path | Crypto.Crypto
   >;
   /** Removes only an empty runtime-only remnant and its now-empty identity root. */
   readonly recoverRuntimeRemnant: (
@@ -87,7 +87,7 @@ export interface StackStateStore {
   ) => Effect.Effect<
     void,
     InvalidProjectRootError | StackStateInvalidError,
-    FileSystem.FileSystem | Path.Path
+    FileSystem.FileSystem | Path.Path | Crypto.Crypto
   >;
 }
 
@@ -308,10 +308,15 @@ const persistValidatedState = (
 export const withRegistryLock = <A, E, R>(
   stateRoot: string,
   action: Effect.Effect<A, E, R>,
-): Effect.Effect<A, E | StackStateInvalidError, R | FileSystem.FileSystem | Path.Path> =>
+): Effect.Effect<
+  A,
+  E | StackStateInvalidError,
+  R | FileSystem.FileSystem | Path.Path | Crypto.Crypto
+> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const crypto = yield* Crypto.Crypto;
     const root = path.resolve(stateRoot);
     yield* fs
       .makeDirectory(root, { recursive: true, mode: 0o700 })
@@ -339,12 +344,11 @@ export const withRegistryLock = <A, E, R>(
           ),
         );
         const install = Effect.gen(function* () {
-          const token = yield* Effect.try({
-            // oxlint-disable-next-line effecttsgo/crypto-random-uuid-in-effect -- ephemeral label; ownership is proven by the held lease, not this ID.
-            try: () => globalThis.crypto.randomUUID(),
-            catch: (cause) =>
-              stateError(`Unable to allocate registry lock token: ${String(cause)}`),
-          });
+          const token = yield* crypto.randomUUIDv4.pipe(
+            Effect.mapError((error) =>
+              stateError(`Unable to allocate registry lock token: ${error.message}`),
+            ),
+          );
           const lock: OwnerLock = { format: OWNER_LOCK_FORMAT, token, port: held.port };
           const temporary = yield* writeLockTemp(fs, path, lockPath, lock);
           yield* installLease({ fs, lockPath, temporary, observed: existing }).pipe(
@@ -560,7 +564,7 @@ export const makeStackStateStore = (options: {
     ): Effect.Effect<
       void,
       InvalidProjectRootError | StackStateInvalidError,
-      FileSystem.FileSystem | Path.Path
+      FileSystem.FileSystem | Path.Path | Crypto.Crypto
     > =>
       Effect.gen(function* () {
         const paths = yield* pathsFor(stackId);
@@ -626,7 +630,7 @@ export const makeStackStateStore = (options: {
     ): Effect.Effect<
       void,
       InvalidProjectRootError | StackStateInvalidError,
-      FileSystem.FileSystem | Path.Path
+      FileSystem.FileSystem | Path.Path | Crypto.Crypto
     > => withRegistryLock(options.stateRoot, recoverRuntimeRemnantUnlocked(stackId));
 
     const cleanup = (
@@ -634,7 +638,7 @@ export const makeStackStateStore = (options: {
     ): Effect.Effect<
       void,
       InvalidProjectRootError | StackStateInvalidError,
-      FileSystem.FileSystem | Path.Path
+      FileSystem.FileSystem | Path.Path | Crypto.Crypto
     > =>
       withRegistryLock(
         options.stateRoot,

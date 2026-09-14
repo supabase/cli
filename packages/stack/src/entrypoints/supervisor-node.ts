@@ -1,7 +1,7 @@
 import { NodeServices } from "@effect/platform-node";
 import { Crypto, Data, Effect, FileSystem, Path, Schema } from "effect";
 // Node's fd3 readiness channel has no FileSystem abstraction, so it's used directly here.
-// oxlint-disable-next-line effecttsgo/node-builtin-import
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- native fd3 process protocol boundary.
 import * as NodeFs from "node:fs";
 import {
   acquireOwnership,

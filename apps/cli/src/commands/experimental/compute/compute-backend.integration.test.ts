@@ -83,6 +83,15 @@ describe("resolveComputeEnabled", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
+  it.effect("ignores an invalid stack setting when reading compute", () =>
+    Effect.gen(function* () {
+      const root = yield* project({
+        "supabase/config.toml": '[experimental]\ncompute = true\nstack = "yes"\n',
+      });
+      expect(yield* resolve({ args: ["compute"], cwd: root, env: {} })).toBe(true);
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
   it.effect("finds a JSON-only ancestor and respects explicit workdirs", () => {
     return Effect.gen(function* () {
       const path = yield* Path.Path;

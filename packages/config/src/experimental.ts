@@ -40,7 +40,8 @@ export const experimental = Schema.Struct({
   ),
   stack: Schema.optionalKey(
     Schema.Boolean.annotate({
-      description: "Use the new local stack backend for top-level start and stop commands.",
+      description:
+        "Use the new local stack backend for top-level start, stop, and status commands.",
       tags,
     }),
   ),

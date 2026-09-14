@@ -1,10 +1,13 @@
-import { Effect, FileSystem, Path, Schema } from "effect";
+import { Effect, FileSystem, Layer, Path, Schema, Stream } from "effect";
+import { NodeStream } from "@effect/platform-node";
+import {
+  FetchHttpClient,
+  HttpClient,
+  HttpClientError,
+  HttpClientResponse,
+} from "effect/unstable/http";
 import { createZstdDecompress } from "node:zlib";
 import { createHash } from "node:crypto";
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- file-backed streaming avoids archive-sized buffers
-import { createReadStream, createWriteStream } from "node:fs";
-import { Readable, Transform } from "node:stream";
-import { pipeline } from "node:stream/promises";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import type { ArtifactRequest, ArtifactSource } from "./ArtifactStore.ts";
 import type { NativeWorkloadArtifact } from "../model/WorkloadCatalog.ts";
@@ -16,7 +19,7 @@ export interface ZstdDecompressor {
   readonly decompress: (
     compressedPath: string,
     outputPath: string,
-  ) => Effect.Effect<void, StackPreparationError>;
+  ) => Effect.Effect<void, StackPreparationError, FileSystem.FileSystem>;
 }
 
 export interface TarBoundary {
@@ -68,102 +71,113 @@ export const systemTarBoundary: TarBoundary = {
         );
     }),
 };
-// oxlint-disable-next-line effecttsgo/global-fetch -- foreign HTTP boundary; production wiring may swap in an Effect HttpClient-backed fetcher.
-const fetcher: Fetcher = (input, init) => globalThis.fetch(input, init);
+const transport = (fetchRequest?: Fetcher) =>
+  fetchRequest === undefined
+    ? FetchHttpClient.layer
+    : Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request, url, signal) =>
+          Effect.tryPromise({
+            try: () =>
+              fetchRequest(url.href, { signal, method: request.method, headers: request.headers }),
+            catch: (cause) =>
+              new HttpClientError.HttpClientError({
+                reason: new HttpClientError.TransportError({ request, cause }),
+              }),
+          }).pipe(Effect.map((response) => HttpClientResponse.fromWeb(request, response))),
+        ),
+      );
+
+const responseFor = (url: string) =>
+  HttpClient.get(url).pipe(
+    Effect.flatMap((response) =>
+      Effect.gen(function* () {
+        if (response.status < 200 || response.status >= 300)
+          return yield* new StackPreparationError({ message: `HTTP ${response.status}` });
+        return response;
+      }),
+    ),
+  );
 
 const fetchBytes = (
   url: string,
-  request: Fetcher = fetcher,
+  request?: Fetcher,
 ): Effect.Effect<Uint8Array, StackPreparationError> =>
-  Effect.tryPromise({
-    try: (signal) =>
-      request(url, { signal })
-        .then((response) => {
-          if (!response.ok) throw new Error(`HTTP ${response.status}`);
-          return response.arrayBuffer();
-        })
-        .then((bytes) => new Uint8Array(bytes)),
-    catch: (cause) => new StackPreparationError({ message: `Unable to download ${url}`, cause }),
-  });
+  responseFor(url).pipe(
+    Effect.flatMap((response) => response.arrayBuffer),
+    Effect.map((bytes) => new Uint8Array(bytes)),
+    Effect.mapError(
+      (cause) => new StackPreparationError({ message: `Unable to download ${url}`, cause }),
+    ),
+    Effect.provide(transport(request)),
+  );
 
-/** Owned streaming zstd boundary. Cancellation aborts and awaits the exact pipeline. */
 const nodeZstdDecompressor: ZstdDecompressor = {
   decompress: (compressedPath, outputPath) =>
-    Effect.callback<void, StackPreparationError>((resume) => {
-      const controller = new AbortController();
-      const operation = pipeline(
-        createReadStream(compressedPath),
-        createZstdDecompress(),
-        createWriteStream(outputPath, { mode: 0o600 }),
-        { signal: controller.signal },
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.stream(compressedPath).pipe(
+        NodeStream.pipeThroughDuplex({
+          evaluate: () => createZstdDecompress(),
+          onError: (cause) =>
+            new StackPreparationError({
+              message: "Unable to decompress slim-services archive",
+              cause,
+            }),
+        }),
+        Stream.run(fs.sink(outputPath, { mode: 0o600 })),
       );
-      void operation.then(
-        () => resume(Effect.void),
+    }).pipe(
+      Effect.mapError(
         (cause) =>
-          resume(
-            Effect.fail(
-              new StackPreparationError({
-                message: "Unable to decompress slim-services archive",
-                cause,
-              }),
-            ),
-          ),
-      );
-      return Effect.gen(function* () {
-        controller.abort();
-        yield* Effect.promise(() =>
-          operation.then(
-            () => undefined,
-            () => undefined,
-          ),
-        );
-      });
-    }),
+          new StackPreparationError({
+            message: "Unable to decompress slim-services archive",
+            cause,
+          }),
+      ),
+    ),
 };
 
 const downloadToFile = (
   url: string,
   destination: string,
-  request: Fetcher,
+  request: Fetcher | undefined,
   expectedSha256: string,
-): Effect.Effect<void, StackPreparationError> =>
-  Effect.callback<void, StackPreparationError>((resume) => {
-    const controller = new AbortController();
-    // oxlint-disable-next-line effecttsgo/async-function -- foreign pipeline must settle before cancellation cleanup
-    const operation = (async () => {
-      const response = await request(url, { signal: controller.signal });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      if (response.body === null) throw new Error("Response body is empty");
-      const source = Readable.fromWeb(response.body);
-      const hash = createHash("sha256");
-      const digest = new Transform({
-        transform(chunk: Buffer, _encoding, callback) {
-          hash.update(chunk);
-          callback(null, chunk);
-        },
-      });
-      await pipeline(source, digest, createWriteStream(destination, { mode: 0o600 }), {
-        signal: controller.signal,
-      });
-      const actual = hash.digest("hex");
-      if (actual !== expectedSha256.toLowerCase())
-        throw new Error(`expected ${expectedSha256}, got ${actual}`);
-    })();
-    const failure = (cause: unknown) =>
-      resume(
-        Effect.fail(new StackPreparationError({ message: `Unable to download ${url}`, cause })),
-      );
-    void operation.then(() => resume(Effect.void), failure);
-    return Effect.gen(function* () {
-      controller.abort();
-      yield* Effect.promise(() =>
-        operation.then(
-          () => undefined,
-          () => undefined,
-        ),
-      );
+): Effect.Effect<void, StackPreparationError, FileSystem.FileSystem> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const response = yield* responseFor(url);
+    const hash = yield* Effect.try({
+      try: () => createHash("sha256"),
+      catch: (cause) =>
+        new StackPreparationError({ message: "Unable to initialize archive digest", cause }),
     });
-  });
+    yield* response.stream.pipe(
+      Stream.tap((chunk) =>
+        Effect.try({
+          try: () => {
+            hash.update(chunk);
+          },
+          catch: (cause) => new StackPreparationError({ message: "Unable to hash archive", cause }),
+        }),
+      ),
+      Stream.run(fs.sink(destination, { mode: 0o600 })),
+    );
+    const actual = yield* Effect.try({
+      try: () => hash.digest("hex"),
+      catch: (cause) =>
+        new StackPreparationError({ message: "Unable to finish archive digest", cause }),
+    });
+    if (actual !== expectedSha256.toLowerCase())
+      return yield* new StackPreparationError({
+        message: `expected ${expectedSha256}, got ${actual}`,
+      });
+  }).pipe(
+    Effect.mapError(
+      (cause) => new StackPreparationError({ message: `Unable to download ${url}`, cause }),
+    ),
+    Effect.provide(transport(request)),
+  );
 
 const checksumFor = (contents: string, archiveName: string): string | undefined =>
   contents
@@ -173,7 +187,7 @@ const checksumFor = (contents: string, archiveName: string): string | undefined 
 
 export const slimServicesChecksum = (
   artifact: NativeWorkloadArtifact,
-  request: Fetcher = fetcher,
+  request?: Fetcher,
 ): Effect.Effect<string, StackPreparationError> =>
   fetchBytes(artifact.checksumUrl, request).pipe(
     Effect.map((bytes) => new TextDecoder().decode(bytes)),
@@ -262,7 +276,7 @@ const validateExtractedTree = (
 
 export const makeSlimServicesSource = (
   resolve: (request: ArtifactRequest) => NativeWorkloadArtifact | undefined,
-  fetchRequest: Fetcher = fetcher,
+  fetchRequest?: Fetcher,
   tarBoundary: TarBoundary = systemTarBoundary,
   decompressor: ZstdDecompressor = nodeZstdDecompressor,
 ): ArtifactSource => {

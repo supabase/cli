@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Data, Deferred, Duration, Effect, Exit, Fiber, Option } from "effect";
 import * as TestClock from "effect/testing/TestClock";
-/* oxlint-disable effecttsgo/node-builtin-import -- integration test owns real listeners. */
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- integration test owns a real loopback listener.
 import { createServer as createHttpServer, type Server as HttpServer } from "node:http";
 import { createServer as createTcpServer, type Server as TcpServer } from "node:net";
 import { StackPreparationError } from "../public/Errors.ts";
@@ -84,8 +84,7 @@ describe("private endpoint readiness probe", () => {
       Effect.gen(function* () {
         const received = yield* Deferred.make<string>();
         const server = createHttpServer((request, response) => {
-          // oxlint-disable-next-line effecttsgo/run-effect-inside-effect -- bridge event callback to test signal.
-          Effect.runSync(Deferred.succeed(received, request.headers.host ?? ""));
+          Deferred.doneUnsafe(received, Effect.succeed(request.headers.host ?? ""));
           response.statusCode = request.headers.host === "realtime-dev" ? 200 : 400;
           response.end();
         });
@@ -217,8 +216,7 @@ describe("private endpoint readiness probe", () => {
       Effect.gen(function* () {
         const received = yield* Deferred.make<void>();
         const server = createHttpServer((request) => {
-          // oxlint-disable-next-line effecttsgo/run-effect-inside-effect -- bridge event callback to test signal.
-          Effect.runSync(Deferred.succeed(received, undefined));
+          Deferred.doneUnsafe(received, Effect.void);
           request.once("error", () => undefined);
         });
         const port = yield* listenHttp(server, () => undefined);
@@ -237,11 +235,9 @@ describe("private endpoint readiness probe", () => {
         const received = yield* Deferred.make<void>();
         const closed = yield* Deferred.make<void>();
         const server = createHttpServer((request) => {
-          // oxlint-disable-next-line effecttsgo/run-effect-inside-effect -- bridge event callback to test signal.
-          Effect.runSync(Deferred.succeed(received, undefined));
+          Deferred.doneUnsafe(received, Effect.void);
           request.once("close", () => {
-            // oxlint-disable-next-line effecttsgo/run-effect-inside-effect -- bridge event callback to test signal.
-            Effect.runSync(Deferred.succeed(closed, undefined));
+            Deferred.doneUnsafe(closed, Effect.void);
           });
         });
         const port = yield* listenHttp(server, () => undefined);

@@ -57,7 +57,7 @@ describe("completion fish", () => {
           "--no-descriptions",
         ]);
         expect(out.stdoutText).toContain("__completeNoDesc");
-      }).pipe(Effect.provide(layer)) as Effect.Effect<void>;
+      }).pipe(Effect.provide(layer));
     },
   );
 
@@ -76,7 +76,7 @@ describe("completion fish", () => {
         yield* Command.runWith(testRoot(), { version: "0.0.0-test" })(["fish"]);
         const event = analytics.captured.find((entry) => entry.event === EventCommandExecuted);
         expect(event).toBeDefined();
-      }).pipe(Effect.provide(layer)) as Effect.Effect<void>;
+      }).pipe(Effect.provide(layer));
     },
   );
 });

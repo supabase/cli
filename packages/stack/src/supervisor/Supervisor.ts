@@ -968,9 +968,10 @@ export const makeSupervisor = (
       Effect.gen(function* () {
         const previous = yield* Ref.get(phase);
         yield* Ref.set(phase, "stopping");
-        const result = yield* controller
-          .stop()
-          .pipe(Effect.provideContext(options.context), Effect.exit);
+        const result = yield* controller.stop.pipe(
+          Effect.provideContext(options.context),
+          Effect.exit,
+        );
         if (Exit.isFailure(result)) {
           const state = yield* read().pipe(Effect.orElseSucceed(() => undefined));
           if (state?.desiredLifecycle === "stopped") {
@@ -1017,9 +1018,10 @@ export const makeSupervisor = (
     const destroyOperation = Effect.gen(function* () {
       const previous = yield* Ref.get(phase);
       yield* Ref.set(phase, "destroying");
-      const result = yield* controller
-        .destroy()
-        .pipe(Effect.provideContext(options.context), Effect.exit);
+      const result = yield* controller.destroy.pipe(
+        Effect.provideContext(options.context),
+        Effect.exit,
+      );
       if (Exit.isFailure(result)) {
         yield* restorePhase(previous);
         return yield* Effect.failCause(result.cause);
@@ -1107,12 +1109,6 @@ export const makeSupervisor = (
             ),
           );
 
-        const auth = definition.capabilities.auth;
-        if (!auth.enabled)
-          return yield* Effect.fail(
-            rpcError("InvalidStackConfigError", "Stack credentials require Auth to be enabled"),
-          );
-
         const requiredSecret = (slot: string): Effect.Effect<string, StackRpcError> => {
           const value = state.secrets[slot]?.value;
           return value === undefined || value.length === 0
@@ -1128,22 +1124,28 @@ export const makeSupervisor = (
           databasePassword,
         )}@${databaseHost}:${databaseAssignment.port}/postgres`;
 
-        const publishableKey = yield* requiredSecret(AUTH_PUBLISHABLE_KEY_SLOT);
-        const secretKey = yield* requiredSecret(AUTH_SECRET_KEY_SLOT);
-        const anonJwt = yield* requiredSecret(AUTH_ANON_KEY_SLOT);
-        const serviceRoleJwt = yield* requiredSecret(AUTH_SERVICE_ROLE_KEY_SLOT);
+        const auth = definition.capabilities.auth;
+        const api = auth.enabled
+          ? yield* Effect.gen(function* () {
+              const publishableKey = yield* requiredSecret(AUTH_PUBLISHABLE_KEY_SLOT);
+              const secretKey = yield* requiredSecret(AUTH_SECRET_KEY_SLOT);
+              const anonJwt = yield* requiredSecret(AUTH_ANON_KEY_SLOT);
+              const serviceRoleJwt = yield* requiredSecret(AUTH_SERVICE_ROLE_KEY_SLOT);
+              return {
+                publishableKey,
+                secretKey: Redacted.make(secretKey),
+                anonJwt,
+                serviceRoleJwt: Redacted.make(serviceRoleJwt),
+              };
+            })
+          : undefined;
 
         const base: EffectStackCredentials = {
           database: {
             url: Redacted.make(databaseUrl),
             password: Redacted.make(databasePassword),
           },
-          api: {
-            publishableKey,
-            secretKey: Redacted.make(secretKey),
-            anonJwt,
-            serviceRoleJwt: Redacted.make(serviceRoleJwt),
-          },
+          ...(api === undefined ? {} : { api }),
         };
         const storage = definition.capabilities.storage;
         const s3 = storage.settings.s3_protocol;

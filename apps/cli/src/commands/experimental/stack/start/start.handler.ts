@@ -1,7 +1,7 @@
 import { Effect, Match, Option } from "effect";
 import {
+  excludeStackCapabilities,
   isStackError,
-  type StackStatus,
   type StackRuntimePreference,
 } from "@supabase/stack/effect";
 import { Output } from "../../../../shared/output/output.service.ts";
@@ -13,47 +13,47 @@ import {
   StackTargetError,
   StackTargetResolver,
   rejectStackOutput,
+  renderStackStatus,
+  stackStatusPayload,
   validateStackTarget,
 } from "../stack.shared.ts";
 import { loadStackConfig } from "../stack-config.ts";
 import type { StackStartFlags } from "./start.command.ts";
 import { StackCommandStartError } from "./start.errors.ts";
-
-const statusPayload = (status: StackStatus) => ({
-  id: status.id,
-  lifecycle: status.lifecycle,
-  desired_lifecycle: status.desiredLifecycle,
-  runtime: status.runtime,
-  endpoints: status.endpoints,
-  versions: status.versions,
-  capabilities: status.capabilities,
-  artifacts: status.artifacts,
-});
-
-const renderStatus = (status: StackStatus): string => {
-  const lines = [
-    `Stack ${status.id}`,
-    `Runtime: ${status.runtime.kind}`,
-    `Lifecycle: ${status.lifecycle}`,
-  ];
-  const endpoints = Object.entries(status.endpoints);
-  if (endpoints.length > 0) {
-    lines.push("Endpoints:");
-    for (const [name, endpoint] of endpoints) {
-      if (endpoint !== undefined) lines.push(`  ${name}: ${endpoint.url}`);
-    }
-  }
-  const dormant = status.capabilities.filter((capability) => capability.state === "dormant");
-  if (dormant.length > 0)
-    lines.push(`Dormant capabilities: ${dormant.map(({ name }) => name).join(", ")}`);
-  return `${lines.join("\n")}\n`;
-};
+import { STACK_START_EXCLUDABLE_CAPABILITIES } from "./start.options.ts";
 
 const eagerlyActivate = <
   T extends { readonly enabled?: boolean; readonly activation?: "eager" | "lazy" },
 >(
   value: T,
 ): T => (value.enabled === false ? value : Object.assign({}, value, { activation: "eager" }));
+
+const validateExclusions = (exclusions: ReadonlyArray<string>) => {
+  const unknown = exclusions.filter(
+    (name) =>
+      name !== "database" &&
+      !STACK_START_EXCLUDABLE_CAPABILITIES.some((capability) => capability === name),
+  );
+  if (unknown.length > 0)
+    return Effect.fail(
+      new StackCommandStartError({
+        reason: "flags",
+        message: `Unknown stack capabilities in --exclude: ${unknown.map((name) => JSON.stringify(name)).join(", ")}`,
+        suggestion: `Choose from ${STACK_START_EXCLUDABLE_CAPABILITIES.join(", ")}.`,
+      }),
+    );
+  if (exclusions.includes("database"))
+    return Effect.fail(
+      new StackCommandStartError({
+        reason: "flags",
+        message: "The database capability cannot be excluded from a stack.",
+        suggestion: "Remove database from --exclude.",
+      }),
+    );
+  return Effect.succeed(
+    STACK_START_EXCLUDABLE_CAPABILITIES.filter((name) => exclusions.includes(name)),
+  );
+};
 
 const mapTargetError = (error: StackTargetError) =>
   new StackCommandStartError({
@@ -72,6 +72,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     const stackApi = yield* StackApi;
     const outputFlag = yield* Effect.serviceOption(OutputFlag);
     yield* rejectStackOutput(outputFlag).pipe(Effect.mapError(mapTargetError));
+    const exclusions = yield* validateExclusions(flags.exclude);
     yield* validateStackTarget({
       stack: Option.getOrUndefined(flags.stack),
       stackId: Option.getOrUndefined(flags.stackId),
@@ -95,42 +96,43 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
           }),
       ),
     );
+    const configuredStart = excludeStackCapabilities(config, exclusions);
     const startConfig = flags.eager
       ? {
-          ...config,
+          ...configuredStart,
           capabilities: {
-            ...config.capabilities,
-            ...(config.capabilities?.rest === undefined
+            ...configuredStart.capabilities,
+            ...(configuredStart.capabilities?.rest === undefined
               ? {}
-              : { rest: eagerlyActivate(config.capabilities.rest) }),
-            ...(config.capabilities?.auth === undefined
+              : { rest: eagerlyActivate(configuredStart.capabilities.rest) }),
+            ...(configuredStart.capabilities?.auth === undefined
               ? {}
-              : { auth: eagerlyActivate(config.capabilities.auth) }),
-            ...(config.capabilities?.realtime === undefined
+              : { auth: eagerlyActivate(configuredStart.capabilities.auth) }),
+            ...(configuredStart.capabilities?.realtime === undefined
               ? {}
-              : { realtime: eagerlyActivate(config.capabilities.realtime) }),
-            ...(config.capabilities?.storage === undefined
+              : { realtime: eagerlyActivate(configuredStart.capabilities.realtime) }),
+            ...(configuredStart.capabilities?.storage === undefined
               ? {}
-              : { storage: eagerlyActivate(config.capabilities.storage) }),
-            ...(config.capabilities?.functions === undefined
+              : { storage: eagerlyActivate(configuredStart.capabilities.storage) }),
+            ...(configuredStart.capabilities?.functions === undefined
               ? {}
-              : { functions: eagerlyActivate(config.capabilities.functions) }),
-            ...(config.capabilities?.studio === undefined
+              : { functions: eagerlyActivate(configuredStart.capabilities.functions) }),
+            ...(configuredStart.capabilities?.studio === undefined
               ? {}
-              : { studio: eagerlyActivate(config.capabilities.studio) }),
-            ...(config.capabilities?.mail === undefined
+              : { studio: eagerlyActivate(configuredStart.capabilities.studio) }),
+            ...(configuredStart.capabilities?.mail === undefined
               ? {}
-              : { mail: eagerlyActivate(config.capabilities.mail) }),
-            ...(config.capabilities?.analytics === undefined
+              : { mail: eagerlyActivate(configuredStart.capabilities.mail) }),
+            ...(configuredStart.capabilities?.analytics === undefined
               ? {}
-              : { analytics: eagerlyActivate(config.capabilities.analytics) }),
-            ...(config.capabilities?.pooler === undefined
+              : { analytics: eagerlyActivate(configuredStart.capabilities.analytics) }),
+            ...(configuredStart.capabilities?.pooler === undefined
               ? {}
-              : { pooler: eagerlyActivate(config.capabilities.pooler) }),
+              : { pooler: eagerlyActivate(configuredStart.capabilities.pooler) }),
           },
           preparation: flags.preparation,
         }
-      : { ...config, preparation: flags.preparation };
+      : { ...configuredStart, preparation: flags.preparation };
     const runtime: StackRuntimePreference | undefined = target.runtime;
     // The package's public Effect API reads SUPABASE_HOME only at its runtime
     // composition boundary and launches the detached owner through the compiled
@@ -153,9 +155,9 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       Effect.mapError(stackStartError),
     );
     if (output.format === "text") {
-      yield* output.raw(renderStatus(status));
+      yield* output.raw(renderStackStatus(status));
     } else {
-      yield* output.success("", statusPayload(status));
+      yield* output.success("", stackStatusPayload(status));
     }
     return status;
   });

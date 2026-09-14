@@ -242,6 +242,7 @@ export function mockOutput(
   } = {},
 ) {
   const messages: OutputMessage[] = [];
+  const failures: Array<Parameters<ReturnType<typeof Output.of>["fail"]>[0]> = [];
   const progressEvents: ProgressEvent[] = [];
   const events: OutputEvent[] = [];
   const rawChunks: Array<{ text: string; stream: "stdout" | "stderr" }> = [];
@@ -362,6 +363,7 @@ export function mockOutput(
       fail: (err: { code: string; message: string; detail?: string; suggestion?: string }) =>
         Effect.sync(() => {
           messages.push({ type: "fail", message: err.message });
+          failures.push(err);
         }),
       progress: (opts: { max: number }) =>
         Effect.sync(() => ({
@@ -446,6 +448,7 @@ export function mockOutput(
         }),
     }),
     messages,
+    failures,
     progressEvents,
     events,
     promptConfirmCalls,

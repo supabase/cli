@@ -15,11 +15,10 @@ Bun monorepo with workspaces under `apps/` and `packages/`. `pnpm` is the packag
 Use an existing TypeScript/Bun workspace, especially `packages/api`, as the package-structure
 reference. Published `apps/cli` and `packages/config` are not private; `apps/docs` and
 `packages/cli-*` have their own shapes. Generic lint, format, and unused-code tooling is
-root-owned. Effect lint covers `packages/stack`, all files under
-`apps/cli/src/commands/experimental/stack` and `apps/cli/src/commands/experimental/compute`, the
-shared `apps/cli/src/shared/compute` runtime helpers (excluding embedded starter templates), the
-Compute test fixture helper, and `apps/cli/src/command-internal/experimental-feature.ts`; use the
-root scripts for it.
+root-owned. Effect lint covers a growing allow list of areas, defined by the `!` entries in
+`.oxlintrc.effect.json` (the source of truth) and enforced through the root scripts; it
+currently spans `packages/stack`, the experimental and smaller `apps/cli/src/commands`
+families and most of the shared compute runtime, and expands area by area.
 
 ### Config Naming Vocabulary
 
@@ -75,8 +74,11 @@ notes in `.repos/effect/MIGRATION.md`. Run `pnpm repos:install` if it is absent.
   Effect constructs; do not silence findings with `oxlint-disable`, casts, file
   exclusions, or weaker lint configuration.
 - A suppression is acceptable only for a demonstrated false positive or an unavoidable
-  foreign-library boundary. Limit it to the specific rule and smallest scope, and
-  explain why a compliant implementation is not possible.
+  foreign-library boundary. Before retaining one, inspect the corresponding Effect API
+  and identify the specific missing capability or behavior that prevents replacement;
+  existing Promise-based code, native API usage, or refactoring effort alone do not
+  justify an exception. Limit it to the specific rule and smallest scope, and explain
+  why a compliant implementation is not possible.
 - Passing lint by bypassing its rules does not complete an Effect migration.
 
 ## Commands, validation, and workflows

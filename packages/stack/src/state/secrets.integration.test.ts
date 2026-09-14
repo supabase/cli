@@ -1,6 +1,6 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Option, Path, Redacted } from "effect";
+import { Cause, Effect, Exit, FileSystem, Option, Path, Redacted, Schema } from "effect";
 import * as TestClock from "effect/testing/TestClock";
 import { createHmac, generateKeyPairSync, createVerify } from "node:crypto";
 import {
@@ -17,6 +17,12 @@ import {
 } from "./SecretStore.ts";
 
 const layer = NodeServices.layer;
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+const decodeJwtPayload = (text: string) =>
+  Schema.decodeUnknownSync(
+    Schema.Struct({ iss: Schema.String, role: Schema.String, exp: Schema.Finite }),
+  )(decodeJson(text));
 const managed = (value?: string): SecretCandidate => ({
   declarations: [
     {
@@ -105,8 +111,7 @@ describe("managed and pass-through secrets", () => {
           present(tokenParts[1], `${slot} payload`),
           "base64url",
         ).toString();
-        // oxlint-disable-next-line effecttsgo/prefer-schema-over-json
-        const payload = JSON.parse(payloadText);
+        const payload = decodeJwtPayload(payloadText);
         expect(payload).toMatchObject({
           iss: "supabase-demo",
           role: slot.endsWith("anon_key") ? "anon" : "service_role",
@@ -171,8 +176,7 @@ describe("managed and pass-through secrets", () => {
       };
       yield* fs.writeFileString(
         path.join(root, "keys.json"),
-        // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- dynamic JWK fixture JSON
-        JSON.stringify([privateJwk, { kty: "EC", alg: "ES256", d: "invalid" }]),
+        encodeJson([privateJwk, { kty: "EC", alg: "ES256", d: "invalid" }]),
       );
       const failed = yield* resolveSigningKeyMaterial({
         kind: "jwks-file",
@@ -190,8 +194,7 @@ describe("managed and pass-through secrets", () => {
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-credentials-" });
       const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
       const privateJwk = { ...privateKey.export({ format: "jwk" }), alg: "ES256", kid: "test-key" };
-      // oxlint-disable-next-line effecttsgo/prefer-schema-over-json
-      yield* fs.writeFileString(path.join(root, "keys.json"), JSON.stringify([privateJwk]));
+      yield* fs.writeFileString(path.join(root, "keys.json"), encodeJson([privateJwk]));
       const compiled = yield* compileStack({
         projectRoot: root,
         runtime: { kind: "native" },
@@ -210,8 +213,7 @@ describe("managed and pass-through secrets", () => {
       const tokenHeader = present(header, "JWT header");
       const tokenPayload = present(payload, "JWT payload");
       const tokenSignature = present(signature, "JWT signature");
-      // oxlint-disable-next-line effecttsgo/prefer-schema-over-json
-      expect(JSON.parse(Buffer.from(tokenHeader, "base64url").toString())).toMatchObject({
+      expect(decodeJson(Buffer.from(tokenHeader, "base64url").toString())).toMatchObject({
         alg: "ES256",
         kid: "test-key",
       });
@@ -234,8 +236,7 @@ describe("managed and pass-through secrets", () => {
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-credentials-" });
       const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
       const privateJwk = { ...privateKey.export({ format: "jwk" }), alg: "RS256", kid: "rsa-key" };
-      // oxlint-disable-next-line effecttsgo/prefer-schema-over-json
-      yield* fs.writeFileString(path.join(root, "keys.json"), JSON.stringify([privateJwk]));
+      yield* fs.writeFileString(path.join(root, "keys.json"), encodeJson([privateJwk]));
       const compiled = yield* compileStack({
         projectRoot: root,
         runtime: { kind: "native" },
@@ -254,8 +255,7 @@ describe("managed and pass-through secrets", () => {
       const tokenHeader = present(header, "JWT header");
       const tokenPayload = present(payload, "JWT payload");
       const tokenSignature = present(signature, "JWT signature");
-      // oxlint-disable-next-line effecttsgo/prefer-schema-over-json
-      expect(JSON.parse(Buffer.from(tokenHeader, "base64url").toString())).toMatchObject({
+      expect(decodeJson(Buffer.from(tokenHeader, "base64url").toString())).toMatchObject({
         alg: "RS256",
         kid: "rsa-key",
       });
@@ -274,8 +274,7 @@ describe("managed and pass-through secrets", () => {
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-credentials-" });
       const { privateKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
       const privateJwk = { ...privateKey.export({ format: "jwk" }), alg: "ES256" };
-      // oxlint-disable-next-line effecttsgo/prefer-schema-over-json
-      yield* fs.writeFileString(path.join(root, "keys.json"), JSON.stringify([privateJwk]));
+      yield* fs.writeFileString(path.join(root, "keys.json"), encodeJson([privateJwk]));
       const compiled = yield* compileStack({
         projectRoot: root,
         runtime: { kind: "native" },
@@ -292,8 +291,7 @@ describe("managed and pass-through secrets", () => {
       );
       const payloadPart = present(token.split(".")[1], "JWT payload");
       const payloadText = Buffer.from(payloadPart, "base64url").toString();
-      // oxlint-disable-next-line effecttsgo/prefer-schema-over-json
-      const payload = JSON.parse(payloadText);
+      const payload = decodeJwtPayload(payloadText);
       expect(payload).toEqual({
         iss: "supabase-demo",
         role: "anon",
@@ -314,11 +312,7 @@ describe("managed and pass-through secrets", () => {
         }),
         alg: "ES256",
       };
-      yield* fs.writeFileString(
-        path.join(root, "public.json"),
-        // oxlint-disable-next-line effecttsgo/prefer-schema-over-json
-        JSON.stringify([publicJwk]),
-      );
+      yield* fs.writeFileString(path.join(root, "public.json"), encodeJson([publicJwk]));
       const publicOnly = yield* compileStack({
         projectRoot: root,
         runtime: { kind: "native" },
@@ -380,8 +374,7 @@ describe("managed and pass-through secrets", () => {
       const outside = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-outside-" });
       yield* fs.writeFileString(
         path.join(outside, "private.json"),
-        // oxlint-disable-next-line effecttsgo/prefer-schema-over-json
-        JSON.stringify([{ kty: "EC", alg: "ES256", crv: "P-256", d: "d", x: "x", y: "y" }]),
+        encodeJson([{ kty: "EC", alg: "ES256", crv: "P-256", d: "d", x: "x", y: "y" }]),
       );
       yield* fs.symlink(path.join(outside, "private.json"), path.join(root, "linked.json"));
       const symlinkEscape = yield* compileStack({

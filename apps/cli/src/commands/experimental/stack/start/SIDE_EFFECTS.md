@@ -1,5 +1,8 @@
 # `supabase stack start`
 
+The command is available only when the `experimental.stack` feature flag is enabled. The
+top-level `supabase start` command uses this handler when the same flag is enabled.
+
 This command creates or resumes the managed stack identified by the current
 project and optional `--stack`, or opens an existing stack with `--stack-id`.
 It loads `supabase/config.toml` for the target project when present and uses
@@ -55,6 +58,13 @@ runtime. `docker` and `native` select the requested runtime without fallback.
 `--preparation` controls background versus
 on-demand artifact preparation, and `--eager` requests enabled capabilities be
 activated before the command returns.
+`--exclude` accepts repeated or comma-separated capability names (`rest`, `auth`, `realtime`,
+`storage`, `functions`, `studio`, `mail`, `analytics`, and `pooler`) and disables those services
+in the effective start configuration. The database cannot be excluded. Exclusions are applied in
+memory and persisted with the stack state; the project configuration file is unchanged. A capability
+and its dependents are disabled together, so excluding `rest` or `analytics` also disables `studio`.
+Listeners are derived by the runtime from enabled capability routes; route-less listeners are therefore omitted.
+Eager activation never re-enables an excluded capability.
 
 The command owns only the start request. Once the package reports readiness,
 the detached stack owner remains alive after the CLI process exits. If the CLI

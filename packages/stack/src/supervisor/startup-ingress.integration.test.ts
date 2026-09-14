@@ -12,14 +12,13 @@ import {
   Path,
   Ref,
 } from "effect";
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- native loopback HTTP server is the integration protocol boundary under test.
 import {
   request as requestHttp,
   createServer,
   type ClientRequest,
   type IncomingMessage,
   type ServerResponse,
-  // oxlint-disable-next-line effecttsgo/node-builtin-import -- native loopback HTTP server is the integration protocol boundary under test.
+  // oxlint-disable-next-line effecttsgo/node-builtin-import -- startup ingress protocol fixture.
 } from "node:http";
 import { deriveStackId } from "../identity/Identity.ts";
 import type { StackError } from "../public/Errors.ts";

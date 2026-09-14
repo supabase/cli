@@ -1,6 +1,6 @@
 import type { V1GetProfileOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option, Stdio } from "effect";
+import { Cause, Effect, Exit, Layer, Option, Schema, Stdio } from "effect";
 
 import { GLOBAL_OUTPUT_FORMATS } from "../../command-internal/global-flags.ts";
 import { InvalidOutputFormatError } from "../../command-internal/go-output-flag.ts";
@@ -89,7 +89,9 @@ describe("whoami integration", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* whoami({});
-      const payload = JSON.parse(out.stdoutText);
+      const payload: unknown = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
+        out.stdoutText,
+      );
       expect(payload).toEqual({
         id: SAMPLE_PROFILE.gotrue_id,
         email: SAMPLE_PROFILE.primary_email,

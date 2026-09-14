@@ -3,16 +3,20 @@ export {
   openStack,
   findStack,
   listStacks,
+  discoverStacks,
   inspectStack,
 } from "./public/PromiseStack.ts";
 export type {
   PromiseStack,
   PromiseStackConfig,
+  PromiseInspectStackOptions,
   PromiseStartStackOptions,
   PromisePrepareStackOptions,
   CreateStackOptions,
   FindStackOptions,
   ListStacksOptions,
+  StackDiscoveryIssue,
+  StackDiscoveryResult,
   PreparedCapability,
 } from "./public/PromiseStack.ts";
 export type {

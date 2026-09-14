@@ -2,6 +2,7 @@ import { DateTime } from "effect";
 import { red, yellow, type ColorStream } from "../../../command-internal/colors.ts";
 import { COMPUTE_LOG_STREAMS } from "../../../shared/compute/compute-logs.sql.ts";
 import type { ComputeLogEntry } from "../../../shared/compute/compute-logs-api.ts";
+import { stripControlSequences } from "../../../shared/output/strip-control-sequences.ts";
 
 /**
  * Text rendering for `supabase compute logs`.
@@ -36,44 +37,6 @@ export function computeLogLevel(entry: ComputeLogEntry): ComputeLogLevel | undef
     return entry.attributes.event === "build_failed" ? "error" : "info";
   }
   return undefined;
-}
-
-/**
- * Escape-sequence and control-character patterns stripped from a guest line,
- * as module constants so they compile once. Every pattern uses Unicode
- * escapes so the source itself holds no raw control bytes.
- */
-/* oxlint-disable no-control-regex */
-/** OSC: ESC ] ... terminated by BEL or ESC backslash. */
-const OSC_SEQUENCE = /\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)?/gu;
-/** CSI: ESC [ parameters intermediates final. */
-const CSI_SEQUENCE = /\u001b\[[0-9;?]*[ -/]*[@-~]/gu;
-/** Remaining two-character escape sequences. */
-const ESCAPE_SEQUENCE = /\u001b[@-Z\\-_]/gu;
-/** CRLF pairs, folded to a bare newline before lone carriage returns go. */
-const CRLF_PAIR = /\u000d\u000a/gu;
-/**
- * Leftover C0 controls and DEL, keeping only tab and newline. A carriage
- * return is stripped since it returns the cursor to column zero, letting a
- * line overwrite the timestamp and stream tag already printed to its left.
- */
-const C0_CONTROLS = /[\u0000-\u0008\u000b-\u001f\u007f]/gu;
-/* oxlint-enable no-control-regex */
-
-/**
- * Control characters stripped from a line before it reaches a terminal.
- * `worker_guest_logs` is bytes the tenant's own code printed — the one
- * untrusted string this CLI displays — so left alone it could reposition the
- * cursor or forge a line that looks like the CLI's own. Tabs and interior
- * newlines are kept; only escape sequences and other C0 controls go.
- */
-function stripControlSequences(message: string): string {
-  return message
-    .replaceAll(CRLF_PAIR, "\n")
-    .replaceAll(OSC_SEQUENCE, "")
-    .replaceAll(CSI_SEQUENCE, "")
-    .replaceAll(ESCAPE_SEQUENCE, "")
-    .replaceAll(C0_CONTROLS, "");
 }
 
 /**

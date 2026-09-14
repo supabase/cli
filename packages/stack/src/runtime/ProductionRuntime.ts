@@ -1,3 +1,5 @@
+import { NodeHttpClient } from "@effect/platform-node";
+import { HttpClient } from "effect/unstable/http";
 import {
   Cause,
   Context,
@@ -341,12 +343,17 @@ const bootstrapContent =
   typeof SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE === "string"
     ? Effect.succeed(SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE)
     : Effect.tryPromise({
-        try: () =>
-          import("../functions/serve-main-bundler.ts").then(({ bundleServeMainTemplate }) =>
-            bundleServeMainTemplate(),
-          ),
+        try: () => import("../functions/serve-main-bundler.ts"),
         catch: (cause) => preparationError("Unable to bundle functions bootstrap", cause),
-      });
+      }).pipe(
+        Effect.flatMap(({ bundleServeMainTemplate }) =>
+          bundleServeMainTemplate.pipe(
+            Effect.mapError((cause) =>
+              preparationError("Unable to bundle functions bootstrap", cause),
+            ),
+          ),
+        ),
+      );
 
 const mapDriverError = (
   key: Pick<RuntimeWorkloadKey, "stackId" | "workloadId">,
@@ -437,18 +444,16 @@ export const makeProductionRuntime = (
     const fetchJson: RuntimeJsonFetcher =
       options.fetchJson ??
       ((url) =>
-        // oxlint-disable effecttsgo/async-function -- production fetch leaf owns AbortSignal.
-        // oxlint-disable effecttsgo/global-fetch-in-effect -- production fetch leaf is the network boundary.
-        Effect.tryPromise({
-          try: async (signal) => {
-            const response = await fetch(url, { signal });
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-            return await response.json();
-          },
-          catch: (cause) => preparationError("Unable to fetch Auth OIDC metadata", cause),
-        }));
-    // oxlint-enable effecttsgo/async-function
-    // oxlint-enable effecttsgo/global-fetch-in-effect
+        Effect.gen(function* () {
+          const client = yield* HttpClient.HttpClient;
+          const response = yield* HttpClient.followRedirects(client, 20).get(url);
+          if (response.status < 200 || response.status >= 300)
+            return yield* preparationError(`HTTP ${response.status}`);
+          return yield* response.json;
+        }).pipe(
+          Effect.mapError((cause) => preparationError("Unable to fetch Auth OIDC metadata", cause)),
+          Effect.provide(NodeHttpClient.layerNodeHttp),
+        ));
     const inputOwner = yield* makeRuntimeInputOwner({
       stateRoot: options.stateRoot,
       stackId: options.stackId,

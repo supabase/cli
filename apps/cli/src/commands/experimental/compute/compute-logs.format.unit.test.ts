@@ -171,10 +171,13 @@ describe("renderComputeLogLine", () => {
   });
 
   it("strips ANSI escapes a compute printed, so it cannot forge output", () => {
-    const line = renderComputeLogLine(entry({ message: `${ESCAPE}[31mfake error${ESCAPE}[0m` }), {
-      showStream: false,
-      colorStream: PLAIN,
-    });
+    const line = renderComputeLogLine(
+      entry({ message: `${ESCAPE}[38:2::255:0:0mfake error${ESCAPE}[0m` }),
+      {
+        showStream: false,
+        colorStream: PLAIN,
+      },
+    );
 
     expect(line).toBe(`${T}  fake error`);
     expect(line).not.toContain(ESCAPE);
@@ -198,6 +201,15 @@ describe("renderComputeLogLine", () => {
     expect(line).toBe(`${T}  kept`);
   });
 
+  it("strips C1 terminal sequences and controls", () => {
+    const line = renderComputeLogLine(
+      entry({ message: "safe\u009d0;title\u0007-\u009b2Ablue\u009d1;title\u009c\u0085tail" }),
+      { showStream: false, colorStream: PLAIN },
+    );
+
+    expect(line).toBe(`${T}  safe-bluetail`);
+  });
+
   it("strips a carriage return so a line cannot overwrite its own prefix", () => {
     const line = renderComputeLogLine(entry({ message: "harmless\r00:00:00  forged" }), {
       showStream: false,
@@ -215,6 +227,15 @@ describe("renderComputeLogLine", () => {
         colorStream: PLAIN,
       }),
     ).toBe(`${T}  first\nsecond`);
+  });
+
+  it("strips C0 controls while keeping tabs and newlines", () => {
+    const line = renderComputeLogLine(entry({ message: "first\u0000\tsecond\u000b\nthird" }), {
+      showStream: false,
+      colorStream: PLAIN,
+    });
+
+    expect(line).toBe(`${T}  first\tsecond\nthird`);
   });
 
   it("strips control sequences from request attributes", () => {

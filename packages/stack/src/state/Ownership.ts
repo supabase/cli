@@ -10,8 +10,8 @@ import {
   Schema,
   Scope,
 } from "effect";
-// oxlint-disable-next-line effecttsgo/node-builtin-import
-import { createServer, type Server } from "node:net";
+import { NodeSocketServer } from "@effect/platform-node";
+import * as Socket from "effect/unstable/socket/Socket";
 import { StackIdSchema, type StackId } from "../public/StackId.ts";
 import { resolveStackPaths } from "./Paths.ts";
 import { StackOwnershipConflictError, StackStateInvalidError } from "../public/Errors.ts";
@@ -104,114 +104,8 @@ export const readOwnerLock = (
     ),
     Effect.catchTag("PlatformError", (error) =>
       Predicate.isTagged(error.reason, "NotFound")
-        ? // oxlint-disable-next-line effecttsgo/effect-succeed-with-void -- this branch carries Option.none as undefined
-          Effect.succeed(undefined)
+        ? Effect.undefined
         : Effect.fail(stateError(`Unable to read owner lock: ${error.message}`)),
-    ),
-  );
-
-const bindLease = (port: number): Effect.Effect<Server, StackStateInvalidError> =>
-  Effect.callback<Server, StackStateInvalidError>((resume) => {
-    const server = createServer({ allowHalfOpen: false }, (socket) => socket.destroy());
-    let settled = false;
-    let canceled = false;
-    const cleanup = () => {
-      server.off("error", onError);
-      server.off("listening", onListening);
-    };
-    const close = () => {
-      if (server.listening) {
-        try {
-          server.close(() => undefined);
-        } catch {
-          // The listener may have failed before a handle was allocated.
-        }
-      }
-    };
-    const onError = (cause: Error & { readonly code?: string }) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      close();
-      if (canceled) return;
-      resume(
-        Effect.fail(
-          new StackStateInvalidError({
-            message: `Unable to acquire owner lease: ${cause.message}`,
-            code: cause.code,
-            cause,
-          }),
-        ),
-      );
-    };
-    const onListening = () => {
-      if (canceled) {
-        settled = true;
-        cleanup();
-        close();
-        return;
-      }
-      if (settled) return;
-      settled = true;
-      cleanup();
-      resume(Effect.succeed(server));
-    };
-    server.once("error", onError);
-    server.once("listening", onListening);
-    try {
-      server.listen({ host: "127.0.0.1", port });
-    } catch (cause) {
-      onError(cause instanceof Error ? cause : new Error(String(cause)));
-    }
-    return Effect.sync(() => {
-      if (!settled) {
-        canceled = true;
-        if (server.listening) close();
-      }
-    });
-  });
-
-const closeBoundServer = (server: Server): Effect.Effect<void> =>
-  Effect.callback<void>((resume) => {
-    if (!server.listening) {
-      resume(Effect.void);
-      return;
-    }
-    let settled = false;
-    const finish = () => {
-      if (!settled) {
-        settled = true;
-        resume(Effect.void);
-      }
-    };
-    try {
-      server.close(finish);
-    } catch {
-      finish();
-    }
-    return Effect.sync(() => {
-      if (!settled) {
-        settled = true;
-        try {
-          server.close(() => undefined);
-        } catch {
-          // The exact listener is already closed or was never allocated.
-        }
-      }
-    });
-  });
-
-const leasePort = (server: Server): Effect.Effect<number, StackStateInvalidError> =>
-  Effect.sync(() => {
-    const address = server.address();
-    if (address === null || typeof address === "string" || !Number.isInteger(address.port))
-      return undefined;
-    return address.port;
-  }).pipe(
-    Effect.flatMap((port) =>
-      port === undefined
-        ? Effect.fail(stateError("Owner lease did not expose a bound port"))
-        : Effect.succeed(port),
     ),
   );
 
@@ -223,13 +117,50 @@ export interface HeldPortLease {
 export const acquirePortLease = (
   port: number,
 ): Effect.Effect<HeldPortLease, StackStateInvalidError> =>
-  Effect.uninterruptible(
+  Effect.uninterruptibleMask((restore) =>
     Effect.gen(function* () {
-      const server = yield* bindLease(port);
-      return yield* leasePort(server).pipe(
-        Effect.map((actualPort) => ({ port: actualPort, close: closeBoundServer(server) })),
-        Effect.onExit((exit) => (Exit.isFailure(exit) ? closeBoundServer(server) : Effect.void)),
-      );
+      const scope = yield* Scope.make();
+      const close = Scope.close(scope, Exit.void);
+      return yield* Effect.gen(function* () {
+        const server = yield* restore(
+          NodeSocketServer.make({ host: "127.0.0.1", port, allowHalfOpen: false }).pipe(
+            Effect.provideService(Scope.Scope, scope),
+            Effect.mapError((error) => {
+              const cause = error.reason.cause;
+              const code =
+                typeof cause === "object" &&
+                cause !== null &&
+                "code" in cause &&
+                typeof cause.code === "string"
+                  ? cause.code
+                  : undefined;
+              return new StackStateInvalidError({
+                message: `Unable to acquire owner lease: ${String(cause)}`,
+                code,
+                cause,
+              });
+            }),
+          ),
+        );
+        if (!Predicate.isTagged(server.address, "TcpAddress"))
+          return yield* stateError("Owner lease did not expose a bound port");
+        yield* Effect.forkIn(
+          server.run((socket) =>
+            socket
+              .run(() => Effect.void, {
+                onOpen: Effect.scoped(
+                  Effect.gen(function* () {
+                    const write = yield* socket.writer;
+                    yield* write(new Socket.CloseEvent());
+                  }),
+                ).pipe(Effect.ignore),
+              })
+              .pipe(Effect.ignore),
+          ),
+          scope,
+        );
+        return { port: server.address.port, close };
+      }).pipe(Effect.onExit((exit) => (Exit.isFailure(exit) ? close : Effect.void)));
     }),
   );
 

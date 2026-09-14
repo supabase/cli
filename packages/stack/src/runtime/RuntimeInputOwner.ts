@@ -139,8 +139,12 @@ const resolveFunctionsEdgeRuntimeSecrets = (
     if (name.startsWith("SUPABASE_"))
       return Effect.fail(failure("Functions Edge Runtime secret name is reserved", { name }));
     const value = settingValue(state, raw);
-    // oxlint-disable-next-line no-control-regex
-    if (/[\u0000-\u001f\u007f]/u.test(value))
+    if (
+      [...value].some((character) => {
+        const code = character.codePointAt(0) ?? 0;
+        return code <= 0x1f || code === 0x7f;
+      })
+    )
       return Effect.fail(failure("Functions Edge Runtime secret value is invalid", { name }));
     output[name] = value;
   }

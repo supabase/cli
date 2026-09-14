@@ -1,9 +1,7 @@
 import { Effect, Queue, Scope } from "effect";
-// oxlint-disable-next-line effecttsgo/node-builtin-import
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- pre-adoption HTTP and raw upgrade events must stay queued on the same bound server.
 import { createServer as createHttpServer, type Server as HttpServer } from "node:http";
-// oxlint-disable-next-line effecttsgo/node-builtin-import
 import { createServer as createNetServer, isIP, type Server as NetServer } from "node:net";
-// oxlint-disable-next-line effecttsgo/node-builtin-import
 import type { Duplex } from "node:stream";
 import { PortUnavailableError } from "../public/Errors.ts";
 import { PORT_FIELD_PROTOCOL, type PortField } from "../public/Status.ts";

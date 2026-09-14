@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer } from "effect";
+import { Cause, Effect, Exit, Layer } from "effect";
 import { CliOutput, Command } from "effect/unstable/cli";
 
 import { textCliOutputFormatter } from "../../shared/output/text-formatter.ts";
@@ -89,7 +89,7 @@ describe("vanity-subdomains experimental gate (Go PersistentPreRunE parity)", ()
         const exit = yield* Effect.exit(Command.runWith(testRoot, { version: "0.0.0-test" })(args));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("ExperimentalRequiredError");
+          expect(Cause.pretty(exit.cause)).toContain("ExperimentalRequiredError");
         }
         expect(api.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
@@ -103,7 +103,7 @@ describe("vanity-subdomains experimental gate (Go PersistentPreRunE parity)", ()
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const causeText = JSON.stringify(exit.cause);
+          const causeText = Cause.pretty(exit.cause);
           expect(causeText).not.toContain("ExperimentalRequiredError");
           expect(causeText).toContain("AccessTokenRequiredError");
         }

@@ -4,9 +4,11 @@ This document describes the legacy backend. With `SUPABASE_EXPERIMENTAL_STACK=1`
 `[experimental] stack = true` when the environment override is unset or empty, `supabase stop`
 uses the new [`supabase stack stop` implementation](../experimental/stack/stop/SIDE_EFFECTS.md).
 `SUPABASE_EXPERIMENTAL_STACK=0` forces the legacy backend. See [backend selection](../../../docs/stack-commands.md).
-Backend selection happens before command parsing. When the environment override is unset or empty,
-an unreadable, malformed, or invalid project configuration falls back to the legacy backend; an
-invalid environment override remains an error.
+
+Backend routing reads `supabase/config.json` when present, otherwise `supabase/config.toml`; the
+legacy handler reads TOML only. Backend selection happens before command parsing. When the
+environment override is unset or empty, an unreadable, malformed, or invalid project configuration
+falls back to the legacy backend; an invalid environment override remains an error.
 
 Talks directly to Docker via subprocess
 (`docker`/`podman`), replicating the old Go CLI's label-filtering and container-naming
@@ -17,7 +19,8 @@ model (see the CLI-1324 plan's "Critical architectural finding" for why).
 
 | Path                                                                                               | Format                                                                                | When                                                                                                                                                                                                                                                                                                                                            |
 | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml`                                                                   | TOML                                                                                  | read by backend routing before dispatch when `SUPABASE_EXPERIMENTAL_STACK` is unset or empty; the legacy handler reads it on the default path only, and skips it when `--project-id` or `--all` is set                                                                                                                                          |
+| `<workdir>/supabase/config.json` or `config.toml`                                                  | JSON or TOML                                                                          | backend routing before command parsing when `SUPABASE_EXPERIMENTAL_STACK` is unset or empty; JSON takes precedence when both exist                                                                                                                                                                                                              |
+| `<workdir>/supabase/config.toml`                                                                   | TOML                                                                                  | legacy handler default path only; skipped with `--project-id` or `--all`                                                                                                                                                                                                                                                                        |
 | `auth.email.template.*` / `auth.email.notification.*` `content_path` (config-relative or absolute) | text (existence/readability only — bytes discarded, used only to validate the config) | default path only, only when `auth.enabled`, for every configured template and every notification with `enabled = true`, as part of `resolveLocalConfigValues`'s own `Config.Validate` pass; the resolved path is CONFINED to the project root (symlinks dereferenced with `realpathSync`) — a path resolving outside it aborts before the read |
 
 ## Files Written
@@ -139,7 +142,7 @@ Same payload as `json`, delivered as a `result` NDJSON event.
 
 - `--project-id` and `--all` are **directory-independent** pure Docker-label filters in the
   legacy handler — the handler does not read `config.toml` for either, so neither is subject to
-  the `content_path` containment check below. Backend routing may still read the file first when
+  the `content_path` containment check below. Backend routing may still read `config.json` or `config.toml` first when
   `SUPABASE_EXPERIMENTAL_STACK` is unset or empty; if that read fails, routing falls back to this
   legacy handler. Only the no-flags default path resolves the project id
   from `CommandSettings.workdir` (env → config.toml `project_id` → workdir basename).

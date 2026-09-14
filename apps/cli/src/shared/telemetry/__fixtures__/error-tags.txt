@@ -60,7 +60,6 @@ ComputeLogsUsageExceededError
 ComputeNewWorkdirError
 ComputeNotDeployedError
 ComputeProjectNotFoundError
-ComputeRoutingError
 ComputeSourceEscapingLinkError
 ComputeSourceMissingError
 ComputeStacksValidationError
@@ -232,7 +231,13 @@ EncryptionNetworkError
 EncryptionUnexpectedStatusError
 ExperimentalFeatureFlagError
 ExperimentalRequiredError
+ExperimentalStackDestroyError
+ExperimentalStackListError
+ExperimentalStackLogsError
+ExperimentalStackPrepareError
+ExperimentalStackRestartError
 ExperimentalStackStartError
+ExperimentalStackStatusError
 ExperimentalStackStopError
 ExperimentalStackTargetError
 FeedbackBackendError
