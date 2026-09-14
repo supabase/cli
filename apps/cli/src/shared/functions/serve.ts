@@ -124,13 +124,8 @@ const ignoredDirNames = new Set([
 ]);
 const dockerLogRetryDelay = Duration.millis(400);
 const dockerLogDiagnosticTailLength = 4_096;
-// A Ctrl-C delivers SIGINT to both this process and the un-detached `docker
-// logs -f` child in the same instant, so a shutdown signal and a log-stream
-// failure can become ready within microseconds of each other. This bounds how
-// long a failing log stream waits to see whether that shutdown signal (which
-// already fired, just not yet observed by this fiber) lands before treating
-// the failure as real; it adds the same bounded delay to a genuine crash's
-// exit, which is imperceptible next to the process already tearing down.
+// Ctrl-C hits this process and the un-detached `docker logs -f` child at once, so a shutdown
+// signal and a log-stream failure can become ready microseconds apart — this is their tie-break.
 const shutdownSignalGracePeriod = Duration.millis(50);
 const defaultSupabaseEnv = "development";
 const serveMainDir = "/root";
@@ -1268,10 +1263,15 @@ function appendDiagnosticTail(existing: string, text: string) {
     : combined.slice(combined.length - dockerLogDiagnosticTailLength);
 }
 
-const inspectContainerExitCode = Effect.fnUntraced(function* (containerId: string) {
+interface ContainerState {
+  readonly running: boolean;
+  readonly exitCode: number;
+}
+
+const inspectContainerState = Effect.fnUntraced(function* (containerId: string) {
   const result = yield* runChildProcess(
     "docker",
-    ["container", "inspect", "--format", "{{.State.ExitCode}}", containerId],
+    ["container", "inspect", "--format", "{{.State.Running}} {{.State.ExitCode}}", containerId],
     {
       stdout: "pipe",
       stderr: "pipe",
@@ -1283,14 +1283,15 @@ const inspectContainerExitCode = Effect.fnUntraced(function* (containerId: strin
     return yield* Effect.fail(new Error(detail));
   }
 
-  const exitCode = Number.parseInt(result.stdout.trim(), 10);
-  if (Number.isNaN(exitCode)) {
+  const [runningToken, exitCodeToken] = result.stdout.trim().split(/\s+/);
+  const exitCode = Number.parseInt(exitCodeToken ?? "", 10);
+  if ((runningToken !== "true" && runningToken !== "false") || Number.isNaN(exitCode)) {
     return yield* Effect.fail(
-      new Error(`failed to parse container exit code: ${result.stdout.trim()}`),
+      new Error(`failed to parse container state: ${result.stdout.trim()}`),
     );
   }
 
-  return exitCode;
+  return { running: runningToken === "true", exitCode } satisfies ContainerState;
 });
 
 const streamContainerLogs = Effect.fnUntraced(function* (containerId: string) {
@@ -1323,21 +1324,27 @@ const streamContainerLogs = Effect.fnUntraced(function* (containerId: string) {
     );
 
     if (exitCode === 0) {
-      const containerExitCode = yield* inspectContainerExitCode(containerId);
-      if (containerExitCode === 0) {
+      const containerState = yield* inspectContainerState(containerId);
+      if (containerState.running) {
+        // `docker logs -f` exiting 0 doesn't mean the container stopped —
+        // the daemon can close the stream while it keeps running; re-attach.
+        yield* Effect.sleep(dockerLogRetryDelay);
+        continue;
+      }
+      if (containerState.exitCode === 0) {
         // The edge runtime container stopped on its own with a clean exit
         // code — not a failure, so `serveFunctions` ends the session normally.
         return;
       }
-      if (containerExitCode === 137) {
+      if (containerState.exitCode === 137) {
         yield* Effect.sleep(dockerLogRetryDelay);
         continue;
       }
       return yield* Effect.fail(
         new EdgeRuntimeContainerCrashedError({
-          message: `error running container: exit ${containerExitCode}`,
+          message: `error running container: exit ${containerState.exitCode}`,
           containerId,
-          exitCode: containerExitCode,
+          exitCode: containerState.exitCode,
         }),
       );
     }
@@ -1940,9 +1947,16 @@ export const serveFunctions = Effect.fn("functions.serve")(function* (
   });
 
   const loop = Effect.gen(function* () {
+    // Hoisted to the loop's lifetime (not per-race) so a signal arriving
+    // between races isn't dropped while nothing is listening for it.
+    const shutdownRequested = yield* Deferred.make<void>();
+    yield* processControl
+      .awaitSignal()
+      .pipe(Effect.andThen(Deferred.succeed(shutdownRequested, void 0)), Effect.forkScoped);
+
     for (;;) {
       const startOutcome = yield* Effect.raceFirst(
-        processControl.awaitSignal().pipe(Effect.as("shutdown" as const)),
+        Deferred.await(shutdownRequested).pipe(Effect.as("shutdown" as const)),
         startEdgeRuntime({
           flags,
           dependencies,
@@ -1959,42 +1973,21 @@ export const serveFunctions = Effect.fn("functions.serve")(function* (
 
       const started = startOutcome.started;
 
-      // `streamContainerLogs` succeeds when the container exits gracefully
-      // (its own clean shutdown) and otherwise streams logs until it fails on
-      // a genuine crash or log-stream error. Ctrl-C races the same signal
-      // against both this fiber's own `awaitSignal` and the container's
-      // `docker logs -f` child dying (`container-cli.ts`'s `spawnContainerCli`
-      // shares this process's process group), so a shutdown can be observed
-      // just as, or just before, the log stream fails. `shutdownRequested`
-      // latches the signal outside the race itself: once it is set (or set
-      // within `shutdownSignalGracePeriod` of a log-stream failure), that
-      // failure is downgraded to the "shutdown" outcome instead of failing
-      // the command. The race otherwise resolves to "shutdown", "restart",
-      // or "exited".
-      const outcome = yield* Effect.scoped(
-        Effect.gen(function* () {
-          const shutdownRequested = yield* Deferred.make<void>();
-          yield* processControl
-            .awaitSignal()
-            .pipe(Effect.andThen(Deferred.succeed(shutdownRequested, void 0)), Effect.forkScoped);
-
-          return yield* Effect.raceFirst(
-            Effect.raceFirst(
-              Deferred.await(shutdownRequested).pipe(Effect.as("shutdown" as const)),
-              waitForRestartSignal(started.watchSpecs).pipe(Effect.as("restart" as const)),
-            ),
-            streamContainerLogs(started.containerId).pipe(
-              Effect.as("exited" as const),
-              Effect.catch((error) =>
-                Effect.raceFirst(
-                  Deferred.await(shutdownRequested).pipe(Effect.as("shutdown" as const)),
-                  Effect.sleep(shutdownSignalGracePeriod).pipe(Effect.andThen(Effect.fail(error))),
-                ),
-              ),
-            ),
-          );
-        }),
+      const outcome = yield* Effect.raceFirst(
+        Effect.raceFirst(
+          Deferred.await(shutdownRequested).pipe(Effect.as("shutdown" as const)),
+          waitForRestartSignal(started.watchSpecs).pipe(Effect.as("restart" as const)),
+        ),
+        streamContainerLogs(started.containerId).pipe(Effect.as("exited" as const)),
       ).pipe(
+        // raceFirst already interrupted the restart listener, so only a shutdown
+        // signal — not a restart — can still downgrade this failure here.
+        Effect.catch((error) =>
+          Effect.raceFirst(
+            Deferred.await(shutdownRequested).pipe(Effect.as("shutdown" as const)),
+            Effect.sleep(shutdownSignalGracePeriod).pipe(Effect.andThen(Effect.fail(error))),
+          ),
+        ),
         Effect.ensuring(
           bestEffortRemoveContainer(started.containerId).pipe(Effect.ensuring(started.cleanup)),
         ),

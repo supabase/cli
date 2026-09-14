@@ -2045,17 +2045,17 @@ describe("functions serve integration", () => {
     },
   );
 
-  describe("shutdown vs. container-exit outcomes (CLI-2426)", () => {
-    function baseDockerRunHandler(inspectExitCode?: string) {
+  describe("shutdown vs. container-exit outcomes", () => {
+    function baseDockerRunHandler(inspectExitCode = "0", inspectRunning = false) {
       return (command: string, args: ReadonlyArray<string>) => {
         if (command !== "docker") {
           throw new Error(`unexpected process: ${command}`);
         }
         if (args[0] === "container" && args[1] === "inspect") {
-          // `inspectContainerExitCode` passes `--format`; the pre-create DB
+          // `inspectContainerState` passes `--format`; the pre-create DB
           // check and pre-create stale-container removal do not.
           if (args[2] === "--format") {
-            return { exitCode: 0, stdout: `${inspectExitCode ?? "0"}\n`, stderr: "" };
+            return { exitCode: 0, stdout: `${inspectRunning} ${inspectExitCode}\n`, stderr: "" };
           }
           return { exitCode: 0, stdout: "", stderr: "" };
         }
@@ -2083,14 +2083,9 @@ describe("functions serve integration", () => {
       () => {
         deployMockState.runHandler = baseDockerRunHandler();
         const processControl = mockQueuedProcessControl();
-        // Models the real bug as its worst case: the same Ctrl-C that
-        // delivers SIGINT to the CLI also kills the un-detached
-        // `docker logs -f` child (`spawnContainerCli` shares this process's
-        // process group), and the signal is offered in the very same tick
-        // the log-stream child spawns and immediately reports its own
-        // failing exit — the log-stream failure and the SIGINT delivery are
-        // exactly concurrent, with nothing to break the tie except the
-        // shutdown-race grace period.
+        // The same Ctrl-C reaches both the CLI and the un-detached
+        // `docker logs -f` child, so signaling from `onSpawn` models the
+        // two events as concurrent.
         const childSpawner = mockDockerLogSpawner([
           {
             exitCode: 1,
@@ -2111,7 +2106,52 @@ describe("functions serve integration", () => {
           const exit = yield* Fiber.await(fiber);
           expect(Exit.isSuccess(exit)).toBe(true);
           expect(
-            out.stdoutText.replaceAll("[1m", "").replaceAll("[22m", "").replaceAll("\\", "/"),
+            out.stdoutText
+              .replaceAll("\u001b[1m", "")
+              .replaceAll("\u001b[22m", "")
+              .replaceAll("\\", "/"),
+          ).toContain("Stopped serving supabase/functions\n");
+        });
+      },
+    );
+
+    it.live(
+      "exits cleanly when SIGINT arrives shortly after the docker-logs stream has already failed",
+      () => {
+        deployMockState.runHandler = baseDockerRunHandler();
+        const processControl = mockQueuedProcessControl();
+        // Delays SIGINT past the log-stream failure so only the shutdown
+        // grace period, not a same-tick race, can produce a clean exit.
+        const childSpawner = mockDockerLogSpawner([
+          {
+            exitCode: 1,
+            stderr: "docker logs killed by signal",
+            onSpawn: () => {
+              Effect.runFork(
+                Effect.sleep(Duration.millis(15)).pipe(
+                  Effect.andThen(Effect.sync(() => processControl.signal("SIGINT"))),
+                ),
+              );
+            },
+          },
+        ]);
+
+        return Effect.gen(function* () {
+          yield* Effect.promise(writeHelloFunction);
+
+          const { layer, out } = setupServe({ processControl, childSpawner });
+          const fiber = yield* functionsServe(baseFlags()).pipe(
+            Effect.provide(layer),
+            Effect.forkChild({ startImmediately: true }),
+          );
+
+          const exit = yield* Fiber.await(fiber);
+          expect(Exit.isSuccess(exit)).toBe(true);
+          expect(
+            out.stdoutText
+              .replaceAll("\u001b[1m", "")
+              .replaceAll("\u001b[22m", "")
+              .replaceAll("\\", "/"),
           ).toContain("Stopped serving supabase/functions\n");
         });
       },
@@ -2143,6 +2183,30 @@ describe("functions serve integration", () => {
       },
     );
 
+    it.live(
+      "still fails, but as user-cancelled rather than an internal bug, when the container exits 143 (SIGTERM)",
+      () => {
+        deployMockState.runHandler = baseDockerRunHandler("143");
+        const childSpawner = mockDockerLogSpawner([{ exitCode: 0 }]);
+
+        return Effect.gen(function* () {
+          yield* Effect.promise(writeHelloFunction);
+
+          const { layer } = setupServe({ childSpawner });
+          const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
+
+          expect(error).toBeInstanceOf(EdgeRuntimeContainerCrashedError);
+          if (error instanceof EdgeRuntimeContainerCrashedError) {
+            expect(error.exitCode).toBe(143);
+            expect(error[ErrorActionabilityId]).toEqual({
+              ...actionability.cancelled,
+              fingerprint_suffix: "cancelled",
+            });
+          }
+        });
+      },
+    );
+
     it.live("ends the session normally when the container exits gracefully (exit 0)", () => {
       deployMockState.runHandler = baseDockerRunHandler("0");
       const childSpawner = mockDockerLogSpawner([{ exitCode: 0 }]);
@@ -2157,6 +2221,58 @@ describe("functions serve integration", () => {
         expect(out.stdoutText).toContain("Stopped serving");
       });
     });
+
+    it.live(
+      "re-attaches instead of reporting a graceful exit when docker logs exits 0 but the container is still running",
+      () => {
+        let inspectCalls = 0;
+        deployMockState.runHandler = (command, args) => {
+          if (command !== "docker") {
+            throw new Error(`unexpected process: ${command}`);
+          }
+          if (args[0] === "container" && args[1] === "inspect") {
+            if (args[2] === "--format") {
+              inspectCalls += 1;
+              // The first `docker logs -f` exit is a stream EOF while the
+              // container keeps running; only the second is its real stop.
+              return {
+                exitCode: 0,
+                stdout: inspectCalls === 1 ? "true 0\n" : "false 0\n",
+                stderr: "",
+              };
+            }
+            return { exitCode: 0, stdout: "", stderr: "" };
+          }
+          if (args[0] === "container" && args[1] === "rm") {
+            return { exitCode: 0, stdout: "", stderr: "" };
+          }
+          if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
+            return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
+          }
+          if (args[0] === "exec") {
+            return { exitCode: 0, stdout: "", stderr: "" };
+          }
+          throw new Error(`unexpected docker args: ${args.join(" ")}`);
+        };
+        const childSpawner = mockDockerLogSpawner([{ exitCode: 0 }, { exitCode: 0 }]);
+
+        return Effect.gen(function* () {
+          yield* Effect.promise(writeHelloFunction);
+
+          const { layer, out } = setupServe({ childSpawner });
+          const exit = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.exit);
+
+          expect(Exit.isSuccess(exit)).toBe(true);
+          expect(out.stdoutText).toContain("Stopped serving");
+          expect(
+            childSpawner.spawned.filter(
+              (call) => call.command === "docker" && call.args[0] === "logs",
+            ),
+          ).toHaveLength(2);
+          expect(inspectCalls).toBe(2);
+        });
+      },
+    );
 
     it.live(
       "classifies an unreachable docker daemon as user-actionable rather than unknown",
