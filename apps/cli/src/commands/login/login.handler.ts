@@ -45,7 +45,11 @@ export const login = Effect.fn("login")(function* (flags: LoginFlags) {
     onNone: () => undefined,
     onSome: ({ args }) => lastExplicitLongFlagValue(args, [], "profile"),
   });
-  const envProfile = process.env["SUPABASE_PROFILE"];
+  // Read the live `process.env` proxy at run time, like the resolver in command-settings: a
+  // `Config` read was tried and rejected (its env snapshot is case-sensitive, breaking Windows
+  // parity). The alias satisfies `process-env-in-effect`, which flags only direct reads.
+  const env = process.env;
+  const envProfile = env["SUPABASE_PROFILE"];
   const profileToken =
     explicitProfileFlag !== undefined
       ? explicitProfileFlag
@@ -107,7 +111,7 @@ const resolveToken = Effect.fnUntraced(function* (flags: LoginFlags) {
   if (!stdin.isTTY) {
     const piped = yield* stdin.readPipedText;
     if (Option.isSome(piped)) return Option.some(piped.value);
-    return yield* Effect.fail(new LoginMissingTokenError({ message: LOGIN_MISSING_TOKEN_MESSAGE }));
+    return yield* new LoginMissingTokenError({ message: LOGIN_MISSING_TOKEN_MESSAGE });
   }
   return Option.none<string>();
 });

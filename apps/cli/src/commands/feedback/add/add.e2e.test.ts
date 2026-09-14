@@ -1,6 +1,7 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, it } from "@effect/vitest";
+import { Effect } from "effect";
 
-import { makeTempHome, runSupabase } from "../../../../tests/helpers/cli.ts";
+import { runSupabaseEffect, tempHomeScoped } from "../../../../tests/helpers/cli.ts";
 
 import { FEEDBACK_EMPTY_MESSAGE } from "./add.errors.ts";
 
@@ -13,19 +14,20 @@ describe("supabase feedback", () => {
   // 1 before any request could leave the process. The real-backend golden path
   // (add → delete round trip) lives in add.live.test.ts, gated to the
   // cli-e2e-ci runner.
-  test(
+  it.live(
     "feedback add fails with the empty-message error when nothing is provided",
-    { timeout: E2E_TIMEOUT_MS },
-    async () => {
-      using home = makeTempHome();
-      const result = await runSupabase(["feedback", "add"], {
-        home: home.dir,
-        env: { HOME: home.dir },
-        stdin: "   \n",
-      });
-      expect(result.exitCode).toBe(1);
-      expect(result.stderr).toContain(FEEDBACK_EMPTY_MESSAGE);
-      expect(result.stdout).toBe("");
-    },
+    () =>
+      Effect.gen(function* () {
+        const home = yield* tempHomeScoped;
+        const result = yield* runSupabaseEffect(["feedback", "add"], {
+          home: home.dir,
+          env: { HOME: home.dir },
+          stdin: "   \n",
+        });
+        expect(result.exitCode).toBe(1);
+        expect(result.stderr).toContain(FEEDBACK_EMPTY_MESSAGE);
+        expect(result.stdout).toBe("");
+      }).pipe(Effect.scoped),
+    E2E_TIMEOUT_MS,
   );
 });

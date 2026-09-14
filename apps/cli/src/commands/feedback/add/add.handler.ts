@@ -51,9 +51,7 @@ const readCappedPipedText = (pipe: Stream.Stream<Uint8Array, PlatformError>) =>
     );
     if (readFailed) return Option.none<string>();
     if (total > FEEDBACK_PIPE_CAP_BYTES) {
-      return yield* Effect.fail(
-        new FeedbackMessageTooLongError({ message: FEEDBACK_PIPE_TOO_LONG_MESSAGE }),
-      );
+      return yield* new FeedbackMessageTooLongError({ message: FEEDBACK_PIPE_TOO_LONG_MESSAGE });
     }
     const bytes = new Uint8Array(total);
     let offset = 0;
@@ -95,7 +93,7 @@ const resolveFeedbackMessage = Effect.fnUntraced(function* (args: FeedbackAddArg
     return typed.trim();
   }
 
-  return yield* Effect.fail(new FeedbackEmptyMessageError({ message: FEEDBACK_EMPTY_MESSAGE }));
+  return yield* new FeedbackEmptyMessageError({ message: FEEDBACK_EMPTY_MESSAGE });
 });
 
 export const feedbackAdd = Effect.fn("feedback.add")(function* (args: FeedbackAddArgs) {
@@ -121,11 +119,9 @@ export const feedbackAdd = Effect.fn("feedback.add")(function* (args: FeedbackAd
     // server would accept.
     const messageLength = [...message].length;
     if (messageLength > FEEDBACK_MESSAGE_LIMIT) {
-      return yield* Effect.fail(
-        new FeedbackMessageTooLongError({
-          message: feedbackTooLongMessage(messageLength),
-        }),
-      );
+      return yield* new FeedbackMessageTooLongError({
+        message: feedbackTooLongMessage(messageLength),
+      });
     }
     // `--agent yes|no` overrides detection (`auto`), same as root's output
     // selection and `db query`. When the override says "not an agent", the

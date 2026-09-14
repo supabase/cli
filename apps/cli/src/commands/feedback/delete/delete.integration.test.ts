@@ -1,8 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
-import { Effect, Layer, Option, Stdio } from "effect";
+import { Effect, FileSystem, Layer, Option, Path, Schema, Stdio } from "effect";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import {
   FeedbackBackendError,
@@ -40,16 +38,26 @@ function deleteArgs(overrides: Partial<FeedbackDeleteArgs> = {}): FeedbackDelete
 // Seeds `<workdir>/supabase/.temp/project-ref`, the file `supabase link` writes.
 // Passing `asDirectory` creates the path as a directory instead, which makes the
 // read fail with a non-NotFound error (the "broken ref file" degradation path).
-function writeLinkedProjectRef(workdir: string, ref: string, opts: { asDirectory?: boolean } = {}) {
-  const tempDir = join(workdir, "supabase", ".temp");
-  mkdirSync(tempDir, { recursive: true });
-  const refPath = join(tempDir, "project-ref");
+const writeLinkedProjectRef = Effect.fnUntraced(function* (
+  workdir: string,
+  ref: string,
+  opts: { asDirectory?: boolean } = {},
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const tempDir = path.join(workdir, "supabase", ".temp");
+  yield* fs.makeDirectory(tempDir, { recursive: true });
+  const refPath = path.join(tempDir, "project-ref");
   if (opts.asDirectory === true) {
-    mkdirSync(refPath, { recursive: true });
+    yield* fs.makeDirectory(refPath, { recursive: true });
     return;
   }
-  writeFileSync(refPath, `${ref}\n`);
-}
+  yield* fs.writeFileString(refPath, `${ref}\n`);
+});
+
+// `JSON.stringify` via the schema codec: the whole event is scanned as one document.
+const jsonText = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+const jsonValue = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 interface MockClientOpts {
   /** Whether the delete matches a row; defaults to true. */
@@ -224,7 +232,11 @@ describe("feedback delete", () => {
     return Effect.gen(function* () {
       const error = yield* feedbackDelete(deleteArgs()).pipe(Effect.flip);
 
-      expect(error).toMatchObject({ _tag: "NonInteractiveError" });
+      expect(error).toMatchObject({
+        _tag: "NonInteractiveError",
+        detail: "Cannot prompt for confirmation in a non-interactive context",
+        suggestion: "Pass --yes to delete without confirmation",
+      });
       expect(out.promptConfirmCalls).toHaveLength(0);
       expect(client.deleteCalls).toHaveLength(0);
     }).pipe(Effect.provide(layer));
@@ -272,8 +284,8 @@ describe("feedback delete", () => {
 
   it.live("sends the linked project ref written by supabase link", () => {
     const { layer, client } = setupFeedbackDelete({ yes: true });
-    writeLinkedProjectRef(tempRoot.current, VALID_REF);
     return Effect.gen(function* () {
+      yield* writeLinkedProjectRef(tempRoot.current, VALID_REF);
       yield* feedbackDelete(deleteArgs());
 
       expect(client.deleteCalls).toEqual([{ token: TOKEN, projectRef: VALID_REF }]);
@@ -285,8 +297,8 @@ describe("feedback delete", () => {
       yes: true,
       projectIdEnv: "envenvenvenvenvenvre",
     });
-    writeLinkedProjectRef(tempRoot.current, VALID_REF);
     return Effect.gen(function* () {
+      yield* writeLinkedProjectRef(tempRoot.current, VALID_REF);
       yield* feedbackDelete(deleteArgs({ projectRef: Option.some("flagflagflagflagflag") }));
 
       expect(client.deleteCalls).toEqual([{ token: TOKEN, projectRef: "flagflagflagflagflag" }]);
@@ -298,8 +310,8 @@ describe("feedback delete", () => {
     // every other command raises) rather than silently sending the linked
     // checkout's context and reporting a misleading "not found".
     const { layer, client } = setupFeedbackDelete({ yes: true });
-    writeLinkedProjectRef(tempRoot.current, VALID_REF);
     return Effect.gen(function* () {
+      yield* writeLinkedProjectRef(tempRoot.current, VALID_REF);
       const error = yield* feedbackDelete(
         deleteArgs({ projectRef: Option.some("Not-A-Ref") }),
       ).pipe(Effect.flip);
@@ -315,8 +327,8 @@ describe("feedback delete", () => {
 
   it.live("rejects a malformed SUPABASE_PROJECT_ID instead of falling through", () => {
     const { layer, client } = setupFeedbackDelete({ yes: true, projectIdEnv: "not-a-valid-ref!" });
-    writeLinkedProjectRef(tempRoot.current, VALID_REF);
     return Effect.gen(function* () {
+      yield* writeLinkedProjectRef(tempRoot.current, VALID_REF);
       const error = yield* feedbackDelete(deleteArgs()).pipe(Effect.flip);
 
       expect(error).toMatchObject({ _tag: "InvalidProjectRefError", ref: "not-a-valid-ref!" });
@@ -341,8 +353,8 @@ describe("feedback delete", () => {
       yes: true,
       projectIdEnv: "envenvenvenvenvenvre",
     });
-    writeLinkedProjectRef(tempRoot.current, VALID_REF);
     return Effect.gen(function* () {
+      yield* writeLinkedProjectRef(tempRoot.current, VALID_REF);
       yield* feedbackDelete(deleteArgs());
 
       expect(client.deleteCalls).toEqual([{ token: TOKEN, projectRef: "envenvenvenvenvenvre" }]);
@@ -394,8 +406,8 @@ describe("feedback delete", () => {
 
   it.live("degrades to no project ref when the linked ref file cannot be read", () => {
     const { layer, client } = setupFeedbackDelete({ yes: true });
-    writeLinkedProjectRef(tempRoot.current, VALID_REF, { asDirectory: true });
     return Effect.gen(function* () {
+      yield* writeLinkedProjectRef(tempRoot.current, VALID_REF, { asDirectory: true });
       yield* feedbackDelete(deleteArgs());
 
       expect(client.deleteCalls).toEqual([{ token: TOKEN, projectRef: undefined }]);
@@ -422,7 +434,8 @@ describe("feedback delete", () => {
 
       expect(out.rawChunks).toHaveLength(1);
       expect(out.rawChunks[0]?.stream).toBe("stdout");
-      expect(JSON.parse(out.rawChunks[0]!.text)).toEqual({ deleted: true });
+      const payload: unknown = yield* jsonValue(out.rawChunks[0]!.text);
+      expect(payload).toEqual({ deleted: true });
       // No human-readable acknowledgement — stdout is payload-only.
       expect(out.messages).not.toContainEqual(expect.objectContaining({ type: "info" }));
       expect(out.messages).not.toContainEqual(expect.objectContaining({ type: "success" }));
@@ -438,7 +451,11 @@ describe("feedback delete", () => {
     return Effect.gen(function* () {
       const error = yield* feedbackDelete(deleteArgs()).pipe(Effect.flip);
 
-      expect(error).toMatchObject({ _tag: "NonInteractiveError" });
+      expect(error).toMatchObject({
+        _tag: "NonInteractiveError",
+        detail: "Cannot prompt for confirmation with -o json",
+        suggestion: "Pass --yes to delete without confirmation",
+      });
       expect(out.promptConfirmCalls).toHaveLength(0);
       expect(client.deleteCalls).toHaveLength(0);
       expect(out.rawChunks).toHaveLength(0);
@@ -484,7 +501,8 @@ describe("feedback delete", () => {
       expect(client.deleteCalls).toHaveLength(1);
       const events = analytics.captured.filter((c) => c.event === "cli_command_executed");
       expect(events).toHaveLength(1);
-      const serialized = JSON.stringify(events[0]);
+      const serialized = yield* jsonText(events[0]);
+      expect(serialized).toContain("cli_command_executed");
       // The token is a positional (structurally excluded from the flags map)
       // and --project-ref has no telemetry-safe marking, so its value redacts.
       expect(serialized).not.toContain(TOKEN);

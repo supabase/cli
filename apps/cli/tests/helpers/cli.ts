@@ -146,6 +146,21 @@ export function makeTempHome() {
   return home;
 }
 
+/** The run's owned temp `SUPABASE_HOME` could not be created. */
+export class TempHomeSetupError extends Data.TaggedError("TempHomeSetupError")<{
+  readonly message: string;
+  readonly cause: unknown;
+}> {}
+
+/** Scoped temp home for Effect-native e2e tests; the scope owns disposal. */
+export const tempHomeScoped = Effect.acquireRelease(
+  Effect.try({
+    try: () => makeTempHome(),
+    catch: (cause) => new TempHomeSetupError({ message: "temp home setup failed", cause }),
+  }),
+  (owned) => Effect.sync(() => owned[Symbol.dispose]()),
+);
+
 function pickFreePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const server = createServer();

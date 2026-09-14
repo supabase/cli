@@ -42,10 +42,10 @@ function recordingLogger() {
 function recordingInnerFetch(respond: () => Response) {
   const requests: Array<{ url: string; headers: Headers }> = [];
   const fetch: typeof globalThis.fetch = Object.assign(
-    async (input: string | URL | Request, init?: RequestInit) => {
+    (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       requests.push({ url, headers: new Headers(init?.headers) });
-      return respond();
+      return Promise.resolve(respond());
     },
     { preconnect: () => Promise.resolve() },
   );
