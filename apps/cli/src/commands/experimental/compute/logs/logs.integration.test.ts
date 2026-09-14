@@ -1,6 +1,18 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option, Schedule, Clock, DateTime, Schema } from "effect";
+import {
+  Cause,
+  Effect,
+  Exit,
+  Layer,
+  Option,
+  Schedule,
+  Clock,
+  DateTime,
+  Schema,
+  Stdio,
+} from "effect";
+import { Command } from "effect/unstable/cli";
 import {
   makeComputeProject,
   setupCompute,
@@ -12,6 +24,19 @@ import {
   computeRoute,
   COMPUTE_PROJECT_REF,
 } from "../../../../../tests/helpers/compute.ts";
+import {
+  buildTestRuntime,
+  mockCommandPlatformApi,
+  mockCommandSettings,
+  VALID_TOKEN,
+} from "../../../../../tests/helpers/command-mocks.ts";
+import {
+  mockContextualAnalytics,
+  mockRuntimeInfo,
+  mockOutput,
+  mockTelemetryRuntime,
+  processEnvLayer,
+} from "../../../../../tests/helpers/mocks.ts";
 import { ComputeFollowNotSupportedError } from "../compute.errors.ts";
 import {
   InvalidComputeNameError,
@@ -24,6 +49,8 @@ import {
   ComputeUnavailableError,
 } from "../../../../shared/compute/compute.errors.ts";
 import { ComputeEnvNotSupportedError } from "../compute.errors.ts";
+import { computeCommand } from "../compute.command.ts";
+import { GLOBAL_FLAGS } from "../../../../command-internal/global-flags.ts";
 import { computeLogs } from "./logs.handler.ts";
 
 const ESCAPE = "\u001b";
@@ -79,6 +106,53 @@ function sentQuery(request: { readonly urlParams: Readonly<Record<string, string
 }
 
 describe("compute logs", () => {
+  it.live("captures shorthand follow and kind flags through command wiring", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const out = mockOutput({ format: "text" });
+      const analytics = mockContextualAnalytics();
+      const args = ["compute", "logs", "api", "-f", "--kind", "requests", "-o", "json"];
+      const root = Command.make("supabase").pipe(
+        Command.withSubcommands([computeCommand]),
+        Command.withGlobalFlags(GLOBAL_FLAGS),
+      );
+
+      const commandLayer = Layer.mergeAll(
+        buildTestRuntime({
+          out,
+          api: mockCommandPlatformApi({ response: { status: 200, body: {} } }),
+          analytics,
+          cliSettings: mockCommandSettings({ workdir: repo.dir }),
+        }),
+        analytics.layer,
+        mockTelemetryRuntime({ configDir: repo.dir }),
+        processEnvLayer({
+          SUPABASE_ACCESS_TOKEN: VALID_TOKEN,
+          SUPABASE_HOME: repo.dir,
+          SUPABASE_NO_KEYRING: "1",
+          SUPABASE_PROJECT_ID: COMPUTE_PROJECT_REF,
+        }),
+        mockRuntimeInfo({ cwd: repo.dir, homeDir: repo.dir }),
+        Stdio.layerTest({ args: Effect.succeed(args) }),
+      );
+      const exit = yield* Command.runWith(root, { version: "0.0.0-test" })(args).pipe(
+        Effect.exit,
+        Effect.provide(commandLayer),
+      );
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("ComputeFollowNotSupportedError");
+      }
+      expect(analytics.captured).toHaveLength(1);
+      expect(analytics.captured[0]?.properties.flags).toEqual({
+        follow: true,
+        kind: "requests",
+        output: "json",
+      });
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
   it.live("prints a compute's own output oldest first", () =>
     Effect.gen(function* () {
       const repo = yield* project();

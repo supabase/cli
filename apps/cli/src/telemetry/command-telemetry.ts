@@ -193,7 +193,12 @@ function extractChangedFlagNames(
       if (canonical !== undefined) used.add(canonical);
       // A bare short flag (`-s`, length 2) takes its value from the next token; attached forms
       // (`-svalue`, `-s=value`) carry it inline, so no skip is needed there.
-      if (arg.length === 2 && VALUE_CONSUMING_SHORT_FLAGS.has(short)) {
+      // Known aliases use their canonical flag because shorthand arity can differ between commands.
+      const consumesNext =
+        canonical === undefined
+          ? VALUE_CONSUMING_SHORT_FLAGS.has(short)
+          : VALUE_CONSUMING_LONG_FLAGS.has(canonical);
+      if (arg.length === 2 && consumesNext) {
         skipNext = true;
       }
     }

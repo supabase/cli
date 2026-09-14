@@ -12,7 +12,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { parse as parseDotenv } from "dotenv";
 import { afterEach, describe, expect, test } from "vitest";
-import { makeTempHome, runSupabase } from "../../../../../tests/helpers/cli.ts";
+import { makeTempHome, runSupabase, spawnSupabase } from "../../../../../tests/helpers/cli.ts";
 
 const START_TIMEOUT_MS = 15 * 60_000;
 const CLEANUP_TIMEOUT_MS = 120_000;
@@ -177,6 +177,102 @@ describe("stack start (compiled e2e)", () => {
       const databasePath = path.join(homeDir.dir, "managed", "stacks", idText, "data", "database");
       await access(path.join(databasePath, "PG_VERSION"));
 
+      const logs = await runSupabase(
+        [
+          "stack",
+          "logs",
+          "--stack-id",
+          idText,
+          "--service",
+          "database",
+          "--tail",
+          "100",
+          "--output-format",
+          "json",
+        ],
+        {
+          cwd: projectRoot,
+          home: homeDir.dir,
+          env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
+          exitTimeoutMs: CLEANUP_TIMEOUT_MS,
+        },
+      );
+      expect(logs.exitCode, `stdout:\n${logs.stdout}\nstderr:\n${logs.stderr}`).toBe(0);
+      const logData = JSON.parse(logs.stdout) as {
+        readonly found: boolean;
+        readonly id: string;
+        readonly entries: ReadonlyArray<{
+          readonly source: string;
+          readonly message: string;
+        }>;
+      };
+      expect(logData.found).toBe(true);
+      expect(logData.id).toBe(idText);
+      expect(logData.entries.length).toBeGreaterThan(0);
+      expect(logData.entries.every((entry) => entry.source === "database")).toBe(true);
+
+      const followed = spawnSupabase(
+        [
+          "stack",
+          "logs",
+          "--stack-id",
+          idText,
+          "--service",
+          "database",
+          "--tail",
+          "1",
+          "--follow",
+          "--output-format",
+          "stream-json",
+        ],
+        {
+          cwd: projectRoot,
+          home: homeDir.dir,
+          env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
+          exitTimeoutMs: CLEANUP_TIMEOUT_MS,
+        },
+      );
+      let followerExited = false;
+      try {
+        await followed.waitForOutput(
+          /"type":"log-entry".*"service":"database".*"source":"history"/u,
+          START_TIMEOUT_MS,
+        );
+        followed.kill("SIGINT");
+        const followResult = await followed.waitForExit(CLEANUP_TIMEOUT_MS);
+        followerExited = true;
+        expect(
+          followResult.exitCode,
+          `stdout:\n${followResult.stdout}\nstderr:\n${followResult.stderr}`,
+        ).toBe(130);
+        const followEvents = followResult.stdout
+          .trim()
+          .split("\n")
+          .filter((line) => line.length > 0)
+          .map(
+            (line) =>
+              JSON.parse(line) as {
+                readonly type: string;
+                readonly service?: string;
+                readonly source?: string;
+              },
+          );
+        const historyEntries = followEvents.filter(
+          (event) => event.type === "log-entry" && event.source === "history",
+        );
+        expect(historyEntries).toHaveLength(1);
+        expect(historyEntries[0]).toEqual(expect.objectContaining({ service: "database" }));
+      } finally {
+        if (!followerExited) {
+          followed.kill("SIGKILL");
+          await followed.waitForExit(CLEANUP_TIMEOUT_MS);
+        }
+      }
+
+      const afterFollow = await inspectStackState(homeDir.dir, idText);
+      expect(afterFollow.owner).toBe("running");
+      expect(afterFollow.lifecycle).toBe("running");
+      expect(afterFollow.database).toBe("ready");
       const status = await runSupabase(["stack", "status", "--stack-id", idText], {
         cwd: projectRoot,
         home: homeDir.dir,
@@ -260,6 +356,42 @@ describe("stack start (compiled e2e)", () => {
       expect(stoppedEnv.stderr).toContain("must be running");
 
       await access(path.join(databasePath, "PG_VERSION"));
+
+      const retainedLogs = await runSupabase(
+        [
+          "stack",
+          "logs",
+          "--stack-id",
+          idText,
+          "--service",
+          "database",
+          "--tail",
+          "100",
+          "--output-format",
+          "json",
+        ],
+        {
+          cwd: projectRoot,
+          home: homeDir.dir,
+          env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
+          exitTimeoutMs: CLEANUP_TIMEOUT_MS,
+        },
+      );
+      expect(
+        retainedLogs.exitCode,
+        `stdout:\n${retainedLogs.stdout}\nstderr:\n${retainedLogs.stderr}`,
+      ).toBe(0);
+      const retainedData = JSON.parse(retainedLogs.stdout) as {
+        readonly found: boolean;
+        readonly id: string;
+        readonly running: boolean;
+        readonly entries: ReadonlyArray<{ readonly source: string }>;
+      };
+      expect(retainedData.found).toBe(true);
+      expect(retainedData.id).toBe(idText);
+      expect(retainedData.running).toBe(false);
+      expect(retainedData.entries.length).toBeGreaterThan(0);
+      expect(retainedData.entries.every((entry) => entry.source === "database")).toBe(true);
 
       await destroyStack(homeDir.dir, idText);
       stackDestroyed = true;
