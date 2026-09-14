@@ -67,6 +67,25 @@ function setup() {
 }
 
 describe("stack command telemetry", () => {
+  it.live("records the canonical list command identity", () => {
+    const fixture = setup();
+    const command = stackCommand.pipe(Command.provide(fixture.layer));
+    return Effect.gen(function* () {
+      yield* Command.runWith(command, { version: "0.0.0-test" })(["list"]);
+      const event = fixture.analytics.captured.find(
+        (candidate) => candidate.event === EventCommandExecuted,
+      );
+      expect(
+        fixture.analytics.captured.filter((candidate) => candidate.event === EventCommandExecuted),
+      ).toHaveLength(1);
+      expect(event?.properties[PropCommand]).toBe("stack list");
+      expect(event?.properties[PropCommandRunId]).toEqual(expect.any(String));
+    }).pipe(
+      Effect.provide(fixture.layer),
+      Effect.ensuring(Effect.sync(() => rmSync(fixture.root, { recursive: true, force: true }))),
+    );
+  });
+
   it.live("records canonical and top-level stop paths with distinct run ids", () => {
     const fixture = setup();
     const canonical = stackCommand.pipe(Command.provide(fixture.layer));

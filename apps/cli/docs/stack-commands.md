@@ -7,10 +7,11 @@ native runtimes.
 
 | Command                  | Purpose                                                                           |
 | ------------------------ | --------------------------------------------------------------------------------- |
+| `supabase stack destroy` | Permanently delete one stack and its data.                                        |
+| `supabase stack list`    | List persisted managed local stacks.                                              |
 | `supabase stack start`   | Create or resume the project's stack.                                             |
 | `supabase stack status`  | Show identity, readiness, and drift, or export connection variables with `--env`. |
 | `supabase stack stop`    | Stop a stack while retaining its data.                                            |
-| `supabase stack destroy` | Permanently delete one stack and its data.                                        |
 
 Use each command's `--help` for its available targeting and runtime options.
 
@@ -34,6 +35,16 @@ unknown variables, invalid names, and collisions. API credentials are omitted wh
 The stack backend rejects every explicit legacy `-o/--output` value: `env`, `pretty`, `json`,
 `toml`, `yaml`, `table`, and `csv`. `--output-format text`, `json`, or `stream-json` replace them.
 `-o env` becomes `--env`.
+
+`supabase stack list` reads the global managed-stack registry and reports each readable stack's
+project, branch, runtime, and desired lifecycle. Corrupt or unsupported registry entries are
+included in a diagnostic section with their full IDs and error reasons, and do not hide readable
+entries. The text table shortens readable IDs for scanning; use `--output-format json` or
+`--output-format stream-json` for the complete structured inventory with full IDs.
+
+Listing is global and has no checkout filter. Desired lifecycle is persisted intent, so `running`
+does not prove a live owner exists. Use `supabase stack status` for live state. Registry directories
+without a state file are ignored as remnants.
 
 ## Selecting the top-level commands
 
