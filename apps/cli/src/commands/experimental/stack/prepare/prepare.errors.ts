@@ -67,8 +67,13 @@ export const stackPrepareError = (error: unknown): StackCommandPrepareError => {
             "StackStateFormatUnsupportedError",
             () => ({ reason: "invalid-config" as const }),
           ),
-          Match.tag("StackNotFoundError", "StackRuntimeMismatchError", () => ({
+          Match.tag("StackNotFoundError", () => ({
             reason: "flags" as const,
+          })),
+          Match.tag("StackRuntimeMismatchError", () => ({
+            reason: "flags" as const,
+            suggestion:
+              "Omit --runtime to reuse the existing runtime, or choose a different --stack name.",
           })),
           Match.tag("StackOwnershipConflictError", "StackUpgradeRequiredError", () => ({
             reason: "lifecycle" as const,

@@ -9,12 +9,22 @@ native runtimes.
 | ------------------------ | --------------------------------------------------------------------------------- |
 | `supabase stack destroy` | Permanently delete one stack and its data.                                        |
 | `supabase stack list`    | List persisted managed local stacks.                                              |
+| `supabase stack prepare` | Download artifacts without starting services.                                     |
 | `supabase stack start`   | Create or resume the project's stack.                                             |
 | `supabase stack status`  | Show identity, readiness, and drift, or export connection variables with `--env`. |
 | `supabase stack logs`    | Read retained or live stack logs.                                                 |
 | `supabase stack stop`    | Stop a stack while retaining its data.                                            |
 
 Use each command's `--help` for its available targeting and runtime options.
+
+`supabase stack prepare` downloads or pulls artifacts for the selected stack without starting
+services. Omit `--capability` to prepare every enabled capability, or repeat it to select specific
+capabilities:
+
+```sh
+supabase stack prepare
+supabase stack prepare --capability rest --capability auth --output-format json
+```
 
 ## Exporting environment variables
 

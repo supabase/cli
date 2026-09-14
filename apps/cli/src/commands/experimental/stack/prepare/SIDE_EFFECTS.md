@@ -44,12 +44,14 @@ existing stacks reuse their persisted runtime, and an explicit runtime that diff
 stack fails. When no project configuration exists, the stack package's default settings are used.
 With no `--capability`, all enabled capabilities are
 prepared. Repeated `--capability` values are passed to the package, which includes dependencies and
-rejects unknown or disabled capabilities. The legacy `-o/--output` flag is rejected; use
+rejects unknown capabilities; explicitly disabled capabilities are rejected before preparation.
+The legacy `-o/--output` flag is rejected; use
 `--output-format`.
 
 Text output lists the stack ID and each prepared capability, version, and outcome (`cached`,
-`downloaded`, or `pulled`). JSON and stream-JSON output return `{ id, capabilities }`. Errors use
-typed actionability and retain package diagnostics.
+`downloaded`, or `pulled`). JSON output returns `{ id, capabilities, message: "" }`. Stream-JSON
+output returns `{ type: "result", data: { id, capabilities, message: "" }, timestamp }`. Errors
+use typed actionability and retain package diagnostics.
 
 ## Exit codes
 

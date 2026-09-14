@@ -7,7 +7,12 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { CliOutput, Command } from "effect/unstable/cli";
 import { Deferred, Effect, Fiber, Layer, Option, Schema, Sink, Stdio, Stream } from "effect";
-import { StackIdSchema, StackPreparationError, type EffectStack } from "@supabase/stack/effect";
+import {
+  StackIdSchema,
+  StackPreparationError,
+  StackRuntimeMismatchError,
+  type EffectStack,
+} from "@supabase/stack/effect";
 import { OutputFlag } from "../../../../command-internal/global-flags.ts";
 import { mockOutput, processEnvLayer } from "../../../../../tests/helpers/mocks.ts";
 import {
@@ -20,6 +25,10 @@ import { stackPrepareCommand, type StackPrepareFlags } from "./prepare.command.t
 import { StackCommandPrepareError } from "./prepare.errors.ts";
 import { jsonOutputLayer, streamJsonOutputLayer } from "../../../../shared/output/output.layer.ts";
 import { textCliOutputFormatter } from "../../../../shared/output/text-formatter.ts";
+import {
+  actionability,
+  ErrorActionabilityId,
+} from "../../../../shared/telemetry/error-actionability.ts";
 
 const makeProject = (config = 'project_id = "prepare-test"\n') => {
   const root = mkdtempSync(join(tmpdir(), "supabase-stack-prepare-"));
@@ -138,6 +147,49 @@ describe("stack prepare", () => {
           expect(fixture.output.stdoutText).toContain(`Stack ${id} prepared.`);
           expect(fixture.output.stdoutText).toContain("database 1 (cached)");
           expect(fixture.telemetry.flushed).toBe(true);
+        }),
+      ),
+      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live("rejects an explicitly disabled capability before creating a stack", () => {
+    const root = makeProject("[studio]\nenabled = false\n");
+    let created = false;
+    let prepared = false;
+    const stack = makeStack("2".repeat(64), () => {
+      prepared = true;
+      return Effect.die("must not prepare");
+    });
+    const telemetry = mockTelemetryStateTracked();
+    const fixture = handlerLayer({
+      root,
+      stack,
+      telemetry,
+      api: Layer.succeed(StackApi, {
+        findStack: () => Effect.die("unused"),
+        discoverStacks: () => Effect.die("unused"),
+        inspectStack: () => Effect.die("unused"),
+        openStack: () => Effect.die("unused"),
+        createStack: () => {
+          created = true;
+          return Effect.succeed(stack);
+        },
+      }),
+    });
+    return stackPrepare(flags({ capability: ["studio"] })).pipe(
+      Effect.flip,
+      Effect.provide(fixture.layer),
+      Effect.tap((error) =>
+        Effect.sync(() => {
+          expect(error).toBeInstanceOf(StackCommandPrepareError);
+          expect(error.reason).toBe("invalid-config");
+          expect(error[ErrorActionabilityId]).toEqual(actionability.invalidConfig);
+          expect(error.message).toContain("Capability studio is disabled in config");
+          expect(error.suggestion).toContain("Enable the capability in config");
+          expect(created).toBe(false);
+          expect(prepared).toBe(false);
+          expect(telemetry.flushed).toBe(true);
         }),
       ),
       Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
@@ -377,6 +429,43 @@ describe("stack prepare", () => {
             expect.arrayContaining([
               expect.objectContaining({ type: "error", message: "artifact failed" }),
             ]),
+          );
+          expect(telemetry.flushed).toBe(true);
+        }),
+      ),
+      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live("suggests omitting runtime when a named stack has a runtime mismatch", () => {
+    const root = makeProject();
+    const stack = makeStack("0".repeat(64), () => Effect.die("must not prepare"));
+    const telemetry = mockTelemetryStateTracked();
+    const fixture = handlerLayer({
+      root,
+      stack,
+      telemetry,
+      resolver: Layer.succeed(StackTargetResolver, {
+        resolve: () =>
+          Effect.succeed({ projectRoot: root, name: "feature", runtime: { kind: "native" } }),
+      }),
+      api: Layer.succeed(StackApi, {
+        findStack: () => Effect.die("unused"),
+        discoverStacks: () => Effect.die("unused"),
+        inspectStack: () => Effect.die("unused"),
+        openStack: () => Effect.die("unused"),
+        createStack: () =>
+          Effect.fail(new StackRuntimeMismatchError({ message: "runtime mismatch" })),
+      }),
+    });
+    return stackPrepare(flags({ stack: Option.some("feature"), runtime: "native" })).pipe(
+      Effect.flip,
+      Effect.provide(fixture.layer),
+      Effect.tap((error) =>
+        Effect.sync(() => {
+          expect(error.reason).toBe("flags");
+          expect(error.suggestion).toBe(
+            "Omit --runtime to reuse the existing runtime, or choose a different --stack name.",
           );
           expect(telemetry.flushed).toBe(true);
         }),
