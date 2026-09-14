@@ -1,7 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Data, Effect, Exit, Layer, Option } from "effect";
+import { Data, Effect, Exit, Layer, Option, Runtime } from "effect";
 import { mockProcessControl } from "../../../tests/helpers/mocks.ts";
-import { GoChildExitError } from "../../command-internal/go-child-exit.error.ts";
 import { Output } from "./output.service.ts";
 import { withJsonErrorHandling } from "./json-error-handling.ts";
 
@@ -14,6 +13,14 @@ class TaggedErrorWithDetail extends Data.TaggedError("TaggedErrorWithDetail")<{
 class TaggedErrorMinimal extends Data.TaggedError("TaggedErrorMinimal")<{
   readonly message: string;
 }> {}
+
+/** Local stand-in for a typed error opting into a custom process exit code. */
+class CustomExitCodeError extends Data.TaggedError("CustomExitCodeError")<{
+  readonly exitCode: number;
+  readonly message: string;
+}> {
+  override readonly [Runtime.errorExitCode] = this.exitCode;
+}
 
 class PlainError {
   readonly message: string;
@@ -172,17 +179,17 @@ describe("withJsonErrorHandling", () => {
       }).pipe(Effect.provide(out.layer), Effect.provide(processControl.layer));
     });
 
-    it.live("sets the exact exit code for a GoChildExitError, not a generic 1", () => {
+    it.live("sets a typed error's exact custom exit code, not a generic 1", () => {
       const out = mockOutput("json");
       const processControl = mockProcessControl();
       return Effect.gen(function* () {
-        const error = new GoChildExitError({
+        const error = new CustomExitCodeError({
           exitCode: 130,
-          message: "supabase-go exited with code 130 (see stderr for details)",
+          message: "exited with code 130",
         });
         yield* withJsonErrorHandling(Effect.fail(error)).pipe(Effect.provide(out.layer));
         expect(out.failCalls).toHaveLength(1);
-        expect(out.failCalls[0]?.code).toBe("GoChildExitError");
+        expect(out.failCalls[0]?.code).toBe("CustomExitCodeError");
         expect(processControl.exitCode).toBe(130);
       }).pipe(Effect.provide(out.layer), Effect.provide(processControl.layer));
     });

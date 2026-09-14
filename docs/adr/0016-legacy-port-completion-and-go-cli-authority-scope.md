@@ -11,7 +11,7 @@ command began as a Phase 0 proxy to the Go binary, then moved to a native TypeSc
 touching `src/legacy/` was correct — nearly every change was either wrapping a new command or
 replacing its proxy, and the Go source was the only available spec for what the command should do.
 
-That phase is essentially over. Per [`apps/cli/docs/go-cli-porting-status.md`](../../apps/cli/docs/go-cli-porting-status.md),
+That phase is essentially over. Per `apps/cli/docs/go-cli-porting-status.md` (removed, CLI-2432),
 95 of 103 legacy leaf commands (~92%) are natively ported; only 8 remain Phase 0 proxies. Most
 changes landing in `src/legacy/` today are ordinary engineering on already-ported commands — bug
 fixes, internal refactors, hoisting shared helpers, adding documented TS-only flags, telemetry and
@@ -72,8 +72,8 @@ surface from a parity check it never needed.
 
 - Contributors now have to briefly classify a change (does it touch the parity surface?) rather than
   defaulting to "always check Go." Misclassification risk is partly, not fully, mitigated:
-  [`apps/cli/docs/go-cli-porting-status.md`](../../apps/cli/docs/go-cli-porting-status.md) stays the
-  source of truth for which commands are still `wrapped`, and CI's `testParity` /
+  `apps/cli/docs/go-cli-porting-status.md` (since removed, CLI-2432) stayed the
+  source of truth for which commands were still `wrapped`, and CI's `testParity` /
   `*.e2e.test.ts` suites catch output/behavior drift on the already-ported commands and code paths
   they cover — but that coverage is deliberately partial (e.g. `db pull --local` and `db lint
 --local` skip `testParity` today, see `apps/cli-e2e/src/tests/database-core.e2e.test.ts`), so a
@@ -96,7 +96,7 @@ surface from a parity check it never needed.
 ## See Also
 
 - [`apps/cli/AGENTS.md`](../../apps/cli/AGENTS.md)
-- [`apps/cli/docs/go-cli-porting-status.md`](../../apps/cli/docs/go-cli-porting-status.md)
+- `apps/cli/docs/go-cli-porting-status.md` (since removed, CLI-2432)
 
 ## Addendum (2026-08-12): CLI-1970 outcome
 
