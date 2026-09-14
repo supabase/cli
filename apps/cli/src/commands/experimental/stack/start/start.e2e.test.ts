@@ -189,6 +189,20 @@ describe("stack start (compiled e2e)", () => {
       expect(status.stdout).toContain("Readiness: ready");
       expect(status.stdout).toMatch(/Config drift: (changed|unchanged)/u);
 
+      const topLevelStatus = await runSupabase(["status", "--stack-id", idText], {
+        cwd: projectRoot,
+        home: homeDir.dir,
+        env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
+        exitTimeoutMs: CLEANUP_TIMEOUT_MS,
+      });
+      expect(
+        topLevelStatus.exitCode,
+        `stdout:\n${topLevelStatus.stdout}\nstderr:\n${topLevelStatus.stderr}`,
+      ).toBe(0);
+      expect(topLevelStatus.stdout).toContain(`(${idText})`);
+      expect(topLevelStatus.stdout).toContain("Owner: running");
+      expect(topLevelStatus.stdout).toContain("Lifecycle: running");
+
       const env = await runSupabase(
         ["stack", "status", "--env", "--stack-id", idText, "--output-format", "json"],
         { cwd: projectRoot, home: homeDir.dir, exitTimeoutMs: CLEANUP_TIMEOUT_MS },

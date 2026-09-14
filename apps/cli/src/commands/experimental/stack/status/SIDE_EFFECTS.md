@@ -3,7 +3,6 @@
 Reports the persisted identity and current owner state of a managed local stack.
 The command is read-only: it never creates, starts, prepares, stops, or destroys
 a stack, and opens a stack handle only when `--env` is used.
-
 The command is available only when the `experimental.stack` feature flag is
 enabled. The top-level `supabase status` command uses this handler when the
 same flag is enabled. Command routing may read `supabase/config.toml` or
@@ -30,8 +29,9 @@ inspection available, appears as `Config warning:` in text output, and as
 `config_drift.message` with `status: "unavailable"` in JSON.
 
 Text output includes identity, runtime, owner, lifecycle, readiness,
-endpoints, and config drift. JSON output contains the same fields under
-`identity`.
+endpoints, and config drift. JSON output nests only the identity fields under
+`identity`; runtime, lifecycle, readiness, endpoints, and config drift remain
+top-level fields.
 
 ## Exporting environment variables (`--env`)
 
@@ -67,15 +67,16 @@ credentials failure with `--env` fails the command without emitting output.
 
 ## Files read and written
 
-Without `--env`, the command reads `supabase/config.toml` and the project
-dotenv files the shared config loader consults to resolve the target stack's
-configuration; with `--env`, it skips config loading entirely. Either way, it
+Without `--env`, the command reads the selected `supabase/config.toml` or
+`supabase/config.json` and the project dotenv files and environment overrides
+the shared config loader consults to resolve the target stack's configuration;
+with `--env`, it skips config loading entirely. Either way, it
 reads the target stack's persisted state under
 `<SUPABASE_HOME or ~/.supabase>/managed/stacks/<id>/`, and when a live owner
 exists, it reads the owner's local RPC endpoint for status and credentials.
 The command calls no API routes and writes no files besides `telemetry.json`.
-It reads no environment variables beyond the CLI's usual `SUPABASE_HOME`,
-`SUPABASE_WORKDIR`, and `SUPABASE_EXPERIMENTAL_STACK` routing.
+It reads the CLI's usual home, workdir, and experimental routing variables,
+plus the environment variables used as project configuration overrides.
 
 ## Output and telemetry
 

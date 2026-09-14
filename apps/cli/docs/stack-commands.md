@@ -22,8 +22,8 @@ supabase status --env --override-name API_URL=NEXT_PUBLIC_SUPABASE_URL,ANON_KEY=
 supabase stack status --env --output-format json
 ```
 
-The top-level example requires the stack backend flag described below. `--env` exports the
-connection URLs and credentials of the running stack; text mode emits dotenv assignments, and JSON
+Each example requires the stack backend flag described below. `--env` exports the connection URLs
+and credentials of the running stack; text mode emits dotenv assignments, and JSON
 or stream-JSON mode emits a variable map. Add `--output-format text` for an explicit dotenv file
 regardless of automatic agent output detection; this is dotenv data, not a shell script. Only this
 explicit export reveals credentials. Ordinary status remains free of secrets. `--override-name`

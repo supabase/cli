@@ -220,11 +220,13 @@ stack = true
         [],
         ["--help"],
         ["help", "start"],
+        ["help", "status"],
         ["help", "stop"],
         ["help", "stack"],
         ["stack", "--help"],
         ["__complete", "st"],
         ["__complete", "start", "--"],
+        ["__complete", "status", "--"],
       ]) {
         expect(yield* resolve({ args, cwd: root, env: {} })).toBe("stack");
       }
@@ -265,7 +267,7 @@ stack = true
     expect(completionFlags("stack", "start")).not.toContain("--ignore-health-check");
   });
 
-  it("gates the stack command tree and routes status like start and stop", () => {
+  it("gates the stack command tree while preserving status completion", () => {
     const disabledRoot = respondToComplete(rootCommandForFeatures({ stackBackend: "legacy" }), [
       "__complete",
       "",
@@ -286,8 +288,11 @@ stack = true
       expect(stackCommands).toEqual(
         backend === "stack" ? ["destroy", "start", "status", "stop"] : [],
       );
-
-      expect(completionFlags(backend, "status")).toContain("--override-name");
     }
+    expect(completionFlags("stack", "status")).toContain("--override-name");
+    expect(completionFlags("stack", "status")).toContain("--env");
+    expect(completionFlags("stack", "status")).toContain("--stack-id");
+    expect(completionFlags("legacy", "status")).not.toContain("--stack-id");
+    expect(completionFlags("legacy", "status")).not.toContain("--env");
   });
 });
