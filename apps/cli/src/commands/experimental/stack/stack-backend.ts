@@ -1,4 +1,4 @@
-import { CliConfigSchema } from "@supabase/config/effect";
+import { CliConfigSchema, findCliProjectPaths } from "@supabase/config/effect";
 import { Data, Effect, FileSystem, Option, Path, Schema } from "effect";
 import * as SmolToml from "smol-toml";
 import { resolveWorkdir } from "../../../config/command-settings.layer.ts";
@@ -17,7 +17,7 @@ export class StackRoutingError extends Data.TaggedError("StackRoutingError")<{
   readonly cause?: unknown;
 }> {
   get suggestion(): string {
-    return "Set SUPABASE_EXPERIMENTAL_STACK=0 to use legacy start/stop, or use `supabase stack`.";
+    return "Set SUPABASE_EXPERIMENTAL_STACK=1 to enable stack commands, or 0 to use legacy start/stop.";
   }
 
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -42,15 +42,24 @@ const firstExplicitLongFlagValue = (
   return undefined;
 };
 
+const UnknownFromJsonString = Schema.fromJsonString(Schema.Unknown);
+const decodeJson = Schema.decodeUnknownEffect(UnknownFromJsonString);
+
 const parseConfig = (path: string, content: string): Effect.Effect<unknown, StackRoutingError> =>
-  Effect.try({
-    try: () => SmolToml.parse(content),
-    catch: (cause) =>
-      new StackRoutingError({
-        message: `Unable to parse ${path}: ${String(cause)}`,
-        cause,
-      }),
-  });
+  path.endsWith(".json")
+    ? decodeJson(content).pipe(
+        Effect.mapError(
+          (cause) => new StackRoutingError({ message: `Unable to parse ${path}`, cause }),
+        ),
+      )
+    : Effect.try({
+        try: () => SmolToml.parse(content),
+        catch: (cause) =>
+          new StackRoutingError({
+            message: `Unable to parse ${path}: ${String(cause)}`,
+            cause,
+          }),
+      });
 
 const stackSettingFrom = (
   path: string,
@@ -67,15 +76,48 @@ const stackSettingFrom = (
     ),
   );
 
+const configValue = (input: {
+  readonly args: ReadonlyArray<string>;
+  readonly cwd: string;
+  readonly env: Readonly<Record<string, string | undefined>>;
+}): Effect.Effect<boolean | undefined, StackRoutingError, FileSystem.FileSystem | Path.Path> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const explicitWorkdir = firstExplicitLongFlagValue(input.args, "workdir");
+    const resolvedWorkdir = yield* resolveWorkdir(
+      explicitWorkdir === undefined ? Option.none() : Option.some(explicitWorkdir),
+      input.env["SUPABASE_WORKDIR"],
+      input.cwd,
+      (filePath) => fs.exists(filePath).pipe(Effect.orElseSucceed(() => false)),
+      path,
+    );
+    const project = yield* findCliProjectPaths(resolvedWorkdir.workdir, {
+      search: !resolvedWorkdir.explicit,
+    });
+    if (project === null) return undefined;
+    const content = yield* fs.readFileString(project.configPath).pipe(
+      Effect.mapError(
+        (cause) =>
+          new StackRoutingError({
+            message: `Unable to read ${project.configPath}: ${String(cause)}`,
+            cause,
+          }),
+      ),
+    );
+    return yield* parseConfig(project.configPath, content).pipe(
+      Effect.flatMap((document) => stackSettingFrom(project.configPath, document)),
+    );
+  });
+
 export const resolveStackBackend = (input: {
   readonly args: ReadonlyArray<string>;
   readonly cwd: string;
   readonly env: Readonly<Record<string, string | undefined>>;
 }): Effect.Effect<StackBackend, StackRoutingError, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
-    // Completion passes the final token as the cursor word, even when it is a
-    // command-shaped token such as `start`. It must not select a backend or
-    // trigger config I/O until the user has supplied a complete command path.
+    // Completion passes the final token as the cursor word, so it is not part of
+    // the resolved command path.
     const routingArgs =
       input.args[0] === "__complete" || input.args[0] === "__completeNoDesc"
         ? input.args.slice(0, -1)
@@ -87,43 +129,16 @@ export const resolveStackBackend = (input: {
       commandPath[0] === "__complete" || commandPath[0] === "__completeNoDesc"
         ? commandPath.slice(1)
         : commandPath;
-    const command = completePath[0];
+    const command = completePath[0] === "help" ? completePath[1] : completePath[0];
+    if (command !== undefined && command !== "stack" && command !== "start" && command !== "stop") {
+      return "legacy";
+    }
 
-    // The explicit namespace is always backed by the stack runtime and does
-    // not need a project config or environment lookup to select it.
-    if (command === "stack") return "stack";
-    if (command !== "start" && command !== "stop") return "legacy";
-
-    const configValue = Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const explicitWorkdir = firstExplicitLongFlagValue(routingArgs, "workdir");
-      const resolvedWorkdir = yield* resolveWorkdir(
-        explicitWorkdir === undefined ? Option.none() : Option.some(explicitWorkdir),
-        input.env["SUPABASE_WORKDIR"],
-        input.cwd,
-        (filePath) => fs.exists(filePath).pipe(Effect.orElseSucceed(() => false)),
-        path,
-      );
-      const configPath = path.join(resolvedWorkdir.workdir, "supabase", "config.toml");
-      const configExists = yield* fs.exists(configPath).pipe(Effect.orElseSucceed(() => false));
-      if (!configExists) return undefined;
-      const content = yield* fs.readFileString(configPath).pipe(
-        Effect.mapError(
-          (cause) =>
-            new StackRoutingError({
-              message: `Unable to read ${configPath}: ${String(cause)}`,
-              cause,
-            }),
-        ),
-      );
-      return yield* parseConfig(configPath, content).pipe(
-        Effect.flatMap((document) => stackSettingFrom(configPath, document)),
-      );
-    }).pipe(Effect.catchTag("StackRoutingError", () => Effect.succeed(false)));
     const enabled = yield* resolveExperimentalFeature({
       feature: "stack",
-      configValue,
+      configValue: configValue({ ...input, args: routingArgs }).pipe(
+        Effect.catchTag("StackRoutingError", () => Effect.succeed(false)),
+      ),
       env: input.env,
     }).pipe(
       Effect.mapError((error) => new StackRoutingError({ message: error.message, cause: error })),

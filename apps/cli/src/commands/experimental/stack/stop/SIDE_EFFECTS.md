@@ -1,5 +1,8 @@
 # `supabase stack stop`
 
+The command is available only when the `experimental.stack` feature flag is enabled. The
+top-level `supabase stop` command uses this handler when the same flag is enabled.
+
 This command stops the managed stack identified by the current project, an optional `--stack`
 name, or `--stack-id`. With `--all`, it discovers every readable managed stack and attempts each
 stop while preserving persistent state and data volumes. `--all` cannot be combined with a named
@@ -8,11 +11,12 @@ stack or `--stack-id`; the command never destroys stacks.
 ## Files read and written
 
 The stack package reads and updates its durable state under `<SUPABASE_HOME or ~/.supabase>`
-and the selected stack's lifecycle state. The CLI reads its normal workdir settings. The
-command does not load `supabase/config.toml`, so a missing or invalid project config does not
-prevent stopping a stack addressed with `--stack-id`. Implicit and named stacks still depend on
-workdir discovery, so removing an ancestor config can change which stack is selected; use an
-explicit `--workdir` when needed.
+and the selected stack's lifecycle state. The CLI reads its normal workdir settings. Command
+routing may read `supabase/config.toml` or `supabase/config.json` to select the experimental
+backend; once the stack handler is selected, it does not load project configuration. Set
+`SUPABASE_EXPERIMENTAL_STACK=1` to stop a stack addressed with `--stack-id` when project
+configuration is missing or invalid. Implicit and named stacks still depend on workdir discovery, so removing an
+ancestor config can change which stack is selected; use an explicit `--workdir` when needed.
 
 No project files, credentials, or runtime configuration files are written. The package owns
 the supervisor teardown and state transition; the CLI does not remove containers, volumes,

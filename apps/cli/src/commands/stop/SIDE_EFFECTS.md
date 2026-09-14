@@ -4,6 +4,9 @@ This document describes the legacy backend. With `SUPABASE_EXPERIMENTAL_STACK=1`
 `[experimental] stack = true` when the environment override is unset or empty, `supabase stop`
 uses the new [`supabase stack stop` implementation](../experimental/stack/stop/SIDE_EFFECTS.md).
 `SUPABASE_EXPERIMENTAL_STACK=0` forces the legacy backend. See [backend selection](../../../docs/stack-commands.md).
+
+Backend routing also reads `supabase/config.json` when present, preferring it over TOML; the
+legacy handler's configuration reads below remain TOML-only.
 Backend selection happens before command parsing. When the environment override is unset or empty,
 an unreadable, malformed, or invalid project configuration falls back to the legacy backend; an
 invalid environment override remains an error.

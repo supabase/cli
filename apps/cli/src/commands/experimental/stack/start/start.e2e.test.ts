@@ -21,6 +21,9 @@ const nativeSupported =
 
 const minimalConfig = `project_id = "compiled-stack-start-e2e"
 
+[experimental]
+stack = true
+
 [api]
 enabled = false
 
