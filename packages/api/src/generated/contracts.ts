@@ -10186,6 +10186,454 @@ export const V2CreateLogDrainOutput = Schema.Struct({
     }),
   }),
 });
+export const V2CreateNotebookInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  data: Schema.Struct({
+    attributes: Schema.Struct({
+      content: Schema.Struct({
+        cells: Schema.Array(
+          Schema.Union(
+            [
+              Schema.StructWithRest(
+                Schema.Struct({
+                  id: Schema.optionalKey(Schema.String),
+                  text: Schema.String,
+                  type: Schema.Literal("markdown"),
+                }),
+                [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+              ),
+              Schema.StructWithRest(
+                Schema.Struct({
+                  chart: Schema.optionalKey(
+                    Schema.StructWithRest(
+                      Schema.Struct({
+                        cumulative: Schema.Boolean,
+                        scale: Schema.Literals(["linear", "log"]),
+                        show_labels: Schema.Boolean,
+                        type: Schema.Literals(["bar", "line"]),
+                        x_column: Schema.String.annotate({
+                          description: "Result column used for the x axis.",
+                        }),
+                        y_series: Schema.Array(
+                          Schema.StructWithRest(
+                            Schema.Struct({
+                              column: Schema.String.annotate({
+                                description: "Result column plotted as a series.",
+                              }),
+                            }),
+                            [
+                              Schema.Record(
+                                Schema.String,
+                                Schema.Json.annotate({ expected: "JSON value" }),
+                              ),
+                            ],
+                          ),
+                        ),
+                      }),
+                      [
+                        Schema.Record(
+                          Schema.String,
+                          Schema.Json.annotate({ expected: "JSON value" }),
+                        ),
+                      ],
+                    ).annotate({
+                      description: "Chart configuration, retained even while `view` is `table`.",
+                    }),
+                  ),
+                  database_identifier: Schema.optionalKey(
+                    Schema.String.annotate({
+                      description: "Read replica to run against. Omit to use the primary database.",
+                    }),
+                  ),
+                  id: Schema.optionalKey(Schema.String),
+                  row_limit: Schema.optionalKey(
+                    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+                      .check(
+                        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                          expected: "a value less than or equal to 9007199254740991",
+                        }),
+                      )
+                      .check(
+                        Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" }),
+                      ),
+                  ),
+                  sql: Schema.String.annotate({
+                    description: "SQL run against the project database.",
+                  }),
+                  title: Schema.optionalKey(Schema.String),
+                  type: Schema.Literal("database"),
+                  view: Schema.optionalKey(Schema.Literals(["chart", "table"])),
+                }),
+                [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+              ),
+              Schema.StructWithRest(
+                Schema.Struct({
+                  chart: Schema.optionalKey(
+                    Schema.StructWithRest(
+                      Schema.Struct({
+                        cumulative: Schema.Boolean,
+                        scale: Schema.Literals(["linear", "log"]),
+                        show_labels: Schema.Boolean,
+                        type: Schema.Literals(["bar", "line"]),
+                        x_column: Schema.String.annotate({
+                          description: "Result column used for the x axis.",
+                        }),
+                        y_series: Schema.Array(
+                          Schema.StructWithRest(
+                            Schema.Struct({
+                              column: Schema.String.annotate({
+                                description: "Result column plotted as a series.",
+                              }),
+                            }),
+                            [
+                              Schema.Record(
+                                Schema.String,
+                                Schema.Json.annotate({ expected: "JSON value" }),
+                              ),
+                            ],
+                          ),
+                        ),
+                      }),
+                      [
+                        Schema.Record(
+                          Schema.String,
+                          Schema.Json.annotate({ expected: "JSON value" }),
+                        ),
+                      ],
+                    ).annotate({
+                      description: "Chart configuration, retained even while `view` is `table`.",
+                    }),
+                  ),
+                  id: Schema.optionalKey(Schema.String),
+                  sql: Schema.String.annotate({ description: "SQL run against the project logs." }),
+                  time_range: Schema.Union(
+                    [
+                      Schema.StructWithRest(
+                        Schema.Struct({
+                          end: Schema.String.annotate({
+                            description: "ISO 8601 end of the range.",
+                          }),
+                          start: Schema.String.annotate({
+                            description: "ISO 8601 start of the range.",
+                          }),
+                          type: Schema.Literal("absolute"),
+                        }),
+                        [
+                          Schema.Record(
+                            Schema.String,
+                            Schema.Json.annotate({ expected: "JSON value" }),
+                          ),
+                        ],
+                      ),
+                      Schema.StructWithRest(
+                        Schema.Struct({
+                          amount: Schema.Number.check(
+                            Schema.isInt().annotate({ expected: "an integer" }),
+                          )
+                            .check(
+                              Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                                expected: "a value less than or equal to 9007199254740991",
+                              }),
+                            )
+                            .check(
+                              Schema.isGreaterThan(0).annotate({
+                                expected: "a value greater than 0",
+                              }),
+                            ),
+                          type: Schema.Literal("relative"),
+                          unit: Schema.Literals(["day", "hour", "minute", "month", "week", "year"]),
+                        }),
+                        [
+                          Schema.Record(
+                            Schema.String,
+                            Schema.Json.annotate({ expected: "JSON value" }),
+                          ),
+                        ],
+                      ),
+                    ],
+                    { mode: "oneOf" },
+                  ),
+                  title: Schema.optionalKey(Schema.String),
+                  type: Schema.Literal("log"),
+                  view: Schema.optionalKey(Schema.Literals(["chart", "table"])),
+                }),
+                [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+              ),
+            ],
+            { mode: "oneOf" },
+          ),
+        ),
+      }),
+      description: Schema.optionalKey(
+        Schema.String.check(
+          Schema.isMaxLength(10000).annotate({
+            expected: "a value with a length of at most 10000",
+          }),
+        ),
+      ),
+      favorite: Schema.optionalKey(Schema.Boolean),
+      name: Schema.String.check(
+        Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+      ).check(
+        Schema.isMaxLength(255).annotate({ expected: "a value with a length of at most 255" }),
+      ),
+    }),
+    type: Schema.Literal("notebook").annotate({ description: "Resource type." }),
+  }),
+});
+export const V2CreateNotebookOutput = Schema.Struct({
+  data: Schema.Struct({
+    attributes: Schema.StructWithRest(
+      Schema.Struct({
+        content: Schema.StructWithRest(
+          Schema.Struct({
+            cells: Schema.Array(
+              Schema.Union(
+                [
+                  Schema.StructWithRest(
+                    Schema.Struct({
+                      id: Schema.String,
+                      text: Schema.String,
+                      type: Schema.Literal("markdown"),
+                    }),
+                    [
+                      Schema.Record(
+                        Schema.String,
+                        Schema.Json.annotate({ expected: "JSON value" }),
+                      ),
+                    ],
+                  ),
+                  Schema.StructWithRest(
+                    Schema.Struct({
+                      chart: Schema.optionalKey(
+                        Schema.StructWithRest(
+                          Schema.Struct({
+                            cumulative: Schema.Boolean,
+                            scale: Schema.Literals(["linear", "log"]),
+                            show_labels: Schema.Boolean,
+                            type: Schema.Literals(["bar", "line"]),
+                            x_column: Schema.String.annotate({
+                              description: "Result column used for the x axis.",
+                            }),
+                            y_series: Schema.Array(
+                              Schema.StructWithRest(
+                                Schema.Struct({
+                                  column: Schema.String.annotate({
+                                    description: "Result column plotted as a series.",
+                                  }),
+                                }),
+                                [
+                                  Schema.Record(
+                                    Schema.String,
+                                    Schema.Json.annotate({ expected: "JSON value" }),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          }),
+                          [
+                            Schema.Record(
+                              Schema.String,
+                              Schema.Json.annotate({ expected: "JSON value" }),
+                            ),
+                          ],
+                        ).annotate({
+                          description:
+                            "Chart configuration, retained even while `view` is `table`.",
+                        }),
+                      ),
+                      database_identifier: Schema.optionalKey(
+                        Schema.String.annotate({
+                          description:
+                            "Read replica to run against. Omit to use the primary database.",
+                        }),
+                      ),
+                      id: Schema.String,
+                      row_limit: Schema.optionalKey(
+                        Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+                          .check(
+                            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                              expected: "a value less than or equal to 9007199254740991",
+                            }),
+                          )
+                          .check(
+                            Schema.isGreaterThan(0).annotate({
+                              expected: "a value greater than 0",
+                            }),
+                          ),
+                      ),
+                      sql: Schema.String.annotate({
+                        description: "SQL run against the project database.",
+                      }),
+                      title: Schema.optionalKey(Schema.String),
+                      type: Schema.Literal("database"),
+                      view: Schema.optionalKey(Schema.Literals(["chart", "table"])),
+                    }),
+                    [
+                      Schema.Record(
+                        Schema.String,
+                        Schema.Json.annotate({ expected: "JSON value" }),
+                      ),
+                    ],
+                  ),
+                  Schema.StructWithRest(
+                    Schema.Struct({
+                      chart: Schema.optionalKey(
+                        Schema.StructWithRest(
+                          Schema.Struct({
+                            cumulative: Schema.Boolean,
+                            scale: Schema.Literals(["linear", "log"]),
+                            show_labels: Schema.Boolean,
+                            type: Schema.Literals(["bar", "line"]),
+                            x_column: Schema.String.annotate({
+                              description: "Result column used for the x axis.",
+                            }),
+                            y_series: Schema.Array(
+                              Schema.StructWithRest(
+                                Schema.Struct({
+                                  column: Schema.String.annotate({
+                                    description: "Result column plotted as a series.",
+                                  }),
+                                }),
+                                [
+                                  Schema.Record(
+                                    Schema.String,
+                                    Schema.Json.annotate({ expected: "JSON value" }),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          }),
+                          [
+                            Schema.Record(
+                              Schema.String,
+                              Schema.Json.annotate({ expected: "JSON value" }),
+                            ),
+                          ],
+                        ).annotate({
+                          description:
+                            "Chart configuration, retained even while `view` is `table`.",
+                        }),
+                      ),
+                      id: Schema.String,
+                      sql: Schema.String.annotate({
+                        description: "SQL run against the project logs.",
+                      }),
+                      time_range: Schema.Union(
+                        [
+                          Schema.StructWithRest(
+                            Schema.Struct({
+                              end: Schema.String.annotate({
+                                description: "ISO 8601 end of the range.",
+                              }),
+                              start: Schema.String.annotate({
+                                description: "ISO 8601 start of the range.",
+                              }),
+                              type: Schema.Literal("absolute"),
+                            }),
+                            [
+                              Schema.Record(
+                                Schema.String,
+                                Schema.Json.annotate({ expected: "JSON value" }),
+                              ),
+                            ],
+                          ),
+                          Schema.StructWithRest(
+                            Schema.Struct({
+                              amount: Schema.Number.check(
+                                Schema.isInt().annotate({ expected: "an integer" }),
+                              )
+                                .check(
+                                  Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                                    expected: "a value less than or equal to 9007199254740991",
+                                  }),
+                                )
+                                .check(
+                                  Schema.isGreaterThan(0).annotate({
+                                    expected: "a value greater than 0",
+                                  }),
+                                ),
+                              type: Schema.Literal("relative"),
+                              unit: Schema.Literals([
+                                "day",
+                                "hour",
+                                "minute",
+                                "month",
+                                "week",
+                                "year",
+                              ]),
+                            }),
+                            [
+                              Schema.Record(
+                                Schema.String,
+                                Schema.Json.annotate({ expected: "JSON value" }),
+                              ),
+                            ],
+                          ),
+                        ],
+                        { mode: "oneOf" },
+                      ),
+                      title: Schema.optionalKey(Schema.String),
+                      type: Schema.Literal("log"),
+                      view: Schema.optionalKey(Schema.Literals(["chart", "table"])),
+                    }),
+                    [
+                      Schema.Record(
+                        Schema.String,
+                        Schema.Json.annotate({ expected: "JSON value" }),
+                      ),
+                    ],
+                  ),
+                ],
+                { mode: "oneOf" },
+              ),
+            ),
+            schema_version: Schema.Number.check(
+              Schema.isFinite().annotate({ expected: "a finite number" }),
+            ),
+          }),
+          [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+        ),
+        description: Schema.Union([Schema.String, Schema.Null]),
+        favorite: Schema.Boolean,
+        inserted_at: Schema.String,
+        name: Schema.String,
+        owner: Schema.Union([
+          Schema.StructWithRest(
+            Schema.Struct({
+              id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+              username: Schema.String,
+            }),
+            [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+          ).annotate({ description: "User who created the notebook." }),
+          Schema.Null,
+        ]),
+        updated_at: Schema.String,
+        updated_by: Schema.Union([
+          Schema.StructWithRest(
+            Schema.Struct({
+              id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+              username: Schema.String,
+            }),
+            [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+          ).annotate({ description: "User who last wrote to the notebook." }),
+          Schema.Null,
+        ]),
+      }),
+      [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+    ),
+    id: Schema.String,
+    type: Schema.Literal("notebook").annotate({ description: "Resource type." }),
+  }),
+});
 export const V2CreateOrganizationInvitationsInput = Schema.Struct({
   slug: Schema.String.check(
     Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
@@ -10499,6 +10947,27 @@ export const V2DeleteLogDrainInput = Schema.Struct({
     }),
   ),
 });
+export const V2DeleteNotebookInput = Schema.Struct({
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
+  ),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+});
 export const V2DeleteOrganizationInvitationsInput = Schema.Struct({
   slug: Schema.String.check(
     Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
@@ -10788,6 +11257,272 @@ export const V2GetAWorkerOutput = Schema.Struct({
       ),
       instances_error: Schema.optionalKey(Schema.String),
     }),
+  }),
+});
+export const V2GetNotebookInput = Schema.Struct({
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
+  ),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+});
+export const V2GetNotebookOutput = Schema.Struct({
+  data: Schema.Struct({
+    attributes: Schema.StructWithRest(
+      Schema.Struct({
+        content: Schema.StructWithRest(
+          Schema.Struct({
+            cells: Schema.Array(
+              Schema.Union(
+                [
+                  Schema.StructWithRest(
+                    Schema.Struct({
+                      id: Schema.String,
+                      text: Schema.String,
+                      type: Schema.Literal("markdown"),
+                    }),
+                    [
+                      Schema.Record(
+                        Schema.String,
+                        Schema.Json.annotate({ expected: "JSON value" }),
+                      ),
+                    ],
+                  ),
+                  Schema.StructWithRest(
+                    Schema.Struct({
+                      chart: Schema.optionalKey(
+                        Schema.StructWithRest(
+                          Schema.Struct({
+                            cumulative: Schema.Boolean,
+                            scale: Schema.Literals(["linear", "log"]),
+                            show_labels: Schema.Boolean,
+                            type: Schema.Literals(["bar", "line"]),
+                            x_column: Schema.String.annotate({
+                              description: "Result column used for the x axis.",
+                            }),
+                            y_series: Schema.Array(
+                              Schema.StructWithRest(
+                                Schema.Struct({
+                                  column: Schema.String.annotate({
+                                    description: "Result column plotted as a series.",
+                                  }),
+                                }),
+                                [
+                                  Schema.Record(
+                                    Schema.String,
+                                    Schema.Json.annotate({ expected: "JSON value" }),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          }),
+                          [
+                            Schema.Record(
+                              Schema.String,
+                              Schema.Json.annotate({ expected: "JSON value" }),
+                            ),
+                          ],
+                        ).annotate({
+                          description:
+                            "Chart configuration, retained even while `view` is `table`.",
+                        }),
+                      ),
+                      database_identifier: Schema.optionalKey(
+                        Schema.String.annotate({
+                          description:
+                            "Read replica to run against. Omit to use the primary database.",
+                        }),
+                      ),
+                      id: Schema.String,
+                      row_limit: Schema.optionalKey(
+                        Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+                          .check(
+                            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                              expected: "a value less than or equal to 9007199254740991",
+                            }),
+                          )
+                          .check(
+                            Schema.isGreaterThan(0).annotate({
+                              expected: "a value greater than 0",
+                            }),
+                          ),
+                      ),
+                      sql: Schema.String.annotate({
+                        description: "SQL run against the project database.",
+                      }),
+                      title: Schema.optionalKey(Schema.String),
+                      type: Schema.Literal("database"),
+                      view: Schema.optionalKey(Schema.Literals(["chart", "table"])),
+                    }),
+                    [
+                      Schema.Record(
+                        Schema.String,
+                        Schema.Json.annotate({ expected: "JSON value" }),
+                      ),
+                    ],
+                  ),
+                  Schema.StructWithRest(
+                    Schema.Struct({
+                      chart: Schema.optionalKey(
+                        Schema.StructWithRest(
+                          Schema.Struct({
+                            cumulative: Schema.Boolean,
+                            scale: Schema.Literals(["linear", "log"]),
+                            show_labels: Schema.Boolean,
+                            type: Schema.Literals(["bar", "line"]),
+                            x_column: Schema.String.annotate({
+                              description: "Result column used for the x axis.",
+                            }),
+                            y_series: Schema.Array(
+                              Schema.StructWithRest(
+                                Schema.Struct({
+                                  column: Schema.String.annotate({
+                                    description: "Result column plotted as a series.",
+                                  }),
+                                }),
+                                [
+                                  Schema.Record(
+                                    Schema.String,
+                                    Schema.Json.annotate({ expected: "JSON value" }),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          }),
+                          [
+                            Schema.Record(
+                              Schema.String,
+                              Schema.Json.annotate({ expected: "JSON value" }),
+                            ),
+                          ],
+                        ).annotate({
+                          description:
+                            "Chart configuration, retained even while `view` is `table`.",
+                        }),
+                      ),
+                      id: Schema.String,
+                      sql: Schema.String.annotate({
+                        description: "SQL run against the project logs.",
+                      }),
+                      time_range: Schema.Union(
+                        [
+                          Schema.StructWithRest(
+                            Schema.Struct({
+                              end: Schema.String.annotate({
+                                description: "ISO 8601 end of the range.",
+                              }),
+                              start: Schema.String.annotate({
+                                description: "ISO 8601 start of the range.",
+                              }),
+                              type: Schema.Literal("absolute"),
+                            }),
+                            [
+                              Schema.Record(
+                                Schema.String,
+                                Schema.Json.annotate({ expected: "JSON value" }),
+                              ),
+                            ],
+                          ),
+                          Schema.StructWithRest(
+                            Schema.Struct({
+                              amount: Schema.Number.check(
+                                Schema.isInt().annotate({ expected: "an integer" }),
+                              )
+                                .check(
+                                  Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                                    expected: "a value less than or equal to 9007199254740991",
+                                  }),
+                                )
+                                .check(
+                                  Schema.isGreaterThan(0).annotate({
+                                    expected: "a value greater than 0",
+                                  }),
+                                ),
+                              type: Schema.Literal("relative"),
+                              unit: Schema.Literals([
+                                "day",
+                                "hour",
+                                "minute",
+                                "month",
+                                "week",
+                                "year",
+                              ]),
+                            }),
+                            [
+                              Schema.Record(
+                                Schema.String,
+                                Schema.Json.annotate({ expected: "JSON value" }),
+                              ),
+                            ],
+                          ),
+                        ],
+                        { mode: "oneOf" },
+                      ),
+                      title: Schema.optionalKey(Schema.String),
+                      type: Schema.Literal("log"),
+                      view: Schema.optionalKey(Schema.Literals(["chart", "table"])),
+                    }),
+                    [
+                      Schema.Record(
+                        Schema.String,
+                        Schema.Json.annotate({ expected: "JSON value" }),
+                      ),
+                    ],
+                  ),
+                ],
+                { mode: "oneOf" },
+              ),
+            ),
+            schema_version: Schema.Number.check(
+              Schema.isFinite().annotate({ expected: "a finite number" }),
+            ),
+          }),
+          [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+        ),
+        description: Schema.Union([Schema.String, Schema.Null]),
+        favorite: Schema.Boolean,
+        inserted_at: Schema.String,
+        name: Schema.String,
+        owner: Schema.Union([
+          Schema.StructWithRest(
+            Schema.Struct({
+              id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+              username: Schema.String,
+            }),
+            [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+          ).annotate({ description: "User who created the notebook." }),
+          Schema.Null,
+        ]),
+        updated_at: Schema.String,
+        updated_by: Schema.Union([
+          Schema.StructWithRest(
+            Schema.Struct({
+              id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+              username: Schema.String,
+            }),
+            [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+          ).annotate({ description: "User who last wrote to the notebook." }),
+          Schema.Null,
+        ]),
+      }),
+      [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+    ),
+    id: Schema.String,
+    type: Schema.Literal("notebook").annotate({ description: "Resource type." }),
   }),
 });
 export const V2GetProjectConfigInput = Schema.Struct({
@@ -11600,6 +12335,118 @@ export const V2ListLogDrainsOutput = Schema.Struct({
       }),
     }),
   ),
+});
+export const V2ListNotebooksInput = Schema.Struct({
+  filter: Schema.optionalKey(
+    Schema.Struct({
+      name: Schema.optionalKey(
+        Schema.String.check(
+          Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+        ),
+      ),
+    }),
+  ),
+  page: Schema.optionalKey(
+    Schema.Struct({
+      after: Schema.optionalKey(
+        Schema.String.check(
+          Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+        ),
+      ),
+      before: Schema.optionalKey(
+        Schema.String.check(
+          Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+        ),
+      ),
+      size: Schema.optionalKey(
+        Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isGreaterThanOrEqualTo(1).annotate({
+              expected: "a value greater than or equal to 1",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(100).annotate({
+              expected: "a value less than or equal to 100",
+            }),
+          ),
+      ),
+    }),
+  ),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  sort: Schema.optionalKey(Schema.Literals(["-inserted_at", "-name", "inserted_at", "name"])),
+});
+export const V2ListNotebooksOutput = Schema.Struct({
+  data: Schema.Array(
+    Schema.Struct({
+      attributes: Schema.StructWithRest(
+        Schema.Struct({
+          description: Schema.Union([Schema.String, Schema.Null]),
+          favorite: Schema.Boolean,
+          inserted_at: Schema.String,
+          name: Schema.String,
+          owner: Schema.Union([
+            Schema.StructWithRest(
+              Schema.Struct({
+                id: Schema.Number.check(
+                  Schema.isFinite().annotate({ expected: "a finite number" }),
+                ),
+                username: Schema.String,
+              }),
+              [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+            ).annotate({ description: "User who created the notebook." }),
+            Schema.Null,
+          ]),
+          updated_at: Schema.String,
+          updated_by: Schema.Union([
+            Schema.StructWithRest(
+              Schema.Struct({
+                id: Schema.Number.check(
+                  Schema.isFinite().annotate({ expected: "a finite number" }),
+                ),
+                username: Schema.String,
+              }),
+              [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+            ).annotate({ description: "User who last wrote to the notebook." }),
+            Schema.Null,
+          ]),
+        }),
+        [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+      ),
+      id: Schema.String,
+      type: Schema.Literal("notebook").annotate({ description: "Resource type." }),
+    }),
+  ),
+  links: Schema.Struct({
+    first: Schema.optionalKey(
+      Schema.Union([
+        Schema.String.annotate({ description: "URL path to the first page if available." }),
+        Schema.Null,
+      ]),
+    ),
+    last: Schema.optionalKey(
+      Schema.Union([
+        Schema.String.annotate({ description: "URL path to the last page if available." }),
+        Schema.Null,
+      ]),
+    ),
+    next: Schema.Union([
+      Schema.String.annotate({ description: "URL path to the next page." }),
+      Schema.Null,
+    ]),
+    prev: Schema.Union([
+      Schema.String.annotate({ description: "URL path to the previous page." }),
+      Schema.Null,
+    ]),
+  }),
 });
 export const V2ListOrganizationGithubConnectionsInput = Schema.Struct({
   slug: Schema.String.check(
@@ -12568,6 +13415,481 @@ export const V2UpdateLogDrainOutput = Schema.Struct({
     }),
   }),
 });
+export const V2UpdateNotebookInput = Schema.Struct({
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
+  ),
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  data: Schema.Struct({
+    attributes: Schema.Struct({
+      content: Schema.optionalKey(
+        Schema.Struct({
+          cells: Schema.Array(
+            Schema.Union(
+              [
+                Schema.StructWithRest(
+                  Schema.Struct({
+                    id: Schema.optionalKey(Schema.String),
+                    text: Schema.String,
+                    type: Schema.Literal("markdown"),
+                  }),
+                  [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+                ),
+                Schema.StructWithRest(
+                  Schema.Struct({
+                    chart: Schema.optionalKey(
+                      Schema.StructWithRest(
+                        Schema.Struct({
+                          cumulative: Schema.Boolean,
+                          scale: Schema.Literals(["linear", "log"]),
+                          show_labels: Schema.Boolean,
+                          type: Schema.Literals(["bar", "line"]),
+                          x_column: Schema.String.annotate({
+                            description: "Result column used for the x axis.",
+                          }),
+                          y_series: Schema.Array(
+                            Schema.StructWithRest(
+                              Schema.Struct({
+                                column: Schema.String.annotate({
+                                  description: "Result column plotted as a series.",
+                                }),
+                              }),
+                              [
+                                Schema.Record(
+                                  Schema.String,
+                                  Schema.Json.annotate({ expected: "JSON value" }),
+                                ),
+                              ],
+                            ),
+                          ),
+                        }),
+                        [
+                          Schema.Record(
+                            Schema.String,
+                            Schema.Json.annotate({ expected: "JSON value" }),
+                          ),
+                        ],
+                      ).annotate({
+                        description: "Chart configuration, retained even while `view` is `table`.",
+                      }),
+                    ),
+                    database_identifier: Schema.optionalKey(
+                      Schema.String.annotate({
+                        description:
+                          "Read replica to run against. Omit to use the primary database.",
+                      }),
+                    ),
+                    id: Schema.optionalKey(Schema.String),
+                    row_limit: Schema.optionalKey(
+                      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+                        .check(
+                          Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                            expected: "a value less than or equal to 9007199254740991",
+                          }),
+                        )
+                        .check(
+                          Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" }),
+                        ),
+                    ),
+                    sql: Schema.String.annotate({
+                      description: "SQL run against the project database.",
+                    }),
+                    title: Schema.optionalKey(Schema.String),
+                    type: Schema.Literal("database"),
+                    view: Schema.optionalKey(Schema.Literals(["chart", "table"])),
+                  }),
+                  [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+                ),
+                Schema.StructWithRest(
+                  Schema.Struct({
+                    chart: Schema.optionalKey(
+                      Schema.StructWithRest(
+                        Schema.Struct({
+                          cumulative: Schema.Boolean,
+                          scale: Schema.Literals(["linear", "log"]),
+                          show_labels: Schema.Boolean,
+                          type: Schema.Literals(["bar", "line"]),
+                          x_column: Schema.String.annotate({
+                            description: "Result column used for the x axis.",
+                          }),
+                          y_series: Schema.Array(
+                            Schema.StructWithRest(
+                              Schema.Struct({
+                                column: Schema.String.annotate({
+                                  description: "Result column plotted as a series.",
+                                }),
+                              }),
+                              [
+                                Schema.Record(
+                                  Schema.String,
+                                  Schema.Json.annotate({ expected: "JSON value" }),
+                                ),
+                              ],
+                            ),
+                          ),
+                        }),
+                        [
+                          Schema.Record(
+                            Schema.String,
+                            Schema.Json.annotate({ expected: "JSON value" }),
+                          ),
+                        ],
+                      ).annotate({
+                        description: "Chart configuration, retained even while `view` is `table`.",
+                      }),
+                    ),
+                    id: Schema.optionalKey(Schema.String),
+                    sql: Schema.String.annotate({
+                      description: "SQL run against the project logs.",
+                    }),
+                    time_range: Schema.Union(
+                      [
+                        Schema.StructWithRest(
+                          Schema.Struct({
+                            end: Schema.String.annotate({
+                              description: "ISO 8601 end of the range.",
+                            }),
+                            start: Schema.String.annotate({
+                              description: "ISO 8601 start of the range.",
+                            }),
+                            type: Schema.Literal("absolute"),
+                          }),
+                          [
+                            Schema.Record(
+                              Schema.String,
+                              Schema.Json.annotate({ expected: "JSON value" }),
+                            ),
+                          ],
+                        ),
+                        Schema.StructWithRest(
+                          Schema.Struct({
+                            amount: Schema.Number.check(
+                              Schema.isInt().annotate({ expected: "an integer" }),
+                            )
+                              .check(
+                                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                                  expected: "a value less than or equal to 9007199254740991",
+                                }),
+                              )
+                              .check(
+                                Schema.isGreaterThan(0).annotate({
+                                  expected: "a value greater than 0",
+                                }),
+                              ),
+                            type: Schema.Literal("relative"),
+                            unit: Schema.Literals([
+                              "day",
+                              "hour",
+                              "minute",
+                              "month",
+                              "week",
+                              "year",
+                            ]),
+                          }),
+                          [
+                            Schema.Record(
+                              Schema.String,
+                              Schema.Json.annotate({ expected: "JSON value" }),
+                            ),
+                          ],
+                        ),
+                      ],
+                      { mode: "oneOf" },
+                    ),
+                    title: Schema.optionalKey(Schema.String),
+                    type: Schema.Literal("log"),
+                    view: Schema.optionalKey(Schema.Literals(["chart", "table"])),
+                  }),
+                  [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+                ),
+              ],
+              { mode: "oneOf" },
+            ),
+          ),
+        }).annotate({
+          description:
+            "Replaces the notebook body. A cell keeps its identity by echoing back its `id`; a cell sent without an `id` is added as a new one.",
+        }),
+      ),
+      description: Schema.optionalKey(
+        Schema.String.check(
+          Schema.isMaxLength(10000).annotate({
+            expected: "a value with a length of at most 10000",
+          }),
+        ),
+      ),
+      favorite: Schema.optionalKey(Schema.Boolean),
+      name: Schema.optionalKey(
+        Schema.String.check(
+          Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+        ).check(
+          Schema.isMaxLength(255).annotate({ expected: "a value with a length of at most 255" }),
+        ),
+      ),
+    }),
+    type: Schema.Literal("notebook").annotate({ description: "Resource type." }),
+  }),
+});
+export const V2UpdateNotebookOutput = Schema.Struct({
+  data: Schema.Struct({
+    attributes: Schema.StructWithRest(
+      Schema.Struct({
+        content: Schema.StructWithRest(
+          Schema.Struct({
+            cells: Schema.Array(
+              Schema.Union(
+                [
+                  Schema.StructWithRest(
+                    Schema.Struct({
+                      id: Schema.String,
+                      text: Schema.String,
+                      type: Schema.Literal("markdown"),
+                    }),
+                    [
+                      Schema.Record(
+                        Schema.String,
+                        Schema.Json.annotate({ expected: "JSON value" }),
+                      ),
+                    ],
+                  ),
+                  Schema.StructWithRest(
+                    Schema.Struct({
+                      chart: Schema.optionalKey(
+                        Schema.StructWithRest(
+                          Schema.Struct({
+                            cumulative: Schema.Boolean,
+                            scale: Schema.Literals(["linear", "log"]),
+                            show_labels: Schema.Boolean,
+                            type: Schema.Literals(["bar", "line"]),
+                            x_column: Schema.String.annotate({
+                              description: "Result column used for the x axis.",
+                            }),
+                            y_series: Schema.Array(
+                              Schema.StructWithRest(
+                                Schema.Struct({
+                                  column: Schema.String.annotate({
+                                    description: "Result column plotted as a series.",
+                                  }),
+                                }),
+                                [
+                                  Schema.Record(
+                                    Schema.String,
+                                    Schema.Json.annotate({ expected: "JSON value" }),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          }),
+                          [
+                            Schema.Record(
+                              Schema.String,
+                              Schema.Json.annotate({ expected: "JSON value" }),
+                            ),
+                          ],
+                        ).annotate({
+                          description:
+                            "Chart configuration, retained even while `view` is `table`.",
+                        }),
+                      ),
+                      database_identifier: Schema.optionalKey(
+                        Schema.String.annotate({
+                          description:
+                            "Read replica to run against. Omit to use the primary database.",
+                        }),
+                      ),
+                      id: Schema.String,
+                      row_limit: Schema.optionalKey(
+                        Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+                          .check(
+                            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                              expected: "a value less than or equal to 9007199254740991",
+                            }),
+                          )
+                          .check(
+                            Schema.isGreaterThan(0).annotate({
+                              expected: "a value greater than 0",
+                            }),
+                          ),
+                      ),
+                      sql: Schema.String.annotate({
+                        description: "SQL run against the project database.",
+                      }),
+                      title: Schema.optionalKey(Schema.String),
+                      type: Schema.Literal("database"),
+                      view: Schema.optionalKey(Schema.Literals(["chart", "table"])),
+                    }),
+                    [
+                      Schema.Record(
+                        Schema.String,
+                        Schema.Json.annotate({ expected: "JSON value" }),
+                      ),
+                    ],
+                  ),
+                  Schema.StructWithRest(
+                    Schema.Struct({
+                      chart: Schema.optionalKey(
+                        Schema.StructWithRest(
+                          Schema.Struct({
+                            cumulative: Schema.Boolean,
+                            scale: Schema.Literals(["linear", "log"]),
+                            show_labels: Schema.Boolean,
+                            type: Schema.Literals(["bar", "line"]),
+                            x_column: Schema.String.annotate({
+                              description: "Result column used for the x axis.",
+                            }),
+                            y_series: Schema.Array(
+                              Schema.StructWithRest(
+                                Schema.Struct({
+                                  column: Schema.String.annotate({
+                                    description: "Result column plotted as a series.",
+                                  }),
+                                }),
+                                [
+                                  Schema.Record(
+                                    Schema.String,
+                                    Schema.Json.annotate({ expected: "JSON value" }),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          }),
+                          [
+                            Schema.Record(
+                              Schema.String,
+                              Schema.Json.annotate({ expected: "JSON value" }),
+                            ),
+                          ],
+                        ).annotate({
+                          description:
+                            "Chart configuration, retained even while `view` is `table`.",
+                        }),
+                      ),
+                      id: Schema.String,
+                      sql: Schema.String.annotate({
+                        description: "SQL run against the project logs.",
+                      }),
+                      time_range: Schema.Union(
+                        [
+                          Schema.StructWithRest(
+                            Schema.Struct({
+                              end: Schema.String.annotate({
+                                description: "ISO 8601 end of the range.",
+                              }),
+                              start: Schema.String.annotate({
+                                description: "ISO 8601 start of the range.",
+                              }),
+                              type: Schema.Literal("absolute"),
+                            }),
+                            [
+                              Schema.Record(
+                                Schema.String,
+                                Schema.Json.annotate({ expected: "JSON value" }),
+                              ),
+                            ],
+                          ),
+                          Schema.StructWithRest(
+                            Schema.Struct({
+                              amount: Schema.Number.check(
+                                Schema.isInt().annotate({ expected: "an integer" }),
+                              )
+                                .check(
+                                  Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                                    expected: "a value less than or equal to 9007199254740991",
+                                  }),
+                                )
+                                .check(
+                                  Schema.isGreaterThan(0).annotate({
+                                    expected: "a value greater than 0",
+                                  }),
+                                ),
+                              type: Schema.Literal("relative"),
+                              unit: Schema.Literals([
+                                "day",
+                                "hour",
+                                "minute",
+                                "month",
+                                "week",
+                                "year",
+                              ]),
+                            }),
+                            [
+                              Schema.Record(
+                                Schema.String,
+                                Schema.Json.annotate({ expected: "JSON value" }),
+                              ),
+                            ],
+                          ),
+                        ],
+                        { mode: "oneOf" },
+                      ),
+                      title: Schema.optionalKey(Schema.String),
+                      type: Schema.Literal("log"),
+                      view: Schema.optionalKey(Schema.Literals(["chart", "table"])),
+                    }),
+                    [
+                      Schema.Record(
+                        Schema.String,
+                        Schema.Json.annotate({ expected: "JSON value" }),
+                      ),
+                    ],
+                  ),
+                ],
+                { mode: "oneOf" },
+              ),
+            ),
+            schema_version: Schema.Number.check(
+              Schema.isFinite().annotate({ expected: "a finite number" }),
+            ),
+          }),
+          [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+        ),
+        description: Schema.Union([Schema.String, Schema.Null]),
+        favorite: Schema.Boolean,
+        inserted_at: Schema.String,
+        name: Schema.String,
+        owner: Schema.Union([
+          Schema.StructWithRest(
+            Schema.Struct({
+              id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+              username: Schema.String,
+            }),
+            [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+          ).annotate({ description: "User who created the notebook." }),
+          Schema.Null,
+        ]),
+        updated_at: Schema.String,
+        updated_by: Schema.Union([
+          Schema.StructWithRest(
+            Schema.Struct({
+              id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+              username: Schema.String,
+            }),
+            [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+          ).annotate({ description: "User who last wrote to the notebook." }),
+          Schema.Null,
+        ]),
+      }),
+      [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+    ),
+    id: Schema.String,
+    type: Schema.Literal("notebook").annotate({ description: "Resource type." }),
+  }),
+});
 export const V1ApplyAMigrationOutput = Schema.Void;
 export const V1ApplyProjectAddonOutput = Schema.Void;
 export const V1AuthorizeUserOutput = Schema.Void;
@@ -12608,6 +13930,7 @@ export const V1UpdateStorageConfigOutput = Schema.Void;
 export const V1UpsertAMigrationOutput = Schema.Void;
 export const V2DeleteAWorkerOutput = Schema.Void;
 export const V2DeleteLogDrainOutput = Schema.Void;
+export const V2DeleteNotebookOutput = Schema.Void;
 export const V2DeletePrivateLinkAssociationOutput = Schema.Void;
 export const V2DeletePrivateLinkAssociationForDatabaseOutput = Schema.Void;
 export const V2TransferAProjectOutput = Schema.Void;
@@ -12785,19 +14108,23 @@ export const openApiOperationIdMap = {
   "v1-verify-dns-config": "v1VerifyDnsConfig",
   "v2-assign-organization-member-role": "v2AssignOrganizationMemberRole",
   "v2-create-log-drain": "v2CreateLogDrain",
+  "v2-create-notebook": "v2CreateNotebook",
   "v2-create-organization-invitations": "v2CreateOrganizationInvitations",
   "v2-create-private-link-association": "v2CreatePrivateLinkAssociation",
   "v2-create-worker-upload": "v2CreateWorkerUpload",
   "v2-delete-a-worker": "v2DeleteAWorker",
   "v2-delete-log-drain": "v2DeleteLogDrain",
+  "v2-delete-notebook": "v2DeleteNotebook",
   "v2-delete-organization-invitations": "v2DeleteOrganizationInvitations",
   "v2-delete-private-link-association": "v2DeletePrivateLinkAssociation",
   "v2-delete-private-link-association-for-database": "v2DeletePrivateLinkAssociationForDatabase",
   "v2-deploy-a-worker": "v2DeployAWorker",
   "v2-get-a-worker": "v2GetAWorker",
+  "v2-get-notebook": "v2GetNotebook",
   "v2-get-project-config": "v2GetProjectConfig",
   "v2-list-all-workers": "v2ListAllWorkers",
   "v2-list-log-drains": "v2ListLogDrains",
+  "v2-list-notebooks": "v2ListNotebooks",
   "v2-list-organization-github-connections": "v2ListOrganizationGithubConnections",
   "v2-list-organization-members": "v2ListOrganizationMembers",
   "v2-list-organization-projects": "v2ListOrganizationProjects",
@@ -12807,6 +14134,7 @@ export const openApiOperationIdMap = {
   "v2-run-project-advisors": "v2RunProjectAdvisors",
   "v2-transfer-a-project": "v2TransferAProject",
   "v2-update-log-drain": "v2UpdateLogDrain",
+  "v2-update-notebook": "v2UpdateNotebook",
 } as const;
 
 export const operationDefinitions = {
@@ -15546,6 +16874,20 @@ export const operationDefinitions = {
     inputSchema: V2CreateLogDrainInput,
     outputSchema: V2CreateLogDrainOutput,
   },
+  v2CreateNotebook: {
+    id: "v2CreateNotebook",
+    description:
+      "Creates a notebook shared with everyone who has access to the project. Cell ids are assigned by the server and returned in the response.",
+    method: "POST",
+    path: "/v2/projects/{ref}/notebooks",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "json", contentType: "application/json", fields: ["data"] },
+    response: { kind: "json" },
+    inputSchema: V2CreateNotebookInput,
+    outputSchema: V2CreateNotebookOutput,
+  },
   v2CreateOrganizationInvitations: {
     id: "v2CreateOrganizationInvitations",
     description:
@@ -15613,6 +16955,19 @@ export const operationDefinitions = {
     response: { kind: "void" },
     inputSchema: V2DeleteLogDrainInput,
     outputSchema: V2DeleteLogDrainOutput,
+  },
+  v2DeleteNotebook: {
+    id: "v2DeleteNotebook",
+    description: "Delete a notebook",
+    method: "DELETE",
+    path: "/v2/projects/{ref}/notebooks/{id}",
+    pathParams: ["id", "ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "void" },
+    inputSchema: V2DeleteNotebookInput,
+    outputSchema: V2DeleteNotebookOutput,
   },
   v2DeleteOrganizationInvitations: {
     id: "v2DeleteOrganizationInvitations",
@@ -15683,6 +17038,19 @@ export const operationDefinitions = {
     inputSchema: V2GetAWorkerInput,
     outputSchema: V2GetAWorkerOutput,
   },
+  v2GetNotebook: {
+    id: "v2GetNotebook",
+    description: "Get a notebook",
+    method: "GET",
+    path: "/v2/projects/{ref}/notebooks/{id}",
+    pathParams: ["id", "ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2GetNotebookInput,
+    outputSchema: V2GetNotebookOutput,
+  },
   v2GetProjectConfig: {
     id: "v2GetProjectConfig",
     description:
@@ -15722,6 +17090,20 @@ export const operationDefinitions = {
     response: { kind: "json" },
     inputSchema: V2ListLogDrainsInput,
     outputSchema: V2ListLogDrainsOutput,
+  },
+  v2ListNotebooks: {
+    id: "v2ListNotebooks",
+    description:
+      "Returns a cursor-paginated list of the project notebooks. Notebook bodies are omitted — read a single notebook to get its cells.",
+    method: "GET",
+    path: "/v2/projects/{ref}/notebooks",
+    pathParams: ["ref"],
+    queryParams: ["filter", "page", "sort"],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2ListNotebooksInput,
+    outputSchema: V2ListNotebooksOutput,
   },
   v2ListOrganizationGithubConnections: {
     id: "v2ListOrganizationGithubConnections",
@@ -15843,6 +17225,20 @@ export const operationDefinitions = {
     response: { kind: "json" },
     inputSchema: V2UpdateLogDrainInput,
     outputSchema: V2UpdateLogDrainOutput,
+  },
+  v2UpdateNotebook: {
+    id: "v2UpdateNotebook",
+    description:
+      "Updates the attributes provided and leaves the rest untouched. Sending `content` replaces the whole notebook body.",
+    method: "PATCH",
+    path: "/v2/projects/{ref}/notebooks/{id}",
+    pathParams: ["id", "ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "json", contentType: "application/json", fields: ["data"] },
+    response: { kind: "json" },
+    inputSchema: V2UpdateNotebookInput,
+    outputSchema: V2UpdateNotebookOutput,
   },
 } as const;
 

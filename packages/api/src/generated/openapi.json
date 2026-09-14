@@ -13530,6 +13530,577 @@
         "x-fga-permissions": [["organization_projects_read"]],
         "x-oauth-scope": "projects:read"
       }
+    },
+    "/v2/projects/{ref}/notebooks": {
+      "get": {
+        "description": "Returns a cursor-paginated list of the project notebooks. Notebook bodies are omitted — read a single notebook to get its cells.",
+        "operationId": "v2-list-notebooks",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "filter",
+            "required": false,
+            "schema": {
+              "properties": {
+                "name": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "style": "deepObject"
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "properties": {
+                "after": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "before": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "size": {
+                  "maximum": 100,
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "type": "object"
+            },
+            "style": "deepObject"
+          },
+          {
+            "description": "Project ref",
+            "in": "path",
+            "name": "ref",
+            "required": true,
+            "schema": {
+              "example": "abcdefghijklmnopqrst",
+              "maxLength": 20,
+              "minLength": 20,
+              "pattern": "^[a-z]+$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "enum": ["-inserted_at", "-name", "inserted_at", "name"],
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2ListNotebooksResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Forbidden action"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Rate limit exceeded"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Failed to retrieve project's notebooks"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List notebooks of a project",
+        "tags": ["Projects"],
+        "x-badges": [
+          {
+            "name": "OAuth scope: database:read",
+            "position": "after"
+          }
+        ],
+        "x-endpoint-owners": ["control-plane"],
+        "x-fga-permissions": [["project_notebooks_read"]],
+        "x-oauth-scope": "database:read"
+      },
+      "post": {
+        "description": "Creates a notebook shared with everyone who has access to the project. Cell ids are assigned by the server and returned in the response.",
+        "operationId": "v2-create-notebook",
+        "parameters": [
+          {
+            "description": "Project ref",
+            "in": "path",
+            "name": "ref",
+            "required": true,
+            "schema": {
+              "example": "abcdefghijklmnopqrst",
+              "maxLength": 20,
+              "minLength": 20,
+              "pattern": "^[a-z]+$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/V2CreateNotebookRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2NotebookResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Forbidden action"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Rate limit exceeded"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Failed to create notebook"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Create a notebook",
+        "tags": ["Projects"],
+        "x-badges": [
+          {
+            "name": "OAuth scope: database:write",
+            "position": "after"
+          }
+        ],
+        "x-endpoint-owners": ["control-plane"],
+        "x-fga-permissions": [["project_notebooks_write"]],
+        "x-oauth-scope": "database:write"
+      }
+    },
+    "/v2/projects/{ref}/notebooks/{id}": {
+      "delete": {
+        "operationId": "v2-delete-notebook",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "example": "44444444-4444-4444-8444-444444444444",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Project ref",
+            "in": "path",
+            "name": "ref",
+            "required": true,
+            "schema": {
+              "example": "abcdefghijklmnopqrst",
+              "maxLength": 20,
+              "minLength": 20,
+              "pattern": "^[a-z]+$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Forbidden action"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Notebook not found"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Rate limit exceeded"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Failed to delete notebook"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Delete a notebook",
+        "tags": ["Projects"],
+        "x-badges": [
+          {
+            "name": "OAuth scope: database:write",
+            "position": "after"
+          }
+        ],
+        "x-endpoint-owners": ["control-plane"],
+        "x-fga-permissions": [["project_notebooks_write"]],
+        "x-oauth-scope": "database:write"
+      },
+      "get": {
+        "operationId": "v2-get-notebook",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "example": "44444444-4444-4444-8444-444444444444",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Project ref",
+            "in": "path",
+            "name": "ref",
+            "required": true,
+            "schema": {
+              "example": "abcdefghijklmnopqrst",
+              "maxLength": 20,
+              "minLength": 20,
+              "pattern": "^[a-z]+$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2NotebookResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Forbidden action"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Notebook not found"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Rate limit exceeded"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Failed to retrieve notebook"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Get a notebook",
+        "tags": ["Projects"],
+        "x-badges": [
+          {
+            "name": "OAuth scope: database:read",
+            "position": "after"
+          }
+        ],
+        "x-endpoint-owners": ["control-plane"],
+        "x-fga-permissions": [["project_notebooks_read"]],
+        "x-oauth-scope": "database:read"
+      },
+      "patch": {
+        "description": "Updates the attributes provided and leaves the rest untouched. Sending `content` replaces the whole notebook body.",
+        "operationId": "v2-update-notebook",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "example": "44444444-4444-4444-8444-444444444444",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Project ref",
+            "in": "path",
+            "name": "ref",
+            "required": true,
+            "schema": {
+              "example": "abcdefghijklmnopqrst",
+              "maxLength": 20,
+              "minLength": 20,
+              "pattern": "^[a-z]+$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/V2UpdateNotebookRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2NotebookResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "The request references a cell that does not exist on this notebook"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Forbidden action"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Notebook not found"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Rate limit exceeded"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            },
+            "description": "Failed to update notebook"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Update a notebook",
+        "tags": ["Projects"],
+        "x-badges": [
+          {
+            "name": "OAuth scope: database:write",
+            "position": "after"
+          }
+        ],
+        "x-endpoint-owners": ["control-plane"],
+        "x-fga-permissions": [["project_notebooks_write"]],
+        "x-oauth-scope": "database:write"
+      }
     }
   },
   "components": {
@@ -26425,6 +26996,984 @@
           }
         },
         "required": ["data", "links"]
+      },
+      "V2CreateNotebookRequest": {
+        "properties": {
+          "data": {
+            "properties": {
+              "attributes": {
+                "properties": {
+                  "content": {
+                    "properties": {
+                      "cells": {
+                        "items": {
+                          "oneOf": [
+                            {
+                              "additionalProperties": {},
+                              "properties": {
+                                "id": {
+                                  "type": "string"
+                                },
+                                "text": {
+                                  "type": "string"
+                                },
+                                "type": {
+                                  "enum": ["markdown"],
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["text", "type"],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": {},
+                              "properties": {
+                                "chart": {
+                                  "additionalProperties": {},
+                                  "description": "Chart configuration, retained even while `view` is `table`.",
+                                  "properties": {
+                                    "cumulative": {
+                                      "type": "boolean"
+                                    },
+                                    "scale": {
+                                      "enum": ["linear", "log"],
+                                      "type": "string"
+                                    },
+                                    "show_labels": {
+                                      "type": "boolean"
+                                    },
+                                    "type": {
+                                      "enum": ["bar", "line"],
+                                      "type": "string"
+                                    },
+                                    "x_column": {
+                                      "description": "Result column used for the x axis.",
+                                      "type": "string"
+                                    },
+                                    "y_series": {
+                                      "items": {
+                                        "additionalProperties": {},
+                                        "properties": {
+                                          "column": {
+                                            "description": "Result column plotted as a series.",
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": ["column"],
+                                        "type": "object"
+                                      },
+                                      "type": "array"
+                                    }
+                                  },
+                                  "required": [
+                                    "cumulative",
+                                    "scale",
+                                    "show_labels",
+                                    "type",
+                                    "x_column",
+                                    "y_series"
+                                  ],
+                                  "type": "object"
+                                },
+                                "database_identifier": {
+                                  "description": "Read replica to run against. Omit to use the primary database.",
+                                  "type": "string"
+                                },
+                                "id": {
+                                  "type": "string"
+                                },
+                                "row_limit": {
+                                  "default": 100,
+                                  "exclusiveMinimum": true,
+                                  "maximum": 9007199254740991,
+                                  "minimum": 0,
+                                  "type": "integer"
+                                },
+                                "sql": {
+                                  "description": "SQL run against the project database.",
+                                  "type": "string"
+                                },
+                                "title": {
+                                  "type": "string"
+                                },
+                                "type": {
+                                  "enum": ["database"],
+                                  "type": "string"
+                                },
+                                "view": {
+                                  "enum": ["chart", "table"],
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["sql", "type"],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": {},
+                              "properties": {
+                                "chart": {
+                                  "additionalProperties": {},
+                                  "description": "Chart configuration, retained even while `view` is `table`.",
+                                  "properties": {
+                                    "cumulative": {
+                                      "type": "boolean"
+                                    },
+                                    "scale": {
+                                      "enum": ["linear", "log"],
+                                      "type": "string"
+                                    },
+                                    "show_labels": {
+                                      "type": "boolean"
+                                    },
+                                    "type": {
+                                      "enum": ["bar", "line"],
+                                      "type": "string"
+                                    },
+                                    "x_column": {
+                                      "description": "Result column used for the x axis.",
+                                      "type": "string"
+                                    },
+                                    "y_series": {
+                                      "items": {
+                                        "additionalProperties": {},
+                                        "properties": {
+                                          "column": {
+                                            "description": "Result column plotted as a series.",
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": ["column"],
+                                        "type": "object"
+                                      },
+                                      "type": "array"
+                                    }
+                                  },
+                                  "required": [
+                                    "cumulative",
+                                    "scale",
+                                    "show_labels",
+                                    "type",
+                                    "x_column",
+                                    "y_series"
+                                  ],
+                                  "type": "object"
+                                },
+                                "id": {
+                                  "type": "string"
+                                },
+                                "sql": {
+                                  "description": "SQL run against the project logs.",
+                                  "type": "string"
+                                },
+                                "time_range": {
+                                  "oneOf": [
+                                    {
+                                      "additionalProperties": {},
+                                      "properties": {
+                                        "end": {
+                                          "description": "ISO 8601 end of the range.",
+                                          "type": "string"
+                                        },
+                                        "start": {
+                                          "description": "ISO 8601 start of the range.",
+                                          "type": "string"
+                                        },
+                                        "type": {
+                                          "enum": ["absolute"],
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": ["end", "start", "type"],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "additionalProperties": {},
+                                      "properties": {
+                                        "amount": {
+                                          "exclusiveMinimum": true,
+                                          "maximum": 9007199254740991,
+                                          "minimum": 0,
+                                          "type": "integer"
+                                        },
+                                        "type": {
+                                          "enum": ["relative"],
+                                          "type": "string"
+                                        },
+                                        "unit": {
+                                          "enum": [
+                                            "day",
+                                            "hour",
+                                            "minute",
+                                            "month",
+                                            "week",
+                                            "year"
+                                          ],
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": ["amount", "type", "unit"],
+                                      "type": "object"
+                                    }
+                                  ]
+                                },
+                                "title": {
+                                  "type": "string"
+                                },
+                                "type": {
+                                  "enum": ["log"],
+                                  "type": "string"
+                                },
+                                "view": {
+                                  "enum": ["chart", "table"],
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["sql", "time_range", "type"],
+                              "type": "object"
+                            }
+                          ]
+                        },
+                        "type": "array"
+                      }
+                    },
+                    "required": ["cells"],
+                    "type": "object"
+                  },
+                  "description": {
+                    "maxLength": 10000,
+                    "type": "string"
+                  },
+                  "favorite": {
+                    "type": "boolean"
+                  },
+                  "name": {
+                    "maxLength": 255,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": ["content", "name"],
+                "type": "object"
+              },
+              "type": {
+                "description": "Resource type.",
+                "enum": ["notebook"],
+                "type": "string"
+              }
+            },
+            "required": ["attributes", "type"],
+            "type": "object"
+          }
+        },
+        "required": ["data"],
+        "type": "object"
+      },
+      "V2ListNotebooksResponse": {
+        "properties": {
+          "data": {
+            "items": {
+              "properties": {
+                "attributes": {
+                  "additionalProperties": {},
+                  "properties": {
+                    "description": {
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "favorite": {
+                      "type": "boolean"
+                    },
+                    "inserted_at": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "owner": {
+                      "additionalProperties": {},
+                      "description": "User who created the notebook.",
+                      "nullable": true,
+                      "properties": {
+                        "id": {
+                          "type": "number"
+                        },
+                        "username": {
+                          "type": "string"
+                        }
+                      },
+                      "required": ["id", "username"],
+                      "type": "object"
+                    },
+                    "updated_at": {
+                      "type": "string"
+                    },
+                    "updated_by": {
+                      "additionalProperties": {},
+                      "description": "User who last wrote to the notebook.",
+                      "nullable": true,
+                      "properties": {
+                        "id": {
+                          "type": "number"
+                        },
+                        "username": {
+                          "type": "string"
+                        }
+                      },
+                      "required": ["id", "username"],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "description",
+                    "favorite",
+                    "inserted_at",
+                    "name",
+                    "owner",
+                    "updated_at",
+                    "updated_by"
+                  ],
+                  "type": "object"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "type": {
+                  "description": "Resource type.",
+                  "enum": ["notebook"],
+                  "type": "string"
+                }
+              },
+              "required": ["attributes", "id", "type"],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "links": {
+            "properties": {
+              "first": {
+                "description": "URL path to the first page if available.",
+                "example": "/v2/projects/{ref}/notebooks?page[size]=10",
+                "nullable": true,
+                "type": "string"
+              },
+              "last": {
+                "description": "URL path to the last page if available.",
+                "example": "/v2/projects/{ref}/notebooks?page[size]=10&page[after]=019adf7d-4513-71ba-b264-21900edb4295",
+                "nullable": true,
+                "type": "string"
+              },
+              "next": {
+                "description": "URL path to the next page.",
+                "example": "/v2/projects/{ref}/notebooks?page[size]=10&page[after]=019adf7d-4513-7062-b292-78b86cc470a4",
+                "nullable": true,
+                "type": "string"
+              },
+              "prev": {
+                "description": "URL path to the previous page.",
+                "example": "/v2/projects/{ref}/notebooks?page[size]=10&page[before]=019adf7d-4513-74c5-bb9a-f1bc0f7a95d7",
+                "nullable": true,
+                "type": "string"
+              }
+            },
+            "required": ["next", "prev"],
+            "type": "object"
+          }
+        },
+        "required": ["data", "links"],
+        "type": "object"
+      },
+      "V2NotebookResponse": {
+        "properties": {
+          "data": {
+            "properties": {
+              "attributes": {
+                "additionalProperties": {},
+                "properties": {
+                  "content": {
+                    "additionalProperties": {},
+                    "properties": {
+                      "cells": {
+                        "items": {
+                          "oneOf": [
+                            {
+                              "additionalProperties": {},
+                              "properties": {
+                                "id": {
+                                  "type": "string"
+                                },
+                                "text": {
+                                  "type": "string"
+                                },
+                                "type": {
+                                  "enum": ["markdown"],
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["id", "text", "type"],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": {},
+                              "properties": {
+                                "chart": {
+                                  "additionalProperties": {},
+                                  "description": "Chart configuration, retained even while `view` is `table`.",
+                                  "properties": {
+                                    "cumulative": {
+                                      "type": "boolean"
+                                    },
+                                    "scale": {
+                                      "enum": ["linear", "log"],
+                                      "type": "string"
+                                    },
+                                    "show_labels": {
+                                      "type": "boolean"
+                                    },
+                                    "type": {
+                                      "enum": ["bar", "line"],
+                                      "type": "string"
+                                    },
+                                    "x_column": {
+                                      "description": "Result column used for the x axis.",
+                                      "type": "string"
+                                    },
+                                    "y_series": {
+                                      "items": {
+                                        "additionalProperties": {},
+                                        "properties": {
+                                          "column": {
+                                            "description": "Result column plotted as a series.",
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": ["column"],
+                                        "type": "object"
+                                      },
+                                      "type": "array"
+                                    }
+                                  },
+                                  "required": [
+                                    "cumulative",
+                                    "scale",
+                                    "show_labels",
+                                    "type",
+                                    "x_column",
+                                    "y_series"
+                                  ],
+                                  "type": "object"
+                                },
+                                "database_identifier": {
+                                  "description": "Read replica to run against. Omit to use the primary database.",
+                                  "type": "string"
+                                },
+                                "id": {
+                                  "type": "string"
+                                },
+                                "row_limit": {
+                                  "default": 100,
+                                  "exclusiveMinimum": true,
+                                  "maximum": 9007199254740991,
+                                  "minimum": 0,
+                                  "type": "integer"
+                                },
+                                "sql": {
+                                  "description": "SQL run against the project database.",
+                                  "type": "string"
+                                },
+                                "title": {
+                                  "type": "string"
+                                },
+                                "type": {
+                                  "enum": ["database"],
+                                  "type": "string"
+                                },
+                                "view": {
+                                  "enum": ["chart", "table"],
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["id", "sql", "type"],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": {},
+                              "properties": {
+                                "chart": {
+                                  "additionalProperties": {},
+                                  "description": "Chart configuration, retained even while `view` is `table`.",
+                                  "properties": {
+                                    "cumulative": {
+                                      "type": "boolean"
+                                    },
+                                    "scale": {
+                                      "enum": ["linear", "log"],
+                                      "type": "string"
+                                    },
+                                    "show_labels": {
+                                      "type": "boolean"
+                                    },
+                                    "type": {
+                                      "enum": ["bar", "line"],
+                                      "type": "string"
+                                    },
+                                    "x_column": {
+                                      "description": "Result column used for the x axis.",
+                                      "type": "string"
+                                    },
+                                    "y_series": {
+                                      "items": {
+                                        "additionalProperties": {},
+                                        "properties": {
+                                          "column": {
+                                            "description": "Result column plotted as a series.",
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": ["column"],
+                                        "type": "object"
+                                      },
+                                      "type": "array"
+                                    }
+                                  },
+                                  "required": [
+                                    "cumulative",
+                                    "scale",
+                                    "show_labels",
+                                    "type",
+                                    "x_column",
+                                    "y_series"
+                                  ],
+                                  "type": "object"
+                                },
+                                "id": {
+                                  "type": "string"
+                                },
+                                "sql": {
+                                  "description": "SQL run against the project logs.",
+                                  "type": "string"
+                                },
+                                "time_range": {
+                                  "oneOf": [
+                                    {
+                                      "additionalProperties": {},
+                                      "properties": {
+                                        "end": {
+                                          "description": "ISO 8601 end of the range.",
+                                          "type": "string"
+                                        },
+                                        "start": {
+                                          "description": "ISO 8601 start of the range.",
+                                          "type": "string"
+                                        },
+                                        "type": {
+                                          "enum": ["absolute"],
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": ["end", "start", "type"],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "additionalProperties": {},
+                                      "properties": {
+                                        "amount": {
+                                          "exclusiveMinimum": true,
+                                          "maximum": 9007199254740991,
+                                          "minimum": 0,
+                                          "type": "integer"
+                                        },
+                                        "type": {
+                                          "enum": ["relative"],
+                                          "type": "string"
+                                        },
+                                        "unit": {
+                                          "enum": [
+                                            "day",
+                                            "hour",
+                                            "minute",
+                                            "month",
+                                            "week",
+                                            "year"
+                                          ],
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": ["amount", "type", "unit"],
+                                      "type": "object"
+                                    }
+                                  ]
+                                },
+                                "title": {
+                                  "type": "string"
+                                },
+                                "type": {
+                                  "enum": ["log"],
+                                  "type": "string"
+                                },
+                                "view": {
+                                  "enum": ["chart", "table"],
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["id", "sql", "time_range", "type"],
+                              "type": "object"
+                            }
+                          ]
+                        },
+                        "type": "array"
+                      },
+                      "schema_version": {
+                        "type": "number"
+                      }
+                    },
+                    "required": ["cells", "schema_version"],
+                    "type": "object"
+                  },
+                  "description": {
+                    "nullable": true,
+                    "type": "string"
+                  },
+                  "favorite": {
+                    "type": "boolean"
+                  },
+                  "inserted_at": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "owner": {
+                    "additionalProperties": {},
+                    "description": "User who created the notebook.",
+                    "nullable": true,
+                    "properties": {
+                      "id": {
+                        "type": "number"
+                      },
+                      "username": {
+                        "type": "string"
+                      }
+                    },
+                    "required": ["id", "username"],
+                    "type": "object"
+                  },
+                  "updated_at": {
+                    "type": "string"
+                  },
+                  "updated_by": {
+                    "additionalProperties": {},
+                    "description": "User who last wrote to the notebook.",
+                    "nullable": true,
+                    "properties": {
+                      "id": {
+                        "type": "number"
+                      },
+                      "username": {
+                        "type": "string"
+                      }
+                    },
+                    "required": ["id", "username"],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "content",
+                  "description",
+                  "favorite",
+                  "inserted_at",
+                  "name",
+                  "owner",
+                  "updated_at",
+                  "updated_by"
+                ],
+                "type": "object"
+              },
+              "id": {
+                "type": "string"
+              },
+              "type": {
+                "description": "Resource type.",
+                "enum": ["notebook"],
+                "type": "string"
+              }
+            },
+            "required": ["attributes", "id", "type"],
+            "type": "object"
+          }
+        },
+        "required": ["data"],
+        "type": "object"
+      },
+      "V2UpdateNotebookRequest": {
+        "properties": {
+          "data": {
+            "properties": {
+              "attributes": {
+                "properties": {
+                  "content": {
+                    "description": "Replaces the notebook body. A cell keeps its identity by echoing back its `id`; a cell sent without an `id` is added as a new one.",
+                    "properties": {
+                      "cells": {
+                        "items": {
+                          "oneOf": [
+                            {
+                              "additionalProperties": {},
+                              "properties": {
+                                "id": {
+                                  "type": "string"
+                                },
+                                "text": {
+                                  "type": "string"
+                                },
+                                "type": {
+                                  "enum": ["markdown"],
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["text", "type"],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": {},
+                              "properties": {
+                                "chart": {
+                                  "additionalProperties": {},
+                                  "description": "Chart configuration, retained even while `view` is `table`.",
+                                  "properties": {
+                                    "cumulative": {
+                                      "type": "boolean"
+                                    },
+                                    "scale": {
+                                      "enum": ["linear", "log"],
+                                      "type": "string"
+                                    },
+                                    "show_labels": {
+                                      "type": "boolean"
+                                    },
+                                    "type": {
+                                      "enum": ["bar", "line"],
+                                      "type": "string"
+                                    },
+                                    "x_column": {
+                                      "description": "Result column used for the x axis.",
+                                      "type": "string"
+                                    },
+                                    "y_series": {
+                                      "items": {
+                                        "additionalProperties": {},
+                                        "properties": {
+                                          "column": {
+                                            "description": "Result column plotted as a series.",
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": ["column"],
+                                        "type": "object"
+                                      },
+                                      "type": "array"
+                                    }
+                                  },
+                                  "required": [
+                                    "cumulative",
+                                    "scale",
+                                    "show_labels",
+                                    "type",
+                                    "x_column",
+                                    "y_series"
+                                  ],
+                                  "type": "object"
+                                },
+                                "database_identifier": {
+                                  "description": "Read replica to run against. Omit to use the primary database.",
+                                  "type": "string"
+                                },
+                                "id": {
+                                  "type": "string"
+                                },
+                                "row_limit": {
+                                  "default": 100,
+                                  "exclusiveMinimum": true,
+                                  "maximum": 9007199254740991,
+                                  "minimum": 0,
+                                  "type": "integer"
+                                },
+                                "sql": {
+                                  "description": "SQL run against the project database.",
+                                  "type": "string"
+                                },
+                                "title": {
+                                  "type": "string"
+                                },
+                                "type": {
+                                  "enum": ["database"],
+                                  "type": "string"
+                                },
+                                "view": {
+                                  "enum": ["chart", "table"],
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["sql", "type"],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": {},
+                              "properties": {
+                                "chart": {
+                                  "additionalProperties": {},
+                                  "description": "Chart configuration, retained even while `view` is `table`.",
+                                  "properties": {
+                                    "cumulative": {
+                                      "type": "boolean"
+                                    },
+                                    "scale": {
+                                      "enum": ["linear", "log"],
+                                      "type": "string"
+                                    },
+                                    "show_labels": {
+                                      "type": "boolean"
+                                    },
+                                    "type": {
+                                      "enum": ["bar", "line"],
+                                      "type": "string"
+                                    },
+                                    "x_column": {
+                                      "description": "Result column used for the x axis.",
+                                      "type": "string"
+                                    },
+                                    "y_series": {
+                                      "items": {
+                                        "additionalProperties": {},
+                                        "properties": {
+                                          "column": {
+                                            "description": "Result column plotted as a series.",
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": ["column"],
+                                        "type": "object"
+                                      },
+                                      "type": "array"
+                                    }
+                                  },
+                                  "required": [
+                                    "cumulative",
+                                    "scale",
+                                    "show_labels",
+                                    "type",
+                                    "x_column",
+                                    "y_series"
+                                  ],
+                                  "type": "object"
+                                },
+                                "id": {
+                                  "type": "string"
+                                },
+                                "sql": {
+                                  "description": "SQL run against the project logs.",
+                                  "type": "string"
+                                },
+                                "time_range": {
+                                  "oneOf": [
+                                    {
+                                      "additionalProperties": {},
+                                      "properties": {
+                                        "end": {
+                                          "description": "ISO 8601 end of the range.",
+                                          "type": "string"
+                                        },
+                                        "start": {
+                                          "description": "ISO 8601 start of the range.",
+                                          "type": "string"
+                                        },
+                                        "type": {
+                                          "enum": ["absolute"],
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": ["end", "start", "type"],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "additionalProperties": {},
+                                      "properties": {
+                                        "amount": {
+                                          "exclusiveMinimum": true,
+                                          "maximum": 9007199254740991,
+                                          "minimum": 0,
+                                          "type": "integer"
+                                        },
+                                        "type": {
+                                          "enum": ["relative"],
+                                          "type": "string"
+                                        },
+                                        "unit": {
+                                          "enum": [
+                                            "day",
+                                            "hour",
+                                            "minute",
+                                            "month",
+                                            "week",
+                                            "year"
+                                          ],
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": ["amount", "type", "unit"],
+                                      "type": "object"
+                                    }
+                                  ]
+                                },
+                                "title": {
+                                  "type": "string"
+                                },
+                                "type": {
+                                  "enum": ["log"],
+                                  "type": "string"
+                                },
+                                "view": {
+                                  "enum": ["chart", "table"],
+                                  "type": "string"
+                                }
+                              },
+                              "required": ["sql", "time_range", "type"],
+                              "type": "object"
+                            }
+                          ]
+                        },
+                        "type": "array"
+                      }
+                    },
+                    "required": ["cells"],
+                    "type": "object"
+                  },
+                  "description": {
+                    "maxLength": 10000,
+                    "type": "string"
+                  },
+                  "favorite": {
+                    "type": "boolean"
+                  },
+                  "name": {
+                    "maxLength": 255,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "type": {
+                "description": "Resource type.",
+                "enum": ["notebook"],
+                "type": "string"
+              }
+            },
+            "required": ["attributes", "type"],
+            "type": "object"
+          }
+        },
+        "required": ["data"],
+        "type": "object"
       }
     }
   }
