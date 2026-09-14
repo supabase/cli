@@ -7,7 +7,7 @@ import pg from "pg";
 import { expect, inject, test as vitestTest } from "vitest";
 
 import {
-  type CliStdinWriteError,
+  type CliRunError,
   makeTempHome,
   requireCliSuccess,
   runSupabase,
@@ -39,7 +39,7 @@ export interface LiveFixtures {
   readonly cliEffect: (
     args: string[],
     options?: RunEffectOptions,
-  ) => Effect.Effect<RunResult, CliStdinWriteError>;
+  ) => Effect.Effect<RunResult, CliRunError>;
   readonly invoke: (
     slug: string,
     options?: { readonly anonKey?: string; readonly payload?: unknown },

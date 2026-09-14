@@ -75,12 +75,32 @@ export type RunResult = {
 
 /** The CLI closed its stdin before the harness finished writing to it. */
 export class CliStdinWriteError extends Data.TaggedError("CliStdinWriteError")<{
-  readonly reason: Error;
+  readonly cause: Error;
 }> {
   override get message(): string {
-    return this.reason.message;
+    return this.cause.message;
   }
 }
+
+/** Spawning the CLI failed before the child was usable: temp home, symlink, missing build artifacts, or stdio pipes. */
+export class CliSpawnError extends Data.TaggedError("CliSpawnError")<{
+  readonly cause: unknown;
+}> {
+  override get message(): string {
+    return this.cause instanceof Error ? this.cause.message : String(this.cause);
+  }
+}
+
+/** Disposing the run's owned temp `SUPABASE_HOME` failed after the CLI exited. */
+export class CliHomeDisposeError extends Data.TaggedError("CliHomeDisposeError")<{
+  readonly cause: unknown;
+}> {
+  override get message(): string {
+    return this.cause instanceof Error ? this.cause.message : String(this.cause);
+  }
+}
+
+export type CliRunError = CliSpawnError | CliStdinWriteError | CliHomeDisposeError;
 
 const DEFAULT_EXIT_TIMEOUT_MS = 60_000;
 const DEFAULT_STACK_CLEANUP_TIMEOUT_MS = 120_000;
@@ -95,7 +115,7 @@ interface SpawnedSupabase {
   readonly waitForOutput: (pattern: RegExp, timeoutMs?: number, startAt?: number) => Promise<void>;
   readonly waitForExit: (timeoutMs?: number) => Promise<RunResult>;
   /** Effect-native exit path; `waitForExit` is the Promise facade over this. */
-  readonly exitEffect: (timeoutMs?: number) => Effect.Effect<RunResult>;
+  readonly exitEffect: (timeoutMs?: number) => Effect.Effect<RunResult, CliHomeDisposeError>;
   /** The deferred stdin write failure, if the CLI closed stdin early. */
   readonly stdinFailure: (result: RunResult) => Error | undefined;
   /**
@@ -444,11 +464,10 @@ export function spawnSupabase(
   // share one implementation of the exit bound, the process-group kill and home disposal.
   const exitEffect = (
     timeoutMs = options?.exitTimeoutMs ?? DEFAULT_EXIT_TIMEOUT_MS,
-  ): Effect.Effect<RunResult> =>
+  ): Effect.Effect<RunResult, CliHomeDisposeError> =>
     Effect.callback<RunResult>((resume) => {
       if (closeResult) {
         cleanupProcessGroupOnClose();
-        disposeOwnHome();
         resume(Effect.succeed(closeResult));
         return Effect.void;
       }
@@ -471,7 +490,6 @@ export function spawnSupabase(
         clearTimeout(timeout);
         closeWaiters.delete(onClose);
         cleanupProcessGroupOnClose();
-        disposeOwnHome();
         resume(Effect.succeed(timedOut ? { ...result, timedOutAfterMs: timeoutMs } : result));
       };
 
@@ -488,7 +506,16 @@ export function spawnSupabase(
           disposeOwnHome();
         }
       });
-    });
+    }).pipe(
+      // Disposal can throw (`rmSync`); inside the `close` listener that escapes as an
+      // uncaught exception and leaves this effect pending, so it fails the caller here.
+      Effect.tap(() =>
+        Effect.try({
+          try: disposeOwnHome,
+          catch: (cause) => new CliHomeDisposeError({ cause }),
+        }),
+      ),
+    );
 
   const waitForExit = async (
     timeoutMs = options?.exitTimeoutMs ?? DEFAULT_EXIT_TIMEOUT_MS,
@@ -643,14 +670,12 @@ export async function runSupabase(
 export const runSupabaseEffect = (
   args: string[],
   options?: Parameters<typeof spawnSupabase>[1],
-): Effect.Effect<RunResult, CliStdinWriteError> =>
+): Effect.Effect<RunResult, CliRunError> =>
   Effect.acquireRelease(
-    // spawnSupabase throws when build artifacts or stdio pipes are missing — a violated
-    // harness precondition. The identity catch keeps the original error as the defect, so
-    // the "run pnpm build" instruction stays the failure headline.
-    Effect.try({ try: () => spawnSupabase(args, options), catch: (error) => error }).pipe(
-      Effect.orDie,
-    ),
+    Effect.try({
+      try: () => spawnSupabase(args, options),
+      catch: (cause) => new CliSpawnError({ cause }),
+    }),
     // Scope teardown owns the spawned group: an interrupted run always kills it so the
     // child is never orphaned, without re-signaling a group the close path already
     // cleaned. On successful completion the caller's `cleanupProcessGroupOnClose: false`
@@ -668,7 +693,7 @@ export const runSupabaseEffect = (
           const failure = spawned.stdinFailure(result);
           return failure === undefined
             ? Effect.succeed(result)
-            : Effect.fail(new CliStdinWriteError({ reason: failure }));
+            : Effect.fail(new CliStdinWriteError({ cause: failure }));
         }),
       ),
     ),

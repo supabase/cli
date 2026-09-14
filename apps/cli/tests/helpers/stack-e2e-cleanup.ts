@@ -149,10 +149,18 @@ function cleanupErrorDetail(
   }`;
 }
 
-function isPermissionError(error: unknown): boolean {
-  const code =
-    error != null && typeof error === "object" && "code" in error ? String(error.code) : undefined;
-  return code === "EACCES" || code === "EPERM";
+// Walks the `cause` chain (bounded) so a typed wrapper like `CliHomeDisposeError`
+// classifies by the errno it carries, not by its own shape.
+function isPermissionError(error: unknown, hops = 8): boolean {
+  let current: unknown = error;
+  for (let hop = 0; hop < hops && current != null && typeof current === "object"; hop += 1) {
+    const code = "code" in current ? String(current.code) : undefined;
+    if (code === "EACCES" || code === "EPERM") {
+      return true;
+    }
+    current = "cause" in current ? current.cause : undefined;
+  }
+  return false;
 }
 
 function formatMode(mode: number): string {

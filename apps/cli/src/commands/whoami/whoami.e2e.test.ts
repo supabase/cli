@@ -1,8 +1,16 @@
 import { expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
-import { Effect, FileSystem, Path, Schema } from "effect";
+import { Data, Effect, FileSystem, Path, Schema } from "effect";
 
 import { makeTempHome, requireCliSuccess, runSupabaseEffect } from "../../../tests/helpers/cli.ts";
+
+class WhoamiSetupError extends Data.TaggedError("WhoamiSetupError")<{
+  readonly cause: unknown;
+}> {
+  override get message(): string {
+    return this.cause instanceof Error ? this.cause.message : String(this.cause);
+  }
+}
 
 const ACCESS_TOKEN = `sbp_${"a".repeat(40)}`;
 const PROFILE = {
@@ -21,28 +29,33 @@ it.live("shows the authenticated profile through the CLI", () =>
         }
       | undefined;
     const server = yield* Effect.acquireRelease(
-      Effect.sync(() =>
-        Bun.serve({
-          hostname: "127.0.0.1",
-          port: 0,
-          fetch(incoming) {
-            const url = new URL(incoming.url);
-            if (incoming.method === "GET" && url.pathname === "/v1/profile") {
-              request = {
-                method: incoming.method,
-                pathname: url.pathname,
-                authorization: incoming.headers.get("authorization"),
-              };
-              return Response.json(PROFILE);
-            }
-            return new Response("not found", { status: 404 });
-          },
-        }),
-      ),
+      Effect.try({
+        try: () =>
+          Bun.serve({
+            hostname: "127.0.0.1",
+            port: 0,
+            fetch(incoming) {
+              const url = new URL(incoming.url);
+              if (incoming.method === "GET" && url.pathname === "/v1/profile") {
+                request = {
+                  method: incoming.method,
+                  pathname: url.pathname,
+                  authorization: incoming.headers.get("authorization"),
+                };
+                return Response.json(PROFILE);
+              }
+              return new Response("not found", { status: 404 });
+            },
+          }),
+        catch: (cause) => new WhoamiSetupError({ cause }),
+      }),
       (running) => Effect.promise(() => running.stop(true)),
     );
     const home = yield* Effect.acquireRelease(
-      Effect.sync(() => makeTempHome()),
+      Effect.try({
+        try: () => makeTempHome(),
+        catch: (cause) => new WhoamiSetupError({ cause }),
+      }),
       (owned) => Effect.sync(() => owned[Symbol.dispose]()),
     );
 
