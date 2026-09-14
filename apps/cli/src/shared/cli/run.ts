@@ -21,7 +21,6 @@ import { Credentials } from "../auth/credentials.service.ts";
 import type { CliProjectHome } from "../config/cli-project-home.service.ts";
 import type { CliSettings } from "../config/cli-settings.service.ts";
 import type { ProjectLinkState } from "../config/project-link-state.service.ts";
-import type { CommandPlatformApiFactory } from "../../auth/command-platform-api-factory.service.ts";
 import { jsonCliOutputFormatter } from "../output/json-formatter.ts";
 import { textCliOutputFormatter } from "../output/text-formatter.ts";
 import { outputLayerFor } from "../output/output.layer.ts";
@@ -44,7 +43,6 @@ import { ttyLayer } from "../runtime/tty.layer.ts";
 import { CommandRuntime } from "../runtime/command-runtime.service.ts";
 import { ProcessControl } from "../runtime/process-control.service.ts";
 import type { RuntimeInfo } from "../runtime/runtime-info.service.ts";
-import type { Stdin } from "../runtime/stdin.service.ts";
 import type { Tty } from "../runtime/tty.service.ts";
 import type { Analytics } from "../telemetry/analytics.service.ts";
 import { aiToolLayer } from "../telemetry/ai-tool.layer.ts";
@@ -70,7 +68,11 @@ import {
 /**
  * Services available before evaluating the root command. Keep this list explicit: preserving the
  * root command's requirement channel here makes an accidentally unprovided service fail at the
- * shell boundary instead of becoming a runtime missing-service defect.
+ * shell boundary instead of becoming a runtime missing-service defect. Every entry must be
+ * genuinely satisfied at the root: by `cliProgramFor`'s provide chain (including
+ * `fallbackCommandLayer`'s root `CommandRuntime` placeholder) or, for the `GlobalFlag`
+ * identifiers, by the CLI parser itself. Never widen this union to silence a leaked command
+ * requirement; provide the layer in the command instead.
  */
 export type AllowedRunCliServices =
   | Analytics
@@ -89,8 +91,6 @@ export type AllowedRunCliServices =
   | Stdio.Stdio
   | TelemetryRuntime
   | Tty
-  | CommandPlatformApiFactory
-  | Stdin
   | "effect/unstable/cli/GlobalFlag/linked"
   | "effect/unstable/cli/GlobalFlag/local";
 

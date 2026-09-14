@@ -1,6 +1,7 @@
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { stackDestroy } from "./destroy.handler.ts";
 
@@ -31,4 +32,8 @@ export const stackDestroyCommand = Command.make("destroy", config).pipe(
   Command.withHandler((flags) =>
     stackDestroy(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),
   ),
+  // `stdinLayer` satisfies `promptYesNo`'s `Stdin` requirement. destroy either rejects a
+  // non-TTY run up front or short-circuits the prompt via `--yes`, so the layer is here for
+  // the effect's type requirements only.
+  Command.provide(stdinLayer),
 );
