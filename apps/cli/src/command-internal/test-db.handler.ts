@@ -27,6 +27,7 @@ import {
   rewriteDumpHostForToolContainer,
   requireHostPgProve,
   streamHostCommand,
+  toolContainerUsesHostNetwork,
 } from "./postgres-client.run.ts";
 
 const ENABLE_PGTAP = "create extension if not exists pgtap with schema extensions";
@@ -110,12 +111,14 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
 
     const backend = yield* currentStackBackend;
     const stackRuntime =
-      backend.kind === "stack" && isLocal ? yield* stackRequireProjectRuntime : undefined;
+      backend.kind === "stack" && connType === "local"
+        ? yield* stackRequireProjectRuntime
+        : undefined;
     const useHostProve = stackRuntime?.kind === "native" && runtimeInfo.platform !== "win32";
-    const stackContainerProve = backend.kind === "stack" && isLocal && !useHostProve;
+    const stackContainerProve = backend.kind === "stack" && connType === "local" && !useHostProve;
 
     const networkId = Option.getOrUndefined(networkIdFlag);
-    const dumpUsesHostNetwork = networkId === undefined || networkId.length === 0;
+    const dumpUsesHostNetwork = toolContainerUsesHostNetwork(networkId);
     const runEnv = {
       PGHOST: useHostProve
         ? "127.0.0.1"

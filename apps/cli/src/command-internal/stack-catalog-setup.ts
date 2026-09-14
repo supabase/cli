@@ -9,6 +9,11 @@ import {
   type StackRuntime,
 } from "@supabase/stack/effect";
 import { Output } from "../shared/output/output.service.ts";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../shared/telemetry/error-actionability.ts";
 import { parseConnectionString } from "./db-config.parse.ts";
 import { DbConnection } from "./db-connection.service.ts";
 import { dbConnectionLayer } from "./db-connection.layer.ts";
@@ -32,7 +37,11 @@ const OPTIONAL_CAPS = [
 export class StackCatalogSetupError extends Data.TaggedError("StackCatalogSetupError")<{
   readonly message: string;
   readonly cause?: unknown;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dbFinding;
+  }
+}
 
 interface StackCatalogOverlay {
   readonly webhooks?: SetupDatabaseOptions["webhooks"];

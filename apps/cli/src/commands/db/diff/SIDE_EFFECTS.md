@@ -8,6 +8,10 @@ edge-runtime involved). `--use-pg-schema` is the CLI's sole remaining Go
 delegation on this command — a documented keep-in-Go exception (CLI-1960), not a
 pending port.
 
+When `[experimental].stack` is on, the shadow is `EphemeralPostgres` under
+`~/.supabase/ephemeral-postgres/<identity>/`. Migra, pgAdmin, and `--use-pg-schema` are
+rejected because that shadow is always stack.
+
 Pg-delta runs in-process. Coverage gaps warn, while `--strict-coverage` makes
 them fatal, and `PGDELTA_DEBUG` writes diagnostic JSON under
 `supabase/.temp/pgdelta/v2/debug/<id>/`. The engine may emit transaction-aware

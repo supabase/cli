@@ -13,6 +13,7 @@ import { startLocalDatabase } from "../../../command-internal/db-bootstrap/start
 import { resolveLocalProjectId, localDbContainerId } from "../../../command-internal/docker-ids.ts";
 import { DeclarativeShadowDbError } from "./pgdelta.errors.ts";
 import { DeclarativeSeam } from "./pgdelta.seam.service.ts";
+import { resolveExperimental } from "../../../command-internal/global-flags.ts";
 import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
 import { StackApi, stackApiLayer } from "../../../command-internal/stack-api.ts";
 import { stackEnsurePostgresOnlyStarted } from "../../../command-internal/stack-local-database.ts";
@@ -73,6 +74,7 @@ export const declarativeSeamLayer = Layer.effect(
     // Captures every service `startLocalDatabase` needs into a plain `Context`, so each
     // closure below can `Effect.provideContext` it and satisfy `DeclarativeSeamShape` without
     // hand-enumerating every transitive dependency.
+    const experimental = yield* resolveExperimental;
     const context = yield* Effect.context<StartLocalDatabaseDeps>();
 
     return DeclarativeSeam.of({
@@ -80,7 +82,7 @@ export const declarativeSeamLayer = Layer.effect(
         Effect.gen(function* () {
           const backend = yield* currentStackBackend;
           if (backend.kind === "stack") {
-            return yield* stackEnsurePostgresOnlyStarted.pipe(
+            return yield* stackEnsurePostgresOnlyStarted(experimental).pipe(
               Effect.asVoid,
               Effect.provideContext(context),
               Effect.provideService(StackApi, stackApi),

@@ -1051,6 +1051,36 @@ describe("db dump integration", () => {
     },
   );
 
+  it.live(
+    "dump --db-url on the stack backend does not require a project stack even when isLocal is true",
+    () => {
+      const { layer, docker, resolver } = setup({ isLocal: true, stdout: "-- schema\n" });
+      return Effect.gen(function* () {
+        yield* dbDump(
+          flags({
+            dbUrl: Option.some("postgresql://postgres:review@127.0.0.1:54322/postgres"),
+          }),
+        );
+        expect(resolver.calls[0]).toMatchObject({ connType: "db-url" });
+        expect(docker.lastOpts).toBeDefined();
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layer,
+            stackBackendLayer("stack"),
+            Layer.succeed(StackApi, {
+              createStack: unusedDump,
+              findStack: () => Effect.succeed(Option.none()),
+              discoverStacks: unusedDump,
+              openStack: unusedDump,
+              inspectStack: unusedDump,
+            }),
+          ),
+        ),
+      );
+    },
+  );
+
   it.live("dump --local on a docker stack never uses PGHOST=db", () => {
     const { layer, docker } = setup({
       isLocal: true,

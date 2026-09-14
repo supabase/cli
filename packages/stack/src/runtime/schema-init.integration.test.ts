@@ -511,6 +511,8 @@ describe("schemaInit", () => {
         expect(recorded[0]?.executable.endsWith("bin/prepare")).toBe(true);
         expect(recorded[0]?.env.SEED_SELF_HOST).toBeUndefined();
         expect(recorded[0]?.env.APP_NAME).toBe("realtime");
+        expect(recorded[0]?.env.GEN_RPC_TCP_SERVER_PORT).toBe("5369");
+        expect(recorded[0]?.env.GEN_RPC_SOCKET_IP).toBe("127.0.0.1");
       }),
     ).pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),

@@ -20,6 +20,7 @@ import {
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import {
   DebugFlag,
+  ExperimentalFlag,
   ProfileFlag,
   WorkdirFlag,
   YesFlag,
@@ -50,6 +51,7 @@ function setup() {
       processControl.layer,
       Layer.succeed(CliArgs, { args: [] }),
       Layer.succeed(DebugFlag, false),
+      Layer.succeed(ExperimentalFlag, false),
       Layer.succeed(ProfileFlag, "supabase"),
       Layer.succeed(WorkdirFlag, Option.none()),
       Layer.succeed(YesFlag, false),

@@ -414,7 +414,7 @@ enabled = false
 `);
     return Effect.gen(function* () {
       const config = yield* load(root);
-      expect(config.capabilities?.functions).toEqual({ enabled: false });
+      expect(config.capabilities?.functions).toEqual(expect.objectContaining({ enabled: false }));
     });
   });
 
@@ -454,7 +454,7 @@ env = { TOKEN = "env(SUPABASE_STACK_TEST_DISABLED_MISSING_ENV)" }
 `);
     return Effect.gen(function* () {
       const config = yield* load(root);
-      expect(config.capabilities?.functions).toEqual({ enabled: false });
+      expect(config.capabilities?.functions).toEqual(expect.objectContaining({ enabled: false }));
     });
   });
 
@@ -466,7 +466,7 @@ enabled = false
     writeFileSync(join(root, "supabase", "functions", ".env"), "lowercase=value\n");
     return Effect.gen(function* () {
       const config = yield* load(root);
-      expect(config.capabilities?.functions).toEqual({ enabled: false });
+      expect(config.capabilities?.functions).toEqual(expect.objectContaining({ enabled: false }));
     });
   });
 

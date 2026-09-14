@@ -51,13 +51,17 @@ import {
   GenTypesUnexpectedStatusError,
   GenTypesWorkdirError,
 } from "./types.errors.ts";
-import { getHostname } from "../../../command-internal/hostname.ts";
+import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
+import {
+  rewriteDumpHostForToolContainer,
+  toolContainerUsesHostNetwork,
+} from "../../../command-internal/postgres-client.run.ts";
+import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
 import {
   defaultSchemas,
   buildPostgresUrl,
   localDbContainerId,
-  localDbPassword,
   localNetworkId,
   parseDatabaseUrl,
   parseQueryTimeoutSeconds,
@@ -232,6 +236,8 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
   const linkedProjectCache = yield* LinkedProjectCache;
   const dbConfig = yield* DbConfigResolver;
   const sslProbe = yield* PgDeltaSslProbe;
+  const runtimeInfo = yield* RuntimeInfo;
+  const backend = yield* currentStackBackend;
 
   // "Set" means the flag appeared in argv at all (pflag's `Changed` semantics), not its parsed
   // value — `--linked=false` still counts. Argv is scanned directly since a token like
@@ -413,6 +419,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
     readonly includedSchemas: string;
     readonly postgrestV9Compat: boolean;
     readonly pgmetaVersionOverride?: string;
+    readonly projectEnv?: Readonly<Record<string, string>>;
     readonly poolerFallback?: {
       readonly directHost: string;
       readonly eligible: boolean;
@@ -424,7 +431,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
         // Cached so the pooler retry reuses one resolve; the resolver's candidate rewrite is
         // idempotent on this already-rewritten reference.
         const resolvedImage = yield* Effect.cached(
-          resolveImage(resolvePgmetaImage(input.pgmetaVersionOverride)),
+          resolveImage(resolvePgmetaImage(input.pgmetaVersionOverride, input.projectEnv)),
         );
         const buildRun = (target: {
           readonly url: string;
@@ -637,24 +644,38 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       const includedSchemas = (
         schemas.length > 0 ? schemas : defaultSchemas(config.apiSchemas)
       ).join(",");
-      yield* assertLocalDbRunning(projectId);
-
+      const resolved = yield* dbConfig.resolve({
+        dbUrl: Option.none(),
+        connType: "local",
+        dnsResolver,
+      });
+      if (backend.kind !== "stack") yield* assertLocalDbRunning(projectId);
+      const usesHostNetwork = toolContainerUsesHostNetwork(Option.getOrUndefined(networkId));
+      const toolHost =
+        backend.kind === "stack"
+          ? rewriteDumpHostForToolContainer(resolved.conn.host, {
+              platform: runtimeInfo.platform,
+              usesHostNetwork,
+            })
+          : "db";
+      const toolPort = backend.kind === "stack" ? resolved.conn.port : 5432;
       yield* runPgMeta({
         url: buildPostgresUrl({
-          host: "db",
-          port: 5432,
-          user: "postgres",
-          password: localDbPassword(),
-          database: "postgres",
+          host: toolHost,
+          port: toolPort,
+          user: resolved.conn.user,
+          password: resolved.conn.password,
+          database: resolved.conn.database,
         }),
-        host: "db",
-        port: 5432,
-        probeHost: getHostname(),
-        probePort: config.port,
-        networkMode: localNetworkId(projectId),
+        host: toolHost,
+        port: toolPort,
+        probeHost: resolved.conn.host,
+        probePort: resolved.conn.port,
+        networkMode: backend.kind === "stack" ? "host" : localNetworkId(projectId),
         includedSchemas,
         postgrestV9Compat: flags.postgrestV9Compat || forcedV9,
         pgmetaVersionOverride,
+        projectEnv: config.projectEnv,
       });
       return;
     }

@@ -28,6 +28,10 @@ instead of shelling out to a second `supabase-go` child through the previously
 removed `DeclarativeSeam.execInherit` seam — see those commands' own
 `SIDE_EFFECTS.md`.
 
+When `[experimental].stack` is on, the local path calls `resetDatabase` on the project stack
+and seeds storage buckets only if storage is ready (waiting up to 30s while it is starting).
+The Storage gateway URL comes from the stack API listener, not `[api].port`.
+
 ## Files Read
 
 | Path                                                                                         | Format     | When                                                                                                                                           |

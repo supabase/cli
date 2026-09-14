@@ -68,7 +68,15 @@ const PRIMARY_WORKLOAD: Record<SchemaInitCapabilityName, string> = {
   pooler: "pooler:pooler",
 };
 
-const SCHEMA_INIT_BINDINGS = ["primary", "admin", "ui", "smtp", "pop3", "inspector"] as const;
+const SCHEMA_INIT_BINDINGS = [
+  "primary",
+  "admin",
+  "ui",
+  "smtp",
+  "pop3",
+  "inspector",
+  "rpc",
+] as const;
 
 const schemaInitCompileConfig = (
   config: SchemaInitTarget["config"],

@@ -12,6 +12,7 @@ import {
   Schema,
   Scope,
   Semaphore,
+  Stream,
 } from "effect";
 import { ChildProcess } from "effect/unstable/process";
 import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/unstable/process/ChildProcessSpawner";
@@ -68,8 +69,10 @@ const DEFAULT_JWT_EXPIRY = 3600;
 const RuntimeMarkerSchema = Schema.Struct({
   kind: Schema.Literals(["native", "container"] as const),
   engine: Schema.optionalKey(Schema.Literals(["docker", "podman"] as const)),
+  snapshotKey: Schema.optionalKey(Schema.String),
 });
 type RuntimeMarker = Schema.Schema.Type<typeof RuntimeMarkerSchema>;
+const TAR_EXTRACT_FLAGS = ["--no-same-owner"] as const;
 
 const ephemeralError = (
   message: string,
@@ -144,8 +147,15 @@ const postgresEnv = (input: {
 const databaseUrl = (port: number, password: string): string =>
   `postgresql://${encodeURIComponent("postgres")}:${encodeURIComponent(password)}@127.0.0.1:${port}/postgres`;
 
-const markerFor = (runtime: StackRuntime): RuntimeMarker =>
-  runtime.kind === "native" ? { kind: "native" } : { kind: "container", engine: runtime.engine };
+const markerFor = (runtime: StackRuntime, snapshotKey?: string): RuntimeMarker => ({
+  ...(runtime.kind === "native"
+    ? { kind: "native" as const }
+    : { kind: "container" as const, engine: runtime.engine }),
+  ...(snapshotKey === undefined ? {} : { snapshotKey }),
+});
+
+const sameSnapshotKey = (marker: RuntimeMarker, expected: string | undefined): boolean =>
+  expected === undefined || marker.snapshotKey === undefined || marker.snapshotKey === expected;
 
 const encodeMarker = (marker: RuntimeMarker): string => JSON.stringify(marker);
 
@@ -208,7 +218,11 @@ const runTar = (
         stdout: "pipe",
         stderr: "pipe",
       }).pipe(Effect.mapError((cause) => ephemeralError("Unable to start tar", { cause })));
-      const code = yield* handle.exitCode.pipe(
+      const drain = Effect.all([Stream.runDrain(handle.stdout), Stream.runDrain(handle.stderr)], {
+        concurrency: "unbounded",
+        discard: true,
+      }).pipe(Effect.ignore);
+      const [code] = yield* Effect.all([handle.exitCode, drain], { concurrency: "unbounded" }).pipe(
         Effect.mapError((cause) => ephemeralError("tar failed", { cause })),
       );
       if (Number(code) !== 0)
@@ -228,13 +242,19 @@ const writeEnvFile = (
       ),
     );
     yield* fs
-      .writeFileString(filePath, text)
+      .writeFileString(filePath, text, { mode: 0o600 })
       .pipe(
         Effect.mapError((cause) =>
           ephemeralError("Unable to write Postgres environment file", { cause, path: filePath }),
         ),
       );
-    yield* fs.chmod(filePath, 0o600).pipe(Effect.ignore);
+    yield* fs
+      .chmod(filePath, 0o600)
+      .pipe(
+        Effect.mapError((cause) =>
+          ephemeralError("Unable to restrict Postgres environment file", { cause, path: filePath }),
+        ),
+      );
     return filePath;
   });
 
@@ -345,6 +365,8 @@ interface NativeResources {
 interface ContainerResources {
   readonly kind: "container";
   readonly engine: ContainerEngine;
+  networkName?: string;
+  volumeName?: string;
   networkId?: string;
   volumeId?: string;
   containerId?: string;
@@ -366,6 +388,7 @@ interface Cluster {
   readonly lifecycle: Semaphore.Semaphore;
   running: boolean;
   bootstrapped: boolean;
+  snapshotKey?: string;
   resources: RuntimeResources;
 }
 
@@ -383,11 +406,12 @@ const createIdentity = (crypto: Crypto.Crypto): Effect.Effect<StackId, Ephemeral
 
 const writeRuntimeMarker = (
   cluster: Cluster,
+  snapshotKey?: string,
 ): Effect.Effect<void, EphemeralPostgresError, FileSystem.FileSystem> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const markerPath = `${cluster.dataPath}/${RUNTIME_MARKER}`;
-    const encoded = encodeMarker(markerFor(cluster.runtime));
+    const encoded = encodeMarker(markerFor(cluster.runtime, snapshotKey ?? cluster.snapshotKey));
     if (cluster.resources.kind === "native") {
       yield* fs.writeFileString(markerPath, encoded).pipe(
         Effect.mapError((cause) =>
@@ -559,7 +583,7 @@ const verifyRestoredMarker = (
       ),
       Effect.flatMap(decodeMarker),
     );
-    if (!sameRuntime(marker, cluster.runtime))
+    if (!sameRuntime(marker, cluster.runtime) || !sameSnapshotKey(marker, cluster.snapshotKey))
       return yield* ephemeralError(
         "Ephemeral Postgres snapshot was produced by a different runtime",
         {
@@ -637,11 +661,18 @@ const startNative = (
       ).pipe(
         Effect.mapError((cause) => ephemeralError("Unable to start native Postgres", { cause })),
         Effect.tap((process) =>
-          Effect.sync(() => {
+          Effect.gen(function* () {
             if (cluster.resources.kind === "native") {
               cluster.resources.process = process;
               cluster.resources.processScope = processScope;
             }
+            yield* Effect.forkIn(
+              Effect.all([Stream.runDrain(process.stdout), Stream.runDrain(process.stderr)], {
+                concurrency: "unbounded",
+                discard: true,
+              }).pipe(Effect.ignore),
+              processScope,
+            );
           }),
         ),
         Effect.onExit((exit) =>
@@ -769,7 +800,7 @@ const exportNative = (
   ChildProcessSpawnerService | Scope.Scope | FileSystem.FileSystem
 > =>
   Effect.gen(function* () {
-    yield* writeRuntimeMarker(cluster);
+    yield* writeRuntimeMarker(cluster, cluster.snapshotKey);
     yield* runTar(["-C", cluster.root, "-cf", tarPath, PGDATA_DIR_NAME]);
   });
 
@@ -778,7 +809,7 @@ const exportContainer = (
   tarPath: string,
 ): Effect.Effect<void, EphemeralPostgresError, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
-    yield* writeRuntimeMarker(cluster);
+    yield* writeRuntimeMarker(cluster, cluster.snapshotKey);
     yield* runVolumeTar(cluster, tarPath, "create");
   });
 
@@ -791,7 +822,7 @@ const restoreNative = (
   ChildProcessSpawnerService | Scope.Scope | FileSystem.FileSystem
 > =>
   Effect.gen(function* () {
-    yield* runTar(["-C", cluster.root, "-xf", restoreFrom]);
+    yield* runTar(["-C", cluster.root, "-xf", restoreFrom, ...TAR_EXTRACT_FLAGS]);
     yield* verifyRestoredMarker(cluster, restoreFrom);
   });
 
@@ -805,6 +836,7 @@ const peekSnapshotRuntime = (
   restoreFrom: string,
   runtime: StackRuntime,
   peekRoot: string,
+  snapshotKey?: string,
 ): Effect.Effect<
   void,
   EphemeralPostgresError,
@@ -826,6 +858,7 @@ const peekSnapshotRuntime = (
       restoreFrom,
       "-C",
       peekRoot,
+      ...TAR_EXTRACT_FLAGS,
       `${PGDATA_DIR_NAME}/${RUNTIME_MARKER}`,
     ]).pipe(
       Effect.mapError(() =>
@@ -843,7 +876,7 @@ const peekSnapshotRuntime = (
         ),
         Effect.flatMap(decodeMarker),
       );
-    if (!sameRuntime(marker, runtime))
+    if (!sameRuntime(marker, runtime) || !sameSnapshotKey(marker, snapshotKey))
       return yield* ephemeralError(
         "Ephemeral Postgres snapshot was produced by a different runtime",
         {
@@ -863,14 +896,12 @@ const destroyCluster = (cluster: Cluster): Effect.Effect<void, never, FileSystem
         yield* cluster.resources.engine
           .removeContainer(cluster.resources.containerId)
           .pipe(Effect.ignore);
-      if (cluster.resources.volumeId !== undefined)
-        yield* cluster.resources.engine
-          .removeVolume(cluster.resources.volumeId)
-          .pipe(Effect.ignore);
-      if (cluster.resources.networkId !== undefined)
-        yield* cluster.resources.engine
-          .removeNetwork(cluster.resources.networkId)
-          .pipe(Effect.ignore);
+      const volumeRef = cluster.resources.volumeId ?? cluster.resources.volumeName;
+      if (volumeRef !== undefined)
+        yield* cluster.resources.engine.removeVolume(volumeRef).pipe(Effect.ignore);
+      const networkRef = cluster.resources.networkId ?? cluster.resources.networkName;
+      if (networkRef !== undefined)
+        yield* cluster.resources.engine.removeNetwork(networkRef).pipe(Effect.ignore);
     }
     const fs = yield* FileSystem.FileSystem;
     yield* fs.remove(cluster.root, { recursive: true }).pipe(Effect.ignore);
@@ -929,10 +960,11 @@ const clusterHandle = (
         cluster.runtime.kind === "native" ? stopNative(cluster) : stopContainer(cluster),
       ),
     ),
-    exportPgData: (tarPath) =>
+    exportPgData: (tarPath, snapshotKey) =>
       cluster.lifecycle.withPermit(
         Effect.gen(function* () {
           yield* requireStopped();
+          if (snapshotKey !== undefined) cluster.snapshotKey = snapshotKey;
           if (cluster.runtime.kind === "native") yield* exportNative(cluster, tarPath);
           else yield* exportContainer(cluster, tarPath);
         }),
@@ -953,9 +985,8 @@ export const createEphemeralPostgresCluster = (
     );
     const runtime = yield* resolvedRuntime(options.runtime, resolver);
     const release = yield* resolveEphemeralPostgresRelease(options.version);
-    const env = yield* Effect.serviceOption(StackRuntimeEnvironment).pipe(
-      Effect.map(Option.getOrElse(defaultRuntimeEnvironment)),
-    );
+    const envOption = yield* Effect.serviceOption(StackRuntimeEnvironment);
+    const env = Option.isSome(envOption) ? envOption.value : yield* defaultRuntimeEnvironment;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const crypto = yield* Crypto.Crypto;
@@ -974,7 +1005,12 @@ export const createEphemeralPostgresCluster = (
     );
     yield* Effect.addFinalizer(() => fs.remove(root, { recursive: true }).pipe(Effect.ignore));
     if (options.restoreFrom !== undefined)
-      yield* peekSnapshotRuntime(options.restoreFrom, runtime, path.join(root, "peek"));
+      yield* peekSnapshotRuntime(
+        options.restoreFrom,
+        runtime,
+        path.join(root, "peek"),
+        options.snapshotKey,
+      );
     const port = yield* allocateLoopbackPort(options.port);
     const healthTimeout = options.healthTimeout ?? DEFAULT_DATABASE_HEALTH_TIMEOUT;
     const password = Redacted.value(options.databasePassword);
@@ -1024,6 +1060,7 @@ export const createEphemeralPostgresCluster = (
       lifecycle: Semaphore.makeUnsafe(1),
       running: false,
       bootstrapped: options.restoreFrom !== undefined,
+      ...(options.snapshotKey === undefined ? {} : { snapshotKey: options.snapshotKey }),
       resources,
     };
     yield* Effect.addFinalizer(() => destroyCluster(cluster));
@@ -1031,10 +1068,14 @@ export const createEphemeralPostgresCluster = (
       const resources = cluster.resources;
       const engine = resources.engine;
       const engineKind = cluster.runtime.kind === "container" ? cluster.runtime.engine : "docker";
+      const networkName = resourceName(identity, "network");
+      const volumeName = resourceName(identity, "database-volume");
+      resources.networkName = networkName;
+      resources.volumeName = volumeName;
       yield* Effect.uninterruptibleMask((restore) =>
         restore(
           engine.createNetwork({
-            name: resourceName(identity, "network"),
+            name: networkName,
             labels: { stackId: identity, ownerSessionId: identity.slice(0, 32), role: "network" },
           }),
         ).pipe(
@@ -1056,7 +1097,7 @@ export const createEphemeralPostgresCluster = (
       yield* Effect.uninterruptibleMask((restore) =>
         restore(
           engine.createVolume({
-            name: resourceName(identity, "database-volume"),
+            name: volumeName,
             labels: { stackId: identity, workloadId: DATABASE_WORKLOAD_ID, role: "volume" },
           }),
         ).pipe(

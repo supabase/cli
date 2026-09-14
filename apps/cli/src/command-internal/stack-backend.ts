@@ -1,6 +1,9 @@
 import { Context, Data, Effect, FileSystem, Layer, Option, Path } from "effect";
 import { extractCommandPath, hasRootVersionFlag } from "../shared/cli/run.ts";
-import { readExperimentalFeatureConfig, resolveExperimentalFeature } from "./experimental-feature.ts";
+import {
+  readExperimentalFeatureConfig,
+  resolveExperimentalFeature,
+} from "./experimental-feature.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -10,7 +13,16 @@ import {
 export type StackBackend = "legacy" | "stack";
 
 /** Commands that consult experimental.stack for local database and shadow routing. */
-const STACK_BACKEND_COMMANDS = new Set(["start", "stop", "status", "db", "migration", "test"]);
+const STACK_BACKEND_COMMANDS = new Set([
+  "start",
+  "stop",
+  "status",
+  "db",
+  "migration",
+  "test",
+  "gen",
+  "inspect",
+]);
 
 export class StackRoutingError extends Data.TaggedError("StackRoutingError")<{
   readonly message: string;
@@ -60,11 +72,7 @@ export const resolveStackBackend = (input: {
         ? commandPath.slice(1)
         : commandPath;
     const command = completePath[0] === "help" ? completePath[1] : completePath[0];
-    if (
-      command !== undefined &&
-      command !== "stack" &&
-      !STACK_BACKEND_COMMANDS.has(command)
-    ) {
+    if (command !== undefined && command !== "stack" && !STACK_BACKEND_COMMANDS.has(command)) {
       return "legacy";
     }
 

@@ -78,6 +78,28 @@ export const ephemeralPostgresLayer = Layer.succeed(StackEphemeralPostgres, {
 
 const TAR_PREFIX = "stack-shadow-baseline-";
 
+const ensurePrivateCacheDir = (fs: FileSystem.FileSystem, cacheDir: string) =>
+  Effect.gen(function* () {
+    yield* fs.makeDirectory(cacheDir, { recursive: true, mode: 0o700 }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ShadowDbError({
+            message: `failed to create ${cacheDir}: ${cause.message}`,
+            reason: "filesystem",
+          }),
+      ),
+    );
+    yield* fs.chmod(cacheDir, 0o700).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ShadowDbError({
+            message: `failed to set permissions on ${cacheDir}: ${cause.message}`,
+            reason: "filesystem",
+          }),
+      ),
+    );
+  });
+
 /** A partial older than 5 minutes is abandoned; a live export finishes in seconds. */
 const STACK_SHADOW_PARTIAL_ABANDON_MS = 5 * 60 * 1000;
 
@@ -160,7 +182,7 @@ export const stackShadowCacheKey = (inputs: StackShadowCacheKeyInputs): string =
 
 const capabilityPinVersion = (
   cap: { readonly enabled?: boolean; readonly version?: string } | undefined,
-): string | undefined => (cap === undefined || cap.enabled === false ? undefined : cap.version);
+): string | undefined => cap?.version;
 
 const trioSchemaInitArtifact = (
   enabled: boolean,
@@ -244,9 +266,8 @@ const overlaySetupEnabled = <C extends { readonly enabled?: boolean } | undefine
   current: C,
   enabled: boolean,
 ): C | { readonly enabled: false } | { readonly enabled: true } => {
-  if (!enabled) return { enabled: false };
-  if (current === undefined || current.enabled === false) return { enabled: true };
-  return current;
+  if (current === undefined) return { enabled };
+  return { ...current, enabled };
 };
 
 const overlaySetupTrio = (
@@ -279,6 +300,7 @@ const createOptions = (
   runtime: StackRuntime,
   restoreFrom: string | undefined,
   port: number | undefined,
+  snapshotKey?: string,
 ): CreateEphemeralPostgresOptions => ({
   databasePassword: Redacted.make(input.password),
   jwtSecret: Redacted.make(input.jwtSecret),
@@ -289,6 +311,7 @@ const createOptions = (
   runtime,
   ...(port === undefined ? {} : { port }),
   ...(restoreFrom === undefined ? {} : { restoreFrom }),
+  ...(snapshotKey === undefined ? {} : { snapshotKey }),
 });
 
 const connFrom = (handle: EffectEphemeralPostgres, password: string) => ({
@@ -408,15 +431,7 @@ const writeStackShadowBaselineTar = <R>(
         const published = yield* fs.exists(tarPath).pipe(Effect.orElseSucceed(() => false));
         if (published) return;
       }
-      yield* fs.makeDirectory(cacheDir, { recursive: true, mode: 0o700 }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ShadowDbError({
-              message: `failed to create ${cacheDir}: ${cause.message}`,
-              reason: "filesystem",
-            }),
-        ),
-      );
+      yield* ensurePrivateCacheDir(fs, cacheDir);
       yield* sweepAbandonedPartials(fs, path, cacheDir);
       const tempPath = `${tarPath}.${String(process.pid)}.partial`;
       yield* fs.remove(tempPath).pipe(Effect.ignore);
@@ -519,7 +534,7 @@ export const stackAcquireShadowDatabase = <E>(
     const cacheOn = cacheEnabled(input.setup.projectEnvValues, opts.bypassCache === true);
     const cacheDir = shadowBaselineCacheDir(path);
     const webhooks = opts.webhooks;
-    yield* fs.makeDirectory(cacheDir, { recursive: true, mode: 0o700 }).pipe(Effect.ignore);
+    yield* ensurePrivateCacheDir(fs, cacheDir);
 
     const startEmpty = () =>
       apis
@@ -592,7 +607,7 @@ export const stackAcquireShadowDatabase = <E>(
 
     if (cached) {
       const restored = yield* Effect.result(
-        apis.create(createOptions(input, runtime, tarPath, opts.port)),
+        apis.create(createOptions(input, runtime, tarPath, opts.port, key)),
       );
       if (Result.isSuccess(restored)) {
         yield* ownCluster(restored.success);
@@ -633,7 +648,7 @@ export const stackAcquireShadowDatabase = <E>(
           path,
           cacheDir,
           tarPath,
-          (tempPath) => probe.exportPgData(tempPath).pipe(Effect.mapError(mapCreateError)),
+          (tempPath) => probe.exportPgData(tempPath, key).pipe(Effect.mapError(mapCreateError)),
           !cached,
         );
       }),

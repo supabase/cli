@@ -378,7 +378,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
         }),
     });
     if (Option.getOrElse(flags.diffEngine, () => "pg-delta") === "migra") {
-      yield* stackRejectNativeDockerDiffEngine;
+      yield* stackRejectNativeDockerDiffEngine("--diff-engine migra");
     }
 
     // Connectivity check, run before dialing.

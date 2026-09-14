@@ -40,11 +40,16 @@ const dockerAvailable = (): boolean =>
 const artifactCacheRoot = join(tmpdir(), "supabase-stack-test-artifacts");
 
 const testEnvironment = (stateRoot: string) =>
-  Layer.succeed(StackRuntimeEnvironment, {
-    ...defaultRuntimeEnvironment(),
-    stateRoot,
-    artifactCacheRoot,
-  });
+  Layer.effect(
+    StackRuntimeEnvironment,
+    defaultRuntimeEnvironment.pipe(
+      Effect.map((env) => ({
+        ...env,
+        stateRoot,
+        artifactCacheRoot,
+      })),
+    ),
+  );
 
 const secrets = {
   databasePassword: Redacted.make(PASSWORD),

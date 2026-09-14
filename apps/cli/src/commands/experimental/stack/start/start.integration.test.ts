@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, Fiber, Layer, Option, Schema, Stream } from "effect";
+import { Deferred, Effect, Fiber, Layer, Option, Redacted, Schema, Stream } from "effect";
 import { CliOutput, Command } from "effect/unstable/cli";
 import {
   ContainerEngineError,
@@ -39,7 +39,9 @@ import { StackCommandStartError } from "./start.errors.ts";
 import { stackStartCommand } from "./start.command.ts";
 import { textCliOutputFormatter } from "../../../../shared/output/text-formatter.ts";
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
-import { OutputFlag } from "../../../../command-internal/global-flags.ts";
+import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
+import { ExperimentalFlag, OutputFlag } from "../../../../command-internal/global-flags.ts";
+import { DbConnection } from "../../../../command-internal/db-connection.service.ts";
 import {
   actionability,
   ErrorActionabilityId,
@@ -54,6 +56,14 @@ const project = (): string => {
   mkdirSync(join(root, "supabase"), { recursive: true });
   writeFileSync(join(root, "supabase", "config.toml"), 'project_id = "start-test"\n');
   return root;
+};
+
+const writeStartMigration = (root: string) => {
+  mkdirSync(join(root, "supabase", "migrations"), { recursive: true });
+  writeFileSync(
+    join(root, "supabase", "migrations", "20240101000000_dogfood.sql"),
+    "create table public.dogfood ();\n",
+  );
 };
 
 const emptyProject = (): string =>
@@ -96,11 +106,21 @@ const status = (id: string, runtime: "native" | "container" = "native") =>
 function fakeStack(
   id: string,
   start: (config?: { readonly config?: unknown }) => Effect.Effect<StackStatus, ApiStackStartError>,
+  desiredLifecycle: "unconfigured" | "stopped" | "running" = "unconfigured",
 ) {
   return {
     id: StackIdSchema.make(id),
-    status: Effect.succeed(status(id)),
-    credentials: Effect.die("credentials not used in start test"),
+    status: Effect.succeed({
+      ...status(id),
+      lifecycle: desiredLifecycle === "unconfigured" ? "unconfigured" : desiredLifecycle,
+      desiredLifecycle,
+    }),
+    credentials: Effect.succeed({
+      database: {
+        url: Redacted.make("postgresql://postgres:secret@127.0.0.1:54329/postgres"),
+        password: Redacted.make("secret"),
+      },
+    }),
     prepare: () => Effect.die("prepare not used in start test"),
     start,
     stop: Effect.void,
@@ -168,6 +188,19 @@ function handlerLayer(opts: {
       apiLayer,
       BunServices.layer,
       noopStackCatalogSetupLayer,
+      Layer.succeed(ExperimentalFlag, false),
+      Layer.succeed(CliArgs, { args: ["stack", "start"] }),
+      Layer.succeed(DbConnection, {
+        connect: () =>
+          Effect.succeed({
+            exec: () => Effect.void,
+            query: () => Effect.succeed([]),
+            execBatch: () => Effect.void,
+            extensionExists: () => Effect.succeed(false),
+            copyToCsv: () => Effect.succeed(new Uint8Array()),
+            queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
+          }),
+      }),
     ),
   };
 }
@@ -233,8 +266,8 @@ describe("stack start targeting", () => {
         expect.objectContaining({
           config: expect.objectContaining({
             capabilities: expect.objectContaining({
-              studio: { enabled: false },
-              analytics: { enabled: false },
+              studio: expect.objectContaining({ enabled: false }),
+              analytics: expect.objectContaining({ enabled: false }),
             }),
           }),
         }),
@@ -248,6 +281,7 @@ describe("stack start targeting", () => {
 
   it.live("applies catalog setup from pre-exclude config after start returns", () => {
     const root = project();
+    writeStartMigration(root);
     const catalog = recordingStackCatalogSetup((input) => ({
       kind: input.target.kind,
       authEnabled: input.target.config.capabilities?.auth?.enabled,
@@ -257,6 +291,51 @@ describe("stack start targeting", () => {
     return Effect.gen(function* () {
       yield* stackStart(flags({ exclude: ["auth"] }));
       expect(catalog.applied).toEqual([{ kind: "live", authEnabled: undefined }]);
+      expect(setup.out.stderrText).toContain("Applying migration 20240101000000_dogfood.sql");
+    }).pipe(
+      Effect.provide(Layer.mergeAll(setup.layer, catalog.layer)),
+      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live("skips catalog setup when an existing cluster is already present", () => {
+    const root = project();
+    writeStartMigration(root);
+    const catalog = recordingStackCatalogSetup((input) => input.target.kind);
+    const stack = fakeStack(
+      "d".repeat(64),
+      () => Effect.succeed(status("d".repeat(64))),
+      "stopped",
+    );
+    const setup = handlerLayer({
+      root,
+      target: { projectRoot: root },
+      stack,
+    });
+    return Effect.gen(function* () {
+      yield* stackStart(flags());
+      expect(catalog.applied).toEqual([]);
+      expect(setup.out.stderrText).not.toContain("Applying migration");
+    }).pipe(
+      Effect.provide(Layer.mergeAll(setup.layer, catalog.layer)),
+      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live("applies catalog and migrations when starting an unconfigured stack by id", () => {
+    const root = project();
+    writeStartMigration(root);
+    const catalog = recordingStackCatalogSetup((input) => input.target.kind);
+    const stack = fakeStack("c".repeat(64), () => Effect.succeed(status("c".repeat(64))));
+    const setup = handlerLayer({
+      root,
+      target: { projectRoot: root, id: "c".repeat(64) },
+      stack,
+    });
+    return Effect.gen(function* () {
+      yield* stackStart(flags({ stackId: Option.some("c".repeat(64)) }));
+      expect(catalog.applied).toEqual(["live"]);
+      expect(setup.out.stderrText).toContain("Applying migration 20240101000000_dogfood.sql");
     }).pipe(
       Effect.provide(Layer.mergeAll(setup.layer, catalog.layer)),
       Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
@@ -534,7 +613,7 @@ enabled = false
           config: expect.objectContaining({
             capabilities: expect.objectContaining({
               rest: expect.objectContaining({ activation: "eager" }),
-              studio: { enabled: false },
+              studio: expect.objectContaining({ enabled: false }),
             }),
           }),
         }),
@@ -556,10 +635,14 @@ enabled = false
     );
     let opened = false;
     let startConfig: unknown;
-    const stack = fakeStack("b".repeat(64), (config) => {
-      startConfig = config;
-      return Effect.succeed(status("b".repeat(64)));
-    });
+    const stack = fakeStack(
+      "b".repeat(64),
+      (config) => {
+        startConfig = config;
+        return Effect.succeed(status("b".repeat(64)));
+      },
+      "running",
+    );
     const setup = handlerLayer({
       root: settingsRoot,
       target: { projectRoot: targetRoot, id: "b".repeat(64) },
@@ -787,6 +870,19 @@ enabled = false
         discoverStacks: () => Effect.succeed({ stacks: [], errors: [] }),
       }),
       BunServices.layer,
+      Layer.succeed(ExperimentalFlag, false),
+      Layer.succeed(CliArgs, { args: ["stack", "start"] }),
+      Layer.succeed(DbConnection, {
+        connect: () =>
+          Effect.succeed({
+            exec: () => Effect.void,
+            query: () => Effect.succeed([]),
+            execBatch: () => Effect.void,
+            extensionExists: () => Effect.succeed(false),
+            copyToCsv: () => Effect.succeed(new Uint8Array()),
+            queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
+          }),
+      }),
     );
     return Effect.gen(function* () {
       const failure = yield* stackStart(

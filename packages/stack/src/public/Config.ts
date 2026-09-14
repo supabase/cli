@@ -35,7 +35,12 @@ export type ListenerConfig = Schema.Schema.Type<typeof ListenerConfigSchema>;
 
 const optionalCapability = <S extends Schema.Top>(settings: S) =>
   Schema.Union([
-    Schema.Struct({ enabled: Schema.Literal(false) }),
+    Schema.Struct({
+      enabled: Schema.Literal(false),
+      activation: Schema.optionalKey(ActivationModeSchema),
+      version: Schema.optionalKey(Schema.String),
+      settings: Schema.optionalKey(settings),
+    }),
     Schema.Struct({
       enabled: Schema.optionalKey(Schema.Literal(true)),
       activation: Schema.optionalKey(ActivationModeSchema),

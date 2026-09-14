@@ -115,6 +115,7 @@ function setup(opts: {
     start: () => Effect.die("must not start"),
     stop: Effect.sync(() => void calls.stopCalls++),
     destroy: Effect.sync(() => void calls.destroyCalls++),
+    resetDatabase: Effect.die("unused"),
     logs: (query?: unknown) => {
       calls.queries.push(query);
       return (

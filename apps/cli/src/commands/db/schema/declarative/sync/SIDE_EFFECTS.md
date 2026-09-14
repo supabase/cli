@@ -3,6 +3,9 @@
 Diffs local migrations state against declarative schema files and writes the delta
 as a new timestamped migration.
 
+When `[experimental].stack` is on, shadows are `EphemeralPostgres` clusters under
+`~/.supabase/ephemeral-postgres/<identity>/`.
+
 Pg-delta runs in-process and uses two scoped shadow databases. Coverage gaps
 warn; `--strict-coverage` makes
 them fatal, while `PGDELTA_DEBUG` writes diagnostic JSON under

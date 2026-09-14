@@ -51,6 +51,7 @@ import { parsePostgresServerMajor } from "../../../command-internal/stack-local-
 import {
   dumpConnForHostClient,
   rewriteDumpHostForToolContainer,
+  toolContainerUsesHostNetwork,
 } from "../../../command-internal/postgres-client.run.ts";
 import { applyMigrations, MigrationApplyError } from "../../../command-internal/migration-apply.ts";
 import {
@@ -135,7 +136,7 @@ const squashMigrations = Effect.fnUntraced(function* (
           };
           const networkIdFlag = yield* NetworkIdFlag;
           const networkId = Option.getOrUndefined(networkIdFlag);
-          const dumpUsesHostNetwork = networkId === undefined || networkId.length === 0;
+          const dumpUsesHostNetwork = toolContainerUsesHostNetwork(networkId);
           const nativeShadow = handle.runtime.kind === "native" && runtimeInfo.platform !== "win32";
           const expectedMajor =
             parsePostgresServerMajor(handle.ephemeral.version) ?? toml.majorVersion;

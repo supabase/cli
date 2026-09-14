@@ -24,6 +24,8 @@ export interface CreateEphemeralPostgresOptions {
   readonly healthTimeout?: string;
   /** Stopped-cluster PGDATA tar to restore before the first start. */
   readonly restoreFrom?: string;
+  /** Cache identity written into the snapshot runtime marker. Keyless snapshots stay valid. */
+  readonly snapshotKey?: string;
 }
 
 export interface EphemeralPostgresRelease {
@@ -51,6 +53,7 @@ export interface EffectEphemeralPostgres {
   readonly stop: Effect.Effect<void, EphemeralPostgresError>;
   readonly exportPgData: (
     tarPath: string,
+    snapshotKey?: string,
   ) => Effect.Effect<void, EphemeralPostgresError, EphemeralPostgresServices>;
 }
 

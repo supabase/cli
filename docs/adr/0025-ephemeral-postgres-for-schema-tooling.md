@@ -28,8 +28,19 @@ snapshot.
   one-shot names (live: auth, storage, realtime; analytics and pooler only when those one-shots
   run). It never includes studio, mail, or functions. CLI `--exclude` does not change this set.
 - **Overlay**: CLI session SQL after schema init: webhooks (`pg_net`), API default grants, vault
-  upsert, and `roles.sql`.
+  upsert, and `roles.sql`. The CLI helper that runs schema init then overlay is not a fourth
+  concept.
 - **Activation**: starting a capability’s long-running process and listeners. Not schema init.
+- **Disabled capability**: a capability with `enabled: false` that still carries its nested pins
+  (`version`, `settings`). Disable is not absence; schema-init can turn a disabled cap back on
+  without losing the pin.
+- **First create**: this start created the live project stack (`unconfigured` / no stack). Analog
+  of Compose’s fresh volume: schema init, Overlay, and user migrate-and-seed run once here.
+- **Existing cluster**: a live project stack this start did not create (already-running or
+  start-from-existing-data). Analog of Compose’s existing volume: webhooks setup only.
+
+_Avoid_: treating `{ enabled: false }` as an empty object; “initialized PGDATA” as a setup
+predicate; using stack `unconfigured` to mean “user migrations have not run.”
 
 ## Decision
 
@@ -56,9 +67,9 @@ through the catalog Postgres image.
 ### (c) `[experimental].stack` covers the db/migration family
 
 `SUPABASE_EXPERIMENTAL_STACK` / `[experimental].stack` select the stack backend for `db` and
-`migration` as well as `start`/`stop`. Flag off keeps the legacy Docker shadow and
-`supabase_db_*` local target. Linked / `--db-url` targets are unchanged. Top-level `status` is
-not switched.
+`migration` as well as `start`/`stop`/`status`. Flag off keeps the legacy Docker shadow and
+`supabase_db_*` local target. Linked / `--db-url` targets stay URL/linked connections; they do
+not switch the local engine. Top-level `status` **is** aliased (`STACK_BACKEND_COMMANDS`).
 
 Shadow baseline for the stack backend is slim-init, stack bootstrap, schema init for the
 platform trio (auth, storage, realtime), and the CLI overlay. Cache files use a distinct
@@ -66,8 +77,8 @@ platform trio (auth, storage, realtime), and the CLI overlay. Cache files use a 
 init never compiles studio, mail, or functions (those are not Postgres catalog one-shots).
 
 The stack backend requires the in-process pg-delta engine. Migra, pgAdmin, and
-`--use-pg-schema` assume Docker networks or differ containers and are rejected for every
-stack runtime.
+`--use-pg-schema` are rejected for every stack runtime because the **shadow is always**
+`EphemeralPostgres`, including `--linked` / `--db-url`.
 
 ### (d) Native dump, test, and squash clients
 
@@ -83,6 +94,20 @@ Compose runs Studio when `[analytics] enabled = false`. Stack compile allows tha
 bare `stack start` matches Compose. Studio’s capability and workload graphs do not list analytics
 as a hard dependency; logs UI stays off when analytics is off. This is independent of schema
 init, which never compiles Studio.
+
+### (f) Live start setup is Compose-faithful
+
+Compose keys “run full setup” on `volumeExists`. Stack has no compose volume, so the analog is
+whether **this start created the stack identity** (first create / `unconfigured`).
+
+- **First create**: schema init, Overlay (webhooks, grants, vault, `roles.sql`), then
+  migrate-and-seed. `db start` and `stack start` share this. Do not report start success until
+  it completes.
+- **Existing cluster**: webhooks setup only. No schema-init retry, no grants/vault/`roles.sql`,
+  no migrate-and-seed.
+- If catalog or migrate-and-seed fails after the engine is already `running`, the command exits
+  non-zero and Postgres stays up. The next start is an existing cluster and does not retry.
+  Recover with `db reset`. Same stuck case as Compose after a failed fresh-volume setup.
 
 ## Rationale
 
@@ -101,13 +126,15 @@ leaving schema policy in the CLI.
   Auth is disabled. `credentials().api` is absent when Auth is off. Overlay and `--local` keep
   calling `credentials()`. There is no second RPC, and the CLI does not read secret slots.
 - `resetDatabase` wipes Postgres without destroying the stack identity, so `db reset --local` and declarative `--apply` stay on the stack backend.
+- Live `db start` / `stack start` setup matches Compose: full setup on first create, webhooks only afterwards.
 - Legacy Docker behavior is unchanged when the flag is off.
 - Windows native stacks can dump and squash without PostgreSQL client tools on PATH.
 
 ### Negative
 
 - Cache tars cannot be shared across native and container runtimes.
-- Migra/pgAdmin remain unavailable on stack backends.
+- Migra/pgAdmin remain unavailable on stack backends (shadow is always ephemeral).
+- A failed first live setup is stuck until `db reset`, same as Compose.
 - Windows native dump/test/squash need a working Docker client even though Postgres itself is native.
 
 ## Alternatives Considered

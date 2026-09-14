@@ -1681,6 +1681,7 @@ describe("production runtime", () => {
             definition: compiled.definition,
             privatePorts: [
               { workloadId: "realtime:realtime", binding: "primary", port: address.port },
+              { workloadId: "realtime:realtime", binding: "rpc", port: 41_069 },
             ],
           },
         } satisfies { value: PersistedStackState };

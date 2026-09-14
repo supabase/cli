@@ -1729,6 +1729,9 @@ describe("db diff", () => {
       if (!Exit.isFailure(exit)) return;
       const error = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
       expect(error).toBeInstanceOf(StackNativeEngineError);
+      if (!(error instanceof StackNativeEngineError)) return;
+      expect(error.message).toContain("The stack backend only supports the pg-delta engine.");
+      expect(error.message).toContain("--use-migra");
     }).pipe(Effect.provide(Layer.mergeAll(s.layer, stackBackendLayer("stack"))));
   });
 
@@ -1740,6 +1743,9 @@ describe("db diff", () => {
       if (!Exit.isFailure(exit)) return;
       const error = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
       expect(error).toBeInstanceOf(StackNativeEngineError);
+      if (!(error instanceof StackNativeEngineError)) return;
+      expect(error.message).toContain("The stack backend only supports the pg-delta engine.");
+      expect(error.message).toContain("--use-migra");
     }).pipe(Effect.provide(Layer.mergeAll(s.layer, stackBackendLayer("stack"))));
   });
 

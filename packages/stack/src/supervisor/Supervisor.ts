@@ -730,15 +730,23 @@ export const makeSupervisor = (
             yield* runtime.driver.remove(key).pipe(Effect.mapError(mapRuntimeError));
             yield* launcher.forget([workloadId]);
           });
-        for (const workload of [...bounce].reverse()) yield* stopOne(workload.id);
-        yield* stopOne(databaseWorkload.id);
-        yield* runtime.driver
-          .wipePersistentData({ stackId: options.stackId, workloadId: databaseWorkload.id })
-          .pipe(Effect.mapError(mapRuntimeError));
         const resetWorkloads = [databaseWorkload, ...bounce];
-        yield* launcher
-          .launch({ ...plan, workloads: resetWorkloads })
-          .pipe(Effect.mapError(mapRuntimeError));
+        const result = yield* Effect.gen(function* () {
+          for (const workload of [...bounce].reverse()) yield* stopOne(workload.id);
+          yield* stopOne(databaseWorkload.id);
+          yield* runtime.driver
+            .wipePersistentData({ stackId: options.stackId, workloadId: databaseWorkload.id })
+            .pipe(Effect.mapError(mapRuntimeError));
+          yield* launcher
+            .launch({ ...plan, workloads: resetWorkloads })
+            .pipe(Effect.mapError(mapRuntimeError));
+        }).pipe(Effect.exit);
+        if (Exit.isFailure(result)) {
+          for (const name of bounceNames) activationOwned.delete(name);
+          activationOwned.delete("database");
+          yield* restorePhase(previous);
+          return yield* Effect.failCause(result.cause);
+        }
       });
     const resetDatabase = submitLifecycle("reset", resetDatabaseOperation()).pipe(
       Effect.andThen(snapshot()),

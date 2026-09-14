@@ -161,6 +161,7 @@ const runStatus = (options: {
         start: () => Effect.die("unused"),
         stop: Effect.die("unused"),
         destroy: Effect.die("unused"),
+        resetDatabase: Effect.die("unused"),
         logs: () => Effect.die("unused"),
         followLogs: () => Stream.empty,
       } satisfies EffectStack),

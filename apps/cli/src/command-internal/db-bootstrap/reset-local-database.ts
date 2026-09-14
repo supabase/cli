@@ -9,7 +9,7 @@
  * invocation only, emitted by its own handler after calling this function.
  */
 
-import { Data, Effect, FileSystem, Option, Path } from "effect";
+import { Data, Duration, Effect, FileSystem, Option, Path, Redacted, Schedule } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { detectGitBranch } from "../../shared/git/git-branch.ts";
@@ -109,7 +109,7 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
     const opened = yield* stackOpenReadyProject;
     if (Option.isNone(opened)) return yield* Effect.fail(notRunning());
     yield* output.raw(`Resetting local database${toLogMessage(input.version)}\n`, "stderr");
-    yield* opened.value.stack.resetDatabase().pipe(
+    yield* opened.value.stack.resetDatabase.pipe(
       Effect.catchTag("StackNotRunningError", () => Effect.fail(notRunning())),
       Effect.mapError((cause) => resetFailed(`failed to reset local database: ${cause.message}`)),
     );
@@ -159,22 +159,79 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
         }).pipe(Effect.mapError((cause) => resetFailed(cause.message)));
       }),
     );
-    const after = yield* opened.value.stack
-      .status()
-      .pipe(
+    const inspectStatus = opened.value.stack.status.pipe(
+      Effect.mapError((cause) =>
+        resetFailed(`failed to inspect stack after reset: ${cause.message}`),
+      ),
+    );
+    const after = yield* inspectStatus;
+    const storageState = (status: typeof after) =>
+      status.capabilities.find((capability) => capability.name === "storage")?.state;
+    const readyStatus =
+      storageState(after) === "starting"
+        ? yield* inspectStatus.pipe(
+            Effect.filterOrFail(
+              (status) => storageState(status) !== "starting",
+              () => "starting" as const,
+            ),
+            Effect.retry({
+              schedule: Schedule.spaced(Duration.millis(200)),
+              while: (error) => error === "starting",
+            }),
+            Effect.timeoutOrElse({
+              duration: Duration.seconds(30),
+              orElse: () => Effect.succeed(undefined),
+            }),
+            Effect.catchIf(
+              (error): error is "starting" => error === "starting",
+              () => Effect.succeed(undefined),
+            ),
+          )
+        : after;
+    if (storageState(after) === "starting" && readyStatus === undefined) {
+      yield* output.raw(
+        `${yellow("WARNING:")} timed out waiting for storage to become ready; skipped seeding storage buckets.\n`,
+        "stderr",
+      );
+    }
+    const status = readyStatus ?? after;
+    if (storageState(status) === "ready") {
+      const context = yield* loadLocalProjectContext(workdir, (message) => resetFailed(message));
+      const credentials = yield* opened.value.stack.credentials.pipe(
         Effect.mapError((cause) =>
-          resetFailed(`failed to inspect stack after reset: ${cause.message}`),
+          resetFailed(`failed to read stack credentials after reset: ${cause.message}`),
         ),
       );
-    const storage = after.capabilities.find((capability) => capability.name === "storage");
-    if (storage?.state === "ready") {
-      const context = yield* loadLocalProjectContext(workdir, (message) => resetFailed(message));
+      const apiEndpoint = status.endpoints.api;
+      const storageEndpoint = credentials.storage?.endpoint.replace(/\/s3\/?$/, "");
+      const gatewayUrl = apiEndpoint?.url ?? storageEndpoint;
+      const apiPort = apiEndpoint?.port;
+      const serviceRoleJwt =
+        credentials.api === undefined ? undefined : Redacted.value(credentials.api.serviceRoleJwt);
       yield* seedBucketsRun({
         projectRef: "",
         emitSummary: false,
         interactive: false,
         yes,
-        resolvedConfig: { config: context.config, document: context.loaded?.document },
+        resolvedConfig: {
+          config: {
+            ...context.config,
+            api: {
+              ...context.config.api,
+              ...(apiPort === undefined ? {} : { port: apiPort }),
+              ...(gatewayUrl === undefined ? {} : { external_url: gatewayUrl }),
+            },
+            ...(serviceRoleJwt === undefined
+              ? {}
+              : {
+                  auth: {
+                    ...context.config.auth,
+                    service_role_key: serviceRoleJwt,
+                  },
+                }),
+          },
+          document: context.loaded?.document,
+        },
         projectEnvValues: projectEnv,
       }).pipe(
         Effect.catchTag("SeedConfigLoadError", (error) =>

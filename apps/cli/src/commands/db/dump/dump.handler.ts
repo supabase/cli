@@ -42,6 +42,7 @@ import {
 import {
   dumpConnForHostClient,
   rewriteDumpHostForToolContainer,
+  toolContainerUsesHostNetwork,
 } from "../../../command-internal/postgres-client.run.ts";
 import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
 import {
@@ -200,17 +201,25 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
 
     const backend = yield* currentStackBackend;
     const stackRuntime =
-      backend.kind === "stack" && isLocal ? yield* stackRequireProjectRuntime : undefined;
+      backend.kind === "stack" && connType === "local"
+        ? yield* stackRequireProjectRuntime
+        : undefined;
     const useHostClient = stackRuntime?.kind === "native" && runtimeInfo.platform !== "win32";
     const networkId = Option.getOrUndefined(networkIdFlag);
     const envNetworkId = viperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", projectEnv);
     const dumpUsesHostNetwork =
       backend.kind === "stack"
-        ? networkId === undefined || networkId.length === 0
-        : (networkId === undefined || networkId.length === 0) && envNetworkId.length === 0;
+        ? toolContainerUsesHostNetwork(networkId)
+        : toolContainerUsesHostNetwork(
+            networkId !== undefined && networkId.length > 0
+              ? networkId
+              : envNetworkId.length === 0
+                ? undefined
+                : envNetworkId,
+          );
     const dumpConn = useHostClient
       ? dumpConnForHostClient(conn)
-      : backend.kind === "stack" && isLocal
+      : backend.kind === "stack" && connType === "local"
         ? {
             ...conn,
             host: rewriteDumpHostForToolContainer(conn.host, {
@@ -220,7 +229,9 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
           }
         : conn;
     const serverMajor =
-      backend.kind === "stack" && isLocal ? yield* stackProjectDatabaseMajor : undefined;
+      backend.kind === "stack" && connType === "local"
+        ? yield* stackProjectDatabaseMajor
+        : undefined;
     const dumpMajor = serverMajor ?? tomlValues.majorVersion;
     const dumpClient = useHostClient
       ? {
@@ -333,6 +344,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
                         file.writeAll(chunk).pipe(Effect.mapError(toOpenFileError)),
                       projectEnvValues: projectEnv,
                       client: dumpClient,
+                      forceHostNetwork: backend.kind === "stack" && connType === "local",
                     });
                   }),
                 ),
@@ -356,6 +368,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
               : (chunk) => output.rawBytes(chunk),
             projectEnvValues: projectEnv,
             client: dumpClient,
+            forceHostNetwork: backend.kind === "stack" && connType === "local",
           });
 
     // 7b. IPv6 → IPv4-pooler retry, shared with `db pull`: a linked dump can reach the

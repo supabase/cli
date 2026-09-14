@@ -137,11 +137,14 @@ export function buildPostgresUrl(input: {
   );
 }
 
-export function resolvePgmetaImage(versionOverride?: string) {
+export function resolvePgmetaImage(
+  versionOverride?: string,
+  projectEnvValues?: Readonly<Record<string, string>>,
+) {
   const raw = dockerfileServiceImageRaw("pgmeta");
   const trimmed = versionOverride?.trim() ?? "";
   const pin = trimmed.length > 0 ? `v${trimmed.replace(/^v/i, "")}` : undefined;
-  return getRegistryImageUrl(slimImageForCurrentPin("pgmeta", raw, pin));
+  return getRegistryImageUrl(slimImageForCurrentPin("pgmeta", raw, pin), projectEnvValues);
 }
 
 export function rootCaBundle() {

@@ -5,7 +5,6 @@ import { viperEnvStringWithProjectFallback } from "./viper-env.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { getRegistryImageUrl } from "./docker-registry.ts";
 import { DockerRun } from "./docker-run.service.ts";
-import { currentStackBackend } from "./stack-backend.ts";
 import { requireHostPostgresClient, streamHostCommand } from "./postgres-client.run.ts";
 
 /**
@@ -95,6 +94,11 @@ export const streamPgDumpWithClient = Effect.fnUntraced(function* <E>(params: {
   readonly onStdout: (chunk: Uint8Array) => Effect.Effect<void, E>;
   readonly projectEnvValues?: Readonly<Record<string, string>>;
   readonly client: PgDumpClient;
+  /**
+   * Stack `--local` dumps and stack shadow dumps talk to published credentials.
+   * URL targets keep compose `SUPABASE_NETWORK_ID` resolution.
+   */
+  readonly forceHostNetwork?: boolean;
 }) {
   if (params.client.kind === "host") {
     yield* requireHostPostgresClient(params.client.command, params.client.expectedMajor);
@@ -106,9 +110,8 @@ export const streamPgDumpWithClient = Effect.fnUntraced(function* <E>(params: {
       teeStderr: true,
     });
   }
-  const backend = yield* currentStackBackend;
   return yield* streamPgDump({
     ...params,
-    forceHostNetwork: backend.kind === "stack",
+    forceHostNetwork: params.forceHostNetwork === true,
   });
 });

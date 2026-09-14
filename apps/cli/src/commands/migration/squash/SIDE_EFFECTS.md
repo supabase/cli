@@ -7,6 +7,9 @@ full schema into the target file, and deleting the merged files — then either
 suggests `migration repair` (local target) or prompts to baseline the remote
 migration-history table to match.
 
+When `[experimental].stack` is on, the shadow is `EphemeralPostgres` under
+`~/.supabase/ephemeral-postgres/<identity>/`.
+
 ## Files Read
 
 | Path                                                                                               | Format                                                                                | When                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |

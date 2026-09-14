@@ -182,6 +182,11 @@ Emits a single result object to stdout: `{ status: "already-running" }` or
 
 Same result object as the terminal `result` event; progress on stderr.
 
+When `[experimental].stack` is on, this command creates or resumes a postgres-only project
+stack instead of a Compose container. First create runs schema init, overlay, and
+migrate-and-seed. An existing cluster applies webhooks only. Other schema commands may write
+throwaway clusters under `~/.supabase/ephemeral-postgres/<identity>/`.
+
 ## Notes
 
 - **`pg_net` converges with `[experimental.webhooks]` on every non-backup start** (shared

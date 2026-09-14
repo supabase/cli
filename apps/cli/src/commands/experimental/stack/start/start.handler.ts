@@ -5,11 +5,15 @@ import {
   type StackRuntimePreference,
 } from "@supabase/stack/effect";
 import { Output } from "../../../../shared/output/output.service.ts";
-import { OutputFlag } from "../../../../command-internal/global-flags.ts";
+import { OutputFlag, resolveExperimental } from "../../../../command-internal/global-flags.ts";
 import { CommandSettings } from "../../../../config/command-settings.service.ts";
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
 import { readDbToml } from "../../../../command-internal/db-config.toml-read.ts";
 import { StackCatalogSetup } from "../../../../command-internal/stack-catalog-setup.ts";
+import {
+  applyStackMigrateAndSeed,
+  applyStackWebhooksOnly,
+} from "../../../../command-internal/stack-local-database.ts";
 import {
   StackApi,
   StackTargetError,
@@ -150,17 +154,14 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
               ...(runtime === undefined ? {} : { runtime }),
             })
             .pipe(Effect.mapError(stackStartError));
+    // `--stack-id` addresses this identity, not findStack(projectRoot, name).
+    const addressed = yield* stack.status.pipe(Effect.mapError(stackStartError));
+    const firstCreate = addressed.desiredLifecycle === "unconfigured";
     const starting = yield* output.task("Starting local Supabase stack...");
     const status = yield* stack.start({ config: startConfig }).pipe(
       Effect.tapError((error) => starting.fail(error.message)),
       Effect.mapError(stackStartError),
     );
-    const catalog = yield* Effect.serviceOption(StackCatalogSetup);
-    if (Option.isNone(catalog))
-      return yield* new StackCommandStartError({
-        reason: "unknown",
-        message: "stack catalog setup is unavailable",
-      });
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const toml = yield* readDbToml(fs, path, target.projectRoot).pipe(
@@ -173,34 +174,53 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
           }),
       ),
     );
-    yield* catalog.value
-      .apply({
-        target: {
-          kind: "live",
-          stack,
-          projectRoot: target.projectRoot,
-          config,
-        },
-        overlay: {
-          webhooks: "config",
-          webhooksEnabled: toml.webhooksEnabled,
-          apiAutoExposeNewTables: toml.baseline.apiAutoExposeNewTables,
-          vault: toml.vault,
-          workdir: target.projectRoot,
-        },
-      })
-      .pipe(
+    const setupFailed = (error: { readonly message: string; readonly cause?: unknown }) =>
+      isStackError(error.cause)
+        ? stackStartError(error.cause)
+        : new StackCommandStartError({
+            reason: "unknown",
+            message: error.message,
+            suggestion: "The stack is running. Recover with db reset.",
+            cause: error,
+          });
+    if (firstCreate) {
+      const catalog = yield* Effect.serviceOption(StackCatalogSetup);
+      if (Option.isNone(catalog))
+        return yield* new StackCommandStartError({
+          reason: "unknown",
+          message: "stack catalog setup is unavailable",
+        });
+      yield* catalog.value
+        .apply({
+          target: {
+            kind: "live",
+            stack,
+            projectRoot: target.projectRoot,
+            config,
+          },
+          overlay: {
+            webhooks: "config",
+            webhooksEnabled: toml.webhooksEnabled,
+            apiAutoExposeNewTables: toml.baseline.apiAutoExposeNewTables,
+            vault: toml.vault,
+            workdir: target.projectRoot,
+          },
+        })
+        .pipe(
+          Effect.tapError((error) => starting.fail(error.message)),
+          Effect.mapError(setupFailed),
+        );
+      const experimental = yield* resolveExperimental;
+      yield* applyStackMigrateAndSeed(stack, target.projectRoot, toml, experimental).pipe(
         Effect.tapError((error) => starting.fail(error.message)),
-        Effect.mapError((error) =>
-          isStackError(error.cause)
-            ? stackStartError(error.cause)
-            : new StackCommandStartError({
-                reason: "unknown",
-                message: error.message,
-                cause: error,
-              }),
-        ),
+        Effect.mapError(setupFailed),
       );
+    } else {
+      yield* applyStackWebhooksOnly(stack, toml.webhooksEnabled).pipe(
+        Effect.tapError((error) => starting.fail(error.message)),
+        Effect.mapError(setupFailed),
+      );
+    }
     yield* starting.succeed("Stack is ready.");
     if (output.format === "text") {
       yield* output.raw(renderStackStatus(status));

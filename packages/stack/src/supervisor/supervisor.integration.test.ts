@@ -1560,6 +1560,11 @@ describe("Supervisor composition", () => {
 
           const resetExit = yield* fixture.supervisor.resetDatabase.pipe(Effect.exit);
           expect(Exit.isFailure(resetExit)).toBe(true);
+          const afterFail = yield* fixture.supervisor.status;
+          expect(afterFail.lifecycle).toBe("running");
+          expect(
+            afterFail.capabilities.find((capability) => capability.name === "database")?.state,
+          ).not.toBe("ready");
 
           yield* fixture.supervisor.start();
           expect(yield* Ref.get(timeline)).toEqual([

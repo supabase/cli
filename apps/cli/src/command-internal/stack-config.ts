@@ -1198,7 +1198,7 @@ const configInput = (
   );
   const poolerResolved = pooler;
   const signingKeysPath = auth.signing_keys_path;
-  const authResolvedSettings = authEnabled ? authSettings(auth, document) : undefined;
+  const authResolvedSettings = authSettings(auth, document);
   const jwtIssuer = auth.jwt_issuer;
   const jwtSecret = secret(auth.jwt_secret);
   const jwtSigning = (): JwtSigning | undefined => {
@@ -1212,7 +1212,7 @@ const configInput = (
   };
   const signing = jwtSigning();
   const capability = <T>(enabled: boolean, settings: T) =>
-    enabled ? { settings } : { enabled: false as const };
+    enabled ? { settings } : { enabled: false as const, settings };
   return {
     capabilities: {
       database: {
@@ -1228,10 +1228,10 @@ const configInput = (
         max_rows: apiResolved.max_rows,
         external_url: apiResolved.external_url,
       }),
-      auth:
-        authResolvedSettings === undefined
-          ? { enabled: false as const }
-          : { settings: { ...authResolvedSettings, signing_keys_path: signingKeysPath } },
+      auth: capability(authEnabled, {
+        ...authResolvedSettings,
+        signing_keys_path: signingKeysPath,
+      }),
       realtime: capability(realtimeResolved.enabled, {
         ip_version: realtimeResolved.ip_version,
         max_header_length: realtimeResolved.max_header_length,
@@ -1263,16 +1263,11 @@ const configInput = (
         gcp_project_number: analyticsResolved.gcp_project_number,
         gcp_jwt_path: analyticsResolved.gcp_jwt_path,
       }),
-      pooler:
-        poolerEnabled !== false
-          ? {
-              settings: {
-                pool_mode: poolerResolved.pool_mode,
-                default_pool_size: poolerResolved.default_pool_size,
-                max_client_conn: poolerResolved.max_client_conn,
-              },
-            }
-          : { enabled: false as const },
+      pooler: capability(poolerEnabled !== false, {
+        pool_mode: poolerResolved.pool_mode,
+        default_pool_size: poolerResolved.default_pool_size,
+        max_client_conn: poolerResolved.max_client_conn,
+      }),
     },
     listeners: {
       api: apiListener(
@@ -1346,6 +1341,7 @@ const decryptConsumedSecrets = (
         decryptConsumedSecrets(item, keys, `${path}[${index}]`),
       );
     if (!isRecord(value)) return value;
+    if (value.enabled === false) return value;
     const entries = yield* Effect.forEach(Object.entries(value), ([key, item]) =>
       decryptConsumedSecrets(item, keys, `${path}.${key}`).pipe(
         Effect.map((resolved) => [key, resolved] as const),

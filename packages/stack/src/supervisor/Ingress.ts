@@ -273,7 +273,8 @@ export const makeSupervisorIngress = (
               message: "Gateway reservation is no longer current",
             });
           if (entry.gateway !== undefined) return;
-          const material = input.definition.listeners.api.enabled
+          const intents = listenerIntents(input);
+          const material = intents.api.enabled
             ? yield* (options.apiMaterial ?? defaultApiMaterial)(input.state)
             : undefined;
           const catalog = routeCatalogFor(input.plan, material);
@@ -341,7 +342,7 @@ export const makeSupervisorIngress = (
               },
             }));
           const internalApiAddress =
-            input.definition.listeners.api.enabled &&
+            intents.api.enabled &&
             reservation.assignments.api !== undefined &&
             options.resolveInternalApiBindAddress !== undefined
               ? yield* options.resolveInternalApiBindAddress()

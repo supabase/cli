@@ -184,7 +184,12 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
       Option.isSome(flags.usePgAdmin) ||
       Option.isSome(flags.usePgSchema)
     ) {
-      yield* stackRejectNativeDockerDiffEngine;
+      const flag = Option.isSome(flags.useMigra)
+        ? "--use-migra"
+        : Option.isSome(flags.usePgAdmin)
+          ? "--use-pgadmin"
+          : "--use-pg-schema";
+      yield* stackRejectNativeDockerDiffEngine(flag);
     }
 
     // Config is read lazily per path, not unconditionally up front: reading the base config

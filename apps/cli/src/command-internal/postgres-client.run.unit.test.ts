@@ -1,6 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { matchingHostPostgresClient, parsePostgresClientMajor } from "./postgres-client.run.ts";
+import {
+  matchingHostPostgresClient,
+  parsePostgresClientMajor,
+  rewriteDumpHostForToolContainer,
+  toolContainerUsesHostNetwork,
+} from "./postgres-client.run.ts";
 
 describe("parsePostgresClientMajor", () => {
   it("reads the PostgreSQL major from client --version output", () => {
@@ -37,5 +42,28 @@ describe("matchingHostPostgresClient", () => {
       command: "pg_dump",
       actual: undefined,
     });
+  });
+});
+
+describe("toolContainerUsesHostNetwork", () => {
+  it("treats an omitted or Docker host network as the host netns", () => {
+    expect(toolContainerUsesHostNetwork(undefined)).toBe(true);
+    expect(toolContainerUsesHostNetwork("")).toBe(true);
+    expect(toolContainerUsesHostNetwork("host")).toBe(true);
+    expect(toolContainerUsesHostNetwork("custom_net")).toBe(false);
+  });
+});
+
+describe("rewriteDumpHostForToolContainer", () => {
+  it("keeps loopback on Linux host networking", () => {
+    expect(
+      rewriteDumpHostForToolContainer("127.0.0.1", { platform: "linux", usesHostNetwork: true }),
+    ).toBe("127.0.0.1");
+  });
+
+  it("rewrites loopback when the tool is not on the host netns", () => {
+    expect(
+      rewriteDumpHostForToolContainer("127.0.0.1", { platform: "linux", usesHostNetwork: false }),
+    ).toBe("host.docker.internal");
   });
 });

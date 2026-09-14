@@ -8,51 +8,50 @@ import { StackApi } from "./stack-api.ts";
 const tmp = useTempWorkdir("stack-local-db-");
 const STACK_ID = StackIdSchema.make("a".repeat(64));
 
-const unused = () => Effect.die("unused");
+const unused = Effect.die("unused");
+const unusedFn = () => unused;
 
 const stack: EffectStack = {
   id: STACK_ID,
-  status: () =>
-    Effect.succeed({
-      id: STACK_ID,
-      lifecycle: "running",
-      desiredLifecycle: "running",
-      runtime: { kind: "native" },
-      endpoints: {},
-      versions: {},
-      capabilities: CAPABILITY_NAMES.map((name) => ({
-        name,
-        activation: name === "database" ? "eager" : "lazy",
-        state: name === "database" ? "ready" : "dormant",
-      })),
-      artifacts: [],
-    }),
-  credentials: () =>
-    Effect.succeed({
-      database: {
-        url: Redacted.make("postgresql://postgres:secret@127.0.0.1:54329/postgres"),
-        password: Redacted.make("secret"),
-      },
-      api: {
-        publishableKey: "anon",
-        secretKey: Redacted.make("service"),
-        anonJwt: "anon",
-        serviceRoleJwt: Redacted.make("service"),
-      },
-    }),
-  prepare: unused,
-  start: unused,
+  status: Effect.succeed({
+    id: STACK_ID,
+    lifecycle: "running",
+    desiredLifecycle: "running",
+    runtime: { kind: "native" },
+    endpoints: {},
+    versions: {},
+    capabilities: CAPABILITY_NAMES.map((name) => ({
+      name,
+      activation: name === "database" ? "eager" : "lazy",
+      state: name === "database" ? "ready" : "dormant",
+    })),
+    artifacts: [],
+  }),
+  credentials: Effect.succeed({
+    database: {
+      url: Redacted.make("postgresql://postgres:secret@127.0.0.1:54329/postgres"),
+      password: Redacted.make("secret"),
+    },
+    api: {
+      publishableKey: "anon",
+      secretKey: Redacted.make("service"),
+      anonJwt: "anon",
+      serviceRoleJwt: Redacted.make("service"),
+    },
+  }),
+  prepare: unusedFn,
+  start: unusedFn,
   stop: unused,
   destroy: unused,
   resetDatabase: unused,
-  logs: unused,
+  logs: unusedFn,
   followLogs: () => Stream.empty,
 };
 
 describe("stackLocalDatabaseUrl", () => {
   it.effect("returns the project stack database URL when the database is ready", () => {
     const api = Layer.succeed(StackApi, {
-      createStack: unused,
+      createStack: unusedFn,
       findStack: () =>
         Effect.succeed(
           Option.some({
@@ -64,9 +63,9 @@ describe("stackLocalDatabaseUrl", () => {
             desiredLifecycle: "running",
           }),
         ),
-      discoverStacks: unused,
+      discoverStacks: unusedFn,
       openStack: () => Effect.succeed(stack),
-      inspectStack: unused,
+      inspectStack: unusedFn,
     });
     return Effect.gen(function* () {
       expect(yield* stackLocalDatabaseUrl).toBe(

@@ -1536,7 +1536,8 @@ describe("db start", () => {
 
 describe("db start stack backend", () => {
   const STACK_ID = StackIdSchema.make("b".repeat(64));
-  const unused = () => Effect.die("unused");
+  const unused = Effect.die("unused");
+  const unusedFn = () => unused;
 
   function mockStackApi(opts: {
     readonly existing?: boolean;
@@ -1546,35 +1547,33 @@ describe("db start stack backend", () => {
     const startConfigs: Array<unknown> = [];
     const stack: EffectStack = {
       id: STACK_ID,
-      status: () =>
-        Effect.succeed({
-          id: STACK_ID,
-          lifecycle: opts.databaseReady === true ? "running" : "stopped",
-          desiredLifecycle: opts.databaseReady === true ? "running" : "stopped",
-          runtime: { kind: "native" },
-          endpoints: {},
-          versions: {},
-          capabilities: CAPABILITY_NAMES.map((name) => ({
-            name,
-            activation: name === "database" ? "eager" : "lazy",
-            state: name === "database" && opts.databaseReady === true ? "ready" : "stopped",
-          })),
-          artifacts: [],
-        }),
-      credentials: () =>
-        Effect.succeed({
-          database: {
-            url: Redacted.make("postgresql://postgres:secret@127.0.0.1:54329/postgres"),
-            password: Redacted.make("secret"),
-          },
-          api: {
-            publishableKey: "anon",
-            secretKey: Redacted.make("service"),
-            anonJwt: "anon",
-            serviceRoleJwt: Redacted.make("service"),
-          },
-        }),
-      prepare: unused,
+      status: Effect.succeed({
+        id: STACK_ID,
+        lifecycle: opts.databaseReady === true ? "running" : "stopped",
+        desiredLifecycle: opts.databaseReady === true ? "running" : "stopped",
+        runtime: { kind: "native" },
+        endpoints: {},
+        versions: {},
+        capabilities: CAPABILITY_NAMES.map((name) => ({
+          name,
+          activation: name === "database" ? "eager" : "lazy",
+          state: name === "database" && opts.databaseReady === true ? "ready" : "stopped",
+        })),
+        artifacts: [],
+      }),
+      credentials: Effect.succeed({
+        database: {
+          url: Redacted.make("postgresql://postgres:secret@127.0.0.1:54329/postgres"),
+          password: Redacted.make("secret"),
+        },
+        api: {
+          publishableKey: "anon",
+          secretKey: Redacted.make("service"),
+          anonJwt: "anon",
+          serviceRoleJwt: Redacted.make("service"),
+        },
+      }),
+      prepare: unusedFn,
       start: (startOpts) =>
         Effect.sync(() => {
           startConfigs.push(startOpts?.config);
@@ -1596,7 +1595,7 @@ describe("db start stack backend", () => {
       stop: unused,
       destroy: unused,
       resetDatabase: unused,
-      logs: unused,
+      logs: unusedFn,
       followLogs: () => Stream.empty,
     };
     const api = Layer.succeed(StackApi, {
@@ -1615,15 +1614,20 @@ describe("db start stack backend", () => {
               })
             : Option.none(),
         ),
-      discoverStacks: unused,
+      discoverStacks: unusedFn,
       openStack: () => Effect.succeed(stack),
-      inspectStack: unused,
+      inspectStack: unusedFn,
     });
     return { api, startConfigs };
   }
 
   it.live("starts a postgres-only stack when none exists", () => {
-    const { layer, catalogApplied } = setup({ recordCatalog: true });
+    const { layer, catalogApplied, out } = setup({ recordCatalog: true });
+    mkdirSync(join(tempRoot.current, "supabase", "migrations"), { recursive: true });
+    writeFileSync(
+      join(tempRoot.current, "supabase", "migrations", "20240101000000_dogfood.sql"),
+      "create table public.dogfood ();\n",
+    );
     const stack = mockStackApi({});
     return Effect.gen(function* () {
       yield* dbStart(DEFAULT_FLAGS).pipe(
@@ -1636,23 +1640,35 @@ describe("db start stack backend", () => {
         },
       });
       expect(catalogApplied).toEqual(["live"]);
+      expect(out.stderrText).toContain("Applying migration 20240101000000_dogfood.sql");
     });
   });
 
   it.live("does not persist exclusions when a stack already exists", () => {
-    const { layer, catalogApplied } = setup({ recordCatalog: true });
+    const { layer, catalogApplied, out } = setup({ recordCatalog: true });
+    mkdirSync(join(tempRoot.current, "supabase", "migrations"), { recursive: true });
+    writeFileSync(
+      join(tempRoot.current, "supabase", "migrations", "20240101000000_dogfood.sql"),
+      "create table public.dogfood ();\n",
+    );
     const stack = mockStackApi({ existing: true });
     return Effect.gen(function* () {
       yield* dbStart(DEFAULT_FLAGS).pipe(
         Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"), stack.api)),
       );
       expect(stack.startConfigs).toEqual([undefined]);
-      expect(catalogApplied).toEqual(["live"]);
+      expect(catalogApplied).toEqual([]);
+      expect(out.stderrText).not.toContain("Applying migration");
     });
   });
 
   it.live("applies the postgres-only overlay when an unconfigured identity already exists", () => {
-    const { layer, catalogApplied } = setup({ recordCatalog: true });
+    const { layer, catalogApplied, out } = setup({ recordCatalog: true });
+    mkdirSync(join(tempRoot.current, "supabase", "migrations"), { recursive: true });
+    writeFileSync(
+      join(tempRoot.current, "supabase", "migrations", "20240101000000_dogfood.sql"),
+      "create table public.dogfood ();\n",
+    );
     const stack = mockStackApi({ existing: true, unconfigured: true });
     return Effect.gen(function* () {
       yield* dbStart(DEFAULT_FLAGS).pipe(
@@ -1665,6 +1681,7 @@ describe("db start stack backend", () => {
         },
       });
       expect(catalogApplied).toEqual(["live"]);
+      expect(out.stderrText).toContain("Applying migration 20240101000000_dogfood.sql");
     });
   });
 
@@ -1677,7 +1694,7 @@ describe("db start stack backend", () => {
       );
       expect(out.stderrText).toContain("Postgres database is already running.");
       expect(stack.startConfigs).toEqual([]);
-      expect(catalogApplied).toEqual(["live"]);
+      expect(catalogApplied).toEqual([]);
     });
   });
 

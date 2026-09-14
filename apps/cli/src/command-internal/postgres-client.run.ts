@@ -13,7 +13,7 @@ import type { PgConnInput } from "./db-connection.service.ts";
 
 const POSTGRES_CLIENT_MAJOR = /\(PostgreSQL\)\s+(\d+)/;
 const HOST_CLIENT_SUGGESTION =
-  "Install matching PostgreSQL client tools on PATH, or start the stack with --runtime docker.";
+  "Install matching PostgreSQL client tools on PATH, or create a new stack that uses a container runtime.";
 
 export const parsePostgresClientMajor = (text: string): number | undefined => {
   const match = POSTGRES_CLIENT_MAJOR.exec(text);
@@ -172,6 +172,10 @@ export const streamHostCommand = Effect.fnUntraced(function* <E>(params: {
     }),
   );
 });
+
+/** Empty `--network-id` and Docker's `host` network both put the tool in the host netns. */
+export const toolContainerUsesHostNetwork = (networkId: string | undefined): boolean =>
+  networkId === undefined || networkId.length === 0 || networkId === "host";
 
 /** Native-engine dumps talk to loopback; container tools may need Docker Desktop's host alias. */
 export const rewriteDumpHostForToolContainer = (

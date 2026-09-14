@@ -1,5 +1,7 @@
 import { Effect } from "effect";
 
+import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
+
 import type { PgConnInput } from "../../../command-internal/db-connection.service.ts";
 import { buildSchemaDumpEnv, type DumpOptions } from "../../../command-internal/pg-dump.env.ts";
 import { dumpSchemaScript } from "../../../command-internal/pg-dump.scripts.ts";
@@ -47,6 +49,7 @@ export const squashDumpSchema = Effect.fnUntraced(function* <E>(params: SquashDu
     columnInsert: false,
   };
   const client = params.client ?? { kind: "container" as const };
+  const backend = yield* currentStackBackend;
   const result = yield* streamPgDumpWithClient({
     image: params.image,
     script: dumpSchemaScript,
@@ -54,6 +57,7 @@ export const squashDumpSchema = Effect.fnUntraced(function* <E>(params: SquashDu
     onStdout: params.onStdout,
     projectEnvValues: params.projectEnvValues,
     client,
+    forceHostNetwork: backend.kind === "stack",
   });
   if (result.exitCode !== 0) {
     return yield* Effect.fail(
