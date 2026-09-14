@@ -137,7 +137,7 @@ export function normalizeCliError(
     const message = readString(error, "message") ?? readString(error, "detail") ?? code;
     const detail = readString(error, "detail");
     // Raw read: some producers' suggestion text carries meaningful leading
-    // whitespace (e.g. `suggestLegacyBundle`'s leading `\n` for a blank
+    // whitespace (e.g. `suggestUseApiRetry`'s leading `\n` for a blank
     // separator line); `readString` would trim exactly that away.
     const suggestion = readRawString(error, "suggestion");
     return {

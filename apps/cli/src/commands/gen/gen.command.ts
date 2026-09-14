@@ -11,6 +11,6 @@ export const genCommand = Command.make("gen").pipe(
     genTypesCommand,
     genSigningKeyCommand,
     genBearerJwtCommand,
-    genKeysCommand,
+    genKeysCommand.pipe(Command.unlisted),
   ]),
 );

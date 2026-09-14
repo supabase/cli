@@ -1,20 +1,22 @@
-import { Cause, Effect, Exit, FileSystem, Layer, Schema } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Schema } from "effect";
 import { BunServices } from "@effect/platform-bun";
 import { CliOutput, Command, type HelpDoc } from "effect/unstable/cli";
 import { describe, expect, it } from "@effect/vitest";
 import { branchesCommand } from "../../commands/branches/branches.command.ts";
 import { dbCommand } from "../../commands/db/db.command.ts";
+import { dbDiffCommand } from "../../commands/db/diff/diff.command.ts";
 import { functionsCommand } from "../../commands/functions/functions.command.ts";
 import { functionsDeployCommand } from "../../commands/functions/deploy/deploy.command.ts";
 import { functionsDownloadCommand } from "../../commands/functions/download/download.command.ts";
 import { functionsServeCommand } from "../../commands/functions/serve/serve.command.ts";
+import { genCommand } from "../../commands/gen/gen.command.ts";
 import { initCommand } from "../../commands/init/init.command.ts";
 import { projectsCommand } from "../../commands/projects/projects.command.ts";
 import { projectsCreateCommand } from "../../commands/projects/create/create.command.ts";
 import { startCommand } from "../../commands/start/start.command.ts";
 import { stopCommand } from "../../commands/stop/stop.command.ts";
 import { GLOBAL_FLAGS } from "../../command-internal/global-flags.ts";
-import { GoProxy } from "../../command-internal/go-proxy.service.ts";
+import { RemovedSurfaceError } from "../../command-internal/removed-command.ts";
 import { TestDbMutuallyExclusiveFlagsError } from "../../command-internal/test-db.errors.ts";
 import {
   mockAnalytics,
@@ -36,26 +38,8 @@ const buildHelpDoc = <Name extends string, Input, ContextInput, E, R>(
   cmd: Command.Command<Name, Input, ContextInput, E, R>,
 ): HelpDoc.HelpDoc => (cmd as unknown as CommandImpl).buildHelpDoc([]);
 
-function mockGoProxy() {
-  const calls: Array<ReadonlyArray<string>> = [];
-  const layer = Layer.succeed(GoProxy, {
-    exec: (args) =>
-      Effect.sync(() => {
-        calls.push([...args]);
-      }),
-    execCapture: () => Effect.succeed(""),
-  });
-
-  return { layer, calls };
-}
-
-const testRootLayer = (
-  proxy: Layer.Layer<GoProxy>,
-  formatter: CliOutput.Formatter,
-  args: ReadonlyArray<string>,
-) =>
+const testRootLayer = (formatter: CliOutput.Formatter, args: ReadonlyArray<string>) =>
   Layer.mergeAll(
-    proxy,
     CliOutput.layer(formatter),
     Layer.succeed(CliArgs, { args }),
     mockOutput({ format: "text" }).layer,
@@ -73,6 +57,7 @@ const testRoot = Command.make("supabase").pipe(
     stopCommand,
     initCommand,
     functionsCommand,
+    genCommand,
     projectsCommand,
     branchesCommand,
     dbCommand,
@@ -152,6 +137,10 @@ describe("native hidden flags", () => {
       "size",
       "high-availability",
     ]);
+
+    expect(buildHelpDoc(dbDiffCommand).flags.map((flag) => flag.name)).not.toContain(
+      "use-pg-schema",
+    );
   });
 
   it.effect("passes hidden flag values to handlers by exact name", () => {
@@ -191,14 +180,7 @@ describe("native hidden flags", () => {
         "abcdefghijklmnopqrst",
         "--use-docker=false",
       ]);
-      yield* runParser([
-        "functions",
-        "download",
-        "hello",
-        "--project-ref",
-        "abcdefghijklmnopqrst",
-        "--legacy-bundle",
-      ]);
+      yield* runParser(["functions", "download", "hello", "--legacy-bundle"]);
       yield* runParser(["functions", "deploy", "hello", "--use-docker=false"]);
       yield* runParser(["functions", "deploy", "hello", "--legacy-bundle"]);
       yield* runParser(["functions", "serve", "--all=false"]);
@@ -206,7 +188,7 @@ describe("native hidden flags", () => {
         expect.objectContaining({ preview: true }),
         expect.objectContaining({ backup: false }),
         expect.objectContaining({ useDocker: false }),
-        expect.objectContaining({ legacyBundle: true }),
+        expect.objectContaining({ legacyBundle: Option.some(true) }),
         expect.objectContaining({ useDocker: false }),
         expect.objectContaining({ legacyBundle: true }),
         expect.objectContaining({ all: false }),
@@ -216,11 +198,10 @@ describe("native hidden flags", () => {
 
   it.effect("does not leak hidden flag names through unknown-flag suggestions", () =>
     Effect.gen(function* () {
-      const proxy = mockGoProxy();
       const args = ["projects", "create", "demo", "--pla"];
 
       const exit = yield* Command.runWith(testRoot, { version: "0.0.0-test" })(args).pipe(
-        Effect.provide(testRootLayer(proxy.layer, silentCliOutputFormatter, args)),
+        Effect.provide(testRootLayer(silentCliOutputFormatter, args)),
         Effect.exit,
       );
 
@@ -260,22 +241,30 @@ describe("hidden subcommands", () => {
     ]);
   });
 
-  it.effect("still executes hidden subcommands by exact name", () =>
+  it.effect("still executes hidden tombstoned subcommands by exact name", () =>
     Effect.gen(function* () {
-      const proxy = mockGoProxy();
-      const run = (args: ReadonlyArray<string>) =>
-        Command.runWith(testRoot, { version: "0.0.0-test" })(args).pipe(
-          Effect.provide(testRootLayer(proxy.layer, textCliOutputFormatter(), args)),
-        );
+      const fs = yield* FileSystem.FileSystem;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-hidden-flag-tombstone-" });
 
-      yield* run(["db", "branch", "list"]);
-      yield* run(["db", "remote", "changes"]);
-
-      expect(proxy.calls).toEqual([
+      for (const args of [
         ["db", "branch", "list"],
         ["db", "remote", "changes"],
-      ]);
-    }),
+        ["gen", "keys"],
+      ]) {
+        const exit = yield* Command.runWith(testRoot, { version: "0.0.0-test" })(args).pipe(
+          Effect.provide(
+            Layer.merge(
+              testRootLayer(textCliOutputFormatter(), args),
+              processEnvLayer({ SUPABASE_HOME: home }),
+            ),
+          ),
+          Effect.exit,
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (!Exit.isFailure(exit)) return;
+        expect(Cause.squash(exit.cause)).toBeInstanceOf(RemovedSurfaceError);
+      }
+    }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.effect("still executes the native `db test` hidden alias by exact name (CLI-1962)", () =>
@@ -284,10 +273,9 @@ describe("hidden subcommands", () => {
       // DB/docker IO, so that typed failure (not success) is what proves dispatch reached it.
       const fs = yield* FileSystem.FileSystem;
       const home = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-hidden-flag-" });
-      const proxy = mockGoProxy();
       const run = (args: ReadonlyArray<string>) =>
         Command.runWith(testRoot, { version: "0.0.0-test" })(args).pipe(
-          Effect.provide(testRootLayer(proxy.layer, textCliOutputFormatter(), args)),
+          Effect.provide(testRootLayer(textCliOutputFormatter(), args)),
           Effect.exit,
         );
 
