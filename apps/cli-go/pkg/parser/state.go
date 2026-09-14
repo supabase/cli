@@ -26,7 +26,12 @@ type ReadyState struct{}
 func (s *ReadyState) Next(r rune, data []byte) State {
 	switch r {
 	case '$':
+		// A $ after an identifier rune continues the identifier (pending$$foo$), not a
+		// dollar quote. A digit counts too (1$$), unlike PostgreSQL; valid SQL never has that.
 		offset := len(data) - utf8.RuneLen(r)
+		if hasIdentifierRuneBefore(data, offset) {
+			return s
+		}
 		return &TagState{offset: offset}
 	case '\'':
 		fallthrough
@@ -42,42 +47,85 @@ func (s *ReadyState) Next(r rune, data []byte) State {
 		// Emit token
 		return nil
 	case '(':
-		return &AtomicState{prev: s, delimiter: []byte{')'}}
+		return &ParenState{prev: s}
 	case 'c':
 		fallthrough
 	case 'C':
 		if isBeginAtomic(data) {
-			return &AtomicState{prev: s, delimiter: []byte(END_ATOMIC)}
+			return &AtomicState{prev: s, statementStart: len(data)}
 		}
 	}
 	return s
 }
 
 func isBeginAtomic(data []byte) bool {
-	offset := len(data) - len(BEGIN_ATOMIC)
-	if offset < 0 || !strings.EqualFold(string(data[offset:]), BEGIN_ATOMIC) {
+	if !endsWithKeyword(data, BEGIN_ATOMIC) {
 		return false
 	}
-	if offset > 0 {
-		r, _ := utf8.DecodeLastRune(data[:offset])
-		if isIdentifierRune(r) {
+	prefix := bytes.TrimRight(data[:len(data)-len(BEGIN_ATOMIC)], sqlWhitespace)
+	return endsWithKeyword(prefix, "BEGIN")
+}
+
+// PostgreSQL's scan.l treats every byte at or above 0x80 as an identifier/dollar-tag
+// character (ident_cont/dolq_cont), whatever its Unicode category.
+func isIdentifierRune(r rune) bool {
+	return r >= utf8.RuneSelf || unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '$'
+}
+
+func hasIdentifierRuneBefore(data []byte, offset int) bool {
+	if offset <= 0 {
+		return false
+	}
+	r, _ := utf8.DecodeLastRune(data[:offset])
+	return isIdentifierRune(r)
+}
+
+func endsWithKeyword(data []byte, keyword string) bool {
+	offset := len(data) - len(keyword)
+	if offset < 0 || !strings.EqualFold(string(data[offset:]), keyword) {
+		return false
+	}
+	return !hasIdentifierRuneBefore(data, offset)
+}
+
+const sqlWhitespace = " \t\n\r\f\v"
+
+func isSqlWhitespace(b byte) bool {
+	return bytes.IndexByte([]byte(sqlWhitespace), b) >= 0
+}
+
+func isCommentsAndWhitespace(text []byte) bool {
+	for i := 0; i < len(text); {
+		switch {
+		case isSqlWhitespace(text[i]):
+			i++
+		case bytes.HasPrefix(text[i:], []byte("--")):
+			newline := bytes.IndexByte(text[i+2:], '\n')
+			if newline == -1 {
+				return true
+			}
+			i += 2 + newline + 1
+		case bytes.HasPrefix(text[i:], []byte("/*")):
+			// Match BlockState's sliding-window scan so both agree on overlapping delimiters.
+			depth := 1
+			i += 2
+			for i < len(text) && depth > 0 {
+				switch {
+				case bytes.HasPrefix(text[i-1:], []byte("/*")):
+					depth++
+				case bytes.HasPrefix(text[i-1:], []byte("*/")):
+					depth--
+				}
+				i++
+			}
+			if depth > 0 {
+				return true
+			}
+		default:
 			return false
 		}
 	}
-	prefix := bytes.TrimRightFunc(data[:offset], unicode.IsSpace)
-	offset = len(prefix) - len("BEGIN")
-	if offset < 0 || !strings.EqualFold(string(prefix[offset:]), "BEGIN") {
-		return false
-	}
-	if offset == 0 {
-		return true
-	}
-	r, _ := utf8.DecodeLastRune(prefix[:offset])
-	return !isIdentifierRune(r)
-}
-
-func isIdentifierRune(r rune) bool {
-	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '$'
+	return true
 }
 
 // Opened a line comment
@@ -173,7 +221,7 @@ func (s *TagState) Next(r rune, data []byte) State {
 		return &dollar
 	}
 	// Valid tag: https://www.postgresql.org/docs/current/sql-syntax-lexical.html
-	if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' {
+	if isIdentifierRune(r) {
 		return s
 	}
 	// Break out of tag state
@@ -188,22 +236,60 @@ func (s *EscapeState) Next(r rune, data []byte) State {
 	return &ReadyState{}
 }
 
+// Opened a parenthesis group
+type ParenState struct {
+	prev State
+}
+
+func (s *ParenState) Next(r rune, data []byte) State {
+	curr := s.prev.Next(r, data)
+	if curr == nil {
+		s.prev = &ReadyState{}
+		return s
+	}
+	s.prev = curr
+	if _, ok := s.prev.(*ReadyState); !ok {
+		return s
+	}
+	if r == ')' {
+		return &ReadyState{}
+	}
+	return s
+}
+
 // Opened BEGIN ATOMIC function body
 type AtomicState struct {
-	prev      State
-	delimiter []byte
+	prev                State
+	pendingEnd          bool
+	statementStart      int
+	statementHasContent bool
 }
 
 func (s *AtomicState) Next(r rune, data []byte) State {
-	// If we are in a quoted state, the current delimiter doesn't count.
-	if curr := s.prev.Next(r, data); curr != nil {
-		s.prev = curr
+	pendingEnd := s.pendingEnd
+	s.pendingEnd = false
+	if pendingEnd && !isIdentifierRune(r) {
+		return (&ReadyState{}).Next(r, data)
 	}
-	if _, ok := s.prev.(*ReadyState); ok {
-		window := data[len(data)-len(s.delimiter):]
-		// Treat delimiter as case insensitive
-		if strings.EqualFold(string(window), string(s.delimiter)) {
-			return &ReadyState{}
+	// An END inside a nested quote/comment doesn't count.
+	curr := s.prev.Next(r, data)
+	if curr == nil {
+		s.prev = &ReadyState{}
+		s.statementStart = len(data)
+		s.statementHasContent = false
+		return s
+	}
+	s.prev = curr
+	if _, ok := s.prev.(*ReadyState); !ok {
+		return s
+	}
+	// PostgreSQL requires each inner statement to end with ';', so the closing END is
+	// always the first token of a statement; a later END is expression text.
+	if !s.statementHasContent && endsWithKeyword(data, END_ATOMIC) {
+		if isCommentsAndWhitespace(data[s.statementStart : len(data)-len(END_ATOMIC)]) {
+			s.pendingEnd = true
+		} else {
+			s.statementHasContent = true
 		}
 	}
 	return s

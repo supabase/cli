@@ -863,7 +863,7 @@ const handleDependencies = (options: {
           }
           for (const name of dependencyClosure(plan, requested)) {
             if (!definition.capabilities[name].enabled)
-              return yield* new StackPreparationError({
+              return yield* new InvalidStackConfigError({
                 stackId: options.id,
                 capability: name,
                 message: `Capability ${name} is disabled`,
