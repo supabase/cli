@@ -22,6 +22,7 @@ import { StackApi } from "./stack-api.ts";
 import { loadStackConfig } from "./stack-config.ts";
 import { readDbToml, type DbTomlValues } from "./db-config.toml-read.ts";
 import { StackCatalogSetup } from "./stack-catalog-setup.ts";
+import { resolveExperimentalWithProjectEnv } from "./global-flags.ts";
 import { migrateAndSeed } from "./migrate-and-seed.ts";
 
 const stackDatabaseConn = (stack: EffectStack) =>
@@ -275,13 +276,7 @@ export const stackLocalDatabaseConn: Effect.Effect<
  * Start a postgres-only stack for `db start` and declarative local ensure. First create runs
  * schema init, overlay, and migrate-and-seed. An existing cluster gets webhooks setup only.
  */
-export const stackEnsurePostgresOnlyStarted = (
-  experimental: boolean,
-): Effect.Effect<
-  "already-running" | "started",
-  LocalDbRunningError,
-  CommandSettings | FileSystem.FileSystem | Path.Path | Output | DbConnection
-> =>
+export const stackEnsurePostgresOnlyStarted = () =>
   Effect.gen(function* () {
     const api = yield* Effect.serviceOption(StackApi);
     if (Option.isNone(api)) return yield* startFailed({ message: "stack API is unavailable" });
@@ -292,6 +287,7 @@ export const stackEnsurePostgresOnlyStarted = (
     const toml = yield* readDbToml(fs, path, cliSettings.workdir).pipe(
       Effect.mapError(startFailed),
     );
+    const experimental = yield* resolveExperimentalWithProjectEnv({ ...toml.projectEnv });
     const applyCatalog = (stack: EffectStack) =>
       Effect.gen(function* () {
         const catalog = yield* Effect.serviceOption(StackCatalogSetup);

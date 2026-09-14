@@ -217,9 +217,10 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
                 ? undefined
                 : envNetworkId,
           );
+    const stackPublishedTarget = backend.kind === "stack" && isLocal;
     const dumpConn = useHostClient
       ? dumpConnForHostClient(conn)
-      : backend.kind === "stack" && connType === "local"
+      : stackPublishedTarget
         ? {
             ...conn,
             host: rewriteDumpHostForToolContainer(conn.host, {
@@ -344,7 +345,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
                         file.writeAll(chunk).pipe(Effect.mapError(toOpenFileError)),
                       projectEnvValues: projectEnv,
                       client: dumpClient,
-                      forceHostNetwork: backend.kind === "stack" && connType === "local",
+                      forceHostNetwork: stackPublishedTarget,
                     });
                   }),
                 ),
@@ -368,7 +369,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
               : (chunk) => output.rawBytes(chunk),
             projectEnvValues: projectEnv,
             client: dumpClient,
-            forceHostNetwork: backend.kind === "stack" && connType === "local",
+            forceHostNetwork: stackPublishedTarget,
           });
 
     // 7b. IPv6 → IPv4-pooler retry, shared with `db pull`: a linked dump can reach the

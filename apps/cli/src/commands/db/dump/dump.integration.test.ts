@@ -1054,7 +1054,11 @@ describe("db dump integration", () => {
   it.live(
     "dump --db-url on the stack backend does not require a project stack even when isLocal is true",
     () => {
-      const { layer, docker, resolver } = setup({ isLocal: true, stdout: "-- schema\n" });
+      const { layer, docker, resolver } = setup({
+        isLocal: true,
+        stdout: "-- schema\n",
+        platform: "darwin",
+      });
       return Effect.gen(function* () {
         yield* dbDump(
           flags({
@@ -1062,7 +1066,8 @@ describe("db dump integration", () => {
           }),
         );
         expect(resolver.calls[0]).toMatchObject({ connType: "db-url" });
-        expect(docker.lastOpts).toBeDefined();
+        expect(docker.lastOpts?.env["PGHOST"]).toBe("host.docker.internal");
+        expect(docker.lastOpts?.network).toEqual({ _tag: "host" });
       }).pipe(
         Effect.provide(
           Layer.mergeAll(

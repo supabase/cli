@@ -19,6 +19,7 @@ import { DbConnection, type DbSession, type PgConnInput } from "./db-connection.
 import { DockerRunError } from "./docker-run.errors.ts";
 import { DockerRun, type DockerRunOpts } from "./docker-run.service.ts";
 import { testDb } from "./test-db.handler.ts";
+import { stackBackendLayer } from "./stack-backend.ts";
 
 const LOCAL_CONN: PgConnInput = {
   host: "127.0.0.1",
@@ -354,6 +355,26 @@ describe("test db integration", () => {
       expect(connection.connectCalls[0]?.isLocal).toBe(false);
       expect(connection.connectCalls[0]?.dnsResolver).toBe("native");
     }).pipe(Effect.provide(layer));
+  });
+
+  it.live("stack db-url to published local ports never uses PGHOST=db", () => {
+    const { layer, docker } = setup({
+      conn: LOCAL_CONN,
+      isLocal: true,
+      args: ["--db-url=postgresql://postgres:postgres@127.0.0.1:54322/postgres"],
+    });
+    return Effect.gen(function* () {
+      yield* testDb(
+        flags({
+          local: false,
+          dbUrl: Option.some("postgresql://postgres:postgres@127.0.0.1:54322/postgres"),
+        }),
+      );
+      const run = docker.lastOpts;
+      expect(run?.network).toEqual({ _tag: "host" });
+      expect(run?.env["PGHOST"]).toBe("127.0.0.1");
+      expect(run?.env["PGPORT"]).toBe("54322");
+    }).pipe(Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))));
   });
 
   it.live("forwards --dns-resolver https to the driver for the connection", () => {

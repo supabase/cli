@@ -2,6 +2,8 @@ import { Effect, FileSystem, Layer, Option, Path, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
 import { CommandSettings } from "../../../config/command-settings.service.ts";
+import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
+import { ExperimentalFlag } from "../../../command-internal/global-flags.ts";
 import { spawnContainerCli } from "../../../command-internal/container-cli.ts";
 import { resolveDbImage } from "../../../command-internal/db-image.ts";
 import { readDbToml } from "../../../command-internal/db-config.toml-read.ts";
@@ -13,7 +15,6 @@ import { startLocalDatabase } from "../../../command-internal/db-bootstrap/start
 import { resolveLocalProjectId, localDbContainerId } from "../../../command-internal/docker-ids.ts";
 import { DeclarativeShadowDbError } from "./pgdelta.errors.ts";
 import { DeclarativeSeam } from "./pgdelta.seam.service.ts";
-import { resolveExperimental } from "../../../command-internal/global-flags.ts";
 import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
 import { StackApi, stackApiLayer } from "../../../command-internal/stack-api.ts";
 import { stackEnsurePostgresOnlyStarted } from "../../../command-internal/stack-local-database.ts";
@@ -74,7 +75,8 @@ export const declarativeSeamLayer = Layer.effect(
     // Captures every service `startLocalDatabase` needs into a plain `Context`, so each
     // closure below can `Effect.provideContext` it and satisfy `DeclarativeSeamShape` without
     // hand-enumerating every transitive dependency.
-    const experimental = yield* resolveExperimental;
+    const experimentalFlag = yield* ExperimentalFlag;
+    const cliArgs = yield* CliArgs;
     const context = yield* Effect.context<StartLocalDatabaseDeps>();
 
     return DeclarativeSeam.of({
@@ -82,10 +84,13 @@ export const declarativeSeamLayer = Layer.effect(
         Effect.gen(function* () {
           const backend = yield* currentStackBackend;
           if (backend.kind === "stack") {
-            return yield* stackEnsurePostgresOnlyStarted(experimental).pipe(
+            return yield* stackEnsurePostgresOnlyStarted().pipe(
               Effect.asVoid,
               Effect.provideContext(context),
               Effect.provideService(StackApi, stackApi),
+              // Re-provide flag/argv; first-create reads project `.env` after the seam closes over start deps.
+              Effect.provideService(ExperimentalFlag, experimentalFlag),
+              Effect.provideService(CliArgs, cliArgs),
               Effect.mapError(
                 (cause) =>
                   new DeclarativeShadowDbError({

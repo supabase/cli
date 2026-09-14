@@ -2724,6 +2724,62 @@ describe("gen types", () => {
     }),
   );
 
+  it.live("adds host-gateway for Linux stack gen types on a named --network-id", () =>
+    Effect.tryPromise({
+      try: () =>
+        withSslProbeServer(async (port) => {
+          const docker = captureDockerRun();
+          const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-stack-named-net-"));
+          writeConfig(
+            workdir,
+            [
+              'project_id = "demo"',
+              "",
+              "[api]",
+              'schemas = ["public"]',
+              "",
+              "[db]",
+              `port = ${port}`,
+            ].join("\n"),
+          );
+
+          const { layer, child } = setup({
+            workdir,
+            childStdout: ["export type Database = {};"],
+            networkId: Option.some("custom-network"),
+            onSpawn: docker.onSpawn,
+            dbConfigResolve: () =>
+              Effect.succeed(
+                localResolvedConfig({
+                  host: "127.0.0.1",
+                  port,
+                  user: "postgres",
+                  password: "postgres",
+                  database: "postgres",
+                }),
+              ),
+          });
+
+          await Effect.runPromise(
+            genTypes(defaultFlags({ local: true })).pipe(
+              Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))),
+            ),
+          );
+
+          const pgmeta = child.spawned.find((spawn) => spawn.args.includes("custom-network"));
+          expect(pgmeta?.args).toContain("custom-network");
+          expect(pgmeta?.args).toContain("--add-host");
+          expect(pgmeta?.args).toContain("host.docker.internal:host-gateway");
+          expect(
+            docker.env.has(
+              `PG_META_DB_URL=postgresql://postgres:postgres@host.docker.internal:${port}/postgres?connect_timeout=10`,
+            ),
+          ).toBe(true);
+        }),
+      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    }),
+  );
+
   it.live("falls back to podman when the docker executable is missing for local generation", () =>
     Effect.tryPromise({
       try: () =>

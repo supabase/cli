@@ -5,7 +5,10 @@ import {
   type StackRuntimePreference,
 } from "@supabase/stack/effect";
 import { Output } from "../../../../shared/output/output.service.ts";
-import { OutputFlag, resolveExperimental } from "../../../../command-internal/global-flags.ts";
+import {
+  OutputFlag,
+  resolveExperimentalWithProjectEnv,
+} from "../../../../command-internal/global-flags.ts";
 import { CommandSettings } from "../../../../config/command-settings.service.ts";
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
 import { readDbToml } from "../../../../command-internal/db-config.toml-read.ts";
@@ -210,7 +213,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
           Effect.tapError((error) => starting.fail(error.message)),
           Effect.mapError(setupFailed),
         );
-      const experimental = yield* resolveExperimental;
+      const experimental = yield* resolveExperimentalWithProjectEnv({ ...toml.projectEnv });
       yield* applyStackMigrateAndSeed(stack, target.projectRoot, toml, experimental).pipe(
         Effect.tapError((error) => starting.fail(error.message)),
         Effect.mapError(setupFailed),

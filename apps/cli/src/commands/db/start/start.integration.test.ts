@@ -1644,6 +1644,34 @@ describe("db start stack backend", () => {
     });
   });
 
+  it.live("honors SUPABASE_EXPERIMENTAL from project .env on first-create migrate", () => {
+    const previous = process.env["SUPABASE_EXPERIMENTAL"];
+    delete process.env["SUPABASE_EXPERIMENTAL"];
+    const { layer, out } = setup({
+      recordCatalog: true,
+      projectEnvContents: "SUPABASE_EXPERIMENTAL=true\n",
+    });
+    mkdirSync(join(tempRoot.current, "supabase", "migrations"), { recursive: true });
+    writeFileSync(
+      join(tempRoot.current, "supabase", "migrations", "20240101000000_dogfood.sql"),
+      "create table public.dogfood ();\n",
+    );
+    const stack = mockStackApi({});
+    return Effect.gen(function* () {
+      yield* dbStart(DEFAULT_FLAGS).pipe(
+        Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"), stack.api)),
+      );
+      expect(out.stderrText).not.toContain("Applying migration 20240101000000_dogfood.sql");
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previous === undefined) delete process.env["SUPABASE_EXPERIMENTAL"];
+          else process.env["SUPABASE_EXPERIMENTAL"] = previous;
+        }),
+      ),
+    );
+  });
+
   it.live("does not persist exclusions when a stack already exists", () => {
     const { layer, catalogApplied, out } = setup({ recordCatalog: true });
     mkdirSync(join(tempRoot.current, "supabase", "migrations"), { recursive: true });

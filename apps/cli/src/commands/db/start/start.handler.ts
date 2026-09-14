@@ -2,7 +2,6 @@ import { Effect, Option } from "effect";
 
 import { Output } from "../../../shared/output/output.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
-import { resolveExperimental } from "../../../command-internal/global-flags.ts";
 import { startLocalDatabase } from "../../../command-internal/db-bootstrap/start-local-database.ts";
 import { stackEnsurePostgresOnlyStarted } from "../../../command-internal/stack-local-database.ts";
 import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
@@ -36,8 +35,7 @@ export const dbStart = Effect.fn("db.start")(function* (flags: DbStartFlags) {
           }),
         );
       }
-      const experimental = yield* resolveExperimental;
-      const result = yield* stackEnsurePostgresOnlyStarted(experimental);
+      const result = yield* stackEnsurePostgresOnlyStarted();
       if (result === "already-running") {
         if (output.format === "text") {
           yield* output.raw("Postgres database is already running.\n", "stderr");

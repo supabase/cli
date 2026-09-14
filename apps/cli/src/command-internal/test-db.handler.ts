@@ -115,7 +115,7 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
         ? yield* stackRequireProjectRuntime
         : undefined;
     const useHostProve = stackRuntime?.kind === "native" && runtimeInfo.platform !== "win32";
-    const stackContainerProve = backend.kind === "stack" && connType === "local" && !useHostProve;
+    const stackContainerProve = backend.kind === "stack" && !useHostProve;
 
     const networkId = Option.getOrUndefined(networkIdFlag);
     const dumpUsesHostNetwork = toolContainerUsesHostNetwork(networkId);

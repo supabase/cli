@@ -269,9 +269,10 @@ export const resolveExperimental = Effect.gen(function* () {
 /**
  * `--experimental` resolved with the project `.env` consulted too, for commands that load the
  * nested project env before branching on the experimental gate (`db reset`,
- * `db schema declarative generate`/`sync`). Shell env *presence* suppresses the file value
- * entirely (see {@link viperEnvBoolWithProjectFallback}); an explicit `--experimental` wins over
- * both. `projectEnv` is the loaded map from `loadProjectEnv`.
+ * `db schema declarative generate`/`sync`, `db start`, and `stack start`). Shell env
+ * *presence* suppresses the file value entirely (see {@link viperEnvBoolWithProjectFallback});
+ * an explicit `--experimental` wins over both. `projectEnv` is the loaded map from
+ * `loadProjectEnv`.
  */
 export const resolveExperimentalWithProjectEnv = (projectEnv: Record<string, string>) =>
   Effect.gen(function* () {

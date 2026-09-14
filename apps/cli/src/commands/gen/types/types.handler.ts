@@ -476,11 +476,17 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
 
             // `--network-id` overrides any base network mode, including "host" for --db-url.
             const networkMode = Option.isSome(networkId) ? networkId.value : input.networkMode;
+            // Linux needs an explicit gateway mapping; Docker Desktop platforms already provide it.
+            const extraHosts =
+              runtimeInfo.platform === "linux"
+                ? (["--add-host", "host.docker.internal:host-gateway"] as const)
+                : [];
             const args = [
               "run",
               "--rm",
               "--network",
               networkMode,
+              ...extraHosts,
               ...env.flatMap((entry) => ["--env", entry]),
               pgmetaImage,
               "node",
