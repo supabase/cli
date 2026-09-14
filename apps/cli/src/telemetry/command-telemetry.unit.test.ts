@@ -270,6 +270,39 @@ describe("withCommandTelemetry", () => {
     );
   });
 
+  it.live(
+    "does not consume the next flag after a boolean alias that collides with a value alias",
+    () => {
+      const analytics = mockContextualAnalytics();
+      const config = {
+        service: Flag.choice("service", ["database"] as const),
+      };
+
+      return Effect.void.pipe(
+        withCommandTelemetry({
+          flags: { follow: true, service: "database" },
+          config,
+          aliases: { f: "follow" },
+        }),
+        Effect.provide(analytics.layer),
+        Effect.provide(mockProcessControl().layer),
+        Effect.provide(mockOutput({ format: "text" }).layer),
+        Effect.provide(
+          Stdio.layerTest({
+            args: Effect.succeed(["stack", "logs", "-f", "--service", "database"]),
+          }),
+        ),
+        Effect.provide(commandRuntimeLayer(["stack", "logs"])),
+        Effect.tap(() =>
+          Effect.sync(() => {
+            const event = analytics.captured[0];
+            expect(event?.properties.flags).toEqual({ follow: true, service: "database" });
+          }),
+        ),
+      );
+    },
+  );
+
   it.live("records db dump shorthand flags (-x/-f) under their canonical names", () => {
     const analytics = mockContextualAnalytics();
 

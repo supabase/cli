@@ -5,8 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, Fiber, Layer, Option, Stream } from "effect";
-import { CliOutput, Command } from "effect/unstable/cli";
+import { Deferred, Effect, Fiber, Layer, Option, Schema, Stream } from "effect";
+import { CliError, CliOutput, Command } from "effect/unstable/cli";
 import {
   InvalidProjectRootError,
   StackIdSchema,
@@ -79,6 +79,9 @@ const flags = (overrides: Partial<Parameters<typeof stackLogs>[0]> = {}) => ({
   follow: false,
   ...overrides,
 });
+
+const parseErrorMessages = (error: CliError.CliError): ReadonlyArray<string> =>
+  Schema.is(CliError.ShowHelp)(error) ? error.errors.map(({ message }) => message) : [];
 
 function setup(opts: {
   root: string;
@@ -197,8 +200,14 @@ describe("experimental stack logs", () => {
       const aboveMaximum = yield* Command.runWith(command, { version: "0.0.0-test" })([
         "--tail=10001",
       ]).pipe(Effect.flip);
-      expect(belowMinimum).toBeDefined();
-      expect(aboveMaximum).toBeDefined();
+      expect(belowMinimum).toBeInstanceOf(CliError.ShowHelp);
+      expect(aboveMaximum).toBeInstanceOf(CliError.ShowHelp);
+      expect(parseErrorMessages(belowMinimum)).toContain(
+        'Invalid value for flag --tail: "-1". Expected --tail between 0 and 10000, got -1',
+      );
+      expect(parseErrorMessages(aboveMaximum)).toContain(
+        'Invalid value for flag --tail: "10001". Expected --tail between 0 and 10000, got 10001',
+      );
     }).pipe(Effect.provide(outputLayer));
   });
 
@@ -477,12 +486,14 @@ describe("experimental stack logs", () => {
     });
     return Effect.gen(function* () {
       const busyFailure = yield* stackLogs(flags()).pipe(Effect.flip, Effect.provide(busy.layer));
-      const upgradeFailure = yield* stackLogs(flags()).pipe(
+      const upgradeFailure = yield* stackLogs(flags({ stack: Option.some("feature-a") })).pipe(
         Effect.flip,
         Effect.provide(upgrade.layer),
       );
-      expect(busyFailure.suggestion).toContain("retry after");
-      expect(upgradeFailure.suggestion).toContain("compatible stack version");
+      expect(busyFailure.suggestion).toContain("no longer running");
+      expect(busyFailure.suggestion).toContain("reconcile");
+      expect(upgradeFailure.suggestion).toContain("Stop and restart the selected stack");
+      expect(upgradeFailure.suggestion).toContain("matches this release");
     }).pipe(
       Effect.ensuring(
         Effect.sync(() => {

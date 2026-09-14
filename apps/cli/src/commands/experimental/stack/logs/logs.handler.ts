@@ -41,7 +41,8 @@ const logsError = (
     })),
     Match.tag("StackOwnershipConflictError", () => ({
       reason: "lifecycle" as const,
-      suggestion: "The stack owner is busy; retry after the current lifecycle operation finishes.",
+      suggestion:
+        "Retry with --debug. If the owner is no longer running, stop the selected stack to reconcile its state, then retry.",
     })),
     Match.tag("StackLifecycleConflictError", () => ({
       reason: "lifecycle" as const,
@@ -49,7 +50,8 @@ const logsError = (
     })),
     Match.tag("StackUpgradeRequiredError", () => ({
       reason: "lifecycle" as const,
-      suggestion: "Upgrade the CLI to a compatible stack version before reading logs.",
+      suggestion:
+        "Stop and restart the selected stack using this CLI so its owner matches this release.",
     })),
     Match.tag("StackRuntimeMismatchError", () => ({ reason: "unknown" as const })),
     Match.tag("StackStateInvalidError", "StackStateFormatUnsupportedError", () => ({
