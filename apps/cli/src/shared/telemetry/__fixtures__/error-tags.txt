@@ -301,6 +301,7 @@ InvalidRemoteProjectIdError
 InvalidSecretPairError
 InvalidTokenError
 KongReloadError
+LegacyExperimentalStackListError
 LinkApiKeysNetworkError
 LinkAuthTokenError
 LinkBranchListNetworkError

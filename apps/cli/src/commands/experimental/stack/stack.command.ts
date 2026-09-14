@@ -7,6 +7,7 @@ import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts
 import { stackStartCommand as stackStartCommandBase } from "./start/start.command.ts";
 import { stackStopCommand as stackStopCommandBase } from "./stop/stop.command.ts";
 import { stackDestroyCommand as stackDestroyCommandBase } from "./destroy/destroy.command.ts";
+import { stackListCommand as stackListCommandBase } from "./list/list.command.ts";
 import { stackApiLayer, stackTargetResolverLayer } from "./stack.shared.ts";
 
 export const stackRuntimeLayer = Layer.mergeAll(
@@ -25,12 +26,20 @@ const stackStopCommand = stackStopCommandBase.pipe(
 const stackDestroyCommand = stackDestroyCommandBase.pipe(
   Command.provide(commandRuntimeLayer(["stack", "destroy"])),
 );
+const stackListCommand = stackListCommandBase.pipe(
+  Command.provide(commandRuntimeLayer(["stack", "list"])),
+);
 
 export const stackCommand = Command.make("stack").pipe(
   Command.withDescription(
     "Manage an experimental, unstable local Supabase stack with the new backend. This command is excluded from the CLI compatibility promise.",
   ),
   Command.withShortDescription("Manage experimental local stacks"),
-  Command.withSubcommands([stackStartCommand, stackStopCommand, stackDestroyCommand]),
+  Command.withSubcommands([
+    stackStartCommand,
+    stackStopCommand,
+    stackDestroyCommand,
+    stackListCommand,
+  ]),
   Command.provide(stackRuntimeLayer),
 );

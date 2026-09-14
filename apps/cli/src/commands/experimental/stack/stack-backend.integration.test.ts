@@ -283,7 +283,9 @@ stack = true
         "stack",
         "",
       ])?.candidates.map(({ name }) => name);
-      expect(stackCommands).toEqual(backend === "stack" ? ["destroy", "start", "stop"] : []);
+      expect(stackCommands).toEqual(
+        backend === "stack" ? ["destroy", "list", "start", "stop"] : [],
+      );
 
       expect(completionFlags(backend, "status")).toContain("--override-name");
     }

@@ -10,8 +10,13 @@ native runtimes.
 | `supabase stack start`   | Create or resume the project's stack.      |
 | `supabase stack destroy` | Permanently delete one stack and its data. |
 | `supabase stack stop`    | Stop a stack while retaining its data.     |
+| `supabase stack list`    | List persisted managed local stacks.       |
 
 Use each command's `--help` for its available targeting and runtime options.
+
+`supabase stack list` reads the global managed-stack registry and reports each stack's project,
+branch, runtime, and desired lifecycle. Use `--output-format json` or `--output-format stream-json`
+for structured output.
 
 ## Selecting the top-level commands
 
