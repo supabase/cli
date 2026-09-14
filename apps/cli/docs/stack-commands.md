@@ -67,9 +67,12 @@ Other values are rejected. The override is applied before reading the project co
 
 `supabase stack logs` reads retained logs without starting or stopping the selected stack. Use
 `--stack <name>` or `--stack-id <id>` to select a stack, `--service <name>` to filter services,
-and `--tail <count>` to bound retained history. Add `--follow` (or `-f`) to continue with new
-entries; `--tail 0` starts with live entries only. Follow mode leaves the stack running when
-interrupted.
+and `--tail <count>` to bound retained history (`0` through `1000`, default `100`). `--service`
+accepts one capability name; it excludes supervisor and gateway entries, including their startup
+diagnostics. Omit it to include all retained sources. Retention is bounded to the newest 1000
+entries or 1 MiB, whichever is reached first.
+Add `--follow` (or `-f`) to continue with new entries; `--tail 0` starts with live entries only.
+Follow mode leaves the stack running when interrupted.
 
 The default text output is one `<timestamp> <service>/<stream>: <message>` line per entry.
 `--output-format json` returns one bounded object. A found stack has this shape, with the raw
@@ -104,9 +107,9 @@ When no default stack exists, JSON output is:
 }
 ```
 
-`--output-format stream-json` emits one `log-entry` event for each history or live entry, with
-the original message in `line`. For an absent default stack it emits the standard empty result
-envelope:
+`--output-format stream-json` emits one bounded result event for a finite read. With `--follow`,
+it emits one `log-entry` event for each history or live entry, with the original message in
+`line`. For an absent default stack it emits the standard empty result envelope:
 
 ```json
 {
@@ -120,8 +123,10 @@ envelope:
 }
 ```
 
-A found stack with no entries emits no events. The command is available only while
-`experimental.stack` is enabled.
+A found stack with no entries emits a result event for a finite stream-json read. Follow mode
+emits only log-entry events; a found stack with no retained entries emits no follow events, and a
+stopped stack exits successfully. The command is available only while `experimental.stack` is
+enabled.
 
 ## Data and configuration
 

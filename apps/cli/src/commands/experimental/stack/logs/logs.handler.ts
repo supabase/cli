@@ -32,9 +32,12 @@ const logsError = (
   error: StackDiscoveryError | OpenStackError | ApiStackLogsError,
 ): StackCommandLogsError => {
   const classification = Match.value(error).pipe(
-    Match.tag("StackNotFoundError", "InvalidStackIdentityError", () => ({
+    Match.tag("StackNotFoundError", () => ({
       reason: "flags" as const,
+      suggestion:
+        "Choose an existing stack with --stack or --stack-id, or omit both to use the current project.",
     })),
+    Match.tag("InvalidStackIdentityError", () => ({ reason: "flags" as const })),
     Match.tag("InvalidLogCursorError", () => ({ reason: "impossible-state" as const })),
     Match.tag("StackNotRunningError", () => ({
       reason: "lifecycle" as const,
@@ -116,7 +119,8 @@ export const stackLogs = Effect.fn("experimental.stack.logs")(function* (flags: 
         return yield* new StackCommandLogsError({
           reason: "flags",
           message: `No managed stack named "${flags.stack.value}" was found for this project.`,
-          suggestion: "Choose an existing --stack name or omit --stack for the current project.",
+          suggestion:
+            "Choose an existing stack with --stack or --stack-id, or omit both to use the current project.",
         });
       yield* output.success("No managed stack found for this context.", {
         found: false,
@@ -137,7 +141,7 @@ export const stackLogs = Effect.fn("experimental.stack.logs")(function* (flags: 
           })
         : Effect.forEach(entries, (entry) => output.raw(renderEntry(entry)), { discard: true });
     if (!flags.follow) {
-      if (output.format === "json") {
+      if (output.format === "json" || output.format === "stream-json") {
         yield* output.success("", { found: true, id: stack.id, ...batch });
       } else {
         yield* emitEntries("history", batch.entries);

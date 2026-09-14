@@ -201,6 +201,15 @@ describe("renderComputeLogLine", () => {
     expect(line).toBe(`${T}  kept`);
   });
 
+  it("strips C1 terminal sequences and controls", () => {
+    const line = renderComputeLogLine(
+      entry({ message: "safe\u009d0;title\u0007-\u009b2Ablue\u009d1;title\u009c\u0085tail" }),
+      { showStream: false, colorStream: PLAIN },
+    );
+
+    expect(line).toBe(`${T}  safe-bluetail`);
+  });
+
   it("strips a carriage return so a line cannot overwrite its own prefix", () => {
     const line = renderComputeLogLine(entry({ message: "harmless\r00:00:00  forged" }), {
       showStream: false,

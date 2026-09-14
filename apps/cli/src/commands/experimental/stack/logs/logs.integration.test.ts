@@ -5,11 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, Fiber, Layer, Option, Schema, Stream } from "effect";
+import { Deferred, Effect, Fiber, Layer, Option, Schema, Sink, Stdio, Stream } from "effect";
 import { CliError, CliOutput, Command } from "effect/unstable/cli";
 import {
   InvalidProjectRootError,
   StackIdSchema,
+  StackNotFoundError,
   StackOwnershipConflictError,
   StackUpgradeRequiredError,
 } from "@supabase/stack/effect";
@@ -36,8 +37,14 @@ import { stackLogs } from "./logs.handler.ts";
 import { StackCommandLogsError } from "./logs.errors.ts";
 import { stackLogsCommand } from "./logs.command.ts";
 import { textCliOutputFormatter } from "../../../../shared/output/text-formatter.ts";
+import { streamJsonOutputLayer } from "../../../../shared/output/output.layer.ts";
 
 const id = StackIdSchema.make("a".repeat(64));
+const streamResultSchema = Schema.Struct({
+  type: Schema.Literal("result"),
+  data: Schema.Unknown,
+  timestamp: Schema.String,
+});
 const entries: ReadonlyArray<StackLogEntry> = [
   {
     cursor: { opaque: "1" },
@@ -156,6 +163,25 @@ function setup(opts: {
   return { layer, out, calls };
 }
 
+function capturedStdio() {
+  const stdout: string[] = [];
+  const layer = Layer.succeed(
+    Stdio.Stdio,
+    Stdio.make({
+      args: Effect.succeed([]),
+      stdin: Stream.empty,
+      stdout: () =>
+        Sink.forEach((item: string | Uint8Array) =>
+          Effect.sync(() =>
+            stdout.push(typeof item === "string" ? item : new TextDecoder().decode(item)),
+          ),
+        ),
+      stderr: () => Sink.forEach(() => Effect.void),
+    }),
+  );
+  return { layer, stdout };
+}
+
 describe("experimental stack logs", () => {
   it.live("parses --service as a value-consuming flag", () => {
     let parsed: { service: Option.Option<string>; tail: number } | undefined;
@@ -180,38 +206,43 @@ describe("experimental stack logs", () => {
     );
   });
 
-  it.live("accepts zero tail with the follow alias and rejects out-of-range tails", () => {
-    let parsed: { tail: number; follow: boolean } | undefined;
-    const command = stackLogsCommand.pipe(
-      Command.withHandler((flags) =>
-        Effect.sync(() => {
-          parsed = { tail: flags.tail, follow: flags.follow };
-        }),
-      ),
-    );
-    const outputLayer = Layer.mergeAll(
-      BunServices.layer,
-      CliOutput.layer(textCliOutputFormatter()),
-    );
-    return Effect.gen(function* () {
-      yield* Command.runWith(command, { version: "0.0.0-test" })(["--tail", "0", "-f"]);
-      expect(parsed).toEqual({ tail: 0, follow: true });
-      const belowMinimum = yield* Command.runWith(command, { version: "0.0.0-test" })([
-        "--tail=-1",
-      ]).pipe(Effect.flip);
-      const aboveMaximum = yield* Command.runWith(command, { version: "0.0.0-test" })([
-        "--tail=10001",
-      ]).pipe(Effect.flip);
-      expect(belowMinimum).toBeInstanceOf(CliError.ShowHelp);
-      expect(aboveMaximum).toBeInstanceOf(CliError.ShowHelp);
-      expect(parseErrorMessages(belowMinimum)).toContain(
-        'Invalid value for flag --tail: "-1". Expected --tail between 0 and 10000, got -1',
+  it.live(
+    "accepts zero and maximum tail with the follow alias and rejects out-of-range tails",
+    () => {
+      let parsed: { tail: number; follow: boolean } | undefined;
+      const command = stackLogsCommand.pipe(
+        Command.withHandler((flags) =>
+          Effect.sync(() => {
+            parsed = { tail: flags.tail, follow: flags.follow };
+          }),
+        ),
       );
-      expect(parseErrorMessages(aboveMaximum)).toContain(
-        'Invalid value for flag --tail: "10001". Expected --tail between 0 and 10000, got 10001',
+      const outputLayer = Layer.mergeAll(
+        BunServices.layer,
+        CliOutput.layer(textCliOutputFormatter()),
       );
-    }).pipe(Effect.provide(outputLayer));
-  });
+      return Effect.gen(function* () {
+        yield* Command.runWith(command, { version: "0.0.0-test" })(["--tail", "0", "-f"]);
+        expect(parsed).toEqual({ tail: 0, follow: true });
+        yield* Command.runWith(command, { version: "0.0.0-test" })(["--tail", "1000"]);
+        expect(parsed).toEqual({ tail: 1000, follow: false });
+        const belowMinimum = yield* Command.runWith(command, { version: "0.0.0-test" })([
+          "--tail=-1",
+        ]).pipe(Effect.flip);
+        const aboveMaximum = yield* Command.runWith(command, { version: "0.0.0-test" })([
+          "--tail=1001",
+        ]).pipe(Effect.flip);
+        expect(belowMinimum).toBeInstanceOf(CliError.ShowHelp);
+        expect(aboveMaximum).toBeInstanceOf(CliError.ShowHelp);
+        expect(parseErrorMessages(belowMinimum)).toContain(
+          'Invalid value for flag --tail: "-1". Expected --tail between 0 and 1000, got -1',
+        );
+        expect(parseErrorMessages(aboveMaximum)).toContain(
+          'Invalid value for flag --tail: "1001". Expected --tail between 0 and 1000, got 1001',
+        );
+      }).pipe(Effect.provide(outputLayer));
+    },
+  );
 
   it.live("reads a finite tail and passes the service filter without starting or stopping", () => {
     const root = mkdtempSync(join(tmpdir(), "supabase-stack-logs-"));
@@ -230,8 +261,9 @@ describe("experimental stack logs", () => {
 
   it.live("sanitizes text messages while preserving structured log content", () => {
     const root = mkdtempSync(join(tmpdir(), "supabase-stack-logs-sanitize-"));
-    const message = "safe\u001b]0;title\u0007\u001b[31m-red\u001b[0m\tcolumn\rnext\u0000\u000bend";
-    const sanitized = "safe-red\tcolumnnextend";
+    const message =
+      "safe\u009d0;bel\u0007-red\u009d0;c1\u009c-blue\u009d0;esc\u001b\\\u009b38:2::255:0:0m-color\u009b0m\tcolumn\rnext\u0000\u000b\u0085end";
+    const sanitized = "safe-red-blue-color\tcolumnnextend";
     const setupResult = setup({
       root,
       logs: () =>
@@ -258,9 +290,10 @@ describe("experimental stack logs", () => {
       yield* stackLogs(flags()).pipe(
         Effect.provide(Layer.mergeAll(setupResult.layer, structured.layer)),
       );
-      expect(structured.events).toEqual([
-        expect.objectContaining({ type: "log-entry", line: message, source: "history" }),
-      ]);
+      const streamResult = structured.messages.find((entry) => entry.type === "success")?.data;
+      expect(streamResult).toEqual(
+        expect.objectContaining({ entries: [expect.objectContaining({ message })] }),
+      );
     }).pipe(Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))));
   });
 
@@ -293,6 +326,28 @@ describe("experimental stack logs", () => {
           message: "No managed stack found for this context.",
         }),
       );
+      const absentStream = capturedStdio();
+      yield* stackLogs(flags()).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            absent.layer,
+            absentStream.layer,
+            streamJsonOutputLayer.pipe(Layer.provide(absentStream.layer)),
+          ),
+        ),
+      );
+      const absentResult = yield* Schema.decodeEffect(Schema.fromJsonString(streamResultSchema))(
+        absentStream.stdout.join(""),
+      );
+      expect(absentResult).toEqual({
+        type: "result",
+        data: {
+          found: false,
+          entries: [],
+          message: "No managed stack found for this context.",
+        },
+        timestamp: expect.any(String),
+      });
       const failure = yield* stackLogs(flags({ stack: Option.some("missing") })).pipe(
         Effect.flip,
         Effect.provide(named.layer),
@@ -377,7 +432,7 @@ describe("experimental stack logs", () => {
     );
   });
 
-  it.live("emits bounded stream-json log-entry events", () => {
+  it.live("emits one bounded stream-json result", () => {
     const root = mkdtempSync(join(tmpdir(), "supabase-stack-logs-stream-"));
     const setupResult = setup({
       root,
@@ -388,19 +443,33 @@ describe("experimental stack logs", () => {
           running: false,
         }),
     });
-    const output = mockOutput({ format: "stream-json" });
+    const output = capturedStdio();
     return Effect.gen(function* () {
       yield* stackLogs(flags({ tail: 2 }));
-      expect(output.events).toEqual([
-        expect.objectContaining({
-          type: "log-entry",
-          line: internalEntry.message,
-          stream: "internal",
-          source: "history",
-        }),
-      ]);
+      const result = yield* Schema.decodeEffect(Schema.fromJsonString(streamResultSchema))(
+        output.stdout.join(""),
+      );
+      expect(result).toEqual({
+        type: "result",
+        data: {
+          found: true,
+          id,
+          entries: [internalEntry],
+          cursor: { opaque: "internal-1" },
+          running: false,
+          message: "",
+        },
+        timestamp: expect.any(String),
+      });
+      expect(output.stdout.join("")).not.toContain('"type":"log-entry"');
     }).pipe(
-      Effect.provide(Layer.mergeAll(setupResult.layer, output.layer)),
+      Effect.provide(
+        Layer.mergeAll(
+          setupResult.layer,
+          output.layer,
+          streamJsonOutputLayer.pipe(Layer.provide(output.layer)),
+        ),
+      ),
       Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
     );
   });
@@ -541,6 +610,23 @@ describe("experimental stack logs", () => {
           rmSync(upgradeRoot, { recursive: true, force: true });
         }),
       ),
+    );
+  });
+
+  it.live("suggests an explicit target when an addressed stack is missing", () => {
+    const root = mkdtempSync(join(tmpdir(), "supabase-stack-logs-open-missing-"));
+    const setupResult = setup({
+      root,
+      openFailure: new StackNotFoundError({ message: "Stack state was not found" }),
+    });
+    return Effect.gen(function* () {
+      const failure = yield* stackLogs(flags({ stackId: Option.some(id) })).pipe(Effect.flip);
+      expect(failure.suggestion).toBe(
+        "Choose an existing stack with --stack or --stack-id, or omit both to use the current project.",
+      );
+    }).pipe(
+      Effect.provide(setupResult.layer),
+      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
     );
   });
 });

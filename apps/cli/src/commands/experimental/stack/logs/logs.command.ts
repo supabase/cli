@@ -5,7 +5,7 @@ import { withJsonErrorHandling } from "../../../../shared/output/json-error-hand
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { stackLogs } from "./logs.handler.ts";
 
-const MAX_TAIL = 10_000;
+const MAX_TAIL = 1000;
 
 const config = {
   stack: Flag.string("stack").pipe(
@@ -19,7 +19,9 @@ const config = {
     Flag.optional,
   ),
   service: Flag.choice("service", CAPABILITY_NAMES).pipe(
-    Flag.withDescription("Limit logs to one stack service."),
+    Flag.withDescription(
+      "Limit logs to one stack service; omit this flag to include supervisor and gateway diagnostics.",
+    ),
     Flag.optional,
   ),
   tail: Flag.integer("tail").pipe(

@@ -15,14 +15,14 @@ files, stack state, credentials, or runtime resources.
 ## Output
 
 Text mode writes `<timestamp> <service>/<stream>: <message>` followed by a newline for each
-retained or followed entry. Terminal escape sequences and C0 controls are removed from text
-messages while tabs and newlines are preserved. JSON mode writes one bounded result containing
-`message`, `found`, and, when a stack is found, `id`, `entries`, `cursor`, and `running`; log
-entry `message` values are preserved. `--follow` is rejected with `--output-format json`; use
-the default text mode or `--output-format stream-json`, which emits one `log-entry` event per
-entry. Each event has `type: "log-entry"`, `timestamp`, `service`, `stream`, `line`, and
-`source`; `line` preserves the original message, `stream` is `stdout`, `stderr`, or `internal`,
-and `source` is `history` or `live`.
+retained or followed entry. Terminal escape sequences and C0/C1 controls are removed from text
+messages while tabs and newlines are preserved. JSON and bounded stream-json modes each write
+one success/result payload containing `message`, `found`, and `entries`; when a stack is found,
+it also contains `id`, `cursor`, and `running`. Log entry `message` values are preserved. `--follow` is
+rejected with `--output-format json`; follow stream-json emits one `log-entry` event per entry.
+Each event has `type: "log-entry"`, `timestamp`, `service`, `stream`, `line`, and `source`;
+`line` preserves the original message, `stream` is `stdout`, `stderr`, or `internal`, and
+`source` is `history` or `live`.
 
 A found stack's bounded JSON result is shaped as follows (the entry message is raw):
 
@@ -72,9 +72,16 @@ is the standard result envelope:
 }
 ```
 
-A found stack emits only its `log-entry` events, so an empty stack emits no events. A missing
-named stack fails with status `1`. The legacy `-o`/`--output` flag is rejected; use
+A finite stream-json read emits one result event for a found stack, including when its entries
+are empty. Follow mode emits only `log-entry` events; a found stack with no retained entries
+emits no follow events, and a stopped stack exits successfully. A missing named stack fails with
+status `1`. The legacy `-o`/`--output` flag is rejected; use
 `--output-format`.
+
+`--service` accepts one capability name and excludes supervisor and gateway entries, including
+their startup diagnostics. Omit it to include all sources. Retained logs are bounded to the
+newest 1000 entries or 1 MiB, whichever is reached first; `--tail` further limits the returned
+entries.
 
 Successful reads, including an absent default stack and a stopped stack, exit with status `0`.
 Invalid flags, missing named stacks, and stack read failures exit with status `1`. Interrupting

@@ -89,7 +89,7 @@ export const computeLogsCommand = Command.make("logs", config).pipe(
     computeLogs(flags).pipe(
       // `config` as well as `flags`: `--kind` is a choice flag, and the wrapper
       // treats a command's own declared choices as safe to log verbatim.
-      withCommandTelemetry({ flags, config }),
+      withCommandTelemetry({ flags, config, aliases: { f: "follow" } }),
       withJsonErrorHandling,
     ),
   ),
