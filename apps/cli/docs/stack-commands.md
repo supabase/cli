@@ -25,7 +25,8 @@ supabase stack status --env --output-format json
 Each example requires the stack backend flag described below. `--env` exports the connection URLs
 and credentials of the running stack; text mode emits dotenv assignments, and JSON
 or stream-JSON mode emits a variable map. Add `--output-format text` for an explicit dotenv file
-regardless of automatic agent output detection; this is dotenv data, not a shell script. Only this
+regardless of automatic agent output detection; this is dotenv data, not a shell script, and values
+are quoted so that sourcing the file performs no shell expansion. Only this
 explicit export reveals credentials. Ordinary status remains free of secrets. `--override-name`
 accepts repeated or comma-separated `EXPORTED_VARIABLE=NAME` entries, requires `--env`, and rejects
 unknown variables, invalid names, and collisions. API credentials are omitted when Auth is disabled.

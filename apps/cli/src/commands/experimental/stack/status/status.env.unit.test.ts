@@ -10,7 +10,6 @@ describe("stack dotenv encoding", () => {
         TOKEN: "000123",
         SECRET: "literal\\n$HOME#hash=equals\nnew line",
         QUOTED: "it's a secret",
-        MIXED: "it's a `secret`",
         EMPTY: "",
       };
       const encoded = yield* encodeStackEnv(values);
@@ -18,9 +17,23 @@ describe("stack dotenv encoding", () => {
     }),
   );
 
-  it.effect("fails without exposing values that dotenv cannot represent losslessly", () =>
+  it.effect("quotes so that sourcing the file performs no shell expansion", () =>
     Effect.gen(function* () {
-      for (const value of ["all'three`quotes\"", "both'and`quotes\\n", "carriage\rreturn"]) {
+      const encoded = yield* encodeStackEnv({ QUOTED: "it's a secret", PLAIN: "plain$(value)" });
+      expect(encoded).toBe(`PLAIN='plain$(value)'\nQUOTED="it's a secret"\n`);
+    }),
+  );
+
+  it.effect("fails without exposing values that cannot be written safely", () =>
+    Effect.gen(function* () {
+      for (const value of [
+        "it's $(whoami)",
+        "it's a `secret`",
+        "it's !history",
+        "it's a \\n escape",
+        "all'three`quotes\"",
+        "carriage\rreturn",
+      ]) {
         const error = yield* encodeStackEnv({ SECRET: value }).pipe(Effect.flip);
         expect(error.reason).toBe("output");
       }

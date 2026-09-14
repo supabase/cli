@@ -85,12 +85,15 @@ export const stackEnvValues = (
 
 const dotenvQuote = (value: string): string | undefined => {
   if (!value.includes("'")) return "'";
-  if (!value.includes('"') && !value.includes("\\")) return '"';
-  if (!value.includes("`")) return "`";
+  if (!/["\\$`!]/u.test(value)) return '"';
   return undefined;
 };
 
-/** dotenv only expands `\n`/`\r` escapes inside double quotes, so a value with a backslash skips double quotes to keep its escape sequences literal. */
+/**
+ * Quotes so that both dotenv parsers and a shell that sources the file read every
+ * value literally: double quotes are used only without `"`, `\`, `$`, backtick, or
+ * `!`, and backticks are never a delimiter.
+ */
 export const encodeStackEnv = (values: Readonly<Record<string, string>>) =>
   Effect.forEach(
     Object.entries(values).sort(([left], [right]) => left.localeCompare(right)),
@@ -101,7 +104,7 @@ export const encodeStackEnv = (values: Readonly<Record<string, string>>) =>
           new StackCommandStatusError({
             reason: "output",
             message:
-              "A credential cannot be represented losslessly as dotenv. Use --env --output-format json.",
+              "A credential cannot be written safely as dotenv. Use --env --output-format json.",
           }),
         );
       return Effect.succeed(`${name}=${quote}${value}${quote}`);

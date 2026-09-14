@@ -38,10 +38,10 @@ top-level fields.
 `--env` opens the target stack, requires it to be running, and exports its
 connection URLs and credentials instead of the ordinary identity/drift report.
 It does not load or compare project configuration. Text output emits dotenv
-assignments, quoting each value with single quotes, double quotes, or
-backticks, choosing the first that round-trips; a value containing all three
-quote kinds, or a backslash together with both a single quote and a backtick,
-or a carriage return, fails the command with a pointer to
+assignments, quoting each value with single quotes, or with double quotes when
+the value contains a single quote but none of `"`, `\`, `$`, backtick, or `!`,
+so sourcing the file in a shell performs no expansion. Any other value, or one
+containing a carriage return, fails the command with a pointer to
 `--output-format json`. JSON and stream-JSON output, including automatic agent
 detection, emit a plain variable map under a successful result. As described
 above, the legacy `-o env` value is rejected with guidance to use `--env`.
