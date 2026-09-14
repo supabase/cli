@@ -18,7 +18,7 @@ export class EdgeRuntimeContainerCrashedError extends Data.TaggedError(
   readonly exitCode: number;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.unknown;
+    return actionability.runtimeCrash;
   }
 }
 

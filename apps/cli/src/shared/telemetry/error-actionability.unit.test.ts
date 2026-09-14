@@ -39,6 +39,14 @@ class PlainDeclaredError extends Error {
 
 class UndeclaredError extends Data.TaggedError("UndeclaredError")<{ readonly message: string }> {}
 
+class RuntimeCrashError extends Data.TaggedError("RuntimeCrashError")<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.runtimeCrash;
+  }
+}
+
 function externalError(
   _tag: string,
   fields: Record<string, unknown> = {},
@@ -200,6 +208,18 @@ describe("classifyCliErrorActionability", () => {
         new BootstrapHealthError({ message: "failed", transport: true }),
       ).error_category,
     ).toBe("network");
+  });
+  it("keeps a supervised runtime's own crash as an internal bug", () => {
+    // `runtime_crash` is a newer pairing than `panic`/`impossible_state`;
+    // `sanitizeKindCategory` must accept it, or the classification silently
+    // degrades to `unknown` and the failure stops counting as ours.
+    expect(classifyCliErrorActionability(new RuntimeCrashError({ message: "private" }))).toEqual({
+      error_kind: "internal_bug",
+      error_category: "runtime_crash",
+      error_fingerprint: "tag:RuntimeCrashError",
+      has_suggestion: true,
+      suggestion_type: "rerun_debug",
+    });
   });
 });
 

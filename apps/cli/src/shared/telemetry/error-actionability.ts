@@ -41,6 +41,7 @@ export const CliErrorCategory = {
   Cancelled: "cancelled",
   Panic: "panic",
   ImpossibleState: "impossible_state",
+  RuntimeCrash: "runtime_crash",
   Unknown: "unknown",
 } as const;
 
@@ -142,7 +143,8 @@ type CliErrorKindCategory =
       readonly error_kind: typeof CliErrorKind.InternalBug;
       readonly error_category:
         | typeof CliErrorCategory.Panic
-        | typeof CliErrorCategory.ImpossibleState;
+        | typeof CliErrorCategory.ImpossibleState
+        | typeof CliErrorCategory.RuntimeCrash;
     }
   | {
       readonly error_kind: typeof CliErrorKind.ExternalService;
@@ -382,6 +384,19 @@ export const actionability = {
     has_suggestion: true,
     suggestion_type: CliSuggestionType.RerunDebug,
   },
+  /**
+   * A runtime the CLI launched and supervises died on its own — the process
+   * itself failed rather than the CLI code around it, so neither
+   * {@link actionability.internalPanic} nor {@link actionability.impossibleState}
+   * describes it. Still our bug: the user did nothing wrong and has nothing to
+   * fix, so it belongs in the internal-bug counter-metric rather than `unknown`.
+   */
+  runtimeCrash: {
+    error_kind: CliErrorKind.InternalBug,
+    error_category: CliErrorCategory.RuntimeCrash,
+    has_suggestion: true,
+    suggestion_type: CliSuggestionType.RerunDebug,
+  },
   unknown: {
     error_kind: CliErrorKind.Unknown,
     error_category: CliErrorCategory.Unknown,
@@ -472,7 +487,9 @@ function sanitizeKindCategory(kind: unknown, category: unknown): CliErrorKindCat
   }
   if (
     kind === CliErrorKind.InternalBug &&
-    (category === CliErrorCategory.Panic || category === CliErrorCategory.ImpossibleState)
+    (category === CliErrorCategory.Panic ||
+      category === CliErrorCategory.ImpossibleState ||
+      category === CliErrorCategory.RuntimeCrash)
   ) {
     return { error_kind: kind, error_category: category };
   }

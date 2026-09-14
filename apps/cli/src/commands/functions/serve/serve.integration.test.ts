@@ -2135,6 +2135,9 @@ describe("functions serve integration", () => {
           if (error instanceof EdgeRuntimeContainerCrashedError) {
             expect(error.exitCode).toBe(1);
             expect(error.message).toContain("error running container: exit 1");
+            // A runtime we launched died on its own: our bug, not the user's,
+            // and specifically not `unknown`.
+            expect(error[ErrorActionabilityId]).toEqual(actionability.runtimeCrash);
           }
         });
       },
