@@ -38,9 +38,13 @@ The stack backend rejects every explicit legacy `-o/--output` value: `env`, `pre
 
 `supabase stack list` reads the global managed-stack registry and reports each readable stack's
 project, branch, runtime, and desired lifecycle. Corrupt or unsupported registry entries are
-included as `Unreadable stack (<id>)` records with their error reasons, and do not hide readable
-entries. Use `--output-format json` or `--output-format stream-json` for the complete structured
-inventory.
+included in a diagnostic section with their full IDs and error reasons, and do not hide readable
+entries. The text table shortens readable IDs for scanning; use `--output-format json` or
+`--output-format stream-json` for the complete structured inventory with full IDs.
+
+Listing is global and has no checkout filter. Desired lifecycle is persisted intent, so `running`
+does not prove a live owner exists. Use `supabase stack status` for live state. Registry directories
+without a state file are ignored as remnants.
 
 ## Selecting the top-level commands
 

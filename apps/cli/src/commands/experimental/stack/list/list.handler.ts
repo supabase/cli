@@ -7,6 +7,7 @@ import {
 } from "@supabase/stack/effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { OutputFlag } from "../../../../command-internal/global-flags.ts";
+import { renderGlamourTable } from "../../../../output/glamour-table.ts";
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
 import { StackApi, rejectStackOutput } from "../stack.shared.ts";
 import { StackCommandListError } from "./list.errors.ts";
@@ -60,20 +61,35 @@ const renderRuntime = (runtime: StackRuntime): string =>
     Match.exhaustive,
   );
 
+const compactId = (id: string): string => id.slice(0, 8);
+
 const render = (stacks: ReadonlyArray<StackEntry>): string => {
   if (stacks.length === 0) return "No managed stacks found.\n";
-  const lines = stacks.flatMap((stack, index) => [
-    ...(index === 0 ? [] : [""]),
-    ...(stack.readable
-      ? [
-          `${stack.name} (${stack.id})`,
-          `  Project: ${stack.project_root}`,
-          `  Branch: ${stack.branch_context}`,
-          `  Runtime: ${renderRuntime(stack.runtime)}`,
-          `  Desired lifecycle: ${stack.desired_lifecycle}`,
-        ]
-      : [`Unreadable stack (${stack.id})`, `  Error: ${stack.error.message}`]),
-  ]);
+  const readable = stacks.filter((stack): stack is ReadableEntry => stack.readable);
+  const unreadable = stacks.filter((stack): stack is UnreadableEntry => !stack.readable);
+  const lines: string[] = [];
+  if (readable.length > 0) {
+    lines.push(
+      renderGlamourTable(
+        ["NAME", "PROJECT", "BRANCH", "RUNTIME", "DESIRED", "ID"],
+        readable.map((stack) => [
+          stack.name,
+          stack.project_root,
+          stack.branch_context,
+          renderRuntime(stack.runtime),
+          stack.desired_lifecycle,
+          compactId(stack.id),
+        ]),
+      ).trimEnd(),
+    );
+  }
+  if (unreadable.length > 0) {
+    if (lines.length > 0) lines.push("");
+    lines.push("Unreadable stacks:");
+    for (const stack of unreadable) {
+      lines.push(`  ${stack.error.code}: ${stack.error.message}`);
+    }
+  }
   return `${lines.join("\n")}\n`;
 };
 

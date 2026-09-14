@@ -1,9 +1,20 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer, Option } from "effect";
 import {
+  ConfigProvider,
+  Effect,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Schema,
+  Sink,
+  Stdio,
+  Stream,
+} from "effect";
+import {
+  createStack,
   StackIdSchema,
-  StackStateFormatUnsupportedError,
   StackStateInvalidError,
   type StackDescriptor,
   type StackDiscoveryIssue,
@@ -11,7 +22,8 @@ import {
 import { OutputFlag } from "../../../../command-internal/global-flags.ts";
 import { mockTelemetryStateTracked } from "../../../../../tests/helpers/command-mocks.ts";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
-import { StackApi } from "../stack.shared.ts";
+import { jsonOutputLayer, streamJsonOutputLayer } from "../../../../shared/output/output.layer.ts";
+import { StackApi, stackApiLayer } from "../stack.shared.ts";
 import { stackList } from "./list.handler.ts";
 import { StackCommandListError } from "./list.errors.ts";
 
@@ -64,23 +76,30 @@ describe("stack list", () => {
   it.live("sorts persisted stacks and includes stopped and unconfigured lifecycles", () => {
     const fixture = setup({
       stacks: [
-        descriptor("e", "/work/z", "zeta", "stopped"),
+        descriptor("e", "/work/z", "aaa", "stopped"),
         descriptor("a", "/work/a", "beta", "running"),
         descriptor("c", "/work/a", "alpha", "unconfigured"),
         descriptor("b", "/work/a", "alpha", "stopped"),
       ],
     });
     return stackList().pipe(
-      Effect.tap(() =>
+      Effect.tap((entries) =>
         Effect.sync(() => {
+          expect(entries.map(({ id }) => id)).toEqual(
+            ["b", "c", "a", "e"].map((id) => id.repeat(64)),
+          );
+          expect(fixture.output.stdoutText.indexOf("beta")).toBeLessThan(
+            fixture.output.stdoutText.indexOf("aaa"),
+          );
           expect(fixture.output.stdoutText.indexOf("alpha")).toBeLessThan(
             fixture.output.stdoutText.indexOf("beta"),
           );
-          expect(fixture.output.stdoutText.indexOf("alpha (bbbb")).toBeLessThan(
-            fixture.output.stdoutText.indexOf("alpha (cccc"),
+          expect(fixture.output.stdoutText.indexOf("bbbbbbbb")).toBeLessThan(
+            fixture.output.stdoutText.indexOf("cccccccc"),
           );
-          expect(fixture.output.stdoutText).toContain("Desired lifecycle: stopped");
-          expect(fixture.output.stdoutText).toContain("Desired lifecycle: unconfigured");
+          expect(fixture.output.stdoutText).toContain("DESIRED");
+          expect(fixture.output.stdoutText).toContain("stopped");
+          expect(fixture.output.stdoutText).toContain("unconfigured");
           expect(fixture.telemetry.flushed).toBe(true);
         }),
       ),
@@ -98,110 +117,155 @@ describe("stack list", () => {
     );
   });
 
-  it.live("renders every healthy stack and every discovery issue", () => {
-    const healthy = descriptor("a", "/work", "main", "running");
+  it.live("lists a real registry exhaustively in text, JSON, and NDJSON", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.makeTempDirectoryScoped({ prefix: "stack-list-registry-" });
+        const project = path.join(home, "project");
+        yield* fs.makeDirectory(project);
+        const telemetry = mockTelemetryStateTracked();
+        yield* Effect.gen(function* () {
+          const healthy = yield* createStack({
+            projectRoot: project,
+            name: "healthy",
+            runtime: { kind: "native" },
+          });
+          const registry = path.join(home, "managed", "stacks");
+          const corrupt = "b".repeat(64);
+          const unsupported = "c".repeat(64);
+          const remnant = "d".repeat(64);
+          for (const id of [corrupt, unsupported, remnant, "not-a-stack-id"]) {
+            yield* fs.makeDirectory(path.join(registry, id));
+          }
+          yield* fs.writeFileString(path.join(registry, corrupt, "state.json"), "{corrupt");
+          yield* fs.writeFileString(
+            path.join(registry, unsupported, "state.json"),
+            '{"format":"unsupported-example"}',
+          );
+          const text = mockOutput();
+          const entries = yield* stackList().pipe(Effect.provide(text.layer));
+          expect(entries.map(({ id }) => id)).toEqual([healthy.id, corrupt, unsupported]);
+          expect(text.stdoutText).toContain("NAME");
+          expect(text.stdoutText).toContain("healthy");
+          expect(text.stdoutText).toContain("unconfigured");
+          expect(text.stdoutText).toContain(healthy.id.slice(0, 8));
+          expect(text.stdoutText).not.toContain(healthy.id);
+          expect(text.stdoutText).toContain("Unreadable stacks:");
+          for (const id of [corrupt, unsupported]) {
+            expect(text.stdoutText.split(id)).toHaveLength(2);
+          }
+          expect(text.stdoutText).toContain("Unable to parse state document");
+          expect(text.stdoutText).toContain("Unsupported stack state format");
+          expect(text.stdoutText).not.toContain(remnant);
+          expect(entries).toEqual([
+            expect.objectContaining({
+              id: healthy.id,
+              readable: true,
+              name: "healthy",
+              runtime: { kind: "native" },
+              desired_lifecycle: "unconfigured",
+            }),
+            {
+              id: corrupt,
+              readable: false,
+              error: {
+                code: "StackStateInvalidError",
+                message: expect.stringContaining(`Failed to read managed stack ${corrupt}:`),
+              },
+            },
+            {
+              id: unsupported,
+              readable: false,
+              error: {
+                code: "StackStateFormatUnsupportedError",
+                message: expect.stringContaining(`Failed to read managed stack ${unsupported}:`),
+              },
+            },
+          ]);
+          for (const format of ["json", "stream-json"] as const) {
+            const stdout: string[] = [];
+            const stderr: string[] = [];
+            const capture = (target: string[]) =>
+              Sink.forEach((chunk: string | Uint8Array) =>
+                Effect.sync(() => {
+                  target.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
+                }),
+              );
+            const stdio = Layer.succeed(
+              Stdio.Stdio,
+              Stdio.make({
+                args: Effect.succeed([]),
+                stdin: Stream.empty,
+                stdout: () => capture(stdout),
+                stderr: () => capture(stderr),
+              }),
+            );
+            const output = (format === "json" ? jsonOutputLayer : streamJsonOutputLayer).pipe(
+              Layer.provide(stdio),
+            );
+            yield* stackList().pipe(Effect.provide(output));
+            const lines = stdout.join("").trim().split("\n");
+            expect(lines).toHaveLength(1);
+            const result = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Json))(
+              lines[0],
+            );
+            if (format === "json") expect(result).toEqual({ stacks: entries, message: "" });
+            else
+              expect(result).toEqual({
+                type: "result",
+                timestamp: expect.any(String),
+                data: { stacks: entries, message: "" },
+              });
+            expect(stderr).toEqual([]);
+          }
+          yield* fs.remove(path.join(registry, healthy.id), { recursive: true });
+          const unreadableText = mockOutput();
+          const unreadable = yield* stackList().pipe(Effect.provide(unreadableText.layer));
+          expect(unreadable.map(({ id }) => id)).toEqual([corrupt, unsupported]);
+          expect(unreadableText.stdoutText).not.toContain("NAME");
+          expect(unreadableText.stdoutText).not.toContain("No managed stacks found.");
+          expect(telemetry.flushed).toBe(true);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              stackApiLayer,
+              telemetry.layer,
+              ConfigProvider.layer(ConfigProvider.fromUnknown({ SUPABASE_HOME: home })),
+            ),
+          ),
+        );
+      }),
+    ).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("orders unreadable IDs after readable stacks regardless of discovery order", () => {
+    const healthy = descriptor("f", "/work", "healthy", "stopped");
     const fixture = setup({
       stacks: [healthy],
-      errors: [
-        {
-          id: StackIdSchema.make("d".repeat(64)),
-          error: new StackStateInvalidError({ message: "corrupt state" }),
-        },
-        {
-          id: StackIdSchema.make("c".repeat(64)),
-          error: new StackStateFormatUnsupportedError({ message: "unsupported format" }),
-        },
-      ],
-    });
-    return stackList().pipe(
-      Effect.tap(() =>
-        Effect.sync(() => {
-          expect(fixture.output.stdoutText).toContain("main");
-          expect(fixture.output.stdoutText).toContain(`Unreadable stack (${"c".repeat(64)})`);
-          expect(fixture.output.stdoutText).toContain(`Unreadable stack (${"d".repeat(64)})`);
-          expect(fixture.output.stdoutText).toContain("corrupt state");
-          expect(fixture.output.stdoutText).toContain("unsupported format");
-          expect(fixture.output.stdoutText.indexOf("main")).toBeLessThan(
-            fixture.output.stdoutText.indexOf(`Unreadable stack (${"c".repeat(64)})`),
-          );
-          expect(
-            fixture.output.stdoutText.indexOf(`Unreadable stack (${"c".repeat(64)})`),
-          ).toBeLessThan(fixture.output.stdoutText.indexOf(`Unreadable stack (${"d".repeat(64)})`));
-          expect(fixture.telemetry.flushed).toBe(true);
-        }),
-      ),
-      Effect.provide(fixture.layer),
-    );
-  });
-
-  it.live("reports only unreadable stacks without inventing metadata", () => {
-    const first = StackIdSchema.make("b".repeat(64));
-    const second = StackIdSchema.make("a".repeat(64));
-    const fixture = setup({
-      errors: [
-        { id: first, error: new StackStateInvalidError({ message: "bad state" }) },
-        { id: second, error: new StackStateFormatUnsupportedError({ message: "bad format" }) },
-      ],
-    });
-    return stackList().pipe(
-      Effect.tap(() =>
-        Effect.sync(() => {
-          expect(fixture.output.stdoutText).toContain(`Unreadable stack (${second})`);
-          expect(fixture.output.stdoutText).toContain(`Unreadable stack (${first})`);
-          expect(fixture.output.stdoutText.indexOf(`Unreadable stack (${second})`)).toBeLessThan(
-            fixture.output.stdoutText.indexOf(`Unreadable stack (${first})`),
-          );
-          expect(fixture.output.stdoutText).not.toContain("Project:");
-          expect(fixture.output.stdoutText).not.toContain("No managed stacks found.");
-        }),
-      ),
-      Effect.provide(fixture.layer),
-    );
-  });
-
-  it.live("emits the complete discriminated inventory in json and stream-json", () =>
-    Effect.forEach(["json", "stream-json"] as const, (outputFormat) => {
-      const healthy = descriptor("a", "/work", "main", "running");
-      const issue = {
-        id: StackIdSchema.make("b".repeat(64)),
-        error: new StackStateInvalidError({ message: "corrupt state" }),
-      };
-      const fixture = setup({ outputFormat, stacks: [healthy], errors: [issue] });
-      return stackList().pipe(
-        Effect.tap(() =>
-          Effect.sync(() => {
-            expect(fixture.output.messages).toEqual(
-              expect.arrayContaining([
-                expect.objectContaining({
-                  type: "success",
-                  data: {
-                    stacks: [
-                      {
-                        id: healthy.id,
-                        readable: true,
-                        project_root: healthy.projectRoot,
-                        name: healthy.name,
-                        branch_context: healthy.branchContext,
-                        runtime: healthy.runtime,
-                        desired_lifecycle: healthy.desiredLifecycle,
-                      },
-                      {
-                        id: issue.id,
-                        readable: false,
-                        error: { code: "StackStateInvalidError", message: "corrupt state" },
-                      },
-                    ],
-                  },
-                }),
-              ]),
-            );
-            expect(fixture.telemetry.flushed).toBe(true);
+      errors: ["c", "b"].map((prefix) => {
+        const id = StackIdSchema.make(prefix.repeat(64));
+        return {
+          id,
+          error: new StackStateInvalidError({
+            message: `Failed to read managed stack ${id}: corrupt state`,
           }),
-        ),
-        Effect.provide(fixture.layer),
-      );
-    }),
-  );
+        };
+      }),
+    });
+    return stackList().pipe(
+      Effect.tap((entries) =>
+        Effect.sync(() => {
+          expect(entries.map(({ id }) => id)).toEqual([healthy.id, "b".repeat(64), "c".repeat(64)]);
+          expect(fixture.output.stdoutText.indexOf("b".repeat(64))).toBeLessThan(
+            fixture.output.stdoutText.indexOf("c".repeat(64)),
+          );
+        }),
+      ),
+      Effect.provide(fixture.layer),
+    );
+  });
 
   it.live("fails registry discovery without emitting a partial result", () => {
     const fixture = setup({
@@ -211,6 +275,8 @@ describe("stack list", () => {
       Effect.flip,
       Effect.tap((error) =>
         Effect.sync(() => {
+          expect(error).toBeInstanceOf(StackCommandListError);
+          expect(error.reason).toBe("invalid-config");
           expect(error.message).toContain("registry unavailable");
           expect(fixture.output.stdoutText).toBe("");
           expect(fixture.output.messages).toHaveLength(0);

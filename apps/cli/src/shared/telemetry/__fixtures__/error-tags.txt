@@ -232,6 +232,7 @@ EncryptionUnexpectedStatusError
 ExperimentalFeatureFlagError
 ExperimentalRequiredError
 ExperimentalStackDestroyError
+ExperimentalStackListError
 ExperimentalStackStartError
 ExperimentalStackStatusError
 ExperimentalStackStopError
@@ -302,7 +303,6 @@ InvalidRemoteProjectIdError
 InvalidSecretPairError
 InvalidTokenError
 KongReloadError
-LegacyExperimentalStackListError
 LinkApiKeysNetworkError
 LinkAuthTokenError
 LinkBranchListNetworkError

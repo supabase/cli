@@ -7,15 +7,15 @@ lifecycle.
 
 ## Files Read
 
-| Path                                                                  | Format          | When                                                                                                                                                                                                                          |
-| --------------------------------------------------------------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml` or `config.json`                     | TOML or JSON    | During the `experimental.stack` family gate when `SUPABASE_EXPERIMENTAL_STACK` is unset or empty; the nearest project is discovered from the default workdir, while explicit `--workdir`/`SUPABASE_WORKDIR` is used as given. |
-| `<SUPABASE_HOME or ~/.supabase>/profile`                              | plain text      | By shared `CommandSettings` when `--profile` and `SUPABASE_PROFILE` are unset; an empty or missing file selects `supabase`.                                                                                                   |
-| Value of `--profile`, `SUPABASE_PROFILE`, or persisted profile        | YAML profile    | By shared `CommandSettings` when the selected profile is not a built-in name; an unreadable, malformed, or invalid explicit profile fails the command.                                                                        |
-| `<workdir>/supabase/config.toml`                                      | existence probe | By shared `CommandSettings` while resolving a default workdir from its ancestor directories. The list handler does not perform a full project config load.                                                                    |
-| `<SUPABASE_HOME or ~/.supabase>/managed/stacks/`                      | directory       | Registry enumeration. Entries that are not stack IDs are ignored.                                                                                                                                                             |
-| `<SUPABASE_HOME or ~/.supabase>/managed/stacks/<stack-id>/state.json` | JSON            | Each stack ID entry; readable descriptors use `identity.projectRoot`, `identity.stackName`, `identity.branchContext`, `runtime`, and `desiredLifecycle`; decode or validation failures remain unreadable entries.             |
-| `<SUPABASE_HOME or ~/.supabase>/telemetry.json`                       | JSON            | Shared telemetry state load, regardless of telemetry delivery being enabled.                                                                                                                                                  |
+| Path                                                                  | Format          | When                                                                                                                                                                                                                                                           |
+| --------------------------------------------------------------------- | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml` or `config.json`                     | TOML or JSON    | During the `experimental.stack` family gate when `SUPABASE_EXPERIMENTAL_STACK` is unset or empty; the nearest project is discovered from the default workdir, while explicit `--workdir`/`SUPABASE_WORKDIR` is used as given.                                  |
+| `<SUPABASE_HOME or ~/.supabase>/profile`                              | plain text      | By shared `CommandSettings` when `--profile` and `SUPABASE_PROFILE` are unset; an empty or missing file selects `supabase`.                                                                                                                                    |
+| Value of `--profile`, `SUPABASE_PROFILE`, or persisted profile        | YAML profile    | By shared `CommandSettings` when the selected profile is not a built-in name; an unreadable, malformed, or invalid explicit profile fails the command.                                                                                                         |
+| `<workdir>/supabase/config.toml`                                      | existence probe | By shared `CommandSettings` while resolving a default workdir from its ancestor directories. The list handler does not perform a full project config load.                                                                                                     |
+| `<SUPABASE_HOME or ~/.supabase>/managed/stacks/`                      | directory       | Registry enumeration. Entries that are not stack IDs are ignored.                                                                                                                                                                                              |
+| `<SUPABASE_HOME or ~/.supabase>/managed/stacks/<stack-id>/state.json` | JSON            | Each stack ID entry; readable descriptors use `identity.projectRoot`, `identity.stackName`, `identity.branchContext`, `runtime`, and `desiredLifecycle`; missing state files are ignored as remnants; decode or validation failures remain unreadable entries. |
+| `<SUPABASE_HOME or ~/.supabase>/telemetry.json`                       | JSON            | Shared telemetry state load, regardless of telemetry delivery being enabled.                                                                                                                                                                                   |
 
 ## Files Written
 
@@ -66,9 +66,10 @@ entries sort by project root, name, and ID. Unreadable entries follow them, sort
 
 ### `--output-format text`
 
-Readable entries show their name, ID, project, branch, runtime, and desired lifecycle. Every
-unreadable entry is shown as `Unreadable stack (<id>)` followed by its error reason. The
-`No managed stacks found.` message is emitted only when both readable and unreadable entry arrays
+Readable entries show a table with NAME, PROJECT, BRANCH, RUNTIME, DESIRED, and a compact ID.
+Every unreadable entry is shown in a diagnostic section with its error code and the package-enriched
+message carrying its full ID. Underlying filesystem diagnostics may also contain paths with that ID.
+The `No managed stacks found.` message is emitted only when both readable and unreadable entry arrays
 are empty.
 
 ### `--output-format json`
