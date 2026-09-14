@@ -216,6 +216,7 @@ DeleteTokenError
 DesiredSubdomainRequiredError
 DockerLifecycleInspectError
 DockerLifecycleListError
+DockerLogsStreamError
 DockerRemoveAllContainerPruneError
 DockerRemoveAllListError
 DockerRemoveAllNetworkPruneError
@@ -226,6 +227,7 @@ DomainsCnameError
 DomainsNetworkError
 DomainsUnexpectedStatusError
 DuplicateRemoteProjectIdError
+EdgeRuntimeContainerCrashedError
 EdgeRuntimeScriptError
 EncryptionNetworkError
 EncryptionUnexpectedStatusError

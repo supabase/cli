@@ -91,6 +91,7 @@ import {
 } from "./functions-docker.ts";
 import { loadFunctionsCliConfig, type FunctionsGoConfigCompat } from "./functions-config.ts";
 import { edgeRuntimeImage, resolveEdgeRuntimeVersionPin } from "./functions.shared.ts";
+import { DockerLogsStreamError, EdgeRuntimeContainerCrashedError } from "./serve.errors.ts";
 const decodeCliConfig = Schema.decodeUnknownSync(CliConfigSchema);
 const defaultCliConfig = decodeCliConfig({});
 
@@ -1315,19 +1316,32 @@ const streamContainerLogs = Effect.fnUntraced(function* (containerId: string) {
     if (exitCode === 0) {
       const containerExitCode = yield* inspectContainerExitCode(containerId);
       if (containerExitCode === 0) {
-        return yield* Effect.fail(new Error(`container exited gracefully: ${containerId}`));
+        // The edge runtime container stopped on its own with a clean exit
+        // code — not a failure, so `serveFunctions` ends the session normally.
+        return;
       }
       if (containerExitCode === 137) {
         yield* Effect.sleep(dockerLogRetryDelay);
         continue;
       }
-      return yield* Effect.fail(new Error(`error running container: exit ${containerExitCode}`));
+      return yield* Effect.fail(
+        new EdgeRuntimeContainerCrashedError({
+          message: `error running container: exit ${containerExitCode}`,
+          containerId,
+          exitCode: containerExitCode,
+        }),
+      );
     }
 
     const trimmedStderr = stderrText.trim();
     if (!isRetriableDockerLogsError(trimmedStderr)) {
       return yield* Effect.fail(
-        new Error(trimmedStderr.length > 0 ? trimmedStderr : `docker logs exited with ${exitCode}`),
+        new DockerLogsStreamError({
+          message: trimmedStderr.length > 0 ? trimmedStderr : `docker logs exited with ${exitCode}`,
+          containerId,
+          exitCode,
+          stderr: trimmedStderr,
+        }),
       );
     }
 
@@ -1935,23 +1949,23 @@ export const serveFunctions = Effect.fn("functions.serve")(function* (
 
       const started = startOutcome.started;
 
-      // `streamContainerLogs` never succeeds: it streams logs until the
-      // container exits, then fails, so a crash propagates out of this race
-      // and terminates `serve` rather than auto-restarting. The race
-      // otherwise only ever resolves to "shutdown" or "restart".
+      // `streamContainerLogs` succeeds when the container exits gracefully
+      // (its own clean shutdown) and otherwise streams logs until it fails on
+      // a genuine crash or log-stream error. The race otherwise resolves to
+      // "shutdown", "restart", or "exited".
       const outcome = yield* Effect.raceFirst(
         Effect.raceFirst(
           processControl.awaitSignal().pipe(Effect.as("shutdown" as const)),
           waitForRestartSignal(started.watchSpecs).pipe(Effect.as("restart" as const)),
         ),
-        streamContainerLogs(started.containerId),
+        streamContainerLogs(started.containerId).pipe(Effect.as("exited" as const)),
       ).pipe(
         Effect.ensuring(
           bestEffortRemoveContainer(started.containerId).pipe(Effect.ensuring(started.cleanup)),
         ),
       );
 
-      if (outcome === "shutdown") {
+      if (outcome === "shutdown" || outcome === "exited") {
         yield* writeStoppedServingMessage();
         return;
       }
