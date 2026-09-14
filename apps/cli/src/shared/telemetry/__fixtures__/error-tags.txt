@@ -367,6 +367,13 @@ NoComputeToDeployError
 NoFunctionsToDeployError
 NonInteractiveError
 NotLoggedInError
+NotebookFileError
+NotebookIdError
+NotebookNameConflictError
+NotebooksEnvNotSupportedError
+NotebooksNetworkError
+NotebooksPaginationError
+NotebooksUnexpectedStatusError
 OperationCanceledError
 OrgsCreateNetworkError
 OrgsCreateUnexpectedStatusError
