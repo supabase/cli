@@ -47,7 +47,6 @@ import {
   NetworkIdFlag,
   YesFlag,
 } from "../../../../../command-internal/global-flags.ts";
-import { GoProxy } from "../../../../../command-internal/go-proxy.service.ts";
 import { CommandPlatformApi } from "../../../../../auth/command-platform-api.service.ts";
 import { CommandPlatformApiFactory } from "../../../../../auth/command-platform-api-factory.service.ts";
 import { dockerRunLayer } from "../../../../../command-internal/docker-run.layer.ts";
@@ -303,11 +302,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     },
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
-  const proxyCalls: ReadonlyArray<string>[] = [];
-  const proxy = Layer.succeed(GoProxy, {
-    exec: (args) => Effect.sync(() => void proxyCalls.push(args)),
-    execCapture: () => Effect.succeed(""),
-  });
   const runtimeInfo = mockRuntimeInfo({ platform: "linux" });
   const processControl = mockProcessControl();
   const experimentalFlag = Layer.succeed(ExperimentalFlag, opts.experimental ?? true);
@@ -328,7 +322,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     engine,
     mockLocalDockerEngineUnavailableLayer,
     resolver,
-    proxy,
     dbConn,
     mockCommandSettings({ workdir, projectId: opts.projectId ?? Option.some("test") }),
     mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
@@ -366,7 +359,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     dbExec,
     engineExportCalls,
     resolverCalls,
-    proxyCalls,
     localPostgresImageChecks,
     get ensureStartedCalls() {
       return ensureStartedCalls;

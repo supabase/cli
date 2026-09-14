@@ -180,32 +180,3 @@ per-process, so each shard still has deterministic intra-shard ordering.
 is a single-job operation; parallel shards would race on the shared
 `fixtures/recorded/` directory. The `record` script does not accept
 `--shard`.
-
-## Go binary version requirement
-
-The CLI proxies a fixed, small set of commands to a Go binary (`SUPABASE_GO_BINARY` → bundled package binary → system `supabase`) — as of CLI-1970, `apps/cli-go/` contains only that residual proxied subset, nothing else, and it is slated for cleanup and removal (the surface only shrinks; never add tests that grow it). If your system `supabase` binary predates a flag or subcommand change on one of these, `testBehaviour` tests for it will fail with "unknown command" or "unknown flag".
-
-Build the Go CLI from source and point `SUPABASE_GO_BINARY` at it:
-
-```sh
-(cd apps/cli-go && go build -o /tmp/supabase-test-binary .)
-
-# Replay
-SUPABASE_GO_BINARY=/tmp/supabase-test-binary \
-  pnpm exec turbo run @supabase/cli-e2e#test:e2e:run
-
-# Record
-SUPABASE_GO_BINARY=/tmp/supabase-test-binary \
-  SUPABASE_ACCESS_TOKEN=sbp_... SUPABASE_STAGING_URL=https://api.supabase.green \
-  pnpm run record
-```
-
-`SUPABASE_GO_BINARY` is inherited by the CLI subprocess via `exec()` in the harness, so you only need to set it once in the shell.
-
-Commands currently requiring this — the full proxied surface, nothing else needs a Go binary at all:
-
-- `db diff` (for `--use-pg-schema`)
-- `db branch create`, `db branch delete`, `db branch list`, `db branch switch`
-- `db remote changes`
-- `gen keys`
-- `functions download` (for the hidden `--legacy-bundle` flag)
