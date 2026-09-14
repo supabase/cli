@@ -17,7 +17,7 @@ export class StackRoutingError extends Data.TaggedError("StackRoutingError")<{
   readonly cause?: unknown;
 }> {
   get suggestion(): string {
-    return "Set SUPABASE_EXPERIMENTAL_STACK=1 to enable stack commands, or 0 to use legacy start/stop.";
+    return "Set SUPABASE_EXPERIMENTAL_STACK=1 to enable stack commands, or 0 to use legacy start/stop/status.";
   }
 
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -45,7 +45,13 @@ export const resolveStackBackend = (input: {
         ? commandPath.slice(1)
         : commandPath;
     const command = completePath[0] === "help" ? completePath[1] : completePath[0];
-    if (command !== undefined && command !== "stack" && command !== "start" && command !== "stop") {
+    if (
+      command !== undefined &&
+      command !== "stack" &&
+      command !== "start" &&
+      command !== "stop" &&
+      command !== "status"
+    ) {
       return "legacy";
     }
 
