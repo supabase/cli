@@ -121,9 +121,10 @@ export const functionsServeStack = Effect.fn("experimental.stack.functions.serve
     if (apiUrl !== undefined)
       yield* output.raw(`Serving Functions on ${apiUrl}/functions/v1/<function-name>\n`);
 
-    const follow = stack
-      .followLogs({ capabilities: ["functions"], cursor: initial.cursor })
-      .pipe(Stream.mapError(serveError), Stream.runForEach((entry) => output.raw(renderLog(entry))));
+    const follow = stack.followLogs({ capabilities: ["functions"], cursor: initial.cursor }).pipe(
+      Stream.mapError(serveError),
+      Stream.runForEach((entry) => output.raw(renderLog(entry))),
+    );
     yield* Effect.raceFirst(
       follow,
       processControl.awaitSignal(["SIGINT", "SIGTERM", "SIGHUP"]).pipe(Effect.asVoid),

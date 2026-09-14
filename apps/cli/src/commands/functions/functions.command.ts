@@ -10,16 +10,16 @@ import type { StackBackend } from "../experimental/stack/stack-backend.ts";
 
 export const functionsCommandForBackend = (backend: StackBackend = "legacy") =>
   Command.make("functions").pipe(
-  Command.withDescription("Manage Supabase Edge functions."),
-  Command.withShortDescription("Manage Supabase Edge functions"),
-  Command.withSubcommands([
-    functionsListCommand,
-    functionsDeleteCommand,
-    functionsDownloadCommand,
-    functionsDeployCommand,
-    functionsNewCommand,
-    backend === "stack" ? functionsServeStackCommand : functionsServeCommand,
-  ]),
-);
+    Command.withDescription("Manage Supabase Edge functions."),
+    Command.withShortDescription("Manage Supabase Edge functions"),
+    Command.withSubcommands([
+      functionsListCommand,
+      functionsDeleteCommand,
+      functionsDownloadCommand,
+      functionsDeployCommand,
+      functionsNewCommand,
+      backend === "stack" ? functionsServeStackCommand : functionsServeCommand,
+    ]),
+  );
 
 export const functionsCommand = functionsCommandForBackend();

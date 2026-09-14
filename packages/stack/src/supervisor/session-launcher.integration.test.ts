@@ -168,10 +168,7 @@ describe("session launcher", () => {
       yield* launcher.resetCapability("functions");
       yield* launcher.launch(plan([database, functions]));
 
-      expect(calls).toEqual([
-        "stop:functions:edge-runtime",
-        "remove:functions:edge-runtime",
-      ]);
+      expect(calls).toEqual(["stop:functions:edge-runtime", "remove:functions:edge-runtime"]);
     }),
   );
 

@@ -318,8 +318,10 @@ const credentialsError = (error: ControlError): StackCredentialsError =>
 const startError = (error: ControlError): StackStartError =>
   narrowError(error, STACK_START_ERROR_TAGS, (message) => new StackStateInvalidError({ message }));
 const serveFunctionsError = (error: ControlError): ServeFunctionsError =>
-  narrowError(error, SERVE_FUNCTIONS_ERROR_TAGS, (message) =>
-    new StackStateInvalidError({ message }),
+  narrowError(
+    error,
+    SERVE_FUNCTIONS_ERROR_TAGS,
+    (message) => new StackStateInvalidError({ message }),
   );
 const stopError = (error: ControlError): StackStopError =>
   narrowError(

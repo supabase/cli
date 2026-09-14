@@ -78,8 +78,7 @@ describe("managed stack functions serve", () => {
           }),
         stop: Effect.sync(() => void stopCalls++),
         destroy: Effect.sync(() => void destroyCalls++),
-        logs: () =>
-          Effect.succeed({ entries: [], cursor: { opaque: "v1_0" }, running: true }),
+        logs: () => Effect.succeed({ entries: [], cursor: { opaque: "v1_0" }, running: true }),
         followLogs: () =>
           Stream.make({
             cursor: { opaque: "v1_1" },

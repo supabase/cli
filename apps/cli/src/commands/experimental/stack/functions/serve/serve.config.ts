@@ -11,18 +11,13 @@ import { StackFunctionsServeError } from "./serve.errors.ts";
 const configError = (message: string, cause?: unknown) =>
   new StackFunctionsServeError({ reason: "invalid-config", message, cause });
 
-const runtimePath = (path: Path.Path, value: string): string =>
-  value.replaceAll(path.sep, "/");
+const runtimePath = (path: Path.Path, value: string): string => value.replaceAll(path.sep, "/");
 
 const explicitImportMap = (
   value: string,
   projectRoot: string,
   cwd: string,
-): Effect.Effect<
-  string,
-  StackFunctionsServeError,
-  Path.Path
-> =>
+): Effect.Effect<string, StackFunctionsServeError, Path.Path> =>
   Effect.gen(function* () {
     const path = yield* Path.Path;
     const absolute = path.isAbsolute(value) ? path.normalize(value) : path.resolve(cwd, value);

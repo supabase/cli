@@ -17,9 +17,7 @@ export interface SessionLauncher {
   /** Starts the supplied dependency closure as dependencies complete. */
   readonly launch: (plan: ExecutionPlan) => Effect.Effect<SessionLaunch, RuntimeDriverError>;
   /** Stops and removes this session's workloads for one capability. */
-  readonly resetCapability: (
-    capability: CapabilityName,
-  ) => Effect.Effect<void, RuntimeDriverError>;
+  readonly resetCapability: (capability: CapabilityName) => Effect.Effect<void, RuntimeDriverError>;
   /** Stops and removes every workload started in this session in reverse order. */
   readonly stop: Effect.Effect<void, RuntimeDriverError>;
   /** Whether the most recent launch/rollback cleanup completed exactly. */
@@ -197,7 +195,9 @@ export const makeSessionLauncher = (options: {
     const stop = Effect.suspend(() => Ref.get(session).pipe(Effect.flatMap(cleanup)));
     const resetCapability = (capability: CapabilityName) =>
       Ref.get(session).pipe(
-        Effect.map((entries) => entries.filter((entry) => entry.workload.capability === capability)),
+        Effect.map((entries) =>
+          entries.filter((entry) => entry.workload.capability === capability),
+        ),
         Effect.flatMap(cleanup),
         Effect.onExit((result) => Ref.set(cleanupProven, Exit.isSuccess(result))),
       );

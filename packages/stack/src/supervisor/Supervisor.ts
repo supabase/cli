@@ -362,7 +362,9 @@ export const makeSupervisor = (
             message: "Capability functions is disabled in project configuration",
           });
         const functionSecrets = Object.fromEntries(
-          Object.entries(candidate.secrets).filter(([slot]) => slot.startsWith("secret:functions.")),
+          Object.entries(candidate.secrets).filter(([slot]) =>
+            slot.startsWith("secret:functions."),
+          ),
         );
         const durableSecrets = Object.fromEntries(
           Object.entries(state.secrets).filter(([slot]) => !slot.startsWith("secret:functions.")),
