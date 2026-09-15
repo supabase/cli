@@ -15,6 +15,7 @@ import {
   hasExplicitLongFlag,
 } from "../cli/cobra-flag-groups.ts";
 import { describeContainerCliFailure } from "../../command-internal/container-cli.ts";
+import { bitbucketCloneDir } from "../../command-internal/bitbucket-pipeline.ts";
 import { viperEnvStringWithProjectFallback } from "../../command-internal/viper-env.ts";
 import {
   buildFunctionsDockerRunArgs,
@@ -978,6 +979,7 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
   const cacheVolume = edgeRuntimeCacheVolume(projectId);
   const dockerEszipPath = posix.join(DOCKER_ESZIP_DIR, eszipFileName);
   const dockerOutputPath = posix.join(DOCKER_DENO_DIR, slug);
+  const hasBitbucketCloneDir = Option.isSome(yield* bitbucketCloneDir(projectEnvValues));
 
   // `--network-id` is a persistent root flag, not registered on `functions
   // download` itself. `lastExplicitLongFlagValue` preserves the "explicitly
@@ -999,7 +1001,7 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
     yield* ensureDockerNetwork(networkMode, projectId).pipe(
       Effect.mapError(withLegacyBundleSuggestion(slug, styleAqua)),
     );
-    yield* ensureDockerNamedVolume(cacheVolume.name, projectId).pipe(
+    yield* ensureDockerNamedVolume(cacheVolume.name, projectId, projectEnvValues).pipe(
       Effect.mapError(withLegacyBundleSuggestion(slug, styleAqua)),
     );
 
@@ -1009,7 +1011,7 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
     // Docker environment doesn't allow — same carve-out as `deploy.ts`'s
     // `buildDockerBinds`.
     const binds = [
-      ...(process.env["BITBUCKET_CLONE_DIR"] === undefined ? [cacheVolume.bind] : []),
+      ...(hasBitbucketCloneDir ? [] : [cacheVolume.bind]),
       `${hostEszipPath}:${dockerEszipPath}:ro`,
       `${functionsDir}:${DOCKER_DENO_DIR}:rw`,
     ];
