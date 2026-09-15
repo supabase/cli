@@ -81,7 +81,6 @@ import {
   command,
   isTransitioning,
   type LifecycleKind,
-  type StackControlState,
   type SupervisorSnapshot,
 } from "./SupervisorState.ts";
 import {
@@ -106,15 +105,18 @@ import {
 
 import type { ActivationResult } from "../gateway/Gateway.ts";
 import { makeGatewayActivity } from "../gateway/ActivityTracker.ts";
-
-type CommandResult =
-  | { readonly _tag: "succeeded" }
-  | {
-      readonly _tag: "failed";
-      readonly cause: Cause.Cause<StackError>;
-      readonly cleanup: CleanupOutcome;
-      readonly durable: "stopped" | "unsafe";
-    };
+import {
+  settleActivationOwner,
+  settleLifecycleOwner,
+  settleRetirementOwner,
+  stopRecoverySnapshot,
+  type ActivationOwner,
+  type ActivationExit,
+  type CommandResult,
+  type EndpointExit,
+  matchesActivationOwner,
+  type SettlementOwner,
+} from "./OperationSettlement.ts";
 
 /** Runtime construction is injected so catalog/artifact resolution can evolve independently. */
 export interface SupervisorRuntime {
@@ -639,15 +641,19 @@ export const makeSupervisor = (
       Effect.gen(function* () {
         const snapshot = yield* Ref.get(machine);
         const capabilities = new Map(snapshot.capabilities);
+        const completions: Array<Deferred.Deferred<Exit.Exit<void, StackError>, never>> = [];
         for (const [name, state] of capabilities) {
           if (state._tag !== "stopping") continue;
           const next: CapabilityState = Exit.isSuccess(result)
             ? { _tag: "stopped" }
             : cleanupFailed(state, result.cause);
           capabilities.set(name, next);
-          yield* Deferred.succeed(state.completion, result);
+          completions.push(state.completion);
         }
         yield* Ref.set(machine, { ...snapshot, capabilities });
+        yield* Effect.forEach(completions, (completion) => Deferred.succeed(completion, result), {
+          discard: true,
+        });
       });
     const enterCapabilityCleanup = (): Effect.Effect<void> =>
       admission.withPermit(enterCapabilityCleanupInAdmission());
@@ -662,25 +668,6 @@ export const makeSupervisor = (
       });
     const completeDormantCleanup = (): Effect.Effect<void> =>
       admission.withPermit(completeDormantCleanupInAdmission());
-    const stopRecoverySnapshot = (
-      snapshot: SupervisorSnapshot,
-      cause: Cause.Cause<StackError>,
-    ): SupervisorSnapshot =>
-      snapshot.stack._tag === "running" ||
-      (snapshot.stack._tag === "starting" && snapshot.stack.prior._tag === "running")
-        ? {
-            ...snapshot,
-            stack:
-              snapshot.stack._tag === "starting"
-                ? {
-                    _tag: "start-recovery",
-                    cause,
-                    attempt: snapshot.stack.attempt,
-                    completion: snapshot.stack.completion,
-                  }
-                : { _tag: "stop-required", cause },
-          }
-        : snapshot;
     const settleStartupFailures = (
       cause: Cause.Cause<StackError>,
       cleanup: CleanupOutcome,
@@ -710,33 +697,6 @@ export const makeSupervisor = (
           });
         }),
       );
-    const settleCapability = (
-      name: CapabilityName,
-      completion: Deferred.Deferred<Exit.Exit<void, StackError>, never>,
-      result: Exit.Exit<void, StackError>,
-      nextOnSuccess: (
-        current: Extract<CapabilityState, { readonly _tag: "stopping" }>,
-      ) => CapabilityState,
-    ): Effect.Effect<void> =>
-      Effect.gen(function* () {
-        const snapshot = yield* Ref.get(machine);
-        const current = snapshot.capabilities.get(name);
-        if (current?._tag === "stopping" && current.completion === completion) {
-          yield* Ref.set(machine, {
-            ...snapshot,
-            stack: Exit.isSuccess(result)
-              ? snapshot.stack
-              : stopRecoverySnapshot(snapshot, result.cause).stack,
-            capabilities: new Map(snapshot.capabilities).set(
-              name,
-              Exit.isSuccess(result)
-                ? nextOnSuccess(current)
-                : cleanupFailed(current, result.cause),
-            ),
-          });
-        }
-        yield* Deferred.succeed(completion, result);
-      });
     const idleTimeout = (
       timeouts: ReadonlyMap<CapabilityName, number | false>,
       plan: ExecutionPlan,
@@ -831,28 +791,13 @@ export const makeSupervisor = (
             return true;
           }).pipe(
             Effect.onExit((result) =>
-              admission.withPermit(
-                Effect.gen(function* () {
-                  const completionResult = Exit.map(result, () => undefined);
-                  const snapshot = yield* Ref.get(machine);
-                  const current = snapshot.capabilities.get(capability);
-                  if (
-                    current?._tag !== "stopping" ||
-                    current.operation !== operation ||
-                    current.completion !== completion
-                  ) {
-                    yield* Deferred.succeed(completion, completionResult);
-                    return;
-                  }
-                  yield* settleCapability(capability, completion, completionResult, (state) => ({
-                    _tag: "dormant",
-                    sessionId: state.sessionId,
-                    traffic: state.traffic,
-                    root: false,
-                    retirement: { _tag: "disarmed" },
-                  }));
-                }),
-              ),
+              settleOwner({
+                _tag: "retirement",
+                capability,
+                operation,
+                completion,
+                result,
+              }),
             ),
           );
           const stopped = yield* Effect.exit(retire);
@@ -868,7 +813,6 @@ export const makeSupervisor = (
           }
           if (!stopped.value) return false;
 
-          yield* admission.withPermit(reevaluateIdleTimersInAdmission());
           yield* appendIdleLog(`Stopped ${capability} after inactivity`);
           return true;
         }),
@@ -926,10 +870,6 @@ export const makeSupervisor = (
       });
     }
 
-    function armIdleTimer(capability: CapabilityName): Effect.Effect<void> {
-      return admission.withPermit(armIdleTimerInAdmission(capability));
-    }
-
     function reevaluateIdleTimersInAdmission(): Effect.Effect<void> {
       return readySet().pipe(
         Effect.flatMap((capabilities) =>
@@ -940,12 +880,8 @@ export const makeSupervisor = (
       );
     }
 
-    function reevaluateIdleTimers(): Effect.Effect<void> {
-      return readySet().pipe(
-        Effect.flatMap((capabilities) =>
-          Effect.forEach(capabilities, armIdleTimer, { concurrency: "unbounded", discard: true }),
-        ),
-      );
+    function armIdleTimer(capability: CapabilityName): Effect.Effect<void> {
+      return admission.withPermit(armIdleTimerInAdmission(capability));
     }
 
     const cancelIdleTimers: Effect.Effect<void> = Effect.gen(function* () {
@@ -1173,64 +1109,6 @@ export const makeSupervisor = (
       effect: Effect.Effect<CommandResult, StackError>,
     ): Effect.Effect<void, StackError> =>
       Effect.gen(function* () {
-        const finish = (
-          kind: LifecycleKind,
-          deferred: LifecycleResult,
-          result: Exit.Exit<CommandResult, StackError>,
-        ): Effect.Effect<void> =>
-          admission.withPermit(
-            Effect.gen(function* () {
-              const snapshot = yield* Ref.get(machine);
-              const current = snapshot.stack;
-              const operation: CommandResult = Exit.isSuccess(result)
-                ? result.value
-                : {
-                    _tag: "failed",
-                    cause: result.cause,
-                    cleanup: { _tag: "unproven", cause: result.cause },
-                    durable: "unsafe",
-                  };
-              let completion: Exit.Exit<void, StackError> =
-                operation._tag === "succeeded" ? Exit.void : Exit.failCause(operation.cause);
-              if (!isTransitioning(current) || current.completion !== deferred) {
-                yield* Deferred.succeed(deferred, completion);
-                return;
-              }
-              let next: StackControlState;
-              if (current._tag === "start-recovery") {
-                const cause =
-                  operation._tag === "succeeded"
-                    ? current.cause
-                    : Cause.combine(current.cause, operation.cause);
-                completion = Exit.failCause(cause);
-                next = { _tag: "stop-required", cause };
-              } else if (operation._tag === "succeeded") {
-                next =
-                  kind === "start"
-                    ? { _tag: "running" }
-                    : { _tag: "stopped", session: "initialized" };
-              } else if (kind === "destroy") {
-                next = {
-                  _tag: "destroy-required",
-                  evidence: { _tag: "failed", cause: operation.cause },
-                };
-              } else if (kind === "stop") {
-                next = { _tag: "stop-required", cause: operation.cause };
-              } else if (current.prior._tag === "running") {
-                next =
-                  operation.cleanup._tag === "unproven"
-                    ? { _tag: "stop-required", cause: operation.cause }
-                    : current.prior;
-              } else {
-                next =
-                  operation.cleanup._tag === "proven" && operation.durable === "stopped"
-                    ? { _tag: "stopped", session: "initialized" }
-                    : { _tag: "stop-required", cause: operation.cause };
-              }
-              yield* Ref.set(machine, { ...snapshot, stack: next });
-              yield* Deferred.succeed(deferred, completion);
-            }),
-          );
         const owned = yield* admission.withPermit(
           Effect.uninterruptible(
             Effect.gen(function* () {
@@ -1276,8 +1154,11 @@ export const makeSupervisor = (
                       );
                     if (operation._tag === "failed" && (kind === "stop" || kind === "destroy"))
                       yield* settleCapabilityCleanup(Exit.failCause(operation.cause));
-                    yield* finish(kind, deferred, result);
-                    yield* reevaluateIdleTimers();
+                    yield* settleOwner({
+                      _tag: "lifecycle",
+                      completion: deferred,
+                      result: operation,
+                    });
                   }),
                 ),
               );
@@ -1533,7 +1414,6 @@ export const makeSupervisor = (
               yield* admission.withPermit(
                 Ref.update(machine, (snapshot) => ({ ...snapshot, plan })),
               );
-              yield* reevaluateIdleTimers();
               return {
                 _tag: "succeeded",
                 value: { capability, endpoint },
@@ -1563,11 +1443,6 @@ export const makeSupervisor = (
         return attempt.value;
       });
 
-    type ActivationExit = Exit.Exit<ActivationResult, GatewayActivationError | StackError>;
-    type EndpointExit = Exit.Exit<
-      ActivationResult["endpoint"],
-      GatewayActivationError | StackError
-    >;
     type ActivationToken =
       | { readonly _tag: "exit"; readonly result: ActivationExit }
       | {
@@ -1583,6 +1458,77 @@ export const makeSupervisor = (
           readonly _tag: "await";
           readonly result: Deferred.Deferred<Exit.Exit<void, StackError>, never>;
         };
+    const settleOwner = (owner: SettlementOwner): Effect.Effect<void> =>
+      admission.withPermit(
+        Effect.gen(function* () {
+          const snapshot = yield* Ref.get(machine);
+          const settlement = Match.value(owner).pipe(
+            Match.when({ _tag: "lifecycle" }, (event) => settleLifecycleOwner(snapshot, event)),
+            Match.when({ _tag: "retirement" }, (event) => settleRetirementOwner(snapshot, event)),
+            Match.when({ _tag: "endpoint" }, (event) => settleActivationOwner(snapshot, event)),
+            Match.when({ _tag: "activation" }, (event) => settleActivationOwner(snapshot, event)),
+            Match.exhaustive,
+          );
+          yield* Ref.set(machine, settlement.snapshot);
+          if (settlement.reconcile === "all-ready") yield* reevaluateIdleTimersInAdmission();
+          yield* Match.value(settlement.notification).pipe(
+            Match.when({ _tag: "endpoint" }, (notification) =>
+              Deferred.succeed(notification.completion, notification.result),
+            ),
+            Match.when({ _tag: "activation" }, (notification) =>
+              Deferred.succeed(notification.completion, notification.result),
+            ),
+            Match.when({ _tag: "retirement" }, (notification) =>
+              Deferred.succeed(notification.completion, notification.result),
+            ),
+            Match.when({ _tag: "lifecycle" }, (notification) =>
+              Deferred.succeed(notification.completion, notification.result),
+            ),
+            Match.exhaustive,
+          );
+        }),
+      );
+    const runActivationOwner = (owner: ActivationOwner): Effect.Effect<void> =>
+      Effect.gen(function* () {
+        const operation = activateOperation(
+          owner.capability,
+          owner._tag === "endpoint" ? owner.priorRoot : undefined,
+        );
+        const fiber = execution
+          .withPermit(
+            admission
+              .withPermit(
+                Ref.get(machine).pipe(
+                  Effect.map((snapshot) => matchesActivationOwner(snapshot, owner)),
+                ),
+              )
+              .pipe(
+                Effect.flatMap((admitted) =>
+                  admitted
+                    ? operation
+                    : Effect.fail(
+                        new StackLifecycleConflictError({
+                          stackId: options.stackId,
+                          message:
+                            owner._tag === "endpoint"
+                              ? "Endpoint activation was superseded by a lifecycle transition"
+                              : "Lazy activation was superseded by a lifecycle transition",
+                        }),
+                      ),
+                ),
+              ),
+          )
+          .pipe(
+            Effect.onExit((result) =>
+              settleOwner(
+                owner._tag === "endpoint"
+                  ? { ...owner, result: Exit.map(result, (value) => value.endpoint) }
+                  : { ...owner, result },
+              ),
+            ),
+          );
+        yield* FiberSet.run(ownedFibers, fiber, { startImmediately: true });
+      });
     const activate: Supervisor["activate"] = (capability) =>
       Effect.gen(function* () {
         const token = yield* admission.withPermit(
@@ -1648,72 +1594,13 @@ export const makeSupervisor = (
                             root: true,
                             endpoint: { _tag: "resolving", deferred: endpoint },
                           }));
-                          const owner = execution
-                            .withPermit(
-                              admission
-                                .withPermit(
-                                  Ref.get(machine).pipe(
-                                    Effect.map((snapshot) => {
-                                      const current = snapshot.capabilities.get(capability);
-                                      return (
-                                        current?._tag === "ready" &&
-                                        current.endpoint._tag === "resolving" &&
-                                        current.endpoint.deferred === endpoint
-                                      );
-                                    }),
-                                  ),
-                                )
-                                .pipe(
-                                  Effect.flatMap((admitted) =>
-                                    admitted
-                                      ? activateOperation(capability, state.root)
-                                      : reject(
-                                          "Endpoint activation was superseded by a lifecycle transition",
-                                        ),
-                                  ),
-                                ),
-                            )
-                            .pipe(
-                              Effect.onExit((result) =>
-                                admission.withPermit(
-                                  Effect.gen(function* () {
-                                    const snapshot = yield* Ref.get(machine);
-                                    const current = snapshot.capabilities.get(capability);
-                                    if (
-                                      current?._tag === "ready" &&
-                                      current.endpoint._tag === "resolving" &&
-                                      current.endpoint.deferred === endpoint
-                                    ) {
-                                      const next = Exit.isSuccess(result)
-                                        ? {
-                                            ...current,
-                                            endpoint: {
-                                              _tag: "resolved" as const,
-                                              endpoint: result.value.endpoint,
-                                            },
-                                          }
-                                        : {
-                                            ...current,
-                                            endpoint: { _tag: "unresolved" as const },
-                                          };
-                                      yield* Ref.set(machine, {
-                                        ...snapshot,
-                                        capabilities: new Map(snapshot.capabilities).set(
-                                          capability,
-                                          next,
-                                        ),
-                                      });
-                                    }
-                                    yield* reevaluateIdleTimersInAdmission();
-                                    yield* Deferred.succeed(
-                                      endpoint,
-                                      Exit.map(result, (value) => value.endpoint),
-                                    );
-                                  }),
-                                ),
-                              ),
-                            );
-                          yield* FiberSet.run(ownedFibers, owner, { startImmediately: true });
+                          const owner: ActivationOwner = {
+                            _tag: "endpoint",
+                            capability,
+                            endpoint,
+                            priorRoot: state.root,
+                          };
+                          yield* runActivationOwner(owner);
                           return {
                             _tag: "endpoint",
                             capability,
@@ -1754,69 +1641,21 @@ export const makeSupervisor = (
                       Exit.Exit<ActivationResult, GatewayActivationError | StackError>,
                       never
                     >();
-                    const operation = Symbol("activation");
+                    const activationOperation = Symbol("activation");
                     yield* updateCapability(capability, () =>
-                      beginStarting(prior, operation, { _tag: "activation", deferred }, true),
+                      beginStarting(
+                        prior,
+                        activationOperation,
+                        { _tag: "activation", deferred },
+                        true,
+                      ),
                     );
-                    const owner = execution
-                      .withPermit(
-                        admission
-                          .withPermit(
-                            Effect.map(Ref.get(machine), (snapshot) => {
-                              const current = snapshot.capabilities.get(capability);
-                              return (
-                                current?._tag === "starting" &&
-                                current.completion._tag === "activation" &&
-                                current.completion.deferred === deferred
-                              );
-                            }),
-                          )
-                          .pipe(
-                            Effect.flatMap((stillAdmitted) =>
-                              stillAdmitted
-                                ? activateOperation(capability)
-                                : reject(
-                                    "Lazy activation was superseded by a lifecycle transition",
-                                  ),
-                            ),
-                          ),
-                      )
-                      .pipe(
-                        Effect.onExit((result) =>
-                          admission.withPermit(
-                            Effect.gen(function* () {
-                              const snapshot = yield* Ref.get(machine);
-                              const current = snapshot.capabilities.get(capability);
-                              if (
-                                current?._tag === "starting" &&
-                                current.completion._tag === "activation" &&
-                                current.completion.deferred === deferred
-                              ) {
-                                const next: CapabilityState = Exit.isSuccess(result)
-                                  ? completeStarting(
-                                      current,
-                                      {
-                                        _tag: "resolved",
-                                        endpoint: result.value.endpoint,
-                                      },
-                                      true,
-                                    )
-                                  : restoreStarting(current);
-                                yield* Ref.set(machine, {
-                                  ...snapshot,
-                                  capabilities: new Map(snapshot.capabilities).set(
-                                    capability,
-                                    next,
-                                  ),
-                                });
-                              }
-                              yield* reevaluateIdleTimersInAdmission();
-                              yield* Deferred.succeed(deferred, result);
-                            }),
-                          ),
-                        ),
-                      );
-                    yield* FiberSet.run(ownedFibers, owner, { startImmediately: true });
+                    const owner: ActivationOwner = {
+                      _tag: "activation",
+                      capability,
+                      completion: deferred,
+                    };
+                    yield* runActivationOwner(owner);
                     return { _tag: "deferred", result: deferred } satisfies ActivationToken;
                   }),
                 ),
