@@ -10,7 +10,7 @@ import {
   request as requestHttp,
   type IncomingMessage,
   type ServerResponse,
-  // oxlint-disable-next-line effecttsgo/node-builtin-import -- fixture exercises raw HTTP proxy behavior.
+  // oxlint-disable-next-line effecttsgo/node-builtin-import -- fixture controls raw HTTP proxy responses and connection behavior at the gateway boundary.
 } from "node:http";
 import {
   GatewayRouteNotFoundError,

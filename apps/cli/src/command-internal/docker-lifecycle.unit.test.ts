@@ -220,12 +220,18 @@ describe("inspectContainerState", () => {
       stdout: JSON.stringify({
         Status: "running",
         Running: true,
+        ExitCode: 0,
         Health: { Status: "healthy" },
       }),
     });
     return inspectContainerState(mock.spawner, "supabase_db_my-app").pipe(
       Effect.map((state) => {
-        expect(state).toEqual({ running: true, status: "running", health: "healthy" });
+        expect(state).toEqual({
+          running: true,
+          status: "running",
+          exitCode: 0,
+          health: "healthy",
+        });
         expect(mock.spawned).toEqual([
           {
             command: "docker",
@@ -237,19 +243,23 @@ describe("inspectContainerState", () => {
   });
 
   it.live("parses a running container with no health check configured", () => {
-    const mock = mockSpawner({ stdout: JSON.stringify({ Status: "running", Running: true }) });
+    const mock = mockSpawner({
+      stdout: JSON.stringify({ Status: "running", Running: true, ExitCode: 0 }),
+    });
     return inspectContainerState(mock.spawner, "supabase_kong_my-app").pipe(
       Effect.map((state) => {
-        expect(state).toEqual({ running: true, status: "running" });
+        expect(state).toEqual({ running: true, status: "running", exitCode: 0 });
       }),
     );
   });
 
   it.live("parses a stopped/exited container", () => {
-    const mock = mockSpawner({ stdout: JSON.stringify({ Status: "exited", Running: false }) });
+    const mock = mockSpawner({
+      stdout: JSON.stringify({ Status: "exited", Running: false, ExitCode: 1 }),
+    });
     return inspectContainerState(mock.spawner, "supabase_kong_my-app").pipe(
       Effect.map((state) => {
-        expect(state).toEqual({ running: false, status: "exited" });
+        expect(state).toEqual({ running: false, status: "exited", exitCode: 1 });
       }),
     );
   });
@@ -257,10 +267,12 @@ describe("inspectContainerState", () => {
   it.live(
     "treats a paused/restarting container as running, matching Go's boolean-based gate",
     () => {
-      const mock = mockSpawner({ stdout: JSON.stringify({ Status: "paused", Running: true }) });
+      const mock = mockSpawner({
+        stdout: JSON.stringify({ Status: "paused", Running: true, ExitCode: 0 }),
+      });
       return inspectContainerState(mock.spawner, "supabase_db_my-app").pipe(
         Effect.map((state) => {
-          expect(state).toEqual({ running: true, status: "paused" });
+          expect(state).toEqual({ running: true, status: "paused", exitCode: 0 });
         }),
       );
     },
@@ -322,7 +334,7 @@ describe("inspectContainerState", () => {
     const mock = mockSpawner({ stdout: "" });
     return inspectContainerState(mock.spawner, "supabase_db_my-app").pipe(
       Effect.map((state) => {
-        expect(state).toEqual({ running: false, status: "" });
+        expect(state).toEqual({ running: false, status: "", exitCode: 0 });
       }),
     );
   });
@@ -331,7 +343,7 @@ describe("inspectContainerState", () => {
     const mock = mockSpawner({ stdout: "null" });
     return inspectContainerState(mock.spawner, "supabase_db_my-app").pipe(
       Effect.map((state) => {
-        expect(state).toEqual({ running: false, status: "" });
+        expect(state).toEqual({ running: false, status: "", exitCode: 0 });
       }),
     );
   });

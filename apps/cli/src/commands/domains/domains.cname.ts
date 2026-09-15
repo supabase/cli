@@ -105,10 +105,8 @@ export const verifyCname = Effect.fnUntraced(function* (args: {
   );
 
   if (resolved !== expected) {
-    return yield* Effect.fail(
-      new DomainsCnameError({
-        message: `expected custom hostname '${args.customHostname}' to have a CNAME record pointing to your project at '${expected}', but it is currently set to '${resolved}'`,
-      }),
-    );
+    return yield* new DomainsCnameError({
+      message: `expected custom hostname '${args.customHostname}' to have a CNAME record pointing to your project at '${expected}', but it is currently set to '${resolved}'`,
+    });
   }
 });

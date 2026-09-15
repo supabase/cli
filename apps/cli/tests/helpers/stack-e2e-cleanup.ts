@@ -149,8 +149,7 @@ function cleanupErrorDetail(
   }`;
 }
 
-// Walks the `cause` chain (bounded) so a typed wrapper like `CliHomeDisposeError`
-// classifies by the errno it carries, not by its own shape.
+// Walks the `cause` chain so a typed wrapper classifies by the errno it carries.
 function isPermissionError(error: unknown, hops = 8): boolean {
   let current: unknown = error;
   for (let hop = 0; hop < hops && current != null && typeof current === "object"; hop += 1) {

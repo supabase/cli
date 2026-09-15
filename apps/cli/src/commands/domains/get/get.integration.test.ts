@@ -1,6 +1,6 @@
 import { type V1GetHostnameConfigOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Option, Schema } from "effect";
 
 import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -40,6 +40,18 @@ interface SetupOpts {
   readonly network?: "fail";
   readonly response?: unknown;
 }
+
+/** Just enough of the Go JSON envelope to reach the fields under assertion. */
+const GoJsonResult = Schema.Struct({
+  data: Schema.Struct({
+    result: Schema.Struct({
+      ownership_verification: Schema.Unknown,
+      ssl: Schema.Struct({ validation_records: Schema.Unknown }),
+    }),
+  }),
+});
+
+const GoJsonEnvelope = Schema.Record(Schema.String, Schema.Unknown);
 
 const tempRoot = useTempWorkdir("supabase-domains-get-int-");
 
@@ -125,7 +137,9 @@ describe("domains get integration", () => {
     const { layer, out } = setup({ goOutput: "json", response });
     return Effect.gen(function* () {
       yield* domainsGet(baseFlags);
-      const parsed = JSON.parse(out.stdoutText) as typeof V1GetHostnameConfigOutput.Type;
+      const parsed = yield* Schema.decodeEffect(Schema.fromJsonString(GoJsonResult))(
+        out.stdoutText,
+      );
       expect(parsed.data.result.ownership_verification).toEqual({ type: "", name: "", value: "" });
       expect(parsed.data.result.ssl.validation_records).toEqual([]);
     }).pipe(Effect.provide(layer));
@@ -155,7 +169,9 @@ describe("domains get integration", () => {
     const { layer, out } = setup({ goOutput: "json", response });
     return Effect.gen(function* () {
       yield* domainsGet(baseFlags);
-      const parsed = JSON.parse(out.stdoutText) as Record<string, unknown>;
+      const parsed = yield* Schema.decodeEffect(Schema.fromJsonString(GoJsonEnvelope))(
+        out.stdoutText,
+      );
       expect(parsed.status).toBe("");
       expect(parsed.custom_hostname).toBe("");
       expect(parsed.data).toMatchObject({
@@ -294,9 +310,9 @@ describe("domains get integration", () => {
       const exit = yield* Effect.exit(domainsGet(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("DomainsUnexpectedStatusError");
-        expect(json).toContain("unexpected get hostname status 503");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("DomainsUnexpectedStatusError");
+        expect(causeText).toContain("unexpected get hostname status 503");
       }
       // PersistentPostRun still fires on failure.
       expect(telemetry.flushed).toBe(true);
@@ -361,9 +377,9 @@ describe("domains get integration", () => {
       const exit = yield* Effect.exit(domainsGet(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("DomainsNetworkError");
-        expect(json).toContain("failed to get custom hostname");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("DomainsNetworkError");
+        expect(causeText).toContain("failed to get custom hostname");
       }
     }).pipe(Effect.provide(layer));
   });

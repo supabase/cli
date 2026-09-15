@@ -216,6 +216,7 @@ DeleteTokenError
 DesiredSubdomainRequiredError
 DockerLifecycleInspectError
 DockerLifecycleListError
+DockerLogsStreamError
 DockerRemoveAllContainerPruneError
 DockerRemoveAllListError
 DockerRemoveAllNetworkPruneError
@@ -226,6 +227,8 @@ DomainsCnameError
 DomainsNetworkError
 DomainsUnexpectedStatusError
 DuplicateRemoteProjectIdError
+EdgeRuntimeContainerCrashedError
+EdgeRuntimeLogStreamLostError
 EdgeRuntimeScriptError
 EncryptionNetworkError
 EncryptionUnexpectedStatusError
@@ -444,6 +447,8 @@ SeedConfigLoadError
 SeedMissingProjectConfigError
 SeedMutuallyExclusiveFlagsError
 SeedWorkdirError
+ServeLocalDbInspectError
+ServeLocalDbNotRunningError
 ServiceVersionNotFoundError
 ServicesEnvNotSupportedError
 ShadowDbError
