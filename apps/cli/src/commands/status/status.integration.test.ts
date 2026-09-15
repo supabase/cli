@@ -21,6 +21,7 @@ import {
 } from "../../../tests/helpers/command-mocks.ts";
 import type { CommandPlatformApiFactoryError } from "../../auth/command-platform-api-factory.service.ts";
 import { CommandPlatformApiFactory } from "../../auth/command-platform-api-factory.service.ts";
+import { runtimeInfoLayer } from "../../shared/runtime/runtime-info.layer.ts";
 import { AccessTokenRequiredError } from "../../auth/errors.ts";
 import { OutputFlag } from "../../command-internal/global-flags.ts";
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
@@ -351,6 +352,7 @@ function setup(opts: SetupOpts = {}) {
 
   const layer = Layer.mergeAll(
     BunServices.layer,
+    runtimeInfoLayer,
     out.layer,
     cliSettings,
     telemetry.layer,
@@ -434,6 +436,7 @@ function setupFailureEnvelope(opts: FailureEnvelopeOpts) {
 
   const layer = Layer.mergeAll(
     BunServices.layer,
+    runtimeInfoLayer,
     outputLayer.pipe(Layer.provide(stdio.layer)),
     cliSettings,
     telemetry.layer,

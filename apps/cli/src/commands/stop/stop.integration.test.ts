@@ -14,6 +14,7 @@ import {
   useTempWorkdir,
 } from "../../../tests/helpers/command-mocks.ts";
 import { DebugFlag } from "../../command-internal/global-flags.ts";
+import { runtimeInfoLayer } from "../../shared/runtime/runtime-info.layer.ts";
 import { stop } from "./stop.handler.ts";
 import type { StopFlags } from "./stop.command.ts";
 
@@ -199,6 +200,7 @@ function setup(opts: SetupOpts = {}) {
 
   const layer = Layer.mergeAll(
     BunServices.layer,
+    runtimeInfoLayer,
     out.layer,
     cliSettings,
     telemetry.layer,
