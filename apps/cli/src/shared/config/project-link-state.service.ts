@@ -1,5 +1,7 @@
 import type { Effect, Option } from "effect";
 import { Data, Schema, Context } from "effect";
+import type { PlatformError } from "effect/PlatformError";
+import type { CliProjectHomeNotDirectoryError } from "./cli-project-home.service.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -59,15 +61,26 @@ export class ProjectNotLinkedError extends Data.TaggedError("ProjectNotLinkedErr
 
 interface ProjectLinkStateShape {
   readonly load: Effect.Effect<Option.Option<ProjectLinkStateValue>, InvalidProjectLinkStateError>;
-  readonly save: (state: ProjectLinkStateValue) => Effect.Effect<void>;
-  readonly clear: Effect.Effect<void>;
+  readonly save: (
+    state: ProjectLinkStateValue,
+  ) => Effect.Effect<
+    void,
+    InvalidProjectLinkStateError | PlatformError | CliProjectHomeNotDirectoryError
+  >;
+  readonly clear: Effect.Effect<void, PlatformError>;
   readonly getActiveBranch: Effect.Effect<
     Option.Option<ActiveBranch>,
     InvalidProjectLinkStateError
   >;
   readonly setActiveBranch: (
     branch: ActiveBranch,
-  ) => Effect.Effect<void, InvalidProjectLinkStateError | ProjectNotLinkedError>;
+  ) => Effect.Effect<
+    void,
+    | InvalidProjectLinkStateError
+    | ProjectNotLinkedError
+    | PlatformError
+    | CliProjectHomeNotDirectoryError
+  >;
 }
 
 export class ProjectLinkState extends Context.Service<ProjectLinkState, ProjectLinkStateShape>()(

@@ -1,4 +1,4 @@
-import { Effect, Exit, FileSystem, Option, Path } from "effect";
+import { Effect, FileSystem, Option, Path } from "effect";
 import { CommandSettings } from "../../config/command-settings.service.ts";
 import { CommandCredentials } from "../../auth/command-credentials.service.ts";
 import {
@@ -96,8 +96,9 @@ export const services = Effect.fn("services")(function* (_flags: ServicesFlags) 
   });
 
   yield* Effect.gen(function* () {
-    const accessTokenExit = yield* credentials.getAccessToken.pipe(Effect.exit);
-    const accessToken = Exit.isSuccess(accessTokenExit) ? accessTokenExit.value : Option.none();
+    const accessToken = yield* credentials.getAccessToken.pipe(
+      Effect.catchTag("InvalidAccessTokenError", () => Effect.succeed(Option.none())),
+    );
 
     const validLinkedRef = Option.filter(linkedProjectRef, (ref) => PROJECT_REF_PATTERN.test(ref));
     if (Option.isSome(linkedProjectRef) && Option.isNone(validLinkedRef)) {

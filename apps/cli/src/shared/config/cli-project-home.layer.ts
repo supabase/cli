@@ -1,4 +1,5 @@
-import { Effect, FileSystem, Layer, Option, Path } from "effect";
+import { Effect, FileSystem, Layer, Option, Path, Predicate } from "effect";
+import type { PlatformError } from "effect/PlatformError";
 import { CliProjectContext } from "./cli-project-context.service.ts";
 import { CliProjectHome, CliProjectHomeNotDirectoryError } from "./cli-project-home.service.ts";
 import { RuntimeInfo } from "../runtime/runtime-info.service.ts";
@@ -45,19 +46,28 @@ const makeCliProjectHome = Effect.gen(function* () {
   const projectLinkPath = path.join(projectHomeDir, "project.json");
   const projectLocalVersionsPath = path.join(projectHomeDir, "local-versions.json");
 
-  const ensureCliProjectHomeDir = fs
+  const mapEnsureError = (
+    error: PlatformError,
+  ): Effect.Effect<never, PlatformError | CliProjectHomeNotDirectoryError> => {
+    if (
+      Predicate.isTagged(error.reason, "AlreadyExists") ||
+      Predicate.isTagged(error.reason, "BadResource")
+    ) {
+      return Effect.fail(
+        new CliProjectHomeNotDirectoryError({
+          message: `${projectHomeDir} could not be created: a file (or a symlink loop) exists at that path or on one of its parent directories. Remove or rename it so the Supabase CLI can store project state there.`,
+        }),
+      );
+    }
+    return Effect.fail(error);
+  };
+
+  const ensureCliProjectHomeDir: Effect.Effect<
+    void,
+    PlatformError | CliProjectHomeNotDirectoryError
+  > = fs
     .makeDirectory(projectHomeDir, { recursive: true, mode: 0o700 })
-    .pipe(
-      Effect.catchTag("PlatformError", (error) =>
-        error.reason._tag === "AlreadyExists" || error.reason._tag === "BadResource"
-          ? Effect.die(
-              new CliProjectHomeNotDirectoryError({
-                message: `${projectHomeDir} could not be created: a file (or a symlink loop) exists at that path or on one of its parent directories. Remove or rename it so the Supabase CLI can store project state there.`,
-              }),
-            )
-          : Effect.die(error),
-      ),
-    );
+    .pipe(Effect.catchTag("PlatformError", mapEnsureError), Effect.asVoid);
 
   return CliProjectHome.of({
     projectRoot,
