@@ -2,6 +2,8 @@
 
 > Extracted from [ADR 0005](adr/0005-openapi-driven-code-generation.md). This document covers the GitHub Actions workflows that keep checked-in OpenAPI types in sync with the live Management API. For the three-layer generation strategy and architectural decisions, see the ADR.
 
+> This document describes an earlier iteration of the API sync pipeline; see [`.github/workflows/api-package-sync.yml`](../.github/workflows/api-package-sync.yml) for the current workflow.
+
 Three GitHub Actions workflows keep the checked-in `v1.d.ts` in sync with the live Management API spec across the private API repo and the public CLI repo.
 
 ## 1. Sync workflow (CLI repo — `.github/workflows/openapi-sync.yml`)

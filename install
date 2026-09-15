@@ -181,6 +181,13 @@ verify_checksum() {
   fi
 }
 
+# Removes the pre-2.x Go sidecar this script used to install alongside the CLI;
+# single-binary releases no longer ship it (CLI-2432).
+remove_legacy_sidecar() {
+  local ext="$1"
+  rm -f "${INSTALL_DIR}/${APP}-go${ext}"
+}
+
 install_from_binary() {
   local ext="$1"
 
@@ -192,12 +199,13 @@ install_from_binary() {
   mkdir -p "$INSTALL_DIR"
   cp "$BINARY_PATH" "${INSTALL_DIR}/${APP}${ext}"
   chmod 755 "${INSTALL_DIR}/${APP}${ext}"
+  remove_legacy_sidecar "$ext"
 }
 
 download_and_install() {
   local target="$1"
   local ext="$2"
-  local version filename base_url tmp_dir archive checksums source_dir companion_ext
+  local version filename base_url tmp_dir archive checksums source_dir
 
   need curl
   need tar
@@ -250,11 +258,7 @@ download_and_install() {
   mv "${source_dir}/${APP}${ext}" "${INSTALL_DIR}/${APP}${ext}"
   chmod 755 "${INSTALL_DIR}/${APP}${ext}"
 
-  companion_ext="$ext"
-  if [[ -f "${source_dir}/${APP}-go${companion_ext}" ]]; then
-    mv "${source_dir}/${APP}-go${companion_ext}" "${INSTALL_DIR}/${APP}-go${companion_ext}"
-    chmod 755 "${INSTALL_DIR}/${APP}-go${companion_ext}"
-  fi
+  remove_legacy_sidecar "$ext"
 }
 
 path_command_for_shell() {

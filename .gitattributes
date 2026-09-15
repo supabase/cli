@@ -14,16 +14,12 @@ apps/cli/src/shared/telemetry/__fixtures__/error-tags.txt text eol=lf
 # statistics and collapses them in pull request diffs -- they are build output to
 # be regenerated, not code to review, and together they outweigh the hand-written
 # source. The attribute is GitHub-only: git, CI, and local diffs are unaffected.
-# Collapsed is not hidden. v1-openapi.yaml and the lockfiles do carry changes
-# worth reading -- an upstream API change, a dependency substitution -- and both
-# stay one click away in review.
-# Regeneration is owned by `go generate` in apps/cli-go and by the `generate`
-# turbo task, whose `outputs` in turbo.json are the source of truth for this list.
-# Only the generated files are listed, not their hand-written inputs
-# (pkg/api/*.cfg.yaml, api/overlay.yaml). apps/docs/content/docs/commands/ is
-# generated too but gitignored, so it needs no entry.
-apps/cli-go/api/v1-openapi.yaml linguist-generated=true
-apps/cli-go/pkg/api/*.gen.go linguist-generated=true
+# Collapsed is not hidden. The lockfile does carry changes worth reading --
+# a dependency substitution -- and stays one click away in review.
+# Regeneration is owned by the `generate` turbo task, whose `outputs` in
+# turbo.json are the source of truth for this list. Only the generated files
+# are listed, not their hand-written inputs. apps/docs/content/docs/commands/
+# is generated too but gitignored, so it needs no entry.
 packages/api/src/generated/* linguist-generated=true
 packages/api/scripts/openapi-source.json linguist-generated=true
 apps/cli/src/shared/feedback/database.types.ts linguist-generated=true
@@ -33,7 +29,6 @@ apps/docs/public/cli/project-config.schema.json linguist-generated=true
 # Lockfiles. Collapsed rather than hidden -- a dependency change is still one
 # click away in review, which is the same treatment GitHub gives package-lock.json.
 pnpm-lock.yaml linguist-generated=true
-apps/cli-go/go.sum linguist-generated=true
 
 # Not a language marker -- this is the service image manifest, not a container build.
 apps/cli/src/shared/services/Dockerfile linguist-detectable=false

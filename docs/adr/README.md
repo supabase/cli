@@ -56,7 +56,7 @@ When an ADR becomes outdated, mark it as `deprecated` or reference the supersedi
 | 0011 | [CLI Release & Distribution Strategy](0011-cli-release-and-distribution-strategy.md)                           | proposed   |
 | 0013 | [Live E2E Tests Bypass the Replay Server](0013-live-e2e-bypasses-replay-server.md)                             | accepted   |
 | 0015 | [Managed Stack Contract Fixtures](0015-managed-stack-contract-fixtures.md)                                     | superseded |
-| 0016 | [Legacy Port Completion and Go CLI Authority Scope](0016-legacy-port-completion-and-go-cli-authority-scope.md) | proposed   |
+| 0016 | [Legacy Port Completion and Go CLI Authority Scope](0016-legacy-port-completion-and-go-cli-authority-scope.md) | superseded |
 | 0017 | [Simplified Managed Stack Architecture](0017-simplified-managed-stack-architecture.md)                         | accepted   |
 | 0018 | [Sparse Config Subtraction](0018-sparse-config-subtraction.md)                                                 | proposed   |
 | 0019 | [Raw API-Response Passthrough on API-Sourced Config](0019-config-api-response-passthrough.md)                  | accepted   |
@@ -65,6 +65,7 @@ When an ADR becomes outdated, mark it as `deprecated` or reference the supersedi
 | 0022 | [Config Diff Classification and Managed Surface](0022-config-diff-classification-and-managed-surface.md)       | accepted   |
 | 0023 | [Config Pull Write Strategy and Scope Resolution](0023-config-pull-write-strategy-and-scope-resolution.md)     | accepted   |
 | 0024 | [Top-Level `pull` Orchestration](0024-top-level-pull-orchestration.md)                                         | accepted   |
+| 0025 | [Go CLI Removal](0025-go-cli-removal.md)                                                                       | accepted   |
 
 ## Template
 

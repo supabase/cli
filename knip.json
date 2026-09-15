@@ -4,8 +4,7 @@
   "workspaces": {
     ".": {
       "entry": [".github/scripts/**/*.ts", "tools/release/*.ts"],
-      "ignore": [".repos/**", "apps/cli-go/**"],
-      "ignoreBinaries": ["go"],
+      "ignore": [".repos/**"],
       "ignoreDependencies": ["verdaccio"]
     },
     "apps/cli": {

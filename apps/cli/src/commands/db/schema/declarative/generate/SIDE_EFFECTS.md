@@ -80,9 +80,8 @@ always go to stderr, in every `--output-format`. On success:
 - `--db-url` / `--linked` / `--local` are mutually exclusive; absent all three,
   smart mode prompts (existing-files overwrite → Local/Custom choice + reset offer).
 - `--output-dir <dir>` selects a destination for this invocation without changing
-  config or activating it for later syncs (TS-only; deliberately not
-  `--output`/`-o`, which the legacy root reserves for the global machine-format
-  flag — see `docs/go-cli-divergences.md`).
+  config or activating it for later syncs (deliberately not `--output`/`-o`, which
+  the root command reserves for the global machine-format flag).
 - When `declarative_schema_path` is unset, the new `supabase/schemas` default is
   empty, and the former `supabase/database` default still contains `.sql` files
   or an export manifest, a WARNING on stderr explains the default move and how
