@@ -32,7 +32,10 @@ When the `experimental.stack` feature flag is on (`SUPABASE_EXPERIMENTAL_STACK=1
 precedence, same rules as [`docs/stack-commands.md`](../../../docs/stack-commands.md)), the
 local path calls `resetDatabase` on the project stack instead of the container recreate
 described above. After the reset, buckets are seeded — reusing the `seed buckets` local path —
-when Storage is `ready`, `dormant`, or `starting`; there is no client-side wait. When Storage is
+when Storage is `ready`, `dormant`, or `starting`. While Storage is `starting`, the command first
+waits up to 30s for it to settle (polling the stack status every 200ms) and prints `WARNING: timed
+out waiting for storage to become ready; skipped seeding storage buckets.` and skips seeding if
+it does not. When Storage is
 `disabled`, `failed`, or `stopped`, the command prints `WARNING: skipped seeding storage
 buckets: Storage is <state> for this stack.` to stderr and exits `0` rather than failing. The
 Storage gateway URL is the selected stack's API gateway URL (`status.endpoints.api.url`), not
@@ -222,9 +225,9 @@ path has no confirmation prompt.
 ## Notes
 
 - **Stack backend bucket seeding.** Only Storage's post-reset capability state gates
-  bucket seeding on this path: `ready`/`dormant`/`starting` seed immediately (the
-  gateway itself lazily activates a `starting`/`dormant` Storage on first request and
-  holds that request; the CLI does not poll or wait). `disabled`/`failed`/`stopped`
+  bucket seeding on this path: `ready`/`dormant` seed immediately (the gateway
+  itself lazily activates a dormant Storage on first request and holds that request);
+  `starting` waits up to 30s for the capability to settle first. `disabled`/`failed`/`stopped`
   skip seeding with a stderr `WARNING: skipped seeding storage buckets: Storage is
 <state> for this stack.` and the command still exits `0`. The stack's service-role
   JWT is never printed or logged.

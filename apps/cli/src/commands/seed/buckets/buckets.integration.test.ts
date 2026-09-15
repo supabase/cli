@@ -34,6 +34,11 @@ import { seedBuckets } from "./buckets.handler.ts";
 import type { BucketsFlags } from "./buckets.command.ts";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
+import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
+import {
+  buildStorageStackApi,
+  type SetupStorageStackApiOptions,
+} from "../../../../tests/helpers/storage.ts";
 
 interface MockRoute {
   readonly method: string;
@@ -77,6 +82,9 @@ function setupSeedBuckets(
     readonly apiKeysFail?: HttpClientError.HttpClientError;
     /** cliSettings.explicitWorkdir override — true iff --workdir/SUPABASE_WORKDIR was set verbatim. */
     readonly explicitWorkdir?: boolean;
+    /** Selects the `stack` backend; omitted/false keeps the legacy default. */
+    readonly stackBackend?: boolean;
+    readonly stackApi?: SetupStorageStackApiOptions;
   },
 ) {
   if (opts.toml !== undefined) {
@@ -189,6 +197,8 @@ function setupSeedBuckets(
     },
   });
 
+  const stackApi = buildStorageStackApi(workdir, opts.stackApi);
+
   const layer = Layer.mergeAll(
     out.layer,
     httpLayer,
@@ -205,9 +215,10 @@ function setupSeedBuckets(
       make: CommandPlatformApi.pipe(Effect.provide(managementApi.layer)),
     }),
     linkedCache.layer,
+    ...(opts.stackBackend === true ? [stackBackendLayer("stack"), stackApi.layer] : []),
   );
 
-  return { layer, out, requests, telemetry, linkedCache };
+  return { layer, out, requests, telemetry, linkedCache, stackCalls: stackApi.stackCalls };
 }
 
 const VECTOR_LIST = "/storage/v1/vector/ListVectorBuckets";
@@ -2712,6 +2723,107 @@ describe("seed buckets", () => {
         expect(
           requests.some((r) => r.method === "POST" && r.url.endsWith("/storage/v1/bucket")),
         ).toBe(true);
+      });
+    },
+  );
+});
+
+describe("stack backend", () => {
+  const tmp = useTempWorkdir("supabase-seed-buckets-stack-");
+
+  it.live("creates buckets and uploads objects through the stack's api endpoint and JWT", () => {
+    const { layer, requests } = setupSeedBuckets(tmp.current, {
+      toml: '[storage.buckets.images]\npublic = true\nobjects_path = "./assets"\n',
+      files: { "supabase/assets/a.txt": "hello" },
+      stackBackend: true,
+      stackApi: { apiEndpoint: "http://127.0.0.1:59999", serviceRoleJwt: "stack-jwt" },
+      routes: [
+        { method: "GET", match: "/storage/v1/bucket", body: [] },
+        { method: "POST", match: "/storage/v1/bucket", body: { name: "images" } },
+        { method: "POST", match: "/storage/v1/object/", body: {} },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* seedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(requests.length).toBeGreaterThan(0);
+      expect(requests.every((r) => r.url.startsWith("http://127.0.0.1:59999"))).toBe(true);
+      expect(requests.every((r) => r.headers["apikey"] === "stack-jwt")).toBe(true);
+      expect(
+        requests.some((r) => r.method === "POST" && r.url.endsWith("/storage/v1/bucket")),
+      ).toBe(true);
+      expect(requests.some((r) => r.url.includes("/storage/v1/object/"))).toBe(true);
+    });
+  });
+
+  it.live(
+    "short-circuits with the empty summary despite a malformed SUPABASE_API_PORT, since the stack backend never reads it",
+    () => {
+      const { layer, out, requests } = setupSeedBuckets(tmp.current, {
+        toml: 'project_id = "test"\n',
+        files: { "supabase/.env": "SUPABASE_API_PORT=notaport\n" },
+        stackBackend: true,
+        format: "json",
+      });
+      return Effect.gen(function* () {
+        const exit = yield* seedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(requests).toHaveLength(0);
+        const success = out.messages.find((m) => m.type === "success");
+        expect(success?.data?.["buckets_created"]).toEqual([]);
+      });
+    },
+  );
+
+  it.live("the same malformed SUPABASE_API_PORT still hard-fails under the legacy backend", () => {
+    const { layer, requests } = setupSeedBuckets(tmp.current, {
+      toml: 'project_id = "test"\n',
+      files: { "supabase/.env": "SUPABASE_API_PORT=notaport\n" },
+    });
+    return Effect.gen(function* () {
+      const exit = yield* seedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      const json = JSON.stringify(exit);
+      expect(json).toContain("StorageConfigError");
+      expect(json).toContain("Invalid config for api.port: cannot parse");
+      expect(requests).toHaveLength(0);
+    });
+  });
+
+  it.live(
+    "fails with StackStorageCapabilityError when Storage is disabled, before any request",
+    () => {
+      const { layer, requests } = setupSeedBuckets(tmp.current, {
+        toml: "[storage.buckets.images]\npublic = true\n",
+        stackBackend: true,
+        stackApi: { storageState: "disabled" },
+      });
+      return Effect.gen(function* () {
+        const exit = yield* seedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        const json = JSON.stringify(exit);
+        expect(json).toContain("StackStorageCapabilityError");
+        expect(json).toContain("-x storage");
+        expect(requests).toHaveLength(0);
+      });
+    },
+  );
+
+  it.live(
+    "fails with StackStorageUnavailableError when no stack is registered for the project",
+    () => {
+      const { layer, requests } = setupSeedBuckets(tmp.current, {
+        toml: "[storage.buckets.images]\npublic = true\n",
+        stackBackend: true,
+        stackApi: { found: false },
+      });
+      return Effect.gen(function* () {
+        const exit = yield* seedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        const json = JSON.stringify(exit);
+        expect(json).toContain("StackStorageUnavailableError");
+        expect(json).toContain("supabase start");
+        expect(requests).toHaveLength(0);
       });
     },
   );

@@ -380,3 +380,49 @@ describe("storage mv", () => {
     });
   });
 });
+
+describe("stack backend", () => {
+  const tmp = useTempWorkdir("supabase-storage-mv-stack-");
+
+  it.live("moves through the stack's api endpoint and JWT", () => {
+    const { layer, out, requests } = setupStorage(tmp.current, {
+      toml: 'project_id = "test"\n',
+      local: true,
+      stackBackend: true,
+      stackApi: { apiEndpoint: "http://127.0.0.1:59999", serviceRoleJwt: "stack-jwt" },
+      routes: [{ method: "POST", match: MOVE, body: { message: "Successfully moved" } }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* storageMv(
+        mvFlags({ src: "ss:///private/readme.md", dst: "ss:///private/docs/file" }),
+      ).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(out.stderrText).toContain("Successfully moved");
+      const move = requests.find((r) => r.url.includes(MOVE));
+      expect(move?.url.startsWith("http://127.0.0.1:59999")).toBe(true);
+      expect(move?.headers["apikey"]).toBe("stack-jwt");
+    });
+  });
+
+  it.live(
+    "fails with StackStorageCapabilityError when Storage is disabled, before any request",
+    () => {
+      const { layer, requests } = setupStorage(tmp.current, {
+        toml: 'project_id = "test"\n',
+        local: true,
+        stackBackend: true,
+        stackApi: { storageState: "disabled" },
+      });
+      return Effect.gen(function* () {
+        const exit = yield* storageMv(
+          mvFlags({ src: "ss:///private/readme.md", dst: "ss:///private/docs/file" }),
+        ).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        const json = JSON.stringify(exit);
+        expect(json).toContain("StackStorageCapabilityError");
+        expect(json).toContain("-x storage");
+        expect(requests).toHaveLength(0);
+      });
+    },
+  );
+});
