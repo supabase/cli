@@ -72,8 +72,20 @@ const computeEntry = Schema.Struct({
   ),
 });
 
-/** `[compute]` — one `[compute.<name>]` table per Compute service, keyed by name. */
-export const compute = Schema.Record(computeName, computeEntry)
+/**
+ * `[compute]` — one `[compute.<name>]` table per Compute service, keyed by name, plus
+ * room for settings that apply to every compute.
+ *
+ * A struct-with-rest rather than a bare `Record` so both can share the one table: a
+ * `Record` has no slot for a sibling scalar, so `[compute] source = "./my-apps"` would
+ * be read as a compute *named* `source` and rejected as a non-table. There are no such
+ * settings yet. Adding the first one is a field in the struct below and nothing else —
+ * `[compute.<name>]` does not move — at the cost of that name no longer being available
+ * to a compute, which is why they are added deliberately rather than speculatively.
+ */
+export const compute = Schema.StructWithRest(Schema.Struct({}), [
+  Schema.Record(computeName, computeEntry),
+])
   .annotate({
     default: {},
     description: "Compute-specific configuration keyed by compute name.",

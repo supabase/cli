@@ -1939,8 +1939,15 @@
       "type": "object",
       "properties": {
         "compute": {
-          "type": "boolean",
-          "description": "Enable the experimental compute command family."
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Enable the experimental compute command family.",
+              "default": false
+            }
+          },
+          "additionalProperties": true
         },
         "stack": {
           "type": "boolean",

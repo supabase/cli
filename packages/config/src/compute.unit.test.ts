@@ -61,6 +61,14 @@ describe("compute schema", () => {
     expect(() => decode({ api: "node" })).toThrow();
   });
 
+  test("rejects a scalar setting until one is declared as a shared setting", () => {
+    // `[compute]` is a struct-with-rest so shared settings can sit beside the per-compute
+    // tables, but none are declared yet. Until one is, a scalar here is still an error
+    // rather than a silently-ignored key — adding `source` (or any other) is a deliberate
+    // field in the struct, and this expectation is what flips when that happens.
+    expect(() => decode({ source: "./my-apps" })).toThrow();
+  });
+
   test("includes compute properties in the generated JSON schema", () => {
     const json = JSON.parse(JSON.stringify(Schema.toJsonSchemaDocument(compute).schema));
     const objectSchema = json.anyOf?.find((entry: { type?: string }) => entry?.type === "object");

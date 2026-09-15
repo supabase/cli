@@ -33,10 +33,13 @@ const inspectRule = Schema.Struct({
 
 export const experimental = Schema.Struct({
   compute: Schema.optionalKey(
-    Schema.Boolean.annotate({
-      description: "Enable the experimental compute command family.",
-      tags,
-    }),
+    Schema.Struct({
+      enabled: Schema.Boolean.annotate({
+        default: false,
+        description: "Enable the experimental compute command family.",
+        tags,
+      }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
+    }).pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
   ),
   stack: Schema.optionalKey(
     Schema.Boolean.annotate({

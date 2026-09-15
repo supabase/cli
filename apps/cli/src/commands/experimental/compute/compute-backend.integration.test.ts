@@ -44,16 +44,38 @@ describe("resolveComputeEnabled", () => {
   it.effect("reads JSON and prefers it over TOML", () => {
     return Effect.gen(function* () {
       const root = yield* project({
-        "supabase/config.toml": "[experimental]\ncompute = false\n",
-        "supabase/config.json": '{"experimental":{"compute":true}}',
+        "supabase/config.toml": "[experimental.compute]\nenabled = false\n",
+        "supabase/config.json": '{"experimental":{"compute":{"enabled":true}}}',
       });
       expect(yield* resolve({ args: ["compute"], cwd: root, env: {} })).toBe(true);
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
   });
 
+  it.effect("treats the superseded bare boolean as unset, not as an opt-in", () =>
+    Effect.gen(function* () {
+      // `compute = true` under `[experimental]` was the previous spelling. The gate reads
+      // invalid configuration as unset, so it leaves compute disabled here rather than
+      // failing; loading the config for any other command reports the shape error loudly.
+      const root = yield* project({
+        "supabase/config.toml": "[experimental]\ncompute = true\n",
+      });
+      expect(yield* resolve({ args: ["compute"], cwd: root, env: {} })).toBe(false);
+      // The environment opt-in still works, so a stale config does not strand anyone.
+      expect(
+        yield* resolve({
+          args: ["compute"],
+          cwd: root,
+          env: { SUPABASE_EXPERIMENTAL_COMPUTE: "1" },
+        }),
+      ).toBe(true);
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
   it.effect("reads a true TOML setting and lets explicit env values override it", () =>
     Effect.gen(function* () {
-      const root = yield* project({ "supabase/config.toml": "[experimental]\ncompute = true\n" });
+      const root = yield* project({
+        "supabase/config.toml": "[experimental.compute]\nenabled = true\n",
+      });
       expect(yield* resolve({ args: ["compute"], cwd: root, env: {} })).toBe(true);
       expect(
         yield* resolve({
@@ -70,7 +92,7 @@ describe("resolveComputeEnabled", () => {
         }),
       ).toBe(true);
       const disabledConfig = yield* project({
-        "supabase/config.toml": "[experimental]\ncompute = false\n",
+        "supabase/config.toml": "[experimental.compute]\nenabled = false\n",
       });
       expect(yield* resolve({ args: ["compute"], cwd: disabledConfig, env: {} })).toBe(false);
       expect(
@@ -86,7 +108,8 @@ describe("resolveComputeEnabled", () => {
   it.effect("ignores an invalid stack setting when reading compute", () =>
     Effect.gen(function* () {
       const root = yield* project({
-        "supabase/config.toml": '[experimental]\ncompute = true\nstack = "yes"\n',
+        "supabase/config.toml":
+          '[experimental]\nstack = "yes"\n\n[experimental.compute]\nenabled = true\n',
       });
       expect(yield* resolve({ args: ["compute"], cwd: root, env: {} })).toBe(true);
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
@@ -96,11 +119,13 @@ describe("resolveComputeEnabled", () => {
     return Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
-      const root = yield* project({ "supabase/config.json": '{"experimental":{"compute":true}}' });
+      const root = yield* project({
+        "supabase/config.json": '{"experimental":{"compute":{"enabled":true}}}',
+      });
       const child = path.join(root, "nested");
       yield* fs.makeDirectory(child);
       const explicit = yield* project({
-        "supabase/config.toml": "[experimental]\ncompute = false\n",
+        "supabase/config.toml": "[experimental.compute]\nenabled = false\n",
       });
       expect(yield* resolve({ args: ["compute"], cwd: child, env: {} })).toBe(true);
       expect(
@@ -113,12 +138,14 @@ describe("resolveComputeEnabled", () => {
     return Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
-      const root = yield* project({ "supabase/config.toml": "[experimental]\ncompute = false\n" });
+      const root = yield* project({
+        "supabase/config.toml": "[experimental.compute]\nenabled = false\n",
+      });
       const child = path.join(root, "nested");
       yield* fs.makeDirectory(path.join(child, "supabase"), { recursive: true });
       yield* fs.writeFileString(
         path.join(child, "supabase/config.json"),
-        '{"experimental":{"compute":true}}',
+        '{"experimental":{"compute":{"enabled":true}}}',
       );
       expect(yield* resolve({ args: ["compute"], cwd: child, env: {} })).toBe(false);
       expect(yield* resolve({ args: ["compute", "--workdir", child], cwd: root, env: {} })).toBe(
@@ -129,8 +156,12 @@ describe("resolveComputeEnabled", () => {
 
   it.effect("fails closed for malformed files and types invalid env values", () => {
     return Effect.gen(function* () {
-      const root = yield* project({ "supabase/config.json": '{"experimental":{"compute":"yes"}}' });
-      const malformed = yield* project({ "supabase/config.toml": "[experimental\ncompute = true" });
+      const root = yield* project({
+        "supabase/config.json": '{"experimental":{"compute":{"enabled":"yes"}}}',
+      });
+      const malformed = yield* project({
+        "supabase/config.toml": "[experimental.compute\nenabled = true",
+      });
       expect(yield* resolve({ args: ["compute"], cwd: root, env: {} })).toBe(false);
       expect(yield* resolve({ args: ["compute"], cwd: malformed, env: {} })).toBe(false);
       const error = yield* resolve({
@@ -174,7 +205,9 @@ describe("resolveComputeEnabled", () => {
     ["__completeNoDesc", "co"],
   ])("exposes compute for root/help/completion args %j", (args) =>
     Effect.gen(function* () {
-      const root = yield* project({ "supabase/config.toml": "[experimental]\ncompute = true\n" });
+      const root = yield* project({
+        "supabase/config.toml": "[experimental.compute]\nenabled = true\n",
+      });
       const enabled = yield* resolve({ args, cwd: root, env: {} });
       const completion = respondToComplete(rootCommandForFeatures({ computeEnabled: enabled }), [
         "__complete",

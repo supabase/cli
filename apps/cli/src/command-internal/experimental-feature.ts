@@ -36,6 +36,25 @@ const firstExplicitLongFlagValue = (
 
 const UnknownFromJsonString = Schema.fromJsonString(Schema.Unknown);
 
+/**
+ * The one boolean a gate needs, from either shape an experimental flag takes: `stack` is a
+ * bare `stack = true`, while `compute` is a `[experimental.compute]` table carrying
+ * `enabled`, the same shape as `[experimental.pgdelta]` and `[experimental.webhooks]`.
+ *
+ * Shape-checked rather than typed per feature because the decoded type of a computed-key
+ * struct is an index signature over every feature's schema, so neither branch narrows. The
+ * schema has already validated whichever shape arrived; this only has to pick the boolean
+ * out of it.
+ */
+const featureEnabled = (configured: unknown): boolean | undefined => {
+  if (typeof configured === "boolean") return configured;
+  if (typeof configured === "object" && configured !== null && "enabled" in configured) {
+    const { enabled } = configured as { readonly enabled?: unknown };
+    return typeof enabled === "boolean" ? enabled : undefined;
+  }
+  return undefined;
+};
+
 /** Reads one experimental feature, treating unavailable or invalid configuration as unset. */
 export const readExperimentalFeatureConfig = (input: {
   readonly feature: keyof typeof featureSchemas;
@@ -68,7 +87,7 @@ export const readExperimentalFeatureConfig = (input: {
       ),
     });
     const decoded = yield* Schema.decodeUnknownEffect(schema)(document);
-    return decoded.experimental?.[input.feature];
+    return featureEnabled(decoded.experimental?.[input.feature]);
   }).pipe(Effect.orElseSucceed(() => undefined));
 
 /** Resolves one experimental boolean from its environment override and config fallback. */
