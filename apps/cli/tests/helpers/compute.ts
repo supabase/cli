@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { makeApiClient } from "@supabase/api/effect";
 import { Effect, FileSystem, Layer, Option, Path, Predicate, Redacted, Schema } from "effect";
@@ -351,6 +352,8 @@ const testCliConfigLayer = (workdir: string, explicitWorkdir: boolean) =>
   Layer.succeed(CommandSettings, {
     profileEnvValue: undefined,
     profile: "supabase",
+    profileEnvValue: Option.none(),
+    supabaseHome: join(workdir, ".supabase"),
     apiUrl: "https://api.supabase.com",
     projectHost: "supabase.co",
     poolerHost: "pooler.supabase.com",

@@ -71,11 +71,15 @@ function makeLayer(
 ) {
   const runtimeInfoLayer = mockRuntimeInfo({ homeDir: home });
   const cliProjectContextLayer = mockCliProjectContext();
+  const envLayer = processEnvLayer({ HOME: home, ...env });
   const baseLayer = Layer.mergeAll(
     runtimeInfoLayer,
     cliProjectContextLayer,
-    processEnvLayer({ HOME: home, ...env }),
-    cliSettingsLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(cliProjectContextLayer)),
+    cliSettingsLayer.pipe(
+      Layer.provide(runtimeInfoLayer),
+      Layer.provide(cliProjectContextLayer),
+      Layer.provide(envLayer),
+    ),
   );
   return credentialsLayer.pipe(
     Layer.provide(fsLayer),
@@ -258,16 +262,17 @@ describe("Credentials", () => {
       );
       const runtimeInfoLayer = mockRuntimeInfo({ homeDir: tempHome });
       const cliProjectContextLayer = mockCliProjectContext();
+      const envLayer = processEnvLayer({ HOME: tempHome, SUPABASE_NO_KEYRING: "1" });
       const layer = credentialsLayer.pipe(
         Layer.provide(failingFs),
         Layer.provide(BunServices.layer),
         Layer.provide(runtimeInfoLayer),
         Layer.provide(cliProjectContextLayer),
-        Layer.provide(processEnvLayer({ HOME: tempHome })),
         Layer.provide(
           cliSettingsLayer.pipe(
             Layer.provide(runtimeInfoLayer),
             Layer.provide(cliProjectContextLayer),
+            Layer.provide(envLayer),
           ),
         ),
       );

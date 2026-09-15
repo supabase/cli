@@ -2,7 +2,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
 import { BunServices } from "@effect/platform-bun";
-import { Deferred, Effect, Layer, Option, Redacted, Stream } from "effect";
+import { ConfigProvider, Deferred, Effect, Layer, Option, Redacted, Stream } from "effect";
 import type { CliProjectEnvironment, CliProjectPaths } from "@supabase/config";
 import { Api } from "../../src/shared/auth/api.service.ts";
 import type { LoginSessionResponse, ProfileResponse } from "../../src/shared/auth/api.service.ts";
@@ -670,14 +670,20 @@ function applyProcessEnv(values: Readonly<Record<string, string | undefined>>) {
 export function processEnvLayer(
   values: Readonly<Record<string, string | undefined>> = {},
 ): Layer.Layer<never> {
-  return Layer.effectDiscard(
+  return ConfigProvider.layer(
     Effect.acquireRelease(
-      Effect.sync(() => applyProcessEnv(values)),
-      (snapshot) =>
+      Effect.sync(() => {
+        const snapshot = applyProcessEnv(values);
+        return {
+          provider: ConfigProvider.fromEnvRecord(process.env, { preserveEmptyStrings: true }),
+          snapshot,
+        };
+      }),
+      ({ snapshot }) =>
         Effect.sync(() => {
           applyProcessEnv(snapshot);
         }),
-    ),
+    ).pipe(Effect.map(({ provider }) => provider)),
   );
 }
 
@@ -837,10 +843,13 @@ export function emptyEnv() {
     cliProjectLocalServiceVersionsLayer,
     analytics.layer,
     mockTelemetryRuntime(),
-    envLayer,
     mockTty(),
     mockProcessControl().layer,
-    cliSettingsLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(cliProjectContextLayer)),
+    cliSettingsLayer.pipe(
+      Layer.provide(runtimeInfoLayer),
+      Layer.provide(cliProjectContextLayer),
+      Layer.provide(envLayer),
+    ),
   );
 }
 
@@ -857,9 +866,12 @@ export function withEnv(env: Record<string, string>) {
     cliProjectHomeLayer,
     analytics.layer,
     mockTelemetryRuntime(),
-    envLayer,
     mockTty(),
     mockProcessControl().layer,
-    cliSettingsLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(cliProjectContextLayer)),
+    cliSettingsLayer.pipe(
+      Layer.provide(runtimeInfoLayer),
+      Layer.provide(cliProjectContextLayer),
+      Layer.provide(envLayer),
+    ),
   );
 }

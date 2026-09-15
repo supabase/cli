@@ -26,7 +26,7 @@ import {
   PropSessionId,
 } from "../shared/telemetry/event-catalog.ts";
 import { scopedPosthogClient } from "../shared/telemetry/posthog-client.ts";
-import { resolvePosthogConfig } from "../shared/telemetry/posthog-config.ts";
+import { CliSettings } from "../shared/config/cli-settings.service.ts";
 import { telemetryRuntimeLayer } from "../shared/telemetry/runtime.layer.ts";
 import { TelemetryRuntime } from "../shared/telemetry/runtime.service.ts";
 
@@ -136,10 +136,14 @@ export const analyticsLayer = Layer.effect(
   Analytics,
   Effect.gen(function* () {
     const runtime = yield* TelemetryRuntime;
+    const cliSettings = yield* CliSettings;
     const aiTool = yield* AiTool;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const posthogConfig = resolvePosthogConfig(process.env);
+    const posthogConfig = {
+      host: cliSettings.telemetryPosthogHost,
+      key: cliSettings.telemetryPosthogKey,
+    };
 
     if (runtime.consent !== "granted" || Option.isNone(posthogConfig.key)) {
       return Analytics.of({

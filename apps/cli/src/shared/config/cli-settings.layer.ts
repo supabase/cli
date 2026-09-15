@@ -1,5 +1,5 @@
-import { Effect, Layer, Option, Redacted } from "effect";
-import { resolveSupabaseHome } from "./supabase-home.ts";
+import { Config, ConfigProvider, Effect, Layer, Option, Redacted } from "effect";
+import { resolveSupabaseHomeValue } from "./supabase-home.ts";
 import { RuntimeInfo } from "../runtime/runtime-info.service.ts";
 import { resolvePosthogConfig } from "../telemetry/posthog-config.ts";
 import { CliSettings } from "./cli-settings.service.ts";
@@ -9,44 +9,41 @@ const SUPABASE_API_URL = "https://api.supabase.com";
 const SUPABASE_DASHBOARD_URL = "https://supabase.com/dashboard";
 const SUPABASE_PROJECT_HOST = "supabase.co";
 
-function readEnv(
-  env: Readonly<Record<string, string | undefined>>,
-  key: string,
-): Option.Option<string> {
-  const value = env[key];
-  return value === undefined ? Option.none() : Option.some(value);
-}
-
 const makeCliSettings = Effect.gen(function* () {
   const runtimeInfo = yield* RuntimeInfo;
   const cliProjectContext = yield* CliProjectContext;
-  const effectiveEnv = Option.match(cliProjectContext.projectEnv, {
-    onNone: () => process.env,
-    onSome: (projectEnv) => projectEnv.values,
+  const ambientProvider = yield* ConfigProvider.ConfigProvider;
+  const provider = Option.match(cliProjectContext.projectEnv, {
+    onNone: () => ambientProvider,
+    onSome: (projectEnv) =>
+      ConfigProvider.fromEnvRecord(projectEnv.values, { preserveEmptyStrings: true }),
   });
-  const posthogConfig = resolvePosthogConfig(effectiveEnv);
+  const read = <A>(config: Config.Config<A>) => config.parse(provider);
+  const posthogConfig = yield* resolvePosthogConfig(provider);
+  const supabaseHome = yield* read(Config.option(Config.string("SUPABASE_HOME")));
 
   return CliSettings.of({
-    apiUrl: Option.getOrElse(readEnv(effectiveEnv, "SUPABASE_API_URL"), () => SUPABASE_API_URL),
-    dashboardUrl: Option.getOrElse(
-      readEnv(effectiveEnv, "SUPABASE_DASHBOARD_URL"),
-      () => SUPABASE_DASHBOARD_URL,
+    apiUrl: yield* read(
+      Config.string("SUPABASE_API_URL").pipe(Config.withDefault(SUPABASE_API_URL)),
     ),
-    projectHost: Option.getOrElse(
-      readEnv(effectiveEnv, "SUPABASE_PROJECT_HOST"),
-      () => SUPABASE_PROJECT_HOST,
+    dashboardUrl: yield* read(
+      Config.string("SUPABASE_DASHBOARD_URL").pipe(Config.withDefault(SUPABASE_DASHBOARD_URL)),
+    ),
+    projectHost: yield* read(
+      Config.string("SUPABASE_PROJECT_HOST").pipe(Config.withDefault(SUPABASE_PROJECT_HOST)),
     ),
     telemetryPosthogHost: posthogConfig.host,
     telemetryPosthogKey: posthogConfig.key,
-    accessToken: Option.map(readEnv(effectiveEnv, "SUPABASE_ACCESS_TOKEN"), (token) =>
-      Redacted.make(token, { label: "SUPABASE_ACCESS_TOKEN" }),
+    accessToken: Option.map(
+      yield* read(Config.option(Config.string("SUPABASE_ACCESS_TOKEN"))),
+      (token) => Redacted.make(token, { label: "SUPABASE_ACCESS_TOKEN" }),
     ),
-    noKeyring: readEnv(effectiveEnv, "SUPABASE_NO_KEYRING"),
-    supabaseHome: resolveSupabaseHome(effectiveEnv, runtimeInfo.homeDir),
-    debug: readEnv(effectiveEnv, "SUPABASE_DEBUG"),
-    telemetryDebug: readEnv(effectiveEnv, "SUPABASE_TELEMETRY_DEBUG"),
-    telemetryDisabled: readEnv(effectiveEnv, "SUPABASE_TELEMETRY_DISABLED"),
-    doNotTrack: readEnv(effectiveEnv, "DO_NOT_TRACK"),
+    noKeyring: yield* read(Config.option(Config.string("SUPABASE_NO_KEYRING"))),
+    supabaseHome: resolveSupabaseHomeValue(supabaseHome, runtimeInfo.homeDir),
+    debug: yield* read(Config.option(Config.string("SUPABASE_DEBUG"))),
+    telemetryDebug: yield* read(Config.option(Config.string("SUPABASE_TELEMETRY_DEBUG"))),
+    telemetryDisabled: yield* read(Config.option(Config.string("SUPABASE_TELEMETRY_DISABLED"))),
+    doNotTrack: yield* read(Config.option(Config.string("DO_NOT_TRACK"))),
   });
 });
 

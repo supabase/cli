@@ -1,5 +1,5 @@
 import { note } from "@clack/prompts";
-import { Effect, Layer, Option, Path } from "effect";
+import { Config, ConfigProvider, Effect, Layer, Option, Path } from "effect";
 import { CliSettings } from "../config/cli-settings.service.ts";
 import { CLI_VERSION } from "../cli/version.ts";
 import { RuntimeInfo } from "../runtime/runtime-info.service.ts";
@@ -33,6 +33,7 @@ export const telemetryRuntimeLayer = Layer.effect(
   TelemetryRuntime,
   Effect.gen(function* () {
     const cliSettings = yield* CliSettings;
+    const configProvider = yield* ConfigProvider.ConfigProvider;
     const path = yield* Path.Path;
     const configDir = yield* getConfigDir;
     const tracesDir = path.join(configDir, "traces");
@@ -64,7 +65,7 @@ export const telemetryRuntimeLayer = Layer.effect(
 
     let isCi = false;
     for (const envVar of CI_ENV_VARS) {
-      if (process.env[envVar] !== undefined) {
+      if (Option.isSome(yield* Config.option(Config.string(envVar)).parse(configProvider))) {
         isCi = true;
         break;
       }

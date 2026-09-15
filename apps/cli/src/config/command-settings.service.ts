@@ -13,6 +13,8 @@ export type ProfileName = "supabase" | "supabase-staging" | "supabase-local" | "
 interface CommandSettingsShape {
   readonly profile: string;
   readonly apiUrl: string;
+  readonly profileEnvValue: Option.Option<string>;
+  readonly supabaseHome: string;
   /**
    * Project subdomain host for the active profile. Used to build the
    * expected CNAME target (`<ref>.<projectHost>`) in `domains create`.

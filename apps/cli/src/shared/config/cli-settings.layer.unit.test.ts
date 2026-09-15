@@ -4,8 +4,12 @@ import { mkdtempSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Effect, Layer, Option, Redacted } from "effect";
-import { mockRuntimeInfo, processEnvLayer } from "../../../tests/helpers/mocks.ts";
+import { ConfigProvider, Effect, Layer, Option, Redacted } from "effect";
+import {
+  mockCliProjectContext,
+  mockRuntimeInfo,
+  processEnvLayer,
+} from "../../../tests/helpers/mocks.ts";
 import { CliSettings } from "./cli-settings.service.ts";
 import { cliSettingsLayer } from "./cli-settings.layer.ts";
 import { cliProjectContextLayer } from "./cli-project-context.layer.ts";
@@ -29,6 +33,11 @@ function buildLayer(opts: { cwd: string; env?: Record<string, string>; homeDir?:
   const discoveredCliSettingsLayer = cliSettingsLayer.pipe(
     Layer.provide(runtimeInfoLayer),
     Layer.provide(discoveredCliProjectContextLayer),
+    Layer.provide(
+      ConfigProvider.layer(
+        ConfigProvider.fromEnvRecord(opts.env ?? {}, { preserveEmptyStrings: true }),
+      ),
+    ),
   );
 
   return Layer.mergeAll(
@@ -168,6 +177,32 @@ describe("cliSettingsLayer", () => {
       Effect.provide(buildLayer({ cwd: tempDir })),
       Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
     );
+  });
+
+  it.effect("preserves empty runtime settings as present options", () => {
+    const settingsLayer = cliSettingsLayer.pipe(
+      Layer.provide(mockRuntimeInfo({ cwd: "/test/cwd", homeDir: "/test/home" })),
+      Layer.provide(mockCliProjectContext()),
+      Layer.provide(
+        ConfigProvider.layer(
+          ConfigProvider.fromEnvRecord(
+            {
+              SUPABASE_NO_KEYRING: "",
+              SUPABASE_DEBUG: "",
+              SUPABASE_TELEMETRY_DISABLED: "",
+            },
+            { preserveEmptyStrings: true },
+          ),
+        ),
+      ),
+    );
+    return Effect.gen(function* () {
+      const cliSettings = yield* CliSettings;
+
+      expect(cliSettings.noKeyring).toEqual(Option.some(""));
+      expect(cliSettings.debug).toEqual(Option.some(""));
+      expect(cliSettings.telemetryDisabled).toEqual(Option.some(""));
+    }).pipe(Effect.provide(settingsLayer));
   });
 
   it.live("prefers SUPABASE_TELEMETRY_POSTHOG_KEY over the shipped default", () => {

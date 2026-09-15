@@ -13,7 +13,6 @@ import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { lastExplicitLongFlagValue } from "../../shared/cli/cobra-flag-groups.ts";
 import { ProfileFlag } from "../../command-internal/global-flags.ts";
 import { Output } from "../../shared/output/output.service.ts";
-import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import { Stdin } from "../../shared/runtime/stdin.service.ts";
 import { Tty } from "../../shared/runtime/tty.service.ts";
 import { suggestClaudePlugin } from "./login-claude-hint.ts";
@@ -31,9 +30,8 @@ export const login = Effect.fn("login")(function* (flags: LoginFlags) {
   const tty = yield* Tty;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const runtimeInfo = yield* RuntimeInfo;
   const profileFlag = yield* ProfileFlag;
-  const cliSettings = yield* CommandSettings;
+  const commandSettings = yield* CommandSettings;
 
   const claudeHint = suggestClaudePlugin({ stdoutIsTty: tty.stdoutIsTty });
 
@@ -46,31 +44,31 @@ export const login = Effect.fn("login")(function* (flags: LoginFlags) {
     onNone: () => undefined,
     onSome: ({ args }) => lastExplicitLongFlagValue(args, [], "profile"),
   });
-  const envProfile = cliSettings.profileEnvValue;
   const profileToken =
     explicitProfileFlag !== undefined
       ? explicitProfileFlag
       : profileFlag !== "supabase"
         ? profileFlag
-        : envProfile !== undefined
-          ? envProfile
+        : Option.isSome(commandSettings.profileEnvValue) &&
+            commandSettings.profileEnvValue.value.length > 0
+          ? commandSettings.profileEnvValue.value
           : undefined;
   const persistProfileName =
     profileToken === undefined
       ? Effect.void
-      : saveProfileName(fs, path, runtimeInfo.homeDir, profileToken);
+      : saveProfileName(fs, path, path.join(commandSettings.supabaseHome, "profile"), profileToken);
 
   const tokenPath = (token: string) =>
     Effect.gen(function* () {
-      yield* credentials.saveAccessToken(token).pipe(
-        Effect.catchTag("InvalidAccessTokenError", (cause) =>
-          Effect.fail(
-            new LoginSaveTokenError({
-              message: `cannot save provided token: ${cause.message}`,
-            }),
+      yield* credentials
+        .saveAccessToken(token)
+        .pipe(
+          Effect.catchTag("InvalidAccessTokenError", (cause) =>
+            Effect.fail(
+              new LoginSaveTokenError({ message: `cannot save provided token: ${cause.message}` }),
+            ),
           ),
-        ),
-      );
+        );
       yield* postLoginTelemetry(token);
 
       if (output.format !== "text") {

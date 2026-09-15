@@ -89,6 +89,8 @@ function setup(
         CommandSettings.of({
           profileEnvValue: undefined,
           profile: "supabase",
+          profileEnvValue: Option.none(),
+          supabaseHome: "/tmp/.supabase",
           apiUrl: opts.apiUrl ?? "https://api.supabase.com",
           projectHost: "supabase.co",
           poolerHost: "supabase.com",
