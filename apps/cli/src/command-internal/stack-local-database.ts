@@ -47,7 +47,7 @@ const withStackDatabaseSession = <A, E, R>(
     }),
   );
 
-/** Webhooks-only setup for an existing cluster (Compose existing-volume path). */
+/** Webhooks-only setup for an existing cluster. */
 export const applyStackWebhooksOnly = (
   stack: EffectStack,
   webhooksEnabled: boolean,
@@ -135,7 +135,8 @@ const databaseReady = (stack: EffectStack) =>
     return Option.some({ stack, runtime: status.runtime });
   });
 
-const openProjectStack = Effect.gen(function* () {
+/** Ready project stack, or none when the stack is missing or the database is not ready. */
+export const stackOpenReadyProject = Effect.gen(function* () {
   const api = yield* Effect.serviceOption(StackApi);
   if (Option.isNone(api)) return Option.none();
   const cliSettings = yield* CommandSettings;
@@ -148,9 +149,6 @@ const openProjectStack = Effect.gen(function* () {
     .pipe(Effect.mapError((cause) => notRunning(cause.message)));
   return yield* databaseReady(stack);
 });
-
-/** Ready project stack, or none when the stack is missing or the database is not ready. */
-export const stackOpenReadyProject = openProjectStack;
 
 export const stackProjectRuntime: Effect.Effect<StackRuntime | undefined, never, CommandSettings> =
   Effect.gen(function* () {
@@ -249,9 +247,9 @@ export const stackRejectNativeDockerDiffEngine = (
     return yield* new StackNativeEngineError({ message: stackNativeEngineAdvice(flag) });
   });
 
-export const stackLocalDatabaseUrl: Effect.Effect<string, LocalDbRunningError, CommandSettings> =
+const stackLocalDatabaseUrl: Effect.Effect<string, LocalDbRunningError, CommandSettings> =
   Effect.gen(function* () {
-    const opened = yield* openProjectStack;
+    const opened = yield* stackOpenReadyProject;
     if (Option.isNone(opened)) return yield* notRunning();
     const credentials = yield* opened.value.stack.credentials.pipe(
       Effect.mapError((cause) => notRunning(cause.message)),
@@ -272,7 +270,7 @@ export const stackLocalDatabaseConn: Effect.Effect<
   return conn;
 });
 
-/** Postgres-only `db start`: first create does schema init, overlay, migrate-and-seed; existing clusters get webhooks only. */
+/** Postgres-only `db start` / resume path. */
 export const stackEnsurePostgresOnlyStarted = Effect.gen(function* () {
   const api = yield* Effect.serviceOption(StackApi);
   if (Option.isNone(api)) return yield* startFailed({ message: "stack API is unavailable" });
