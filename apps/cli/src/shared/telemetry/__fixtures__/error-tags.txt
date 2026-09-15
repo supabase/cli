@@ -283,7 +283,6 @@ GenTypesNetworkError
 GenTypesParseConfigError
 GenTypesUnexpectedStatusError
 GenTypesWorkdirError
-GoChildExitError
 HealthCheckProbeError
 HealthCheckTimeoutError
 ImagePrepullError
@@ -428,6 +427,7 @@ PullOutputFlagUnsupportedError
 PullParentRefInvalidError
 PullUncommittedChangesError
 PullWorkdirError
+RemovedSurfaceError
 ResetLocalDbNotRunningError
 ResetReplicationSlotsError
 RestartServicesError

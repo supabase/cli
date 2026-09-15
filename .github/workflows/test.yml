@@ -202,19 +202,6 @@ jobs:
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
 
-      - name: Cache Go CLI binary
-        id: cache-go-binary
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: apps/cli-go/supabase-go
-          key: go-cli-${{ runner.os }}-${{ hashFiles('apps/cli-go/**/*.go',
-            'apps/cli-go/go.mod', 'apps/cli-go/go.sum') }}
-
-      - name: Build Go CLI
-        if: steps.cache-go-binary.outputs.cache-hit != 'true'
-        run: go build -o supabase-go .
-        working-directory: apps/cli-go
-
       # The e2e harness invokes `node apps/cli/dist/supabase.js` with
       # `SUPABASE_CLI_BINARY_OVERRIDE` pointing at the compiled binary in
       # `apps/cli/dist/`. Build the CLI explicitly before invoking every
@@ -224,8 +211,6 @@ jobs:
 
       - name: Run end-to-end tests
         run: pnpm exec turbo run test:e2e:run --only --concurrency=1 --filter=supabase --filter=@supabase/cli-e2e -- --shard=${{ matrix.shard }}/3
-        env:
-          SUPABASE_GO_BINARY: ${{ github.workspace }}/apps/cli-go/supabase-go
 
   test-stack-e2e:
     if: |

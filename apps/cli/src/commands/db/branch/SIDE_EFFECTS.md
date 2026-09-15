@@ -1,7 +1,8 @@
-# `supabase gen keys`
+# `supabase db branch <create|delete|list|switch>`
 
-Removed and unlisted. The command is a tombstone: it fails with a removal error
-and a replacement suggestion instead of contacting the Management API.
+Single shared side-effect document for all four `db branch` leaves. Local database
+branches are no longer supported; each leaf is a tombstone that fails with a
+removal error and a replacement suggestion instead of performing any work.
 
 ## Files Read
 
@@ -41,8 +42,8 @@ Writes the removal message and the replacement suggestion to stderr, two lines,
 regardless of `-o`/`--output`:
 
 ```
-supabase gen keys was removed.
-Use `supabase projects api-keys --project-ref <ref>` to read a project's API keys.
+supabase db branch <leaf> was removed.
+Local database branches are no longer supported. For hosted preview branches, see `supabase branches --help`.
 ```
 
 ### `--output-format json` / `stream-json`
@@ -58,6 +59,11 @@ One `cli_command_executed` event per invocation, with `exit_code: 1` and an
 
 ## Notes
 
-- Unlisted (not shown in `supabase gen --help`), still reachable by exact name.
-- No flag value is read; the command fails identically regardless of
-  `--project-ref`/`--override-name`.
+- `create`/`delete`/`switch` accept an optional `<branch name>` positional so a bare
+  invocation still reaches the tombstone (and emits telemetry) instead of failing
+  parse with a missing-argument error.
+- No positional or flag value is read; every leaf fails identically regardless of
+  its arguments.
+- `supabase branches --help` covers the hosted preview-branching product this
+  suggestion points to, which is a different product from local DB branches, not a
+  drop-in replacement.

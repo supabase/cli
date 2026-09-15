@@ -51,7 +51,6 @@ import { DockerRun, type DockerRunOpts } from "../../../command-internal/docker-
 import { EdgeRuntimeScript } from "../../../command-internal/edge-runtime-script.service.ts";
 import { PgDeltaSslProbe } from "../../../command-internal/pgdelta-ssl-probe.service.ts";
 import { runTestDbCommand } from "../../../command-internal/test-db.command-handler.ts";
-import { GoProxy } from "../../../command-internal/go-proxy.service.ts";
 import { dbCommand } from "../db.command.ts";
 
 const LOCAL_CONN: PgConnInput = {
@@ -224,8 +223,7 @@ describe("db test (alias) integration", () => {
         Stdio.layerTest({ args: Effect.succeed(args) }),
         Layer.succeed(CliArgs, { args }),
         // `dbCommand` is the whole `db` subtree, so its R includes every sibling subcommand's
-        // global-flag/Go-delegation requirements too, even though this test only dispatches
-        // `db test`.
+        // global-flag requirements too, even though this test only dispatches `db test`.
         Layer.succeed(AgentFlag, "auto"),
         Layer.succeed(CreateTicketFlag, false),
         Layer.succeed(DebugFlag, false),
@@ -236,10 +234,6 @@ describe("db test (alias) integration", () => {
         Layer.succeed(ProfileFlag, "supabase"),
         Layer.succeed(WorkdirFlag, Option.none()),
         Layer.succeed(YesFlag, false),
-        Layer.succeed(GoProxy, {
-          exec: () => Effect.die("GoProxy not needed for `db test` dispatch"),
-          execCapture: () => Effect.die("GoProxy not needed for `db test` dispatch"),
-        }),
         Layer.succeed(EdgeRuntimeScript, {
           run: () => Effect.die("EdgeRuntimeScript not needed for `db test` dispatch"),
         }),

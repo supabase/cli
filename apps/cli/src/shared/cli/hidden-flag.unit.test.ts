@@ -4,17 +4,20 @@ import { CliOutput, Command, type HelpDoc } from "effect/unstable/cli";
 import { describe, expect, it } from "vitest";
 import { branchesCommand } from "../../commands/branches/branches.command.ts";
 import { dbCommand } from "../../commands/db/db.command.ts";
+import { dbDiffCommand } from "../../commands/db/diff/diff.command.ts";
 import { functionsCommand } from "../../commands/functions/functions.command.ts";
 import { functionsDeployCommand } from "../../commands/functions/deploy/deploy.command.ts";
 import { functionsDownloadCommand } from "../../commands/functions/download/download.command.ts";
 import { functionsServeCommand } from "../../commands/functions/serve/serve.command.ts";
+import { genCommand } from "../../commands/gen/gen.command.ts";
 import { initCommand } from "../../commands/init/init.command.ts";
 import { projectsCommand } from "../../commands/projects/projects.command.ts";
 import { projectsCreateCommand } from "../../commands/projects/create/create.command.ts";
 import { startCommand } from "../../commands/start/start.command.ts";
 import { stopCommand } from "../../commands/stop/stop.command.ts";
 import { GLOBAL_FLAGS } from "../../command-internal/global-flags.ts";
-import { GoProxy } from "../../command-internal/go-proxy.service.ts";
+import { RemovedSurfaceError } from "../../command-internal/removed-command.ts";
+import { mockAnalytics, mockOutput, mockProcessControl } from "../../../tests/helpers/mocks.ts";
 import { textCliOutputFormatter } from "../output/text-formatter.ts";
 
 interface CommandImpl {
@@ -25,31 +28,33 @@ const buildHelpDoc = <Name extends string, Input, ContextInput, E, R>(
   cmd: Command.Command<Name, Input, ContextInput, E, R>,
 ): HelpDoc.HelpDoc => (cmd as unknown as CommandImpl).buildHelpDoc([]);
 
-function mockGoProxy() {
-  const calls: Array<ReadonlyArray<string>> = [];
-  const layer = Layer.succeed(GoProxy, {
-    exec: (args) =>
-      Effect.sync(() => {
-        calls.push([...args]);
-      }),
-    execCapture: () => Effect.succeed(""),
-  });
-
-  return { layer, calls };
-}
-
 const testRoot = Command.make("supabase").pipe(
   Command.withSubcommands([
     startCommand,
     stopCommand,
     initCommand,
     functionsCommand,
+    genCommand,
     projectsCommand,
     branchesCommand,
     dbCommand,
   ]),
   Command.withGlobalFlags(GLOBAL_FLAGS),
 );
+
+/** Satisfies a tombstoned command's `withCommandTelemetry`/`withJsonErrorHandling` requirements. */
+function tombstoneRuntimeLayer() {
+  const out = mockOutput({ format: "text" });
+  const analytics = mockAnalytics();
+  const processControl = mockProcessControl();
+  return Layer.mergeAll(
+    out.layer,
+    analytics.layer,
+    processControl.layer,
+    BunServices.layer,
+    CliOutput.layer(textCliOutputFormatter()),
+  );
+}
 
 function parserCommand<Name extends string, Input, ContextInput, E, R>(
   command: Command.Command<Name, Input, ContextInput, E, R>,
@@ -121,6 +126,10 @@ describe("native hidden flags", () => {
       "size",
       "high-availability",
     ]);
+
+    expect(buildHelpDoc(dbDiffCommand).flags.map((flag) => flag.name)).not.toContain(
+      "use-pg-schema",
+    );
   });
 
   it("passes hidden flag values to handlers by exact name", async () => {
@@ -162,14 +171,7 @@ describe("native hidden flags", () => {
             "abcdefghijklmnopqrst",
             "--use-docker=false",
           ]);
-          yield* runParser([
-            "functions",
-            "download",
-            "hello",
-            "--project-ref",
-            "abcdefghijklmnopqrst",
-            "--legacy-bundle",
-          ]);
+          yield* runParser(["functions", "download", "hello", "--legacy-bundle"]);
           yield* runParser(["functions", "deploy", "hello", "--use-docker=false"]);
           yield* runParser(["functions", "deploy", "hello", "--legacy-bundle"]);
           yield* runParser(["functions", "serve", "--all=false"]);
@@ -188,8 +190,6 @@ describe("native hidden flags", () => {
   });
 
   it("does not leak hidden flag names through unknown-flag suggestions", async () => {
-    const proxy = mockGoProxy();
-
     const exit = await Effect.runPromise(
       Command.runWith(testRoot, { version: "0.0.0-test" })([
         "projects",
@@ -197,7 +197,7 @@ describe("native hidden flags", () => {
         "demo",
         "--pla",
       ]).pipe(
-        Effect.provide(Layer.mergeAll(proxy.layer, CliOutput.layer(silentCliOutputFormatter))),
+        Effect.provide(CliOutput.layer(silentCliOutputFormatter)),
         Effect.exit,
       ) as Effect.Effect<unknown, never, never>,
     );
@@ -236,29 +236,32 @@ describe("hidden subcommands", () => {
     ]);
   });
 
-  it("still executes hidden subcommands by exact name", async () => {
-    const proxy = mockGoProxy();
+  it("still executes hidden tombstoned subcommands by exact name", async () => {
+    const layer = tombstoneRuntimeLayer();
 
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        yield* Command.runWith(testRoot, { version: "0.0.0-test" })(["db", "branch", "list"]);
-        yield* Command.runWith(testRoot, { version: "0.0.0-test" })(["db", "remote", "changes"]);
-      }).pipe(
-        Effect.provide(Layer.mergeAll(proxy.layer, CliOutput.layer(textCliOutputFormatter()))),
-      ) as Effect.Effect<void>,
-    );
+    const causeOf = (exit: unknown) =>
+      (exit as { cause: { reasons: Array<{ _tag: string; error?: unknown }> } }).cause;
 
-    expect(proxy.calls).toEqual([
+    for (const args of [
       ["db", "branch", "list"],
       ["db", "remote", "changes"],
-    ]);
+      ["gen", "keys"],
+    ]) {
+      const exit = await Effect.runPromise(
+        Command.runWith(testRoot, { version: "0.0.0-test" })(args).pipe(
+          Effect.provide(layer),
+          Effect.exit,
+        ) as Effect.Effect<unknown, never, never>,
+      );
+      expect((exit as { _tag: string })._tag).toBe("Failure");
+      expect(causeOf(exit).reasons[0]?.error).toBeInstanceOf(RemovedSurfaceError);
+    }
   });
 
   it("still executes the native `db test` hidden alias by exact name (CLI-1962)", async () => {
     // This test's minimal layer doesn't wire the services the native handler needs, so dispatch
     // reaching the handler (a Die on a missing service, not success) is what's being proven.
-    const proxy = mockGoProxy();
-    const layer = Layer.mergeAll(proxy.layer, CliOutput.layer(textCliOutputFormatter()));
+    const layer = CliOutput.layer(textCliOutputFormatter());
 
     const causeOf = (exit: unknown) =>
       (exit as { cause: { reasons: Array<{ _tag: string; defect?: unknown; error?: unknown }> } })

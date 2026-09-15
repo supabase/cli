@@ -32,7 +32,6 @@ import {
   ExperimentalFlag,
   NetworkIdFlag,
 } from "../../../command-internal/global-flags.ts";
-import { GoProxy } from "../../../command-internal/go-proxy.service.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
 import { ProjectRefNotLinkedError } from "../../../config/project-ref.errors.ts";
 import {
@@ -61,6 +60,7 @@ import {
   type PgDeltaExplicitDiffInput,
   type PgDeltaHazardReport,
 } from "../shared/pgdelta-engine.service.ts";
+import { RemovedSurfaceError } from "../../../command-internal/removed-command.ts";
 import type { DbDiffFlags } from "./diff.command.ts";
 import { dbDiff } from "./diff.handler.ts";
 import { PGADMIN_DESKTOP_NOTE_PREFIX, PGADMIN_DIFF_HEADER } from "./pgadmin-diff.ts";
@@ -76,7 +76,6 @@ interface SetupOpts {
   readonly diffSuffixes?: ReadonlyArray<string | null>;
   readonly hazards?: PgDeltaHazardReport;
   readonly oom?: boolean; // edge-runtime OOMs; the bash fallback returns `diffSql`
-  readonly delegateStdout?: string; // stdout returned by a captured Go-delegate run
   // Message for a failing PGDELTA_DEBUG shadow-catalog export.
   readonly diffFailWith?: string;
   // Makes the shadow's PG15+ baseline job(s) exit non-zero; the shadow should
@@ -366,18 +365,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     promptProjectRef: () => Effect.succeed(opts.linkedRef ?? VALID_REF),
   });
 
-  const proxyCalls: Array<{ args: ReadonlyArray<string>; env?: Record<string, string> }> = [];
-  const proxyCaptureCalls: Array<{ args: ReadonlyArray<string>; env?: Record<string, string> }> =
-    [];
-  const proxy = Layer.succeed(GoProxy, {
-    exec: (args, execOpts) => Effect.sync(() => void proxyCalls.push({ args, env: execOpts?.env })),
-    execCapture: (args, execOpts) =>
-      Effect.sync(() => {
-        proxyCaptureCalls.push({ args, env: execOpts?.env });
-        return opts.delegateStdout ?? "";
-      }),
-  });
-
   const baseLayer = Layer.mergeAll(
     // Listed first so the fake service layers below (`Layer.mergeAll` is last-wins)
     // override its real implementations, matching `start.integration.test.ts`.
@@ -394,7 +381,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     alwaysReadyHttpClientLayer,
     resolver,
     projectRefResolver,
-    proxy,
     mockCommandSettings({ workdir, projectId: opts.projectId ?? Option.some("test") }),
     Layer.succeed(DnsResolverFlag, "native"),
     Layer.succeed(
@@ -428,8 +414,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     databaseDiffCalls,
     edgeCalls,
     resolverCalls,
-    proxyCalls,
-    proxyCaptureCalls,
     dockerCalls,
     differCalls,
     differCaptureOpts,
@@ -949,47 +933,60 @@ describe("db diff", () => {
     },
   );
 
+  it.effect("diffs with the native pgAdmin engine: shadow create/rm, one differ run", () => {
+    const s = setup(tmp.current, { pgadminStdout: [JSON.stringify([pgadminEntry()])] });
+    return Effect.gen(function* () {
+      yield* dbDiff(flags({ usePgAdmin: Option.some(true) }));
+      expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
+      expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
+      expect(s.differCalls).toHaveLength(1);
+      // Status lines go to stdout, not stderr.
+      expect(stdout(s.out)).toBe(
+        `Creating shadow database...\nDiffing local database with current migrations...\n${PGADMIN_DIFF_SQL}\n`,
+      );
+      // Stderr carries the shared shadow-setup diagnostics but not pgAdmin's own status
+      // lines (those are on stdout) or the migra/pg-delta-only status lines.
+      const err = stderr(s.out);
+      expect(err).not.toContain("Creating shadow database...");
+      expect(err).not.toContain("Diffing local database with current migrations...");
+      expect(err).not.toContain("Diffing schemas");
+      expect(err).not.toContain("Finished");
+    }).pipe(Effect.provide(s.layer));
+  });
+
   it.effect(
-    "diffs with the native pgAdmin engine: shadow create/rm, one differ run, no Go proxy call",
+    "rejects --use-pg-schema with a removal error before any engine-conflict or shadow work",
     () => {
-      const s = setup(tmp.current, { pgadminStdout: [JSON.stringify([pgadminEntry()])] });
+      const s = setup(tmp.current);
       return Effect.gen(function* () {
-        yield* dbDiff(flags({ usePgAdmin: Option.some(true) }));
-        expect(s.proxyCalls).toEqual([]);
-        expect(s.proxyCaptureCalls).toEqual([]);
-        expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
-        expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
-        expect(s.differCalls).toHaveLength(1);
-        // Status lines go to stdout, not stderr.
-        expect(stdout(s.out)).toBe(
-          `Creating shadow database...\nDiffing local database with current migrations...\n${PGADMIN_DIFF_SQL}\n`,
-        );
-        // Stderr carries the shared shadow-setup diagnostics but not pgAdmin's own status
-        // lines (those are on stdout) or the migra/pg-delta-only status lines.
-        const err = stderr(s.out);
-        expect(err).not.toContain("Creating shadow database...");
-        expect(err).not.toContain("Diffing local database with current migrations...");
-        expect(err).not.toContain("Diffing schemas");
-        expect(err).not.toContain("Finished");
+        const error = yield* dbDiff(flags({ usePgSchema: Option.some(true) })).pipe(Effect.flip);
+        expect(error).toBeInstanceOf(RemovedSurfaceError);
+        expect(s.shadowSpawned).toEqual([]);
+        expect(s.resolverCalls).toEqual([]);
       }).pipe(Effect.provide(s.layer));
     },
   );
 
-  it.effect("rejects --project-ref combined with --use-pg-schema before delegating", () => {
-    // The delegated Go binary doesn't support --project-ref, so this must fail before
-    // forwarding rather than silently dropping the flag.
-    const FLAG_REF = "flagflagflagflagflag";
+  it.effect("rejects --use-pg-schema=false the same as an explicit true value", () => {
     const s = setup(tmp.current);
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
-        dbDiff(flags({ usePgSchema: Option.some(true), projectRef: Option.some(FLAG_REF) })),
-      );
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("--project-ref is not supported with --use-pg-schema");
-      expect(s.proxyCalls).toEqual([]);
-      expect(s.proxyCaptureCalls).toEqual([]);
+      const error = yield* dbDiff(flags({ usePgSchema: Option.some(false) })).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(RemovedSurfaceError);
     }).pipe(Effect.provide(s.layer));
   });
+
+  it.effect(
+    "rejects --use-pg-schema combined with --use-pgadmin before the engine-conflict check",
+    () => {
+      const s = setup(tmp.current);
+      return Effect.gen(function* () {
+        const error = yield* dbDiff(
+          flags({ usePgSchema: Option.some(true), usePgAdmin: Option.some(true) }),
+        ).pipe(Effect.flip);
+        expect(error).toBeInstanceOf(RemovedSurfaceError);
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
 
   it.effect("--use-pgadmin --linked honors --project-ref like the other native engines", () => {
     const FLAG_REF = "flagflagflagflagflag";
@@ -1006,7 +1003,6 @@ describe("db diff", () => {
           projectRef: Option.some(FLAG_REF),
         }),
       );
-      expect(s.proxyCalls).toEqual([]);
       expect(s.differCalls).toHaveLength(1);
       expect(s.cache.cached).toBe(true);
       expect(s.cache.cachedRef).toBe(FLAG_REF);
@@ -1041,7 +1037,6 @@ describe("db diff", () => {
       return Effect.gen(function* () {
         yield* dbDiff(flags({ usePgAdmin: Option.some(true), linked: Option.some(true) }));
         expect(stderr(s.out)).toContain("Loading config override: [remotes.staging]");
-        expect(s.proxyCalls).toEqual([]);
         expect(s.differCalls).toHaveLength(1);
       }).pipe(Effect.provide(s.layer));
     },
@@ -1137,65 +1132,17 @@ describe("db diff", () => {
     },
   );
 
-  it.effect("re-quotes a comma-containing schema when delegating --use-pg-schema", () => {
-    // The parsed schema value `tenant,one` must be re-encoded as a quoted CSV field
-    // so the delegated Go child's pflag StringSlice doesn't split it into two schemas.
-    const s = setup(tmp.current);
-    return Effect.gen(function* () {
-      yield* dbDiff(flags({ usePgSchema: Option.some(true), schema: ["tenant,one"] }));
-      const args = s.proxyCalls[0]?.args ?? [];
-      const idx = args.indexOf("--schema");
-      expect(args[idx + 1]).toBe('"tenant,one"');
-    }).pipe(Effect.provide(s.layer));
-  });
-
   it.effect(
     "forwards a comma-containing --schema value to the differ raw, with no CSV re-quoting (native path)",
     () => {
-      // Unlike the delegate above, the native differ argv isn't re-parsed by a pflag
-      // StringSlice, so the value reaches the container unchanged.
+      // The native differ argv is never re-parsed by a CSV-splitting flag parser, so the
+      // value reaches the container unchanged.
       const s = setup(tmp.current, { pgadminStdout: [JSON.stringify([pgadminEntry()])] });
       return Effect.gen(function* () {
         yield* dbDiff(flags({ usePgAdmin: Option.some(true), schema: ["tenant,one"] }));
         const call = s.differCalls[0];
         const idx = call?.cmd.indexOf("--schema") ?? -1;
         expect(call?.cmd[idx + 1]).toBe("tenant,one");
-      }).pipe(Effect.provide(s.layer));
-    },
-  );
-
-  it.effect(
-    "delegates --use-pg-schema to the Go binary, printing a deprecation warning without duplicating Go's own warning",
-    () => {
-      const s = setup(tmp.current);
-      return Effect.gen(function* () {
-        yield* dbDiff(flags({ usePgSchema: Option.some(true) }));
-        // Asserts on a stable substring so wording tweaks don't require touching every test site.
-        expect(stderr(s.out)).toContain('"--use-pg-schema" is deprecated');
-        expect(stderr(s.out)).not.toContain("--use-pg-schema flag is experimental");
-        expect(s.proxyCalls[0]?.args).toEqual(["db", "diff", "--use-pg-schema"]);
-        // The child's own telemetry is disabled so the single `cli_command_executed`
-        // event comes from this TS command's instrumentation, not the delegated child.
-        expect(s.proxyCalls[0]?.env).toEqual({ SUPABASE_TELEMETRY_DISABLED: "1" });
-      }).pipe(Effect.provide(s.layer));
-    },
-  );
-
-  it.effect("does not print the --use-pg-schema deprecation warning on other diff paths", () => {
-    const s = setup(tmp.current, { diffSql: "create table g ();\n" });
-    return Effect.gen(function* () {
-      yield* dbDiff(flags());
-      expect(stderr(s.out)).not.toContain('"--use-pg-schema" is deprecated');
-    }).pipe(Effect.provide(s.layer));
-  });
-
-  it.effect(
-    "does not print the --use-pg-schema deprecation warning on the native --use-pgadmin path",
-    () => {
-      const s = setup(tmp.current, { pgadminStdout: [JSON.stringify([pgadminEntry()])] });
-      return Effect.gen(function* () {
-        yield* dbDiff(flags({ usePgAdmin: Option.some(true) }));
-        expect(stderr(s.out)).not.toContain('"--use-pg-schema" is deprecated');
       }).pipe(Effect.provide(s.layer));
     },
   );
@@ -1213,8 +1160,6 @@ describe("db diff", () => {
         const err = stderr(s.out);
         expect(err).toContain("Creating shadow database...");
         expect(err).toContain("Diffing local database with current migrations...");
-        expect(s.proxyCalls).toEqual([]);
-        expect(s.proxyCaptureCalls).toEqual([]);
         const success = s.out.messages.find((m) => m.type === "success");
         expect(success?.data).toMatchObject({
           diff: PGADMIN_DIFF_SQL,
@@ -1255,21 +1200,6 @@ describe("db diff", () => {
       yield* dbDiff(flags({ usePgAdmin: Option.some(true) }));
       const success = s.out.messages.find((m) => m.type === "success");
       expect(success?.data).toMatchObject({ diff: PGADMIN_DIFF_SQL, engine: "pgadmin" });
-    }).pipe(Effect.provide(s.layer));
-  });
-
-  it.effect("--use-pg-schema in json mode wraps the captured SQL in a structured envelope", () => {
-    const s = setup(tmp.current, { format: "json", delegateStdout: "create table e ();\n" });
-    return Effect.gen(function* () {
-      yield* dbDiff(flags({ usePgSchema: Option.some(true) }));
-      expect(stdout(s.out)).toBe("");
-      expect(s.proxyCaptureCalls).toHaveLength(1);
-      const success = s.out.messages.find((m) => m.type === "success");
-      expect(success?.data).toMatchObject({ diff: "create table e ();\n", engine: "pg-schema" });
-      // Diagnostics like the deprecation notice still reach stderr in machine mode.
-      expect(stderr(s.out)).toContain('"--use-pg-schema" is deprecated');
-      // The child's own telemetry is disabled here too, same as the text-mode delegate.
-      expect(s.proxyCaptureCalls[0]?.env).toEqual({ SUPABASE_TELEMETRY_DISABLED: "1" });
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -1468,19 +1398,6 @@ describe("db diff", () => {
       expect(stdout(s.out)).toBe("");
     }).pipe(Effect.provide(s.layer));
   });
-
-  it.effect(
-    "forwards an explicit --linked=false target flag to the delegated pg-schema child",
-    () => {
-      // Target flags are selectors keyed on the delegated child's flag.Changed; dropping
-      // `Some(false)` would default it to local instead of the linked target selected.
-      const s = setup(tmp.current);
-      return Effect.gen(function* () {
-        yield* dbDiff(flags({ usePgSchema: Option.some(true), linked: Option.some(false) }));
-        expect(s.proxyCalls[0]?.args).toEqual(["db", "diff", "--use-pg-schema", "--linked=false"]);
-      }).pipe(Effect.provide(s.layer));
-    },
-  );
 
   it.effect(
     "an empty --file value prints to stdout instead of writing a nameless migration",
@@ -2297,7 +2214,7 @@ describe("db diff", () => {
             flags({ usePgAdmin: Option.some(true), usePgDelta: Option.some(true) }),
           ).pipe(Effect.flip);
           expect((error as { message: string }).message).toBe(
-            "if any flags in the group [use-migra use-pgadmin use-pg-schema use-pg-delta] are set none of the others can be; [use-pg-delta use-pgadmin] were all set",
+            "if any flags in the group [use-migra use-pgadmin use-pg-delta] are set none of the others can be; [use-pg-delta use-pgadmin] were all set",
           );
         }).pipe(Effect.provide(s.layer));
       },

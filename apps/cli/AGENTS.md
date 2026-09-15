@@ -99,15 +99,6 @@ compatibility decision in the PR. For the Compute transition, no local compatibi
 migrations are required. Compute error tags intentionally start new fingerprints; server-owned
 contracts remain unchanged. Update tests, generated schemas, and side-effect documentation.
 
-## Go delegation
-
-- TypeScript owns CLI behavior. Consult `apps/cli-go` only for existing delegated
-  operations listed in [the delegation document](docs/go-cli-porting-status.md); do not expand delegation.
-- Native replacements must preserve the public command, flags, output, side effects,
-  and exit behavior. Update the delegation document when removing a Go dependency.
-- Emit command telemetry exactly once: bare proxies rely on Go telemetry;
-  instrumented TypeScript handlers suppress child telemetry.
-
 ## Telemetry
 
 > The string passed to `Data.TaggedError("...")` is the PostHog `error_fingerprint` identity
