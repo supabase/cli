@@ -29,9 +29,10 @@ export const testNew = Effect.fn("test.new")(function* (flags: TestNewFlags) {
 
     const exists = yield* fs.exists(target).pipe(Effect.orElseSucceed(() => false));
     if (exists) {
-      return yield* Effect.fail(
-        new TestNewFileExistsError({ path: relPath, message: `${relPath} already exists.` }),
-      );
+      return yield* new TestNewFileExistsError({
+        path: relPath,
+        message: `${relPath} already exists.`,
+      });
     }
 
     yield* fs

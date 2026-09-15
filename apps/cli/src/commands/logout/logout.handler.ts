@@ -35,7 +35,7 @@ export const logout = Effect.fn("logout")(function* () {
       return yield* promptYesNo(output, yes, confirmLabel, false);
     });
     if (!confirmed) {
-      return yield* Effect.fail(new LogoutCancelledError({ message: CONTEXT_CANCELED_MESSAGE }));
+      return yield* new LogoutCancelledError({ message: CONTEXT_CANCELED_MESSAGE });
     }
 
     // `NotLoggedInError` prints to stderr and exits 0 without sweeping project credentials;

@@ -42,9 +42,7 @@ export const feedbackDelete = Effect.fn("feedback.delete")(function* (args: Feed
   // command runs.
   yield* Effect.gen(function* () {
     if (!UUID_PATTERN.test(args.token)) {
-      return yield* Effect.fail(
-        new FeedbackInvalidTokenError({ message: FEEDBACK_INVALID_TOKEN_MESSAGE }),
-      );
+      return yield* new FeedbackInvalidTokenError({ message: FEEDBACK_INVALID_TOKEN_MESSAGE });
     }
     // RLS compares the header lowercased; normalize so an uppercase paste works.
     const token = args.token.toLowerCase();
@@ -89,30 +87,24 @@ export const feedbackDelete = Effect.fn("feedback.delete")(function* (args: Feed
     if (!yes) {
       const stdin = yield* Stdin;
       if (goFmt === "json") {
-        return yield* Effect.fail(
-          new NonInteractiveError({
-            detail: "Cannot prompt for confirmation with -o json",
-            suggestion: "Pass --yes to delete without confirmation",
-          }),
-        );
+        return yield* new NonInteractiveError({
+          detail: "Cannot prompt for confirmation with -o json",
+          suggestion: "Pass --yes to delete without confirmation",
+        });
       }
       if (!stdin.isTTY || !output.interactive) {
-        return yield* Effect.fail(
-          new NonInteractiveError({
-            detail: "Cannot prompt for confirmation in a non-interactive context",
-            suggestion: "Pass --yes to delete without confirmation",
-          }),
-        );
+        return yield* new NonInteractiveError({
+          detail: "Cannot prompt for confirmation in a non-interactive context",
+          suggestion: "Pass --yes to delete without confirmation",
+        });
       }
       const confirmed = yield* output.promptConfirm("Permanently delete this feedback?", {
         defaultValue: false,
       });
       if (!confirmed) {
-        return yield* Effect.fail(
-          new FeedbackDeleteCancelledError({
-            message: FEEDBACK_DELETE_CANCELLED_MESSAGE,
-          }),
-        );
+        return yield* new FeedbackDeleteCancelledError({
+          message: FEEDBACK_DELETE_CANCELLED_MESSAGE,
+        });
       }
     }
 
@@ -122,7 +114,7 @@ export const feedbackDelete = Effect.fn("feedback.delete")(function* (args: Feed
     // Zero rows matched: wrong token, already deleted, or a project-ref/user-id
     // context mismatch — the backend cannot tell these apart.
     if (!deleted) {
-      return yield* Effect.fail(new FeedbackNotFoundError({ message: FEEDBACK_NOT_FOUND_MESSAGE }));
+      return yield* new FeedbackNotFoundError({ message: FEEDBACK_NOT_FOUND_MESSAGE });
     }
 
     // `-o json` takes priority over `--output-format` (CLI Agent Guide invariant 6):

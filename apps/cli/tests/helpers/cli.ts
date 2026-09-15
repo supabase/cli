@@ -91,7 +91,7 @@ export class CliSpawnError extends Data.TaggedError("CliSpawnError")<{
   }
 }
 
-/** Disposing the run's owned temp `SUPABASE_HOME` failed after the CLI exited. */
+/** Disposing a run-owned or test-owned temp `SUPABASE_HOME` failed. */
 export class CliHomeDisposeError extends Data.TaggedError("CliHomeDisposeError")<{
   readonly cause: unknown;
 }> {
@@ -145,6 +145,32 @@ export function makeTempHome() {
   registerTempHome(home);
   return home;
 }
+
+/** The run's owned temp `SUPABASE_HOME` could not be created. */
+export class TempHomeSetupError extends Data.TaggedError("TempHomeSetupError")<{
+  readonly message: string;
+  readonly cause: unknown;
+}> {}
+
+/**
+ * Runs `use` with an owned temp `SUPABASE_HOME`. Setup and disposal failures both stay in
+ * the typed channel (`rmSync` can throw), which a scoped release could not express.
+ */
+export const withTempHome = <A, E, R>(
+  use: (home: ReturnType<typeof makeTempHome>) => Effect.Effect<A, E, R>,
+): Effect.Effect<A, TempHomeSetupError | CliHomeDisposeError | E, R> =>
+  Effect.acquireUseRelease(
+    Effect.try({
+      try: () => makeTempHome(),
+      catch: (cause) => new TempHomeSetupError({ message: "temp home setup failed", cause }),
+    }),
+    use,
+    (owned) =>
+      Effect.try({
+        try: () => owned[Symbol.dispose](),
+        catch: (cause) => new CliHomeDisposeError({ cause }),
+      }),
+  );
 
 function pickFreePort(): Promise<number> {
   return new Promise((resolve, reject) => {

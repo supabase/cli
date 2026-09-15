@@ -33,6 +33,7 @@ export const login = Effect.fn("login")(function* (flags: LoginFlags) {
   const path = yield* Path.Path;
   const runtimeInfo = yield* RuntimeInfo;
   const profileFlag = yield* ProfileFlag;
+  const cliSettings = yield* CommandSettings;
 
   const claudeHint = suggestClaudePlugin({ stdoutIsTty: tty.stdoutIsTty });
 
@@ -45,13 +46,13 @@ export const login = Effect.fn("login")(function* (flags: LoginFlags) {
     onNone: () => undefined,
     onSome: ({ args }) => lastExplicitLongFlagValue(args, [], "profile"),
   });
-  const envProfile = process.env["SUPABASE_PROFILE"];
+  const envProfile = cliSettings.profileEnvValue;
   const profileToken =
     explicitProfileFlag !== undefined
       ? explicitProfileFlag
       : profileFlag !== "supabase"
         ? profileFlag
-        : envProfile !== undefined && envProfile.length > 0
+        : envProfile !== undefined
           ? envProfile
           : undefined;
   const persistProfileName =
@@ -107,7 +108,7 @@ const resolveToken = Effect.fnUntraced(function* (flags: LoginFlags) {
   if (!stdin.isTTY) {
     const piped = yield* stdin.readPipedText;
     if (Option.isSome(piped)) return Option.some(piped.value);
-    return yield* Effect.fail(new LoginMissingTokenError({ message: LOGIN_MISSING_TOKEN_MESSAGE }));
+    return yield* new LoginMissingTokenError({ message: LOGIN_MISSING_TOKEN_MESSAGE });
   }
   return Option.none<string>();
 });

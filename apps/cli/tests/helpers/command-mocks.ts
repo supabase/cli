@@ -397,8 +397,10 @@ export function mockCommandSettings(opts: {
   readonly accessToken?: Option.Option<Redacted.Redacted<string>>;
   readonly projectId?: Option.Option<string>;
   readonly userAgent?: string;
+  readonly profileEnvValue?: string;
 }): Layer.Layer<CommandSettings> {
   return Layer.succeed(CommandSettings, {
+    profileEnvValue: opts.profileEnvValue,
     profile: opts.profile ?? "supabase",
     apiUrl: opts.apiUrl ?? DEFAULT_API_URL,
     projectHost: opts.projectHost ?? "supabase.co",

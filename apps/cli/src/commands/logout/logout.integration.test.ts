@@ -1,11 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer } from "effect";
+import { Cause, Effect, Exit, Layer } from "effect";
 
 import { mockOutput, mockStdin, mockTty } from "../../../tests/helpers/mocks.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import {
   mockCommandCredentialsTracked,
   mockTelemetryStateTracked,
+  withEnvVar,
 } from "../../../tests/helpers/command-mocks.ts";
 import { YesFlag } from "../../command-internal/global-flags.ts";
 import { logout } from "./logout.handler.ts";
@@ -77,7 +78,7 @@ describe("logout integration", () => {
       const exit = yield* Effect.exit(logout());
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LogoutCancelledError");
+        expect(Cause.pretty(exit.cause)).toContain("LogoutCancelledError");
       }
       expect(credentials.deletedAll).toBe(false);
     }).pipe(Effect.provide(layer));
@@ -89,7 +90,7 @@ describe("logout integration", () => {
       const exit = yield* Effect.exit(logout());
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LogoutCancelledError");
+        expect(Cause.pretty(exit.cause)).toContain("LogoutCancelledError");
       }
       expect(credentials.deletedAll).toBe(false);
     }).pipe(Effect.provide(layer));
@@ -104,20 +105,14 @@ describe("logout integration", () => {
   });
 
   it.live("honors SUPABASE_YES and logs out even when a piped 'n' is present", () => {
-    const prev = process.env["SUPABASE_YES"];
-    process.env["SUPABASE_YES"] = "1";
     const { layer, credentials } = setupLogout({ stdinIsTty: false, pipedAnswers: ["n"] });
-    return Effect.gen(function* () {
-      yield* logout();
-      expect(credentials.deletedAll).toBe(true);
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (prev === undefined) delete process.env["SUPABASE_YES"];
-          else process.env["SUPABASE_YES"] = prev;
-        }),
-      ),
-      Effect.provide(layer),
+    return withEnvVar(
+      "SUPABASE_YES",
+      "1",
+      Effect.gen(function* () {
+        yield* logout();
+        expect(credentials.deletedAll).toBe(true);
+      }).pipe(Effect.provide(layer)),
     );
   });
 
@@ -140,7 +135,7 @@ describe("logout integration", () => {
       const exit = yield* Effect.exit(logout());
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("DeleteTokenError");
+        expect(Cause.pretty(exit.cause)).toContain("DeleteTokenError");
       }
       expect(credentials.deletedAll).toBe(false);
     }).pipe(Effect.provide(layer));
@@ -212,7 +207,7 @@ describe("logout integration", () => {
       const exit = yield* Effect.exit(logout());
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("NonInteractiveError");
+        expect(Cause.pretty(exit.cause)).toContain("NonInteractiveError");
       }
     }).pipe(Effect.provide(layer));
   });
