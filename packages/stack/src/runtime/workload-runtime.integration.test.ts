@@ -244,7 +244,7 @@ describe("workload runtime catalog", () => {
       expect(nativeEnvironment?.MULTILINE).toBe("first line\nsecond line");
 
       const container = containerResolutionFor(configured, functions, inputs);
-      const containerPath = `${FUNCTIONS_CONTAINER_ROOT}/.supabase-functions-serve-import-map.json`;
+      const containerPath = "/root/.supabase-functions-serve-import-map.json";
       expect(
         yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
           container?.env.SUPABASE_INTERNAL_FUNCTIONS_CONFIG ?? "{}",

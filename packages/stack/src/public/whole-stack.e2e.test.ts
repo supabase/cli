@@ -768,6 +768,15 @@ Deno.serve(async (request) => {
 });
 `;
 
+const transientImportMapFunctionSource = `
+import marker from "stack-e2e-marker";
+
+Deno.serve(() => Response.json({
+  marker,
+  multiline: Deno.env.get("STACK_TRANSIENT_MULTILINE"),
+}));
+`;
+
 const waitForSocket = (
   socket: WebSocket,
   predicate: (value: JsonObject) => boolean,
@@ -1247,6 +1256,54 @@ const exerciseWholeStackFunctions = async (scenario: WholeStackScenario): Promis
       await liveIterator.return?.();
     }
     expect((await liveIterator.next()).done).toBe(true);
+
+    const importMapPath = join(projectRoot, "functions-serve-import-map.json");
+    const functionFile = join(projectRoot, "supabase", "functions", functionSlug, "index.ts");
+    const sessionId = randomId();
+    await writeFile(
+      importMapPath,
+      JSON.stringify({
+        imports: {
+          "stack-e2e-marker":
+            "data:text/javascript,export%20default%20%22transient-import-map%22%3B",
+        },
+      }),
+    );
+    await writeFile(functionFile, transientImportMapFunctionSource);
+    try {
+      await stack.serveFunctions({
+        sessionId,
+        importMapSource: importMapPath,
+        config: {
+          capabilities: {
+            functions: {
+              settings: {
+                edge_runtime: {
+                  import_map_default: importMapPath,
+                  secrets: { STACK_TRANSIENT_MULTILINE: "first line\nsecond line" },
+                },
+              },
+            },
+          },
+        },
+      });
+      expect(
+        await jsonObject(
+          await request(api.url, functionPath, { headers: apiHeaders(credentials) }),
+        ),
+      ).toEqual({ marker: "transient-import-map", multiline: "first line\nsecond line" });
+    } finally {
+      await writeFile(functionFile, functionSource(table, markers.live));
+      await stack.serveFunctions({ sessionId });
+    }
+    expect(
+      await jsonObject(await request(api.url, functionPath, { headers: apiHeaders(credentials) })),
+    ).toEqual(
+      expect.objectContaining({
+        marker: markers.live,
+        rows: expect.arrayContaining([{ id: 1, payload: markers.first }]),
+      }),
+    );
   } catch (cause) {
     await throwCapabilityDiagnostics(stack, "functions", "Functions flow", cause);
   }

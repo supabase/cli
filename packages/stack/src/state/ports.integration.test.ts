@@ -119,10 +119,9 @@ describe("port acquisition", () => {
         const coordinator = makePortCoordinator(coordinatorOptions(store, root));
 
         const conflict = yield* coordinator
-          .reserveTransientPrivate(ownId, "functions:edge-runtime:inspector", 31_337)
+          .reserveTransientPrivate("functions:edge-runtime:inspector", 31_337)
           .pipe(Effect.exit);
         const held = yield* coordinator.reserveTransientPrivate(
-          ownId,
           "functions:edge-runtime:inspector",
           "automatic",
         );

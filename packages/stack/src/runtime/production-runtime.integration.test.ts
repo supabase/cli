@@ -2748,7 +2748,8 @@ describe("production runtime", () => {
   it.live("preserves multiline Functions secrets in container runtime input", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const { fs, runtime, createdSpecs, compiled, state } = yield* makeOwnerMaterialFixture();
+        const { fs, runtime, logEntries, createdSpecs, compiled, state } =
+          yield* makeOwnerMaterialFixture();
         const functions = compiled.executionPlan.workloads.find(
           (workload) => workload.id === "functions:edge-runtime",
         );
@@ -2782,6 +2783,12 @@ describe("production runtime", () => {
           yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(encoded ?? "{}"),
         ).toMatchObject({ FACTORY_SECRET: value });
         expect(environment).not.toContain(`FACTORY_SECRET=${value}`);
+        yield* runtime.logStore.append({
+          source: "functions",
+          stream: "stdout",
+          message: `serialized=${encodeJson(value)}`,
+        });
+        expect(logEntries.at(-1)?.message).toBe('serialized="[REDACTED]"');
       }),
     ),
   );

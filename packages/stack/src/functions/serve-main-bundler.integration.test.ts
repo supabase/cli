@@ -1,5 +1,5 @@
 import { createContext, SourceTextModule } from "node:vm";
-import { Effect, FileSystem, Path } from "effect";
+import { Effect, FileSystem, Path, Schema } from "effect";
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { SignJWT } from "jose";
@@ -19,10 +19,16 @@ describe("stack-owned functions bootstrap", () => {
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-bootstrap-" });
       yield* fs.makeDirectory(path.join(root, "hello"));
       yield* fs.writeFileString(path.join(root, "hello", "index.ts"), "export default 1");
+      const importMapPath = path.join(root, "import-map.json");
+      yield* fs.writeFileString(importMapPath, '{"imports":{}}');
       const secret = "bootstrap-test-secret";
       let serveOptions: ServeOptions | undefined;
       let workerEnvironment: ReadonlyArray<readonly [string, string]> | undefined;
+      let workerContext: Readonly<Record<string, unknown>> | undefined;
       const multiline = '{"MULTILINE_VALUE":"first line\\nsecond line"}';
+      const functionsConfig = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
+        $default: { import_map_root: importMapPath },
+      });
       const bundled = yield* bundleServeMainTemplate;
       const sandbox = {
         Deno: {
@@ -30,11 +36,15 @@ describe("stack-owned functions bootstrap", () => {
             get: (name: string) =>
               name === "SUPABASE_INTERNAL_FUNCTIONS_ROOT"
                 ? root
-                : name === "SUPABASE_INTERNAL_JWT_SECRET"
-                  ? secret
-                  : name === "SUPABASE_INTERNAL_MULTILINE_ENV"
-                    ? multiline
-                    : undefined,
+                : name === "SUPABASE_INTERNAL_FUNCTIONS_CONFIG"
+                  ? functionsConfig
+                  : name === "SUPABASE_INTERNAL_IMPORT_MAP_SOURCE"
+                    ? importMapPath
+                    : name === "SUPABASE_INTERNAL_JWT_SECRET"
+                      ? secret
+                      : name === "SUPABASE_INTERNAL_MULTILINE_ENV"
+                        ? multiline
+                        : undefined,
             toObject: () => ({ SUPABASE_INTERNAL_MULTILINE_ENV: multiline }),
           },
           lstat: (filename: string) =>
@@ -56,8 +66,12 @@ describe("stack-owned functions bootstrap", () => {
         EdgeRuntime: {
           applySupabaseTag: () => undefined,
           userWorkers: {
-            create: (options: { envVars: ReadonlyArray<readonly [string, string]> }) => {
+            create: (options: {
+              envVars: ReadonlyArray<readonly [string, string]>;
+              context: Readonly<Record<string, unknown>>;
+            }) => {
               workerEnvironment = options.envVars;
+              workerContext = options.context;
               return Promise.resolve({ fetch: () => Promise.resolve(new Response("hello")) });
             },
           },
@@ -120,6 +134,7 @@ describe("stack-owned functions bootstrap", () => {
       expect(yield* Effect.tryPromise(() => valid.text())).toBe("hello");
       expect(workerEnvironment).toContainEqual(["MULTILINE_VALUE", "first line\nsecond line"]);
       expect(workerEnvironment).not.toContainEqual(["SUPABASE_INTERNAL_MULTILINE_ENV", multiline]);
+      expect(workerContext).toMatchObject({ useReadSyncFileAPI: true, importMapPath });
       const wrongToken = yield* Effect.tryPromise(() =>
         new SignJWT({ sub: "bootstrap-test" })
           .setProtectedHeader({ alg: "HS256" })
