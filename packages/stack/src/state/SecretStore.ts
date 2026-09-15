@@ -1,5 +1,5 @@
 import { Clock, Crypto, Effect, FileSystem, Path, Redacted, Schema } from "effect";
-// Native crypto provides the HMAC and asymmetric signing APIs used here.
+// Effect Crypto does not expose the HMAC, private-key import, or asymmetric signing operations used here.
 import { createHmac, createPrivateKey, createSign } from "node:crypto";
 import {
   InvalidJwtSigningMaterialError,

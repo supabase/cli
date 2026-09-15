@@ -1914,10 +1914,18 @@ describe("production runtime", () => {
           response = nativeResponse;
           Effect.runSyncWith(context)(Deferred.succeed(received, undefined));
           return Effect.callback<HttpServerResponse.HttpServerResponse>((resume) => {
-            const onDone = () => resume(Effect.succeed(HttpServerResponse.empty()));
+            let settled = false;
+            const onDone = () => {
+              if (settled) return;
+              settled = true;
+              nativeResponse.off("finish", onDone);
+              nativeResponse.off("close", onDone);
+              resume(Effect.succeed(HttpServerResponse.empty()));
+            };
             nativeResponse.once("finish", onDone);
             nativeResponse.once("close", onDone);
             return Effect.sync(() => {
+              settled = true;
               nativeResponse.off("finish", onDone);
               nativeResponse.off("close", onDone);
             });

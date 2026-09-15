@@ -379,7 +379,19 @@ describe("stack start (compiled e2e)", () => {
                   catch: (cause) =>
                     new StartE2eProcessError({ message: "failed to spawn logs follower", cause }),
                 }),
-                (spawned) => Effect.sync(() => spawned.releaseOwned({ successOptOut: false })),
+                (spawned) =>
+                  Effect.sync(() => spawned.releaseOwned({ successOptOut: false })).pipe(
+                    Effect.flatMap(() => spawned.exitEffect(CLEANUP_TIMEOUT_MS)),
+                    Effect.asVoid,
+                    Effect.catchTag("CliHomeDisposeError", (cause) =>
+                      Effect.die(
+                        new StartE2eProcessError({
+                          message: "Follower reused the shared CLI home; disposal must not fail",
+                          cause,
+                        }),
+                      ),
+                    ),
+                  ),
               );
               yield* waitForOutput(
                 followed,
@@ -457,7 +469,7 @@ describe("stack start (compiled e2e)", () => {
 
           yield* remove(join(projectRoot, "supabase", "config.toml"), {
             recursive: false,
-            force: true,
+            force: false,
           });
           const stop = yield* runSupabaseEffect(["stack", "stop", "--stack-id", idText], {
             cwd: projectRoot,

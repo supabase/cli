@@ -51,7 +51,11 @@ const runNode = <A, E>(
   program: Effect.Effect<
     A,
     E,
-    FileSystem.FileSystem | Path.Path | Crypto.Crypto | ChildProcessSpawner.ChildProcessSpawner
+    | FileSystem.FileSystem
+    | Path.Path
+    | Crypto.Crypto
+    | ChildProcessSpawner.ChildProcessSpawner
+    | HttpClient.HttpClient
   >,
 ) => hostRuntime.runPromise(program);
 
@@ -466,14 +470,17 @@ const activate = async <A>(
   return result;
 };
 
-const abortRequest = (signal: AbortSignal): Effect.Effect<never, E2ERequestError> =>
+const abortRequest = (
+  signal: AbortSignal,
+  requestDescription: string,
+): Effect.Effect<never, E2ERequestError> =>
   Effect.callback<never, E2ERequestError>((resume) => {
     const onAbort = () => {
       const reason = signal.reason;
       resume(
         Effect.fail(
           new E2ERequestError({
-            message: reason instanceof Error ? reason.message : String(reason ?? "Request aborted"),
+            message: `${requestDescription} failed: ${reason instanceof Error ? reason.message : String(reason ?? "Request aborted")}`,
             cause: reason,
           }),
         ),
@@ -492,8 +499,9 @@ const request = (
   path: string,
   init: RequestInit = {},
   options: Readonly<{ expectedStatus?: number }> = {},
-): Effect.Effect<Response, E2ERequestError> => {
+): Effect.Effect<Response, E2ERequestError, HttpClient.HttpClient> => {
   const url = new URL(path, `${base.replace(/\/$/u, "")}/`);
+  const requestDescription = `${init.method ?? "GET"} ${url}`;
   const program = Effect.gen(function* () {
     const webRequest = new Request(url.href, init);
     let outgoing = HttpClientRequest.fromWeb(webRequest);
@@ -526,14 +534,13 @@ const request = (
   const requestProgram =
     init.signal == null
       ? program.pipe(Effect.timeout(REQUEST_TIMEOUT_MS))
-      : Effect.raceFirst(abortRequest(init.signal), program);
+      : Effect.raceFirst(abortRequest(init.signal, requestDescription), program);
   return requestProgram.pipe(
-    Effect.provide(FetchHttpClient.layer),
     Effect.mapError((cause) => {
       if (cause instanceof E2ERequestError) return cause;
       const reason = cause instanceof Error ? cause.message : String(cause);
       return new E2ERequestError({
-        message: `${init.method ?? "GET"} ${url} failed: ${reason}`,
+        message: `${requestDescription} failed: ${reason}`,
         cause,
       });
     }),
@@ -903,7 +910,7 @@ const queryAnalyticsMarker = (
   api: StackEndpoint,
   analyticsApiKey: string,
   marker: string,
-): Effect.Effect<number, E2ERequestError> => {
+): Effect.Effect<number, E2ERequestError, HttpClient.HttpClient> => {
   const query = new URLSearchParams({
     project: "default",
     iso_timestamp_start: queryTimestamp(-3_600_000),
@@ -1915,9 +1922,7 @@ describe("managed Supabase stack whole-stack E2E", () => {
             return yield* new E2ERequestError({ message: `Mailpit delivery pending for ${email}` });
           return body;
         });
-        await Effect.runPromise(
-          Effect.retry(mailAttempt, { schedule: MAILPIT_DELIVERY_RETRY_SCHEDULE }),
-        );
+        await runNode(Effect.retry(mailAttempt, { schedule: MAILPIT_DELIVERY_RETRY_SCHEDULE }));
       },
     );
   }
