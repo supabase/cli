@@ -239,6 +239,13 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         Effect.mapError(setupFailed),
       );
     }
+    const skipSeeding = (error: { readonly message: string; readonly suggestion?: string }) =>
+      output.raw(
+        `${yellow("WARNING:")} skipped seeding storage buckets: ${error.message}${
+          error.suggestion === undefined ? "" : ` ${error.suggestion}`
+        }\n`,
+        "stderr",
+      );
     if (firstCreate) {
       const capability = status.capabilities.find((entry) => entry.name === "storage");
       if (classifyStorageCapability(capability) === "disabled") {
@@ -255,14 +262,13 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
               workdir: target.projectRoot,
             }),
           ),
-          // Missing capability and gateway-activation failures never abort a successful
-          // start; report and continue, same as an underlying seed-config failure below.
-          Effect.catchTag("StackStorageCapabilityError", (error) =>
-            output.raw(
-              `${yellow("WARNING:")} skipped seeding storage buckets: ${error.message}\n`,
-              "stderr",
-            ),
-          ),
+          // Missing capability/credentials and gateway-activation failures never abort a
+          // successful start; report and continue, same as an underlying seed-config
+          // failure below.
+          Effect.catchTags({
+            StackStorageCapabilityError: skipSeeding,
+            StackStorageUnavailableError: skipSeeding,
+          }),
           Effect.tapError((error) => starting.fail(error.message)),
           Effect.mapError(seedFailed),
         );

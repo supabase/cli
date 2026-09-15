@@ -708,6 +708,41 @@ describe("stack backend", () => {
     });
   });
 
+  it.live("suggests waiting for the stack to finish stopping", () => {
+    const { layer } = setupStorage(tmp.current, {
+      toml: 'project_id = "test"\n',
+      local: true,
+      stackBackend: true,
+      stackApi: { lifecycle: "stopping" },
+    });
+    return Effect.gen(function* () {
+      const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain("run supabase start once it has stopped");
+    });
+  });
+
+  it.live(
+    "surfaces the gateway's status and body on a local 503, without suggesting reactivation",
+    () => {
+      const { layer } = setupStorage(tmp.current, {
+        toml: 'project_id = "test"\n',
+        local: true,
+        stackBackend: true,
+        routes: [{ method: "GET", match: BUCKET, status: 503, body: { message: "upstream down" } }],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        const json = JSON.stringify(exit);
+        expect(json).toContain("StackStorageCapabilityError");
+        expect(json).toContain("HTTP 503");
+        expect(json).toContain("upstream down");
+        expect(json).not.toContain("activate");
+      });
+    },
+  );
+
   it.live("suggests retrying shortly while the stack lifecycle is starting", () => {
     const { layer } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',

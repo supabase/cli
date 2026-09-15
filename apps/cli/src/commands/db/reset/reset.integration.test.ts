@@ -24,6 +24,7 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
   sequentialExecBatch,
+  transportFailure,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
@@ -418,6 +419,54 @@ function recordingStackStorageHttpClient() {
         HttpClientResponse.fromWeb(
           request,
           new Response(body, { status: 200, headers: { "content-type": "application/json" } }),
+        ),
+      );
+    }),
+  );
+  return { layer, requests };
+}
+
+/** Like `recordingStackStorageHttpClient`, but a bucket-create POST fails with the given status. */
+function recordingStackStorageHttpClientBucketCreateFails(status: number) {
+  const requests: Array<{ readonly method: string; readonly url: string }> = [];
+  const layer = Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) => {
+      requests.push({ method: request.method, url: request.url });
+      if (request.method === "POST" && request.url.includes("/storage/v1/bucket")) {
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(request, new Response("server error", { status })),
+        );
+      }
+      const body = request.method === "GET" ? "[]" : JSON.stringify({ name: "bucket" });
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(body, { status: 200, headers: { "content-type": "application/json" } }),
+        ),
+      );
+    }),
+  );
+  return { layer, requests };
+}
+
+/** Like `recordingStackStorageHttpClient`, but the bucket-list GET fails at the transport level. */
+function recordingStackStorageHttpClientBucketListTransportFails() {
+  const requests: Array<{ readonly method: string; readonly url: string }> = [];
+  const layer = Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) => {
+      requests.push({ method: request.method, url: request.url });
+      if (request.method === "GET" && request.url.includes("/storage/v1/bucket")) {
+        return Effect.fail(transportFailure(request, "ECONNREFUSED"));
+      }
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(JSON.stringify({ name: "bucket" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
         ),
       );
     }),
@@ -1022,6 +1071,80 @@ describe("db reset", () => {
           expect(client.requests.some((r) => r.authorization.includes("starting-stack-jwt"))).toBe(
             true,
           );
+        });
+      },
+    );
+
+    it.live(
+      "warns and completes the reset when the bucket-create gateway request fails (500)",
+      () => {
+        const client = recordingStackStorageHttpClientBucketCreateFails(500);
+        const { layer, out } = setup(tmp.current, {
+          toml: BUCKET_TOML,
+          args: ["db", "reset", "--local"],
+          isLocal: true,
+          yes: true,
+          stackBackend: true,
+          stackStorageState: "dormant",
+          stackApiEndpoint: { url: "http://127.0.0.1:55426", port: 55426 },
+          httpClient: client.layer,
+        });
+        return Effect.gen(function* () {
+          const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+          expect(Exit.isSuccess(exit)).toBe(true);
+          expect(out.stderrText).toContain("WARNING: skipped seeding storage buckets:");
+          expect(out.stderrText).toContain(
+            "Run supabase seed buckets --local once Storage is available.",
+          );
+          expect(out.stderrText).toContain("Finished ");
+        });
+      },
+    );
+
+    it.live(
+      "warns and completes the reset when the bucket-list gateway request fails at the transport level",
+      () => {
+        const client = recordingStackStorageHttpClientBucketListTransportFails();
+        const { layer, out } = setup(tmp.current, {
+          toml: BUCKET_TOML,
+          args: ["db", "reset", "--local"],
+          isLocal: true,
+          yes: true,
+          stackBackend: true,
+          stackStorageState: "dormant",
+          stackApiEndpoint: { url: "http://127.0.0.1:55427", port: 55427 },
+          httpClient: client.layer,
+        });
+        return Effect.gen(function* () {
+          const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+          expect(Exit.isSuccess(exit)).toBe(true);
+          expect(out.stderrText).toContain("WARNING: skipped seeding storage buckets:");
+          expect(out.stderrText).toContain(
+            "Run supabase seed buckets --local once Storage is available.",
+          );
+          expect(out.stderrText).toContain("Finished ");
+        });
+      },
+    );
+
+    it.live(
+      "reports the specific failed-storage reason (with underlying error) in the pre-check warning",
+      () => {
+        const { layer, out } = setup(tmp.current, {
+          toml: BUCKET_TOML,
+          args: ["db", "reset", "--local"],
+          isLocal: true,
+          stackBackend: true,
+          stackStorageState: "failed",
+          stackStorageError: "boom",
+          stackApiEndpoint: { url: "http://127.0.0.1:55428", port: 55428 },
+        });
+        return Effect.gen(function* () {
+          yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+          expect(out.stderrText).toContain(
+            "WARNING: skipped seeding storage buckets: Storage failed to start for this stack: boom",
+          );
+          expect(out.stderrText).not.toContain("Storage is failed");
         });
       },
     );

@@ -1161,6 +1161,42 @@ describe("stack start bucket seeding", () => {
     );
   });
 
+  it.live(
+    "warns without failing when first-start seeding cannot resolve the stack's API credentials (Auth disabled)",
+    () => {
+      const root = project();
+      writeBucketsConfig(root);
+      const client = recordingStackStorageHttpClient();
+      const stack = {
+        ...fakeStack("a".repeat(64), () =>
+          Effect.succeed(statusWithStorageState("a".repeat(64), "dormant")),
+        ),
+        credentials: Effect.succeed({
+          database: {
+            url: Redacted.make("postgresql://postgres:secret@127.0.0.1:54329/postgres"),
+            password: Redacted.make("secret"),
+          },
+        }),
+      } satisfies EffectStack;
+      const setup = handlerLayer({
+        root,
+        target: { projectRoot: root },
+        stack,
+        httpClient: client.layer,
+      });
+      return Effect.gen(function* () {
+        yield* stackStart(flags());
+        expect(setup.out.stderrText).toContain("WARNING: skipped seeding storage buckets:");
+        expect(setup.out.stderrText).toContain("API credentials");
+        expect(setup.out.stderrText).toContain("Auth");
+        expect(client.requests).toHaveLength(0);
+      }).pipe(
+        Effect.provide(setup.layer),
+        Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+      );
+    },
+  );
+
   it.live("never seeds buckets when opening an existing stack", () => {
     const root = project();
     writeBucketsConfig(root);
@@ -1284,7 +1320,8 @@ describe("stack start bucket seeding", () => {
       return Effect.gen(function* () {
         yield* stackStart(flags());
         expect(setup.out.stderrText).toContain("WARNING:");
-        expect(setup.out.stderrText).toContain("could not activate Storage");
+        expect(setup.out.stderrText).toContain("HTTP 503 for Storage");
+        expect(setup.out.stderrText).not.toContain("activate");
       }).pipe(
         Effect.provide(setup.layer),
         Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),

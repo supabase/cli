@@ -41,7 +41,11 @@ import { isLocalDbRunning } from "./local-db-running.ts";
 import { recreateLocalDatabase } from "./recreate-local-database.ts";
 import { currentStackBackend } from "../stack-backend.ts";
 import { stackLocalDatabaseConn, stackOpenReadyProject } from "../stack-local-database.ts";
-import { classifyStorageCapability, stackStorageEndpointFor } from "../stack-storage.ts";
+import {
+  classifyStorageCapability,
+  describeStorageCapability,
+  stackStorageEndpointFor,
+} from "../stack-storage.ts";
 import { loadStackConfig } from "../stack-config.ts";
 import { StackCatalogSetup } from "../stack-catalog-setup.ts";
 
@@ -176,10 +180,12 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
       );
     const capability = status.capabilities.find((entry) => entry.name === "storage");
     if (classifyStorageCapability(capability) !== "proceed") {
-      yield* skipSeeding(`Storage is ${capability?.state ?? "unavailable"} for this stack.`);
+      yield* skipSeeding(describeStorageCapability(capability));
     } else {
       // Bucket seeding never fails the reset: the database is already rebuilt, so any
-      // credential-resolution or config failure here only warns and skips.
+      // typed failure here (config load, credential resolution, gateway error, or a
+      // filesystem error walking `objects_path`) only warns and skips; defects and
+      // interruption still propagate.
       yield* Effect.gen(function* () {
         const context = yield* loadLocalProjectContext(
           workdir,
@@ -196,13 +202,7 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
           projectEnvValues: projectEnv,
           workdir,
         });
-      }).pipe(
-        Effect.catchTags({
-          StackStorageCapabilityError: (error) => skipSeeding(error.message),
-          StackStorageUnavailableError: (error) => skipSeeding(error.message),
-          SeedConfigLoadError: (error) => skipSeeding(error.message),
-        }),
-      );
+      }).pipe(Effect.catch((error) => skipSeeding(error.message)));
     }
     const branch = Option.getOrElse(yield* detectGitBranch(workdir), () => "main");
     yield* output.raw(

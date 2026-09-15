@@ -63,10 +63,34 @@ export const classifyStorageCapability = (
   );
 };
 
+/**
+ * Renders the current Storage capability state in the same wording `stackStorageEndpointFor`
+ * fails with, so pre-check warnings (`db reset`, `stack start`) and the endpoint resolver never
+ * drift apart.
+ */
+export const describeStorageCapability = (capability: CapabilityStatus | undefined): string =>
+  Match.value(classifyStorageCapability(capability)).pipe(
+    Match.when("disabled", () => "Storage is disabled for this stack."),
+    Match.when("proceed", () => "Storage is available for this stack."),
+    Match.when("unusable", () =>
+      capability === undefined
+        ? "The stack reports no Storage capability."
+        : capability.state === "failed"
+          ? `Storage failed to start for this stack${
+              capability.error === undefined ? "." : `: ${sanitizeInlineName(capability.error)}`
+            }`
+          : "Storage is stopped for this stack.",
+    ),
+    Match.exhaustive,
+  );
+
 const notRunningSuggestion = (lifecycle: Exclude<StackStatus["lifecycle"], "running">): string =>
   Match.value(lifecycle).pipe(
     Match.when("starting", () => "The stack is still starting; retry shortly."),
-    Match.when("stopping", () => "The stack is shutting down; retry once it has stopped."),
+    Match.when(
+      "stopping",
+      () => "The stack is shutting down; run supabase start once it has stopped.",
+    ),
     Match.when(
       "destroying",
       () => "The stack is being destroyed; run supabase start to create a new one.",
@@ -101,27 +125,19 @@ export const stackStorageEndpointFor = (
     const classification = classifyStorageCapability(capability);
     if (classification === "disabled") {
       return yield* new StackStorageCapabilityError({
-        message: "Storage is disabled for this stack.",
+        message: describeStorageCapability(capability),
         suggestion:
           "Set [storage] enabled = true in supabase/config.toml, or start without -x storage, then run supabase stack restart.",
         disabled: true,
       });
     }
     if (classification === "unusable") {
-      if (capability === undefined) {
-        return yield* new StackStorageCapabilityError({
-          message: "The stack reports no Storage capability.",
-          suggestion: INSPECT_OR_RESTART_SUGGESTION,
-        });
-      }
       return yield* new StackStorageCapabilityError({
-        message:
-          capability.state === "failed"
-            ? `Storage failed to start for this stack${
-                capability.error === undefined ? "." : `: ${sanitizeInlineName(capability.error)}`
-              }`
-            : "Storage is stopped for this stack.",
-        suggestion: "Run supabase stack restart, then retry.",
+        message: describeStorageCapability(capability),
+        suggestion:
+          capability === undefined
+            ? INSPECT_OR_RESTART_SUGGESTION
+            : "Run supabase stack restart, then retry.",
       });
     }
     const credentials = yield* stack.credentials.pipe(
@@ -129,8 +145,9 @@ export const stackStorageEndpointFor = (
     );
     if (credentials.api === undefined) {
       return yield* new StackStorageUnavailableError({
-        message: "The stack exposes no API credentials.",
-        suggestion: INSPECT_OR_RESTART_SUGGESTION,
+        message: "The stack exposes no API credentials because Auth is disabled.",
+        suggestion:
+          "Start the stack with Auth enabled (without -x auth, or [auth] enabled = true in supabase/config.toml), then retry.",
       });
     }
     return {
@@ -188,11 +205,13 @@ export const withStackStorageGuidance = <A, E, R>(
       Effect.catch((error): Effect.Effect<never, E | StackStorageCapabilityError> => {
         if (!(error instanceof StorageGatewayStatusError)) return Effect.fail(error);
         if (error.status !== 502 && error.status !== 503) return Effect.fail(error);
+        const body = sanitizeInlineName(error.body);
         return Effect.fail(
           new StackStorageCapabilityError({
-            message: `The stack gateway could not activate Storage (HTTP ${error.status}).`,
-            suggestion:
-              "Run supabase stack logs to inspect the failure, then supabase stack restart.",
+            message: `The stack gateway returned HTTP ${error.status} for Storage${
+              body.length === 0 ? "." : `: ${body}`
+            }`,
+            suggestion: "Run supabase stack logs to inspect Storage, then supabase stack restart.",
             cause: error,
           }),
         );
