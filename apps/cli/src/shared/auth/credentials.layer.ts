@@ -55,7 +55,7 @@ const makeCredentials = Effect.gen(function* () {
 
   const keyringModule =
     Option.isSome(cliSettings.noKeyring) && cliSettings.noKeyring.value === "1"
-      ? Option.none<typeof import("@napi-rs/keyring")>()
+      ? Option.none<KeyringModule>()
       : yield* Effect.tryPromise(() => import("@napi-rs/keyring")).pipe(Effect.option);
 
   return Credentials.of({

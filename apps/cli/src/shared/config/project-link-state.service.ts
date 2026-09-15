@@ -1,7 +1,7 @@
 import type { Effect, Option } from "effect";
 import { Data, Schema, Context } from "effect";
 import type { PlatformError } from "effect/PlatformError";
-import { CliProjectHomeNotDirectoryError } from "./cli-project-home.service.ts";
+import type { CliProjectHomeNotDirectoryError } from "./cli-project-home.service.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,

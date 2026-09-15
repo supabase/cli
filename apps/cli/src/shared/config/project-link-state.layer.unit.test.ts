@@ -85,7 +85,7 @@ const SAMPLE_STATE = {
 } as const;
 
 describe("projectLinkStateLayer", () => {
-  it.live("surfaces a clear failure while preserving missing-file no-op behavior", () => {
+  it.live("surfaces a clear permission failure", () => {
     const tempDir = makeTempDir();
     const projectRoot = join(tempDir, "repo");
     const linkPath = join(projectRoot, ".supabase", "project.json");
@@ -183,6 +183,7 @@ describe("projectLinkStateLayer", () => {
       }).pipe(Effect.provide(layer));
 
       yield* linkState.save(SAMPLE_STATE);
+      yield* linkState.clear;
       yield* linkState.clear;
 
       const loaded = yield* linkState.load;

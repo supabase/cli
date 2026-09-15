@@ -11,7 +11,7 @@ import { CliProjectHome } from "./cli-project-home.service.ts";
 
 const ProjectLinkStateValueFileSchema = Schema.fromJsonString(ProjectLinkStateValueSchema);
 const decodeProjectLinkStateValue = Schema.decodeUnknownEffect(ProjectLinkStateValueFileSchema);
-const encodeProjectLinkStateValue = Schema.encodeUnknownEffect(ProjectLinkStateValueSchema);
+const encodeProjectLinkStateValue = Schema.encodeEffect(ProjectLinkStateValueSchema);
 
 function encodePrettyJson(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;

@@ -370,7 +370,8 @@ const readFallbackFile = (
  * Resolves an access token for an explicit profile account: env token → keyring (profile
  * account, then legacy account) → fallback file. Used by commands that reconcile a
  * pflag-effective profile after `CommandCredentials` already captured a different one at
- * construction. Fails with the same validation error as `resolveAccessToken`.
+ * construction. Fails with the same validation error as `resolveAccessToken` and propagates
+ * credential storage failures.
  */
 export const accessTokenForProfile = Effect.fnUntraced(function* (profileAccount: string) {
   const fs = yield* FileSystem.FileSystem;
@@ -481,20 +482,17 @@ const makeCommandCredentials = Effect.gen(function* () {
     deleteAccessToken: Effect.gen(function* () {
       // Removes the fallback token file first; a missing file is ignored, but any other
       // failure aborts before the keyring is touched.
-      const exists = yield* fs.exists(fallbackPath);
-      if (exists) {
-        yield* fs.remove(fallbackPath).pipe(
-          Effect.catchTag("PlatformError", (error) =>
-            Predicate.isTagged(error.reason, "NotFound")
-              ? Effect.void
-              : Effect.fail(
-                  new DeleteTokenError({
-                    message: `failed to remove access token file: ${error.message}`,
-                  }),
-                ),
-          ),
-        );
-      }
+      yield* fs.remove(fallbackPath).pipe(
+        Effect.catchTag("PlatformError", (error) =>
+          Predicate.isTagged(error.reason, "NotFound")
+            ? Effect.void
+            : Effect.fail(
+                new DeleteTokenError({
+                  message: `failed to remove access token file: ${error.message}`,
+                }),
+              ),
+        ),
+      );
 
       // Best-effort delete of the legacy `access-token` keyring account; errors here don't
       // affect the result.
