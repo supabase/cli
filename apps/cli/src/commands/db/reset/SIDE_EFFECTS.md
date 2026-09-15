@@ -205,9 +205,10 @@ default (`false`), so a remote reset is declined unless `--yes` is set. The loca
 path has no reset confirmation, but its bucket-seed step carries the seed-buckets
 overwrite/prune confirmations: in machine modes they take their defaults silently
 (overwrite → yes, prune → no) unless `--yes`/`SUPABASE_YES` auto-confirms; in text
-mode each prints its label and scans one piped stdin line — a parsed `y`/`n` answer
-wins (so `yes | supabase db reset` confirms a vector prune), and only an empty or
-unparseable line falls back to those defaults.
+mode each prints its label and reads one stdin line, bounded to 100 ms and performed
+even when stdin is a TTY — a parsed `y`/`n` answer wins (so `yes | supabase db reset`
+confirms a vector prune), while an empty, unparseable, or timed-out read falls back
+to those defaults (the usual outcome for an interactive terminal).
 
 ## Notes
 

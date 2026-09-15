@@ -425,6 +425,8 @@ function setup(
     }>;
     /** Piped (non-TTY) stdin content, one line consumed per confirmation prompt. */
     pipedStdin?: string;
+    /** Whether stdin is a TTY. Defaults to `true`. */
+    stdinIsTty?: boolean;
     replicationSlotCounts?: ReadonlyArray<number>;
     replicationSlotQueryFails?: boolean;
     failStatement?: { readonly sql: string; readonly code?: string; readonly message: string };
@@ -497,10 +499,11 @@ function setup(
     httpLayer,
     dockerRunLayer.pipe(Layer.provide(child.layer), Layer.provide(mockProcessControl().layer)),
     Layer.succeed(NetworkIdFlag, Option.none()),
-    // The remote-reset confirmation is answered through mockOutput's `promptConfirmResponses`
-    // (the TTY/clack path); stdin is only required to satisfy the effect's service dependency.
-    mockTty({ stdinIsTty: true }),
-    mockStdin(true, opts.pipedStdin),
+    // Default: a TTY whose remote-reset confirmation is answered through mockOutput's
+    // `promptConfirmResponses` (the clack path); `stdinIsTty: false` + `pipedStdin` model a
+    // real pipe for the non-interactive bucket-seed prompts instead.
+    mockTty({ stdinIsTty: opts.stdinIsTty ?? true }),
+    mockStdin(opts.stdinIsTty ?? true, opts.pipedStdin),
     // `loadProjectRef` gives an explicit `--project-ref` flag top precedence, mirrored here so a
     // test can prove the flag (not just `opts.ref`) drives the linked ref.
     Layer.succeed(ProjectRefResolver, {
@@ -876,6 +879,7 @@ describe("db reset", () => {
         args: ["db", "reset", "--local"],
         isLocal: true,
         pipedStdin: "y\n",
+        stdinIsTty: false,
         storageRoutes: [
           { method: "GET", match: "/storage/v1/bucket", body: [] },
           {
