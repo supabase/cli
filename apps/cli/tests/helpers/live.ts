@@ -269,6 +269,39 @@ export async function expectPostgresConfigLiveOverride(
 }
 
 /**
+ * Waits until `branches get` resolves `branch` on the live project. `branches
+ * create` and `update --name` return before the platform can look the branch
+ * up, so a caller that acts on it next does one fail-fast read (aborting on
+ * anything but a 404) and then polls (2s apart, 60s deadline, each attempt
+ * bounded). Reports stderr only since `get` prints secrets on stdout.
+ */
+export async function awaitLiveBranch(
+  cli: LiveFixtures["cli"],
+  project: LiveProject,
+  branch: string,
+): Promise<void> {
+  const read = async (): Promise<string> => {
+    const proof = await cli(["branches", "get", branch, "--project-ref", project.ref], {
+      exitTimeoutMs: 20_000,
+    });
+    if (proof.exitCode !== 0 && !/status 404\b/u.test(proof.stderr)) {
+      requireCliSuccess({ ...proof, stdout: "" }, `branches get ${branch}`);
+    }
+    return proof.exitCode === 0
+      ? "found"
+      : `not found (exit ${proof.exitCode})\nstderr:\n${proof.stderr}`;
+  };
+  if ((await read()) === "found") return;
+  await expect
+    .poll(read, {
+      interval: 2_000,
+      timeout: 60_000,
+      message: `branches get ${branch} still does not find the branch`,
+    })
+    .toBe("found");
+}
+
+/**
  * Waits until `branches list` shows no non-default branch on the live project.
  * `branches delete` returns before the platform finishes tearing the branch
  * down, and `branches disable` is refused ("Please delete all non-default
