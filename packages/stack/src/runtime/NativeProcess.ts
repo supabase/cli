@@ -1,6 +1,6 @@
 import { Data, Duration, Effect, Option, Scope, Stream } from "effect";
 import { fileURLToPath } from "node:url";
-import { ChildProcess } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import type { PlatformError } from "effect/PlatformError";
 import type {
   ChildProcessHandle,
@@ -146,6 +146,35 @@ export const spawnNativeProcess = (
       stream: Stream.Stream<Uint8Array, PlatformError>,
     ): Stream.Stream<Uint8Array, NativeProcessError> =>
       stream.pipe(Stream.mapError((error) => mapProcessError(error, spec)));
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    // Darwin can report EPERM after a process group has become zombie-only.
+    const inspectProcessGroup = Effect.scoped(
+      Effect.gen(function* () {
+        const inspection = yield* ChildProcess.make("/bin/ps", ["-axo", "pgid=,stat="], {
+          killSignal: "SIGKILL",
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "ignore",
+        });
+        const [output, exitCode] = yield* Effect.all(
+          [inspection.stdout.pipe(Stream.decodeText, Stream.mkString), inspection.exitCode],
+          { concurrency: 2 },
+        );
+        if (Number(exitCode) !== 0 || output.trim().length === 0) return false;
+        const targetGroup = Number(handle.pid);
+        for (const line of output.split("\n")) {
+          if (line.trim() === "") continue;
+          const match = /^(\d+)\s+(\S+)$/.exec(line.trim());
+          if (match === null) return false;
+          const group = Number(match[1]);
+          const state = match[2];
+          if (state === undefined) return false;
+          if (!Number.isSafeInteger(group)) return false;
+          if (group === targetGroup && !state.startsWith("Z")) return false;
+        }
+        return true;
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+    );
     const cleanupProcessGroup = Effect.try({
       try: () => {
         if (globalThis.process.platform === "win32") return;
@@ -163,7 +192,26 @@ export const spawnNativeProcess = (
         }
       },
       catch: (error) => mapProcessError(error, spec),
-    });
+    }).pipe(
+      Effect.catch((error) => {
+        const cause = error.cause;
+        if (
+          globalThis.process.platform === "darwin" &&
+          typeof cause === "object" &&
+          cause !== null &&
+          "code" in cause &&
+          cause.code === "EPERM"
+        ) {
+          return inspectProcessGroup.pipe(
+            Effect.timeout("2 seconds"),
+            Effect.catchDefect(() => Effect.fail(error)),
+            Effect.mapError(() => error),
+            Effect.flatMap((noLiveMembers) => (noLiveMembers ? Effect.void : Effect.fail(error))),
+          );
+        }
+        return Effect.fail(error);
+      }),
+    );
     const signalLauncher = (signal: NodeJS.Signals): Effect.Effect<void, NativeProcessError> =>
       Effect.try({
         try: () => {
