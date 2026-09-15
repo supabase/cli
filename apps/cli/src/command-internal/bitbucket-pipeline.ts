@@ -1,6 +1,6 @@
 import { Config, Effect, Option } from "effect";
 
-export const BITBUCKET_CLONE_DIR_ENV_KEY = "BITBUCKET_CLONE_DIR";
+const BITBUCKET_CLONE_DIR_ENV_KEY = "BITBUCKET_CLONE_DIR";
 
 /** Resolves the Bitbucket marker from project values or the ambient CLI provider. */
 export const bitbucketCloneDir = Effect.fnUntraced(function* (
