@@ -68,7 +68,7 @@ export type RouteHandler =
   | ReadonlyArray<StubResponse | StubTransportFailure>;
 
 export interface ComputeHttpRoutes {
-  /** Keyed `"<METHOD> <pathname>"`, e.g. `"GET /v2/projects/abc.../workers"`. */
+  /** Keyed `"<METHOD> <pathname>"`, e.g. `"GET /v2/projects/abc.../compute"`. */
   readonly [route: string]: RouteHandler;
 }
 
@@ -219,7 +219,7 @@ export function computeResource(options: {
   readonly instancesError?: string;
 }) {
   return {
-    type: "project_worker",
+    type: "project_compute_instance",
     id: options.name,
     attributes: {
       spec: {
@@ -239,10 +239,10 @@ export function computeResource(options: {
   };
 }
 
-export const computeRoute = (suffix = "") => `/v2/projects/${COMPUTE_PROJECT_REF}/workers${suffix}`;
+export const computeRoute = (suffix = "") => `/v2/projects/${COMPUTE_PROJECT_REF}/compute${suffix}`;
 
 /**
- * The unified logs endpoint `compute logs` queries. Not under `/v2/.../workers` —
+ * The unified logs endpoint `compute logs` queries. Not under `/v2/.../compute` —
  * there is no compute-scoped log route.
  */
 export const computeLogsRoute = () =>

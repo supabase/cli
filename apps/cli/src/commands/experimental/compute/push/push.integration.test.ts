@@ -36,7 +36,7 @@ const IMMEDIATE = Schedule.recurs(20);
 
 const uploadSlot = {
   data: {
-    type: "project_worker_upload",
+    type: "project_compute_instance_upload",
     id: UPLOAD_ID,
     attributes: { url: UPLOAD_URL, method: "PUT", expires_at: "2026-08-12T00:15:00Z" },
   },
@@ -135,7 +135,7 @@ describe("compute push", () => {
         const deploy = http.requests.find((request) => request.url.endsWith("/deploy"));
         expect(yield* decodeDeploy(deploy?.body ?? "{}")).toEqual({
           data: {
-            type: "project_worker",
+            type: "project_compute_instance",
             attributes: {
               spec: {
                 runtime: "node",
@@ -154,7 +154,7 @@ describe("compute push", () => {
         expect(out.stdoutText).toContain("Deployed Compute api");
         expect(out.stdoutText).toContain("Runtime");
         expect(out.stdoutText).toContain(
-          `https://${COMPUTE_PROJECT_REF}.supabase.co/workers/v1/api`,
+          `https://${COMPUTE_PROJECT_REF}.supabase.co/compute/v1/api`,
         );
         expect(out.stdoutText).toContain("v1");
         // The build settled, so there is nothing left to follow up on.
@@ -1671,7 +1671,7 @@ describe("compute push", () => {
             instances: 1,
             build_state: "active",
             image_version: "v1",
-            url: `https://${COMPUTE_PROJECT_REF}.supabase.co/workers/v1/api`,
+            url: `https://${COMPUTE_PROJECT_REF}.supabase.co/compute/v1/api`,
           },
         ]);
       }).pipe(Effect.provide(layer));
@@ -1739,7 +1739,7 @@ describe("compute push", () => {
               exposure: "public",
               instances: 1,
               build_state: "building",
-              url: `https://${COMPUTE_PROJECT_REF}.supabase.co/workers/v1/api`,
+              url: `https://${COMPUTE_PROJECT_REF}.supabase.co/compute/v1/api`,
             },
           ]);
         }).pipe(Effect.provide(layer));
@@ -1787,7 +1787,7 @@ describe("compute push", () => {
             exposure: "public",
             instances: 1,
             build_state: "building",
-            url: `https://${COMPUTE_PROJECT_REF}.supabase.co/workers/v1/api`,
+            url: `https://${COMPUTE_PROJECT_REF}.supabase.co/compute/v1/api`,
           },
         ]);
       }).pipe(Effect.provide(layer));

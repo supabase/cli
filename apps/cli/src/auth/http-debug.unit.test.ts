@@ -29,7 +29,7 @@ describe("redactHttpUrl", () => {
   });
 
   test.each([
-    ["a Management API route", "https://api.supabase.com/v2/projects/abc/workers/api"],
+    ["a Management API route", "https://api.supabase.com/v2/projects/abc/compute/api"],
     ["an ordinary query string", "https://api.supabase.com/v1/projects?limit=10"],
     ["a URL with no query at all", "https://api.supabase.com/v1/projects"],
   ])("leaves %s untouched", (_label, url) => {

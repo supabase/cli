@@ -9975,6 +9975,41 @@ export const V2AssignOrganizationMemberRoleOutput = Schema.Struct({
     }),
   }),
 });
+export const V2CreateComputeInstanceUploadInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  name: Schema.String.check(
+    Schema.isPattern(new RegExp("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")).annotate({
+      expected: "a string matching the RegExp ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$",
+    }),
+  ),
+});
+export const V2CreateComputeInstanceUploadOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("project_compute_instance_upload").annotate({
+      description: "Resource type.",
+    }),
+    id: Schema.String.annotate({
+      description: "Upload id to pass to the deploy endpoint as `context_upload_id`.",
+    }),
+    attributes: Schema.Struct({
+      url: Schema.String.annotate({
+        description: "Presigned destination for the `.tar.gz` build context.",
+      }),
+      method: Schema.String,
+      expires_at: Schema.String.annotate({
+        description: "When the slot stops accepting the upload.",
+      }),
+    }),
+  }),
+});
 export const V2CreateLogDrainInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
@@ -10429,40 +10464,7 @@ export const V2CreatePrivateLinkAssociationOutput = Schema.Struct({
     }),
   }),
 });
-export const V2CreateWorkerUploadInput = Schema.Struct({
-  ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
-  )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
-    .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
-        expected: "a string matching the RegExp ^[a-z]+$",
-      }),
-    ),
-  name: Schema.String.check(
-    Schema.isPattern(new RegExp("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")).annotate({
-      expected: "a string matching the RegExp ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$",
-    }),
-  ),
-});
-export const V2CreateWorkerUploadOutput = Schema.Struct({
-  data: Schema.Struct({
-    type: Schema.Literal("project_worker_upload").annotate({ description: "Resource type." }),
-    id: Schema.String.annotate({
-      description: "Upload id to pass to the deploy endpoint as `context_upload_id`.",
-    }),
-    attributes: Schema.Struct({
-      url: Schema.String.annotate({
-        description: "Presigned destination for the `.tar.gz` build context.",
-      }),
-      method: Schema.String,
-      expires_at: Schema.String.annotate({
-        description: "When the slot stops accepting the upload.",
-      }),
-    }),
-  }),
-});
-export const V2DeleteAWorkerInput = Schema.Struct({
+export const V2DeleteAComputeInstanceInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
   )
@@ -10575,7 +10577,7 @@ export const V2DeletePrivateLinkAssociationForDatabaseInput = Schema.Struct({
   aws_account_id: Schema.String,
   database_identifier: Schema.String,
 });
-export const V2DeployAWorkerInput = Schema.Struct({
+export const V2DeployAComputeInstanceInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
   )
@@ -10591,7 +10593,7 @@ export const V2DeployAWorkerInput = Schema.Struct({
     }),
   ),
   data: Schema.Struct({
-    type: Schema.Literal("project_worker").annotate({ description: "Resource type." }),
+    type: Schema.Literal("project_compute_instance").annotate({ description: "Resource type." }),
     attributes: Schema.Struct({
       spec: Schema.Struct({
         runtime: Schema.optionalKey(Schema.String),
@@ -10618,10 +10620,10 @@ export const V2DeployAWorkerInput = Schema.Struct({
     }),
   }),
 });
-export const V2DeployAWorkerOutput = Schema.Struct({
+export const V2DeployAComputeInstanceOutput = Schema.Struct({
   data: Schema.Struct({
-    type: Schema.Literal("project_worker").annotate({ description: "Resource type." }),
-    id: Schema.String.annotate({ description: "Worker name." }),
+    type: Schema.Literal("project_compute_instance").annotate({ description: "Resource type." }),
+    id: Schema.String.annotate({ description: "Compute instance name." }),
     attributes: Schema.Struct({
       spec: Schema.Struct({
         runtime: Schema.optionalKey(Schema.String),
@@ -10696,7 +10698,7 @@ export const V2DeployAWorkerOutput = Schema.Struct({
     }),
   }),
 });
-export const V2GetAWorkerInput = Schema.Struct({
+export const V2GetAComputeInstanceInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
   )
@@ -10712,10 +10714,10 @@ export const V2GetAWorkerInput = Schema.Struct({
     }),
   ),
 });
-export const V2GetAWorkerOutput = Schema.Struct({
+export const V2GetAComputeInstanceOutput = Schema.Struct({
   data: Schema.Struct({
-    type: Schema.Literal("project_worker").annotate({ description: "Resource type." }),
-    id: Schema.String.annotate({ description: "Worker name." }),
+    type: Schema.Literal("project_compute_instance").annotate({ description: "Resource type." }),
+    id: Schema.String.annotate({ description: "Compute instance name." }),
     attributes: Schema.Struct({
       spec: Schema.Struct({
         runtime: Schema.optionalKey(Schema.String),
@@ -11397,7 +11399,7 @@ export const V2GetProjectConfigOutput = Schema.Struct({
     }),
   }),
 });
-export const V2ListAllWorkersInput = Schema.Struct({
+export const V2ListAllComputeInstancesInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
   )
@@ -11408,11 +11410,11 @@ export const V2ListAllWorkersInput = Schema.Struct({
       }),
     ),
 });
-export const V2ListAllWorkersOutput = Schema.Struct({
+export const V2ListAllComputeInstancesOutput = Schema.Struct({
   data: Schema.Array(
     Schema.Struct({
-      type: Schema.Literal("project_worker").annotate({ description: "Resource type." }),
-      id: Schema.String.annotate({ description: "Worker name." }),
+      type: Schema.Literal("project_compute_instance").annotate({ description: "Resource type." }),
+      id: Schema.String.annotate({ description: "Compute instance name." }),
       attributes: Schema.Struct({
         spec: Schema.Struct({
           runtime: Schema.optionalKey(Schema.String),
@@ -12606,7 +12608,7 @@ export const V1UndoOutput = Schema.Void;
 export const V1UpdateRealtimeConfigOutput = Schema.Void;
 export const V1UpdateStorageConfigOutput = Schema.Void;
 export const V1UpsertAMigrationOutput = Schema.Void;
-export const V2DeleteAWorkerOutput = Schema.Void;
+export const V2DeleteAComputeInstanceOutput = Schema.Void;
 export const V2DeleteLogDrainOutput = Schema.Void;
 export const V2DeletePrivateLinkAssociationOutput = Schema.Void;
 export const V2DeletePrivateLinkAssociationForDatabaseOutput = Schema.Void;
@@ -12784,19 +12786,19 @@ export const openApiOperationIdMap = {
   "v1-upsert-a-migration": "v1UpsertAMigration",
   "v1-verify-dns-config": "v1VerifyDnsConfig",
   "v2-assign-organization-member-role": "v2AssignOrganizationMemberRole",
+  "v2-create-compute-instance-upload": "v2CreateComputeInstanceUpload",
   "v2-create-log-drain": "v2CreateLogDrain",
   "v2-create-organization-invitations": "v2CreateOrganizationInvitations",
   "v2-create-private-link-association": "v2CreatePrivateLinkAssociation",
-  "v2-create-worker-upload": "v2CreateWorkerUpload",
-  "v2-delete-a-worker": "v2DeleteAWorker",
+  "v2-delete-a-compute-instance": "v2DeleteAComputeInstance",
   "v2-delete-log-drain": "v2DeleteLogDrain",
   "v2-delete-organization-invitations": "v2DeleteOrganizationInvitations",
   "v2-delete-private-link-association": "v2DeletePrivateLinkAssociation",
   "v2-delete-private-link-association-for-database": "v2DeletePrivateLinkAssociationForDatabase",
-  "v2-deploy-a-worker": "v2DeployAWorker",
-  "v2-get-a-worker": "v2GetAWorker",
+  "v2-deploy-a-compute-instance": "v2DeployAComputeInstance",
+  "v2-get-a-compute-instance": "v2GetAComputeInstance",
   "v2-get-project-config": "v2GetProjectConfig",
-  "v2-list-all-workers": "v2ListAllWorkers",
+  "v2-list-all-compute-instances": "v2ListAllComputeInstances",
   "v2-list-log-drains": "v2ListLogDrains",
   "v2-list-organization-github-connections": "v2ListOrganizationGithubConnections",
   "v2-list-organization-members": "v2ListOrganizationMembers",
@@ -15533,6 +15535,20 @@ export const operationDefinitions = {
     inputSchema: V2AssignOrganizationMemberRoleInput,
     outputSchema: V2AssignOrganizationMemberRoleOutput,
   },
+  v2CreateComputeInstanceUpload: {
+    id: "v2CreateComputeInstanceUpload",
+    description:
+      "PUT the `.tar.gz` build context to the returned `url` before `expires_at`, then deploy with the upload id as `context_upload_id`. The bytes go straight to storage — no management API request carries them.\n\nThis endpoint is currently in its **Alpha** stage.",
+    method: "POST",
+    path: "/v2/projects/{ref}/compute/{name}/uploads",
+    pathParams: ["ref", "name"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2CreateComputeInstanceUploadInput,
+    outputSchema: V2CreateComputeInstanceUploadOutput,
+  },
   v2CreateLogDrain: {
     id: "v2CreateLogDrain",
     description: "Create a log drain for a project",
@@ -15574,32 +15590,19 @@ export const operationDefinitions = {
     inputSchema: V2CreatePrivateLinkAssociationInput,
     outputSchema: V2CreatePrivateLinkAssociationOutput,
   },
-  v2CreateWorkerUpload: {
-    id: "v2CreateWorkerUpload",
+  v2DeleteAComputeInstance: {
+    id: "v2DeleteAComputeInstance",
     description:
-      "PUT the `.tar.gz` build context to the returned `url` before `expires_at`, then deploy with the upload id as `context_upload_id`. The bytes go straight to storage — no management API request carries them.",
-    method: "POST",
-    path: "/v2/projects/{ref}/workers/{name}/uploads",
-    pathParams: ["ref", "name"],
-    queryParams: [],
-    headerParams: [],
-    requestBody: { kind: "none" },
-    response: { kind: "json" },
-    inputSchema: V2CreateWorkerUploadInput,
-    outputSchema: V2CreateWorkerUploadOutput,
-  },
-  v2DeleteAWorker: {
-    id: "v2DeleteAWorker",
-    description: "Tombstones the worker. Its instances and image are torn down asynchronously.",
+      "Tombstones the compute instance. Its running instances and image are torn down asynchronously.\n\nThis endpoint is currently in its **Alpha** stage.",
     method: "DELETE",
-    path: "/v2/projects/{ref}/workers/{name}",
+    path: "/v2/projects/{ref}/compute/{name}",
     pathParams: ["ref", "name"],
     queryParams: [],
     headerParams: [],
     requestBody: { kind: "none" },
     response: { kind: "void" },
-    inputSchema: V2DeleteAWorkerInput,
-    outputSchema: V2DeleteAWorkerOutput,
+    inputSchema: V2DeleteAComputeInstanceInput,
+    outputSchema: V2DeleteAComputeInstanceOutput,
   },
   v2DeleteLogDrain: {
     id: "v2DeleteLogDrain",
@@ -15655,33 +15658,33 @@ export const operationDefinitions = {
     inputSchema: V2DeletePrivateLinkAssociationForDatabaseInput,
     outputSchema: V2DeletePrivateLinkAssociationForDatabaseOutput,
   },
-  v2DeployAWorker: {
-    id: "v2DeployAWorker",
+  v2DeployAComputeInstance: {
+    id: "v2DeployAComputeInstance",
     description:
-      "Creates the worker if it does not exist, building from a context staged through the uploads endpoint. The build runs asynchronously: this answers 202 and the worker reaches `build_state` `active` or `failed` later.",
+      "Creates the compute instance if it does not exist, building from a context staged through the uploads endpoint. The build runs asynchronously: this answers 202 and the compute instance reaches `build_state` `active` or `failed` later.\n\nThis endpoint is currently in its **Alpha** stage.",
     method: "POST",
-    path: "/v2/projects/{ref}/workers/{name}/deploy",
+    path: "/v2/projects/{ref}/compute/{name}/deploy",
     pathParams: ["ref", "name"],
     queryParams: [],
     headerParams: [],
     requestBody: { kind: "json", contentType: "application/json", fields: ["data"] },
     response: { kind: "json" },
-    inputSchema: V2DeployAWorkerInput,
-    outputSchema: V2DeployAWorkerOutput,
+    inputSchema: V2DeployAComputeInstanceInput,
+    outputSchema: V2DeployAComputeInstanceOutput,
   },
-  v2GetAWorker: {
-    id: "v2GetAWorker",
+  v2GetAComputeInstance: {
+    id: "v2GetAComputeInstance",
     description:
-      "Returns a worker along with its instance tally. Poll this after a deploy until `build_state` leaves `building`.",
+      "Returns a compute instance along with the counts of its running instances. Poll this after a deploy until `build_state` leaves `building`.\n\nThis endpoint is currently in its **Alpha** stage.",
     method: "GET",
-    path: "/v2/projects/{ref}/workers/{name}",
+    path: "/v2/projects/{ref}/compute/{name}",
     pathParams: ["ref", "name"],
     queryParams: [],
     headerParams: [],
     requestBody: { kind: "none" },
     response: { kind: "json" },
-    inputSchema: V2GetAWorkerInput,
-    outputSchema: V2GetAWorkerOutput,
+    inputSchema: V2GetAComputeInstanceInput,
+    outputSchema: V2GetAComputeInstanceOutput,
   },
   v2GetProjectConfig: {
     id: "v2GetProjectConfig",
@@ -15697,18 +15700,19 @@ export const operationDefinitions = {
     inputSchema: V2GetProjectConfigInput,
     outputSchema: V2GetProjectConfigOutput,
   },
-  v2ListAllWorkers: {
-    id: "v2ListAllWorkers",
-    description: "Returns all workers you've previously deployed to the specified project.",
+  v2ListAllComputeInstances: {
+    id: "v2ListAllComputeInstances",
+    description:
+      "Returns all compute instances you've previously deployed to the specified project.\n\nThis endpoint is currently in its **Alpha** stage.",
     method: "GET",
-    path: "/v2/projects/{ref}/workers",
+    path: "/v2/projects/{ref}/compute",
     pathParams: ["ref"],
     queryParams: [],
     headerParams: [],
     requestBody: { kind: "none" },
     response: { kind: "json" },
-    inputSchema: V2ListAllWorkersInput,
-    outputSchema: V2ListAllWorkersOutput,
+    inputSchema: V2ListAllComputeInstancesInput,
+    outputSchema: V2ListAllComputeInstancesOutput,
   },
   v2ListLogDrains: {
     id: "v2ListLogDrains",

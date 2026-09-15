@@ -12327,442 +12327,6 @@
         "x-fga-permissions": [["project_admin_write"]]
       }
     },
-    "/v2/projects/{ref}/workers": {
-      "get": {
-        "description": "Returns all workers you've previously deployed to the specified project.",
-        "operationId": "v2-list-all-workers",
-        "parameters": [
-          {
-            "name": "ref",
-            "required": true,
-            "in": "path",
-            "description": "Project ref",
-            "schema": {
-              "minLength": 20,
-              "maxLength": 20,
-              "pattern": "^[a-z]+$",
-              "example": "abcdefghijklmnopqrst",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/V2ListWorkersResponse_Output"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponseBody"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden action",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponseBody"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Rate limit exceeded",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponseBody"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "summary": "[Alpha] List all workers",
-        "tags": ["Workers"],
-        "x-badges": [
-          {
-            "name": "OAuth scope: edge_functions:read",
-            "position": "after"
-          }
-        ],
-        "x-endpoint-owners": ["functions"],
-        "x-fga-permissions": [["workers_read"]],
-        "x-oauth-scope": "edge_functions:read"
-      }
-    },
-    "/v2/projects/{ref}/workers/{name}": {
-      "get": {
-        "description": "Returns a worker along with its instance tally. Poll this after a deploy until `build_state` leaves `building`.",
-        "operationId": "v2-get-a-worker",
-        "parameters": [
-          {
-            "name": "ref",
-            "required": true,
-            "in": "path",
-            "description": "Project ref",
-            "schema": {
-              "minLength": 20,
-              "maxLength": 20,
-              "pattern": "^[a-z]+$",
-              "example": "abcdefghijklmnopqrst",
-              "type": "string"
-            }
-          },
-          {
-            "name": "name",
-            "required": true,
-            "in": "path",
-            "schema": {
-              "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$",
-              "example": "hello-world",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/V2WorkerResponse_Output"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponseBody"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden action",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponseBody"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Rate limit exceeded",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponseBody"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "summary": "[Alpha] Retrieve a worker",
-        "tags": ["Workers"],
-        "x-badges": [
-          {
-            "name": "OAuth scope: edge_functions:read",
-            "position": "after"
-          }
-        ],
-        "x-endpoint-owners": ["functions"],
-        "x-fga-permissions": [["workers_read"]],
-        "x-oauth-scope": "edge_functions:read"
-      },
-      "delete": {
-        "description": "Tombstones the worker. Its instances and image are torn down asynchronously.",
-        "operationId": "v2-delete-a-worker",
-        "parameters": [
-          {
-            "name": "ref",
-            "required": true,
-            "in": "path",
-            "description": "Project ref",
-            "schema": {
-              "minLength": 20,
-              "maxLength": 20,
-              "pattern": "^[a-z]+$",
-              "example": "abcdefghijklmnopqrst",
-              "type": "string"
-            }
-          },
-          {
-            "name": "name",
-            "required": true,
-            "in": "path",
-            "schema": {
-              "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$",
-              "example": "hello-world",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": ""
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponseBody"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden action",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponseBody"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Rate limit exceeded",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponseBody"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "summary": "[Alpha] Delete a worker",
-        "tags": ["Workers"],
-        "x-badges": [
-          {
-            "name": "OAuth scope: edge_functions:write",
-            "position": "after"
-          }
-        ],
-        "x-endpoint-owners": ["functions"],
-        "x-fga-permissions": [["workers_write"]],
-        "x-oauth-scope": "edge_functions:write"
-      }
-    },
-    "/v2/projects/{ref}/workers/{name}/uploads": {
-      "post": {
-        "description": "PUT the `.tar.gz` build context to the returned `url` before `expires_at`, then deploy with the upload id as `context_upload_id`. The bytes go straight to storage — no management API request carries them.",
-        "operationId": "v2-create-worker-upload",
-        "parameters": [
-          {
-            "name": "ref",
-            "required": true,
-            "in": "path",
-            "description": "Project ref",
-            "schema": {
-              "minLength": 20,
-              "maxLength": 20,
-              "pattern": "^[a-z]+$",
-              "example": "abcdefghijklmnopqrst",
-              "type": "string"
-            }
-          },
-          {
-            "name": "name",
-            "required": true,
-            "in": "path",
-            "schema": {
-              "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$",
-              "example": "hello-world",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/V2WorkerUploadResponse_Output"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponseBody"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden action",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponseBody"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Rate limit exceeded",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponseBody"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "summary": "[Alpha] Mint a presigned slot for a build-context upload",
-        "tags": ["Workers"],
-        "x-badges": [
-          {
-            "name": "OAuth scope: edge_functions:write",
-            "position": "after"
-          }
-        ],
-        "x-endpoint-owners": ["functions"],
-        "x-fga-permissions": [["workers_write"]],
-        "x-oauth-scope": "edge_functions:write"
-      }
-    },
-    "/v2/projects/{ref}/workers/{name}/deploy": {
-      "post": {
-        "description": "Creates the worker if it does not exist, building from a context staged through the uploads endpoint. The build runs asynchronously: this answers 202 and the worker reaches `build_state` `active` or `failed` later.",
-        "operationId": "v2-deploy-a-worker",
-        "parameters": [
-          {
-            "name": "ref",
-            "required": true,
-            "in": "path",
-            "description": "Project ref",
-            "schema": {
-              "minLength": 20,
-              "maxLength": 20,
-              "pattern": "^[a-z]+$",
-              "example": "abcdefghijklmnopqrst",
-              "type": "string"
-            }
-          },
-          {
-            "name": "name",
-            "required": true,
-            "in": "path",
-            "schema": {
-              "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$",
-              "example": "hello-world",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/V2DeployWorkerRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "202": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/V2WorkerResponse_Output"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponseBody"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden action",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponseBody"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Rate limit exceeded",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponseBody"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "summary": "[Alpha] Deploy a worker",
-        "tags": ["Workers"],
-        "x-badges": [
-          {
-            "name": "OAuth scope: edge_functions:write",
-            "position": "after"
-          }
-        ],
-        "x-endpoint-owners": ["functions"],
-        "x-fga-permissions": [["workers_write"]],
-        "x-oauth-scope": "edge_functions:write"
-      }
-    },
     "/v2/organizations/{slug}/members": {
       "get": {
         "description": "Returns a cursor-paginated list of organization members including their roles and project-scoped permissions.",
@@ -13529,6 +13093,467 @@
         "x-endpoint-owners": ["control-plane", "dev-workflows"],
         "x-fga-permissions": [["organization_projects_read"]],
         "x-oauth-scope": "projects:read"
+      }
+    },
+    "/v2/projects/{ref}/compute": {
+      "get": {
+        "description": "Returns all compute instances you've previously deployed to the specified project.\n\nThis endpoint is currently in its **Alpha** stage.",
+        "operationId": "v2-list-all-compute-instances",
+        "parameters": [
+          {
+            "name": "ref",
+            "required": true,
+            "in": "path",
+            "description": "Project ref",
+            "schema": {
+              "minLength": 20,
+              "maxLength": 20,
+              "pattern": "^[a-z]+$",
+              "example": "abcdefghijklmnopqrst",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2ListComputeInstancesResponse_Output"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List all compute instances",
+        "tags": ["Compute"],
+        "x-badges": [
+          {
+            "name": "OAuth scope: edge_functions:read",
+            "position": "after"
+          },
+          {
+            "name": "Alpha",
+            "position": "before"
+          }
+        ],
+        "x-endpoint-owners": ["functions"],
+        "x-fga-permissions": [["workers_read"]],
+        "x-oauth-scope": "edge_functions:read",
+        "x-scalar-stability": "experimental"
+      }
+    },
+    "/v2/projects/{ref}/compute/{name}": {
+      "get": {
+        "description": "Returns a compute instance along with the counts of its running instances. Poll this after a deploy until `build_state` leaves `building`.\n\nThis endpoint is currently in its **Alpha** stage.",
+        "operationId": "v2-get-a-compute-instance",
+        "parameters": [
+          {
+            "name": "ref",
+            "required": true,
+            "in": "path",
+            "description": "Project ref",
+            "schema": {
+              "minLength": 20,
+              "maxLength": 20,
+              "pattern": "^[a-z]+$",
+              "example": "abcdefghijklmnopqrst",
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$",
+              "example": "hello-world",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2ComputeInstanceResponse_Output"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Retrieve a compute instance",
+        "tags": ["Compute"],
+        "x-badges": [
+          {
+            "name": "OAuth scope: edge_functions:read",
+            "position": "after"
+          },
+          {
+            "name": "Alpha",
+            "position": "before"
+          }
+        ],
+        "x-endpoint-owners": ["functions"],
+        "x-fga-permissions": [["workers_read"]],
+        "x-oauth-scope": "edge_functions:read",
+        "x-scalar-stability": "experimental"
+      },
+      "delete": {
+        "description": "Tombstones the compute instance. Its running instances and image are torn down asynchronously.\n\nThis endpoint is currently in its **Alpha** stage.",
+        "operationId": "v2-delete-a-compute-instance",
+        "parameters": [
+          {
+            "name": "ref",
+            "required": true,
+            "in": "path",
+            "description": "Project ref",
+            "schema": {
+              "minLength": 20,
+              "maxLength": 20,
+              "pattern": "^[a-z]+$",
+              "example": "abcdefghijklmnopqrst",
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$",
+              "example": "hello-world",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Delete a compute instance",
+        "tags": ["Compute"],
+        "x-badges": [
+          {
+            "name": "OAuth scope: edge_functions:write",
+            "position": "after"
+          },
+          {
+            "name": "Alpha",
+            "position": "before"
+          }
+        ],
+        "x-endpoint-owners": ["functions"],
+        "x-fga-permissions": [["workers_write"]],
+        "x-oauth-scope": "edge_functions:write",
+        "x-scalar-stability": "experimental"
+      }
+    },
+    "/v2/projects/{ref}/compute/{name}/deploy": {
+      "post": {
+        "description": "Creates the compute instance if it does not exist, building from a context staged through the uploads endpoint. The build runs asynchronously: this answers 202 and the compute instance reaches `build_state` `active` or `failed` later.\n\nThis endpoint is currently in its **Alpha** stage.",
+        "operationId": "v2-deploy-a-compute-instance",
+        "parameters": [
+          {
+            "name": "ref",
+            "required": true,
+            "in": "path",
+            "description": "Project ref",
+            "schema": {
+              "minLength": 20,
+              "maxLength": 20,
+              "pattern": "^[a-z]+$",
+              "example": "abcdefghijklmnopqrst",
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$",
+              "example": "hello-world",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/V2DeployComputeInstanceRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2ComputeInstanceResponse_Output"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Deploy a compute instance",
+        "tags": ["Compute"],
+        "x-badges": [
+          {
+            "name": "OAuth scope: edge_functions:write",
+            "position": "after"
+          },
+          {
+            "name": "Alpha",
+            "position": "before"
+          }
+        ],
+        "x-endpoint-owners": ["functions"],
+        "x-fga-permissions": [["workers_write"]],
+        "x-oauth-scope": "edge_functions:write",
+        "x-scalar-stability": "experimental"
+      }
+    },
+    "/v2/projects/{ref}/compute/{name}/uploads": {
+      "post": {
+        "description": "PUT the `.tar.gz` build context to the returned `url` before `expires_at`, then deploy with the upload id as `context_upload_id`. The bytes go straight to storage — no management API request carries them.\n\nThis endpoint is currently in its **Alpha** stage.",
+        "operationId": "v2-create-compute-instance-upload",
+        "parameters": [
+          {
+            "name": "ref",
+            "required": true,
+            "in": "path",
+            "description": "Project ref",
+            "schema": {
+              "minLength": 20,
+              "maxLength": 20,
+              "pattern": "^[a-z]+$",
+              "example": "abcdefghijklmnopqrst",
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$",
+              "example": "hello-world",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2ComputeInstanceUploadResponse_Output"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Mint a presigned slot for a build-context upload",
+        "tags": ["Compute"],
+        "x-badges": [
+          {
+            "name": "OAuth scope: edge_functions:write",
+            "position": "after"
+          },
+          {
+            "name": "Alpha",
+            "position": "before"
+          }
+        ],
+        "x-endpoint-owners": ["functions"],
+        "x-fga-permissions": [["workers_write"]],
+        "x-oauth-scope": "edge_functions:write",
+        "x-scalar-stability": "experimental"
       }
     }
   },
@@ -25269,294 +25294,6 @@
         },
         "required": ["data"]
       },
-      "V2ListWorkersResponse_Output": {
-        "type": "object",
-        "properties": {
-          "data": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "type": {
-                  "type": "string",
-                  "description": "Resource type.",
-                  "enum": ["project_worker"]
-                },
-                "id": {
-                  "type": "string",
-                  "description": "Worker name.",
-                  "example": "hello-world"
-                },
-                "attributes": {
-                  "type": "object",
-                  "properties": {
-                    "spec": {
-                      "type": "object",
-                      "properties": {
-                        "runtime": {
-                          "example": "node",
-                          "type": "string"
-                        },
-                        "size": {
-                          "type": "string",
-                          "example": "2gb-1vcpu"
-                        },
-                        "exposure": {
-                          "type": "string",
-                          "example": "public"
-                        },
-                        "instances": {
-                          "type": "integer",
-                          "minimum": -9007199254740991,
-                          "maximum": 9007199254740991,
-                          "example": 1
-                        }
-                      },
-                      "required": ["size", "exposure", "instances"]
-                    },
-                    "build_state": {
-                      "type": "string",
-                      "enum": ["building", "active", "failed"]
-                    },
-                    "secret_generation": {
-                      "type": "string"
-                    },
-                    "state_reason": {
-                      "type": "string"
-                    },
-                    "image_version": {
-                      "type": "string"
-                    },
-                    "deleting": {
-                      "type": "boolean"
-                    },
-                    "instances": {
-                      "type": "object",
-                      "properties": {
-                        "declared": {
-                          "type": "integer",
-                          "minimum": -9007199254740991,
-                          "maximum": 9007199254740991
-                        },
-                        "live": {
-                          "type": "integer",
-                          "minimum": -9007199254740991,
-                          "maximum": 9007199254740991
-                        },
-                        "ready": {
-                          "type": "integer",
-                          "minimum": -9007199254740991,
-                          "maximum": 9007199254740991
-                        },
-                        "stale": {
-                          "type": "integer",
-                          "minimum": -9007199254740991,
-                          "maximum": 9007199254740991
-                        }
-                      },
-                      "required": ["declared", "live", "ready", "stale"]
-                    },
-                    "instances_error": {
-                      "type": "string"
-                    }
-                  },
-                  "required": ["spec", "build_state", "secret_generation"]
-                }
-              },
-              "required": ["type", "id", "attributes"]
-            }
-          }
-        },
-        "required": ["data"]
-      },
-      "V2WorkerResponse_Output": {
-        "type": "object",
-        "properties": {
-          "data": {
-            "type": "object",
-            "properties": {
-              "type": {
-                "type": "string",
-                "description": "Resource type.",
-                "enum": ["project_worker"]
-              },
-              "id": {
-                "type": "string",
-                "description": "Worker name.",
-                "example": "hello-world"
-              },
-              "attributes": {
-                "type": "object",
-                "properties": {
-                  "spec": {
-                    "type": "object",
-                    "properties": {
-                      "runtime": {
-                        "example": "node",
-                        "type": "string"
-                      },
-                      "size": {
-                        "type": "string",
-                        "example": "2gb-1vcpu"
-                      },
-                      "exposure": {
-                        "type": "string",
-                        "example": "public"
-                      },
-                      "instances": {
-                        "type": "integer",
-                        "minimum": -9007199254740991,
-                        "maximum": 9007199254740991,
-                        "example": 1
-                      }
-                    },
-                    "required": ["size", "exposure", "instances"]
-                  },
-                  "build_state": {
-                    "type": "string",
-                    "enum": ["building", "active", "failed"]
-                  },
-                  "secret_generation": {
-                    "type": "string"
-                  },
-                  "state_reason": {
-                    "type": "string"
-                  },
-                  "image_version": {
-                    "type": "string"
-                  },
-                  "deleting": {
-                    "type": "boolean"
-                  },
-                  "instances": {
-                    "type": "object",
-                    "properties": {
-                      "declared": {
-                        "type": "integer",
-                        "minimum": -9007199254740991,
-                        "maximum": 9007199254740991
-                      },
-                      "live": {
-                        "type": "integer",
-                        "minimum": -9007199254740991,
-                        "maximum": 9007199254740991
-                      },
-                      "ready": {
-                        "type": "integer",
-                        "minimum": -9007199254740991,
-                        "maximum": 9007199254740991
-                      },
-                      "stale": {
-                        "type": "integer",
-                        "minimum": -9007199254740991,
-                        "maximum": 9007199254740991
-                      }
-                    },
-                    "required": ["declared", "live", "ready", "stale"]
-                  },
-                  "instances_error": {
-                    "type": "string"
-                  }
-                },
-                "required": ["spec", "build_state", "secret_generation"]
-              }
-            },
-            "required": ["type", "id", "attributes"]
-          }
-        },
-        "required": ["data"]
-      },
-      "V2WorkerUploadResponse_Output": {
-        "type": "object",
-        "properties": {
-          "data": {
-            "type": "object",
-            "properties": {
-              "type": {
-                "type": "string",
-                "description": "Resource type.",
-                "enum": ["project_worker_upload"]
-              },
-              "id": {
-                "type": "string",
-                "description": "Upload id to pass to the deploy endpoint as `context_upload_id`.",
-                "example": "cafe0000000000000000000000000000"
-              },
-              "attributes": {
-                "type": "object",
-                "properties": {
-                  "url": {
-                    "type": "string",
-                    "description": "Presigned destination for the `.tar.gz` build context."
-                  },
-                  "method": {
-                    "type": "string",
-                    "example": "PUT"
-                  },
-                  "expires_at": {
-                    "type": "string",
-                    "description": "When the slot stops accepting the upload."
-                  }
-                },
-                "required": ["url", "method", "expires_at"]
-              }
-            },
-            "required": ["type", "id", "attributes"]
-          }
-        },
-        "required": ["data"]
-      },
-      "V2DeployWorkerRequest": {
-        "type": "object",
-        "properties": {
-          "data": {
-            "type": "object",
-            "properties": {
-              "type": {
-                "type": "string",
-                "description": "Resource type.",
-                "enum": ["project_worker"]
-              },
-              "attributes": {
-                "type": "object",
-                "properties": {
-                  "spec": {
-                    "type": "object",
-                    "properties": {
-                      "runtime": {
-                        "example": "node",
-                        "type": "string"
-                      },
-                      "size": {
-                        "type": "string",
-                        "example": "2gb-1vcpu"
-                      },
-                      "exposure": {
-                        "type": "string",
-                        "example": "public"
-                      },
-                      "instances": {
-                        "type": "integer",
-                        "minimum": -9007199254740991,
-                        "maximum": 9007199254740991,
-                        "example": 1
-                      }
-                    },
-                    "required": ["size", "exposure", "instances"]
-                  },
-                  "context_upload_id": {
-                    "description": "Id of a build context staged through the uploads endpoint. Required unless `runtime` is set.",
-                    "type": "string"
-                  }
-                },
-                "required": ["spec"]
-              }
-            },
-            "required": ["type", "attributes"]
-          }
-        },
-        "required": ["data"]
-      },
       "V2ListMembersResponse_Output": {
         "type": "object",
         "properties": {
@@ -26425,6 +26162,294 @@
           }
         },
         "required": ["data", "links"]
+      },
+      "V2ComputeInstanceResponse_Output": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "description": "Resource type.",
+                "enum": ["project_compute_instance"]
+              },
+              "id": {
+                "type": "string",
+                "description": "Compute instance name.",
+                "example": "hello-world"
+              },
+              "attributes": {
+                "type": "object",
+                "properties": {
+                  "spec": {
+                    "type": "object",
+                    "properties": {
+                      "runtime": {
+                        "example": "node",
+                        "type": "string"
+                      },
+                      "size": {
+                        "type": "string",
+                        "example": "2gb-1vcpu"
+                      },
+                      "exposure": {
+                        "type": "string",
+                        "example": "public"
+                      },
+                      "instances": {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991,
+                        "example": 1
+                      }
+                    },
+                    "required": ["size", "exposure", "instances"]
+                  },
+                  "build_state": {
+                    "type": "string",
+                    "enum": ["building", "active", "failed"]
+                  },
+                  "secret_generation": {
+                    "type": "string"
+                  },
+                  "state_reason": {
+                    "type": "string"
+                  },
+                  "image_version": {
+                    "type": "string"
+                  },
+                  "deleting": {
+                    "type": "boolean"
+                  },
+                  "instances": {
+                    "type": "object",
+                    "properties": {
+                      "declared": {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      "live": {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      "ready": {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      "stale": {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": ["declared", "live", "ready", "stale"]
+                  },
+                  "instances_error": {
+                    "type": "string"
+                  }
+                },
+                "required": ["spec", "build_state", "secret_generation"]
+              }
+            },
+            "required": ["type", "id", "attributes"]
+          }
+        },
+        "required": ["data"]
+      },
+      "V2ListComputeInstancesResponse_Output": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "description": "Resource type.",
+                  "enum": ["project_compute_instance"]
+                },
+                "id": {
+                  "type": "string",
+                  "description": "Compute instance name.",
+                  "example": "hello-world"
+                },
+                "attributes": {
+                  "type": "object",
+                  "properties": {
+                    "spec": {
+                      "type": "object",
+                      "properties": {
+                        "runtime": {
+                          "example": "node",
+                          "type": "string"
+                        },
+                        "size": {
+                          "type": "string",
+                          "example": "2gb-1vcpu"
+                        },
+                        "exposure": {
+                          "type": "string",
+                          "example": "public"
+                        },
+                        "instances": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991,
+                          "example": 1
+                        }
+                      },
+                      "required": ["size", "exposure", "instances"]
+                    },
+                    "build_state": {
+                      "type": "string",
+                      "enum": ["building", "active", "failed"]
+                    },
+                    "secret_generation": {
+                      "type": "string"
+                    },
+                    "state_reason": {
+                      "type": "string"
+                    },
+                    "image_version": {
+                      "type": "string"
+                    },
+                    "deleting": {
+                      "type": "boolean"
+                    },
+                    "instances": {
+                      "type": "object",
+                      "properties": {
+                        "declared": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "live": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "ready": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "stale": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": ["declared", "live", "ready", "stale"]
+                    },
+                    "instances_error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["spec", "build_state", "secret_generation"]
+                }
+              },
+              "required": ["type", "id", "attributes"]
+            }
+          }
+        },
+        "required": ["data"]
+      },
+      "V2ComputeInstanceUploadResponse_Output": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "description": "Resource type.",
+                "enum": ["project_compute_instance_upload"]
+              },
+              "id": {
+                "type": "string",
+                "description": "Upload id to pass to the deploy endpoint as `context_upload_id`.",
+                "example": "cafe0000000000000000000000000000"
+              },
+              "attributes": {
+                "type": "object",
+                "properties": {
+                  "url": {
+                    "type": "string",
+                    "description": "Presigned destination for the `.tar.gz` build context."
+                  },
+                  "method": {
+                    "type": "string",
+                    "example": "PUT"
+                  },
+                  "expires_at": {
+                    "type": "string",
+                    "description": "When the slot stops accepting the upload."
+                  }
+                },
+                "required": ["url", "method", "expires_at"]
+              }
+            },
+            "required": ["type", "id", "attributes"]
+          }
+        },
+        "required": ["data"]
+      },
+      "V2DeployComputeInstanceRequest": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "description": "Resource type.",
+                "enum": ["project_compute_instance"]
+              },
+              "attributes": {
+                "type": "object",
+                "properties": {
+                  "spec": {
+                    "type": "object",
+                    "properties": {
+                      "runtime": {
+                        "example": "node",
+                        "type": "string"
+                      },
+                      "size": {
+                        "type": "string",
+                        "example": "2gb-1vcpu"
+                      },
+                      "exposure": {
+                        "type": "string",
+                        "example": "public"
+                      },
+                      "instances": {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991,
+                        "example": 1
+                      }
+                    },
+                    "required": ["size", "exposure", "instances"]
+                  },
+                  "context_upload_id": {
+                    "description": "Id of a build context staged through the uploads endpoint. Required unless `runtime` is set.",
+                    "type": "string"
+                  }
+                },
+                "required": ["spec"]
+              }
+            },
+            "required": ["type", "attributes"]
+          }
+        },
+        "required": ["data"]
       }
     }
   }

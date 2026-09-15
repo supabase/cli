@@ -626,7 +626,7 @@
   {
     "op": "remove",
     "path": "/paths/~1v2~1projects~1{ref}~1webhooks~1endpoints",
-    "$comment": "CLI-2157: the platform's v2 spec gives all 10 project-webhook operations the shared operationId \"allV2ProjectsByRefWebhooks\" (and all 10 org-webhook operations share \"allV2OrganizationsBySlugWebhooks\") — duplicated and not version-prefixed, which breaks codegen. Remove-if-present because staging's v2-json is currently served by two backend variants that disagree on whether these paths exist."
+    "$comment": "CLI-2157: the platform's v2 spec gives all 10 project-webhook operations the shared operationId \"allV2ProjectsByRefWebhooks\" (and all 10 org-webhook operations share \"allV2OrganizationsBySlugWebhooks\") \u2014 duplicated and not version-prefixed, which breaks codegen. Remove-if-present because staging's v2-json is currently served by two backend variants that disagree on whether these paths exist."
   },
   {
     "op": "remove",
@@ -656,7 +656,7 @@
   {
     "op": "remove",
     "path": "/paths/~1v2~1organizations~1{slug}~1webhooks~1endpoints",
-    "$comment": "CLI-2157: the platform's v2 spec gives all 10 org-webhook operations the shared operationId \"allV2OrganizationsBySlugWebhooks\" (and all 10 project-webhook operations share \"allV2ProjectsByRefWebhooks\") — duplicated and not version-prefixed, which breaks codegen. Remove-if-present because staging's v2-json is currently served by two backend variants that disagree on whether these paths exist."
+    "$comment": "CLI-2157: the platform's v2 spec gives all 10 org-webhook operations the shared operationId \"allV2OrganizationsBySlugWebhooks\" (and all 10 project-webhook operations share \"allV2ProjectsByRefWebhooks\") \u2014 duplicated and not version-prefixed, which breaks codegen. Remove-if-present because staging's v2-json is currently served by two backend variants that disagree on whether these paths exist."
   },
   {
     "op": "remove",
@@ -723,5 +723,819 @@
       "description": "Postgres engine version. If not provided, the latest version will be used."
     },
     "$comment": "CLI-2180: the public spec deliberately hides this field (upstream marks it deprecated/null) even though POST /v1/projects accepts it; enum mirrors CreateBranchBody.postgres_engine in the same spec."
+  },
+  {
+    "op": "add",
+    "path": "/components/schemas/V2ComputeInstanceResponse_Output",
+    "value": {
+      "type": "object",
+      "properties": {
+        "data": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "description": "Resource type.",
+              "enum": ["project_compute_instance"]
+            },
+            "id": {
+              "type": "string",
+              "description": "Compute instance name.",
+              "example": "hello-world"
+            },
+            "attributes": {
+              "type": "object",
+              "properties": {
+                "spec": {
+                  "type": "object",
+                  "properties": {
+                    "runtime": {
+                      "example": "node",
+                      "type": "string"
+                    },
+                    "size": {
+                      "type": "string",
+                      "example": "2gb-1vcpu"
+                    },
+                    "exposure": {
+                      "type": "string",
+                      "example": "public"
+                    },
+                    "instances": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991,
+                      "example": 1
+                    }
+                  },
+                  "required": ["size", "exposure", "instances"]
+                },
+                "build_state": {
+                  "type": "string",
+                  "enum": ["building", "active", "failed"]
+                },
+                "secret_generation": {
+                  "type": "string"
+                },
+                "state_reason": {
+                  "type": "string"
+                },
+                "image_version": {
+                  "type": "string"
+                },
+                "deleting": {
+                  "type": "boolean"
+                },
+                "instances": {
+                  "type": "object",
+                  "properties": {
+                    "declared": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "live": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "ready": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "stale": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": ["declared", "live", "ready", "stale"]
+                },
+                "instances_error": {
+                  "type": "string"
+                }
+              },
+              "required": ["spec", "build_state", "secret_generation"]
+            }
+          },
+          "required": ["type", "id", "attributes"]
+        }
+      },
+      "required": ["data"]
+    },
+    "$comment": "FUNC-895: mgmt-api renamed /v2/projects/{ref}/workers to /compute (operation ids, schema names and the project_worker resource type with it), and the rename is live on staging but not yet on prod, which is where the hourly sync regenerates from. These ops carry the staging shape verbatim so the generated client targets /compute today; once the prod deploy lands they overwrite identical values and the whole block can be deleted."
+  },
+  {
+    "op": "add",
+    "path": "/components/schemas/V2ListComputeInstancesResponse_Output",
+    "value": {
+      "type": "object",
+      "properties": {
+        "data": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "description": "Resource type.",
+                "enum": ["project_compute_instance"]
+              },
+              "id": {
+                "type": "string",
+                "description": "Compute instance name.",
+                "example": "hello-world"
+              },
+              "attributes": {
+                "type": "object",
+                "properties": {
+                  "spec": {
+                    "type": "object",
+                    "properties": {
+                      "runtime": {
+                        "example": "node",
+                        "type": "string"
+                      },
+                      "size": {
+                        "type": "string",
+                        "example": "2gb-1vcpu"
+                      },
+                      "exposure": {
+                        "type": "string",
+                        "example": "public"
+                      },
+                      "instances": {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991,
+                        "example": 1
+                      }
+                    },
+                    "required": ["size", "exposure", "instances"]
+                  },
+                  "build_state": {
+                    "type": "string",
+                    "enum": ["building", "active", "failed"]
+                  },
+                  "secret_generation": {
+                    "type": "string"
+                  },
+                  "state_reason": {
+                    "type": "string"
+                  },
+                  "image_version": {
+                    "type": "string"
+                  },
+                  "deleting": {
+                    "type": "boolean"
+                  },
+                  "instances": {
+                    "type": "object",
+                    "properties": {
+                      "declared": {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      "live": {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      "ready": {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      "stale": {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": ["declared", "live", "ready", "stale"]
+                  },
+                  "instances_error": {
+                    "type": "string"
+                  }
+                },
+                "required": ["spec", "build_state", "secret_generation"]
+              }
+            },
+            "required": ["type", "id", "attributes"]
+          }
+        }
+      },
+      "required": ["data"]
+    }
+  },
+  {
+    "op": "add",
+    "path": "/components/schemas/V2ComputeInstanceUploadResponse_Output",
+    "value": {
+      "type": "object",
+      "properties": {
+        "data": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "description": "Resource type.",
+              "enum": ["project_compute_instance_upload"]
+            },
+            "id": {
+              "type": "string",
+              "description": "Upload id to pass to the deploy endpoint as `context_upload_id`.",
+              "example": "cafe0000000000000000000000000000"
+            },
+            "attributes": {
+              "type": "object",
+              "properties": {
+                "url": {
+                  "type": "string",
+                  "description": "Presigned destination for the `.tar.gz` build context."
+                },
+                "method": {
+                  "type": "string",
+                  "example": "PUT"
+                },
+                "expires_at": {
+                  "type": "string",
+                  "description": "When the slot stops accepting the upload."
+                }
+              },
+              "required": ["url", "method", "expires_at"]
+            }
+          },
+          "required": ["type", "id", "attributes"]
+        }
+      },
+      "required": ["data"]
+    }
+  },
+  {
+    "op": "add",
+    "path": "/components/schemas/V2DeployComputeInstanceRequest",
+    "value": {
+      "type": "object",
+      "properties": {
+        "data": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "description": "Resource type.",
+              "enum": ["project_compute_instance"]
+            },
+            "attributes": {
+              "type": "object",
+              "properties": {
+                "spec": {
+                  "type": "object",
+                  "properties": {
+                    "runtime": {
+                      "example": "node",
+                      "type": "string"
+                    },
+                    "size": {
+                      "type": "string",
+                      "example": "2gb-1vcpu"
+                    },
+                    "exposure": {
+                      "type": "string",
+                      "example": "public"
+                    },
+                    "instances": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991,
+                      "example": 1
+                    }
+                  },
+                  "required": ["size", "exposure", "instances"]
+                },
+                "context_upload_id": {
+                  "description": "Id of a build context staged through the uploads endpoint. Required unless `runtime` is set.",
+                  "type": "string"
+                }
+              },
+              "required": ["spec"]
+            }
+          },
+          "required": ["type", "attributes"]
+        }
+      },
+      "required": ["data"]
+    }
+  },
+  {
+    "op": "remove",
+    "path": "/components/schemas/V2WorkerResponse_Output"
+  },
+  {
+    "op": "remove",
+    "path": "/components/schemas/V2ListWorkersResponse_Output"
+  },
+  {
+    "op": "remove",
+    "path": "/components/schemas/V2WorkerUploadResponse_Output"
+  },
+  {
+    "op": "remove",
+    "path": "/components/schemas/V2DeployWorkerRequest"
+  },
+  {
+    "op": "add",
+    "path": "/paths/~1v2~1projects~1{ref}~1compute",
+    "value": {
+      "get": {
+        "description": "Returns all compute instances you've previously deployed to the specified project.\n\nThis endpoint is currently in its **Alpha** stage.",
+        "operationId": "v2-list-all-compute-instances",
+        "parameters": [
+          {
+            "name": "ref",
+            "required": true,
+            "in": "path",
+            "description": "Project ref",
+            "schema": {
+              "minLength": 20,
+              "maxLength": 20,
+              "pattern": "^[a-z]+$",
+              "example": "abcdefghijklmnopqrst",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2ListComputeInstancesResponse_Output"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List all compute instances",
+        "tags": ["Compute"],
+        "x-badges": [
+          {
+            "name": "OAuth scope: edge_functions:read",
+            "position": "after"
+          },
+          {
+            "name": "Alpha",
+            "position": "before"
+          }
+        ],
+        "x-endpoint-owners": ["functions"],
+        "x-fga-permissions": [["workers_read"]],
+        "x-oauth-scope": "edge_functions:read",
+        "x-scalar-stability": "experimental"
+      }
+    }
+  },
+  {
+    "op": "add",
+    "path": "/paths/~1v2~1projects~1{ref}~1compute~1{name}",
+    "value": {
+      "get": {
+        "description": "Returns a compute instance along with the counts of its running instances. Poll this after a deploy until `build_state` leaves `building`.\n\nThis endpoint is currently in its **Alpha** stage.",
+        "operationId": "v2-get-a-compute-instance",
+        "parameters": [
+          {
+            "name": "ref",
+            "required": true,
+            "in": "path",
+            "description": "Project ref",
+            "schema": {
+              "minLength": 20,
+              "maxLength": 20,
+              "pattern": "^[a-z]+$",
+              "example": "abcdefghijklmnopqrst",
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$",
+              "example": "hello-world",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2ComputeInstanceResponse_Output"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Retrieve a compute instance",
+        "tags": ["Compute"],
+        "x-badges": [
+          {
+            "name": "OAuth scope: edge_functions:read",
+            "position": "after"
+          },
+          {
+            "name": "Alpha",
+            "position": "before"
+          }
+        ],
+        "x-endpoint-owners": ["functions"],
+        "x-fga-permissions": [["workers_read"]],
+        "x-oauth-scope": "edge_functions:read",
+        "x-scalar-stability": "experimental"
+      },
+      "delete": {
+        "description": "Tombstones the compute instance. Its running instances and image are torn down asynchronously.\n\nThis endpoint is currently in its **Alpha** stage.",
+        "operationId": "v2-delete-a-compute-instance",
+        "parameters": [
+          {
+            "name": "ref",
+            "required": true,
+            "in": "path",
+            "description": "Project ref",
+            "schema": {
+              "minLength": 20,
+              "maxLength": 20,
+              "pattern": "^[a-z]+$",
+              "example": "abcdefghijklmnopqrst",
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$",
+              "example": "hello-world",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Delete a compute instance",
+        "tags": ["Compute"],
+        "x-badges": [
+          {
+            "name": "OAuth scope: edge_functions:write",
+            "position": "after"
+          },
+          {
+            "name": "Alpha",
+            "position": "before"
+          }
+        ],
+        "x-endpoint-owners": ["functions"],
+        "x-fga-permissions": [["workers_write"]],
+        "x-oauth-scope": "edge_functions:write",
+        "x-scalar-stability": "experimental"
+      }
+    }
+  },
+  {
+    "op": "add",
+    "path": "/paths/~1v2~1projects~1{ref}~1compute~1{name}~1deploy",
+    "value": {
+      "post": {
+        "description": "Creates the compute instance if it does not exist, building from a context staged through the uploads endpoint. The build runs asynchronously: this answers 202 and the compute instance reaches `build_state` `active` or `failed` later.\n\nThis endpoint is currently in its **Alpha** stage.",
+        "operationId": "v2-deploy-a-compute-instance",
+        "parameters": [
+          {
+            "name": "ref",
+            "required": true,
+            "in": "path",
+            "description": "Project ref",
+            "schema": {
+              "minLength": 20,
+              "maxLength": 20,
+              "pattern": "^[a-z]+$",
+              "example": "abcdefghijklmnopqrst",
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$",
+              "example": "hello-world",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/V2DeployComputeInstanceRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2ComputeInstanceResponse_Output"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Deploy a compute instance",
+        "tags": ["Compute"],
+        "x-badges": [
+          {
+            "name": "OAuth scope: edge_functions:write",
+            "position": "after"
+          },
+          {
+            "name": "Alpha",
+            "position": "before"
+          }
+        ],
+        "x-endpoint-owners": ["functions"],
+        "x-fga-permissions": [["workers_write"]],
+        "x-oauth-scope": "edge_functions:write",
+        "x-scalar-stability": "experimental"
+      }
+    }
+  },
+  {
+    "op": "add",
+    "path": "/paths/~1v2~1projects~1{ref}~1compute~1{name}~1uploads",
+    "value": {
+      "post": {
+        "description": "PUT the `.tar.gz` build context to the returned `url` before `expires_at`, then deploy with the upload id as `context_upload_id`. The bytes go straight to storage \u2014 no management API request carries them.\n\nThis endpoint is currently in its **Alpha** stage.",
+        "operationId": "v2-create-compute-instance-upload",
+        "parameters": [
+          {
+            "name": "ref",
+            "required": true,
+            "in": "path",
+            "description": "Project ref",
+            "schema": {
+              "minLength": 20,
+              "maxLength": 20,
+              "pattern": "^[a-z]+$",
+              "example": "abcdefghijklmnopqrst",
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$",
+              "example": "hello-world",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2ComputeInstanceUploadResponse_Output"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Mint a presigned slot for a build-context upload",
+        "tags": ["Compute"],
+        "x-badges": [
+          {
+            "name": "OAuth scope: edge_functions:write",
+            "position": "after"
+          },
+          {
+            "name": "Alpha",
+            "position": "before"
+          }
+        ],
+        "x-endpoint-owners": ["functions"],
+        "x-fga-permissions": [["workers_write"]],
+        "x-oauth-scope": "edge_functions:write",
+        "x-scalar-stability": "experimental"
+      }
+    }
+  },
+  {
+    "op": "remove",
+    "path": "/paths/~1v2~1projects~1{ref}~1workers"
+  },
+  {
+    "op": "remove",
+    "path": "/paths/~1v2~1projects~1{ref}~1workers~1{name}"
+  },
+  {
+    "op": "remove",
+    "path": "/paths/~1v2~1projects~1{ref}~1workers~1{name}~1deploy"
+  },
+  {
+    "op": "remove",
+    "path": "/paths/~1v2~1projects~1{ref}~1workers~1{name}~1uploads"
   }
 ]
