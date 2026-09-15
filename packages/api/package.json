@@ -15,10 +15,12 @@
     "generate:spec": "bun run scripts/download-openapi.ts",
     "generate": "bun run generate:spec && bun run scripts/generate.ts",
     "generate:check": "pnpm generate && pnpm --workspace-root run fmt:fix && git diff --exit-code -- src/generated scripts/openapi-source.json",
-    "test": "pnpm run test:unit",
+    "test": "pnpm run test:unit && pnpm run test:integration",
     "test:unit": "pnpm exec turbo run @supabase/api#test:unit:run --",
     "test:unit:run": "vitest run --project unit --coverage.reportsDirectory=coverage/unit",
-    "types:check": "tsc --noEmit"
+    "types:check": "tsc --noEmit",
+    "test:integration": "pnpm exec turbo run @supabase/api#test:integration:run --",
+    "test:integration:run": "vitest run --project integration && bun --bun vitest run --project bun-integration"
   },
   "dependencies": {
     "@effect/platform-bun": "catalog:",
