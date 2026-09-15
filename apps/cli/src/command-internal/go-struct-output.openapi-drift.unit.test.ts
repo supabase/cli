@@ -327,21 +327,21 @@ interface GoPayloadSpecEntry {
 }
 
 const GO_PAYLOAD_SPEC_REGISTRY: ReadonlyArray<GoPayloadSpecEntry> = [
-  { specName: "GO_BRANCH_RESPONSE", spec: GO_BRANCH_RESPONSE, schemaName: "BranchResponse" },
+  { specName: "GO_BRANCH_RESPONSE", spec: GO_BRANCH_RESPONSE, schemaName: "BranchResponse_Output" },
   {
     specName: "GO_ORGANIZATION_RESPONSE",
     spec: GO_ORGANIZATION_RESPONSE,
-    schemaName: "OrganizationResponseV1",
+    schemaName: "OrganizationResponseV1_Output",
   },
   {
     specName: "GO_SSL_ENFORCEMENT_RESPONSE",
     spec: GO_SSL_ENFORCEMENT_RESPONSE,
-    schemaName: "SslEnforcementResponse",
+    schemaName: "SslEnforcementResponse_Output",
   },
   {
     specName: "GO_SSO_PROVIDER_RESPONSE",
     spec: GO_SSO_PROVIDER_RESPONSE,
-    schemaName: "GetProviderResponse",
+    schemaName: "GetProviderResponse_Output",
   },
 ];
 
