@@ -8,8 +8,8 @@ import {
 
 /**
  * One network / status pair covers every notebook route rather than one pair
- * per call: the notebook commands all walk the same routes, and the failing one
- * is already named by the message the caller templates in ("failed to list
+ * per call: `push` and `pull` each walk the same five routes, and the failing
+ * one is already named by the message the caller templates in ("failed to list
  * notebooks", "failed to update notebook <name>", …).
  */
 export class NotebooksNetworkError extends Data.TaggedError("NotebooksNetworkError")<{
@@ -42,6 +42,16 @@ export class NotebookFileError extends Data.TaggedError("NotebookFileError")<{
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.invalidConfig;
+  }
+}
+
+/** The name given as an argument names no notebook on either side. */
+export class NotebookNotFoundError extends Data.TaggedError("NotebookNotFoundError")<{
+  readonly detail: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
   }
 }
 
