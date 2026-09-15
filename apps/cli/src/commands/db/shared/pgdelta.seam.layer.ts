@@ -84,7 +84,7 @@ export const declarativeSeamLayer = Layer.effect(
         Effect.gen(function* () {
           const backend = yield* currentStackBackend;
           if (backend.kind === "stack") {
-            return yield* stackEnsurePostgresOnlyStarted().pipe(
+            return yield* stackEnsurePostgresOnlyStarted.pipe(
               Effect.asVoid,
               Effect.provideContext(context),
               Effect.provideService(StackApi, stackApi),

@@ -171,9 +171,7 @@ describe.sequential("ephemeral Postgres", () => {
           expect(first.runtime.kind).toBe("native");
           expect(first.artifactIdentity.startsWith("native:")).toBe(true);
           const listedWhileRunning = yield* listStacks({});
-          expect(listedWhileRunning.some((stack) => stack.id === first.artifactIdentity)).toBe(
-            false,
-          );
+          expect(listedWhileRunning).toEqual([]);
           yield* first.stop;
           yield* first.exportPgData(tarPath);
           const exists = yield* fs.exists(tarPath);

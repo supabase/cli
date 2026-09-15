@@ -276,8 +276,7 @@ export const stackLocalDatabaseConn: Effect.Effect<
  * Start a postgres-only stack for `db start` and declarative local ensure. First create runs
  * schema init, overlay, and migrate-and-seed. An existing cluster gets webhooks setup only.
  */
-export const stackEnsurePostgresOnlyStarted = () =>
-  Effect.gen(function* () {
+export const stackEnsurePostgresOnlyStarted = Effect.gen(function* () {
     const api = yield* Effect.serviceOption(StackApi);
     if (Option.isNone(api)) return yield* startFailed({ message: "stack API is unavailable" });
     const cliSettings = yield* CommandSettings;

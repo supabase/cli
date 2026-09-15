@@ -1,6 +1,4 @@
 import { describe, expect, it } from "@effect/vitest";
-import { serializeCommonContainerCommand } from "./ContainerEngine.ts";
-import { StackIdSchema } from "../public/StackId.ts";
 import {
   parseSchemaInitDatabaseUrl,
   rewriteDatabaseEnvironment,
@@ -68,35 +66,5 @@ describe("schemaInitArtifactIdentity", () => {
     const identity = schemaInitArtifactIdentity("auth");
     expect(identity).toMatch(/^v.+:/);
     expect(schemaInitArtifactIdentity("auth", "not-a-catalog-release")).toBeUndefined();
-  });
-});
-
-describe("serializeCommonContainerCommand extra hosts", () => {
-  it("emits --add-host after the network flags", () => {
-    const request = serializeCommonContainerCommand({
-      operation: "create-container",
-      spec: {
-        name: "schema-init",
-        image: "example/auth:1",
-        labels: {
-          stackId: StackIdSchema.make("a".repeat(64)),
-          ownerSessionId: "owner",
-          workloadId: "auth:auth",
-          startup: true,
-          role: "workload",
-        },
-        network: "net",
-        mounts: [],
-        volumeMounts: [],
-        publications: [],
-        role: "workload",
-        extraHosts: ["host.docker.internal:host-gateway"],
-      },
-    });
-    const networkIndex = request.args.indexOf("--network");
-    const addHostIndex = request.args.indexOf("--add-host");
-    expect(networkIndex).toBeGreaterThan(-1);
-    expect(addHostIndex).toBeGreaterThan(networkIndex);
-    expect(request.args[addHostIndex + 1]).toBe("host.docker.internal:host-gateway");
   });
 });

@@ -24,6 +24,7 @@ import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
   mockCommandSettings,
   mockTelemetryStateTracked,
+  withEnvVar,
 } from "../../../../../tests/helpers/command-mocks.ts";
 import { mockContextualAnalytics, mockProcessControl } from "../../../../../tests/helpers/mocks.ts";
 import {
@@ -299,25 +300,21 @@ describe("stack start targeting", () => {
   });
 
   it.live("honors SUPABASE_EXPERIMENTAL from project .env on first-create migrate", () => {
-    const previous = process.env["SUPABASE_EXPERIMENTAL"];
-    delete process.env["SUPABASE_EXPERIMENTAL"];
     const root = project();
     writeStartMigration(root);
     writeFileSync(join(root, "supabase", ".env"), "SUPABASE_EXPERIMENTAL=true\n");
     const catalog = recordingStackCatalogSetup((input) => input.target.kind);
     const stack = fakeStack("e".repeat(64), () => Effect.succeed(status("e".repeat(64))));
     const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
-    return Effect.gen(function* () {
-      yield* stackStart(flags());
-      expect(setup.out.stderrText).not.toContain("Applying migration 20240101000000_dogfood.sql");
-    }).pipe(
-      Effect.provide(Layer.mergeAll(setup.layer, catalog.layer)),
-      Effect.ensuring(
-        Effect.sync(() => {
-          rmSync(root, { recursive: true, force: true });
-          if (previous === undefined) delete process.env["SUPABASE_EXPERIMENTAL"];
-          else process.env["SUPABASE_EXPERIMENTAL"] = previous;
-        }),
+    return withEnvVar(
+      "SUPABASE_EXPERIMENTAL",
+      undefined,
+      Effect.gen(function* () {
+        yield* stackStart(flags());
+        expect(setup.out.stderrText).not.toContain("Applying migration 20240101000000_dogfood.sql");
+      }).pipe(
+        Effect.provide(Layer.mergeAll(setup.layer, catalog.layer)),
+        Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
       ),
     );
   });
