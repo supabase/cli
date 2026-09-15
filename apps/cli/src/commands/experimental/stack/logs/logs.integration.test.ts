@@ -123,6 +123,7 @@ function setup(opts: {
       credentials: Effect.die("unused"),
       prepare: () => Effect.die("unused"),
       start: () => Effect.die("must not start"),
+      serveFunctions: () => Effect.die("must not serve functions"),
       stop: Effect.sync(() => void calls.stopCalls++),
       destroy: Effect.sync(() => void calls.destroyCalls++),
       logs: (query?: unknown) => {

@@ -61,6 +61,7 @@ const effectStack = (): EffectStack =>
     }),
     prepare: (_options?: PrepareStackOptions) => Effect.succeed({ capabilities: [] }),
     start: () => Effect.succeed(status),
+    serveFunctions: () => Effect.succeed(status),
     stop: Effect.void,
     destroy: Effect.void,
     logs: () => Effect.succeed({ entries: [], cursor: { opaque: "v1_0" }, running: false }),
@@ -270,6 +271,7 @@ describe("Promise stack facade", () => {
     Effect.gen(function* () {
       let preparedConfig: StartStackOptions["config"] | undefined;
       let startedConfig: StartStackOptions["config"] | undefined;
+      let servedConfig: StartStackOptions["config"] | undefined;
       const source: EffectStack = {
         ...effectStack(),
         prepare: (options?: PrepareStackOptions) =>
@@ -280,6 +282,11 @@ describe("Promise stack facade", () => {
         start: (options?: StartStackOptions) =>
           Effect.sync(() => {
             startedConfig = options?.config;
+            return status;
+          }),
+        serveFunctions: (options) =>
+          Effect.sync(() => {
+            servedConfig = options?.config;
             return status;
           }),
       };
@@ -300,7 +307,8 @@ describe("Promise stack facade", () => {
       };
       yield* Effect.promise(() => stack.prepare({ config }));
       yield* Effect.promise(() => stack.start({ config }));
-      for (const value of [preparedConfig, startedConfig]) {
+      yield* Effect.promise(() => stack.serveFunctions({ config }));
+      for (const value of [preparedConfig, startedConfig, servedConfig]) {
         const auth = value?.capabilities?.auth;
         const functions = value?.capabilities?.functions;
         const authSettings = auth !== undefined && "settings" in auth ? auth.settings : undefined;

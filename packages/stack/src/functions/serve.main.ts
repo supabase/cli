@@ -16,10 +16,30 @@ import {
 } from "./serve-main-resolver.ts";
 import * as jose from "jose";
 
+const multilineEnvironment = (): Record<string, string> => {
+  const encoded = Deno.env.get("SUPABASE_INTERNAL_MULTILINE_ENV");
+  if (!encoded) return {};
+  try {
+    const values = JSON.parse(encoded);
+    if (values && typeof values === "object" && !Array.isArray(values)) {
+      return Object.fromEntries(
+        Object.entries(values).filter(
+          (entry): entry is [string, string] => typeof entry[1] === "string",
+        ),
+      );
+    }
+  } catch {
+    // Invalid optional environment input is ignored; the host validates invocation values.
+  }
+  return {};
+};
+const MULTILINE_ENV = multilineEnvironment();
+
 const EXCLUDED_ENVS = ["HOME", "HOSTNAME", "PATH", "PWD"];
 const HOST_PORT = Deno.env.get("SUPABASE_INTERNAL_HOST_PORT") ?? "8081";
 const FUNCTIONS_ROOT = Deno.env.get("SUPABASE_INTERNAL_FUNCTIONS_ROOT") ?? "";
-const JWT_SECRET = Deno.env.get("SUPABASE_INTERNAL_JWT_SECRET") ?? "";
+const JWT_SECRET =
+  Deno.env.get("SUPABASE_INTERNAL_JWT_SECRET") ?? MULTILINE_ENV.SUPABASE_INTERNAL_JWT_SECRET ?? "";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "http://127.0.0.1:54321";
 const JWKS_ENDPOINT = new URL("/auth/v1/.well-known/jwks.json", SUPABASE_URL);
 const WALLCLOCK_LIMIT_SEC = Number.parseInt(
@@ -28,6 +48,7 @@ const WALLCLOCK_LIMIT_SEC = Number.parseInt(
 );
 const SUPABASE_PUBLISHABLE_KEY = Deno.env.get("SUPABASE_INTERNAL_PUBLISHABLE_KEY");
 const SUPABASE_SECRET_KEY = Deno.env.get("SUPABASE_INTERNAL_SECRET_KEY");
+const AUTHORIZED_IMPORT_MAP = Deno.env.get("SUPABASE_INTERNAL_IMPORT_MAP_SOURCE") || undefined;
 
 const SB_SPECIFIC_ERROR_CODE = {
   BootError: STATUS_CODE.ServiceUnavailable,
@@ -202,7 +223,13 @@ const denoFileSystem: FunctionFileSystem = {
 };
 
 const functionConfig = (slug: string): Effect.Effect<FunctionConfig | undefined> =>
-  resolveFunctionConfig({ root: FUNCTIONS_ROOT, slug, overrides: configured, fs: denoFileSystem });
+  resolveFunctionConfig({
+    root: FUNCTIONS_ROOT,
+    slug,
+    overrides: configured,
+    fs: denoFileSystem,
+    allowedImportMapPath: AUTHORIZED_IMPORT_MAP,
+  });
 const workerServicePath = createWorkerServicePathResolver(() =>
   Deno.makeTempDirSync({ prefix: "supabase-worker-" }),
 );
@@ -243,6 +270,7 @@ Deno.serve({
         }
         const envVarsObj = {
           ...Deno.env.toObject(),
+          ...MULTILINE_ENV,
           ...Object.fromEntries(
             Object.entries(config.env ?? {}).filter(([name]) => !name.startsWith("SUPABASE_")),
           ),
@@ -270,7 +298,6 @@ Deno.serve({
                 : 400_000,
               noModuleCache: true,
               noNpm,
-              importMapPath: config.importMapPath,
               envVars,
               forceCreate: true,
               customModuleRoot: "",
@@ -278,7 +305,12 @@ Deno.serve({
               cpuTimeHardLimitMs: 2000,
               decoratorType: "tc39",
               maybeEntrypoint: toFileUrl(config.entrypointPath).href,
-              context: { useReadSyncFileAPI: true },
+              context: {
+                useReadSyncFileAPI: true,
+                ...(config.importMapPath.length === 0
+                  ? {}
+                  : { importMapPath: config.importMapPath }),
+              },
               staticPatterns: config.staticFiles,
             }),
           );

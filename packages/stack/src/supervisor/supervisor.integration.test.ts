@@ -46,6 +46,7 @@ import { resolveStackPaths } from "../state/Paths.ts";
 import { StackRpcGroup, type StackRpcError } from "../control/StackRpc.ts";
 import { makeSupervisor, type Supervisor, type SupervisorRuntime } from "./Supervisor.ts";
 import type { SupervisorIngress } from "./Ingress.ts";
+import type { LifecycleInput } from "./Lifecycle.ts";
 
 const identity = {
   projectRoot: "/tmp/supabase-supervisor",
@@ -84,8 +85,11 @@ const makeFixture = (
     readonly startStarted?: Deferred.Deferred<void>;
     readonly startFinished?: Deferred.Deferred<void>;
     readonly activationGate?: Deferred.Deferred<void>;
+    readonly firstActivationGate?: Deferred.Deferred<void>;
     readonly activationStarted?: Deferred.Deferred<void>;
     readonly activationCalls?: Ref.Ref<number>;
+    readonly activationInputs?: Ref.Ref<ReadonlyArray<LifecycleInput>>;
+    readonly lifecycleInputs?: Ref.Ref<ReadonlyArray<LifecycleInput>>;
     readonly activationFailFirst?: Ref.Ref<boolean>;
     readonly startFailures?: Ref.Ref<number>;
     readonly preflightFailFirst?: Ref.Ref<boolean>;
@@ -115,6 +119,7 @@ const makeFixture = (
     readonly prepareGate?: Deferred.Deferred<void>;
     readonly prepareFailure?: boolean;
     readonly artifactStatuses?: Ref.Ref<ReadonlyArray<ArtifactPreparationStatus>>;
+    readonly functionsTermination?: Deferred.Deferred<ObservedWorkload, never>;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -210,6 +215,7 @@ const makeFixture = (
     const logEntries = yield* Ref.make<ReadonlyArray<StackLogEntry>>([entry]);
     const failDestroy = yield* Ref.make(false);
     let gateStopCleanup = false;
+    let activationCount = 0;
     const driver: RuntimeDriver = {
       observe: () => Ref.get(resources),
       start: (key, workload: PlannedWorkload) =>
@@ -257,6 +263,11 @@ const makeFixture = (
             yield* Queue.offer(fixtureOptions.startQueue, workload.id);
           return ready;
         }),
+      ...(fixtureOptions.functionsTermination === undefined
+        ? {}
+        : {
+            awaitTermination: () => Deferred.await(fixtureOptions.functionsTermination!),
+          }),
       stop: (key) =>
         Effect.gen(function* () {
           if (fixtureOptions.workloadStopFailFirst !== undefined) {
@@ -331,6 +342,12 @@ const makeFixture = (
     };
     const runtime: SupervisorRuntime = {
       driver,
+      withLifecycleInput: (input, effect) =>
+        fixtureOptions.lifecycleInputs === undefined
+          ? effect
+          : Ref.update(fixtureOptions.lifecycleInputs, (current) => [...current, input]).pipe(
+              Effect.andThen(effect),
+            ),
       preflight: (_input) =>
         Effect.gen(function* () {
           if (fixtureOptions.preflightCalls !== undefined)
@@ -392,14 +409,19 @@ const makeFixture = (
         fixtureOptions.artifactStatuses === undefined
           ? Effect.succeed([])
           : Ref.get(fixtureOptions.artifactStatuses),
-      activate: () =>
+      activate: (_capability, input) =>
         Effect.gen(function* () {
+          activationCount += 1;
+          if (fixtureOptions.activationInputs !== undefined)
+            yield* Ref.update(fixtureOptions.activationInputs, (current) => [...current, input]);
           if (fixtureOptions.activationCalls !== undefined)
             yield* Ref.update(fixtureOptions.activationCalls, (count) => count + 1);
           if (fixtureOptions.activationStarted !== undefined)
             yield* Deferred.succeed(fixtureOptions.activationStarted, undefined);
           if (fixtureOptions.activationGate !== undefined)
             yield* Deferred.await(fixtureOptions.activationGate);
+          if (fixtureOptions.firstActivationGate !== undefined && activationCount === 1)
+            yield* Deferred.await(fixtureOptions.firstActivationGate);
           if (fixtureOptions.activationFailFirst !== undefined) {
             const fail = yield* Ref.get(fixtureOptions.activationFailFirst);
             if (fail) {
@@ -1729,6 +1751,267 @@ describe("Supervisor composition", () => {
           (yield* fixture.supervisor.status).capabilities.find(({ name }) => name === "functions")
             ?.state,
         ).toBe("ready");
+      }),
+    ),
+  );
+
+  it.live("replaces Functions transiently and restores durable settings without persisting", () =>
+    run(
+      Effect.gen(function* () {
+        const timeline = yield* Ref.make<ReadonlyArray<string>>([]);
+        const activationInputs = yield* Ref.make<ReadonlyArray<LifecycleInput>>([]);
+        const lifecycleInputs = yield* Ref.make<ReadonlyArray<LifecycleInput>>([]);
+        const fixture = yield* makeFixture({ timeline, activationInputs, lifecycleInputs });
+        yield* fixture.supervisor.start({
+          config: {
+            capabilities: {
+              functions: {
+                activation: "lazy",
+                settings: {
+                  edge_runtime: { secrets: { TOKEN: Redacted.make("durable") } },
+                },
+              },
+            },
+          },
+        });
+        const durable = yield* fixture.store.read(fixture.id);
+
+        const first = yield* fixture.supervisor.serveFunctions({
+          config: {
+            capabilities: {
+              functions: {
+                settings: {
+                  debug: true,
+                  edge_runtime: { secrets: { TOKEN: Redacted.make("invocation") } },
+                },
+              },
+            },
+          },
+        });
+        expect(first.capabilities.find(({ name }) => name === "functions")?.state).toBe("ready");
+        const firstInput = (yield* Ref.get(activationInputs))[0];
+        expect(firstInput?.definition.capabilities.functions.settings.debug).toBe(true);
+        expect(
+          firstInput?.state.secrets["secret:functions.settings.edge_runtime.secrets.TOKEN"]?.value,
+        ).toBe("invocation");
+        expect(
+          (yield* Ref.get(lifecycleInputs)).at(-1)?.state.secrets[
+            "secret:functions.settings.edge_runtime.secrets.TOKEN"
+          ]?.value,
+        ).toBe("invocation");
+        expect(yield* fixture.store.read(fixture.id)).toEqual(durable);
+
+        yield* fixture.supervisor.serveFunctions({
+          config: {
+            capabilities: {
+              functions: {
+                settings: {
+                  debug: false,
+                  edge_runtime: { secrets: { TOKEN: Redacted.make("next") } },
+                },
+              },
+            },
+          },
+        });
+        const events = yield* Ref.get(timeline);
+        expect(events.filter((event) => event === "start:functions:edge-runtime")).toHaveLength(2);
+        expect(events.filter((event) => event === "stop:functions:edge-runtime")).toHaveLength(1);
+        expect(yield* fixture.store.read(fixture.id)).toEqual(durable);
+
+        yield* fixture.supervisor.serveFunctions();
+        const restoredInput = (yield* Ref.get(activationInputs)).at(-1);
+        expect(restoredInput?.definition.capabilities.functions.settings.debug).toBeUndefined();
+        expect(
+          restoredInput?.state.secrets["secret:functions.settings.edge_runtime.secrets.TOKEN"]
+            ?.value,
+        ).toBe("durable");
+        const restoredEvents = yield* Ref.get(timeline);
+        expect(
+          restoredEvents.filter((event) => event === "start:functions:edge-runtime"),
+        ).toHaveLength(3);
+        expect(
+          restoredEvents.filter((event) => event === "stop:functions:edge-runtime"),
+        ).toHaveLength(2);
+        expect(yield* fixture.store.read(fixture.id)).toEqual(durable);
+      }),
+    ),
+  );
+
+  it.live("cancels a pending Functions activation before restoring the same session", () =>
+    run(
+      Effect.gen(function* () {
+        const firstActivationGate = yield* Deferred.make<void>();
+        const activationStarted = yield* Deferred.make<void>();
+        const timeline = yield* Ref.make<ReadonlyArray<string>>([]);
+        const fixture = yield* makeFixture({
+          firstActivationGate,
+          activationStarted,
+          timeline,
+        });
+        yield* fixture.supervisor.start({
+          config: { capabilities: { functions: { activation: "lazy" } } },
+        });
+        const serving = yield* Effect.forkChild(
+          fixture.supervisor.serveFunctions({ sessionId: "session-one", config: {} }),
+          { startImmediately: true },
+        );
+        yield* Deferred.await(activationStarted);
+
+        const restored = yield* fixture.supervisor.serveFunctions({ sessionId: "session-one" });
+        const servingExit = yield* Fiber.await(serving);
+
+        expect(Exit.isFailure(servingExit)).toBe(true);
+        expect(restored.capabilities.find(({ name }) => name === "functions")?.state).toBe("ready");
+        expect(
+          (yield* Ref.get(timeline)).filter((entry) => entry === "stop:functions:edge-runtime"),
+        ).toHaveLength(1);
+      }),
+    ),
+  );
+
+  it.live("rejects a second Functions serve owner and permits the current owner to restore", () =>
+    run(
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        yield* fixture.supervisor.start({
+          config: { capabilities: { functions: { activation: "lazy" } } },
+        });
+        yield* fixture.supervisor.serveFunctions({ sessionId: "session-one", config: {} });
+
+        const conflict = yield* fixture.supervisor
+          .serveFunctions({ sessionId: "session-two", config: {} })
+          .pipe(Effect.flip);
+
+        expect(conflict).toBeInstanceOf(StackLifecycleConflictError);
+        expect(conflict.message).toContain("another serve session");
+        yield* fixture.supervisor.serveFunctions({ sessionId: "session-one" });
+      }),
+    ),
+  );
+
+  it.live("retains the Functions lease so a failed activation can restore durable settings", () =>
+    run(
+      Effect.gen(function* () {
+        const activationFailFirst = yield* Ref.make(true);
+        const timeline = yield* Ref.make<ReadonlyArray<string>>([]);
+        const fixture = yield* makeFixture({ activationFailFirst, timeline });
+        yield* fixture.supervisor.start({
+          config: { capabilities: { functions: { activation: "lazy" } } },
+        });
+        const failed = yield* fixture.supervisor
+          .serveFunctions({ sessionId: "session-one", config: {} })
+          .pipe(Effect.exit);
+        expect(Exit.isFailure(failed)).toBe(true);
+
+        const restored = yield* fixture.supervisor.serveFunctions({ sessionId: "session-one" });
+
+        expect(restored.capabilities.find(({ name }) => name === "functions")?.state).toBe("ready");
+        expect(
+          (yield* Ref.get(timeline)).filter((entry) => entry === "start:functions:edge-runtime"),
+        ).toHaveLength(2);
+      }),
+    ),
+  );
+
+  it.live("reports a post-readiness Functions workload failure to its serve session", () =>
+    run(
+      Effect.gen(function* () {
+        const functionsTermination = yield* Deferred.make<ObservedWorkload>();
+        const fixture = yield* makeFixture({ functionsTermination });
+        yield* fixture.supervisor.start({
+          config: { capabilities: { functions: { activation: "lazy" } } },
+        });
+        yield* fixture.supervisor.serveFunctions({ sessionId: "session-one", config: {} });
+        const waiting = yield* Effect.forkChild(
+          fixture.supervisor.serveFunctions({
+            sessionId: "session-one",
+            waitForTermination: true,
+          }),
+          { startImmediately: true },
+        );
+        yield* Deferred.succeed(functionsTermination, {
+          stackId: fixture.id,
+          workloadId: "functions:edge-runtime",
+          state: "failed",
+          error: "edge runtime exited",
+        });
+
+        const failure = errorOf(yield* Fiber.await(waiting));
+        expect(failure).toBeInstanceOf(StackRuntimeError);
+        expect(failure?.message).toBe("edge runtime exited");
+      }),
+    ),
+  );
+
+  it.live("ends a Functions serve wait only after the managed stack has stopped", () =>
+    run(
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        yield* fixture.supervisor.start({
+          config: { capabilities: { functions: { activation: "lazy" } } },
+        });
+        yield* fixture.supervisor.serveFunctions({ sessionId: "session-one", config: {} });
+        const waiting = yield* Effect.forkChild(
+          fixture.supervisor.serveFunctions({
+            sessionId: "session-one",
+            waitForTermination: true,
+          }),
+          { startImmediately: true },
+        );
+
+        expect((yield* fixture.supervisor.maintenanceHandlers.stop).ok).toBe(true);
+        const waited = yield* Fiber.join(waiting);
+
+        expect(waited.lifecycle).toBe("stopped");
+      }),
+    ),
+  );
+
+  it.live("releases a transient inspector reservation when activation fails", () =>
+    run(
+      Effect.gen(function* () {
+        const released = yield* Ref.make(0);
+        const activationFailFirst = yield* Ref.make(true);
+        const ingress: SupervisorIngress = {
+          acquire: () =>
+            Effect.succeed({
+              assignments: {},
+              privateAssignments: [],
+              hostListeners: [],
+              fresh: false,
+              ownershipToken: Symbol(),
+            }),
+          open: () => Effect.void,
+          close: Effect.void,
+          reserveTransientPrivate: () =>
+            Effect.succeed({
+              port: 31_337,
+              close: Ref.update(released, (count) => count + 1),
+            }),
+        };
+        const fixture = yield* makeFixture({ ingress, activationFailFirst });
+        yield* fixture.supervisor.start({
+          config: { capabilities: { functions: { activation: "lazy" } } },
+        });
+
+        yield* fixture.supervisor
+          .serveFunctions({
+            sessionId: "session-one",
+            config: {
+              capabilities: {
+                functions: { settings: { inspector: { mode: "run" } } },
+              },
+            },
+          })
+          .pipe(Effect.exit);
+
+        expect(yield* Ref.get(released)).toBe(1);
+        const durable = yield* fixture.store.read(fixture.id);
+        expect(durable?.privatePorts).not.toContainEqual({
+          workloadId: "functions:edge-runtime",
+          binding: "inspector",
+          port: 31_337,
+        });
       }),
     ),
   );

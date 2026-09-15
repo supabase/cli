@@ -69,6 +69,7 @@ interface Resource {
   readonly output: Readonly<{ stdout: OutputAccumulator; stderr: OutputAccumulator }>;
   readonly result: Deferred.Deferred<ObservedWorkload, RuntimeDriverError>;
   readonly failure: Deferred.Deferred<never, RuntimeDriverError>;
+  readonly termination: Deferred.Deferred<ObservedWorkload, never>;
   stopRequested: boolean;
   process?: NativeProcess;
   startFiber?: Fiber.Fiber<unknown, unknown>;
@@ -199,10 +200,16 @@ export const makeNativeRuntime = (
         yield* Ref.update(resource.state, (current): ObservedWorkload =>
           current.state === "failed" ? current : next,
         );
-        if (!resource.stopRequested && Exit.isFailure(result))
+        yield* Deferred.succeed(resource.termination, next);
+        if (!resource.stopRequested)
           yield* Deferred.fail(
             resource.failure,
-            driverError(resource.key, `Native workload exited before readiness`, result.cause),
+            Exit.isFailure(result)
+              ? driverError(resource.key, "Native workload exited before readiness", result.cause)
+              : driverError(
+                  resource.key,
+                  `Native workload exited before readiness (code ${String(result.value)})`,
+                ),
           );
       }).pipe(Effect.ignore);
 
@@ -223,7 +230,18 @@ export const makeNativeRuntime = (
         return [true, next] satisfies readonly [boolean, ObservedWorkload];
       }).pipe(
         Effect.flatMap((changed) =>
-          changed ? Deferred.fail(resource.failure, failure).pipe(Effect.asVoid) : Effect.void,
+          changed
+            ? Deferred.fail(resource.failure, failure).pipe(
+                Effect.andThen(
+                  Deferred.succeed(resource.termination, {
+                    ...resource.key,
+                    state: "failed",
+                    error: failure.message,
+                  }),
+                ),
+                Effect.asVoid,
+              )
+            : Effect.void,
         ),
       );
     };
@@ -472,6 +490,7 @@ export const makeNativeRuntime = (
             const state = yield* Ref.make<ObservedWorkload>({ ...key, state: "starting" });
             const result = yield* Deferred.make<ObservedWorkload, RuntimeDriverError>();
             const failure = yield* Deferred.make<never, RuntimeDriverError>();
+            const termination = yield* Deferred.make<ObservedWorkload, never>();
             const resource: Resource = {
               key,
               workload,
@@ -479,6 +498,7 @@ export const makeNativeRuntime = (
               state,
               result,
               failure,
+              termination,
               output: {
                 stdout: { decoder: new TextDecoder(), remainder: "" },
                 stderr: { decoder: new TextDecoder(), remainder: "" },
@@ -540,12 +560,14 @@ export const makeNativeRuntime = (
           ...current,
           state: "stopped",
         }));
+        yield* Deferred.succeed(resource.termination, { ...key, state: "stopped" });
       });
 
     const removeResource = (resource: Resource): Effect.Effect<void, RuntimeDriverError> =>
       Effect.gen(function* () {
         resource.stopRequested = true;
         if (resource.startFiber !== undefined) yield* Fiber.interrupt(resource.startFiber);
+        yield* Deferred.succeed(resource.termination, { ...resource.key, state: "stopped" });
         yield* cleanup(resource);
       });
 
@@ -570,6 +592,20 @@ export const makeNativeRuntime = (
           yield* removeResource(resource);
         }),
       );
+
+    const awaitTermination = (
+      key: RuntimeWorkloadKey,
+    ): Effect.Effect<ObservedWorkload, RuntimeDriverError> =>
+      registration
+        .withPermit(
+          Effect.suspend(() => {
+            const resource = resources.get(resourceKey(key));
+            return resource === undefined
+              ? Effect.fail(driverError(key, "Native workload is not registered"))
+              : Effect.succeed(resource.termination);
+          }),
+        )
+        .pipe(Effect.flatMap(Deferred.await));
 
     const cleanupRuntime = (
       request: RuntimeCleanupRequest,
@@ -596,6 +632,7 @@ export const makeNativeRuntime = (
     return {
       observe,
       start,
+      awaitTermination,
       stop,
       remove,
       cleanup: cleanupRuntime,

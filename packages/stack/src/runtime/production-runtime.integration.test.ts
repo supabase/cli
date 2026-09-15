@@ -2603,6 +2603,7 @@ describe("production runtime", () => {
       const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
       const createdSpecs: ContainerContainerSpec[] = [];
       const copiedFiles: Array<Readonly<{ source: string; destination: string }>> = [];
+      const logEntries: StackLogEntry[] = [];
       const engine = ownerInputContainerEngine(createdSpecs, copiedFiles);
       const runtime = yield* makeProductionRuntime({
         stateRoot: root,
@@ -2622,10 +2623,10 @@ describe("production runtime", () => {
               image: workload.selected.kind === "container" ? workload.selected.image : undefined,
             }),
         },
-        logStore: memoryLogStore([]),
+        logStore: memoryLogStore(logEntries),
         bootstrapDatabase: () => Effect.void,
       });
-      return { fs, runtime, createdSpecs, copiedFiles, compiled };
+      return { fs, runtime, createdSpecs, copiedFiles, logEntries, compiled, state: current.value };
     }).pipe(Effect.provide(NodeServices.layer));
 
   it.live("writes Auth owner material and confirmation template settings", () =>
@@ -2672,6 +2673,122 @@ describe("production runtime", () => {
 
         expect(functionsEnvironment).toContain("FACTORY_SECRET=factory-secret");
         expect(yield* fs.exists(firstBootstrap.source)).toBe(true);
+      }),
+    ),
+  );
+
+  it.live("uses lifecycle input secrets while replacing the Functions workload", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { fs, runtime, createdSpecs, compiled, state } = yield* makeOwnerMaterialFixture();
+        const functions = compiled.executionPlan.workloads.find(
+          (workload) => workload.id === "functions:edge-runtime",
+        );
+        if (functions === undefined) return yield* Effect.die("Expected Functions workload");
+        const slot = "secret:functions.settings.edge_runtime.secrets.FACTORY_SECRET";
+        const transientSecrets = {
+          ...state.secrets,
+          [slot]: { policy: "managed" as const, value: "transient-secret" },
+        };
+        const transientState = { ...state, secrets: transientSecrets };
+
+        yield* runtime.withLifecycleInput(
+          {
+            stackId,
+            state: transientState,
+            definition: compiled.definition,
+            secrets: transientSecrets,
+            plan: compiled.executionPlan,
+          },
+          runtime.driver.start({ stackId, workloadId: functions.id }, functions),
+        );
+        const functionsSpec = createdSpecs.find((spec) => spec.labels.workloadId === functions.id);
+        if (functionsSpec?.envFile === undefined)
+          return yield* Effect.die("Functions container was not captured");
+        const functionsEnvironment = yield* fs.readFileString(functionsSpec.envFile);
+
+        expect(functionsEnvironment).toContain("FACTORY_SECRET=transient-secret");
+        expect(functionsEnvironment).not.toContain("FACTORY_SECRET=factory-secret");
+      }),
+    ),
+  );
+
+  it.live("redacts invocation-only Functions secrets before activation work", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { runtime, logEntries, compiled, state } = yield* makeOwnerMaterialFixture();
+        const transientSecret = "invocation-only-secret";
+        const transientSecrets = {
+          ...state.secrets,
+          "secret:functions.settings.edge_runtime.secrets.TRANSIENT": {
+            policy: "managed" as const,
+            value: transientSecret,
+          },
+        };
+        yield* runtime.withLifecycleInput(
+          {
+            stackId,
+            state: { ...state, secrets: transientSecrets },
+            definition: compiled.definition,
+            secrets: transientSecrets,
+            plan: compiled.executionPlan,
+          },
+          runtime.logStore.append({
+            source: "functions",
+            stream: "stderr",
+            message: `failed with ${transientSecret}`,
+          }),
+        );
+
+        expect(logEntries.at(-1)?.message).toBe("failed with [REDACTED]");
+      }),
+    ),
+  );
+
+  it.live("preserves multiline Functions secrets in container runtime input", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { fs, runtime, logEntries, createdSpecs, compiled, state } =
+          yield* makeOwnerMaterialFixture();
+        const functions = compiled.executionPlan.workloads.find(
+          (workload) => workload.id === "functions:edge-runtime",
+        );
+        if (functions === undefined) return yield* Effect.die("Expected Functions workload");
+        const slot = "secret:functions.settings.edge_runtime.secrets.FACTORY_SECRET";
+        const value = "first line\nsecond line";
+        const secrets = {
+          ...state.secrets,
+          [slot]: { policy: "managed" as const, value },
+        };
+        yield* runtime.withLifecycleInput(
+          {
+            stackId,
+            state: { ...state, secrets },
+            definition: compiled.definition,
+            secrets,
+            plan: compiled.executionPlan,
+          },
+          runtime.driver.start({ stackId, workloadId: functions.id }, functions),
+        );
+        const spec = createdSpecs.find((entry) => entry.labels.workloadId === functions.id);
+        if (spec?.envFile === undefined)
+          return yield* Effect.die("Functions container was not captured");
+        const environment = yield* fs.readFileString(spec.envFile);
+        const encoded = environment
+          .split("\n")
+          .find((line) => line.startsWith("SUPABASE_INTERNAL_MULTILINE_ENV="))
+          ?.slice("SUPABASE_INTERNAL_MULTILINE_ENV=".length);
+        expect(encoded).toBeDefined();
+        expect(
+          yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(encoded ?? "{}"),
+        ).toMatchObject({ FACTORY_SECRET: value });
+        expect(environment).not.toContain(`FACTORY_SECRET=${value}`);
+        yield* runtime.logStore.append({
+          source: "functions",
+          stream: "stdout",
+          message: `serialized=${encodeJson(value)}`,
+        });
+        expect(logEntries.at(-1)?.message).toBe('serialized="[REDACTED]"');
       }),
     ),
   );

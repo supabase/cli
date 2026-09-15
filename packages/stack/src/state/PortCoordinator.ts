@@ -68,6 +68,19 @@ export interface PortCoordinator {
     | InvalidProjectRootError,
     Scope.Scope | Crypto.Crypto | FileSystem.FileSystem | Path.Path
   >;
+  /** Reserves one invocation-only private port without changing persisted assignments. */
+  readonly reserveTransientPrivate: (
+    field: string,
+    port: "automatic" | number,
+  ) => Effect.Effect<
+    HeldPort,
+    | PortAllocationError
+    | PortUnavailableError
+    | StackStateInvalidError
+    | StackStateFormatUnsupportedError
+    | InvalidProjectRootError,
+    Scope.Scope | Crypto.Crypto | FileSystem.FileSystem | Path.Path
+  >;
 }
 
 const fields: ReadonlyArray<PortField> = PORT_FIELDS;
@@ -152,6 +165,59 @@ const retryable = (error: PortUnavailableError): boolean => {
 };
 
 export const makePortCoordinator = (options: PortCoordinatorOptions): PortCoordinator => ({
+  reserveTransientPrivate: (field, requestedPort) =>
+    withRegistryLock(
+      options.stateRoot,
+      Effect.gen(function* () {
+        const occupied = new Map<number, string>();
+        for (const entry of yield* readAuthoritativeStates(options)) {
+          for (const assignment of entry.state.ports)
+            occupied.set(assignment.port, `${entry.stackId} (${assignment.field})`);
+          for (const assignment of entry.state.privatePorts)
+            occupied.set(
+              assignment.port,
+              `${entry.stackId} (${assignment.workloadId}:${assignment.binding})`,
+            );
+        }
+        const reserve = (port: number) => {
+          const owner = occupied.get(port);
+          return owner === undefined
+            ? options.bindPrivate("127.0.0.1", port, field)
+            : Effect.fail(
+                unavailable(port, field, `Port ${port} for ${field} is reserved by ${owner}`),
+              );
+        };
+        if (typeof requestedPort === "number") {
+          if (!validPort(requestedPort)) return yield* unavailable(requestedPort, field);
+          return yield* reserve(requestedPort);
+        }
+        const crypto = yield* Crypto.Crypto;
+        const randomStart = yield* crypto.randomIntBetween(0, PORT_POOL_SIZE - 1);
+        let failures = 0;
+        for (let offset = 0; offset < PORT_POOL_SIZE; offset += 1) {
+          const port = PORT_MIN + ((randomStart + offset * PORT_STRIDE) % PORT_POOL_SIZE);
+          if (occupied.has(port)) continue;
+          const result = yield* reserve(port).pipe(
+            Effect.map((held) => ({ ok: true as const, held })),
+            Effect.catchTag("PortUnavailableError", (error) =>
+              retryable(error) ? Effect.succeed({ ok: false as const, error }) : Effect.fail(error),
+            ),
+          );
+          if (result.ok) return result.held;
+          failures += 1;
+          if (failures >= MAX_FRESH_BIND_FAILURES)
+            return yield* allocation(
+              field,
+              `No automatic port is available after ${MAX_FRESH_BIND_FAILURES} bind failures`,
+              result.error.cause,
+            );
+        }
+        return yield* allocation(
+          field,
+          "No automatic port is available in the shared 20000-32767 pool",
+        );
+      }),
+    ),
   acquire: (stackId, listenerIntents, privateBindings) =>
     withRegistryLock(
       options.stateRoot,

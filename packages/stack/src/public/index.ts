@@ -21,6 +21,7 @@ export type {
   EffectStack,
   InspectStackOptions,
   StartStackOptions,
+  ServeFunctionsOptions,
   PrepareStackOptions,
   CreateStackOptions,
   FindStackOptions,

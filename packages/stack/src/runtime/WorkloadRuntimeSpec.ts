@@ -65,6 +65,8 @@ export interface WorkloadRuntimeInputs {
   readonly functions?: Readonly<{
     readonly bootstrapPath?: string;
     readonly secrets?: Readonly<Record<string, string>>;
+    /** Invocation-authorized import map outside the shared Functions root. */
+    readonly importMapSource?: string;
   }>;
   /** Stack-owned native persistent data paths. Containers use their named volumes instead. */
   readonly database?: Readonly<{ readonly dataPath?: string }>;
@@ -369,7 +371,13 @@ const edgeRuntimeJwtEnvironment = (
   return { ...inputs.functions?.secrets, ...fixed };
 };
 
-const functionsConfigEnvironment = (state: PersistedStackState): string => {
+const FUNCTIONS_IMPORT_MAP_CONTAINER_PATH = "/root/.supabase-functions-serve-import-map.json";
+
+const functionsConfigEnvironment = (
+  state: PersistedStackState,
+  runtime: WorkloadRuntimeKind,
+  inputs: WorkloadRuntimeInputs,
+): string => {
   const settings = settingsFor(state, "functions");
   const edgeRuntime =
     isRecord(settings) && isRecord(settings.edge_runtime) ? settings.edge_runtime : {};
@@ -378,7 +386,12 @@ const functionsConfigEnvironment = (state: PersistedStackState): string => {
   const defaults: Record<string, unknown> = {};
   if (typeof edgeRuntime.verify_jwt_default === "boolean")
     defaults.verify_jwt = edgeRuntime.verify_jwt_default;
-  if (typeof edgeRuntime.import_map_default === "string")
+  if (inputs.functions?.importMapSource !== undefined)
+    defaults.import_map_root =
+      runtime === "container"
+        ? FUNCTIONS_IMPORT_MAP_CONTAINER_PATH
+        : inputs.functions.importMapSource;
+  else if (typeof edgeRuntime.import_map_default === "string")
     defaults.import_map_root = edgeRuntime.import_map_default;
   if (Object.keys(defaults).length > 0) result.$default = defaults;
   for (const [slug, value] of Object.entries(configured)) {
@@ -391,7 +404,12 @@ const functionsConfigEnvironment = (state: PersistedStackState): string => {
     result[slug] = {
       enabled: value.enabled ?? true,
       verify_jwt: value.verify_jwt ?? true,
-      import_map: settingValue(state, value.import_map),
+      import_map:
+        inputs.functions?.importMapSource === undefined
+          ? settingValue(state, value.import_map)
+          : runtime === "container"
+            ? FUNCTIONS_IMPORT_MAP_CONTAINER_PATH
+            : inputs.functions.importMapSource,
       entrypoint: settingValue(state, value.entrypoint),
       static_files: Array.isArray(value.static_files)
         ? value.static_files.map((entry) => settingValue(state, entry))
@@ -452,8 +470,13 @@ const nativeFunctionsDirectory = (
 
 const functionsInspectorRequested = (state: Pick<PersistedStackState, "definition">): boolean => {
   const inspectorSettings = state.definition?.capabilities.functions.settings.inspector;
+  const mode = isRecord(inspectorSettings) ? inspectorSettings.mode : undefined;
   return (
-    isRecord(inspectorSettings) || state.definition?.listeners.functionsInspector.enabled === true
+    mode === "run" ||
+    mode === "brk" ||
+    mode === "wait" ||
+    (isRecord(inspectorSettings) && inspectorSettings.main === true) ||
+    state.definition?.listeners.functionsInspector.enabled === true
   );
 };
 
@@ -481,6 +504,36 @@ const functionsInspectorArgs = (
     ...(valueAt(state, "functions", "inspector.main") === "true" ? ["--inspect-main"] : []),
   ];
 };
+
+const functionsDebugArgs = (state: PersistedStackState): ReadonlyArray<string> =>
+  valueAt(state, "functions", "debug") === "true" ? ["--verbose"] : [];
+
+const functionsEnvironment = (
+  state: PersistedStackState,
+  port: number,
+  runtime: WorkloadRuntimeKind,
+  inputs: WorkloadRuntimeInputs,
+): Readonly<Record<string, string>> => ({
+  ...edgeRuntimeJwtEnvironment(state, inputs),
+  EDGE_RUNTIME_PORT: String(port),
+  FUNCTIONS_CONTAINER_ROOT,
+  SUPABASE_INTERNAL_FUNCTIONS_ROOT:
+    runtime === "container" ? FUNCTIONS_CONTAINER_ROOT : functionsRoot(state),
+  SUPABASE_INTERNAL_FUNCTIONS_CONFIG: functionsConfigEnvironment(state, runtime, inputs),
+  SUPABASE_INTERNAL_IMPORT_MAP_SOURCE:
+    inputs.functions?.importMapSource === undefined
+      ? ""
+      : runtime === "container"
+        ? FUNCTIONS_IMPORT_MAP_CONTAINER_PATH
+        : inputs.functions.importMapSource,
+  SUPABASE_URL: apiListenerUrl(state, runtime === "container" ? inputs : undefined),
+  EDGE_RUNTIME_POLICY: valueAt(state, "functions", "edge_runtime.policy"),
+  EDGE_RUNTIME_DENO_VERSION: valueAt(state, "functions", "edge_runtime.deno_version"),
+  INSPECTOR_MODE: valueAt(state, "functions", "inspector.mode"),
+  INSPECTOR_MAIN: valueAt(state, "functions", "inspector.main"),
+  SUPABASE_INTERNAL_DEBUG: valueAt(state, "functions", "debug"),
+  ...(functionsInspectorRequested(state) ? { SUPABASE_INTERNAL_WALLCLOCK_LIMIT_SEC: "0" } : {}),
+});
 
 const nativeProcessFor = (
   artifactRoot: string,
@@ -1066,29 +1119,29 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
       `--port=${port}`,
       `--policy=${valueAt(state, "functions", "edge_runtime.policy")}`,
       ...functionsInspectorArgs(state, runtime),
+      ...functionsDebugArgs(state),
     ],
-    env: (state, _workload, port, runtime = "native", inputs = {}) => ({
-      ...edgeRuntimeJwtEnvironment(state, inputs),
-      EDGE_RUNTIME_PORT: String(port),
-      FUNCTIONS_CONTAINER_ROOT,
-      SUPABASE_INTERNAL_FUNCTIONS_ROOT:
-        runtime === "container" ? FUNCTIONS_CONTAINER_ROOT : functionsRoot(state),
-      SUPABASE_INTERNAL_FUNCTIONS_CONFIG: functionsConfigEnvironment(state),
-      SUPABASE_URL: apiListenerUrl(state, runtime === "container" ? inputs : undefined),
-      EDGE_RUNTIME_POLICY: valueAt(state, "functions", "edge_runtime.policy"),
-      EDGE_RUNTIME_DENO_VERSION: valueAt(state, "functions", "edge_runtime.deno_version"),
-      INSPECTOR_MODE: valueAt(state, "functions", "inspector.mode"),
-      INSPECTOR_MAIN: valueAt(state, "functions", "inspector.main"),
-    }),
+    env: (state, _workload, port, runtime = "native", inputs = {}) =>
+      functionsEnvironment(state, port, runtime, inputs),
     containerArgs: (state, _workload, port) => [
       "start",
       `--main-service=${FUNCTIONS_BOOTSTRAP_CONTAINER_PATH}`,
       `--port=${port}`,
       `--policy=${valueAt(state, "functions", "edge_runtime.policy")}`,
       ...functionsInspectorArgs(state, "container"),
+      ...functionsDebugArgs(state),
     ],
-    containerMounts: (state) => [
+    containerMounts: (state, _workload, inputs = {}) => [
       { source: functionsRoot(state), target: FUNCTIONS_CONTAINER_ROOT, readOnly: true },
+      ...(inputs.functions?.importMapSource === undefined
+        ? []
+        : [
+            {
+              source: inputs.functions.importMapSource,
+              target: FUNCTIONS_IMPORT_MAP_CONTAINER_PATH,
+              readOnly: true,
+            },
+          ]),
     ],
     readiness: { protocol: "http", path: "/_internal/health" },
   },

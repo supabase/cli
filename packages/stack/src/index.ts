@@ -11,6 +11,7 @@ export type {
   PromiseStackConfig,
   PromiseInspectStackOptions,
   PromiseStartStackOptions,
+  PromiseServeFunctionsOptions,
   PromisePrepareStackOptions,
   CreateStackOptions,
   FindStackOptions,
@@ -18,6 +19,7 @@ export type {
   StackDiscoveryIssue,
   StackDiscoveryResult,
   PreparedCapability,
+  ServeFunctionsOptions,
 } from "./public/PromiseStack.ts";
 export type {
   CapabilityName,

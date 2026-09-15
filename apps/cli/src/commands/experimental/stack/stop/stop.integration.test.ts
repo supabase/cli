@@ -88,6 +88,7 @@ function setup(opts: {
     credentials: Effect.die("unused"),
     prepare: () => Effect.die("unused"),
     start: () => Effect.die("unused"),
+    serveFunctions: () => Effect.die("unused"),
     stop:
       opts.stop ??
       Effect.sync(() => {

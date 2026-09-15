@@ -833,12 +833,15 @@ describe("container runtime", () => {
       });
       const ready = yield* runtime.start(key, workload());
       expect(ready.state).toBe("ready");
+      if (runtime.awaitTermination === undefined)
+        return yield* Effect.die("Container termination signal is unavailable");
+      const terminated = yield* Effect.forkChild(runtime.awaitTermination(key), {
+        startImmediately: true,
+      });
       yield* Deferred.succeed(exit, 17);
-      yield* Effect.yieldNow;
-      const observed = yield* runtime.observe(stackId);
-      expect(observed).toEqual([
+      expect(yield* Fiber.join(terminated)).toEqual(
         expect.objectContaining({ workloadId: key.workloadId, state: "failed" }),
-      ]);
+      );
       yield* runtime.remove(key);
     }),
   );
@@ -2851,6 +2854,7 @@ describe("container runtime", () => {
         };
         const runtime: SupervisorRuntime = {
           driver,
+          withLifecycleInput: (_input, effect) => effect,
           preflight: () => Effect.void,
           prepare: () => Effect.void,
           prefetch: () => Effect.void,

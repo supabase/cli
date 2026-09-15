@@ -61,6 +61,11 @@ export interface SupervisorIngress {
   ) => Effect.Effect<void, GatewayActivationError | StackError>;
   /** Close gateway, accepted sockets, and exact listeners; safe to call repeatedly. */
   readonly close: Effect.Effect<void, StackError>;
+  /** Holds an invocation-only private port without changing durable assignments. */
+  readonly reserveTransientPrivate?: (
+    field: string,
+    port: "automatic" | number,
+  ) => Effect.Effect<HeldPort, StackError>;
 }
 
 export interface SupervisorIngressOptions {
@@ -420,5 +425,16 @@ export const makeSupervisorIngress = (
         }),
       );
 
-    return { acquire, open, close } satisfies SupervisorIngress;
+    return {
+      acquire,
+      open,
+      close,
+      reserveTransientPrivate: (field, port) =>
+        coordinator
+          .reserveTransientPrivate(field, port)
+          .pipe(
+            Effect.provideContext(options.context),
+            Effect.provideService(Scope.Scope, ownerScope),
+          ),
+    } satisfies SupervisorIngress;
   });

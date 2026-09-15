@@ -99,9 +99,11 @@ export const resolveFunctionConfig = (options: {
   readonly slug: string;
   readonly overrides: FunctionOverrides;
   readonly fs: FunctionFileSystem;
+  /** Exact invocation-authorized import map outside the Functions root. */
+  readonly allowedImportMapPath?: string;
 }): Effect.Effect<FunctionConfig | undefined> =>
   Effect.gen(function* () {
-    const { root, slug, overrides, fs } = options;
+    const { root, slug, overrides, fs, allowedImportMapPath } = options;
     if (!root.startsWith("/") || !slugPattern.test(slug) || slug === "_shared") return undefined;
     const rootInfo = yield* optionalInfo(fs, root);
     // The configured functions root itself may be a symlink; descendants remain
@@ -150,7 +152,16 @@ export const resolveFunctionConfig = (options: {
           ? relativePath(canonicalRoot, globalImportMap)
           : relativePath(functionDirectory, "");
     if (importMapPath.length > 0) {
-      if (!(yield* safeRealPath(fs, canonicalRoot, importMapPath))) return undefined;
+      const containedImportMap = yield* safeRealPath(fs, canonicalRoot, importMapPath);
+      const authorizedExternalImportMap =
+        allowedImportMapPath !== undefined &&
+        (yield* Effect.all([fs.realPath(importMapPath), fs.realPath(allowedImportMapPath)], {
+          concurrency: 2,
+        }).pipe(
+          Effect.map(([candidate, allowed]) => candidate === allowed),
+          Effect.orElseSucceed(() => false),
+        ));
+      if (!containedImportMap && !authorizedExternalImportMap) return undefined;
       const info = yield* optionalInfo(fs, importMapPath);
       if (info === undefined || !info.isFile || info.isSymbolicLink) return undefined;
     } else {

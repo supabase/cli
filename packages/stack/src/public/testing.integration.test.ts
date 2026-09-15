@@ -115,6 +115,7 @@ const fakeStack = (events: Array<string>, options: FakeStackOptions = {}): Promi
           failedCapability,
         );
       }),
+    serveFunctions: () => fixturePromise(() => status("running", includeApi, "ready")),
     stop: () => fixturePromise(() => undefined),
     destroy: () =>
       fixturePromise(() => {

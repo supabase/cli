@@ -241,7 +241,7 @@ interface ServeFunctionContainerConfig {
   readonly env?: Readonly<Record<string, string>>;
 }
 
-interface WatchSpec {
+export interface FunctionsServeWatchSpec {
   readonly root: string;
   readonly recursive: boolean;
   readonly matchPaths?: ReadonlySet<string>;
@@ -250,7 +250,7 @@ interface WatchSpec {
 export interface StartedRuntime {
   readonly containerId: string;
   readonly cleanup: Effect.Effect<void>;
-  readonly watchSpecs: ReadonlyArray<WatchSpec>;
+  readonly watchSpecs: ReadonlyArray<FunctionsServeWatchSpec>;
 }
 
 /**
@@ -1155,8 +1155,8 @@ function hasBindUnder(binds: Iterable<DockerBind>, containerPath: string): boole
 
 async function buildWatchSpecs(
   binds: ReadonlyArray<DockerBind>,
-): Promise<ReadonlyArray<WatchSpec>> {
-  const specs = new Map<string, WatchSpec>();
+): Promise<ReadonlyArray<FunctionsServeWatchSpec>> {
+  const specs = new Map<string, FunctionsServeWatchSpec>();
 
   for (const bind of binds) {
     const hostPath = bind.hostPath;
@@ -1203,7 +1203,7 @@ function shouldIgnoreEvent(pathname: string) {
   );
 }
 
-function eventMatchesSpec(spec: WatchSpec, event: FileWatchEvent) {
+function eventMatchesSpec(spec: FunctionsServeWatchSpec, event: FileWatchEvent) {
   if (shouldIgnoreEvent(event.path)) {
     return false;
   }
@@ -1220,7 +1220,9 @@ function eventMatchesSpec(spec: WatchSpec, event: FileWatchEvent) {
  */
 const goFileEventOp = { create: "CREATE", update: "WRITE", delete: "REMOVE" } as const;
 
-const waitForRestartSignal = Effect.fnUntraced(function* (watchSpecs: ReadonlyArray<WatchSpec>) {
+export const waitForFunctionsRestartSignal = Effect.fnUntraced(function* (
+  watchSpecs: ReadonlyArray<FunctionsServeWatchSpec>,
+) {
   if (watchSpecs.length === 0) {
     return yield* Effect.never;
   }
@@ -1557,7 +1559,7 @@ const reloadKong = Effect.fnUntraced(function* (projectId: string) {
   }
 });
 
-const writeStoppedServingMessage = Effect.fnUntraced(function* () {
+export const writeStoppedServingMessage = Effect.fnUntraced(function* () {
   const output = yield* Output;
   yield* output.raw(`Stopped serving ${styleText("bold", functionsDirName)}\n`, "stdout");
 });
@@ -2130,7 +2132,9 @@ export const serveFunctions = Effect.fn("functions.serve")(function* (
         Effect.raceFirst(
           Effect.raceFirst(
             Deferred.await(shutdownRequested).pipe(Effect.as({ _tag: "shutdown" as const })),
-            waitForRestartSignal(started.watchSpecs).pipe(Effect.as({ _tag: "restart" as const })),
+            waitForFunctionsRestartSignal(started.watchSpecs).pipe(
+              Effect.as({ _tag: "restart" as const }),
+            ),
           ),
           streamContainerLogs(started.containerId, retryDelay).pipe(
             Effect.map((reason) => ({ _tag: "exited" as const, reason })),

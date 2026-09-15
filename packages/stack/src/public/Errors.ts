@@ -295,6 +295,28 @@ export const STACK_START_ERROR_TAGS = [
 ] as const satisfies ReadonlyArray<StackErrorTag>;
 export type StackStartError = ErrorByTag<(typeof STACK_START_ERROR_TAGS)[number]>;
 
+export const SERVE_FUNCTIONS_ERROR_TAGS = [
+  "InvalidStackConfigError",
+  "StackVersionUnsupportedError",
+  "StackNotFoundError",
+  "StackNotRunningError",
+  "StackOwnershipConflictError",
+  "StackLifecycleConflictError",
+  "StackStateInvalidError",
+  "StackStateFormatUnsupportedError",
+  "StackUpgradeRequiredError",
+  "StackSecretMismatchError",
+  "InvalidJwtSigningMaterialError",
+  "GatewayActivationError",
+  "StackPreparationError",
+  "ArtifactIntegrityError",
+  "ContainerPullError",
+  "StackRuntimeError",
+  "StackCleanupError",
+  "ContainerEngineError",
+] as const satisfies ReadonlyArray<StackErrorTag>;
+export type ServeFunctionsError = ErrorByTag<(typeof SERVE_FUNCTIONS_ERROR_TAGS)[number]>;
+
 /** Stable maintenance stop reports cleanup failures as lifecycle conflicts with their message. */
 export const STACK_STOP_ERROR_TAGS = [
   "StackOwnershipConflictError",

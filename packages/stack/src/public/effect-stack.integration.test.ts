@@ -243,6 +243,7 @@ describe("Effect stack lifecycle handoff", () => {
             status: () => Effect.succeed(runningStatus),
             credentials: () => Effect.succeed(credentials),
             start: () => Effect.succeed(runningStatus),
+            serveFunctions: () => Effect.succeed(runningStatus),
             destroy: () => Effect.void,
             logs: () => emptyLogs(),
           },
@@ -304,6 +305,7 @@ describe("Effect stack lifecycle handoff", () => {
             status: () => Effect.succeed(runningStatus),
             credentials: () => Effect.succeed(credentials),
             start: () => Effect.succeed(runningStatus),
+            serveFunctions: () => Effect.succeed(runningStatus),
             destroy: () => Effect.void,
             logs: () => emptyLogs(),
           },
@@ -421,6 +423,7 @@ describe("Effect stack lifecycle handoff", () => {
             status: () => Effect.succeed(runningStatus),
             credentials: () => Effect.succeed(credentials),
             start: () => Effect.succeed(runningStatus),
+            serveFunctions: () => Effect.succeed(runningStatus),
             destroy: () => Effect.void,
             logs: (query) => readLogs(query),
           },
@@ -500,6 +503,7 @@ describe("Effect stack lifecycle handoff", () => {
             status: () => Effect.succeed(runningStatus),
             credentials: () => Effect.succeed(credentials),
             start: () => Effect.succeed(runningStatus),
+            serveFunctions: () => Effect.succeed(runningStatus),
             destroy: () => Effect.void,
             logs: () =>
               Effect.fail({ tag: "InvalidLogCursorError", message: "Log cursor is invalid" }),
@@ -1424,6 +1428,7 @@ describe("Effect stack lifecycle handoff", () => {
                   tag: "ContainerEngineError",
                   message: "Container engine command failed while starting database",
                 }),
+              serveFunctions: () => Effect.succeed(runningStatus),
               destroy: () => Effect.void,
               logs: () => emptyLogs(),
             },
@@ -1499,6 +1504,7 @@ describe("Effect stack lifecycle handoff", () => {
                   message: "A lifecycle transition is already in progress",
                 } as const);
               }),
+            serveFunctions: () => Effect.succeed(runningStatus),
             destroy: () => Effect.void,
             logs: () => emptyLogs(),
           },
@@ -1675,6 +1681,23 @@ describe("Effect stack lifecycle handoff", () => {
     ),
   );
 
+  it.live("never launches an owner when serving Functions", () =>
+    Effect.gen(function* () {
+      const launches: boolean[] = [];
+      const stack = yield* makeTestHandle(stackId, {
+        resolveOwner: (launch) =>
+          Effect.sync(() => {
+            launches.push(launch);
+            return Option.none();
+          }),
+        readOfflineState: Effect.succeed(Option.some(stoppedState())),
+      });
+      const failure = yield* stack.serveFunctions().pipe(Effect.flip);
+      expect(failure).toBeInstanceOf(StackNotRunningError);
+      expect(launches).toEqual([false]);
+    }),
+  );
+
   it.live("omits undefined optional RPC payload keys", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -1683,12 +1706,19 @@ describe("Effect stack lifecycle handoff", () => {
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-effect-stack-rpc-" });
         const endpoint = { kind: "unix" as const, path: path.join(root, "control.sock") };
         const ownerSessionId = "session";
-        const payloads: { start: Array<unknown> } = { start: [] };
+        const payloads: { start: Array<unknown>; serveFunctions: Array<unknown> } = {
+          start: [],
+          serveFunctions: [],
+        };
         const rpcHandlers: StackRpcHandlers = {
           status: () => Effect.succeed(runningStatus),
           credentials: () => Effect.succeed(credentials),
           start: (payload) => {
             payloads.start.push(payload);
+            return Effect.succeed(runningStatus);
+          },
+          serveFunctions: (payload) => {
+            payloads.serveFunctions.push(payload);
             return Effect.succeed(runningStatus);
           },
           destroy: () => Effect.void,
@@ -1723,7 +1753,10 @@ describe("Effect stack lifecycle handoff", () => {
         });
         yield* stack.start();
         yield* stack.start({ config: {} });
+        yield* stack.serveFunctions();
+        yield* stack.serveFunctions({ config: {} });
         expect(payloads.start).toEqual([{}, { config: {} }]);
+        expect(payloads.serveFunctions).toEqual([{}, { config: {} }]);
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
   );
@@ -1752,6 +1785,7 @@ describe("Effect stack lifecycle handoff", () => {
             status: () => Effect.succeed(runningStatus),
             credentials: () => Effect.succeed(credentials),
             start: () => Effect.succeed(runningStatus),
+            serveFunctions: () => Effect.succeed(runningStatus),
             destroy: () => Effect.void,
             logs: emptyLogs,
           },
@@ -1794,6 +1828,7 @@ describe("Effect stack lifecycle handoff", () => {
           status: () => Effect.succeed(runningStatus),
           credentials: () => Effect.succeed(credentials),
           start: () => Effect.succeed(runningStatus),
+          serveFunctions: () => Effect.succeed(runningStatus),
           destroy: () => Effect.void,
           logs: emptyLogs,
         };
@@ -2210,6 +2245,7 @@ describe("Effect stack lifecycle handoff", () => {
               status: () => invoked(runningStatus),
               credentials: () => invoked(credentials),
               start: () => invoked(runningStatus),
+              serveFunctions: () => invoked(runningStatus),
               destroy: () => invoked(undefined),
               logs: () => invoked({ entries: [], cursor: { opaque: "v1_0" }, running: false }),
             },
@@ -2284,6 +2320,7 @@ describe("Effect stack lifecycle handoff", () => {
             credentials: () => Effect.succeed(credentials),
             start: () =>
               Deferred.succeed(startEntered, undefined).pipe(Effect.andThen(Effect.never)),
+            serveFunctions: () => Effect.succeed(runningStatus),
             destroy: () => Effect.void,
             logs: () => emptyLogs(),
           },
@@ -2342,6 +2379,7 @@ describe("Effect stack lifecycle handoff", () => {
             status: () => Effect.succeed(runningStatus),
             credentials: () => Effect.succeed(credentials),
             start: () => Effect.succeed(runningStatus),
+            serveFunctions: () => Effect.succeed(runningStatus),
             destroy: () =>
               Deferred.succeed(destroyEntered, undefined).pipe(Effect.andThen(Effect.never)),
             logs: () => emptyLogs(),
@@ -2406,6 +2444,7 @@ describe("Effect stack lifecycle handoff", () => {
             credentials: () => Effect.succeed(credentials),
             start: () =>
               Deferred.succeed(startEntered, undefined).pipe(Effect.andThen(Effect.never)),
+            serveFunctions: () => Effect.succeed(runningStatus),
             destroy: () => Effect.void,
             logs: () => emptyLogs(),
           },
@@ -2490,6 +2529,7 @@ describe("Effect stack lifecycle handoff", () => {
             credentials: () => Effect.succeed(credentials),
             start: () =>
               Deferred.succeed(startEntered, undefined).pipe(Effect.andThen(Effect.never)),
+            serveFunctions: () => Effect.succeed(runningStatus),
             destroy: () => Effect.void,
             logs: () => emptyLogs(),
           },
@@ -2569,6 +2609,7 @@ describe("Effect stack lifecycle handoff", () => {
             credentials: () => Effect.succeed(credentials),
             start: () =>
               Deferred.succeed(startEntered, undefined).pipe(Effect.andThen(Effect.never)),
+            serveFunctions: () => Effect.succeed(runningStatus),
             destroy: () => Effect.void,
             logs: () => emptyLogs(),
           },

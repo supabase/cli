@@ -112,6 +112,7 @@ interface ContainerRuntimeResource {
   readonly key: RuntimeWorkloadKey;
   readonly workload: PlannedWorkload;
   readonly failure: Deferred.Deferred<never, RuntimeDriverError>;
+  readonly termination: Deferred.Deferred<ObservedWorkload, never>;
   logFiber?: Fiber.Fiber<void, never>;
   watchFiber?: Fiber.Fiber<void, never>;
   stopRequested: boolean;
@@ -338,7 +339,16 @@ export const makeContainerRuntime = (
         state: "failed",
         error: failure.message,
       });
-      return Deferred.fail(resource.failure, failure).pipe(Effect.asVoid);
+      return Deferred.fail(resource.failure, failure).pipe(
+        Effect.andThen(
+          Deferred.succeed(resource.termination, {
+            ...resource.key,
+            state: "failed",
+            error: failure.message,
+          }),
+        ),
+        Effect.asVoid,
+      );
     };
 
     const attachLogs = (
@@ -786,6 +796,7 @@ export const makeContainerRuntime = (
               Effect.gen(function* () {
                 yield* guard;
                 const failure = yield* Deferred.make<never, RuntimeDriverError>();
+                const termination = yield* Deferred.make<ObservedWorkload, never>();
                 yield* guard;
                 const createdResource: ContainerRuntimeResource = {
                   key,
@@ -793,6 +804,7 @@ export const makeContainerRuntime = (
                   container: container.id,
                   state: "starting",
                   failure,
+                  termination,
                   stopRequested: false,
                 };
                 resources.set(resourceKey(key), createdResource);
@@ -911,6 +923,7 @@ export const makeContainerRuntime = (
               yield* withEngine(key, options.engine.stopContainer(found.container));
               const id = resourceKey(key);
               if (resources.get(id) === found) resources.set(id, { ...found, state: "stopped" });
+              yield* Deferred.succeed(found.termination, { ...key, state: "stopped" });
             })
         : (guard === undefined ? Effect.void : Ref.set(guard, true)).pipe(
             Effect.andThen(withEngine(key, options.engine.listResources(key.stackId))),
@@ -955,6 +968,7 @@ export const makeContainerRuntime = (
             yield* stopExitWatcher(found);
             if (found.state !== "stopped")
               yield* withEngine(key, options.engine.stopContainer(found.container));
+            yield* Deferred.succeed(found.termination, { ...key, state: "stopped" });
             yield* withEngine(key, options.engine.removeContainer(found.container));
             resources.delete(resourceKey(key));
             return;
@@ -973,6 +987,26 @@ export const makeContainerRuntime = (
           yield* withEngine(key, options.engine.removeContainer(exact.id));
         }),
       );
+
+    const awaitTermination = (
+      key: RuntimeWorkloadKey,
+    ): Effect.Effect<ObservedWorkload, RuntimeDriverError> =>
+      registration
+        .withPermit(
+          Effect.suspend(() => {
+            const resource = resources.get(resourceKey(key));
+            return resource === undefined
+              ? Effect.fail(
+                  new RuntimeDriverError({
+                    message: "Container workload is not registered",
+                    stackId: key.stackId,
+                    workloadId: key.workloadId,
+                  }),
+                )
+              : Effect.succeed(resource.termination);
+          }),
+        )
+        .pipe(Effect.flatMap(Deferred.await));
 
     const cleanup = (request: RuntimeCleanupRequest): Effect.Effect<void, RuntimeDriverError> =>
       registration.withPermit(
@@ -1015,6 +1049,10 @@ export const makeContainerRuntime = (
           for (const resource of resources.values())
             if (resource.key.stackId === request.stackId) {
               resource.stopRequested = true;
+              yield* Deferred.succeed(resource.termination, {
+                ...resource.key,
+                state: "stopped",
+              });
               yield* stopLogs(resource);
               yield* stopExitWatcher(resource);
             }
@@ -1041,6 +1079,7 @@ export const makeContainerRuntime = (
     return {
       observe,
       start,
+      awaitTermination,
       stop,
       remove,
       cleanup,

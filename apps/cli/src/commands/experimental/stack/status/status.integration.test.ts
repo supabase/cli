@@ -168,6 +168,7 @@ const runStatus = (options: {
                 }),
           prepare: () => Effect.die("unused"),
           start: () => Effect.die("unused"),
+          serveFunctions: () => Effect.die("unused"),
           stop: Effect.die("unused"),
           destroy: Effect.die("unused"),
           logs: () => Effect.die("unused"),

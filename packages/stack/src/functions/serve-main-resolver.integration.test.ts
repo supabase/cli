@@ -264,6 +264,33 @@ describe("Edge Runtime request-time function resolver", () => {
       });
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
+  it.live("accepts only the explicitly authorized external import map", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const nodeFileSystem = makeNodeFileSystem(fs);
+      const path = yield* Path.Path;
+      const parent = yield* fs.makeTempDirectoryScoped({
+        prefix: "stack-functions-resolver-external-import-map-",
+      });
+      const root = path.join(parent, "functions");
+      const hello = path.join(root, "hello");
+      const externalImportMap = path.join(parent, "deno.json");
+      yield* fs.makeDirectory(hello, { recursive: true });
+      yield* fs.writeFileString(path.join(hello, "index.ts"), "export default 1");
+      yield* fs.writeFileString(externalImportMap, "{}");
+      const options = {
+        root,
+        slug: "hello",
+        overrides: { hello: { import_map: externalImportMap } },
+        fs: nodeFileSystem,
+      };
+
+      expect(yield* resolveFunctionConfig(options)).toBeUndefined();
+      expect(
+        yield* resolveFunctionConfig({ ...options, allowedImportMapPath: externalImportMap }),
+      ).toMatchObject({ importMapPath: externalImportMap });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
   it.live("accepts a symlinked functions root while enforcing canonical descendants", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

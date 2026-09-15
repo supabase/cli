@@ -303,10 +303,26 @@ const rememberSecrets = (
   Ref.update(knownSecrets, (known) => {
     const next = new Set(known);
     for (const entry of Object.values(secrets)) {
-      if (entry.value.length > 0) next.add(entry.value);
+      if (entry.value.length === 0) continue;
+      next.add(entry.value);
+      if (/\r|\n/u.test(entry.value)) next.add(JSON.stringify(entry.value).slice(1, -1));
     }
     return next;
   });
+
+const containerEnvironment = (
+  values: Readonly<Record<string, string>>,
+): Readonly<Record<string, string>> => {
+  const multiline: Record<string, string> = {};
+  const singleLine: Record<string, string> = {};
+  for (const [name, value] of Object.entries(values)) {
+    if (/\r|\n/u.test(value)) multiline[name] = value;
+    else singleLine[name] = value;
+  }
+  return Object.keys(multiline).length === 0
+    ? singleLine
+    : { ...singleLine, SUPABASE_INTERNAL_MULTILINE_ENV: JSON.stringify(multiline) };
+};
 
 const readinessFor = (
   state: PersistedStackState,
@@ -334,14 +350,14 @@ const readinessFor = (
   );
 };
 
-declare const SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE: string | undefined;
+declare const SUPABASE_STACK_FUNCTIONS_SERVE_MAIN_TEMPLATE: string | undefined;
 
 // Release builds inject the already-bundled Edge Runtime entrypoint. The
 // source-only fallback keeps local development/tests convenient while keeping
 // esbuild out of the shipped supervisor's runtime dependency graph.
 const bootstrapContent =
-  typeof SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE === "string"
-    ? Effect.succeed(SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE)
+  typeof SUPABASE_STACK_FUNCTIONS_SERVE_MAIN_TEMPLATE === "string"
+    ? Effect.succeed(SUPABASE_STACK_FUNCTIONS_SERVE_MAIN_TEMPLATE)
     : Effect.tryPromise({
         try: () => import("../functions/serve-main-bundler.ts"),
         catch: (cause) => preparationError("Unable to bundle functions bootstrap", cause),
@@ -481,6 +497,18 @@ export const makeProductionRuntime = (
         stackId: options.stackId,
       }));
     const knownSecrets = yield* Ref.make<ReadonlySet<string>>(new Set(stateSecrets(state)));
+    const lifecycleInput = yield* Ref.make<LifecycleInput | undefined>(undefined);
+    const withLifecycleInput: SupervisorRuntime["withLifecycleInput"] = (input, effect) =>
+      Ref.get(lifecycleInput).pipe(
+        Effect.flatMap((previous) =>
+          rememberSecrets(knownSecrets, input.state.secrets).pipe(
+            Effect.andThen(rememberSecrets(knownSecrets, input.secrets)),
+            Effect.andThen(Ref.set(lifecycleInput, input)),
+            Effect.andThen(effect),
+            Effect.ensuring(Ref.set(lifecycleInput, previous)),
+          ),
+        ),
+      );
     const logStoreInitialization = yield* Effect.result(
       options.logStore === undefined
         ? makeLogStore({ path: paths.logs, knownSecrets: stateSecrets(state) })
@@ -557,7 +585,24 @@ export const makeProductionRuntime = (
     // concurrently after their inputs are ready.
     const runtimeInputGate = yield* Semaphore.make(1);
     const freshState = (key: Pick<RuntimeWorkloadKey, "stackId" | "workloadId">) =>
-      currentStateReader(options).pipe(
+      Ref.get(lifecycleInput).pipe(
+        Effect.flatMap((input) =>
+          currentStateReader(options).pipe(
+            Effect.map((persisted) => {
+              if (input === undefined) return persisted;
+              const persistedBindings = new Set(persisted.privatePorts.map(privateBindingKey));
+              const transientBindings = input.state.privatePorts.filter(
+                (assignment) => !persistedBindings.has(privateBindingKey(assignment)),
+              );
+              return {
+                ...persisted,
+                definition: input.definition,
+                secrets: input.secrets,
+                privatePorts: [...persisted.privatePorts, ...transientBindings],
+              };
+            }),
+          ),
+        ),
         Effect.mapError((error) => mapDriverError(key, error)),
         Effect.flatMap((fresh) =>
           runtimeMatches(fresh.runtime, state.runtime)
@@ -703,6 +748,7 @@ export const makeProductionRuntime = (
     ): Effect.Effect<WorkloadRuntimeInputs, StackPreparationError> =>
       runtimeInputGate.withPermit(
         Effect.gen(function* () {
+          const currentInput = yield* Ref.get(lifecycleInput);
           const material = yield* inputOwner.resolve(fresh, workload.id);
           const templates = material.auth?.templates;
           const apiListener = fresh.definition?.listeners.api;
@@ -729,8 +775,16 @@ export const makeProductionRuntime = (
                   ...(material.functions?.secrets === undefined
                     ? {}
                     : { secrets: material.functions.secrets }),
+                  ...(currentInput?.functions?.importMapSource === undefined
+                    ? {}
+                    : { importMapSource: currentInput.functions.importMapSource }),
                 }
               : undefined;
+          if (
+            workload.id === "functions:edge-runtime" &&
+            currentInput?.functions?.releaseInspectorPort !== undefined
+          )
+            yield* currentInput.functions.releaseInspectorPort;
           return {
             ...(auth === undefined ? {} : { auth }),
             ...(workload.id.startsWith("analytics:") && material.analytics !== undefined
@@ -1027,7 +1081,10 @@ export const makeProductionRuntime = (
                 const envFile = yield* envFiles
                   .write({
                     workloadId: workload.id,
-                    values: resolution.env,
+                    values:
+                      workload.id === "functions:edge-runtime"
+                        ? containerEnvironment(resolution.env)
+                        : resolution.env,
                   })
                   .pipe(Effect.mapError((error) => mapDriverError(key, error)));
                 const volume =
@@ -1092,6 +1149,7 @@ export const makeProductionRuntime = (
     );
     return {
       driver: baseDriver,
+      withLifecycleInput,
       preflight,
       prepare: prepareFor,
       prefetch,

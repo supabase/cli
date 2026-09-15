@@ -32,6 +32,7 @@ import {
   StackLifecycleConflictError,
   StackNotRunningError,
   StackRuntimeError,
+  StackPreparationError,
   StackCleanupError,
   StackStateInvalidError,
   isStackError,
@@ -49,6 +50,7 @@ import { isMissingStateRemnantError, type StackStateStore } from "../state/Stack
 import { makeSessionLauncher, type SessionLauncher } from "./SessionLauncher.ts";
 import {
   makeLifecycleController,
+  materializeLifecycleCandidate,
   type LifecycleBackend,
   type LifecycleInput,
 } from "./Lifecycle.ts";
@@ -80,6 +82,11 @@ interface SupervisorLaunchAttempt {
 /** Runtime construction is injected so catalog/artifact resolution can evolve independently. */
 export interface SupervisorRuntime {
   readonly driver: RuntimeDriver;
+  /** Runs workload resolution against this lifecycle input for the duration of an Effect. */
+  readonly withLifecycleInput: <A, E, R>(
+    input: LifecycleInput,
+    effect: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E, R>;
   readonly preflight: (input: LifecycleInput) => Effect.Effect<void, StackError>;
   /** Prepares artifacts before launching a newly selected workload closure. */
   readonly prepare: (
@@ -103,6 +110,12 @@ export interface Supervisor {
   readonly status: Effect.Effect<StackStatus, StackError>;
   readonly start: (options?: {
     readonly config?: StackConfig;
+  }) => Effect.Effect<StackStatus, StackError>;
+  readonly serveFunctions: (options?: {
+    readonly config?: StackConfig;
+    readonly sessionId?: string;
+    readonly importMapSource?: string;
+    readonly waitForTermination?: boolean;
   }) => Effect.Effect<StackStatus, StackError>;
   readonly destroy: Effect.Effect<void, StackError>;
   /** Completes after a successful stop or destroy shutdown signal. */
@@ -204,17 +217,28 @@ export const makeSupervisor = (
       CapabilityName,
       | {
           readonly _tag: "pending";
+          readonly transient: boolean;
           readonly result: Deferred.Deferred<
             Exit.Exit<ActivationResult, GatewayActivationError | StackError>,
             never
           >;
+          readonly fiber?: Fiber.Fiber<ActivationResult, GatewayActivationError | StackError>;
         }
-      | { readonly _tag: "ready"; readonly result: ActivationResult }
+      | { readonly _tag: "ready"; readonly transient: boolean; readonly result: ActivationResult }
     >();
+    type FunctionsLease = Readonly<{
+      sessionId: string;
+      generation: number;
+      termination: Deferred.Deferred<Exit.Exit<void, StackError>, never>;
+    }>;
+    let functionsLease: FunctionsLease | undefined;
     const initializeActivation = (plan: ExecutionPlan) => Ref.set(active, eagerCapabilities(plan));
     const resetForSession = (input: LifecycleInput) =>
       Effect.gen(function* () {
         activationOwned.clear();
+        if (functionsLease !== undefined)
+          yield* Deferred.succeed(functionsLease.termination, Exit.void);
+        functionsLease = undefined;
         yield* launcher.clear;
         yield* initializeActivation(input.plan);
       });
@@ -331,6 +355,152 @@ export const makeSupervisor = (
       PersistedStackState,
       GatewayActivationError | StackError
     > => ensureActivationPhaseAllowed().pipe(Effect.andThen(ensureActivationStateAllowed()));
+    const transientFunctionsInput = (
+      config: StackConfig,
+      importMapSource?: string,
+    ): Effect.Effect<LifecycleInput, GatewayActivationError | StackError> =>
+      Effect.gen(function* () {
+        const state = yield* ensureActivationStateAllowed();
+        const definition = state.definition;
+        if (definition === undefined)
+          return yield* new StackStateInvalidError({
+            stackId: options.stackId,
+            message: "Stack Functions activation requires a stack definition",
+          });
+        if (!definition.capabilities.functions.enabled)
+          return yield* new GatewayActivationError({
+            capability: "functions",
+            message: "Capability functions is not enabled in the running stack",
+          });
+        const candidate = yield* materializeLifecycleCandidate(
+          { ...state, desiredLifecycle: "unconfigured" },
+          state.runtime,
+          config,
+        ).pipe(Effect.provideContext(options.context));
+        if (!candidate.definition.capabilities.functions.enabled)
+          return yield* new GatewayActivationError({
+            capability: "functions",
+            message: "Capability functions is disabled in project configuration",
+          });
+        const functionSecrets = Object.fromEntries(
+          Object.entries(candidate.secrets).filter(([slot]) =>
+            slot.startsWith("secret:functions."),
+          ),
+        );
+        const durableSecrets = Object.fromEntries(
+          Object.entries(state.secrets).filter(([slot]) => !slot.startsWith("secret:functions.")),
+        );
+        const transientDefinition = {
+          ...definition,
+          capabilities: {
+            ...definition.capabilities,
+            functions: {
+              ...definition.capabilities.functions,
+              settings: candidate.definition.capabilities.functions.settings,
+            },
+          },
+        };
+        const canonicalImportMap =
+          importMapSource === undefined
+            ? undefined
+            : yield* Effect.gen(function* () {
+                const fs = yield* FileSystem.FileSystem;
+                const path = yield* Path.Path;
+                if (!path.isAbsolute(importMapSource))
+                  return yield* new StackPreparationError({
+                    message: "Functions import map source must be an absolute path",
+                    path: importMapSource,
+                  });
+                const canonical = yield* fs.realPath(importMapSource).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new StackPreparationError({
+                        message: "Unable to resolve Functions import map source",
+                        path: importMapSource,
+                        cause,
+                      }),
+                  ),
+                );
+                const info = yield* fs.stat(canonical).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new StackPreparationError({
+                        message: "Unable to inspect Functions import map source",
+                        path: canonical,
+                        cause,
+                      }),
+                  ),
+                );
+                if (info.type !== "File")
+                  return yield* new StackPreparationError({
+                    message: "Functions import map source must be a regular file",
+                    path: canonical,
+                  });
+                return canonical;
+              });
+        let privatePorts = state.privatePorts;
+        let releaseInspectorPort: Effect.Effect<void> | undefined;
+        const inspector = candidate.definition.capabilities.functions.settings.inspector;
+        const inspectorRequested =
+          inspector?.mode === "run" ||
+          inspector?.mode === "brk" ||
+          inspector?.mode === "wait" ||
+          inspector?.main === true ||
+          candidate.definition.listeners.functionsInspector.enabled;
+        if (
+          inspectorRequested &&
+          !privatePorts.some(
+            (entry) =>
+              entry.workloadId === "functions:edge-runtime" && entry.binding === "inspector",
+          )
+        ) {
+          const intent = candidate.definition.listeners.functionsInspector;
+          const reserve = runtime.ingress.reserveTransientPrivate;
+          if (reserve === undefined)
+            return yield* new StackPreparationError({
+              message: "Functions inspector port reservation is unavailable",
+            });
+          const held = yield* reserve(
+            "functions:edge-runtime:inspector",
+            intent.enabled ? intent.port : "automatic",
+          );
+          const port = held.port;
+          releaseInspectorPort = held.close;
+          privatePorts = [
+            ...privatePorts,
+            { workloadId: "functions:edge-runtime", binding: "inspector", port },
+          ];
+        }
+        const transientState: PersistedStackState = {
+          ...state,
+          definition: transientDefinition,
+          secrets: { ...durableSecrets, ...functionSecrets },
+          privatePorts,
+        };
+        const plan = yield* rebuildExecutionPlan(state.runtime, transientDefinition).pipe(
+          Effect.provideContext(options.context),
+          Effect.mapError(
+            (error) => new StackStateInvalidError({ message: error.message, cause: error }),
+          ),
+        );
+        return {
+          stackId: options.stackId,
+          state: transientState,
+          definition: transientDefinition,
+          secrets: transientState.secrets,
+          plan,
+          ...(canonicalImportMap === undefined && releaseInspectorPort === undefined
+            ? {}
+            : {
+                functions: {
+                  ...(canonicalImportMap === undefined
+                    ? {}
+                    : { importMapSource: canonicalImportMap }),
+                  ...(releaseInspectorPort === undefined ? {} : { releaseInspectorPort }),
+                },
+              }),
+        };
+      }).pipe(Effect.provideContext(options.context));
     const shutdownSignal = yield* Deferred.make<void, never>();
     const signalShutdown = Deferred.succeed(shutdownSignal, undefined).pipe(Effect.asVoid);
     const ensureAcceptingOperations = Deferred.poll(shutdownSignal).pipe(
@@ -397,13 +567,13 @@ export const makeSupervisor = (
         const selected = selectedOverride ?? (yield* Ref.get(active));
         const plan = activeExecutionPlan(input.plan, selected);
         const reservation = yield* runtime.ingress.acquire(input);
-        const preparedAndLaunched = yield* Effect.all(
-          [
-            runtime.prepare(input, selected),
-            launcher.launch(plan).pipe(Effect.mapError(mapRuntimeError)),
-          ],
-          { concurrency: 2 },
-        ).pipe(
+        const launch = runtime.withLifecycleInput(
+          input,
+          launcher.launch(plan).pipe(Effect.mapError(mapRuntimeError)),
+        );
+        const preparedAndLaunched = yield* Effect.all([runtime.prepare(input, selected), launch], {
+          concurrency: 2,
+        }).pipe(
           Effect.map(([, launched]) => launched),
           Effect.exit,
         );
@@ -504,23 +674,26 @@ export const makeSupervisor = (
 
     const activateOperation = (
       capability: CapabilityName,
+      inputOverride?: LifecycleInput,
     ): Effect.Effect<ActivationResult, GatewayActivationError | StackError> =>
       Effect.gen(function* () {
-        const state = yield* ensureActivationAllowed();
+        const state = inputOverride?.state ?? (yield* ensureActivationAllowed());
         const definition = state.definition;
         if (definition === undefined || !definition.capabilities[capability].enabled)
           return yield* new GatewayActivationError({
             message: `Capability ${capability} is not enabled`,
           });
-        const plan = yield* rebuildExecutionPlan(state.runtime, definition).pipe(
-          Effect.provideContext(options.context),
-          Effect.mapError(
-            (error) => new StackStateInvalidError({ message: error.message, cause: error }),
-          ),
-        );
+        const plan =
+          inputOverride?.plan ??
+          (yield* rebuildExecutionPlan(state.runtime, definition).pipe(
+            Effect.provideContext(options.context),
+            Effect.mapError(
+              (error) => new StackStateInvalidError({ message: error.message, cause: error }),
+            ),
+          ));
         const previousActive = yield* Ref.get(active);
         const next = new Set([...previousActive, ...dependencyClosure(plan, [capability])]);
-        const input: LifecycleInput = {
+        const input: LifecycleInput = inputOverride ?? {
           stackId: options.stackId,
           state,
           definition,
@@ -553,22 +726,43 @@ export const makeSupervisor = (
       | {
           readonly _tag: "deferred";
           readonly result: Deferred.Deferred<ActivationExit, never>;
+        }
+      | {
+          readonly _tag: "cancel-then-replace";
+          readonly result: Deferred.Deferred<ActivationExit, never>;
+          readonly fiber?: Fiber.Fiber<ActivationResult, GatewayActivationError | StackError>;
         };
     const activate = (
       capability: CapabilityName,
+      config?: StackConfig,
+      activationOptions?: Readonly<{
+        readonly forceReplace?: boolean;
+        readonly importMapSource?: string;
+      }>,
     ): Effect.Effect<ActivationResult, GatewayActivationError | StackError> =>
       Effect.gen(function* () {
         const token = yield* admission.withPermit(
           Effect.gen(function* () {
             yield* ensureActivationPhaseAllowed();
             const current = activationOwned.get(capability);
-            if (current?._tag === "ready" && (yield* Ref.get(phase)) === "running")
+            if (
+              config === undefined &&
+              current?._tag === "ready" &&
+              activationOptions?.forceReplace !== true &&
+              (yield* Ref.get(phase)) === "running"
+            )
               return {
                 _tag: "exit",
                 result: Exit.succeed(current.result),
               } satisfies ActivationToken;
             if (current?._tag === "pending")
-              return { _tag: "deferred", result: current.result } satisfies ActivationToken;
+              return config === undefined && activationOptions?.forceReplace !== true
+                ? ({ _tag: "deferred", result: current.result } satisfies ActivationToken)
+                : ({
+                    _tag: "cancel-then-replace",
+                    result: current.result,
+                    ...(current.fiber === undefined ? {} : { fiber: current.fiber }),
+                  } satisfies ActivationToken);
             // Validate durable lifecycle state only for a new activation. Ready
             // entries above are already fenced by the in-memory phase checks.
             yield* ensureActivationStateAllowed();
@@ -576,61 +770,242 @@ export const makeSupervisor = (
               Exit.Exit<ActivationResult, GatewayActivationError | StackError>,
               never
             >();
-            activationOwned.set(capability, { _tag: "pending", result: deferred });
-            const owner = Effect.gen(function* () {
-              const result = yield* execution
+            const restoreTransient =
+              config === undefined && current?._tag === "ready" && current.transient;
+            activationOwned.set(capability, {
+              _tag: "pending",
+              transient: config !== undefined,
+              result: deferred,
+            });
+            const operation = execution.withPermit(
+              admission
                 .withPermit(
-                  admission
-                    .withPermit(
-                      Effect.sync(() => {
-                        const current = activationOwned.get(capability);
-                        return current?._tag === "pending" && current.result === deferred;
-                      }),
-                    )
-                    .pipe(
-                      Effect.flatMap((stillAdmitted) =>
-                        stillAdmitted
-                          ? activateOperation(capability)
-                          : Effect.fail(
-                              new StackLifecycleConflictError({
-                                stackId: options.stackId,
-                                message: "Lazy activation was superseded by a lifecycle transition",
-                              }),
-                            ),
-                      ),
-                    ),
-                )
-                .pipe(Effect.exit);
-              yield* admission.withPermit(
-                Effect.sync(() => {
-                  const current = activationOwned.get(capability);
-                  if (current?._tag !== "pending" || current.result !== deferred) return;
-                  if (Exit.isSuccess(result))
-                    activationOwned.set(capability, { _tag: "ready", result: result.value });
-                  else activationOwned.delete(capability);
-                }),
-              );
-              yield* Deferred.succeed(deferred, result);
-            }).pipe(
-              Effect.ensuring(
-                admission.withPermit(
                   Effect.sync(() => {
                     const current = activationOwned.get(capability);
-                    if (current?._tag === "pending" && current.result === deferred)
-                      activationOwned.delete(capability);
+                    return current?._tag === "pending" && current.result === deferred;
                   }),
+                )
+                .pipe(
+                  Effect.flatMap((stillAdmitted) =>
+                    stillAdmitted
+                      ? Effect.gen(function* () {
+                          const input =
+                            config === undefined
+                              ? undefined
+                              : yield* transientFunctionsInput(
+                                  config,
+                                  activationOptions?.importMapSource,
+                                );
+                          return yield* Effect.gen(function* () {
+                            if (input !== undefined || restoreTransient) {
+                              const reset = yield* launcher
+                                .resetCapability(capability)
+                                .pipe(Effect.mapError(mapCleanupError), Effect.exit);
+                              if (Exit.isFailure(reset)) {
+                                yield* Ref.set(phase, "stopping");
+                                return yield* Effect.failCause(reset.cause);
+                              }
+                              yield* Ref.update(active, (current) => {
+                                const next = new Set(current);
+                                next.delete(capability);
+                                return next;
+                              });
+                            }
+                            return yield* activateOperation(capability, input);
+                          }).pipe(
+                            Effect.ensuring(input?.functions?.releaseInspectorPort ?? Effect.void),
+                          );
+                        })
+                      : Effect.fail(
+                          new StackLifecycleConflictError({
+                            stackId: options.stackId,
+                            message: "Lazy activation was superseded by a lifecycle transition",
+                          }),
+                        ),
+                  ),
                 ),
+            );
+            const owner = operation.pipe(
+              Effect.onExit((result) =>
+                admission
+                  .withPermit(
+                    Effect.sync(() => {
+                      const current = activationOwned.get(capability);
+                      if (current?._tag !== "pending" || current.result !== deferred) return;
+                      if (Exit.isSuccess(result))
+                        activationOwned.set(capability, {
+                          _tag: "ready",
+                          transient: config !== undefined,
+                          result: result.value,
+                        });
+                      else activationOwned.delete(capability);
+                    }),
+                  )
+                  .pipe(Effect.andThen(Deferred.succeed(deferred, result))),
               ),
             );
-            yield* FiberSet.run(ownedFibers, owner, { startImmediately: true });
+            const fiber = yield* FiberSet.run(ownedFibers, owner, { startImmediately: false });
+            activationOwned.set(capability, {
+              _tag: "pending",
+              transient: config !== undefined,
+              result: deferred,
+              fiber,
+            });
             return { _tag: "deferred", result: deferred } satisfies ActivationToken;
           }),
         );
         if (token._tag === "deferred")
           return yield* Deferred.await(token.result).pipe(Effect.flatMap(joinExit));
+        if (token._tag === "cancel-then-replace") {
+          if (token.fiber !== undefined) yield* Fiber.interrupt(token.fiber);
+          yield* Deferred.await(token.result).pipe(Effect.ignore);
+          const reset = yield* execution
+            .withPermit(launcher.resetCapability(capability).pipe(Effect.mapError(mapCleanupError)))
+            .pipe(Effect.exit);
+          if (Exit.isFailure(reset)) {
+            yield* Ref.set(phase, "stopping");
+            return yield* Effect.failCause(reset.cause);
+          }
+          yield* Ref.update(active, (current) => {
+            const next = new Set(current);
+            next.delete(capability);
+            return next;
+          });
+          return yield* activate(capability, config, activationOptions);
+        }
         return yield* joinExit(token.result);
       });
     yield* Deferred.succeed(activationHandler, activate);
+
+    const serveFunctions = (serveOptions?: {
+      readonly config?: StackConfig;
+      readonly sessionId?: string;
+      readonly importMapSource?: string;
+      readonly waitForTermination?: boolean;
+    }): Effect.Effect<StackStatus, StackError> =>
+      Effect.gen(function* () {
+        const sessionId = serveOptions?.sessionId ?? "legacy";
+        if (!/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/u.test(sessionId))
+          return yield* new StackLifecycleConflictError({
+            stackId: options.stackId,
+            message: "Functions serve session identity is invalid",
+          });
+        if (serveOptions?.waitForTermination === true) {
+          if (serveOptions.config !== undefined || serveOptions.importMapSource !== undefined)
+            return yield* new StackLifecycleConflictError({
+              stackId: options.stackId,
+              message: "A Functions termination wait cannot include activation input",
+            });
+          const termination = yield* admission.withPermit(
+            Effect.gen(function* () {
+              yield* ensureActivationStateAllowed();
+              if (functionsLease === undefined)
+                return yield* new StackLifecycleConflictError({
+                  stackId: options.stackId,
+                  message: "Functions serve session is no longer active",
+                });
+              if (functionsLease.sessionId !== sessionId)
+                return yield* new StackLifecycleConflictError({
+                  stackId: options.stackId,
+                  message: "Functions is owned by another serve session",
+                });
+              return functionsLease.termination;
+            }),
+          );
+          yield* Deferred.await(termination).pipe(Effect.flatMap(joinExit));
+          return yield* snapshot();
+        }
+        if (serveOptions?.config === undefined) {
+          const owned = yield* admission.withPermit(
+            Effect.gen(function* () {
+              yield* ensureActivationStateAllowed();
+              if (functionsLease === undefined) return false;
+              if (functionsLease.sessionId !== sessionId)
+                return yield* new StackLifecycleConflictError({
+                  stackId: options.stackId,
+                  message: "Functions is owned by another serve session",
+                });
+              return true;
+            }),
+          );
+          if (!owned) return yield* snapshot();
+          yield* activate("functions", undefined, { forceReplace: true });
+          yield* admission.withPermit(
+            Effect.gen(function* () {
+              if (functionsLease?.sessionId !== sessionId) return;
+              yield* Deferred.succeed(functionsLease.termination, Exit.void);
+              functionsLease = undefined;
+            }),
+          );
+          return yield* snapshot();
+        }
+        const lease = yield* admission.withPermit(
+          Effect.gen(function* () {
+            yield* ensureActivationStateAllowed();
+            if (functionsLease !== undefined && functionsLease.sessionId !== sessionId)
+              return yield* new StackLifecycleConflictError({
+                stackId: options.stackId,
+                message: "Functions is owned by another serve session",
+              });
+            const termination =
+              functionsLease === undefined || (yield* Deferred.isDone(functionsLease.termination))
+                ? yield* Deferred.make<Exit.Exit<void, StackError>, never>()
+                : functionsLease.termination;
+            const next = {
+              sessionId,
+              generation: (functionsLease?.generation ?? 0) + 1,
+              termination,
+            } satisfies FunctionsLease;
+            functionsLease = next;
+            return next;
+          }),
+        );
+        const activated = yield* activate("functions", serveOptions.config, {
+          forceReplace: true,
+          ...(serveOptions.importMapSource === undefined
+            ? {}
+            : { importMapSource: serveOptions.importMapSource }),
+        }).pipe(Effect.exit);
+        if (Exit.isFailure(activated)) {
+          yield* admission.withPermit(
+            Effect.gen(function* () {
+              if (functionsLease?.generation !== lease.generation) return;
+              yield* Deferred.succeed(lease.termination, Exit.failCause(activated.cause));
+            }),
+          );
+          return yield* Effect.failCause(activated.cause);
+        }
+        const awaitTermination = runtime.driver.awaitTermination;
+        if (awaitTermination !== undefined) {
+          const watch = awaitTermination({
+            stackId: options.stackId,
+            workloadId: "functions:edge-runtime",
+          }).pipe(
+            Effect.mapError(mapRuntimeError),
+            Effect.flatMap((observed) =>
+              observed.state === "failed"
+                ? Effect.fail(
+                    new StackRuntimeError({
+                      stackId: options.stackId,
+                      workloadId: observed.workloadId,
+                      message: observed.error ?? "Functions workload failed",
+                    }),
+                  )
+                : Effect.void,
+            ),
+            Effect.onExit((result) =>
+              admission.withPermit(
+                Effect.gen(function* () {
+                  if (functionsLease?.generation !== lease.generation) return;
+                  yield* Deferred.succeed(lease.termination, result);
+                }),
+              ),
+            ),
+          );
+          yield* FiberSet.run(ownedFibers, watch, { startImmediately: true });
+        }
+        return yield* snapshot();
+      });
 
     const startOperation = (startOptions?: { readonly config?: StackConfig }) =>
       Effect.gen(function* () {
@@ -676,6 +1051,14 @@ export const makeSupervisor = (
         yield* submitLifecycle("start", startOperation(startOptions));
         return yield* snapshot();
       });
+    const completeFunctionsLease = (result: Exit.Exit<void, StackError>) =>
+      admission.withPermit(
+        Effect.gen(function* () {
+          if (functionsLease !== undefined)
+            yield* Deferred.succeed(functionsLease.termination, result);
+          functionsLease = undefined;
+        }),
+      );
     const stopOperation = () =>
       Effect.gen(function* () {
         const previous = yield* Ref.get(phase);
@@ -693,9 +1076,11 @@ export const makeSupervisor = (
           } else {
             yield* restorePhase(previous);
           }
+          yield* completeFunctionsLease(Exit.failCause(result.cause));
           return yield* Effect.failCause(result.cause);
         }
         yield* Ref.set(phase, "stopped");
+        yield* completeFunctionsLease(Exit.void);
       });
     const signalShutdownIfIdle = (): Effect.Effect<void> =>
       Effect.gen(function* () {
@@ -736,9 +1121,11 @@ export const makeSupervisor = (
       );
       if (Exit.isFailure(result)) {
         yield* restorePhase(previous);
+        yield* completeFunctionsLease(Exit.failCause(result.cause));
         return yield* Effect.failCause(result.cause);
       }
       yield* Ref.set(phase, "stopped");
+      yield* completeFunctionsLease(Exit.void);
       return result.value;
     });
     const destroy = submitLifecycle("destroy", destroyOperation).pipe(Effect.asVoid);
@@ -903,12 +1290,14 @@ export const makeSupervisor = (
       status: () => operation(status),
       credentials: () => credentials,
       start: ({ config }: { readonly config?: StackConfig }) => operation(start({ config })),
+      serveFunctions: (payload) => operation(serveFunctions(payload)),
       destroy: () => operation(destroy),
       logs: (query: LogQuery) => operation(logs(query)),
     });
     return {
       status,
       start,
+      serveFunctions,
       destroy,
       shutdown: Deferred.await(shutdownSignal),
       shutdownIfIdle,

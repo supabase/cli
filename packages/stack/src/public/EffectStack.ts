@@ -86,6 +86,7 @@ import {
   type StackCredentialsError,
   type PrepareStackError,
   type StackStartError,
+  type ServeFunctionsError,
   type StackStopError,
   type StackLogsError,
   type DestroyStackError,
@@ -97,6 +98,7 @@ import {
   STACK_STATUS_ERROR_TAGS,
   STACK_CREDENTIALS_ERROR_TAGS,
   STACK_START_ERROR_TAGS,
+  SERVE_FUNCTIONS_ERROR_TAGS,
   STACK_STOP_ERROR_TAGS,
   STACK_LOGS_ERROR_TAGS,
   DESTROY_STACK_ERROR_TAGS,
@@ -133,6 +135,16 @@ import {
 
 export interface StartStackOptions {
   readonly config?: StackConfig;
+}
+/** Invocation-only configuration for activating Functions on a running stack. */
+export interface ServeFunctionsOptions {
+  readonly config?: StackConfig;
+  /** Opaque caller-owned lease. Different sessions cannot replace one another. */
+  readonly sessionId?: string;
+  /** Invocation-authorized import map resolved from the caller's working directory. */
+  readonly importMapSource?: string;
+  /** Waits for this session's Functions workload to stop or fail. */
+  readonly waitForTermination?: boolean;
 }
 export interface PrepareStackOptions {
   readonly config?: StackConfig;
@@ -192,6 +204,10 @@ export interface EffectStack {
     options?: PrepareStackOptions,
   ) => Effect.Effect<PrepareStackResult, PrepareStackError>;
   readonly start: (options?: StartStackOptions) => Effect.Effect<StackStatus, StackStartError>;
+  /** Replaces Functions transiently with config, or restores the durable activation when omitted. */
+  readonly serveFunctions: (
+    options?: ServeFunctionsOptions,
+  ) => Effect.Effect<StackStatus, ServeFunctionsError>;
   readonly stop: Effect.Effect<void, StackStopError>;
   readonly destroy: Effect.Effect<void, DestroyStackError>;
   readonly logs: (query?: LogQuery) => Effect.Effect<StackLogBatch, StackLogsError>;
@@ -307,6 +323,12 @@ const credentialsError = (error: ControlError): StackCredentialsError =>
   );
 const startError = (error: ControlError): StackStartError =>
   narrowError(error, STACK_START_ERROR_TAGS, (message) => new StackStateInvalidError({ message }));
+const serveFunctionsError = (error: ControlError): ServeFunctionsError =>
+  narrowError(
+    error,
+    SERVE_FUNCTIONS_ERROR_TAGS,
+    (message) => new StackStateInvalidError({ message }),
+  );
 const stopError = (error: ControlError): StackStopError =>
   narrowError(
     error,
@@ -611,6 +633,42 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
         ),
       );
     };
+    const serveFunctions = (serveOptions?: ServeFunctionsOptions) =>
+      invoke(
+        (rpc) =>
+          rpc.serveFunctions({
+            ...(serveOptions?.config === undefined ? {} : { config: serveOptions.config }),
+            ...(serveOptions?.sessionId === undefined ? {} : { sessionId: serveOptions.sessionId }),
+            ...(serveOptions?.importMapSource === undefined
+              ? {}
+              : { importMapSource: serveOptions.importMapSource }),
+            ...(serveOptions?.waitForTermination === true ? { waitForTermination: true } : {}),
+          }),
+        serveFunctionsError,
+      ).pipe(
+        Effect.catchTag("StackOwnershipConflictError", (ownershipError) =>
+          options.readOfflineState.pipe(
+            Effect.mapError(serveFunctionsError),
+            Effect.flatMap((state): Effect.Effect<StackStatus, ServeFunctionsError> =>
+              Option.isNone(state)
+                ? Effect.fail(stackNotFound())
+                : isStoppedState(state.value)
+                  ? serveOptions?.sessionId !== undefined &&
+                    serveOptions.config === undefined &&
+                    serveOptions.importMapSource === undefined
+                    ? statusFor(id, state.value, [], new Set<CapabilityName>(), "stopped")
+                    : Effect.fail(
+                        new StackNotRunningError({
+                          stackId: id,
+                          message: "Stack must be running before serving Functions",
+                        }),
+                      )
+                  : Effect.fail(ownershipError),
+            ),
+            Effect.catchTag("StackOwnershipConflictError", () => Effect.fail(ownershipError)),
+          ),
+        ),
+      );
     const logsStateError = (error: StackError): StackLogsError =>
       isNarrowError(error, STACK_LOGS_ERROR_TAGS)
         ? error
@@ -696,6 +754,7 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
       credentials,
       prepare,
       start,
+      serveFunctions,
       stop,
       destroy,
       logs,

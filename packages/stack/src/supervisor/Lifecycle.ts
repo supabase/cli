@@ -29,6 +29,11 @@ export interface LifecycleInput {
   readonly definition: StackDefinition;
   readonly secrets: PersistedSecretValues;
   readonly plan: ExecutionPlan;
+  /** Invocation-only Functions material; never written to durable state. */
+  readonly functions?: Readonly<{
+    readonly importMapSource?: string;
+    readonly releaseInspectorPort?: Effect.Effect<void>;
+  }>;
 }
 
 export interface LifecycleBackend {
@@ -68,7 +73,7 @@ export interface LifecycleControllerOptions {
   readonly backend: LifecycleBackend;
 }
 
-interface Candidate {
+export interface LifecycleCandidate {
   readonly definition: StackDefinition;
   readonly secrets: PersistedSecretValues;
   readonly plan: ExecutionPlan;
@@ -115,11 +120,11 @@ const sameSecrets = (left: PersistedSecretValues, right: PersistedSecretValues):
   });
 };
 
-const materializeCandidate = (
+export const materializeLifecycleCandidate = (
   state: PersistedStackState,
   runtime: StackRuntime,
   config: StackConfig | undefined,
-): Effect.Effect<Candidate, StackError, LifecycleRequirements> =>
+): Effect.Effect<LifecycleCandidate, StackError, LifecycleRequirements> =>
   Effect.gen(function* () {
     if (config === undefined && state.definition !== undefined) {
       const plan = yield* rebuildExecutionPlan(runtime, state.definition);
@@ -157,7 +162,7 @@ const materializeCandidate = (
 const lifecycleInput = (
   stackId: StackId,
   state: PersistedStackState,
-  candidate: Candidate,
+  candidate: LifecycleCandidate,
 ): LifecycleInput => ({
   stackId,
   state,
@@ -168,7 +173,7 @@ const lifecycleInput = (
 
 const stateWithCandidate = (
   state: PersistedStackState,
-  candidate: Candidate,
+  candidate: LifecycleCandidate,
   desiredLifecycle: PersistedStackState["desiredLifecycle"],
 ): PersistedStackState => ({
   ...state,
@@ -230,9 +235,11 @@ export const makeLifecycleController = (
 
         const freshSession =
           initial.desiredLifecycle === "running" && startOptions?.freshSession === true;
-        const materialized = yield* materializeCandidate(initial, initial.runtime, supplied).pipe(
-          Effect.exit,
-        );
+        const materialized = yield* materializeLifecycleCandidate(
+          initial,
+          initial.runtime,
+          supplied,
+        ).pipe(Effect.exit);
         if (Exit.isFailure(materialized)) {
           if (freshSession) return yield* persistStoppedAfterFailure(materialized.cause, false);
           return yield* Effect.failCause(materialized.cause);

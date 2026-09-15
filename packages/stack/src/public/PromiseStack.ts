@@ -15,6 +15,7 @@ import {
   type StackDiscoveryResult,
   type StackDiscoveryIssue,
   type PrepareStackOptions,
+  type ServeFunctionsOptions,
   type StartStackOptions,
 } from "./EffectStack.ts";
 import type { StackConfig } from "./Config.ts";
@@ -41,6 +42,10 @@ export type PromiseStackConfig = Unredacted<StackConfig>;
 export type PromiseStartStackOptions = Omit<StartStackOptions, "config"> & {
   readonly config?: PromiseStackConfig;
 };
+/** Plain-value invocation options for serving Functions on a running stack. */
+export type PromiseServeFunctionsOptions = Omit<ServeFunctionsOptions, "config"> & {
+  readonly config?: PromiseStackConfig;
+};
 
 export interface PromiseInspectStackOptions {
   readonly config?: PromiseStackConfig;
@@ -55,6 +60,8 @@ export interface PromiseStack {
   readonly credentials: () => Promise<PromiseStackCredentials>;
   readonly prepare: (options?: PromisePrepareStackOptions) => Promise<PrepareStackResult>;
   readonly start: (options?: PromiseStartStackOptions) => Promise<StackStatus>;
+  /** Replaces Functions transiently with config, or restores the durable activation when omitted. */
+  readonly serveFunctions: (options?: PromiseServeFunctionsOptions) => Promise<StackStatus>;
   readonly stop: () => Promise<void>;
   readonly destroy: () => Promise<void>;
   readonly logs: (query?: LogQuery) => Promise<StackLogBatch>;
@@ -154,6 +161,21 @@ export const adaptEffectStack = (effectStack: EffectStack): PromiseStack => {
             : effectStack.start(config === undefined ? {} : { config }),
         ),
       ),
+    serveFunctions: (options) =>
+      invoke(
+        withConfig(options, (config) =>
+          options === undefined
+            ? effectStack.serveFunctions()
+            : effectStack.serveFunctions({
+                ...(config === undefined ? {} : { config }),
+                ...(options.sessionId === undefined ? {} : { sessionId: options.sessionId }),
+                ...(options.importMapSource === undefined
+                  ? {}
+                  : { importMapSource: options.importMapSource }),
+                ...(options.waitForTermination === true ? { waitForTermination: true } : {}),
+              }),
+        ),
+      ),
     stop: () => invoke(effectStack.stop),
     destroy: () => invoke(effectStack.destroy),
     logs: (query) => invoke(effectStack.logs(query)),
@@ -206,6 +228,7 @@ export type {
   FindStackOptions,
   ListStacksOptions,
   PreparedCapability,
+  ServeFunctionsOptions,
   StackDiscoveryIssue,
   StackDiscoveryResult,
 };

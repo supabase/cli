@@ -235,6 +235,7 @@ EncryptionUnexpectedStatusError
 ExperimentalFeatureFlagError
 ExperimentalRequiredError
 ExperimentalStackDestroyError
+ExperimentalStackFunctionsServeError
 ExperimentalStackListError
 ExperimentalStackLogsError
 ExperimentalStackPrepareError
