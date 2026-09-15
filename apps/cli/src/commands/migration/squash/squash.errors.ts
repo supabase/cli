@@ -21,11 +21,7 @@ export class MigrationSquashMissingVersionError extends Data.TaggedError(
   }
 }
 
-/**
- * One of squash's three `pg_dump` runs exited non-zero. Container dumps keep
- * `"error running container: exit " + code`; native PATH dumps use
- * `"error running pg_dump: exit " + code`.
- */
+/** A squash `pg_dump` run exited non-zero. Message text comes from `pgDumpClientExitMessage`. */
 export class MigrationSquashDumpError extends Data.TaggedError("MigrationSquashDumpError")<{
   readonly message: string;
   readonly suggestion?: string;

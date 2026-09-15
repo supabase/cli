@@ -380,5 +380,6 @@ export const SCHEMA_INIT_ERROR_TAGS = [
   "StackRuntimeError",
   "StackMustBeStoppedError",
   "StackStateInvalidError",
+  "StackStateFormatUnsupportedError",
 ] as const satisfies ReadonlyArray<StackErrorTag>;
 export type SchemaInitError = ErrorByTag<(typeof SCHEMA_INIT_ERROR_TAGS)[number]>;

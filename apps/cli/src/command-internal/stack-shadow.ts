@@ -62,7 +62,7 @@ import { StackCatalogSetup } from "./stack-catalog-setup.ts";
 import { resolveSetupWebhooksEnabled, type SetupDatabaseOptions } from "./db-bootstrap/db-setup.ts";
 import type { VaultSecret } from "./vault.ts";
 
-/** Optional factory so CLI tests can `Layer.succeed` a fake cluster. */
+/** Injectable ephemeral-cluster factory for tests. */
 export class StackEphemeralPostgres extends Context.Service<
   StackEphemeralPostgres,
   {

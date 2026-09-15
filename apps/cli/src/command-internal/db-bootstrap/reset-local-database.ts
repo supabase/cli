@@ -101,8 +101,7 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
   const yes = yield* resolveYesWithProjectEnv(projectEnv);
   const experimental = yield* resolveExperimentalWithProjectEnv(projectEnv);
 
-  // Validate config before checking whether the database is running, so a malformed config
-  // aborts before the local database is recreated — the same pattern `db start`/`db push` use.
+  // Abort on a bad config before wiping the local database.
   yield* checkDbToml(fs, path, workdir);
 
   if (backend.kind === "stack") {
@@ -253,8 +252,7 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const runtimeInfo = yield* RuntimeInfo;
   const networkIdFlag = yield* NetworkIdFlag;
-  // Threaded into `buildLocalDbContainerInputs`'s `setup.debug`, so a failed fresh-volume
-  // Realtime/Storage/Auth migrate job on the PG15 recreate path tees its own stderr.
+  // PG15 fresh-volume migrate jobs tee stderr when `--debug` is set.
   const debug = yield* DebugFlag;
 
   // Error if the local db container is down.

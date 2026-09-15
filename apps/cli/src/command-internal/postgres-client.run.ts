@@ -105,10 +105,7 @@ export const requireHostPostgresClient = (
     if (major !== expectedMajor) return yield* majorMismatch(command, major, expectedMajor);
   });
 
-/**
- * `pg_prove --version` has no Postgres major. Require `pg_prove` on PATH and a
- * matching `pg_dump` or `psql` major.
- */
+/** `pg_prove --version` has no major; require it on PATH plus a matching `pg_dump` or `psql`. */
 export const requireHostPgProve = (
   expectedMajor: number,
 ): Effect.Effect<void, HostPostgresClientError, ChildProcessSpawner> =>

@@ -94,10 +94,6 @@ export const streamPgDumpWithClient = Effect.fnUntraced(function* <E>(params: {
   readonly onStdout: (chunk: Uint8Array) => Effect.Effect<void, E>;
   readonly projectEnvValues?: Readonly<Record<string, string>>;
   readonly client: PgDumpClient;
-  /**
-   * Stack dumps to published credentials, including `--db-url` when `isLocal`.
-   * Ignores compose `SUPABASE_NETWORK_ID`; an explicit `--network-id` still wins.
-   */
   readonly forceHostNetwork?: boolean;
 }) {
   if (params.client.kind === "host") {
