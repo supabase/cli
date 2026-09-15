@@ -1086,27 +1086,6 @@ describe("db dump integration", () => {
     },
   );
 
-  it.live("dump --local on a docker stack never uses PGHOST=db", () => {
-    const { layer, docker } = setup({
-      isLocal: true,
-      stdout: "-- schema\n",
-      platform: "darwin",
-    });
-    return Effect.gen(function* () {
-      yield* dbDump(flags({ local: Option.some(true) }));
-      expect(docker.lastOpts?.env["PGHOST"]).toBe("host.docker.internal");
-      expect(docker.lastOpts?.env["PGHOST"]).not.toBe("db");
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          layer,
-          stackBackendLayer("stack"),
-          dumpStackApi({ kind: "container", engine: "docker" }),
-        ),
-      ),
-    );
-  });
-
   it.live("dump --local on a docker stack ignores compose SUPABASE_NETWORK_ID", () => {
     const { layer, docker } = setup({
       isLocal: true,

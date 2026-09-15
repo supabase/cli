@@ -47,7 +47,7 @@ const withStackDatabaseSession = <A, E, R>(
     }),
   );
 
-/** Webhooks-only setup for an existing cluster (Compose existing-volume path). */
+/** Webhooks-only setup for an existing cluster. */
 export const applyStackWebhooksOnly = (
   stack: EffectStack,
   webhooksEnabled: boolean,
@@ -157,14 +157,12 @@ export const stackOpenProjectBy = <E>(
     return Option.some(stack);
   });
 
-const openProjectStack = stackOpenProjectBy((cause) => notRunning(cause.message)).pipe(
+/** Ready project stack, or none when the stack is missing or the database is not ready. */
+export const stackOpenReadyProject = stackOpenProjectBy((cause) => notRunning(cause.message)).pipe(
   Effect.flatMap((opened) =>
     Option.isNone(opened) ? Effect.succeed(Option.none()) : databaseReady(opened.value),
   ),
 );
-
-/** Ready project stack, or none when the stack is missing or the database is not ready. */
-export const stackOpenReadyProject = openProjectStack;
 
 export const stackProjectRuntime: Effect.Effect<StackRuntime | undefined, never, CommandSettings> =
   Effect.gen(function* () {
@@ -265,7 +263,7 @@ export const stackRejectNativeDockerDiffEngine = (
 
 const stackLocalDatabaseUrl: Effect.Effect<string, LocalDbRunningError, CommandSettings> =
   Effect.gen(function* () {
-    const opened = yield* openProjectStack;
+    const opened = yield* stackOpenReadyProject;
     if (Option.isNone(opened)) return yield* notRunning();
     const credentials = yield* opened.value.stack.credentials.pipe(
       Effect.mapError((cause) => notRunning(cause.message)),
@@ -286,7 +284,7 @@ export const stackLocalDatabaseConn: Effect.Effect<
   return conn;
 });
 
-/** Postgres-only `db start`: first create does schema init, overlay, migrate-and-seed; existing clusters get webhooks only. */
+/** Postgres-only `db start` / resume path. */
 export const stackEnsurePostgresOnlyStarted = Effect.gen(function* () {
   const api = yield* Effect.serviceOption(StackApi);
   if (Option.isNone(api)) return yield* startFailed({ message: "stack API is unavailable" });

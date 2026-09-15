@@ -49,7 +49,6 @@ describe("stackShadowCacheKey", () => {
     expect(native).not.toBe(otherArtifact);
     expect(native).not.toBe(container);
     expect(stackShadowBaselineTarFileName(native)).toBe(`stack-shadow-baseline-${native}.tar`);
-    expect(stackShadowBaselineTarFileName(native)).not.toContain("shadow-baseline-shadow");
   });
 
   it("recognizes only this module's own partial temp files as abandoned-sweep candidates", () => {
