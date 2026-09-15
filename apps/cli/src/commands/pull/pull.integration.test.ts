@@ -767,7 +767,6 @@ describe("pull integration", () => {
 
         expect(capturingStdio!.stdout).toHaveLength(1);
         const payload = yield* Schema.decodeEffect(jsonEnvelope)(capturingStdio!.stdout[0]!);
-        // Exact object: pins the step key set as well as each status.
         expect(payload["steps"]).toEqual({
           config: expect.objectContaining({ status: "changed" }),
           migration_history: expect.objectContaining({ status: "changed" }),
@@ -1672,9 +1671,6 @@ describe("pull integration", () => {
           const exit = yield* Effect.exit(runPull(pullFlags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            // Asks the error types directly: the db step's own failure must not reach the
-            // re-failed cause at all, which a rendered-text check could miss. Every reason
-            // must be a typed failure, so nothing can hide in a defect.
             expect(exit.cause.reasons.every(Cause.isFailReason)).toBe(true);
             const failures = exit.cause.reasons
               .filter(Cause.isFailReason)

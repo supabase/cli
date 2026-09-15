@@ -10,7 +10,6 @@ type LiveCliEffect = LiveFixtures["cliEffect"];
 /** Typed live failures; `message` is a field so vitest can serialize the error. */
 class SecretsLiveError extends Data.TaggedError("SecretsLiveError")<{
   readonly message: string;
-  readonly cause?: unknown;
 }> {}
 
 /** Exact-name cleanup; unsetting an already-removed secret is tolerated. */

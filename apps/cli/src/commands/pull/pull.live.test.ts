@@ -1,7 +1,13 @@
-import { Effect, Schema } from "effect";
+import { Data, Effect, Schema } from "effect";
 import { expect } from "vitest";
 
 import { requireLiveSuccess, test } from "../../../tests/helpers/live.ts";
+
+/** Typed live failures; `message` is a field so vitest can serialize the error. */
+class PullLiveError extends Data.TaggedError("PullLiveError")<{
+  readonly message: string;
+  readonly cause?: unknown;
+}> {}
 
 // Golden path only: the real four-step orchestration reaching a live Management API and its
 // project's data plane in one pass, against a fresh `supabase init` checkout. Branch coverage for
@@ -21,7 +27,14 @@ test("pulls config, migration history, db schema, and functions from a fresh pro
         "json",
         "--yes",
       ]);
-      requireLiveSuccess(result, "pull");
+      yield* Effect.try({
+        try: () => requireLiveSuccess(result, "pull"),
+        catch: (error) =>
+          new PullLiveError({
+            message: error instanceof Error ? error.message : String(error),
+            cause: error,
+          }),
+      });
 
       const payload = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
         result.stdout,
