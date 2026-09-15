@@ -20,6 +20,7 @@ import {
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import {
   DebugFlag,
+  DnsResolverFlag,
   ExperimentalFlag,
   ProfileFlag,
   WorkdirFlag,
@@ -55,6 +56,9 @@ function setup() {
       Layer.succeed(ProfileFlag, "supabase"),
       Layer.succeed(WorkdirFlag, Option.none()),
       Layer.succeed(YesFlag, false),
+      // `stack start`'s bucket-seeding path pulls in `HttpClient`, whose DNS-over-HTTPS layer
+      // reads this even though this suite never runs `start`.
+      Layer.succeed(DnsResolverFlag, "native"),
       mockTty({ stdinIsTty: false, stdoutIsTty: false }),
       mockStdin(false),
       mockRuntimeInfo({ cwd: root, homeDir: root }),

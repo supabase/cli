@@ -9,7 +9,7 @@
  * invocation only, emitted by its own handler after calling this function.
  */
 
-import { Data, Duration, Effect, FileSystem, Option, Path, Redacted, Schedule } from "effect";
+import { Data, Duration, Effect, FileSystem, Option, Path, Schedule } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { detectGitBranch } from "../../shared/git/git-branch.ts";
@@ -30,7 +30,6 @@ import { aqua, yellow } from "../colors.ts";
 import { CommandSettings } from "../../config/command-settings.service.ts";
 import { checkDbToml, loadProjectEnv, readDbToml } from "../db-config.toml-read.ts";
 import { DbConnection } from "../db-connection.service.ts";
-import { loadLocalProjectContext } from "../local-project-context.ts";
 import { migrateAndSeed } from "../migrate-and-seed.ts";
 import { seedBucketsRun } from "../seed-buckets.ts";
 import { awaitStorageReady } from "./await-storage-ready.ts";
@@ -40,6 +39,7 @@ import { isLocalDbRunning } from "./local-db-running.ts";
 import { recreateLocalDatabase } from "./recreate-local-database.ts";
 import { currentStackBackend } from "../stack-backend.ts";
 import { stackLocalDatabaseConn, stackOpenReadyProject } from "../stack-local-database.ts";
+import { stackStorageEndpointFor } from "../stack-storage.ts";
 import { loadStackConfig } from "../stack-config.ts";
 import { StackCatalogSetup } from "../stack-catalog-setup.ts";
 
@@ -188,7 +188,8 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
             ),
           )
         : after;
-    if (storageState(after) === "starting" && readyStatus === undefined) {
+    const timedOutStarting = storageState(after) === "starting" && readyStatus === undefined;
+    if (timedOutStarting) {
       yield* output.raw(
         `${yellow("WARNING:")} timed out waiting for storage to become ready; skipped seeding storage buckets.\n`,
         "stderr",
@@ -200,53 +201,45 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
     // CLI here — the runtime never creates buckets. `dormant`/`starting` still accept
     // requests through the gateway's lazy activation, so seeding proceeds on either state.
     const seedableState = storageState(status);
-    if (seedableState === "ready" || seedableState === "dormant" || seedableState === "starting") {
-      const context = yield* loadLocalProjectContext(workdir, (message) => resetFailed(message));
-      const credentials = yield* opened.value.stack.credentials.pipe(
+    const seedable =
+      seedableState === "ready" || seedableState === "dormant" || seedableState === "starting";
+    // A `starting` stall past the poll deadline was already reported above and skips seeding.
+    if (!timedOutStarting && seedable) {
+      // `resolveStorageCredentials` now short-circuits to the stack under the stack backend,
+      // so seeding resolves credentials from this already-opened handle directly instead of
+      // synthesizing a legacy `config.api`/`auth.service_role_key` override.
+      const credentialsOption = yield* stackStorageEndpointFor(opened.value.stack).pipe(
+        Effect.map(Option.some),
+        Effect.catchTag("StackStorageCapabilityError", (error) =>
+          output
+            .raw(
+              `${yellow("WARNING:")} skipped seeding storage buckets: ${error.message}\n`,
+              "stderr",
+            )
+            .pipe(Effect.as(Option.none())),
+        ),
         Effect.mapError((cause) =>
-          resetFailed(`failed to read stack credentials after reset: ${cause.message}`),
+          resetFailed(`failed to resolve storage credentials after reset: ${cause.message}`),
         ),
       );
-      const apiEndpoint = status.endpoints.api;
-      const storageEndpoint = credentials.storage?.endpoint.replace(/\/s3\/?$/, "");
-      const gatewayUrl = apiEndpoint?.url ?? storageEndpoint;
-      const apiPort = apiEndpoint?.port;
-      const serviceRoleJwt =
-        credentials.api === undefined ? undefined : Redacted.value(credentials.api.serviceRoleJwt);
-      yield* seedBucketsRun({
-        projectRef: "",
-        emitSummary: false,
-        interactive: false,
-        yes,
-        resolvedConfig: {
-          config: {
-            ...context.config,
-            api: {
-              ...context.config.api,
-              ...(apiPort === undefined ? {} : { port: apiPort }),
-              ...(gatewayUrl === undefined ? {} : { external_url: gatewayUrl }),
-            },
-            ...(serviceRoleJwt === undefined
-              ? {}
-              : {
-                  auth: {
-                    ...context.config.auth,
-                    service_role_key: serviceRoleJwt,
-                  },
-                }),
-          },
-          document: context.loaded?.document,
-        },
-        projectEnvValues: projectEnv,
-      }).pipe(
-        Effect.catchTag("SeedConfigLoadError", (error) =>
-          output.raw(
-            `${yellow("WARNING:")} skipped seeding storage buckets: ${error.message}\n`,
-            "stderr",
+      if (Option.isSome(credentialsOption)) {
+        yield* seedBucketsRun({
+          projectRef: "",
+          emitSummary: false,
+          interactive: false,
+          yes,
+          credentials: credentialsOption.value,
+          workdir,
+        }).pipe(
+          Effect.catchTag("SeedConfigLoadError", (error) =>
+            output.raw(
+              `${yellow("WARNING:")} skipped seeding storage buckets: ${error.message}\n`,
+              "stderr",
+            ),
           ),
-        ),
-      );
-    } else {
+        );
+      }
+    } else if (!timedOutStarting) {
       yield* output.raw(
         `${yellow("WARNING:")} skipped seeding storage buckets: Storage is ${seedableState ?? "unavailable"} for this stack.\n`,
         "stderr",

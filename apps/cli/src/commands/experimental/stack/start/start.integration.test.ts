@@ -20,7 +20,8 @@ import type {
   StackStartError as ApiStackStartError,
   StackStatus,
 } from "@supabase/stack/effect";
-import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import { mockOutput, mockTty } from "../../../../../tests/helpers/mocks.ts";
 import {
   mockCommandSettings,
   mockTelemetryStateTracked,
@@ -41,8 +42,14 @@ import { stackStartCommand } from "./start.command.ts";
 import { textCliOutputFormatter } from "../../../../shared/output/text-formatter.ts";
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
-import { ExperimentalFlag, OutputFlag } from "../../../../command-internal/global-flags.ts";
+import {
+  ExperimentalFlag,
+  OutputFlag,
+  YesFlag,
+} from "../../../../command-internal/global-flags.ts";
 import { DbConnection } from "../../../../command-internal/db-connection.service.ts";
+import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
+import { CommandPlatformApiFactory } from "../../../../auth/command-platform-api-factory.service.ts";
 import {
   actionability,
   ErrorActionabilityId,
@@ -81,7 +88,14 @@ const status = (id: string, runtime: "native" | "container" = "native") =>
     lifecycle: "running",
     desiredLifecycle: "running",
     runtime: runtime === "native" ? { kind: "native" } : { kind: "container", engine: "docker" },
-    endpoints: {},
+    endpoints: {
+      api: {
+        protocol: "http" as const,
+        address: "127.0.0.1",
+        port: 55420,
+        url: "http://127.0.0.1:55420",
+      },
+    },
     versions: {},
     capabilities: (
       [
@@ -109,21 +123,38 @@ function fakeStack(
   start: (config?: { readonly config?: unknown }) => Effect.Effect<StackStatus, ApiStackStartError>,
   desiredLifecycle: "unconfigured" | "stopped" | "running" = "unconfigured",
 ) {
+  // Mirrors a real stack: `.status` reflects the pre-start lifecycle (read by `firstCreate`)
+  // until `start` succeeds, then reflects `start`'s own return value (read by the bucket-seeding
+  // gate that follows it).
+  let currentStatus: StackStatus = {
+    ...status(id),
+    lifecycle: desiredLifecycle === "unconfigured" ? "unconfigured" : desiredLifecycle,
+    desiredLifecycle,
+  };
   return {
     id: StackIdSchema.make(id),
-    status: Effect.succeed({
-      ...status(id),
-      lifecycle: desiredLifecycle === "unconfigured" ? "unconfigured" : desiredLifecycle,
-      desiredLifecycle,
-    }),
+    status: Effect.suspend(() => Effect.succeed(currentStatus)),
     credentials: Effect.succeed({
       database: {
         url: Redacted.make("postgresql://postgres:secret@127.0.0.1:54329/postgres"),
         password: Redacted.make("secret"),
       },
+      api: {
+        publishableKey: "anon",
+        secretKey: Redacted.make("service"),
+        anonJwt: "anon",
+        serviceRoleJwt: Redacted.make("service"),
+      },
     }),
     prepare: () => Effect.die("prepare not used in start test"),
-    start,
+    start: (config?: { readonly config?: unknown }) =>
+      start(config).pipe(
+        Effect.tap((result) =>
+          Effect.sync(() => {
+            currentStatus = result;
+          }),
+        ),
+      ),
     stop: Effect.void,
     destroy: Effect.die("destroy not used in start test"),
     resetDatabase: Effect.die("resetDatabase not used in start test"),
@@ -191,6 +222,16 @@ function handlerLayer(opts: {
       noopStackCatalogSetupLayer,
       Layer.succeed(ExperimentalFlag, false),
       Layer.succeed(CliArgs, { args: ["stack", "start"] }),
+      // The bucket-seeding path statically requires these even on the default fixture's
+      // no-buckets `config.toml`, where the short-circuit never reaches them at runtime.
+      Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make(() => Effect.die("unused")),
+      ),
+      Layer.succeed(CommandPlatformApiFactory, { make: Effect.die("unused") }),
+      stdinLayer.pipe(Layer.provide(mockTty({ stdinIsTty: false, stdoutIsTty: false }))),
+      mockTty({ stdinIsTty: false, stdoutIsTty: false }),
+      Layer.succeed(YesFlag, false),
       Layer.succeed(DbConnection, {
         connect: () =>
           Effect.succeed({
@@ -904,6 +945,14 @@ enabled = false
             queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
           }),
       }),
+      Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make(() => Effect.die("unused")),
+      ),
+      Layer.succeed(CommandPlatformApiFactory, { make: Effect.die("unused") }),
+      stdinLayer.pipe(Layer.provide(mockTty({ stdinIsTty: false, stdoutIsTty: false }))),
+      mockTty({ stdinIsTty: false, stdoutIsTty: false }),
+      Layer.succeed(YesFlag, false),
     );
     return Effect.gen(function* () {
       const failure = yield* stackStart(

@@ -16,18 +16,25 @@ import {
   type StackStatus,
   type StackConfig,
 } from "@supabase/stack/effect";
-import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockTty } from "../../../../../tests/helpers/mocks.ts";
 import {
   mockCommandSettings,
   mockTelemetryStateTracked,
 } from "../../../../../tests/helpers/command-mocks.ts";
+import * as HttpClient from "effect/unstable/http/HttpClient";
 import { StackApi, StackTargetResolver } from "../stack.shared.ts";
 import { stackRestart } from "./restart.handler.ts";
 import { stackStart } from "../start/start.handler.ts";
 import { stackStop } from "../stop/stop.handler.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
-import { ExperimentalFlag, OutputFlag } from "../../../../command-internal/global-flags.ts";
+import {
+  ExperimentalFlag,
+  OutputFlag,
+  YesFlag,
+} from "../../../../command-internal/global-flags.ts";
 import { DbConnection } from "../../../../command-internal/db-connection.service.ts";
+import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
+import { CommandPlatformApiFactory } from "../../../../auth/command-platform-api-factory.service.ts";
 import { noopStackCatalogSetupLayer } from "../../../../command-internal/stack-catalog-setup.ts";
 
 const id = StackIdSchema.make("a".repeat(64));
@@ -375,7 +382,9 @@ describe("stack restart", () => {
         runtime: { kind: "native" as const },
         endpoints: {},
         versions: {},
-        capabilities: [],
+        capabilities: [
+          { name: "storage" as const, activation: "lazy" as const, state: "disabled" as const },
+        ],
         artifacts: [],
       });
       const stack: EffectStack = {
@@ -416,6 +425,16 @@ describe("stack restart", () => {
         output.layer,
         telemetry.layer,
         mockCommandSettings({ workdir: root }),
+        // `stackStart`'s bucket-seeding path statically requires these even though this
+        // fixture's storage capability is disabled and never reaches them at runtime.
+        Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make(() => Effect.die("unused")),
+        ),
+        Layer.succeed(CommandPlatformApiFactory, { make: Effect.die("unused") }),
+        stdinLayer.pipe(Layer.provide(mockTty({ stdinIsTty: false, stdoutIsTty: false }))),
+        mockTty({ stdinIsTty: false, stdoutIsTty: false }),
+        Layer.succeed(YesFlag, false),
         Layer.succeed(StackTargetResolver, {
           resolve: ({ id: targetId }) =>
             Effect.succeed({

@@ -17,6 +17,9 @@ import {
   applyStackMigrateAndSeed,
   applyStackWebhooksOnly,
 } from "../../../../command-internal/stack-local-database.ts";
+import { stackStorageEndpointFor } from "../../../../command-internal/stack-storage.ts";
+import { seedBucketsRun } from "../../../../command-internal/seed-buckets.ts";
+import { yellow } from "../../../../command-internal/colors.ts";
 import {
   StackApi,
   StackTargetError,
@@ -147,6 +150,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     // composition boundary and launches the detached owner through the compiled
     // dispatch sentinel. The CLI adapter resolves the target and config; it does
     // not recreate package lifecycle or runtime ownership here.
+    const created = target.id === undefined;
     const stack =
       target.id !== undefined
         ? yield* stackApi.openStack(target.id).pipe(Effect.mapError(stackStartError))
@@ -186,6 +190,15 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
             suggestion: "The stack is running. Recover with db reset.",
             cause: error,
           });
+    // Bucket seeding failures never stop or destroy the stack; report them as a distinct
+    // reason so telemetry doesn't fold them into the runtime-lifecycle "unknown" bucket.
+    const seedFailed = (error: { readonly message: string }) =>
+      new StackCommandStartError({
+        reason: "seed",
+        message: error.message,
+        suggestion: "The stack is running. Recover with supabase seed buckets or db reset.",
+        cause: error,
+      });
     if (firstCreate) {
       const catalog = yield* Effect.serviceOption(StackCatalogSetup);
       if (Option.isNone(catalog))
@@ -223,6 +236,34 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         Effect.tapError((error) => starting.fail(error.message)),
         Effect.mapError(setupFailed),
       );
+    }
+    if (created) {
+      const storageState = status.capabilities.find(
+        (capability) => capability.name === "storage",
+      )?.state;
+      if (storageState === "disabled") {
+        // Skip silently: the stack was started with Storage excluded.
+      } else if (storageState === "failed" || storageState === "stopped") {
+        yield* output.raw(
+          `${yellow("WARNING:")} skipped seeding storage buckets: Storage is ${storageState} for this stack.\n`,
+          "stderr",
+        );
+      } else {
+        yield* stackStorageEndpointFor(stack).pipe(
+          Effect.flatMap((credentials) =>
+            seedBucketsRun({
+              projectRef: "",
+              emitSummary: false,
+              interactive: false,
+              yes: true,
+              credentials,
+              workdir: target.projectRoot,
+            }),
+          ),
+          Effect.tapError((error) => starting.fail(error.message)),
+          Effect.mapError(seedFailed),
+        );
+      }
     }
     yield* starting.succeed("Stack is ready.");
     if (output.format === "text") {

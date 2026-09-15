@@ -263,7 +263,7 @@ export const stackRejectNativeDockerDiffEngine = (
     return yield* new StackNativeEngineError({ message: stackNativeEngineAdvice(flag) });
   });
 
-export const stackLocalDatabaseUrl: Effect.Effect<string, LocalDbRunningError, CommandSettings> =
+const stackLocalDatabaseUrl: Effect.Effect<string, LocalDbRunningError, CommandSettings> =
   Effect.gen(function* () {
     const opened = yield* openProjectStack;
     if (Option.isNone(opened)) return yield* notRunning();
@@ -291,69 +291,67 @@ export const stackLocalDatabaseConn: Effect.Effect<
  * schema init, overlay, and migrate-and-seed. An existing cluster gets webhooks setup only.
  */
 export const stackEnsurePostgresOnlyStarted = Effect.gen(function* () {
-    const api = yield* Effect.serviceOption(StackApi);
-    if (Option.isNone(api)) return yield* startFailed({ message: "stack API is unavailable" });
-    const cliSettings = yield* CommandSettings;
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const config = yield* loadStackConfig(cliSettings.workdir).pipe(Effect.mapError(startFailed));
-    const toml = yield* readDbToml(fs, path, cliSettings.workdir).pipe(
-      Effect.mapError(startFailed),
-    );
-    const experimental = yield* resolveExperimentalWithProjectEnv({ ...toml.projectEnv });
-    const applyCatalog = (stack: EffectStack) =>
-      Effect.gen(function* () {
-        const catalog = yield* Effect.serviceOption(StackCatalogSetup);
-        if (Option.isNone(catalog))
-          return yield* startFailedAfterEngine({ message: "stack catalog setup is unavailable" });
-        yield* catalog.value
-          .apply({
-            target: {
-              kind: "live",
-              stack,
-              projectRoot: cliSettings.workdir,
-              config,
-            },
-            overlay: {
-              webhooks: "config",
-              webhooksEnabled: toml.webhooksEnabled,
-              apiAutoExposeNewTables: toml.baseline.apiAutoExposeNewTables,
-              vault: toml.vault,
-              workdir: cliSettings.workdir,
-            },
-          })
-          .pipe(Effect.mapError(startFailedAfterEngine));
-      });
-    const existing = yield* api.value
-      .findStack({ projectRoot: cliSettings.workdir })
+  const api = yield* Effect.serviceOption(StackApi);
+  if (Option.isNone(api)) return yield* startFailed({ message: "stack API is unavailable" });
+  const cliSettings = yield* CommandSettings;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const config = yield* loadStackConfig(cliSettings.workdir).pipe(Effect.mapError(startFailed));
+  const toml = yield* readDbToml(fs, path, cliSettings.workdir).pipe(Effect.mapError(startFailed));
+  const experimental = yield* resolveExperimentalWithProjectEnv({ ...toml.projectEnv });
+  const applyCatalog = (stack: EffectStack) =>
+    Effect.gen(function* () {
+      const catalog = yield* Effect.serviceOption(StackCatalogSetup);
+      if (Option.isNone(catalog))
+        return yield* startFailedAfterEngine({ message: "stack catalog setup is unavailable" });
+      yield* catalog.value
+        .apply({
+          target: {
+            kind: "live",
+            stack,
+            projectRoot: cliSettings.workdir,
+            config,
+          },
+          overlay: {
+            webhooks: "config",
+            webhooksEnabled: toml.webhooksEnabled,
+            apiAutoExposeNewTables: toml.baseline.apiAutoExposeNewTables,
+            vault: toml.vault,
+            workdir: cliSettings.workdir,
+          },
+        })
+        .pipe(Effect.mapError(startFailedAfterEngine));
+    });
+  const existing = yield* api.value
+    .findStack({ projectRoot: cliSettings.workdir })
+    .pipe(Effect.mapError(startFailed));
+  if (Option.isNone(existing) || existing.value.desiredLifecycle === "unconfigured") {
+    const stack = Option.isNone(existing)
+      ? yield* api.value
+          .createStack({ projectRoot: cliSettings.workdir })
+          .pipe(Effect.mapError(startFailed))
+      : yield* api.value.openStack(existing.value.id).pipe(Effect.mapError(startFailed));
+    yield* stack
+      .start({ config: postgresOnlyStackStartConfig(config) })
       .pipe(Effect.mapError(startFailed));
-    if (Option.isNone(existing) || existing.value.desiredLifecycle === "unconfigured") {
-      const stack = Option.isNone(existing)
-        ? yield* api.value
-            .createStack({ projectRoot: cliSettings.workdir })
-            .pipe(Effect.mapError(startFailed))
-        : yield* api.value.openStack(existing.value.id).pipe(Effect.mapError(startFailed));
-      yield* stack
-        .start({ config: postgresOnlyStackStartConfig(config) })
-        .pipe(Effect.mapError(startFailed));
-      yield* applyCatalog(stack);
-      yield* applyStackMigrateAndSeed(stack, cliSettings.workdir, toml, experimental).pipe(
-        Effect.mapError(startFailedAfterEngine),
-      );
-      return "started";
-    }
-    const stack = yield* api.value.openStack(existing.value.id).pipe(Effect.mapError(startFailed));
-    const status = yield* stack.status.pipe(Effect.mapError(startFailed));
-    const database = status.capabilities.find((capability) => capability.name === "database");
-    if (status.lifecycle === "running" && database?.state === "ready") {
-      yield* applyStackWebhooksOnly(stack, toml.webhooksEnabled).pipe(
-        Effect.mapError(startFailedAfterEngine),
-      );
-      return "already-running";
-    }
-    yield* stack.start().pipe(Effect.mapError(startFailed));
-    yield* applyStackWebhooksOnly(stack, toml.webhooksEnabled).pipe(
+    yield* applyCatalog(stack);
+    yield* applyStackMigrateAndSeed(stack, cliSettings.workdir, toml, experimental).pipe(
       Effect.mapError(startFailedAfterEngine),
     );
     return "started";
-  });
+  }
+  const stack = yield* api.value.openStack(existing.value.id).pipe(Effect.mapError(startFailed));
+  const status = yield* stack.status.pipe(Effect.mapError(startFailed));
+  const database = status.capabilities.find((capability) => capability.name === "database");
+  if (status.lifecycle === "running" && database?.state === "ready") {
+    yield* applyStackWebhooksOnly(stack, toml.webhooksEnabled).pipe(
+      Effect.mapError(startFailedAfterEngine),
+    );
+    return "already-running";
+  }
+  yield* stack.start().pipe(Effect.mapError(startFailed));
+  yield* applyStackWebhooksOnly(stack, toml.webhooksEnabled).pipe(
+    Effect.mapError(startFailedAfterEngine),
+  );
+  return "started";
+});
