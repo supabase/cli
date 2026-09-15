@@ -23,8 +23,8 @@
     "knip:check": "knip-bun",
     "knip:fix": "knip-bun --fix",
     "check:config-api": "bun tools/config-api-compare.ts",
-    "repos:install": "git submodule update --init --recursive",
-    "repos:pull": "git submodule update --remote",
+    "repos:install": "git submodule sync && git submodule update --init",
+    "repos:pull": "git submodule sync && git submodule update --init --remote",
     "local-registry": "bun tools/release/local-registry.ts",
     "cli-release": "bun tools/release/local-release.ts"
   },
