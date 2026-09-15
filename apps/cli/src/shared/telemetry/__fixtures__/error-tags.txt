@@ -4,6 +4,7 @@ BackupListNetworkError
 BackupListUnexpectedStatusError
 BackupRestoreNetworkError
 BackupRestoreUnexpectedStatusError
+BootstrapDotEnvParseError
 BootstrapHealthError
 BootstrapInvalidTemplateError
 BootstrapOverwriteDeclinedError
