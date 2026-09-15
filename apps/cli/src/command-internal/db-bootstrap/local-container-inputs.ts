@@ -9,6 +9,7 @@
  */
 
 import { Effect, FileSystem, Option, Path } from "effect";
+import { HttpClient } from "effect/unstable/http";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 import type { GlobalFlag } from "effect/unstable/cli";
 
@@ -91,9 +92,14 @@ export const buildLocalDbContainerInputs = (
 ): Effect.Effect<
   LocalDbContainerInputs,
   DbConfigLoadError,
-  FileSystem.FileSystem | Path.Path | GlobalFlag.Setting.Identifier<"experimental"> | CliArgs
+  | FileSystem.FileSystem
+  | Path.Path
+  | GlobalFlag.Setting.Identifier<"experimental">
+  | CliArgs
+  | HttpClient.HttpClient
 > =>
   Effect.gen(function* () {
+    const httpClient = yield* HttpClient.HttpClient;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const mapError = (message: string) => new DbConfigLoadError({ message });
@@ -202,11 +208,16 @@ export const buildLocalDbContainerInputs = (
       dbUrl: values.dbUrl,
       jwtSecret: values.jwtSecret,
       // Lazy: only evaluated when `runFreshDbSetup` reaches realtime setup and it's enabled.
-      jwks: Effect.tryPromise({
-        try: () =>
-          resolveLocalJwks(config, workdir, values.jwtSecret, projectEnvValues, remoteOverrideKeys),
-        catch: (cause) => mapError(cause instanceof Error ? cause.message : String(cause)),
-      }),
+      jwks: resolveLocalJwks(
+        config,
+        workdir,
+        values.jwtSecret,
+        projectEnvValues,
+        remoteOverrideKeys,
+      ).pipe(
+        Effect.provideService(HttpClient.HttpClient, httpClient),
+        Effect.mapError((cause) => mapError(cause.message)),
+      ),
       apiUrl: values.apiUrl,
       authExternalUrl: resolveAuthExternalUrl(
         loaded?.document,
