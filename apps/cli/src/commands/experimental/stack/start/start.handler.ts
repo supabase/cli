@@ -17,7 +17,10 @@ import {
   applyStackMigrateAndSeed,
   applyStackWebhooksOnly,
 } from "../../../../command-internal/stack-local-database.ts";
-import { stackStorageEndpointFor } from "../../../../command-internal/stack-storage.ts";
+import {
+  classifyStorageCapability,
+  stackStorageEndpointFor,
+} from "../../../../command-internal/stack-storage.ts";
 import { seedBucketsRun } from "../../../../command-internal/seed-buckets.ts";
 import { yellow } from "../../../../command-internal/colors.ts";
 import {
@@ -150,7 +153,6 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     // composition boundary and launches the detached owner through the compiled
     // dispatch sentinel. The CLI adapter resolves the target and config; it does
     // not recreate package lifecycle or runtime ownership here.
-    const created = target.id === undefined;
     const stack =
       target.id !== undefined
         ? yield* stackApi.openStack(target.id).pipe(Effect.mapError(stackStartError))
@@ -237,19 +239,12 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         Effect.mapError(setupFailed),
       );
     }
-    if (created) {
-      const storageState = status.capabilities.find(
-        (capability) => capability.name === "storage",
-      )?.state;
-      if (storageState === "disabled") {
+    if (firstCreate) {
+      const capability = status.capabilities.find((entry) => entry.name === "storage");
+      if (classifyStorageCapability(capability) === "disabled") {
         // Skip silently: the stack was started with Storage excluded.
-      } else if (storageState === "failed" || storageState === "stopped") {
-        yield* output.raw(
-          `${yellow("WARNING:")} skipped seeding storage buckets: Storage is ${storageState} for this stack.\n`,
-          "stderr",
-        );
       } else {
-        yield* stackStorageEndpointFor(stack).pipe(
+        yield* stackStorageEndpointFor(stack, status).pipe(
           Effect.flatMap((credentials) =>
             seedBucketsRun({
               projectRef: "",
@@ -259,6 +254,14 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
               credentials,
               workdir: target.projectRoot,
             }),
+          ),
+          // Missing capability and gateway-activation failures never abort a successful
+          // start; report and continue, same as an underlying seed-config failure below.
+          Effect.catchTag("StackStorageCapabilityError", (error) =>
+            output.raw(
+              `${yellow("WARNING:")} skipped seeding storage buckets: ${error.message}\n`,
+              "stderr",
+            ),
           ),
           Effect.tapError((error) => starting.fail(error.message)),
           Effect.mapError(seedFailed),

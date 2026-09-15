@@ -114,7 +114,7 @@ export const connectStorageGateway = <E, R>(
       });
       return yield* body(gateway);
     });
-    return yield* withStackStorageGuidance(gatewayOps).pipe(
+    return yield* withStackStorageGuidance({ local: opts.projectRef === "" }, gatewayOps).pipe(
       Effect.provideService(FetchHttpClient.Fetch, storageGatewayFetch(credentials.localKongCa)),
     );
   });

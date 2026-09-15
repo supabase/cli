@@ -217,15 +217,20 @@ configured`, or a 404 on `ListVectorBuckets`), a WARNING is printed and object
   is skipped on this path, even when there is nothing configured to seed.
 - **Stack backend — capability policy.** Storage `disabled` (e.g. `stack start -x
 storage`) errors with `StackStorageCapabilityError` ("Storage is disabled for this
-  stack.") with guidance to start with Storage enabled; `failed`/`stopped` raises the
-  same error class with the capability error appended and guidance to run
-  `supabase start`. `dormant`/`starting`/`ready` all proceed — the gateway activates a
-  lazily-configured Storage on the first request and holds that request; there is no
-  client-side polling. A stack that is not registered, not running, missing its API
-  endpoint or credentials, or whose stack API is unavailable errors with
-  `StackStorageUnavailableError` and guidance to run `supabase start`. A stack-gateway
-  502/503 during Storage activation is reported as `StackStorageCapabilityError` with
-  guidance instead of a raw status body. No HTTP request is sent when Storage is
+  stack.") with guidance to set `[storage] enabled = true` or start without `-x
+storage`, then run `supabase stack restart`; `failed`/`stopped` raises the same error
+  class ("Storage failed to start for this stack"/"Storage is stopped for this
+  stack."), with the capability error appended when present, and guidance to run
+  `supabase stack restart`. `dormant`/`starting`/`ready` all proceed — the gateway
+  activates a lazily-configured Storage on the first request and holds that request;
+  there is no client-side polling. A stack that is not registered, not running, missing
+  its API endpoint or credentials, or whose stack API is unavailable errors with
+  `StackStorageUnavailableError` and guidance to run `supabase stack status` or
+  `supabase stack restart` (or `supabase start` when the stack was never configured). A
+  stack-gateway 502/503 during Storage activation is reported as
+  `StackStorageCapabilityError` with guidance to run `supabase stack logs` then
+  `supabase stack restart`, instead of a raw status body — for a `--local` target only;
+  a `--linked` failure passes through unchanged. No HTTP request is sent when Storage is
   disabled or the stack is not running.
 - **Secrets.** The stack's service-role JWT is never printed or logged; error messages
   contain only lifecycle/capability state text.

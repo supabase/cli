@@ -969,6 +969,9 @@ describe("db reset", () => {
         expect(out.stderrText).toContain(
           "WARNING: skipped seeding storage buckets: Storage is disabled for this stack.",
         );
+        expect(out.stderrText).toContain(
+          "Run supabase seed buckets --local once Storage is available.",
+        );
         expect(client.requests).toHaveLength(0);
       });
     });
@@ -989,14 +992,44 @@ describe("db reset", () => {
         expect(out.stderrText).toContain(
           "WARNING: skipped seeding storage buckets: Storage is stopped for this stack.",
         );
+        expect(out.stderrText).toContain(
+          "Run supabase seed buckets --local once Storage is available.",
+        );
         expect(client.requests).toHaveLength(0);
       });
     });
 
     it.live(
-      "fails the reset when storage is seedable but the stack has no API gateway endpoint",
+      "seeds immediately when storage is starting, without waiting for it to become ready",
       () => {
+        const client = recordingStackStorageHttpClient();
         const { layer } = setup(tmp.current, {
+          toml: BUCKET_TOML,
+          args: ["db", "reset", "--local"],
+          isLocal: true,
+          yes: true,
+          stackBackend: true,
+          stackStorageState: "starting",
+          stackApiEndpoint: { url: "http://127.0.0.1:55425", port: 55425 },
+          stackServiceRoleJwt: "starting-stack-jwt",
+          httpClient: client.layer,
+        });
+        return Effect.gen(function* () {
+          yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+          expect(client.requests.some((r) => r.url.includes("127.0.0.1:55425/storage/v1"))).toBe(
+            true,
+          );
+          expect(client.requests.some((r) => r.authorization.includes("starting-stack-jwt"))).toBe(
+            true,
+          );
+        });
+      },
+    );
+
+    it.live(
+      "warns and completes the reset when storage is seedable but the stack has no API gateway endpoint",
+      () => {
+        const { layer, out } = setup(tmp.current, {
           toml: BUCKET_TOML,
           args: ["db", "reset", "--local"],
           isLocal: true,
@@ -1006,12 +1039,13 @@ describe("db reset", () => {
         });
         return Effect.gen(function* () {
           const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
-          expect(Exit.isFailure(exit)).toBe(true);
-          if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain(
-              "The stack exposes no API gateway endpoint",
-            );
-          }
+          expect(Exit.isSuccess(exit)).toBe(true);
+          expect(out.stderrText).toContain(
+            "WARNING: skipped seeding storage buckets: The stack exposes no API gateway endpoint.",
+          );
+          expect(out.stderrText).toContain(
+            "Run supabase seed buckets --local once Storage is available.",
+          );
         });
       },
     );

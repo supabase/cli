@@ -29,11 +29,9 @@ export const stackRuntimeLayer = Layer.mergeAll(
   telemetryStateLayer,
 );
 
-// `stack start`'s bucket-seeding path shares the seed-buckets core with `db reset`/`seed
-// buckets`, whose `resolveStorageCredentials` statically requires `HttpClient` and the (lazy)
-// Management-API factory for its linked branch even though the stack backend never hits it.
-// Scoped to `start` alone so sibling stack subcommands don't pick up its `--dns-resolver`
-// requirement.
+// Same static `HttpClient`/Management-API-factory requirement as `dbResetRuntimeLayer` in
+// `commands/db/reset/reset.layers.ts`; scoped to `start` so sibling stack subcommands don't
+// pick up its `--dns-resolver` requirement.
 const startCliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
 const startHttpClient = httpClientLayer.pipe(Layer.provide(debugLoggerLayer));
 const startCredentials = commandCredentialsLayer.pipe(

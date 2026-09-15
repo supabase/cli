@@ -50,6 +50,7 @@ import {
   YesFlag,
 } from "../../../../command-internal/global-flags.ts";
 import { DbConnection } from "../../../../command-internal/db-connection.service.ts";
+import { stackBackendLayer } from "../../../../command-internal/stack-backend.ts";
 import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
 import { CommandPlatformApiFactory } from "../../../../auth/command-platform-api-factory.service.ts";
 import {
@@ -138,6 +139,12 @@ const statusWithStorageState = (id: string, storageState: CapabilityState): Stac
   ),
 });
 
+/** `status()` with the `storage` capability entry removed entirely. */
+const statusWithoutStorageCapability = (id: string): StackStatus => ({
+  ...status(id),
+  capabilities: status(id).capabilities.filter((capability) => capability.name !== "storage"),
+});
+
 /** Records every request the seed-buckets gateway client issues, responding 200 to all. */
 function recordingStackStorageHttpClient(opts: { readonly bucketCreateStatus?: number } = {}) {
   const requests: Array<{
@@ -166,6 +173,32 @@ function recordingStackStorageHttpClient(opts: { readonly bucketCreateStatus?: n
         HttpClientResponse.fromWeb(
           request,
           new Response(body, { status: 200, headers: { "content-type": "application/json" } }),
+        ),
+      );
+    }),
+  );
+  return { layer, requests };
+}
+
+/** Records every request the seed-buckets gateway client issues, responding 503 to every GET. */
+function recordingStackStorageHttpClientGet503() {
+  const requests: Array<{ readonly method: string; readonly url: string }> = [];
+  const layer = Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) => {
+      requests.push({ method: request.method, url: request.url });
+      if (request.method === "GET") {
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(request, new Response("unavailable", { status: 503 })),
+        );
+      }
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(JSON.stringify({ name: "bucket" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
         ),
       );
     }),
@@ -275,6 +308,8 @@ function handlerLayer(opts: {
       mockCommandSettings({ workdir: opts.root }),
       targetLayer,
       apiLayer,
+      // Root provides the stack backend for every `stack` command; seeding guidance reads it.
+      stackBackendLayer("stack"),
       BunServices.layer,
       noopStackCatalogSetupLayer,
       Layer.succeed(ExperimentalFlag, false),
@@ -1117,7 +1152,7 @@ describe("stack start bucket seeding", () => {
     return Effect.gen(function* () {
       yield* stackStart(flags());
       expect(setup.out.stderrText).toContain(
-        "WARNING: skipped seeding storage buckets: Storage is failed for this stack.",
+        "WARNING: skipped seeding storage buckets: Storage failed to start for this stack.",
       );
       expect(client.requests).toHaveLength(0);
     }).pipe(
@@ -1149,6 +1184,113 @@ describe("stack start bucket seeding", () => {
       Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
     );
   });
+
+  it.live(
+    "never seeds a plain start of an already-configured stack (no --stack-id, dormant storage)",
+    () => {
+      const root = project();
+      writeBucketsConfig(root);
+      const client = recordingStackStorageHttpClient();
+      const stack = fakeStack(
+        "6".repeat(64),
+        () => Effect.succeed(statusWithStorageState("6".repeat(64), "dormant")),
+        "running",
+      );
+      const setup = handlerLayer({
+        root,
+        target: { projectRoot: root },
+        stack,
+        httpClient: client.layer,
+      });
+      return Effect.gen(function* () {
+        yield* stackStart(flags());
+        expect(client.requests).toHaveLength(0);
+      }).pipe(
+        Effect.provide(setup.layer),
+        Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+      );
+    },
+  );
+
+  it.live(
+    "seeds an addressed stack prepared but never started, even though --stack-id names an existing id",
+    () => {
+      const root = project();
+      writeBucketsConfig(root);
+      const client = recordingStackStorageHttpClient();
+      const id = "d".repeat(64);
+      const stack = fakeStack(id, () => Effect.succeed(statusWithStorageState(id, "dormant")));
+      const setup = handlerLayer({
+        root,
+        target: { projectRoot: root, id },
+        stack,
+        httpClient: client.layer,
+      });
+      return Effect.gen(function* () {
+        yield* stackStart(flags({ stackId: Option.some(id) }));
+        expect(
+          client.requests.some(
+            (r) => r.method === "POST" && r.url === "http://127.0.0.1:55420/storage/v1/bucket",
+          ),
+        ).toBe(true);
+      }).pipe(
+        Effect.provide(setup.layer),
+        Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+      );
+    },
+  );
+
+  it.live(
+    "warns and issues no requests when the started status reports no storage capability at all",
+    () => {
+      const root = project();
+      writeBucketsConfig(root);
+      const client = recordingStackStorageHttpClient();
+      const stack = fakeStack("2".repeat(64), () =>
+        Effect.succeed(statusWithoutStorageCapability("2".repeat(64))),
+      );
+      const setup = handlerLayer({
+        root,
+        target: { projectRoot: root },
+        stack,
+        httpClient: client.layer,
+      });
+      return Effect.gen(function* () {
+        yield* stackStart(flags());
+        expect(setup.out.stderrText).toContain("WARNING: skipped seeding storage buckets");
+        expect(client.requests).toHaveLength(0);
+      }).pipe(
+        Effect.provide(setup.layer),
+        Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+      );
+    },
+  );
+
+  it.live(
+    "warns and succeeds when the storage gateway returns 503 while activating during seeding",
+    () => {
+      const root = project();
+      writeBucketsConfig(root);
+      const client = recordingStackStorageHttpClientGet503();
+      const stack = fakeStack("3".repeat(64), () =>
+        Effect.succeed(statusWithStorageState("3".repeat(64), "dormant")),
+      );
+      const setup = handlerLayer({
+        root,
+        target: { projectRoot: root },
+        stack,
+        httpClient: client.layer,
+      });
+      return Effect.gen(function* () {
+        yield* stackStart(flags());
+        expect(setup.out.stderrText).toContain("WARNING:");
+        expect(setup.out.stderrText).toContain("could not activate Storage");
+      }).pipe(
+        Effect.provide(setup.layer),
+        Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+      );
+    },
+  );
 
   it.live("fails with reason 'seed' and never stops/destroys the stack on a gateway error", () => {
     const root = project();

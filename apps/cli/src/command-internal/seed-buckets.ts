@@ -113,10 +113,9 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
    */
   readonly yes?: boolean;
   /**
-   * Skips this function's own `loadCliConfig` reload in favor of a config the caller
-   * already resolved (see `start.handler.ts`'s `effectiveLocalStorageConfig`). Only `start`
-   * passes this: it resolves config/env once up front, and a fresh reload here would
-   * silently drop any override that exists only in the shell/dotenv, not in `config.toml`.
+   * Skips this function's own `loadCliConfig` reload in favor of a config the caller already
+   * resolved through its own nested-env walk, so a fresh reload here can't drop an override
+   * that exists only in the shell/dotenv, not in `config.toml`.
    */
   readonly resolvedConfig?: {
     readonly config: CliConfig;
@@ -130,16 +129,11 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
    */
   readonly projectEnvValues?: Readonly<Record<string, string>>;
   /**
-   * Already-resolved Storage credentials, when the caller already holds them (`stack start`,
-   * which has the opened stack handle in scope). When omitted, resolved via
+   * Pre-resolved Storage credentials from an already-open stack handle, bypassing
    * {@link resolveStorageCredentials}.
    */
   readonly credentials?: StorageCredentials;
-  /**
-   * Overrides `CommandSettings.workdir` for config/env loading and `objects_path` resolution.
-   * Only `stack start` passes this: it may target a project root other than the current
-   * command's workdir.
-   */
+  /** Explicit project root for config/env loading and `objects_path` resolution. */
   readonly workdir?: string;
 }) {
   const output = yield* Output;
@@ -155,10 +149,13 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
 
   // Loads config.toml, merging `[remotes.*]` overrides for `--linked`; skipped when the
   // caller already supplied `resolvedConfig`.
+  // An explicit `opts.workdir` is the exact project root; only the caller's own workdir
+  // (`cliSettings.workdir`) may still search ancestors for `config.toml`.
+  const search = opts.workdir === undefined && shouldSearchAncestors(cliSettings);
   const loadOptions: InternalLoadCliConfigOptions =
     projectRef !== ""
-      ? { projectRef, goViperCompat: true, search: shouldSearchAncestors(cliSettings) }
-      : { goViperCompat: true, search: shouldSearchAncestors(cliSettings) };
+      ? { projectRef, goViperCompat: true, search }
+      : { goViperCompat: true, search };
   const loaded =
     opts.resolvedConfig !== undefined
       ? null
@@ -280,7 +277,7 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
     }
   });
 
-  yield* withStackStorageGuidance(gatewayOps).pipe(
+  yield* withStackStorageGuidance({ local: projectRef === "" }, gatewayOps).pipe(
     Effect.provideService(FetchHttpClient.Fetch, storageGatewayFetch(credentials.localKongCa)),
   );
 });

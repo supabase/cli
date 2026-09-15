@@ -653,6 +653,75 @@ describe("stack backend", () => {
     },
   );
 
+  it.live(
+    "leaves a --linked gateway 503 as StorageGatewayStatusError even under the stack backend",
+    () => {
+      const { layer, stackCalls } = setupStorage(tmp.current, {
+        stackBackend: true,
+        routes: [{ method: "GET", match: BUCKET, status: 503, body: { message: "unavailable" } }],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* storageLs(lsFlags({ local: false })).pipe(
+          Effect.provide(layer),
+          Effect.exit,
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        const json = JSON.stringify(exit);
+        expect(json).toContain("StorageGatewayStatusError");
+        expect(json).not.toContain("StackStorageCapabilityError");
+        expect(stackCalls.findStack).toHaveLength(0);
+      });
+    },
+  );
+
+  it.live(
+    "sanitizes a failed capability's error message, stripping ANSI escapes from the stack",
+    () => {
+      const { layer } = setupStorage(tmp.current, {
+        toml: 'project_id = "test"\n',
+        local: true,
+        stackBackend: true,
+        stackApi: { storageState: "failed", storageError: "[31mboom[0m" },
+      });
+      return Effect.gen(function* () {
+        const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        const json = JSON.stringify(exit);
+        expect(json).toContain("Storage failed to start for this stack");
+        expect(json).toContain("boom");
+        expect(json).not.toContain("[31m");
+      });
+    },
+  );
+
+  it.live("suggests supabase stack restart when Storage is disabled", () => {
+    const { layer } = setupStorage(tmp.current, {
+      toml: 'project_id = "test"\n',
+      local: true,
+      stackBackend: true,
+      stackApi: { storageState: "disabled" },
+    });
+    return Effect.gen(function* () {
+      const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain("supabase stack restart");
+    });
+  });
+
+  it.live("suggests retrying shortly while the stack lifecycle is starting", () => {
+    const { layer } = setupStorage(tmp.current, {
+      toml: 'project_id = "test"\n',
+      local: true,
+      stackBackend: true,
+      stackApi: { lifecycle: "starting" },
+    });
+    return Effect.gen(function* () {
+      const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain("retry shortly");
+    });
+  });
+
   it.live("legacy default still derives the gateway URL from [api] port", () => {
     const { layer, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n[api]\nport = 65432\n',

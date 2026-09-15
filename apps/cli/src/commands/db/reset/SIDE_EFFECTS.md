@@ -32,12 +32,12 @@ When the `experimental.stack` feature flag is on (`SUPABASE_EXPERIMENTAL_STACK=1
 precedence, same rules as [`docs/stack-commands.md`](../../../docs/stack-commands.md)), the
 local path calls `resetDatabase` on the project stack instead of the container recreate
 described above. After the reset, buckets are seeded — reusing the `seed buckets` local path —
-when Storage is `ready`, `dormant`, or `starting`. While Storage is `starting`, the command first
-waits up to 30s for it to settle (polling the stack status every 200ms) and prints `WARNING: timed
-out waiting for storage to become ready; skipped seeding storage buckets.` and skips seeding if
-it does not. When Storage is
-`disabled`, `failed`, or `stopped`, the command prints `WARNING: skipped seeding storage
-buckets: Storage is <state> for this stack.` to stderr and exits `0` rather than failing. The
+when Storage is `ready`, `dormant`, or `starting`; the gateway holds requests during lazy
+activation, so `starting` proceeds without waiting. The command never fails the reset for a
+Storage problem: an unusable capability state (`disabled`/`failed`/`stopped`), a missing
+capability/credentials, a stack-gateway activation failure, or an invalid bucket config all
+print `WARNING: skipped seeding storage buckets: <reason> Run supabase seed buckets --local once
+Storage is available.` to stderr and exit `0`. The
 Storage gateway URL is the selected stack's API gateway URL (`status.endpoints.api.url`), not
 `[api].port`/`[api.tls]`, and the credential is the stack's service-role JWT — never `[api]`/
 `SUPABASE_API_*`/`SUPABASE_AUTH_{JWT_SECRET,SERVICE_ROLE_KEY}`. Bucket SQL/schema preparation is
@@ -224,13 +224,14 @@ path has no confirmation prompt.
 
 ## Notes
 
-- **Stack backend bucket seeding.** Only Storage's post-reset capability state gates
-  bucket seeding on this path: `ready`/`dormant` seed immediately (the gateway
-  itself lazily activates a dormant Storage on first request and holds that request);
-  `starting` waits up to 30s for the capability to settle first. `disabled`/`failed`/`stopped`
-  skip seeding with a stderr `WARNING: skipped seeding storage buckets: Storage is
-<state> for this stack.` and the command still exits `0`. The stack's service-role
-  JWT is never printed or logged.
+- **Stack backend bucket seeding.** Storage's post-reset capability state gates bucket
+  seeding on this path: `ready`/`dormant`/`starting` seed immediately (the gateway itself
+  lazily activates a dormant Storage on first request and holds that request, so
+  `starting` never waits). Any other Storage problem — an unusable capability state,
+  missing capability/credentials, a stack-gateway activation failure, or an invalid
+  bucket config — skips seeding with a stderr `WARNING: skipped seeding storage buckets:
+<reason> Run supabase seed buckets --local once Storage is available.` and the command
+  still exits `0`. The stack's service-role JWT is never printed or logged.
 - **Target/local split** follows whether the resolved config points at the local
   stack, not the flag name: a `--db-url` pointing at the local stack is treated
   as a local reset.

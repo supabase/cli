@@ -382,9 +382,7 @@ describe("stack restart", () => {
         runtime: { kind: "native" as const },
         endpoints: {},
         versions: {},
-        capabilities: [
-          { name: "storage" as const, activation: "lazy" as const, state: "disabled" as const },
-        ],
+        capabilities: [],
         artifacts: [],
       });
       const stack: EffectStack = {
@@ -426,7 +424,7 @@ describe("stack restart", () => {
         telemetry.layer,
         mockCommandSettings({ workdir: root }),
         // `stackStart`'s bucket-seeding path statically requires these even though this
-        // fixture's storage capability is disabled and never reaches them at runtime.
+        // fixture always resumes an existing stack, so seeding never runs.
         Layer.succeed(
           HttpClient.HttpClient,
           HttpClient.make(() => Effect.die("unused")),

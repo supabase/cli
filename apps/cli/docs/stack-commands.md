@@ -243,34 +243,46 @@ service-role JWT is never printed or logged.
 
 Storage's capability state gates these operations:
 
-| Storage capability state                   | Effect                                                                                                                                 |
-| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `disabled` (e.g. `stack start -x storage`) | Fails with `StackStorageCapabilityError` ("Storage is disabled for this stack."), guiding the user to start with Storage enabled.      |
-| `failed` / `stopped`                       | Fails with the same `StackStorageCapabilityError`, with the underlying capability error appended and guidance to run `supabase start`. |
-| `dormant` / `starting` / `ready`           | Proceeds immediately; no client-side wait.                                                                                             |
+| Storage capability state                   | Effect                                                                                                                                                                          |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `disabled` (e.g. `stack start -x storage`) | Fails with `StackStorageCapabilityError` ("Storage is disabled for this stack."), guiding the user to enable Storage and run `supabase stack restart`.                          |
+| `failed` / `stopped`                       | Fails with the same `StackStorageCapabilityError` ("Storage failed to start for this stack"/"Storage is stopped for this stack"), guiding the user to `supabase stack restart`. |
+| `dormant` / `starting` / `ready`           | Proceeds immediately; no client-side wait, everywhere `starting` is checked.                                                                                                    |
 
 A stack that is not registered, not running, missing its API endpoint or credentials, or whose
 stack API is unavailable fails instead with `StackStorageUnavailableError`, guiding the user to
-run `supabase start`. A stack-gateway 502/503 encountered while Storage activates is reported as
-`StackStorageCapabilityError` with guidance, not as a raw status body. All of these failures exit
-`1`, and no HTTP request is sent when Storage is disabled or the stack is not running.
+run `supabase stack status`/`supabase stack restart`, or `supabase start` when the stack has never
+been configured. A stack-gateway 502/503 encountered while Storage activates is reported as
+`StackStorageCapabilityError` guiding the user to `supabase stack logs` then `supabase stack
+restart`, not as a raw status body — but only for a `--local` target; a `--linked` failure passes
+through unchanged. All of these failures exit `1` for `storage`/`seed buckets`, and no HTTP
+request is sent when Storage is disabled or the stack is not running.
 
 **Lazy activation.** A `dormant` or `starting` Storage capability is not yet listening; the stack
 gateway activates a lazily-configured Storage on the first request that reaches it and holds that
-request until it is ready, rather than the CLI polling capability state itself.
+request until it is ready, rather than the CLI polling capability state itself. `starting`
+proceeds without waiting everywhere Storage capability is checked, including `stack start` and
+`db reset --local`.
 
-**`stack start` seeds only on creation.** When a `stack start` (or the top-level `start` under
-the flag) invocation _creates_ the stack — never when it resumes an existing one — and Storage is
-not `disabled`, it seeds `[storage.buckets]` against the new stack before printing status,
-reusing the `seed buckets` core. A `failed`/`stopped` Storage capability at that point prints a
-stderr warning and skips seeding; a seeding failure fails the `start` command (exit `1`) but
-leaves the stack running. See
+**`stack start` seeds on first configured start.** When a `stack start` (or the top-level `start`
+under the flag) invocation runs the stack's first configured start (`desiredLifecycle` was
+`unconfigured`, including after `stack prepare`) — never when it resumes an existing one — and
+Storage is not `disabled`, it seeds `[storage.buckets]` against the stack before printing status,
+reusing the `seed buckets` core. Auto-confirm is safe here since a first-start stack has no
+pre-existing buckets. Any other unusable Storage state, a missing capability/credentials, or a
+gateway activation failure prints a stderr warning and skips seeding; any other seeding failure
+(e.g. an invalid bucket entry) fails the `start` command (exit `1`) but leaves the stack running.
+`start` fails only on a genuine seeding error, never on Storage being unavailable. See
 [`stack/start/SIDE_EFFECTS.md`](../src/commands/experimental/stack/start/SIDE_EFFECTS.md).
 
-**`db reset --local` re-seeds.** Each reset seeds buckets again after the database reset, when
-Storage is `ready`, `dormant`, or `starting`; a `disabled`/`failed`/`stopped` capability prints
-`WARNING: skipped seeding storage buckets: Storage is <state> for this stack.` to stderr and the
-reset still exits `0`. Bucket SQL/schema preparation is the stack runtime's own storage
+**`db reset --local` never fails for buckets.** Each reset seeds buckets again after the database
+reset, when Storage is `ready`, `dormant`, or `starting`. Any other Storage problem — an unusable
+capability state, a missing capability/credentials, a gateway activation failure, or an invalid
+bucket config — prints `WARNING: skipped seeding storage buckets: <reason> Run supabase seed
+buckets --local once Storage is available.` to stderr and the reset still exits `0`. This is the
+deliberate policy split from `stack start`: the database is already rebuilt by the time buckets
+are seeded, so `db reset` never fails the command for a Storage problem, while `start` still fails
+on a genuine seeding error. Bucket SQL/schema preparation is the stack runtime's own storage
 workload/catalog-setup responsibility; bucket creation and `objects_path` upload from
 `[storage.buckets]` remain the CLI's seeding-step responsibility, since the runtime itself never
 creates buckets. See [`db/reset/SIDE_EFFECTS.md`](../src/commands/db/reset/SIDE_EFFECTS.md).
