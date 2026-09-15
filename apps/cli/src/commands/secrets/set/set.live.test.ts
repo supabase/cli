@@ -1,31 +1,10 @@
 import { randomUUID } from "node:crypto";
 
-import { Cause, Data, Effect, Exit } from "effect";
+import { Cause, Effect, Exit } from "effect";
 import { expect } from "vitest";
 
-import { type LiveFixtures, test, throwWithCleanup } from "../../../../tests/helpers/live.ts";
-
-type LiveCliEffect = LiveFixtures["cliEffect"];
-
-/** Typed live failures; `message` is a field so vitest can serialize the error. */
-class SecretsLiveError extends Data.TaggedError("SecretsLiveError")<{
-  readonly message: string;
-}> {}
-
-/** Exact-name cleanup; unsetting an already-removed secret is tolerated. */
-function unsetSecret(cliEffect: LiveCliEffect, name: string, ref: string) {
-  return Effect.gen(function* () {
-    const cleanup = yield* cliEffect(["secrets", "unset", name, "--project-ref", ref, "--yes"]);
-    if (
-      cleanup.exitCode !== 0 &&
-      !/not found|does not exist/iu.test(`${cleanup.stdout}\n${cleanup.stderr}`)
-    ) {
-      return yield* new SecretsLiveError({
-        message: `secrets unset cleanup failed:\n${cleanup.stdout}\n${cleanup.stderr}`,
-      });
-    }
-  });
-}
+import { test, throwWithCleanup } from "../../../../tests/helpers/live.ts";
+import { unsetSecret } from "../../../../tests/helpers/secrets-live.ts";
 
 // Not wired to the test `signal`: an interrupt SIGKILLs an in-flight cleanup
 // mid-request (the run's scope release kills the process group), so letting the

@@ -37,6 +37,7 @@
     "apps/cli/src/shared/compute/stacks/**",
     "!apps/cli/tests/helpers/compute.ts",
     "!apps/cli/tests/helpers/postgres-config-live.ts",
+    "!apps/cli/tests/helpers/secrets-live.ts",
     "!apps/cli/src/command-internal/experimental-feature.ts"
   ]
 }
