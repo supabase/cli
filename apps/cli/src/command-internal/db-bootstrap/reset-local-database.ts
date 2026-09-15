@@ -173,14 +173,38 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
     // Bucket creation and object seeding are owned by the CLI, not the stack runtime; the
     // gateway's lazy activation serves requests through `dormant`/`starting`, so seeding never
     // waits for `ready`. See docs/stack-commands.md#storage-and-bucket-seeding.
-    const skipSeeding = (reason: string) =>
+    const skipSeeding = (
+      reason: string,
+      nextStep = "Run supabase seed buckets --local once Storage is available.",
+    ) =>
       output.raw(
-        `${yellow("WARNING:")} skipped seeding storage buckets: ${reason} Run supabase seed buckets --local once Storage is available.\n`,
+        `${yellow("WARNING:")} skipped seeding storage buckets: ${reason} ${nextStep}\n`,
         "stderr",
       );
     const capability = status.capabilities.find((entry) => entry.name === "storage");
-    if (classifyStorageCapability(capability) !== "proceed") {
-      yield* skipSeeding(describeStorageCapability(capability));
+    const decision = classifyStorageCapability(capability);
+    if (decision !== "proceed") {
+      // Only a project that configures buckets has anything to skip; an unreadable config
+      // still warns so a real skip is never silent.
+      const configuresBuckets = yield* loadLocalProjectContext(
+        workdir,
+        (message) => new SeedConfigLoadError({ message }),
+      ).pipe(
+        Effect.map(
+          (context) =>
+            Object.keys(context.config.storage.buckets ?? {}).length > 0 ||
+            Object.keys(context.config.storage.vector.buckets).length > 0,
+        ),
+        Effect.orElseSucceed(() => true),
+      );
+      if (configuresBuckets) {
+        yield* skipSeeding(
+          describeStorageCapability(capability),
+          decision === "disabled"
+            ? "Set [storage] enabled = true in supabase/config.toml or start without -x storage, run supabase stack restart, then supabase seed buckets --local."
+            : undefined,
+        );
+      }
     } else {
       // Bucket seeding never fails the reset: the database is already rebuilt, so any
       // typed failure here (config load, credential resolution, gateway error, or a

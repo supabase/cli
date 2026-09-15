@@ -889,7 +889,7 @@ describe("db reset", () => {
     );
 
     it.live("resets the stack database without Compose volume recreate", () => {
-      const { layer, child, stackApi, catalogApplied } = setup(tmp.current, {
+      const { layer, child, stackApi, catalogApplied, out } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
         args: ["db", "reset", "--local"],
         isLocal: true,
@@ -902,6 +902,9 @@ describe("db reset", () => {
         expect(child.spawned.some((s) => s.args[0] === "container" && s.args[1] === "rm")).toBe(
           false,
         );
+        // No `[storage.buckets]`/`[storage.vector.buckets]` configured, so there is nothing to
+        // skip even though this fixture's storage capability defaults to "stopped".
+        expect(out.stderrText).not.toContain("skipped seeding storage buckets");
       });
     });
 
@@ -1019,11 +1022,36 @@ describe("db reset", () => {
           "WARNING: skipped seeding storage buckets: Storage is disabled for this stack.",
         );
         expect(out.stderrText).toContain(
+          "Set [storage] enabled = true in supabase/config.toml or start without -x storage, " +
+            "run supabase stack restart, then supabase seed buckets --local.",
+        );
+        expect(out.stderrText).not.toContain(
           "Run supabase seed buckets --local once Storage is available.",
         );
         expect(client.requests).toHaveLength(0);
       });
     });
+
+    it.live(
+      "skips seeding storage buckets silently when storage is disabled and no buckets are configured",
+      () => {
+        const client = recordingStackStorageHttpClient();
+        const { layer, out } = setup(tmp.current, {
+          toml: 'project_id = "test"\n',
+          args: ["db", "reset", "--local"],
+          isLocal: true,
+          stackBackend: true,
+          stackStorageState: "disabled",
+          stackApiEndpoint: { url: "http://127.0.0.1:55429", port: 55429 },
+          httpClient: client.layer,
+        });
+        return Effect.gen(function* () {
+          yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+          expect(out.stderrText).not.toContain("skipped seeding storage buckets");
+          expect(client.requests).toHaveLength(0);
+        });
+      },
+    );
 
     it.live("skips seeding storage buckets and issues no requests when storage is stopped", () => {
       const client = recordingStackStorageHttpClient();

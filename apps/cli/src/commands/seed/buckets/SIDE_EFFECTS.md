@@ -6,7 +6,7 @@ stack is used; with `--linked` the remote project is used.
 
 The local path resolves the Storage gateway through the `experimental.stack`
 feature flag, same `SUPABASE_EXPERIMENTAL_STACK=1|0` env precedence as
-[`docs/stack-commands.md`](../../../docs/stack-commands.md). `--linked`/`--project-ref`
+[`docs/stack-commands.md`](../../../../docs/stack-commands.md). `--linked`/`--project-ref`
 targeting is unchanged under either backend; see Notes for the stack-backend endpoint,
 credential, capability-state, and error behavior. `db reset --local`'s bucket seeding
 (under the stack backend) goes through this same seeding core; see that command's own

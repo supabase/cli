@@ -278,8 +278,10 @@ gateway activation failure prints a stderr warning and skips seeding; any other 
 **`db reset --local` never fails for buckets.** Each reset seeds buckets again after the database
 reset, when Storage is `ready`, `dormant`, or `starting`. Any other Storage problem — an unusable
 capability state, a missing capability/credentials, a gateway activation failure, or an invalid
-bucket config — prints `WARNING: skipped seeding storage buckets: <reason> Run supabase seed
-buckets --local once Storage is available.` to stderr and the reset still exits `0`. This is the
+bucket config — prints `WARNING: skipped seeding storage buckets: <reason> <next step>` to stderr
+and the reset still exits `0`. The warning is omitted when the project configures no buckets, and
+disabled Storage gets configuration-specific next steps (enable `[storage]`, `supabase stack
+restart`, then `supabase seed buckets --local`). This is the
 deliberate policy split from `stack start`: the database is already rebuilt by the time buckets
 are seeded, so `db reset` never fails the command for a Storage problem, while `start` still fails
 on a genuine seeding error. Bucket SQL/schema preparation is the stack runtime's own storage

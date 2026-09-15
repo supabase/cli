@@ -29,15 +29,18 @@ removed `DeclarativeSeam.execInherit` seam — see those commands' own
 `SIDE_EFFECTS.md`.
 
 When the `experimental.stack` feature flag is on (`SUPABASE_EXPERIMENTAL_STACK=1|0` env
-precedence, same rules as [`docs/stack-commands.md`](../../../docs/stack-commands.md)), the
+precedence, same rules as [`docs/stack-commands.md`](../../../../docs/stack-commands.md)), the
 local path calls `resetDatabase` on the project stack instead of the container recreate
 described above. After the reset, buckets are seeded — reusing the `seed buckets` local path —
 when Storage is `ready`, `dormant`, or `starting`; the gateway holds requests during lazy
 activation, so `starting` proceeds without waiting. The command never fails the reset for a
 Storage problem: an unusable capability state (`disabled`/`failed`/`stopped`), a missing
 capability/credentials, a stack-gateway activation failure, or an invalid bucket config all
-print `WARNING: skipped seeding storage buckets: <reason> Run supabase seed buckets --local once
-Storage is available.` to stderr and exit `0`. The
+print `WARNING: skipped seeding storage buckets: <reason> <next step>` to stderr and exit `0`,
+where the next step is `Run supabase seed buckets --local once Storage is available.` (or, for
+disabled Storage, to enable `[storage]`, run `supabase stack restart`, then `supabase seed buckets
+--local`). The warning is omitted when the project configures no `[storage.buckets]` or vector
+buckets, since there is nothing to seed. The
 Storage gateway URL is the selected stack's API gateway URL (`status.endpoints.api.url`), not
 `[api].port`/`[api.tls]`, and the credential is the stack's service-role JWT — never `[api]`/
 `SUPABASE_API_*`/`SUPABASE_AUTH_{JWT_SECRET,SERVICE_ROLE_KEY}`. Bucket SQL/schema preparation is
@@ -230,8 +233,8 @@ path has no confirmation prompt.
   `starting` never waits). Any other Storage problem — an unusable capability state,
   missing capability/credentials, a stack-gateway activation failure, or an invalid
   bucket config — skips seeding with a stderr `WARNING: skipped seeding storage buckets:
-<reason> Run supabase seed buckets --local once Storage is available.` and the command
-  still exits `0`. The stack's service-role JWT is never printed or logged.
+<reason> <next step>` and the command still exits `0`; the warning is omitted when no
+  buckets are configured, and disabled Storage gets configuration-specific next steps. The stack's service-role JWT is never printed or logged.
 - **Target/local split** follows whether the resolved config points at the local
   stack, not the flag name: a `--db-url` pointing at the local stack is treated
   as a local reset.
