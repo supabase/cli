@@ -8,6 +8,10 @@ export const SUGGEST_DOCKER_INSTALL =
 export const SUGGEST_DOCKER_START =
   "Docker is no longer reachable. Start Docker, then rerun `supabase functions serve`.";
 
+/** Remediation hint shown when a container is killed for exceeding its memory limit. */
+export const SUGGEST_CONTAINER_MEMORY_LIMIT =
+  "The container was killed for exceeding its memory limit. Raise the memory allocated to your container runtime and try again.";
+
 /**
  * Whether a container-CLI stderr indicates the daemon is unreachable. Matches the docker/podman
  * "cannot connect"/"is the docker daemon running" messages, a socket permission-denied message,
