@@ -1680,32 +1680,31 @@ export const makeSupervisor = (
                                     const snapshot = yield* Ref.get(machine);
                                     const current = snapshot.capabilities.get(capability);
                                     if (
-                                      current?._tag !== "ready" ||
-                                      current.endpoint._tag !== "resolving" ||
-                                      current.endpoint.deferred !== endpoint
+                                      current?._tag === "ready" &&
+                                      current.endpoint._tag === "resolving" &&
+                                      current.endpoint.deferred === endpoint
                                     ) {
-                                      yield* Deferred.succeed(
-                                        endpoint,
-                                        Exit.map(result, (value) => value.endpoint),
-                                      );
-                                      return;
+                                      const next = Exit.isSuccess(result)
+                                        ? {
+                                            ...current,
+                                            endpoint: {
+                                              _tag: "resolved" as const,
+                                              endpoint: result.value.endpoint,
+                                            },
+                                          }
+                                        : {
+                                            ...current,
+                                            endpoint: { _tag: "unresolved" as const },
+                                          };
+                                      yield* Ref.set(machine, {
+                                        ...snapshot,
+                                        capabilities: new Map(snapshot.capabilities).set(
+                                          capability,
+                                          next,
+                                        ),
+                                      });
                                     }
-                                    const next = Exit.isSuccess(result)
-                                      ? {
-                                          ...current,
-                                          endpoint: {
-                                            _tag: "resolved" as const,
-                                            endpoint: result.value.endpoint,
-                                          },
-                                        }
-                                      : { ...current, endpoint: { _tag: "unresolved" as const } };
-                                    yield* Ref.set(machine, {
-                                      ...snapshot,
-                                      capabilities: new Map(snapshot.capabilities).set(
-                                        capability,
-                                        next,
-                                      ),
-                                    });
+                                    yield* reevaluateIdleTimersInAdmission();
                                     yield* Deferred.succeed(
                                       endpoint,
                                       Exit.map(result, (value) => value.endpoint),
@@ -1789,29 +1788,29 @@ export const makeSupervisor = (
                               const snapshot = yield* Ref.get(machine);
                               const current = snapshot.capabilities.get(capability);
                               if (
-                                current?._tag !== "starting" ||
-                                current.completion._tag !== "activation" ||
-                                current.completion.deferred !== deferred
+                                current?._tag === "starting" &&
+                                current.completion._tag === "activation" &&
+                                current.completion.deferred === deferred
                               ) {
-                                yield* Deferred.succeed(deferred, result);
-                                return;
+                                const next: CapabilityState = Exit.isSuccess(result)
+                                  ? completeStarting(
+                                      current,
+                                      {
+                                        _tag: "resolved",
+                                        endpoint: result.value.endpoint,
+                                      },
+                                      true,
+                                    )
+                                  : restoreStarting(current);
+                                yield* Ref.set(machine, {
+                                  ...snapshot,
+                                  capabilities: new Map(snapshot.capabilities).set(
+                                    capability,
+                                    next,
+                                  ),
+                                });
                               }
-                              const next: CapabilityState = Exit.isSuccess(result)
-                                ? completeStarting(
-                                    current,
-                                    {
-                                      _tag: "resolved",
-                                      endpoint: result.value.endpoint,
-                                    },
-                                    true,
-                                  )
-                                : restoreStarting(current);
-                              yield* Ref.set(machine, {
-                                ...snapshot,
-                                capabilities: new Map(snapshot.capabilities).set(capability, next),
-                              });
-                              if (Exit.isSuccess(result))
-                                yield* armIdleTimerInAdmission(capability);
+                              yield* reevaluateIdleTimersInAdmission();
                               yield* Deferred.succeed(deferred, result);
                             }),
                           ),

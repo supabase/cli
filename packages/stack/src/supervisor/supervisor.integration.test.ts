@@ -1160,6 +1160,90 @@ describe("Supervisor composition", () => {
     ),
   );
 
+  it.live("re-arms an idle timer after a failed root activation releases execution", () =>
+    run(
+      Effect.gen(function* () {
+        const activity = yield* Ref.make<GatewayActivity | undefined>(undefined);
+        const prepareGateEnabledRef = yield* Ref.make(false);
+        const prepareActivationStarted = yield* Deferred.make<void>();
+        const prepareGate = yield* Deferred.make<void>();
+        const prepareFailureRef = yield* Ref.make(false);
+        const logWritten = yield* Deferred.make<void>();
+        const fixture = yield* makeFixture({
+          prepareGateEnabledRef,
+          prepareActivationStarted,
+          prepareGate,
+          prepareFailureRef,
+          logWritten,
+          logWrittenFor: "Stopped rest after inactivity",
+          ingress: {
+            acquire: () =>
+              Effect.succeed({
+                assignments: {},
+                privateAssignments: [],
+                hostListeners: [],
+                fresh: false,
+                ownershipToken: Symbol(),
+              }),
+            open: (_input, _reservation, _activate, tracker) =>
+              tracker === undefined ? Effect.void : Ref.set(activity, tracker),
+            close: Effect.void,
+          },
+        });
+        yield* fixture.supervisor.start({
+          config: {
+            capabilities: {
+              rest: { activation: "lazy", idleTimeoutSeconds: 1 },
+              auth: { activation: "lazy" },
+              studio: { activation: "lazy", idleTimeoutSeconds: 1 },
+            },
+          },
+        });
+        const tracker = yield* Ref.get(activity);
+        if (tracker === undefined) return yield* Effect.die("gateway activity was not installed");
+        yield* tracker.track("rest", fixture.supervisor.activate("rest"));
+        yield* Ref.set(prepareGateEnabledRef, true);
+        const auth = yield* Effect.forkChild(
+          tracker.track("auth", fixture.supervisor.activate("auth")),
+          { startImmediately: true },
+        );
+        yield* Deferred.await(prepareActivationStarted);
+        yield* TestClock.adjust("1 second");
+        const studio = yield* Effect.forkChild(
+          tracker.track("studio", fixture.supervisor.activate("studio")),
+          { startImmediately: true },
+        );
+        const beforeRelease = yield* fixture.supervisor.status;
+        expect(beforeRelease.capabilities.find(({ name }) => name === "rest")?.state).toBe("ready");
+        expect(beforeRelease.capabilities.find(({ name }) => name === "studio")?.state).toBe(
+          "starting",
+        );
+        yield* Ref.set(prepareFailureRef, true);
+        yield* Deferred.succeed(prepareGate, undefined);
+        const authResult = yield* Fiber.join(auth).pipe(Effect.exit);
+        expect(Exit.isFailure(authResult)).toBe(true);
+        expect(errorOf(authResult)).toBeInstanceOf(StackRuntimeError);
+        const studioResult = yield* Fiber.join(studio).pipe(Effect.exit);
+        expect(Exit.isFailure(studioResult)).toBe(true);
+        expect(errorOf(studioResult)).toBeInstanceOf(StackRuntimeError);
+        const afterFailure = yield* fixture.supervisor.status;
+        expect(afterFailure.lifecycle).toBe("running");
+        expect(afterFailure.capabilities.find(({ name }) => name === "studio")?.state).toBe(
+          "dormant",
+        );
+        yield* TestClock.adjust("1 second");
+        expect(
+          (yield* fixture.supervisor.status).capabilities.find(({ name }) => name === "rest")
+            ?.state,
+        ).toBe("dormant");
+        yield* Deferred.await(logWritten);
+        expect(yield* Ref.get(fixture.resources)).toEqual(
+          expect.not.arrayContaining([expect.objectContaining({ workloadId: "rest:rest" })]),
+        );
+      }).pipe(Effect.provide(TestClock.layer())),
+    ),
+  );
+
   it.live("accepts very small idle timeout values", () =>
     run(
       Effect.gen(function* () {
