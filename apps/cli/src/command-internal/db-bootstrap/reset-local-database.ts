@@ -152,8 +152,10 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
   // emits its own result.
   const storageReady = yield* awaitStorageReady(spawner, projectId);
   if (storageReady) {
-    // Non-interactive: overwrite/prune confirmations take their defaults instead of blocking on
-    // input. `resolvedConfig` reuses the config already resolved via
+    // Non-interactive: overwrite/prune confirmations never open a TTY prompt. In text mode
+    // each still prints its label and scans one stdin line (bounded) — a parsed y/n answer
+    // wins, otherwise its default applies (overwrite → yes, prune → no); machine formats take
+    // the defaults silently. `resolvedConfig` reuses the config already resolved via
     // `buildLocalDbContainerInputs`'s full nested-env walk, so `seedBucketsRun` never
     // independently reloads config.toml through a narrower env resolution that could reject a
     // config whose `env(VAR)` reference is backed by a non-default dotenv file. Same pattern
@@ -162,7 +164,7 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
       projectRef: "",
       emitSummary: false,
       interactive: false,
-      // `SUPABASE_YES` set in `supabase/.env` auto-confirms bucket/vector/analytics prune
+      // `SUPABASE_YES` set in `supabase/.env` auto-confirms the bucket overwrite/prune
       // prompts.
       yes,
       resolvedConfig: { config, document: loaded?.document },

@@ -133,7 +133,7 @@ the whole reset** (not just "skip buckets").
 | `DOCKER_HOST` / `DOCKER_CONTEXT` / `DOCKER_TLS_VERIFY` / `DOCKER_CERT_PATH` / `DOCKER_API_VERSION` / `DOCKER_CONFIG` | local path: ambient shell environment only (project dotenv files deliberately never override Docker client keys) — resolves the daemon endpoint for the running probe (in-process) and steers the spawned `docker`/`podman` CLI itself                                                 | no                                                      |
 | `SUPABASE_ACCESS_TOKEN`                                                                                              | auth token for the `--linked` resolver path                                                                                                                                                                                                                                            | no (falls back to keyring → `~/.supabase/access-token`) |
 | `SUPABASE_DB_PASSWORD`                                                                                               | password for the linked/remote connection                                                                                                                                                                                                                                              | no                                                      |
-| `SUPABASE_YES`                                                                                                       | auto-confirm the reset prompt                                                                                                                                                                                                                                                          | no (also `--yes`)                                       |
+| `SUPABASE_YES`                                                                                                       | auto-confirm the reset prompt and the local path's bucket-seed overwrite/prune prompts (shell or project dotenv, same as `seed buckets`)                                                                                                                                               | no (also `--yes`)                                       |
 | `SUPABASE_EXPERIMENTAL`                                                                                              | selects the schema-files apply branch on either target                                                                                                                                                                                                                                 | no (also `--experimental`)                              |
 | `SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED`                                                                              | overrides `[experimental.pgdelta].enabled`; a truthy value flips the reset gate (`experimental && resolvedVersion === "" && !toml.pgDelta.enabled`) back to timestamped migrations even with `--experimental` set — switches between two different destructive code paths              | no                                                      |
 | `SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS`                                                                                | overrides `[db.migrations].schema_paths` (viper `AutomaticEnv`, beats the config-file value) for the schema-files apply branch — genuinely effective on both targets now                                                                                                               | no (no dedicated flag — config-file-only otherwise)     |
@@ -202,7 +202,13 @@ stdout is payload-only; a `result` object is emitted:
 
 In machine modes the remote confirmation prompt is non-interactive and takes its
 default (`false`), so a remote reset is declined unless `--yes` is set. The local
-path has no confirmation prompt.
+path has no reset confirmation, but its bucket-seed step carries the seed-buckets
+overwrite/prune confirmations: in machine modes they take their defaults silently
+(overwrite → yes, prune → no) unless `--yes`/`SUPABASE_YES` auto-confirms; in text
+mode each prints its label and reads one stdin line, bounded to 100 ms and performed
+even when stdin is a TTY — a parsed `y`/`n` answer wins (so `yes | supabase db reset`
+confirms a vector prune), while an empty, unparseable, or timed-out read falls back
+to those defaults (the usual outcome for an interactive terminal).
 
 ## Notes
 
