@@ -1,4 +1,15 @@
-import { Config, ConfigProvider, Console, Data, Effect, Option, Schema, Stream } from "effect";
+import {
+  Cause,
+  Config,
+  ConfigProvider,
+  Console,
+  Data,
+  Effect,
+  Exit,
+  Option,
+  Schema,
+  Stream,
+} from "effect";
 
 interface DenoErrorConstructors {
   readonly InvalidWorkerCreation?: abstract new (...args: never[]) => Error;
@@ -145,21 +156,21 @@ const FunctionOverrideSchema = Schema.Struct({
 const FunctionOverridesSchema = Schema.Record(Schema.String, FunctionOverrideSchema);
 const JsonWebKeySetSchema = Schema.declare(
   (value): value is jose.JSONWebKeySet =>
-    typeof value === "object" && value !== null && "keys" in value && Array.isArray(value.keys),
+    typeof value === "object" &&
+    value !== null &&
+    "keys" in value &&
+    Array.isArray(value.keys) &&
+    value.keys.every((key) => typeof key === "object" && key !== null),
 );
 const parseConfig = (): FunctionOverrides =>
   Option.match(bootstrapConfig.functionsConfig, {
     onNone: () => ({}),
-    onSome: (raw) => {
-      try {
-        return Effect.runSync(
-          Schema.decodeEffect(Schema.fromJsonString(FunctionOverridesSchema))(raw),
-        );
-      } catch {
-        // Invalid optional config is treated as no overrides; host preflight reports invalid paths.
-        return {};
-      }
-    },
+    onSome: (raw) =>
+      Effect.runSync(
+        Schema.decodeEffect(Schema.fromJsonString(FunctionOverridesSchema))(raw).pipe(
+          Effect.orElseSucceed(() => ({})),
+        ),
+      ),
   });
 const configured: FunctionOverrides = parseConfig();
 if (Option.getOrUndefined(bootstrapConfig.debug) === "true") {
@@ -185,7 +196,7 @@ const getResponse = (
       body = JSON.stringify(payload);
     } else {
       headers["Content-Type"] = "text/plain";
-      body = JSON.stringify(payload) ?? null;
+      body = typeof payload === "string" ? payload : (JSON.stringify(payload) ?? null);
     }
   }
   return new Response(body, { status, headers });
@@ -233,6 +244,10 @@ const getAuthToken = (request: Request): string | AuthFailure => {
   return token ? token : { code: RequestErrors.InvalidTokenFormat, message: "Invalid JWT format" };
 };
 
+class BootstrapOperationError extends Data.TaggedError("BootstrapOperationError")<{
+  readonly cause: unknown;
+}> {}
+
 const localJwks = Effect.runSync(
   Option.match(bootstrapConfig.jwks, {
     onNone: () =>
@@ -253,9 +268,7 @@ const localJwks = Effect.runSync(
       }).pipe(Effect.option),
   }),
 );
-class BootstrapOperationError extends Data.TaggedError("BootstrapOperationError")<{
-  readonly cause: unknown;
-}> {}
+const selectedJwks = Option.getOrElse(localJwks, () => jose.createRemoteJWKSet(JWKS_ENDPOINT));
 const foreign = <A>(operation: () => Promise<A>) =>
   Effect.tryPromise({
     try: operation,
@@ -263,14 +276,12 @@ const foreign = <A>(operation: () => Promise<A>) =>
   });
 const isValidAsymmetricJWT = (jwt: string): Effect.Effect<Option.Option<AuthFailure>> =>
   Effect.gen(function* () {
-    const resolver = Option.getOrElse(localJwks, () => jose.createRemoteJWKSet(JWKS_ENDPOINT));
-    yield* foreign(() => jose.jwtVerify(jwt, resolver));
+    yield* foreign(() => jose.jwtVerify(jwt, selectedJwks));
     return Option.none<AuthFailure>();
   }).pipe(Effect.orElseSucceed(() => Option.some({ code: RequestErrors.InvalidAsymmetricJWT })));
 
 function verifyHybridJWT(
   jwtSecret: string,
-  jwksUrl: URL,
   jwt: string,
 ): Effect.Effect<Option.Option<AuthFailure>> {
   return Effect.gen(function* () {
@@ -349,7 +360,7 @@ export function prepareUserRequest(request: Request): Request {
 
 Deno.serve({
   handler: (request: Request) =>
-    Effect.runPromise(
+    Effect.runPromiseExit(
       Effect.gen(function* () {
         const { pathname } = new URL(request.url);
         if (pathname === "/_internal/health") return getResponse({ message: "ok" }, STATUS_CODE.OK);
@@ -362,7 +373,7 @@ Deno.serve({
         if (request.method !== "OPTIONS" && config.verifyJWT) {
           const token = getAuthToken(request);
           if (typeof token !== "string") return getAuthErrorResponse(token);
-          const authFailure = yield* verifyHybridJWT(JWT_SECRET, JWKS_ENDPOINT, token);
+          const authFailure = yield* verifyHybridJWT(JWT_SECRET, token);
           if (Option.isSome(authFailure)) return getAuthErrorResponse(authFailure.value);
         }
         const envVarsObj: Record<string, string> = {
@@ -417,7 +428,12 @@ Deno.serve({
         );
       }),
       { signal: request.signal },
-    ),
+    ).then((exit) => {
+      if (Exit.isSuccess(exit)) return exit.value;
+      if (request.signal.aborted && Cause.hasInterruptsOnly(exit.cause))
+        return new Response(null, { status: 499 });
+      throw Cause.squash(exit.cause);
+    }),
   onListen: () => {
     const names = Object.keys(configured);
     const examples = names
