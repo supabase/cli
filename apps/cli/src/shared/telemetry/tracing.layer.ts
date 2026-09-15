@@ -1,5 +1,5 @@
-import { Effect, Layer, Option, Stdio, Stream, Tracer } from "effect";
-import type { Exit, Context } from "effect";
+import { Cause, Effect, Fiber, Layer, Queue, Stdio, Stream, Tracer } from "effect";
+import type { Exit } from "effect";
 
 import { makeDebugConsoleExporter } from "./exporters/debug-console.ts";
 import { exportSpanToNdjson, initNdjsonExporter } from "./exporters/ndjson.ts";
@@ -7,82 +7,23 @@ import { telemetryRuntimeLayer } from "./runtime.layer.ts";
 import { TelemetryRuntime } from "./runtime.service.ts";
 import { Tracing } from "./tracing.service.ts";
 
-/**
- * tracingLayer - CLI tracing implementation.
- *
- * This layer owns telemetry bootstrap, consent evaluation, identifier loading,
- * and exporter wiring. Commands only depend on the `Tracing` service tag.
- */
-function generateHexId(length: number): string {
-  const chars = "0123456789abcdef";
-  let result = "";
-  for (let i = 0; i < length; i++) {
-    result += chars[Math.floor(Math.random() * chars.length)];
-  }
-  return result;
-}
-
-class ExportableSpan implements Tracer.Span {
-  readonly _tag = "Span" as const;
-  readonly spanId: string;
-  readonly traceId: string;
-  readonly sampled: boolean;
-  readonly name: string;
-  readonly parent: Option.Option<Tracer.AnySpan>;
-  readonly annotations: Context.Context<never>;
-  readonly links: ReadonlyArray<Tracer.SpanLink>;
-  readonly kind: Tracer.SpanKind;
-
-  status: Tracer.SpanStatus;
-  attributes: Map<string, unknown> = new Map();
-
-  private readonly onEnd: (span: ExportableSpan) => void;
-
+class ExportableSpan extends Tracer.NativeSpan {
   constructor(
-    options: {
-      readonly name: string;
-      readonly parent: Option.Option<Tracer.AnySpan>;
-      readonly annotations: Context.Context<never>;
-      readonly links: Array<Tracer.SpanLink>;
-      readonly startTime: bigint;
-      readonly kind: Tracer.SpanKind;
-      readonly sampled: boolean;
-    },
-    onEnd: (span: ExportableSpan) => void,
+    options: ConstructorParameters<typeof Tracer.NativeSpan>[0],
+    private readonly queue: Queue.Queue<Tracer.Span, Cause.Done>,
   ) {
-    this.name = options.name;
-    this.parent = options.parent;
-    this.annotations = options.annotations;
-    this.links = options.links;
-    this.kind = options.kind;
-    this.sampled = options.sampled;
-    this.status = { _tag: "Started", startTime: options.startTime };
-    this.traceId = Option.match(options.parent, {
-      onNone: () => generateHexId(32),
-      onSome: (parent) => parent.traceId,
-    });
-    this.spanId = generateHexId(16);
-    this.onEnd = onEnd;
+    super(options);
   }
 
-  end(endTime: bigint, exit: Exit.Exit<unknown, unknown>): void {
-    this.status = {
-      _tag: "Ended",
-      startTime: this.status.startTime,
-      endTime,
-      exit,
-    };
-    this.onEnd(this);
-  }
-
-  attribute(key: string, value: unknown): void {
+  override attribute(key: string, value: unknown): void {
     if (key.endsWith(".header.apikey")) return;
-    this.attributes.set(key, value);
+    super.attribute(key, value);
   }
 
-  event(_name: string, _startTime: bigint, _attributes?: Record<string, unknown>): void {}
-
-  addLinks(_links: ReadonlyArray<Tracer.SpanLink>): void {}
+  override end(endTime: bigint, exit: Exit.Exit<unknown, unknown>): void {
+    super.end(endTime, exit);
+    if (this.sampled) Queue.offerUnsafe(this.queue, this);
+  }
 }
 
 export const tracingLayer = Layer.effect(
@@ -90,26 +31,35 @@ export const tracingLayer = Layer.effect(
   Effect.gen(function* () {
     const stdio = yield* Stdio.Stdio;
     const telemetryRuntime = yield* TelemetryRuntime;
-    const exportSpanToDebugConsole = makeDebugConsoleExporter((line) => {
-      Effect.runFork(Stream.make(line).pipe(Stream.run(stdio.stderr()), Effect.ignore));
-    });
+    const exportSpanToDebugConsole = makeDebugConsoleExporter((line) =>
+      Stream.make(line).pipe(Stream.run(stdio.stderr()), Effect.asVoid),
+    );
 
-    // Exporters are gated by consent/debug flags before spans start flowing.
     if (telemetryRuntime.consent === "granted") {
       yield* initNdjsonExporter(telemetryRuntime.tracesDir);
     }
 
-    function onSpanEnd(span: ExportableSpan): void {
-      if (!span.sampled) return;
-      if (telemetryRuntime.consent === "granted") {
-        exportSpanToNdjson(span, telemetryRuntime.tracesDir);
-      }
-      if (telemetryRuntime.showDebug) {
-        exportSpanToDebugConsole(span);
-      }
-    }
+    const queue = yield* Queue.unbounded<Tracer.Span, Cause.Done>();
+    const exportSpan = (span: Tracer.Span) =>
+      Effect.gen(function* () {
+        if (telemetryRuntime.consent === "granted") {
+          yield* Effect.ignore(exportSpanToNdjson(span, telemetryRuntime.tracesDir));
+        }
+        if (telemetryRuntime.showDebug) {
+          yield* Effect.ignore(exportSpanToDebugConsole(span));
+        }
+      });
 
-    // Global attributes are attached once here so individual commands stay lean.
+    const workerEffect = Queue.take(queue).pipe(
+      Effect.flatMap(exportSpan),
+      Effect.forever,
+      Effect.catchTag("Done", () => Effect.void),
+    );
+    const worker = yield* Effect.forkScoped(workerEffect);
+    yield* Effect.addFinalizer(() =>
+      Queue.end(queue).pipe(Effect.andThen(Fiber.join(worker)), Effect.ignore),
+    );
+
     const globalAttrs: Record<string, unknown> = {
       schema_version: 1,
       device_id: telemetryRuntime.deviceId,
@@ -124,7 +74,7 @@ export const tracingLayer = Layer.effect(
 
     return Tracer.make({
       span(options) {
-        const span = new ExportableSpan(options, onSpanEnd);
+        const span = new ExportableSpan(options, queue);
         for (const [key, value] of Object.entries(globalAttrs)) {
           span.attribute(key, value);
         }

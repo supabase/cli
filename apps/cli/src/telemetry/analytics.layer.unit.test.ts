@@ -1,4 +1,4 @@
-import { Option } from "effect";
+import { ConfigProvider, Effect, Option } from "effect";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   EnvSignalPresenceKeys,
@@ -8,6 +8,19 @@ import {
   MaxEnvSignalValueLength,
 } from "../shared/telemetry/event-catalog.ts";
 import { collectEnvSignals, resolveGroups } from "./analytics.layer.ts";
+
+function readEnvSignals(): Record<string, true | string> | undefined {
+  const signals = Effect.runSync(
+    collectEnvSignals.pipe(
+      Effect.provide(
+        ConfigProvider.layer(
+          ConfigProvider.fromEnvRecord(process.env, { preserveEmptyStrings: true }),
+        ),
+      ),
+    ),
+  );
+  return Option.isSome(signals) ? signals.value : undefined;
+}
 
 const linkedCacheValue = (over: Partial<Record<string, string>> = {}) => ({
   ref: "proj-ref",
@@ -50,14 +63,14 @@ describe("collectEnvSignals", () => {
   });
 
   it("returns undefined when no relevant env vars are set", () => {
-    expect(collectEnvSignals()).toBeUndefined();
+    expect(readEnvSignals()).toBeUndefined();
   });
 
   it("records presence keys as boolean `true`", () => {
     process.env.CI = "1";
     process.env.CLAUDECODE = "true";
 
-    const signals = collectEnvSignals();
+    const signals = readEnvSignals();
     expect(signals).toEqual({
       CI: true,
       CLAUDECODE: true,
@@ -68,7 +81,7 @@ describe("collectEnvSignals", () => {
     process.env.AI_AGENT = "  claude-code  ";
     process.env.TERM = "xterm-256color";
 
-    const signals = collectEnvSignals();
+    const signals = readEnvSignals();
     expect(signals).toEqual({
       AI_AGENT: "claude-code",
       TERM: "xterm-256color",
@@ -79,7 +92,7 @@ describe("collectEnvSignals", () => {
     const long = "a".repeat(MaxEnvSignalValueLength + 50);
     process.env.AI_AGENT = long;
 
-    const signals = collectEnvSignals();
+    const signals = readEnvSignals();
     const aiAgent = signals?.AI_AGENT;
     expect(aiAgent).toBe("a".repeat(MaxEnvSignalValueLength));
     expect(typeof aiAgent === "string" ? aiAgent.length : -1).toBe(MaxEnvSignalValueLength);
@@ -89,13 +102,13 @@ describe("collectEnvSignals", () => {
     process.env.CI = "";
     process.env.GITHUB_ACTIONS = "   ";
 
-    expect(collectEnvSignals()).toBeUndefined();
+    expect(readEnvSignals()).toBeUndefined();
   });
 
   it("skips value keys with empty/whitespace-only values", () => {
     process.env.AI_AGENT = "   ";
 
-    expect(collectEnvSignals()).toBeUndefined();
+    expect(readEnvSignals()).toBeUndefined();
   });
 });
 

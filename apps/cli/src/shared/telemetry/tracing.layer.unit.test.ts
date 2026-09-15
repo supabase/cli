@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "@effect/vitest";
+import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
 import {
   existsSync,
@@ -11,16 +11,24 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import process from "node:process";
-import { Effect, Exit, Layer, Option, Context, Tracer } from "effect";
-import { cliSettingsLayer } from "../config/cli-settings.layer.ts";
-import type { TelemetryConfig } from "./types.ts";
 import {
-  mockCliProjectContext,
-  mockRuntimeInfo,
-  mockTty,
-  processEnvLayer,
-} from "../../../tests/helpers/mocks.ts";
+  ConfigProvider,
+  Context,
+  Deferred,
+  Effect,
+  Exit,
+  FileSystem,
+  Fiber,
+  Layer,
+  Option,
+  PlatformError,
+  Sink,
+  Stdio,
+  Tracer,
+} from "effect";
+import { CliSettings } from "../config/cli-settings.service.ts";
+import type { TelemetryConfig } from "./types.ts";
+import { mockCliProjectContext, mockRuntimeInfo, mockTty } from "../../../tests/helpers/mocks.ts";
 import { tracingLayer } from "./tracing.layer.ts";
 
 const fsLayer = BunServices.layer;
@@ -34,7 +42,13 @@ function writeConfig(dir: string, config: TelemetryConfig): void {
   writeFileSync(path.join(dir, "telemetry.json"), JSON.stringify(config));
 }
 
-function buildLayer(opts: { home: string; env?: Record<string, string>; stdoutIsTty?: boolean }) {
+function buildLayer(opts: {
+  home: string;
+  env?: Record<string, string>;
+  stdoutIsTty?: boolean;
+  fileSystem?: Layer.Layer<FileSystem.FileSystem>;
+  stdio?: Layer.Layer<Stdio.Stdio>;
+}) {
   const env: Record<string, string> = {
     HOME: opts.home,
     ...opts.env,
@@ -46,16 +60,39 @@ function buildLayer(opts: { home: string; env?: Record<string, string>; stdoutIs
     arch: "x64",
   });
   const cliProjectContextLayer = mockCliProjectContext();
+  const setting = (key: string) => {
+    const value = opts.env?.[key];
+    return value === undefined ? Option.none<string>() : Option.some(value);
+  };
+  const settingsLayer = Layer.succeed(
+    CliSettings,
+    CliSettings.of({
+      apiUrl: "https://api.supabase.com",
+      dashboardUrl: "https://supabase.com/dashboard",
+      projectHost: "supabase.co",
+      telemetryPosthogHost: "https://eu.i.posthog.com",
+      telemetryPosthogKey: Option.none(),
+      accessToken: Option.none(),
+      noKeyring: Option.none(),
+      supabaseHome: path.join(opts.home, ".supabase"),
+      debug: setting("SUPABASE_DEBUG"),
+      telemetryDebug: setting("SUPABASE_TELEMETRY_DEBUG"),
+      telemetryDisabled: setting("SUPABASE_TELEMETRY_DISABLED"),
+      doNotTrack: Option.none(),
+    }),
+  );
   return Layer.mergeAll(
     fsLayer,
+    opts.fileSystem ?? Layer.empty,
     runtimeInfoLayer,
     cliProjectContextLayer,
-    processEnvLayer(env),
-    cliSettingsLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(cliProjectContextLayer)),
+    ConfigProvider.layer(ConfigProvider.fromEnvRecord(env, { preserveEmptyStrings: true })),
+    settingsLayer,
     mockTty({
       stdoutIsTty: opts.stdoutIsTty ?? false,
       stdinIsTty: false,
     }),
+    opts.stdio ?? Layer.empty,
   );
 }
 
@@ -63,8 +100,54 @@ function buildTracingLayer(opts: {
   home: string;
   env?: Record<string, string>;
   stdoutIsTty?: boolean;
+  fileSystem?: Layer.Layer<FileSystem.FileSystem>;
+  stdio?: Layer.Layer<Stdio.Stdio>;
 }) {
   return tracingLayer.pipe(Layer.provide(buildLayer(opts)));
+}
+
+function blockingFileSystemLayer(
+  started: Deferred.Deferred<void>,
+  release: Deferred.Deferred<void>,
+  order: Array<string>,
+  finished?: Deferred.Deferred<void>,
+) {
+  return Layer.effect(
+    FileSystem.FileSystem,
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      return {
+        ...fs,
+        writeFileString: (
+          filePath: string,
+          content: string,
+          options?: Parameters<FileSystem.FileSystem["writeFileString"]>[2],
+        ): Effect.Effect<void, PlatformError.PlatformError> =>
+          Effect.gen(function* () {
+            if (!filePath.includes(".supabase/traces/")) {
+              yield* fs.writeFileString(filePath, content, options);
+              return;
+            }
+            order.push("started");
+            yield* Deferred.succeed(started, undefined);
+            yield* Deferred.await(release);
+            order.push("finished");
+            if (finished !== undefined) yield* Deferred.succeed(finished, undefined);
+          }),
+      };
+    }),
+  ).pipe(Layer.provide(BunServices.layer));
+}
+
+function capturingStdio(chunks: Array<string>): Layer.Layer<Stdio.Stdio> {
+  return Stdio.layerTest({
+    stderr: () =>
+      Sink.forEach((chunk: string | Uint8Array) =>
+        Effect.sync(() =>
+          chunks.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk)),
+        ),
+      ),
+  });
 }
 
 function makeSpanOptions(
@@ -181,6 +264,144 @@ describe("tracingLayer – layer construction & first-run", () => {
 });
 
 describe("tracingLayer – span behaviour", () => {
+  it.live("waits for a blocked exporter before closing its scope", () => {
+    const home = makeTempDir();
+    return Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const order: Array<string> = [];
+      const run = Effect.scoped(
+        Effect.gen(function* () {
+          const tracer = yield* Tracer.Tracer;
+          tracer.span(makeSpanOptions()).end(1_000_000_000n, Exit.void);
+        }).pipe(
+          Effect.provide(
+            buildTracingLayer({
+              home,
+              fileSystem: blockingFileSystemLayer(started, release, order),
+            }),
+          ),
+        ),
+      );
+
+      const fiber = yield* Effect.forkChild(run);
+      yield* Deferred.await(started);
+      expect(fiber.pollUnsafe()).toBeUndefined();
+      expect(order).toEqual(["started"]);
+
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(fiber);
+      expect(order.length).toBeGreaterThan(0);
+      expect(
+        order.every(
+          (entry, index) =>
+            (entry === "started" && order[index + 1] === "finished") ||
+            (entry === "finished" && order[index - 1] === "started"),
+        ),
+      ).toBe(true);
+    }).pipe(Effect.ensuring(Effect.sync(() => rmSync(home, { recursive: true, force: true }))));
+  });
+
+  it.live("drains a blocked exporter when the scoped program fails", () => {
+    const home = makeTempDir();
+    return Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const order: Array<string> = [];
+      const run = Effect.gen(function* () {
+        const tracer = yield* Tracer.Tracer;
+        tracer.span(makeSpanOptions()).end(1_000_000_000n, Exit.void);
+        return yield* Effect.fail("injected program failure");
+      }).pipe(
+        Effect.provide(
+          buildTracingLayer({
+            home,
+            fileSystem: blockingFileSystemLayer(started, release, order),
+          }),
+        ),
+      );
+
+      const fiber = yield* Effect.forkChild(run);
+      yield* Deferred.await(started);
+      expect(fiber.pollUnsafe()).toBeUndefined();
+      yield* Deferred.succeed(release, undefined);
+      const exit = yield* Fiber.await(fiber);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(order.at(-1)).toBe("finished");
+    }).pipe(Effect.ensuring(Effect.sync(() => rmSync(home, { recursive: true, force: true }))));
+  });
+
+  it.live("drains a blocked exporter when the scoped program is interrupted", () => {
+    const home = makeTempDir();
+    return Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const finished = yield* Deferred.make<void>();
+      const interrupted = yield* Deferred.make<void>();
+      const order: Array<string> = [];
+      const run = Effect.scoped(
+        Effect.gen(function* () {
+          const tracer = yield* Tracer.Tracer;
+          tracer.span(makeSpanOptions()).end(1_000_000_000n, Exit.void);
+          yield* Effect.never.pipe(
+            Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined)),
+          );
+        }).pipe(
+          Effect.provide(
+            buildTracingLayer({
+              home,
+              fileSystem: blockingFileSystemLayer(started, release, order, finished),
+            }),
+          ),
+        ),
+      );
+
+      const fiber = yield* Effect.forkChild(run);
+      yield* Deferred.await(started);
+      expect(fiber.pollUnsafe()).toBeUndefined();
+      const interrupt = yield* Fiber.interrupt(fiber).pipe(Effect.forkChild);
+      yield* Deferred.await(interrupted);
+      expect(order).toEqual(["started"]);
+      yield* Deferred.succeed(release, undefined);
+      yield* Deferred.await(finished);
+      yield* Fiber.join(interrupt);
+      const exit = yield* Fiber.await(fiber);
+      yield* Effect.yieldNow;
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(order.at(-1)).toBe("finished");
+    }).pipe(Effect.ensuring(Effect.sync(() => rmSync(home, { recursive: true, force: true }))));
+  });
+
+  it.live("continues file export when debug output fails", () => {
+    const home = makeTempDir();
+    const tracesDir = path.join(home, ".supabase", "traces");
+    const failure = PlatformError.systemError({
+      _tag: "Unknown",
+      module: "stderr",
+      method: "write",
+      description: "injected debug export failure",
+      pathOrDescriptor: "stderr",
+    });
+    return Effect.gen(function* () {
+      const tracer = yield* Tracer.Tracer;
+      tracer.span(makeSpanOptions()).end(BigInt(Date.now()) * 1_000_000n, Exit.void);
+    }).pipe(
+      Effect.provide(
+        buildTracingLayer({
+          home,
+          env: { SUPABASE_TELEMETRY_DEBUG: "1" },
+          stdio: Stdio.layerTest({ stderr: () => Sink.fail(failure) }),
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          expect(readdirSync(tracesDir).some((file) => file.endsWith(".ndjson"))).toBe(true);
+          rmSync(home, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
   it.live("span creation attaches global attributes", () => {
     const home = makeTempDir();
     return Effect.gen(function* () {
@@ -198,6 +419,52 @@ describe("tracingLayer – span behaviour", () => {
     }).pipe(
       Effect.provide(buildTracingLayer({ home })),
       Effect.ensuring(Effect.sync(() => rmSync(home, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live("span end exports to debug console when SUPABASE_DEBUG=1", () => {
+    const home = makeTempDir();
+    const stderrChunks: string[] = [];
+    return Effect.gen(function* () {
+      const tracer = yield* Tracer.Tracer;
+      tracer.span(makeSpanOptions({ name: "debug-span" })).end(1_000_000_000n, Exit.void);
+    }).pipe(
+      Effect.provide(
+        buildTracingLayer({
+          home,
+          env: { SUPABASE_DEBUG: "1" },
+          stdio: capturingStdio(stderrChunks),
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          expect(stderrChunks.join(" ")).toContain("debug-span");
+          rmSync(home, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.live("span end exports to debug console when SUPABASE_TELEMETRY_DEBUG=1", () => {
+    const home = makeTempDir();
+    const stderrChunks: string[] = [];
+    return Effect.gen(function* () {
+      const tracer = yield* Tracer.Tracer;
+      tracer.span(makeSpanOptions({ name: "telemetry-debug-span" })).end(1_000_000_000n, Exit.void);
+    }).pipe(
+      Effect.provide(
+        buildTracingLayer({
+          home,
+          env: { SUPABASE_TELEMETRY_DEBUG: "1" },
+          stdio: capturingStdio(stderrChunks),
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          expect(stderrChunks.join(" ")).toContain("telemetry-debug-span");
+          rmSync(home, { recursive: true, force: true });
+        }),
+      ),
     );
   });
 
@@ -264,58 +531,6 @@ describe("tracingLayer – span behaviour", () => {
           const hasNdjson =
             existsSync(tracesDir) && readdirSync(tracesDir).some((f) => f.endsWith(".ndjson"));
           expect(hasNdjson).toBe(false);
-          rmSync(home, { recursive: true, force: true });
-        }),
-      ),
-    );
-  });
-
-  it.live("span end exports to debug console when SUPABASE_DEBUG=1", () => {
-    const home = makeTempDir();
-    const stderrChunks: string[] = [];
-    const originalWrite = process.stderr.write.bind(process.stderr);
-    process.stderr.write = vi.fn((chunk: unknown) => {
-      stderrChunks.push(String(chunk));
-      return true;
-    }) as typeof process.stderr.write;
-
-    return Effect.gen(function* () {
-      const tracer = yield* Tracer.Tracer;
-      const span = tracer.span(makeSpanOptions({ name: "debug-span" }));
-      span.end(BigInt(Date.now() + 50) * 1_000_000n, Exit.void);
-    }).pipe(
-      Effect.provide(buildTracingLayer({ home, env: { SUPABASE_DEBUG: "1" } })),
-      Effect.ensuring(
-        Effect.sync(() => {
-          process.stderr.write = originalWrite;
-          const output = stderrChunks.join("");
-          expect(output).toContain("debug-span");
-          rmSync(home, { recursive: true, force: true });
-        }),
-      ),
-    );
-  });
-
-  it.live("span end exports to debug console when SUPABASE_TELEMETRY_DEBUG=1", () => {
-    const home = makeTempDir();
-    const stderrChunks: string[] = [];
-    const originalWrite = process.stderr.write.bind(process.stderr);
-    process.stderr.write = vi.fn((chunk: unknown) => {
-      stderrChunks.push(String(chunk));
-      return true;
-    }) as typeof process.stderr.write;
-
-    return Effect.gen(function* () {
-      const tracer = yield* Tracer.Tracer;
-      const span = tracer.span(makeSpanOptions({ name: "telemetry-debug-span" }));
-      span.end(BigInt(Date.now() + 50) * 1_000_000n, Exit.void);
-    }).pipe(
-      Effect.provide(buildTracingLayer({ home, env: { SUPABASE_TELEMETRY_DEBUG: "1" } })),
-      Effect.ensuring(
-        Effect.sync(() => {
-          process.stderr.write = originalWrite;
-          const output = stderrChunks.join("");
-          expect(output).toContain("telemetry-debug-span");
           rmSync(home, { recursive: true, force: true });
         }),
       ),
