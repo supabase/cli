@@ -2,7 +2,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
 import { BunServices } from "@effect/platform-bun";
-import { Deferred, Effect, Layer, Option, Stream } from "effect";
+import { ConfigProvider, Deferred, Effect, Layer, Option, Stream } from "effect";
 import type { CliProjectEnvironment, CliProjectPaths } from "@supabase/config";
 import { cliSettingsLayer } from "../../src/shared/config/cli-settings.layer.ts";
 import { CliProjectHome } from "../../src/shared/config/cli-project-home.service.ts";
