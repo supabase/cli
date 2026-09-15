@@ -15,6 +15,7 @@ import {
   ConfigProvider,
   Context,
   Deferred,
+  Duration,
   Effect,
   Exit,
   FileSystem,
@@ -26,6 +27,7 @@ import {
   Stdio,
   Tracer,
 } from "effect";
+import { TestClock } from "effect/testing";
 import { CliSettings } from "../config/cli-settings.service.ts";
 import type { TelemetryConfig } from "./types.ts";
 import { mockCliProjectContext, mockRuntimeInfo, mockTty } from "../../../tests/helpers/mocks.ts";
@@ -124,7 +126,7 @@ function blockingFileSystemLayer(
           options?: Parameters<FileSystem.FileSystem["writeFileString"]>[2],
         ): Effect.Effect<void, PlatformError.PlatformError> =>
           Effect.gen(function* () {
-            if (!filePath.includes(".supabase/traces/")) {
+            if (!filePath.endsWith(".ndjson")) {
               yield* fs.writeFileString(filePath, content, options);
               return;
             }
@@ -366,10 +368,73 @@ describe("tracingLayer – span behaviour", () => {
       yield* Deferred.await(finished);
       yield* Fiber.join(interrupt);
       const exit = yield* Fiber.await(fiber);
-      yield* Effect.yieldNow;
       expect(Exit.isFailure(exit)).toBe(true);
       expect(order.at(-1)).toBe("finished");
     }).pipe(Effect.ensuring(Effect.sync(() => rmSync(home, { recursive: true, force: true }))));
+  });
+
+  it.effect("bounds shutdown when an exporter never completes", () => {
+    const home = makeTempDir();
+    return Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const order: Array<string> = [];
+      const run = Effect.scoped(
+        Effect.gen(function* () {
+          const tracer = yield* Tracer.Tracer;
+          tracer.span(makeSpanOptions()).end(1_000_000_000n, Exit.void);
+        }).pipe(
+          Effect.provide(
+            buildTracingLayer({
+              home,
+              fileSystem: blockingFileSystemLayer(started, release, order),
+            }),
+          ),
+        ),
+      );
+
+      const fiber = yield* Effect.forkChild(run);
+      yield* Deferred.await(started);
+      const result = yield* Fiber.await(fiber).pipe(Effect.forkChild);
+      yield* TestClock.adjust(Duration.seconds(2));
+      const exit = yield* Fiber.join(result);
+
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(order).toEqual(["started"]);
+    }).pipe(Effect.ensuring(Effect.sync(() => rmSync(home, { recursive: true, force: true }))));
+  });
+
+  it.live("keeps exporting after debug formatting fails", () => {
+    const home = makeTempDir();
+    const tracesDir = path.join(home, ".supabase", "traces");
+    const stderrChunks: string[] = [];
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    return Effect.gen(function* () {
+      const tracer = yield* Tracer.Tracer;
+      const badSpan = tracer.span(makeSpanOptions({ name: "bad-debug-span" }));
+      badSpan.attribute("cyclic", cyclic);
+      badSpan.end(1_000_000_000n, Exit.void);
+      tracer.span(makeSpanOptions({ name: "good-debug-span" })).end(1_000_000_000n, Exit.void);
+    }).pipe(
+      Effect.provide(
+        buildTracingLayer({
+          home,
+          env: { SUPABASE_DEBUG: "1" },
+          stdio: capturingStdio(stderrChunks),
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          const traceFile = readdirSync(tracesDir).find((file) => file.endsWith(".ndjson"));
+          expect(traceFile).toBeDefined();
+          const traces = readFileSync(path.join(tracesDir, traceFile!), "utf8");
+          expect(traces).toContain("good-debug-span");
+          expect(stderrChunks.join(" ")).toContain("good-debug-span");
+          rmSync(home, { recursive: true, force: true });
+        }),
+      ),
+    );
   });
 
   it.live("continues file export when debug output fails", () => {
