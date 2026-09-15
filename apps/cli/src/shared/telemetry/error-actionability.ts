@@ -41,6 +41,7 @@ export const CliErrorCategory = {
   Cancelled: "cancelled",
   Panic: "panic",
   ImpossibleState: "impossible_state",
+  RuntimeCrash: "runtime_crash",
   Unknown: "unknown",
 } as const;
 
@@ -142,7 +143,8 @@ type CliErrorKindCategory =
       readonly error_kind: typeof CliErrorKind.InternalBug;
       readonly error_category:
         | typeof CliErrorCategory.Panic
-        | typeof CliErrorCategory.ImpossibleState;
+        | typeof CliErrorCategory.ImpossibleState
+        | typeof CliErrorCategory.RuntimeCrash;
     }
   | {
       readonly error_kind: typeof CliErrorKind.ExternalService;
@@ -382,6 +384,21 @@ export const actionability = {
     has_suggestion: true,
     suggestion_type: CliSuggestionType.RerunDebug,
   },
+  /**
+   * A long-running runtime the CLI supervises, such as the edge-runtime
+   * container behind `functions serve`, died on its own. Still our bug, so it
+   * belongs in the internal-bug counter-metric rather than `unknown`.
+   *
+   * Short-lived tool containers emit the same `error running container: exit N`
+   * but their exit reflects the user's data or connection; those use
+   * {@link actionability.dbConnection}.
+   */
+  runtimeCrash: {
+    error_kind: CliErrorKind.InternalBug,
+    error_category: CliErrorCategory.RuntimeCrash,
+    has_suggestion: true,
+    suggestion_type: CliSuggestionType.RerunDebug,
+  },
   unknown: {
     error_kind: CliErrorKind.Unknown,
     error_category: CliErrorCategory.Unknown,
@@ -472,7 +489,9 @@ function sanitizeKindCategory(kind: unknown, category: unknown): CliErrorKindCat
   }
   if (
     kind === CliErrorKind.InternalBug &&
-    (category === CliErrorCategory.Panic || category === CliErrorCategory.ImpossibleState)
+    (category === CliErrorCategory.Panic ||
+      category === CliErrorCategory.ImpossibleState ||
+      category === CliErrorCategory.RuntimeCrash)
   ) {
     return { error_kind: kind, error_category: category };
   }
