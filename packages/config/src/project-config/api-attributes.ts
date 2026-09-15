@@ -142,15 +142,13 @@ const storageFeaturesAttributes = Schema.Struct({
 // iceberg_catalog}` struct, like every other unmapped field.
 const storageCapabilitiesAttributes = Schema.Unknown;
 
-// `file_size_limit` is mapped; `capabilities`/`upstream_target`/`migration_version`/
-// `database_pool_mode` aren't.
+// `file_size_limit` is mapped; `capabilities`/`upstream_target`/`migration_version` aren't.
 const storageAttributes = Schema.Struct({
   file_size_limit: Schema.optionalKey(Schema.Number),
   features: Schema.optionalKey(storageFeaturesAttributes),
   capabilities: Schema.optionalKey(storageCapabilitiesAttributes),
   upstream_target: Schema.optionalKey(Schema.Unknown),
   migration_version: Schema.optionalKey(Schema.Unknown),
-  database_pool_mode: Schema.optionalKey(Schema.Unknown),
 });
 
 export const ProjectConfigApiAttributesSchema = Schema.Struct({

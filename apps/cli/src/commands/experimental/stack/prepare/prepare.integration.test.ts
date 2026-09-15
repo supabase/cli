@@ -1,8 +1,3 @@
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- filesystem fixture cleanup
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- filesystem fixture paths
-import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { CliOutput, Command } from "effect/unstable/cli";
@@ -10,10 +5,12 @@ import {
   Cause,
   Deferred,
   Effect,
+  FileSystem,
   Exit,
   Fiber,
   Layer,
   Option,
+  Path,
   Result,
   Schema,
   Sink,
@@ -45,12 +42,15 @@ import {
   ErrorActionabilityId,
 } from "../../../../shared/telemetry/error-actionability.ts";
 
-const makeProject = (config = 'project_id = "prepare-test"\n') => {
-  const root = mkdtempSync(join(tmpdir(), "supabase-stack-prepare-"));
-  mkdirSync(join(root, "supabase"));
-  writeFileSync(join(root, "supabase", "config.toml"), config);
-  return root;
-};
+const makeProject = (config = 'project_id = "prepare-test"\n') =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-prepare-" });
+    yield* fs.makeDirectory(path.join(root, "supabase"));
+    yield* fs.writeFileString(path.join(root, "supabase", "config.toml"), config);
+    return root;
+  }).pipe(Effect.provide(BunServices.layer));
 
 const makeStack = (
   id: string,
@@ -195,425 +195,455 @@ const statefulTaskOutput = () => {
 
 describe("stack prepare", () => {
   it.live("uses all default capabilities and renders the text result", () => {
-    const root = makeProject();
-    let options: Parameters<NonNullable<EffectStack["prepare"]>>[0];
-    const id = "a".repeat(64);
-    const stack = makeStack(id, (value) =>
-      Effect.sync(() => {
-        options = value;
-        return {
-          capabilities: [
-            { capability: "database", version: "1", outcome: "cached" as const },
-            { capability: "rest", version: "1", outcome: "cached" as const },
-          ],
-        };
+    return makeProject().pipe(
+      Effect.flatMap((root) => {
+        let options: Parameters<NonNullable<EffectStack["prepare"]>>[0];
+        const id = "a".repeat(64);
+        const stack = makeStack(id, (value) =>
+          Effect.sync(() => {
+            options = value;
+            return {
+              capabilities: [
+                { capability: "database", version: "1", outcome: "cached" as const },
+                { capability: "rest", version: "1", outcome: "cached" as const },
+              ],
+            };
+          }),
+        );
+        const fixture = handlerLayer({ root, stack });
+        return stackPrepare(flags()).pipe(
+          Effect.provide(fixture.layer),
+          Effect.tap(() =>
+            Effect.sync(() => {
+              expect(options).toMatchObject({ config: expect.anything() });
+              expect(options).not.toHaveProperty("capabilities");
+              expect(fixture.output.stdoutText).toContain(`Stack ${id} prepared.`);
+              expect(fixture.output.stdoutText).toContain("database 1 (cached)");
+              expect(fixture.telemetry.flushed).toBe(true);
+            }),
+          ),
+        );
       }),
-    );
-    const fixture = handlerLayer({ root, stack });
-    return stackPrepare(flags()).pipe(
-      Effect.provide(fixture.layer),
-      Effect.tap(() =>
-        Effect.sync(() => {
-          expect(options).toMatchObject({ config: expect.anything() });
-          expect(options).not.toHaveProperty("capabilities");
-          expect(fixture.output.stdoutText).toContain(`Stack ${id} prepared.`);
-          expect(fixture.output.stdoutText).toContain("database 1 (cached)");
-          expect(fixture.telemetry.flushed).toBe(true);
-        }),
-      ),
-      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
     );
   });
 
   it.live("maps a package config error for a disabled capability", () => {
-    const root = makeProject("[studio]\nenabled = false\n");
-    let created = false;
-    let prepared = false;
-    let receivedConfig: unknown;
-    const calls = { start: 0, stop: 0, destroy: 0 };
-    const stack = makeStack(
-      "2".repeat(64),
-      (options) => {
-        prepared = true;
-        receivedConfig = options?.config;
-        return Effect.fail(
-          new InvalidStackConfigError({
-            message: "Capability studio is disabled",
-            capability: "studio",
-          }),
+    return makeProject("[studio]\nenabled = false\n").pipe(
+      Effect.flatMap((root) => {
+        let created = false;
+        let prepared = false;
+        let receivedConfig: unknown;
+        const calls = { start: 0, stop: 0, destroy: 0 };
+        const stack = makeStack(
+          "2".repeat(64),
+          (options) => {
+            prepared = true;
+            receivedConfig = options?.config;
+            return Effect.fail(
+              new InvalidStackConfigError({
+                message: "Capability studio is disabled",
+                capability: "studio",
+              }),
+            );
+          },
+          calls,
         );
-      },
-      calls,
-    );
-    const telemetry = mockTelemetryStateTracked();
-    const fixture = handlerLayer({
-      root,
-      stack,
-      telemetry,
-      api: Layer.succeed(StackApi, {
-        findStack: () => Effect.die("unused"),
-        discoverStacks: () => Effect.die("unused"),
-        inspectStack: () => Effect.die("unused"),
-        openStack: () => Effect.die("unused"),
-        createStack: () => {
-          created = true;
-          return Effect.succeed(stack);
-        },
+        const telemetry = mockTelemetryStateTracked();
+        const fixture = handlerLayer({
+          root,
+          stack,
+          telemetry,
+          api: Layer.succeed(StackApi, {
+            findStack: () => Effect.die("unused"),
+            discoverStacks: () => Effect.die("unused"),
+            inspectStack: () => Effect.die("unused"),
+            openStack: () => Effect.die("unused"),
+            createStack: () => {
+              created = true;
+              return Effect.succeed(stack);
+            },
+          }),
+        });
+        return stackPrepare(flags({ capability: ["studio"] })).pipe(
+          Effect.flip,
+          Effect.provide(fixture.layer),
+          Effect.tap((error) =>
+            Effect.sync(() => {
+              expect(error).toBeInstanceOf(StackCommandPrepareError);
+              expect(error.reason).toBe("invalid-config");
+              expect(error[ErrorActionabilityId]).toEqual(actionability.invalidConfig);
+              expect(error.message).toContain("Capability studio is disabled");
+              expect(error.suggestion).toBeUndefined();
+              expect(receivedConfig).toMatchObject({
+                capabilities: { studio: { enabled: false } },
+              });
+              expect(created).toBe(true);
+              expect(prepared).toBe(true);
+              expect(calls).toEqual({ start: 0, stop: 0, destroy: 0 });
+              expect(telemetry.flushed).toBe(true);
+            }),
+          ),
+        );
       }),
-    });
-    return stackPrepare(flags({ capability: ["studio"] })).pipe(
-      Effect.flip,
-      Effect.provide(fixture.layer),
-      Effect.tap((error) =>
-        Effect.sync(() => {
-          expect(error).toBeInstanceOf(StackCommandPrepareError);
-          expect(error.reason).toBe("invalid-config");
-          expect(error[ErrorActionabilityId]).toEqual(actionability.invalidConfig);
-          expect(error.message).toContain("Capability studio is disabled");
-          expect(error.suggestion).toBeUndefined();
-          expect(receivedConfig).toMatchObject({ capabilities: { studio: { enabled: false } } });
-          expect(created).toBe(true);
-          expect(prepared).toBe(true);
-          expect(calls).toEqual({ start: 0, stop: 0, destroy: 0 });
-          expect(telemetry.flushed).toBe(true);
-        }),
-      ),
-      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
     );
   });
 
   it.live("parses repeated capabilities into the handler and serializes JSON results", () => {
     const formats = ["json", "stream-json"] as const;
     return Effect.forEach(formats, (format) => {
-      const root = makeProject();
-      const stdout: string[] = [];
-      let options: Parameters<NonNullable<EffectStack["prepare"]>>[0];
-      const id = "b".repeat(64);
-      const stack = makeStack(id, (value) =>
-        Effect.sync(() => {
-          options = value;
-          return {
-            capabilities: [
-              { capability: "rest", version: "1", outcome: "downloaded" as const },
-              { capability: "auth", version: "2", outcome: "cached" as const },
-            ],
-          };
+      return makeProject().pipe(
+        Effect.flatMap((root) => {
+          const stdout: string[] = [];
+          let options: Parameters<NonNullable<EffectStack["prepare"]>>[0];
+          const id = "b".repeat(64);
+          const stack = makeStack(id, (value) =>
+            Effect.sync(() => {
+              options = value;
+              return {
+                capabilities: [
+                  { capability: "rest", version: "1", outcome: "downloaded" as const },
+                  { capability: "auth", version: "2", outcome: "cached" as const },
+                ],
+              };
+            }),
+          );
+          const telemetry = mockTelemetryStateTracked();
+          const machineOutput = (format === "json" ? jsonOutputLayer : streamJsonOutputLayer).pipe(
+            Layer.provide(captureStdio(stdout, [])),
+          );
+          const command = stackPrepareCommand.pipe(
+            Command.withHandler((value) => stackPrepare(value)),
+          );
+          const layer = Layer.mergeAll(
+            BunServices.layer,
+            CliOutput.layer(textCliOutputFormatter()),
+            machineOutput,
+            telemetry.layer,
+            mockCommandSettings({ workdir: root }),
+            processEnvLayer({}),
+            Layer.succeed(StackTargetResolver, {
+              resolve: () => Effect.succeed({ projectRoot: root }),
+            }),
+            Layer.succeed(StackApi, {
+              findStack: () => Effect.die("unused"),
+              discoverStacks: () => Effect.die("unused"),
+              inspectStack: () => Effect.die("unused"),
+              openStack: () => Effect.die("unused"),
+              createStack: () => Effect.succeed(stack),
+            }),
+          );
+          return Command.runWith(command, { version: "0.0.0-test" })([
+            "--capability",
+            "rest",
+            "--capability",
+            "auth",
+          ]).pipe(
+            Effect.provide(layer),
+            Effect.tap(() =>
+              Effect.sync(() => {
+                expect(options).toMatchObject({ capabilities: ["rest", "auth"] });
+                expect(telemetry.flushed).toBe(true);
+              }),
+            ),
+            Effect.flatMap(() =>
+              Effect.sync(() => {
+                if (stdout.length === 0) throw new Error("no stdout");
+                return stdout.at(-1)!.trim();
+              }),
+            ),
+            Effect.flatMap((line) =>
+              Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(line),
+            ),
+            Effect.tap((result) =>
+              Effect.sync(() => {
+                const data = {
+                  id,
+                  capabilities: [
+                    { capability: "rest", version: "1", outcome: "downloaded" },
+                    { capability: "auth", version: "2", outcome: "cached" },
+                  ],
+                };
+                expect(result).toEqual(
+                  format === "json"
+                    ? { ...data, message: "" }
+                    : {
+                        type: "result",
+                        data: { ...data, message: "" },
+                        timestamp: expect.any(String),
+                      },
+                );
+              }),
+            ),
+          );
         }),
-      );
-      const telemetry = mockTelemetryStateTracked();
-      const machineOutput = (format === "json" ? jsonOutputLayer : streamJsonOutputLayer).pipe(
-        Layer.provide(captureStdio(stdout, [])),
-      );
-      const command = stackPrepareCommand.pipe(Command.withHandler((value) => stackPrepare(value)));
-      const layer = Layer.mergeAll(
-        BunServices.layer,
-        CliOutput.layer(textCliOutputFormatter()),
-        machineOutput,
-        telemetry.layer,
-        mockCommandSettings({ workdir: root }),
-        processEnvLayer({}),
-        Layer.succeed(StackTargetResolver, {
-          resolve: () => Effect.succeed({ projectRoot: root }),
-        }),
-        Layer.succeed(StackApi, {
-          findStack: () => Effect.die("unused"),
-          discoverStacks: () => Effect.die("unused"),
-          inspectStack: () => Effect.die("unused"),
-          openStack: () => Effect.die("unused"),
-          createStack: () => Effect.succeed(stack),
-        }),
-      );
-      return Command.runWith(command, { version: "0.0.0-test" })([
-        "--capability",
-        "rest",
-        "--capability",
-        "auth",
-      ]).pipe(
-        Effect.provide(layer),
-        Effect.tap(() =>
-          Effect.sync(() => {
-            expect(options).toMatchObject({ capabilities: ["rest", "auth"] });
-            expect(telemetry.flushed).toBe(true);
-          }),
-        ),
-        Effect.flatMap(() =>
-          Effect.sync(() => {
-            if (stdout.length === 0) throw new Error("no stdout");
-            return stdout.at(-1)!.trim();
-          }),
-        ),
-        Effect.flatMap((line) => Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(line)),
-        Effect.tap((result) =>
-          Effect.sync(() => {
-            const data = {
-              id,
-              capabilities: [
-                { capability: "rest", version: "1", outcome: "downloaded" },
-                { capability: "auth", version: "2", outcome: "cached" },
-              ],
-            };
-            expect(result).toEqual(
-              format === "json"
-                ? { ...data, message: "" }
-                : { type: "result", data: { ...data, message: "" }, timestamp: expect.any(String) },
-            );
-          }),
-        ),
-        Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
       );
     });
   });
 
   it.live("opens an inspected stack and loads configuration from its project root", () => {
-    const callerRoot = makeProject();
-    const inspectedRoot = makeProject("[api]\nport = 55432\n");
-    const id = "c".repeat(64);
-    let inspected = false;
-    let opened: string | undefined;
-    let preparedConfig: unknown;
-    const stack = makeStack(id, (value) =>
-      Effect.sync(() => {
-        preparedConfig = value?.config;
-        return { capabilities: [] };
-      }),
-    );
-    const api = Layer.succeed(StackApi, {
-      findStack: () => Effect.die("unused"),
-      discoverStacks: () => Effect.die("unused"),
-      inspectStack: () =>
+    return Effect.gen(function* () {
+      const callerRoot = yield* makeProject();
+      const inspectedRoot = yield* makeProject("[api]\nport = 55432\n");
+      const id = "c".repeat(64);
+      let inspected = false;
+      let opened: string | undefined;
+      let preparedConfig: unknown;
+      const stack = makeStack(id, (value) =>
         Effect.sync(() => {
-          inspected = true;
-          return {
-            descriptor: {
-              id: StackIdSchema.make(id),
-              projectRoot: inspectedRoot,
-              name: "existing",
-              branchContext: "existing-branch",
-              runtime: { kind: "native" as const },
-              desiredLifecycle: "stopped" as const,
-            },
-            owner: "absent" as const,
-          };
+          preparedConfig = value?.config;
+          return { capabilities: [] };
         }),
-      openStack: (stackId) =>
-        Effect.sync(() => {
-          opened = stackId;
-          return stack;
-        }),
-      createStack: () => Effect.die("must not create an existing stack"),
+      );
+      const api = Layer.succeed(StackApi, {
+        findStack: () => Effect.die("unused"),
+        discoverStacks: () => Effect.die("unused"),
+        inspectStack: () =>
+          Effect.sync(() => {
+            inspected = true;
+            return {
+              descriptor: {
+                id: StackIdSchema.make(id),
+                projectRoot: inspectedRoot,
+                name: "existing",
+                branchContext: "existing-branch",
+                runtime: { kind: "native" as const },
+                desiredLifecycle: "stopped" as const,
+              },
+              owner: "absent" as const,
+            };
+          }),
+        openStack: (stackId) =>
+          Effect.sync(() => {
+            opened = stackId;
+            return stack;
+          }),
+        createStack: () => Effect.die("must not create an existing stack"),
+      });
+      const fixture = handlerLayer({
+        root: callerRoot,
+        stack,
+        resolver: stackTargetResolverLayer,
+        api,
+      });
+      return yield* stackPrepare(flags({ stackId: Option.some(id) })).pipe(
+        Effect.provide(fixture.layer),
+        Effect.tap(() =>
+          Effect.sync(() => {
+            expect(inspected).toBe(true);
+            expect(opened).toBe(id);
+            expect(preparedConfig).toMatchObject({ listeners: { api: { port: 55432 } } });
+          }),
+        ),
+      );
     });
-    const fixture = handlerLayer({
-      root: callerRoot,
-      stack,
-      resolver: stackTargetResolverLayer,
-      api,
-    });
-    return stackPrepare(flags({ stackId: Option.some(id) })).pipe(
-      Effect.provide(fixture.layer),
-      Effect.tap(() =>
-        Effect.sync(() => {
-          expect(inspected).toBe(true);
-          expect(opened).toBe(id);
-          expect(preparedConfig).toMatchObject({ listeners: { api: { port: 55432 } } });
-        }),
-      ),
-      Effect.ensuring(
-        Effect.sync(() => {
-          rmSync(callerRoot, { recursive: true, force: true });
-          rmSync(inspectedRoot, { recursive: true, force: true });
-        }),
-      ),
-    );
   });
 
   it.live("rejects invalid config before creating a stack", () => {
-    const root = makeProject("project_id = [\n");
-    let created = false;
-    const stack = makeStack("d".repeat(64), () => Effect.die("must not prepare"));
-    const fixture = handlerLayer({
-      root,
-      stack,
-      api: Layer.succeed(StackApi, {
-        findStack: () => Effect.die("unused"),
-        discoverStacks: () => Effect.die("unused"),
-        inspectStack: () => Effect.die("unused"),
-        openStack: () => Effect.die("unused"),
-        createStack: () => {
-          created = true;
-          return Effect.succeed(stack);
-        },
+    return makeProject("project_id = [\n").pipe(
+      Effect.flatMap((root) => {
+        let created = false;
+        const stack = makeStack("d".repeat(64), () => Effect.die("must not prepare"));
+        const fixture = handlerLayer({
+          root,
+          stack,
+          api: Layer.succeed(StackApi, {
+            findStack: () => Effect.die("unused"),
+            discoverStacks: () => Effect.die("unused"),
+            inspectStack: () => Effect.die("unused"),
+            openStack: () => Effect.die("unused"),
+            createStack: () => {
+              created = true;
+              return Effect.succeed(stack);
+            },
+          }),
+        });
+        return stackPrepare(flags()).pipe(
+          Effect.flip,
+          Effect.provide(fixture.layer),
+          Effect.tap((error) =>
+            Effect.sync(() => {
+              expect(error.reason).toBe("invalid-config");
+              expect(created).toBe(false);
+              expect(fixture.telemetry.flushed).toBe(true);
+            }),
+          ),
+        );
       }),
-    });
-    return stackPrepare(flags()).pipe(
-      Effect.flip,
-      Effect.provide(fixture.layer),
-      Effect.tap((error) =>
-        Effect.sync(() => {
-          expect(error.reason).toBe("invalid-config");
-          expect(created).toBe(false);
-          expect(fixture.telemetry.flushed).toBe(true);
-        }),
-      ),
-      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
     );
   });
 
   it.live("rejects invalid targets and the legacy output flag before preparation", () => {
-    const targetRoot = makeProject();
-    let resolved = false;
-    const stack = makeStack("e".repeat(64), () => Effect.die("must not prepare"));
-    const telemetry = mockTelemetryStateTracked();
-    const output = mockOutput();
-    const fixture = handlerLayer({
-      root: targetRoot,
-      stack,
-      telemetry,
-      output,
-      resolver: Layer.succeed(StackTargetResolver, {
-        resolve: () => {
-          resolved = true;
-          return Effect.die("must not resolve invalid flags");
-        },
+    return makeProject().pipe(
+      Effect.flatMap((targetRoot) => {
+        let resolved = false;
+        const stack = makeStack("e".repeat(64), () => Effect.die("must not prepare"));
+        const telemetry = mockTelemetryStateTracked();
+        const output = mockOutput();
+        const fixture = handlerLayer({
+          root: targetRoot,
+          stack,
+          telemetry,
+          output,
+          resolver: Layer.succeed(StackTargetResolver, {
+            resolve: () => {
+              resolved = true;
+              return Effect.die("must not resolve invalid flags");
+            },
+          }),
+        });
+        const invalidTarget = stackPrepare(
+          flags({ stack: Option.some("feature"), stackId: Option.some("e".repeat(64)) }),
+        ).pipe(Effect.flip, Effect.provide(fixture.layer));
+        const legacy = stackPrepare(flags()).pipe(
+          Effect.flip,
+          Effect.provide(
+            Layer.mergeAll(fixture.layer, Layer.succeed(OutputFlag, Option.some("json"))),
+          ),
+        );
+        return Effect.gen(function* () {
+          const targetError = yield* invalidTarget;
+          expect(targetError.reason).toBe("flags");
+          expect(resolved).toBe(false);
+          expect(telemetry.flushed).toBe(true);
+          const legacyError = yield* legacy;
+          expect(legacyError.reason).toBe("flags");
+          expect(output.stdoutText).toBe("");
+        });
       }),
-    });
-    const invalidTarget = stackPrepare(
-      flags({ stack: Option.some("feature"), stackId: Option.some("e".repeat(64)) }),
-    ).pipe(Effect.flip, Effect.provide(fixture.layer));
-    const legacy = stackPrepare(flags()).pipe(
-      Effect.flip,
-      Effect.provide(Layer.mergeAll(fixture.layer, Layer.succeed(OutputFlag, Option.some("json")))),
-    );
-    return Effect.gen(function* () {
-      const targetError = yield* invalidTarget;
-      expect(targetError.reason).toBe("flags");
-      expect(resolved).toBe(false);
-      expect(telemetry.flushed).toBe(true);
-      const legacyError = yield* legacy;
-      expect(legacyError.reason).toBe("flags");
-      expect(output.stdoutText).toBe("");
-    }).pipe(
-      Effect.ensuring(Effect.sync(() => rmSync(targetRoot, { recursive: true, force: true }))),
     );
   });
 
   it.live("reports typed preparation failures through the task and flushes telemetry", () => {
-    const root = makeProject();
-    const telemetry = mockTelemetryStateTracked();
-    const output = mockOutput();
-    const stack = makeStack("f".repeat(64), () =>
-      Effect.fail(new StackPreparationError({ message: "artifact failed" })),
-    );
-    const fixture = handlerLayer({ root, stack, output, telemetry });
-    return stackPrepare(flags()).pipe(
-      Effect.flip,
-      Effect.provide(fixture.layer),
-      Effect.tap((error) =>
-        Effect.sync(() => {
-          expect(error).toBeInstanceOf(StackCommandPrepareError);
-          expect(error.reason).toBe("artifact");
-          expect(output.messages).toEqual(
-            expect.arrayContaining([
-              expect.objectContaining({ type: "error", message: "artifact failed" }),
-            ]),
-          );
-          expect(telemetry.flushed).toBe(true);
-        }),
-      ),
-      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+    return makeProject().pipe(
+      Effect.flatMap((root) => {
+        const telemetry = mockTelemetryStateTracked();
+        const output = mockOutput();
+        const stack = makeStack("f".repeat(64), () =>
+          Effect.fail(new StackPreparationError({ message: "artifact failed" })),
+        );
+        const fixture = handlerLayer({ root, stack, output, telemetry });
+        return stackPrepare(flags()).pipe(
+          Effect.flip,
+          Effect.provide(fixture.layer),
+          Effect.tap((error) =>
+            Effect.sync(() => {
+              expect(error).toBeInstanceOf(StackCommandPrepareError);
+              expect(error.reason).toBe("artifact");
+              expect(output.messages).toEqual(
+                expect.arrayContaining([
+                  expect.objectContaining({ type: "error", message: "artifact failed" }),
+                ]),
+              );
+              expect(telemetry.flushed).toBe(true);
+            }),
+          ),
+        );
+      }),
     );
   });
 
   it.live("suggests omitting runtime when a named stack has a runtime mismatch", () => {
-    const root = makeProject();
-    const stack = makeStack("0".repeat(64), () => Effect.die("must not prepare"));
-    const telemetry = mockTelemetryStateTracked();
-    const fixture = handlerLayer({
-      root,
-      stack,
-      telemetry,
-      resolver: Layer.succeed(StackTargetResolver, {
-        resolve: () =>
-          Effect.succeed({ projectRoot: root, name: "feature", runtime: { kind: "native" } }),
+    return makeProject().pipe(
+      Effect.flatMap((root) => {
+        const stack = makeStack("0".repeat(64), () => Effect.die("must not prepare"));
+        const telemetry = mockTelemetryStateTracked();
+        const fixture = handlerLayer({
+          root,
+          stack,
+          telemetry,
+          resolver: Layer.succeed(StackTargetResolver, {
+            resolve: () =>
+              Effect.succeed({ projectRoot: root, name: "feature", runtime: { kind: "native" } }),
+          }),
+          api: Layer.succeed(StackApi, {
+            findStack: () => Effect.die("unused"),
+            discoverStacks: () => Effect.die("unused"),
+            inspectStack: () => Effect.die("unused"),
+            openStack: () => Effect.die("unused"),
+            createStack: () =>
+              Effect.fail(new StackRuntimeMismatchError({ message: "runtime mismatch" })),
+          }),
+        });
+        return stackPrepare(flags({ stack: Option.some("feature"), runtime: "native" })).pipe(
+          Effect.flip,
+          Effect.provide(fixture.layer),
+          Effect.tap((error) =>
+            Effect.sync(() => {
+              expect(error.reason).toBe("flags");
+              expect(error.suggestion).toBe(
+                "Omit --runtime to reuse the existing runtime, or choose a different --stack name.",
+              );
+              expect(telemetry.flushed).toBe(true);
+            }),
+          ),
+        );
       }),
-      api: Layer.succeed(StackApi, {
-        findStack: () => Effect.die("unused"),
-        discoverStacks: () => Effect.die("unused"),
-        inspectStack: () => Effect.die("unused"),
-        openStack: () => Effect.die("unused"),
-        createStack: () =>
-          Effect.fail(new StackRuntimeMismatchError({ message: "runtime mismatch" })),
-      }),
-    });
-    return stackPrepare(flags({ stack: Option.some("feature"), runtime: "native" })).pipe(
-      Effect.flip,
-      Effect.provide(fixture.layer),
-      Effect.tap((error) =>
-        Effect.sync(() => {
-          expect(error.reason).toBe("flags");
-          expect(error.suggestion).toBe(
-            "Omit --runtime to reuse the existing runtime, or choose a different --stack name.",
-          );
-          expect(telemetry.flushed).toBe(true);
-        }),
-      ),
-      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
     );
   });
 
   it.live(
     "cancels preparation on interruption without lifecycle calls and flushes telemetry",
     () => {
-      const root = makeProject();
-      const started = Deferred.makeUnsafe<void>();
-      const calls = { start: 0, stop: 0, destroy: 0 };
-      let canceled = false;
-      const telemetry = mockTelemetryStateTracked();
-      const stack = makeStack(
-        "1".repeat(64),
-        () =>
-          Effect.gen(function* () {
-            yield* Deferred.succeed(started, undefined);
-            return yield* Effect.never.pipe(Effect.as({ capabilities: [] }));
-          }).pipe(Effect.ensuring(Effect.sync(() => (canceled = true)))),
-        calls,
+      return makeProject().pipe(
+        Effect.flatMap((root) => {
+          const started = Deferred.makeUnsafe<void>();
+          const calls = { start: 0, stop: 0, destroy: 0 };
+          let canceled = false;
+          const telemetry = mockTelemetryStateTracked();
+          const stack = makeStack(
+            "1".repeat(64),
+            () =>
+              Effect.gen(function* () {
+                yield* Deferred.succeed(started, undefined);
+                return yield* Effect.never.pipe(Effect.as({ capabilities: [] }));
+              }).pipe(Effect.ensuring(Effect.sync(() => (canceled = true)))),
+            calls,
+          );
+          const fixture = handlerLayer({ root, stack, telemetry });
+          const taskOutput = statefulTaskOutput();
+          return Effect.gen(function* () {
+            const fiber = yield* Effect.forkChild(
+              Effect.provide(
+                stackPrepare(flags()),
+                Layer.mergeAll(fixture.layer, taskOutput.layer),
+              ),
+            );
+            yield* Deferred.await(started);
+            yield* Fiber.interrupt(fiber);
+            expect(canceled).toBe(true);
+            expect(taskOutput.state.active).toBe(true);
+            expect(taskOutput.state.settled).toBe(true);
+            expect(taskOutput.state.failed).toBe(false);
+            expect(taskOutput.state.canceled || taskOutput.state.cleared).toBe(true);
+            expect(calls).toEqual({ start: 0, stop: 0, destroy: 0 });
+            expect(telemetry.flushed).toBe(true);
+          });
+        }),
       );
-      const fixture = handlerLayer({ root, stack, telemetry });
-      const taskOutput = statefulTaskOutput();
-      return Effect.gen(function* () {
-        const fiber = yield* Effect.forkChild(
-          Effect.provide(stackPrepare(flags()), Layer.mergeAll(fixture.layer, taskOutput.layer)),
-        );
-        yield* Deferred.await(started);
-        yield* Fiber.interrupt(fiber);
-        expect(canceled).toBe(true);
-        expect(taskOutput.state.active).toBe(true);
-        expect(taskOutput.state.settled).toBe(true);
-        expect(taskOutput.state.failed).toBe(false);
-        expect(taskOutput.state.canceled || taskOutput.state.cleared).toBe(true);
-        expect(calls).toEqual({ start: 0, stop: 0, destroy: 0 });
-        expect(telemetry.flushed).toBe(true);
-      }).pipe(Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))));
     },
   );
 
   it.live("settles the task on a preparation defect while preserving the defect", () => {
-    const root = makeProject();
-    const stack = makeStack("3".repeat(64), () => Effect.die("preparation defect"));
-    const fixture = handlerLayer({ root, stack });
-    const taskOutput = statefulTaskOutput();
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
-        Effect.provide(stackPrepare(flags()), Layer.mergeAll(fixture.layer, taskOutput.layer)),
-      );
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const defect = Cause.findDefect(exit.cause);
-        expect(Result.isSuccess(defect)).toBe(true);
-        if (Result.isSuccess(defect)) expect(defect.success).toBe("preparation defect");
-      }
-      expect(taskOutput.state.settled).toBe(true);
-      expect(taskOutput.state.canceled).toBe(false);
-      expect(taskOutput.state.failed).toBe(true);
-    }).pipe(Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))));
+    return makeProject().pipe(
+      Effect.flatMap((root) => {
+        const stack = makeStack("3".repeat(64), () => Effect.die("preparation defect"));
+        const fixture = handlerLayer({ root, stack });
+        const taskOutput = statefulTaskOutput();
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(
+            Effect.provide(stackPrepare(flags()), Layer.mergeAll(fixture.layer, taskOutput.layer)),
+          );
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const defect = Cause.findDefect(exit.cause);
+            expect(Result.isSuccess(defect)).toBe(true);
+            if (Result.isSuccess(defect)) expect(defect.success).toBe("preparation defect");
+          }
+          expect(taskOutput.state.settled).toBe(true);
+          expect(taskOutput.state.canceled).toBe(false);
+          expect(taskOutput.state.failed).toBe(true);
+        });
+      }),
+    );
   });
 });

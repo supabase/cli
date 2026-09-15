@@ -93,18 +93,18 @@ describe("compute delete", () => {
         workdir: repo.dir,
         yes: true,
         routes: {
-          [`GET /v2/projects/${otherRef}/workers/api`]: {
+          [`GET /v2/projects/${otherRef}/compute/api`]: {
             status: 200,
             body: { data: computeResource({ name: "api" }) },
           },
-          [`DELETE /v2/projects/${otherRef}/workers/api`]: { status: 204 },
+          [`DELETE /v2/projects/${otherRef}/compute/api`]: { status: 204 },
         },
       });
 
       return yield* Effect.gen(function* () {
         yield* computeDelete({ name: "api", projectRef: Option.some(otherRef) });
 
-        expect(http.routeKeys).toContain(`DELETE /v2/projects/${otherRef}/workers/api`);
+        expect(http.routeKeys).toContain(`DELETE /v2/projects/${otherRef}/compute/api`);
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
@@ -231,7 +231,7 @@ describe("compute delete", () => {
         workdir: repo.dir,
         format: "json",
         routes: {
-          [`GET /v2/projects/${otherRef}/workers/api`]: {
+          [`GET /v2/projects/${otherRef}/compute/api`]: {
             status: 200,
             body: { data: computeResource({ name: "api" }) },
           },
@@ -279,7 +279,7 @@ describe("compute delete", () => {
         workdir: repo.dir,
         promptTextResponses: ["nope"],
         routes: {
-          [`GET /v2/projects/${otherRef}/workers/api`]: {
+          [`GET /v2/projects/${otherRef}/compute/api`]: {
             status: 200,
             body: { data: computeResource({ name: "api" }) },
           },

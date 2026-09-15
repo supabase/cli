@@ -113,6 +113,8 @@ export const commandSettingsLayer = Layer.unwrap(
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const runtimeInfo = yield* RuntimeInfo;
+        // The live `process.env` proxy, not a `Config` snapshot: the snapshot is
+        // case-sensitive and breaks Windows env lookup parity.
         const env = process.env;
 
         // Optional service: tests without argv default to "not explicit". An empty command
@@ -123,6 +125,9 @@ export const commandSettingsLayer = Layer.unwrap(
           onSome: ({ args }) => lastExplicitLongFlagValue(args, [], "profile"),
         });
 
+        const rawProfileEnv = env["SUPABASE_PROFILE"];
+        const profileEnvValue =
+          rawProfileEnv === undefined || rawProfileEnv.length === 0 ? undefined : rawProfileEnv;
         const {
           name: profile,
           apiUrl,
@@ -132,7 +137,7 @@ export const commandSettingsLayer = Layer.unwrap(
         } = yield* resolveProfile(
           profileFlag,
           explicitProfileFlag,
-          env["SUPABASE_PROFILE"],
+          profileEnvValue,
           fs,
           path,
           runtimeInfo.homeDir,
@@ -167,6 +172,7 @@ export const commandSettingsLayer = Layer.unwrap(
           projectHost,
           poolerHost,
           dashboardUrl,
+          profileEnvValue,
           accessToken,
           projectId,
           workdir,

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "@effect/vitest";
 import { Effect } from "effect";
 import type { DebugLoggerShape } from "../../command-internal/debug-logger.service.ts";
 import { feedbackFetch } from "./feedback.layers.ts";
@@ -16,11 +16,11 @@ function recordingLogger() {
 }
 
 function recordingInnerFetch() {
-  const requests: Array<{ url: string; method: string | undefined }> = [];
+  const requests: Array<{ url: string; method: string | undefined; hasInit: boolean }> = [];
   const fetch: typeof globalThis.fetch = Object.assign(
-    async (input: string | URL | Request, init?: RequestInit) => {
-      requests.push({ url: String(input), method: init?.method });
-      return new Response("ok");
+    (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      requests.push({ url: String(input), method: init?.method, hasInit: init !== undefined });
+      return Promise.resolve(new Response("ok"));
     },
     { preconnect: () => Promise.resolve() },
   );
@@ -28,47 +28,65 @@ function recordingInnerFetch() {
 }
 
 describe("feedbackFetch", () => {
-  it("logs every request through the debug logger and delegates to the inner fetch", async () => {
-    const { logger, httpLines } = recordingLogger();
-    const inner = recordingInnerFetch();
-    const fetch = feedbackFetch({ dnsResolver: "native", logger, innerFetch: inner.fetch });
+  it.live("logs every request through the debug logger and delegates to the inner fetch", () =>
+    Effect.gen(function* () {
+      const { logger, httpLines } = recordingLogger();
+      const inner = recordingInnerFetch();
+      const fetch = feedbackFetch({ dnsResolver: "native", logger, innerFetch: inner.fetch });
 
-    const response = await fetch("https://feedback.supabase.co/rest/v1/rpc/x", { method: "POST" });
+      const response = yield* Effect.promise((signal) =>
+        fetch("https://feedback.supabase.co/rest/v1/rpc/x", { method: "POST", signal }),
+      );
 
-    expect(await response.text()).toBe("ok");
-    expect(httpLines).toEqual(["POST https://feedback.supabase.co/rest/v1/rpc/x"]);
-    expect(inner.requests).toEqual([
-      { url: "https://feedback.supabase.co/rest/v1/rpc/x", method: "POST" },
-    ]);
-  });
+      expect(yield* Effect.promise(() => response.text())).toBe("ok");
+      expect(httpLines).toEqual(["POST https://feedback.supabase.co/rest/v1/rpc/x"]);
+      expect(inner.requests).toEqual([
+        { url: "https://feedback.supabase.co/rest/v1/rpc/x", method: "POST", hasInit: true },
+      ]);
+    }),
+  );
 
-  it("defaults the logged method to GET when the request carries none", async () => {
-    const { logger, httpLines } = recordingLogger();
-    const inner = recordingInnerFetch();
-    const fetch = feedbackFetch({ dnsResolver: "native", logger, innerFetch: inner.fetch });
+  it.live("defaults the logged method to GET when the request carries none", () =>
+    Effect.gen(function* () {
+      const { logger, httpLines } = recordingLogger();
+      const inner = recordingInnerFetch();
+      const fetch = feedbackFetch({ dnsResolver: "native", logger, innerFetch: inner.fetch });
 
-    await fetch("https://feedback.supabase.co/rest/v1/interfaces_feedback");
+      // Deliberately no init at all: pins the undefined-init passthrough to the transport.
+      yield* Effect.promise(() =>
+        fetch("https://feedback.supabase.co/rest/v1/interfaces_feedback"),
+      );
 
-    expect(httpLines).toEqual(["GET https://feedback.supabase.co/rest/v1/interfaces_feedback"]);
-  });
+      expect(httpLines).toEqual(["GET https://feedback.supabase.co/rest/v1/interfaces_feedback"]);
+      expect(inner.requests).toEqual([
+        {
+          url: "https://feedback.supabase.co/rest/v1/interfaces_feedback",
+          method: undefined,
+          hasInit: false,
+        },
+      ]);
+    }),
+  );
 
-  it("redacts the delete_token filter from the logged URL but not the request", async () => {
-    const { logger, httpLines } = recordingLogger();
-    const inner = recordingInnerFetch();
-    const fetch = feedbackFetch({ dnsResolver: "native", logger, innerFetch: inner.fetch });
+  it.live("redacts the delete_token filter from the logged URL but not the request", () =>
+    Effect.gen(function* () {
+      const { logger, httpLines } = recordingLogger();
+      const inner = recordingInnerFetch();
+      const fetch = feedbackFetch({ dnsResolver: "native", logger, innerFetch: inner.fetch });
 
-    // The delete URL carries the capability token as a PostgREST
-    // filter; the debug log must never reproduce it.
-    const url =
-      "https://feedback.supabase.co/rest/v1/interfaces_feedback" +
-      "?select=feedback&delete_token=eq.123e4567-e89b-12d3-a456-426614174000";
-    await fetch(url, { method: "DELETE" });
+      // The delete URL carries the capability token as a PostgREST
+      // filter; the debug log must never reproduce it.
+      const url =
+        "https://feedback.supabase.co/rest/v1/interfaces_feedback" +
+        "?select=feedback&delete_token=eq.123e4567-e89b-12d3-a456-426614174000";
+      yield* Effect.promise((signal) => fetch(url, { method: "DELETE", signal }));
 
-    expect(httpLines).toEqual([
-      "DELETE https://feedback.supabase.co/rest/v1/interfaces_feedback" +
-        "?select=feedback&delete_token=eq.redacted",
-    ]);
-    // The transport still receives the original, unredacted URL.
-    expect(inner.requests).toEqual([{ url, method: "DELETE" }]);
-  });
+      expect(httpLines).toEqual([
+        "DELETE https://feedback.supabase.co/rest/v1/interfaces_feedback" +
+          "?select=feedback&delete_token=eq.redacted",
+      ]);
+      // The transport still receives the original, unredacted URL.
+      expect(inner.requests).toEqual([{ url, method: "DELETE", hasInit: true }]);
+    }),
+  );
 });

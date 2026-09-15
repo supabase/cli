@@ -1,10 +1,10 @@
-import type { ApiKeyResponse } from "@supabase/api/effect";
+import type { ApiKeyResponse_Output } from "@supabase/api/effect";
 
 import { renderGlamourTable } from "../../output/glamour-table.ts";
 import { apiKeyValue } from "../../command-internal/api-keys.format.ts";
 import { formatTimestamp } from "../../command-internal/timestamp.format.ts";
 
-type ApiKey = typeof ApiKeyResponse.Type;
+type ApiKey = typeof ApiKeyResponse_Output.Type;
 
 /**
  * Lenient project record. `projects list`/`create` parse the `/v1/projects` response via the raw

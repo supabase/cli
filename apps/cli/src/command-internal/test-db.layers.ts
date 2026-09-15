@@ -45,7 +45,7 @@ export const testDbRuntimeLayer = (commandPath: ReadonlyArray<string>) =>
     // above, so the lazy linked stack shares a single stitch attempt.
     identityStitchLayer,
     telemetryStateLayer,
-    // Exposed so native-engine prove can read `runtime.kind` and pick PATH pg_prove.
+    // Native engines read `runtime.kind` here to pick PATH `pg_prove`.
     stackApiLayer,
     commandRuntimeLayer(commandPath),
   );

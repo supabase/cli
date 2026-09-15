@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option, Stdio } from "effect";
 
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
+import { stripControlSequences } from "../../../shared/output/strip-control-sequences.ts";
 import {
   buildTestRuntime,
   mockCommandSettings,
@@ -15,10 +16,6 @@ import { functionsDeleteHandler } from "./delete.command.ts";
 import { functionsDelete } from "./delete.handler.ts";
 
 const tempRoot = useTempWorkdir("supabase-functions-delete-");
-
-// Strips ANSI color codes so assertions are stable regardless of color support.
-// eslint-disable-next-line no-control-regex
-const stripSgr = (text: string) => text.replace(/\x1b\[[0-9;]*m/gu, "");
 
 describe("functions delete", () => {
   it.live("deletes a function natively through the Management API", () => {
@@ -45,7 +42,7 @@ describe("functions delete", () => {
       expect(api.requests[0]?.url).toBe(
         "https://api.supabase.com/v1/projects/abcdefghijklmnopqrst/functions/hello-world",
       );
-      expect(stripSgr(out.stdoutText)).toBe(
+      expect(stripControlSequences(out.stdoutText)).toBe(
         "Deleted Function hello-world from project abcdefghijklmnopqrst.\n",
       );
       expect(linkedProjectCache.cached).toBe(true);

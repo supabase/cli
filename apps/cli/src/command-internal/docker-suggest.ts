@@ -4,6 +4,10 @@ import { containerRuntimeNotFoundMessage } from "./container-cli.ts";
 export const SUGGEST_DOCKER_INSTALL =
   "Docker Desktop is a prerequisite for local development. Follow the official docs to install: https://docs.docker.com/desktop";
 
+/** Remediation for a daemon that answered earlier in the session and then went away, as opposed to `SUGGEST_DOCKER_INSTALL`'s missing-binary case. */
+export const SUGGEST_DOCKER_START =
+  "Docker is no longer reachable. Start Docker, then rerun `supabase functions serve`.";
+
 /**
  * Whether a container-CLI stderr indicates the daemon is unreachable. Matches the docker/podman
  * "cannot connect"/"is the docker daemon running" messages, a socket permission-denied message,

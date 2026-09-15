@@ -13,7 +13,7 @@ import {
   Schema,
   Scope,
 } from "effect";
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- HostListener fixtures must supply the native HTTP server that gateways adopt.
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- fixture supplies the native HTTP server instance that HostListener and gateways adopt.
 import { createServer as createHttpServer } from "node:http";
 import { deriveStackId, type StackIdentity } from "../identity/Identity.ts";
 import {

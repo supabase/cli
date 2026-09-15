@@ -1,12 +1,27 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Option, Redacted, Schema, Sink, Stream } from "effect";
+import {
+  Cause,
+  ConfigProvider,
+  Effect,
+  Exit,
+  FileSystem,
+  Option,
+  Redacted,
+  Schema,
+  Sink,
+  Stream,
+} from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- capture env-file contents before the scoped workspace is removed
 import { readFileSync } from "node:fs";
 import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
+import { deriveStackId } from "../identity/Identity.ts";
 import { RequiresActivatedProcessError } from "../public/Errors.ts";
 import { StackIdSchema } from "../public/StackId.ts";
+import { STACK_STATE_FORMAT } from "../state/StackState.ts";
+import { makeStackStateStore } from "../state/StackStateStore.ts";
+import { defaultRuntimeEnvironment } from "../supervisor/Launcher.ts";
 import type { RuntimeArtifactPreparer } from "../preparation/RuntimeArtifacts.ts";
 import type {
   ContainerContainerSpec,
@@ -519,4 +534,90 @@ describe("schemaInit", () => {
       Effect.provide(NodeServices.layer),
     );
   });
+
+  it.live("reuses persisted Realtime secrets for live docker schema-init", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const home = yield* fs.makeTempDirectoryScoped({ prefix: "schema-init-home-" });
+        const projectRoot = yield* fs.makeTempDirectoryScoped({ prefix: "schema-init-live-rt-" });
+        const knownEncKey = "live-db-enc-key1";
+        const knownKeyBase = "live-secret-key-base-value-that-is-long-enough";
+        yield* Effect.gen(function* () {
+          const env = yield* defaultRuntimeEnvironment;
+          const identity = {
+            projectRoot,
+            branchContext: "main",
+            stackName: "default",
+          };
+          const stackId = yield* deriveStackId(identity);
+          const store = yield* makeStackStateStore({ stateRoot: env.stateRoot });
+          yield* store.initialize(stackId, {
+            format: STACK_STATE_FORMAT,
+            identity,
+            runtime: { kind: "container", engine: "docker" },
+            desiredLifecycle: "running",
+            ports: [],
+            privatePorts: [],
+            secrets: {
+              "secret:realtime.settings.db_enc_key": {
+                policy: "managed",
+                value: knownEncKey,
+              },
+              "secret:realtime.settings.secret_key_base": {
+                policy: "managed",
+                value: knownKeyBase,
+              },
+              "secret:functions.environment.DOGFOOD_SMTP": {
+                policy: "passthrough",
+                value: "smtp-pass",
+              },
+            },
+          });
+          const state: FakeContainerState = {
+            resources: [
+              {
+                id: "net-live",
+                name: "supabase-live-network",
+                kind: "network",
+                labels: {
+                  stackId,
+                  ownerSessionId: "owner-session",
+                  role: "network",
+                },
+              },
+            ],
+            calls: [],
+            createdSpecs: [],
+            envFiles: new Map(),
+            nextId: 1,
+          };
+          yield* schemaInitWorkloads(
+            ["realtime"],
+            {
+              kind: "live",
+              stackId,
+              projectRoot,
+              runtime: { kind: "container", engine: "docker" },
+              config: {},
+              databaseUrl: "postgresql://postgres:s3cret@127.0.0.1:54322/postgres",
+              secrets: { databasePassword: password, jwtSecret },
+            },
+            { containerEngine: fakeContainerEngine(state), artifactPreparer: fakePreparer },
+          );
+          const spec = state.createdSpecs[0];
+          expect(spec).toBeDefined();
+          if (spec === undefined) return;
+          expect(spec.envFile).toBeDefined();
+          if (spec.envFile === undefined) return;
+          const launched = envFromFile(state.envFiles.get(spec.envFile) ?? "");
+          expect(launched.SEED_SELF_HOST).toBe("true");
+          expect(launched.DB_ENC_KEY).toBe(knownEncKey);
+          expect(launched.SECRET_KEY_BASE).toBe(knownKeyBase);
+        }).pipe(
+          Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ SUPABASE_HOME: home }))),
+        );
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
 });

@@ -2355,6 +2355,34 @@ export const versionedEffectOperations = {
           input,
         );
       }),
+    createABranch: (
+      input: typeof operationDefinitions.v2CreateABranch.inputSchema.Type,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2CreateABranch.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2CreateABranch">(
+          operationDefinitions.v2CreateABranch,
+          input,
+        );
+      }),
+    createComputeInstanceUpload: (
+      input: typeof operationDefinitions.v2CreateComputeInstanceUpload.inputSchema.Type,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2CreateComputeInstanceUpload.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2CreateComputeInstanceUpload">(
+          operationDefinitions.v2CreateComputeInstanceUpload,
+          input,
+        );
+      }),
     createLogDrain: (
       input: typeof operationDefinitions.v2CreateLogDrain.inputSchema.Type,
     ): Effect.Effect<
@@ -2397,31 +2425,17 @@ export const versionedEffectOperations = {
           input,
         );
       }),
-    createWorkerUpload: (
-      input: typeof operationDefinitions.v2CreateWorkerUpload.inputSchema.Type,
+    deleteAComputeInstance: (
+      input: typeof operationDefinitions.v2DeleteAComputeInstance.inputSchema.Type,
     ): Effect.Effect<
-      typeof operationDefinitions.v2CreateWorkerUpload.outputSchema.Type,
+      typeof operationDefinitions.v2DeleteAComputeInstance.outputSchema.Type,
       SupabaseApiError,
       SupabaseApiClient
     > =>
       Effect.gen(function* () {
         const client = yield* SupabaseApiClient;
-        return yield* client.execute<"v2CreateWorkerUpload">(
-          operationDefinitions.v2CreateWorkerUpload,
-          input,
-        );
-      }),
-    deleteAWorker: (
-      input: typeof operationDefinitions.v2DeleteAWorker.inputSchema.Type,
-    ): Effect.Effect<
-      typeof operationDefinitions.v2DeleteAWorker.outputSchema.Type,
-      SupabaseApiError,
-      SupabaseApiClient
-    > =>
-      Effect.gen(function* () {
-        const client = yield* SupabaseApiClient;
-        return yield* client.execute<"v2DeleteAWorker">(
-          operationDefinitions.v2DeleteAWorker,
+        return yield* client.execute<"v2DeleteAComputeInstance">(
+          operationDefinitions.v2DeleteAComputeInstance,
           input,
         );
       }),
@@ -2481,30 +2495,33 @@ export const versionedEffectOperations = {
           input,
         );
       }),
-    deployAWorker: (
-      input: typeof operationDefinitions.v2DeployAWorker.inputSchema.Type,
+    deployAComputeInstance: (
+      input: typeof operationDefinitions.v2DeployAComputeInstance.inputSchema.Type,
     ): Effect.Effect<
-      typeof operationDefinitions.v2DeployAWorker.outputSchema.Type,
+      typeof operationDefinitions.v2DeployAComputeInstance.outputSchema.Type,
       SupabaseApiError,
       SupabaseApiClient
     > =>
       Effect.gen(function* () {
         const client = yield* SupabaseApiClient;
-        return yield* client.execute<"v2DeployAWorker">(
-          operationDefinitions.v2DeployAWorker,
+        return yield* client.execute<"v2DeployAComputeInstance">(
+          operationDefinitions.v2DeployAComputeInstance,
           input,
         );
       }),
-    getAWorker: (
-      input: typeof operationDefinitions.v2GetAWorker.inputSchema.Type,
+    getAComputeInstance: (
+      input: typeof operationDefinitions.v2GetAComputeInstance.inputSchema.Type,
     ): Effect.Effect<
-      typeof operationDefinitions.v2GetAWorker.outputSchema.Type,
+      typeof operationDefinitions.v2GetAComputeInstance.outputSchema.Type,
       SupabaseApiError,
       SupabaseApiClient
     > =>
       Effect.gen(function* () {
         const client = yield* SupabaseApiClient;
-        return yield* client.execute<"v2GetAWorker">(operationDefinitions.v2GetAWorker, input);
+        return yield* client.execute<"v2GetAComputeInstance">(
+          operationDefinitions.v2GetAComputeInstance,
+          input,
+        );
       }),
     getProjectConfig: (
       input: typeof operationDefinitions.v2GetProjectConfig.inputSchema.Type,
@@ -2520,17 +2537,17 @@ export const versionedEffectOperations = {
           input,
         );
       }),
-    listAllWorkers: (
-      input: typeof operationDefinitions.v2ListAllWorkers.inputSchema.Type,
+    listAllComputeInstances: (
+      input: typeof operationDefinitions.v2ListAllComputeInstances.inputSchema.Type,
     ): Effect.Effect<
-      typeof operationDefinitions.v2ListAllWorkers.outputSchema.Type,
+      typeof operationDefinitions.v2ListAllComputeInstances.outputSchema.Type,
       SupabaseApiError,
       SupabaseApiClient
     > =>
       Effect.gen(function* () {
         const client = yield* SupabaseApiClient;
-        return yield* client.execute<"v2ListAllWorkers">(
-          operationDefinitions.v2ListAllWorkers,
+        return yield* client.execute<"v2ListAllComputeInstances">(
+          operationDefinitions.v2ListAllComputeInstances,
           input,
         );
       }),
@@ -3370,6 +3387,14 @@ export function executeApiClientOperation(
       return Schema.decodeUnknownEffect(
         operationDefinitions.v2AssignOrganizationMemberRole.inputSchema,
       )(input).pipe(Effect.flatMap((decoded) => api.v2.assignOrganizationMemberRole(decoded)));
+    case "v2CreateABranch":
+      return Schema.decodeUnknownEffect(operationDefinitions.v2CreateABranch.inputSchema)(
+        input,
+      ).pipe(Effect.flatMap((decoded) => api.v2.createABranch(decoded)));
+    case "v2CreateComputeInstanceUpload":
+      return Schema.decodeUnknownEffect(
+        operationDefinitions.v2CreateComputeInstanceUpload.inputSchema,
+      )(input).pipe(Effect.flatMap((decoded) => api.v2.createComputeInstanceUpload(decoded)));
     case "v2CreateLogDrain":
       return Schema.decodeUnknownEffect(operationDefinitions.v2CreateLogDrain.inputSchema)(
         input,
@@ -3382,14 +3407,10 @@ export function executeApiClientOperation(
       return Schema.decodeUnknownEffect(
         operationDefinitions.v2CreatePrivateLinkAssociation.inputSchema,
       )(input).pipe(Effect.flatMap((decoded) => api.v2.createPrivateLinkAssociation(decoded)));
-    case "v2CreateWorkerUpload":
-      return Schema.decodeUnknownEffect(operationDefinitions.v2CreateWorkerUpload.inputSchema)(
+    case "v2DeleteAComputeInstance":
+      return Schema.decodeUnknownEffect(operationDefinitions.v2DeleteAComputeInstance.inputSchema)(
         input,
-      ).pipe(Effect.flatMap((decoded) => api.v2.createWorkerUpload(decoded)));
-    case "v2DeleteAWorker":
-      return Schema.decodeUnknownEffect(operationDefinitions.v2DeleteAWorker.inputSchema)(
-        input,
-      ).pipe(Effect.flatMap((decoded) => api.v2.deleteAWorker(decoded)));
+      ).pipe(Effect.flatMap((decoded) => api.v2.deleteAComputeInstance(decoded)));
     case "v2DeleteLogDrain":
       return Schema.decodeUnknownEffect(operationDefinitions.v2DeleteLogDrain.inputSchema)(
         input,
@@ -3408,22 +3429,22 @@ export function executeApiClientOperation(
       )(input).pipe(
         Effect.flatMap((decoded) => api.v2.deletePrivateLinkAssociationForDatabase(decoded)),
       );
-    case "v2DeployAWorker":
-      return Schema.decodeUnknownEffect(operationDefinitions.v2DeployAWorker.inputSchema)(
+    case "v2DeployAComputeInstance":
+      return Schema.decodeUnknownEffect(operationDefinitions.v2DeployAComputeInstance.inputSchema)(
         input,
-      ).pipe(Effect.flatMap((decoded) => api.v2.deployAWorker(decoded)));
-    case "v2GetAWorker":
-      return Schema.decodeUnknownEffect(operationDefinitions.v2GetAWorker.inputSchema)(input).pipe(
-        Effect.flatMap((decoded) => api.v2.getAWorker(decoded)),
-      );
+      ).pipe(Effect.flatMap((decoded) => api.v2.deployAComputeInstance(decoded)));
+    case "v2GetAComputeInstance":
+      return Schema.decodeUnknownEffect(operationDefinitions.v2GetAComputeInstance.inputSchema)(
+        input,
+      ).pipe(Effect.flatMap((decoded) => api.v2.getAComputeInstance(decoded)));
     case "v2GetProjectConfig":
       return Schema.decodeUnknownEffect(operationDefinitions.v2GetProjectConfig.inputSchema)(
         input,
       ).pipe(Effect.flatMap((decoded) => api.v2.getProjectConfig(decoded)));
-    case "v2ListAllWorkers":
-      return Schema.decodeUnknownEffect(operationDefinitions.v2ListAllWorkers.inputSchema)(
+    case "v2ListAllComputeInstances":
+      return Schema.decodeUnknownEffect(operationDefinitions.v2ListAllComputeInstances.inputSchema)(
         input,
-      ).pipe(Effect.flatMap((decoded) => api.v2.listAllWorkers(decoded)));
+      ).pipe(Effect.flatMap((decoded) => api.v2.listAllComputeInstances(decoded)));
     case "v2ListLogDrains":
       return Schema.decodeUnknownEffect(operationDefinitions.v2ListLogDrains.inputSchema)(
         input,

@@ -13,7 +13,7 @@ import { computeLogsQuery } from "./compute-logs.sql.ts";
  * Reading a compute's logs, over the project's unified logs stream:
  * `GET /v1/projects/{ref}/analytics/endpoints/logs`.
  *
- * Not `/v2/projects/{ref}/workers/...` like the rest of the family — there is no
+ * Not `/v2/projects/{ref}/compute/...` like the rest of the family — there is no
  * compute-scoped log route — so this is the one Compute seam that talks to the
  * analytics API, and the one that has to reckon with its two quirks: the query is
  * SQL this CLI writes, and a failed query can arrive as **HTTP 200 with an

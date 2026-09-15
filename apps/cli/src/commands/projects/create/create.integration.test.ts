@@ -1,4 +1,4 @@
-import type { OrganizationResponseV1, V1CreateAProjectOutput } from "@supabase/api/effect";
+import type { OrganizationResponseV1_Output, V1CreateAProjectOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Layer, Option } from "effect";
 import { Command } from "effect/unstable/cli";
@@ -29,7 +29,7 @@ const CREATED: typeof V1CreateAProjectOutput.Type = {
   status: "COMING_UP",
 };
 
-const ORGS: ReadonlyArray<typeof OrganizationResponseV1.Type> = [
+const ORGS: ReadonlyArray<typeof OrganizationResponseV1_Output.Type> = [
   { id: "org-abc", slug: "acme", name: "Acme Inc" },
 ];
 

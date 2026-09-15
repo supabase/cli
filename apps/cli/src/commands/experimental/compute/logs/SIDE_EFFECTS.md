@@ -40,7 +40,7 @@ command's output depends on local state — there is no source path to report �
 | Method | Path                                          | Auth         | Request                                                                                               | Response (used fields) |
 | ------ | --------------------------------------------- | ------------ | ----------------------------------------------------------------------------------------------------- | ---------------------- |
 | `GET`  | `/v1/projects/{ref}/analytics/endpoints/logs` | Bearer token | `sql`, `iso_timestamp_start`, `iso_timestamp_end` as query parameters                                 | `result[]`, `error`    |
-| `GET`  | `/v2/projects/{ref}/workers/{name}`           | Bearer token | none — **only when the log query returned no rows**, to tell "not deployed" from "deployed and quiet" | presence only          |
+| `GET`  | `/v2/projects/{ref}/compute/{name}`           | Bearer token | none — **only when the log query returned no rows**, to tell "not deployed" from "deployed and quiet" | presence only          |
 | `GET`  | `/v1/projects`                                | Bearer token | none — only when no ref resolved and the session is interactive                                       | project picker         |
 
 Requires the `analytics_logs_read` permission, and the project must be on the

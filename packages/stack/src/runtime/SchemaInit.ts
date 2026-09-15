@@ -34,8 +34,14 @@ import {
   AUTH_JWT_SECRET_SLOT,
   DATABASE_INTERNAL_PASSWORD_SLOT,
   resolveSecrets,
+  type SecretDeclaration,
 } from "../state/SecretStore.ts";
-import { STACK_STATE_FORMAT, type PersistedStackState } from "../state/StackState.ts";
+import {
+  STACK_STATE_FORMAT,
+  type PersistedSecretValues,
+  type PersistedStackState,
+} from "../state/StackState.ts";
+import { makeStackStateStore } from "../state/StackStateStore.ts";
 import { defaultRuntimeEnvironment } from "../supervisor/Launcher.ts";
 import { makeProductionRuntimeArtifactPreparer } from "../preparation/RuntimeArtifacts.ts";
 import { catalogReleaseFor } from "../model/WorkloadCatalog.ts";
@@ -89,6 +95,22 @@ const schemaInitCompileConfig = (
       (name): name is ExcludableCapabilityName => name !== "database" && !requested.has(name),
     ),
   );
+};
+
+// Live schema-init compiles a capability subset. Stamp declared managed values from
+// persisted state; passing the full map into resolveSecrets fails on extra pass-through
+// slots while the stack is running.
+const overlayManagedSecrets = (
+  declarations: ReadonlyArray<SecretDeclaration>,
+  persisted: PersistedSecretValues | undefined,
+): ReadonlyArray<SecretDeclaration> => {
+  if (persisted === undefined) return declarations;
+  return declarations.map((entry) => {
+    if (entry.value !== undefined) return entry;
+    const existing = persisted[entry.slot];
+    if (existing === undefined || existing.policy !== "managed") return entry;
+    return { ...entry, value: Redacted.make(existing.value) };
+  });
 };
 
 /** Catalog version and image for a schema-init one-shot; undefined when the pin is unknown. */
@@ -392,13 +414,24 @@ export const schemaInitWorkloads = (
         runtime: target.runtime,
         config: schemaInitCompileConfig(target.config, names),
       });
-      const declarations = compiled.secrets.map((entry) => {
-        if (entry.slot === DATABASE_INTERNAL_PASSWORD_SLOT)
-          return { ...entry, value: target.secrets.databasePassword };
-        if (entry.slot === AUTH_JWT_SECRET_SLOT && target.secrets.jwtSecret !== undefined)
-          return { ...entry, value: target.secrets.jwtSecret };
-        return entry;
-      });
+      const shared = yield* defaultRuntimeEnvironment;
+      let persistedSecrets: PersistedSecretValues | undefined;
+      if (target.kind === "live") {
+        const liveState = yield* (yield* makeStackStateStore({ stateRoot: shared.stateRoot })).read(
+          target.stackId,
+        );
+        persistedSecrets = liveState?.secrets;
+      }
+      const declarations = overlayManagedSecrets(
+        compiled.secrets.map((entry) => {
+          if (entry.slot === DATABASE_INTERNAL_PASSWORD_SLOT)
+            return { ...entry, value: target.secrets.databasePassword };
+          if (entry.slot === AUTH_JWT_SECRET_SLOT && target.secrets.jwtSecret !== undefined)
+            return { ...entry, value: target.secrets.jwtSecret };
+          return entry;
+        }),
+        persistedSecrets,
+      );
       const resolved = yield* resolveSecrets({ declarations }, undefined, "unconfigured");
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -413,7 +446,6 @@ export const schemaInitWorkloads = (
             }),
         ),
       );
-      const shared = yield* defaultRuntimeEnvironment;
       const engine = Option.getOrUndefined(yield* resolveEngine(target, options));
       const preparer =
         options.artifactPreparer ??

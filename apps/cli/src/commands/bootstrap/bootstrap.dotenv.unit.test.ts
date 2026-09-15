@@ -1,10 +1,10 @@
-import type { ApiKeyResponse } from "@supabase/api/effect";
+import type { ApiKeyResponse_Output } from "@supabase/api/effect";
 import { describe, expect, it } from "vitest";
 
 import { buildDotEnv, marshalDotEnv } from "./bootstrap.dotenv.ts";
 import type { DbConfig } from "./bootstrap.pgconfig.ts";
 
-type ApiKey = typeof ApiKeyResponse.Type;
+type ApiKey = typeof ApiKeyResponse_Output.Type;
 
 // Mirrors the established `TestWriteEnv` fixtures.
 const API_KEYS: ReadonlyArray<ApiKey> = [

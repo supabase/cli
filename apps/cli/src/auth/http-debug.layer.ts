@@ -8,7 +8,7 @@ import { DebugLogger } from "../command-internal/debug-logger.service.ts";
 /**
  * Query parameters that mean the URL *is* a credential.
  *
- * A presigned object-store URL authorizes whoever holds it — for the Workers
+ * A presigned object-store URL authorizes whoever holds it — for the Compute
  * build-context upload, to overwrite the archive a deploy is about to build
  * from. Logging one verbatim under `--debug` puts that in terminal scrollback
  * and in any CI log or bug report the output is pasted into.

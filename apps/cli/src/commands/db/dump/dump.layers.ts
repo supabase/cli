@@ -74,7 +74,7 @@ export const dbDumpRuntimeLayer = Layer.mergeAll(
   linkedProjectCache,
   identityStitchLayer,
   telemetryStateLayer,
-  // Exposed so native-engine dump can read `runtime.kind` and pick PATH pg_dump.
+  // Native engines read `runtime.kind` here to pick PATH `pg_dump`.
   stackApiLayer,
   commandRuntimeLayer(["db", "dump"]),
 );

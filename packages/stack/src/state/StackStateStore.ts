@@ -10,7 +10,7 @@ import {
   Schedule,
   Schema,
 } from "effect";
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- FileSystem.remove cannot atomically remove only an empty directory.
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- Effect FileSystem.remove has no empty-directory-only mode; rmdir makes cleanup fail when remnants are present.
 import { rmdir } from "node:fs/promises";
 import {
   InvalidProjectRootError,

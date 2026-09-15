@@ -1,9 +1,9 @@
 import {
   operationDefinitions,
-  V2CreateWorkerUploadOutput,
-  V2DeployAWorkerOutput,
-  V2GetAWorkerOutput,
-  V2ListAllWorkersOutput,
+  V2CreateComputeInstanceUploadOutput,
+  V2DeployAComputeInstanceOutput,
+  V2GetAComputeInstanceOutput,
+  V2ListAllComputeInstancesOutput,
   type ApiClient,
 } from "@supabase/api/effect";
 import { Effect, Option, Schedule, Schema } from "effect";
@@ -18,7 +18,7 @@ import {
 } from "./compute.errors.ts";
 
 /**
- * The seam every compute command talks to: `/v2/projects/{ref}/workers` on the Management API. A
+ * The seam every compute command talks to: `/v2/projects/{ref}/compute` on the Management API. A
  * 404 here is overloaded — a project outside the alpha's allow-list, an unknown project ref, and
  * an undeployed compute all answer the same way. A named-compute 404 is reported as "not deployed";
  * a collection-endpoint 404, where no compute name could be wrong, is split by its body instead —
@@ -65,7 +65,9 @@ export interface ComputeDeploySpec {
   readonly instances: number;
 }
 
-type ComputeResourceData = typeof V2GetAWorkerOutput.Type extends { data: infer D } ? D : never;
+type ComputeResourceData = typeof V2GetAComputeInstanceOutput.Type extends { data: infer D }
+  ? D
+  : never;
 
 function toComputeRecord(data: ComputeResourceData): ComputeRecord {
   return {
@@ -87,7 +89,7 @@ const computeSuggestion =
  * The `error.code` a 404 carries — the only way to tell an unenrolled project from one that
  * doesn't exist, since both answer 404 on the same routes:
  *
- * - not enrolled -> `{"error":{"code":"generic_not_found","message":"Workers are not available for this project"}}`
+ * - not enrolled -> `{"error":{"code":"generic_not_found","message":"Compute is not available for this project"}}`
  * - no such project -> `{"error":{"code":"not_found","message":"Not Found"}}`
  */
 const NotFoundBody = Schema.Struct({
@@ -125,7 +127,7 @@ const projectScoped404 = Effect.fnUntraced(function* (options: {
 export const listCompute = Effect.fnUntraced(function* (api: ApiClient, projectRef: string) {
   const operation = "list compute";
   const response = yield* api
-    .executeRaw(operationDefinitions.v2ListAllWorkers, { ref: projectRef })
+    .executeRaw(operationDefinitions.v2ListAllComputeInstances, { ref: projectRef })
     .pipe(Effect.mapError(mapRequestError(operation)));
 
   if (response.status === 404) {
@@ -144,7 +146,12 @@ export const listCompute = Effect.fnUntraced(function* (api: ApiClient, projectR
   }
 
   const body = yield* response.json.pipe(Effect.mapError(mapRequestError(operation)));
-  const decoded = yield* decodeBody(V2ListAllWorkersOutput, operation, body, response.status);
+  const decoded = yield* decodeBody(
+    V2ListAllComputeInstancesOutput,
+    operation,
+    body,
+    response.status,
+  );
   return decoded.data.map(toComputeRecord);
 });
 
@@ -160,7 +167,7 @@ export const getCompute = Effect.fnUntraced(function* (
 ) {
   const operation = `read compute "${name}"`;
   const response = yield* api
-    .executeRaw(operationDefinitions.v2GetAWorker, { ref: projectRef, name })
+    .executeRaw(operationDefinitions.v2GetAComputeInstance, { ref: projectRef, name })
     .pipe(Effect.mapError(mapRequestError(operation)));
 
   if (response.status === 404) {
@@ -175,7 +182,7 @@ export const getCompute = Effect.fnUntraced(function* (
   }
 
   const body = yield* response.json.pipe(Effect.mapError(mapRequestError(operation)));
-  const decoded = yield* decodeBody(V2GetAWorkerOutput, operation, body, response.status);
+  const decoded = yield* decodeBody(V2GetAComputeInstanceOutput, operation, body, response.status);
   return Option.some(toComputeRecord(decoded.data));
 });
 
@@ -186,7 +193,7 @@ export const createComputeUpload = Effect.fnUntraced(function* (
 ) {
   const operation = `stage a build context for "${name}"`;
   const response = yield* api
-    .executeRaw(operationDefinitions.v2CreateWorkerUpload, { ref: projectRef, name })
+    .executeRaw(operationDefinitions.v2CreateComputeInstanceUpload, { ref: projectRef, name })
     .pipe(Effect.mapError(mapRequestError(operation)));
 
   if (response.status === 404) {
@@ -205,7 +212,12 @@ export const createComputeUpload = Effect.fnUntraced(function* (
   }
 
   const body = yield* response.json.pipe(Effect.mapError(mapRequestError(operation)));
-  const decoded = yield* decodeBody(V2CreateWorkerUploadOutput, operation, body, response.status);
+  const decoded = yield* decodeBody(
+    V2CreateComputeInstanceUploadOutput,
+    operation,
+    body,
+    response.status,
+  );
   return {
     uploadId: decoded.data.id,
     url: decoded.data.attributes.url,
@@ -269,11 +281,11 @@ export const deployCompute = Effect.fnUntraced(function* (
 ) {
   const operation = `deploy compute "${name}"`;
   const response = yield* api
-    .executeRaw(operationDefinitions.v2DeployAWorker, {
+    .executeRaw(operationDefinitions.v2DeployAComputeInstance, {
       ref: projectRef,
       name,
       data: {
-        type: "project_worker",
+        type: "project_compute_instance",
         attributes: {
           spec: attributes.spec,
           ...(attributes.contextUploadId === undefined
@@ -300,7 +312,12 @@ export const deployCompute = Effect.fnUntraced(function* (
   }
 
   const body = yield* response.json.pipe(Effect.mapError(mapRequestError(operation)));
-  const decoded = yield* decodeBody(V2DeployAWorkerOutput, operation, body, response.status);
+  const decoded = yield* decodeBody(
+    V2DeployAComputeInstanceOutput,
+    operation,
+    body,
+    response.status,
+  );
   return toComputeRecord(decoded.data);
 });
 
@@ -311,7 +328,7 @@ export const deleteCompute = Effect.fnUntraced(function* (
 ) {
   const operation = `delete compute "${name}"`;
   const response = yield* api
-    .executeRaw(operationDefinitions.v2DeleteAWorker, { ref: projectRef, name })
+    .executeRaw(operationDefinitions.v2DeleteAComputeInstance, { ref: projectRef, name })
     .pipe(Effect.mapError(mapRequestError(operation)));
 
   // 404 is the caller's own "not deployed" verdict to report; a delete that

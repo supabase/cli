@@ -88,7 +88,6 @@ export const declarativeSeamLayer = Layer.effect(
               Effect.asVoid,
               Effect.provideContext(context),
               Effect.provideService(StackApi, stackApi),
-              // Re-provide flag/argv; first-create reads project `.env` after the seam closes over start deps.
               Effect.provideService(ExperimentalFlag, experimentalFlag),
               Effect.provideService(CliArgs, cliArgs),
               Effect.mapError(
@@ -253,9 +252,7 @@ export const declarativeSeamLayer = Layer.effect(
               if (actual.length === 0 || actualTag.length === 0 || expectedTag.length === 0) {
                 return;
               }
-              // Slim refs never go through a registry mirror, so a family mismatch
-              // (e.g. a docker.io container satisfying a ghcr.io/supabase/cli
-              // expectation) is stale even when the tags happen to match.
+              // Slim images skip the registry mirror, so slim vs docker.io is stale even with matching tags.
               const familyMismatch = isSlimImageRef(expected) !== isSlimImageRef(actual);
               if (!familyMismatch && actualTag === expectedTag) {
                 return;
