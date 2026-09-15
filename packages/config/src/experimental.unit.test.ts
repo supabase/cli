@@ -13,6 +13,15 @@ describe("experimental.compute", () => {
     expect(decode({ compute: {} })).toMatchObject({ compute: { enabled: false } });
   });
 
+  test("names the replacement when the bare boolean is used", () => {
+    // Every opt-in that predates the table form wrote `compute = true`, so this is the
+    // error those projects hit first. The generic wording would only say the shape is
+    // wrong, not what to write instead.
+    expect(() => decode({ compute: true })).toThrow(
+      /use \[experimental\.compute\] with enabled = true/,
+    );
+  });
+
   test("rejects the bare boolean the flag used to be", () => {
     // `compute = true` under `[experimental]` was the previous spelling. It is refused rather
     // than accepted as shorthand, so the table form is the only way to spell it and the
