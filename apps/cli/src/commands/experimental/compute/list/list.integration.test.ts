@@ -337,7 +337,7 @@ describe("compute list", () => {
             body: {
               error: {
                 code: "generic_not_found",
-                message: "Workers are not available for this project",
+                message: "Compute is not available for this project",
               },
             },
           },
