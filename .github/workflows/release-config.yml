@@ -11,8 +11,8 @@ on:
   # to `true` so a stray "Run workflow" click can't accidentally publish.
   #
   # There is no `version` input: the publish job's registry probe already skips versions that
-  # exist on npm with matching bytes, so recovery from stale published bytes is just landing a
-  # new releasable commit — not worth a second cut-forward code path here.
+  # exist on npm with matching bytes. See packages/config/AGENTS.md's recovery section for the
+  # published-but-untagged case.
   workflow_dispatch:
     inputs:
       dry_run:
@@ -259,12 +259,8 @@ jobs:
               echo "@supabase/config@${VERSION} already exists on npm but does not match the reviewed tarball:" >&2
               echo "  registry: ${registry_integrity}" >&2
               echo "  reviewed: ${reviewed_integrity}" >&2
-              echo "Refusing to tag a commit for bytes this run never reviewed — cut forward by landing a new releasable commit." >&2
-              echo "If config-v${VERSION} is also missing from origin, re-running this workflow won't help: semantic-release" >&2
-              echo "refuses to plan from any commit behind develop's tip, so a re-run at the old commit reports no release." >&2
-              echo "Instead, create config-v${VERSION} directly at the commit the published bytes were built from. That tag" >&2
-              echo "is protected by a repo ruleset only the releaser GitHub App can bypass, so a repo admin must temporarily" >&2
-              echo "grant themselves bypass on the ruleset, push the tag, then restore the ruleset." >&2
+              echo "Refusing to tag a commit for bytes this run never reviewed." >&2
+              echo "See packages/config/AGENTS.md's recovery section if config-v${VERSION} is also missing from origin." >&2
               exit 1
             fi
             echo "@supabase/config@${VERSION} already on npm with matching integrity; skipping publish."
@@ -282,12 +278,9 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      # Runs directly after publish, ahead of every verification step: once npm has accepted the
-      # bytes, the tag must land regardless of how the registry-visibility probes below fare,
-      # since an untagged version deadlocks the release train (release-plan.ts derives the next
-      # version from the last config-v* tag, never from npm — see the 2026-09-14 incident where a
-      # slow-to-propagate publish left 0.7.0 live on npm but untagged, with every later run
-      # re-planning the same stuck version). Idempotent: skips if the tag is already on origin.
+      # Runs ahead of the verification steps: once npm accepts the bytes, the tag must land
+      # regardless of how the probes below fare, since release-plan.ts derives the next version
+      # from the last config-v* tag, never from npm (recovery: packages/config/AGENTS.md). Idempotent.
       - name: Push version tag
         run: |
           set -euo pipefail
@@ -300,12 +293,10 @@ jobs:
           fi
 
       # "Published successfully" for the notification jobs means registry-visible with the
-      # reviewed bytes: probe npm until the version resolves and its integrity matches. Runs
-      # after the tag push on purpose: the tag is already safely on origin (see above), so a slow
-      # registry read here can fail without ever stranding the release published-but-untagged.
-      # A re-run of this job re-arms the approval gate and costs a second human approval, hence
-      # the generous (~10 minute) visibility budget — the 2026-09-14 incident's ~112 second budget
-      # gave up ~70 seconds before the version actually became visible.
+      # reviewed bytes: probe npm until the version resolves and its integrity matches. Runs after
+      # the tag push, so a slow registry read here can fail without stranding the release
+      # published-but-untagged. A re-run of this job re-arms the approval gate and costs a second
+      # human approval, hence the generous visibility budget.
       - name: Verify the release is live on npm
         working-directory: ${{ runner.temp }}/config-release
         run: |
