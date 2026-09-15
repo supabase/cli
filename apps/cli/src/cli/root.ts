@@ -26,6 +26,7 @@ import { logoutCommand } from "../commands/logout/logout.command.ts";
 import { migrationCommand } from "../commands/migration/migration.command.ts";
 import { networkBansCommand } from "../commands/network-bans/network-bans.command.ts";
 import { networkRestrictionsCommand } from "../commands/network-restrictions/network-restrictions.command.ts";
+import { notebooksCommand } from "../commands/notebooks/notebooks.command.ts";
 import { orgsCommand } from "../commands/orgs/orgs.command.ts";
 import { postgresConfigCommand } from "../commands/postgres-config/postgres-config.command.ts";
 import { projectsCommand } from "../commands/projects/projects.command.ts";
@@ -112,6 +113,7 @@ export const rootCommandForFeatures = (
       migrationCommand,
       networkBansCommand,
       networkRestrictionsCommand,
+      notebooksCommand,
       orgsCommand,
       postgresConfigCommand,
       projectsCommand,
