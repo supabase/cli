@@ -60,6 +60,11 @@ type StackConfigEffect = Effect.Effect<
   FileSystem.FileSystem | Path.Path
 >;
 
+export interface LoadStackConfigOptions {
+  /** Loads shared and per-function dotenv files when translating the project config. */
+  readonly discoverFunctionEnvFiles?: boolean;
+}
+
 type JwtSigning =
   | { readonly kind: "jwks-file"; readonly path: string }
   | { readonly kind: "symmetric"; readonly secret: Redacted.Redacted<string> };
@@ -1391,8 +1396,11 @@ const configValidationError = (
   return undefined;
 };
 
-/** Loads and translates the effective project config for all stack commands. */
-export const loadStackConfig = (projectRoot: string): StackConfigEffect =>
+/** Loads and translates the effective project config for stack commands. */
+export const loadStackConfig = (
+  projectRoot: string,
+  options: LoadStackConfigOptions = {},
+): StackConfigEffect =>
   Effect.gen(function* () {
     const path = yield* Path.Path;
     const context = yield* loadLocalProjectContext(
@@ -1450,7 +1458,7 @@ export const loadStackConfig = (projectRoot: string): StackConfigEffect =>
           .filter(([, functionConfig]) => functionConfig.enabled === false)
           .map(([name]) => name),
       ),
-      !validatedConfig.edge_runtime.enabled,
+      options.discoverFunctionEnvFiles === false || !validatedConfig.edge_runtime.enabled,
     );
     const input = yield* Effect.try({
       try: () =>

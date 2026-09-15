@@ -1,11 +1,11 @@
 import { Layer } from "effect";
 import { Command } from "effect/unstable/cli";
-import { debugLoggerLayer } from "../../../../../command-internal/debug-logger.layer.ts";
-import { commandSettingsLayer } from "../../../../../config/command-settings.layer.ts";
 import {
   functionsServeCommandConfig,
   functionsServeFlagConfig,
-} from "../../../../../commands/functions/serve/serve.command.ts";
+} from "../../../../../command-internal/functions-serve-command.ts";
+import { debugLoggerLayer } from "../../../../../command-internal/debug-logger.layer.ts";
+import { commandSettingsLayer } from "../../../../../config/command-settings.layer.ts";
 import { serveFileWatcherLayer } from "../../../../../shared/functions/serve.ts";
 import { withJsonErrorHandling } from "../../../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../../../shared/runtime/command-runtime.layer.ts";

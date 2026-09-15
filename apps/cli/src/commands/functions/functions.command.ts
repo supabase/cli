@@ -5,10 +5,10 @@ import { functionsDownloadCommand } from "./download/download.command.ts";
 import { functionsDeployCommand } from "./deploy/deploy.command.ts";
 import { functionsNewCommand } from "./new/new.command.ts";
 import { functionsServeCommand } from "./serve/serve.command.ts";
-import { functionsServeStackCommand } from "../experimental/stack/functions/serve/serve.command.ts";
-import type { StackBackend } from "../experimental/stack/stack-backend.ts";
 
-export const functionsCommandForBackend = (backend: StackBackend = "legacy") =>
+export const functionsCommandWithServe = <Input, ContextInput, E, R>(
+  serveCommand: Command.Command<"serve", Input, ContextInput, E, R>,
+) =>
   Command.make("functions").pipe(
     Command.withDescription("Manage Supabase Edge functions."),
     Command.withShortDescription("Manage Supabase Edge functions"),
@@ -18,8 +18,8 @@ export const functionsCommandForBackend = (backend: StackBackend = "legacy") =>
       functionsDownloadCommand,
       functionsDeployCommand,
       functionsNewCommand,
-      backend === "stack" ? functionsServeStackCommand : functionsServeCommand,
+      serveCommand,
     ]),
   );
 
-export const functionsCommand = functionsCommandForBackend();
+export const functionsCommand = functionsCommandWithServe(functionsServeCommand);

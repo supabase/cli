@@ -4,9 +4,11 @@ import type {
   StackDiscoveryError,
   StackLogEntry,
   StackLogsError,
+  StackStatusError,
 } from "@supabase/stack/effect";
-import { Deferred, Effect, Exit, Match, Option, Path, Stream } from "effect";
+import { Cause, Config, Crypto, Deferred, Effect, Exit, Match, Option, Path, Stream } from "effect";
 import { CommandSettings } from "../../../../../config/command-settings.service.ts";
+import { candidateDotenvFilenames } from "../../../../../command-internal/project-environment.ts";
 import { DebugFlag } from "../../../../../command-internal/global-flags.ts";
 import {
   type FunctionsServeFlags,
@@ -26,7 +28,8 @@ type FunctionsStackApiError =
   | StackDiscoveryError
   | OpenStackError
   | ServeFunctionsError
-  | StackLogsError;
+  | StackLogsError
+  | StackStatusError;
 
 const serveError = (error: FunctionsStackApiError): StackFunctionsServeError => {
   const classification = Match.value(error).pipe(
@@ -80,33 +83,48 @@ const renderLog = (entry: StackLogEntry): string =>
 
 const functionsWatchSpecs = (input: {
   readonly projectRoot: string;
-  readonly cwd: string;
-  readonly envFile: Option.Option<string>;
-}): Effect.Effect<ReadonlyArray<FunctionsServeWatchSpec>, never, Path.Path> =>
+  readonly watchPaths: ReadonlyArray<string>;
+}): Effect.Effect<ReadonlyArray<FunctionsServeWatchSpec>, Config.ConfigError, Path.Path> =>
   Effect.gen(function* () {
     const path = yield* Path.Path;
     const functionsRoot = path.join(input.projectRoot, "supabase", "functions");
-    const configPath = path.join(input.projectRoot, "supabase", "config.toml");
-    const specs: FunctionsServeWatchSpec[] = [
-      { root: functionsRoot, recursive: true },
-      {
-        root: path.dirname(configPath),
-        recursive: false,
-        matchPaths: new Set([configPath]),
-      },
+    const supabaseRoot = path.join(input.projectRoot, "supabase");
+    const configuredEnvironment = yield* Config.string("SUPABASE_ENV").pipe(
+      Config.withDefault("development"),
+    );
+    const environment = configuredEnvironment || "development";
+    const files = [
+      path.join(supabaseRoot, "config.toml"),
+      ...[input.projectRoot, supabaseRoot].flatMap((root) =>
+        candidateDotenvFilenames(environment).map((name) => path.join(root, name)),
+      ),
+      ...input.watchPaths,
     ];
-    if (Option.isSome(input.envFile)) {
-      const envPath = path.isAbsolute(input.envFile.value)
-        ? path.normalize(input.envFile.value)
-        : path.resolve(input.cwd, input.envFile.value);
-      if (!envPath.startsWith(`${functionsRoot}${path.sep}`))
-        specs.push({
-          root: path.dirname(envPath),
-          recursive: false,
-          matchPaths: new Set([envPath]),
-        });
+    const fileSpecs = new Map<string, Set<string>>();
+    for (const file of files) {
+      const relative = path.relative(functionsRoot, file);
+      if (!path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`))
+        continue;
+      const root = path.dirname(file);
+      const matches = fileSpecs.get(root) ?? new Set<string>();
+      matches.add(file);
+      fileSpecs.set(root, matches);
     }
-    return specs;
+    return [
+      { root: functionsRoot, recursive: true },
+      ...[...fileSpecs].map(([root, matchPaths]) => ({
+        root,
+        recursive: false,
+        matchPaths,
+      })),
+    ];
+  });
+
+const unexpectedTermination = () =>
+  new StackFunctionsServeError({
+    reason: "runtime",
+    message: "Edge Functions stopped unexpectedly while the managed stack is still running.",
+    suggestion: "Retry with --debug and inspect the Functions runtime diagnostics.",
   });
 
 export const functionsServeStack = Effect.fn("experimental.stack.functions.serve")(function* (
@@ -120,6 +138,8 @@ export const functionsServeStack = Effect.fn("experimental.stack.functions.serve
     const processControl = yield* ProcessControl;
     const debug = yield* DebugFlag;
     const stackApi = yield* StackApi;
+    const crypto = yield* Crypto.Crypto;
+    const sessionId = yield* crypto.randomUUIDv4;
     const target = yield* stackApi
       .findStack({ projectRoot: settings.workdir })
       .pipe(Effect.mapError(serveError));
@@ -130,11 +150,6 @@ export const functionsServeStack = Effect.fn("experimental.stack.functions.serve
         suggestion: "Run supabase start before serving Functions.",
       });
     const stack = yield* stackApi.openStack(target.value.id).pipe(Effect.mapError(serveError));
-    const watchSpecs = yield* functionsWatchSpecs({
-      projectRoot: target.value.projectRoot,
-      cwd: runtime.cwd,
-      envFile: flags.envFile,
-    });
     const shutdownRequested = yield* Deferred.make<void>();
     yield* processControl
       .awaitSignal(["SIGINT", "SIGTERM", "SIGHUP"])
@@ -144,10 +159,15 @@ export const functionsServeStack = Effect.fn("experimental.stack.functions.serve
       );
 
     let transientRequested = false;
+    let externallyStopped = false;
     const session = Effect.gen(function* () {
       for (;;) {
         const start = Effect.gen(function* () {
-          const loaded = yield* loadStackConfig(target.value.projectRoot).pipe(
+          const loaded = yield* (
+            Option.isSome(flags.envFile)
+              ? loadStackConfig(target.value.projectRoot, { discoverFunctionEnvFiles: false })
+              : loadStackConfig(target.value.projectRoot)
+          ).pipe(
             Effect.mapError(
               (cause) =>
                 new StackFunctionsServeError({
@@ -157,22 +177,44 @@ export const functionsServeStack = Effect.fn("experimental.stack.functions.serve
                 }),
             ),
           );
-          const config = yield* functionsServeStackConfig({
+          const resolved = yield* functionsServeStackConfig({
             config: loaded,
             flags,
             projectRoot: target.value.projectRoot,
             cwd: runtime.cwd,
             debug,
           });
+          for (const warning of resolved.warnings) yield* output.raw(warning, "stderr");
+          const watchSpecs = yield* functionsWatchSpecs({
+            projectRoot: target.value.projectRoot,
+            watchPaths: resolved.watchPaths,
+          }).pipe(
+            Effect.mapError(
+              (cause) =>
+                new StackFunctionsServeError({
+                  reason: "invalid-config",
+                  message: "Unable to resolve SUPABASE_ENV",
+                  cause,
+                }),
+            ),
+          );
           const initial = yield* stack
             .logs({ capabilities: ["functions"], tail: 0 })
             .pipe(Effect.mapError(serveError));
-          yield* output.raw("Setting up Edge Functions runtime...\n");
+          yield* output.raw("Setting up Edge Functions runtime...\n", "stderr");
           yield* Effect.sync(() => {
             transientRequested = true;
           });
-          const status = yield* stack.serveFunctions({ config }).pipe(Effect.mapError(serveError));
-          return { initial, status };
+          const status = yield* stack
+            .serveFunctions({
+              sessionId,
+              config: resolved.config,
+              ...(resolved.importMapSource === undefined
+                ? {}
+                : { importMapSource: resolved.importMapSource }),
+            })
+            .pipe(Effect.mapError(serveError));
+          return { initial, status, watchSpecs };
         });
         const started = yield* Effect.raceFirst(
           Deferred.await(shutdownRequested).pipe(Effect.as("shutdown" as const)),
@@ -191,12 +233,27 @@ export const functionsServeStack = Effect.fn("experimental.stack.functions.serve
           .pipe(
             Stream.mapError(serveError),
             Stream.runForEach((entry) => output.raw(renderLog(entry))),
-            Effect.as("logs-ended" as const),
+            Effect.andThen(Effect.never),
           );
+        const termination = stack.serveFunctions({ sessionId, waitForTermination: true }).pipe(
+          Effect.catchTag("StackNotRunningError", (waitError) =>
+            stack.status.pipe(
+              Effect.flatMap((status) =>
+                status.lifecycle === "stopped" ? Effect.succeed(status) : Effect.fail(waitError),
+              ),
+            ),
+          ),
+          Effect.mapError(serveError),
+          Effect.flatMap((status) =>
+            status.lifecycle === "stopped"
+              ? Effect.succeed("stack-stopped" as const)
+              : Effect.fail(unexpectedTermination()),
+          ),
+        );
         const outcome = yield* Effect.raceFirst(
           Deferred.await(shutdownRequested).pipe(Effect.as("shutdown" as const)),
           Effect.raceFirst(
-            waitForFunctionsRestartSignal(watchSpecs).pipe(
+            waitForFunctionsRestartSignal(started.value.watchSpecs).pipe(
               Effect.mapError(
                 (cause) =>
                   new StackFunctionsServeError({
@@ -207,16 +264,30 @@ export const functionsServeStack = Effect.fn("experimental.stack.functions.serve
               ),
               Effect.as("restart" as const),
             ),
-            follow,
+            Effect.raceFirst(follow, termination),
           ),
         );
+        if (outcome === "stack-stopped") {
+          yield* Effect.sync(() => {
+            externallyStopped = true;
+          });
+          return;
+        }
         if (outcome !== "restart") return;
       }
     });
 
     const sessionExit = yield* session.pipe(Effect.exit);
-    if (transientRequested) yield* stack.serveFunctions().pipe(Effect.mapError(serveError));
+    const restoreExit =
+      transientRequested && !externallyStopped
+        ? yield* stack
+            .serveFunctions({ sessionId })
+            .pipe(Effect.mapError(serveError), Effect.asVoid, Effect.exit)
+        : Exit.void;
+    if (Exit.isFailure(sessionExit) && Exit.isFailure(restoreExit))
+      return yield* Effect.failCause(Cause.combine(sessionExit.cause, restoreExit.cause));
     if (Exit.isFailure(sessionExit)) return yield* Effect.failCause(sessionExit.cause);
+    if (Exit.isFailure(restoreExit)) return yield* Effect.failCause(restoreExit.cause);
     yield* output.raw("Stopped serving supabase/functions\n");
   });
   return yield* body.pipe(Effect.ensuring(telemetryState.flush));

@@ -13,33 +13,49 @@ const configError = (message: string, cause?: unknown) =>
 
 const runtimePath = (path: Path.Path, value: string): string => value.replaceAll(path.sep, "/");
 
+const resolveFlagPath = (path: Path.Path, value: string, cwd: string): string =>
+  path.isAbsolute(value) ? path.normalize(value) : path.resolve(cwd, value);
+
+interface ExplicitImportMap {
+  readonly runtimePath: string;
+  readonly sourcePath: string;
+}
+
 const explicitImportMap = (
   value: string,
   projectRoot: string,
   cwd: string,
-): Effect.Effect<string, StackFunctionsServeError, Path.Path> =>
+): Effect.Effect<ExplicitImportMap, never, Path.Path> =>
   Effect.gen(function* () {
     const path = yield* Path.Path;
-    const absolute = path.isAbsolute(value) ? path.normalize(value) : path.resolve(cwd, value);
+    const sourcePath = resolveFlagPath(path, value, cwd);
     const functionsRoot = path.join(projectRoot, "supabase", "functions");
-    const relative = path.relative(functionsRoot, absolute);
-    if (path.isAbsolute(relative) || relative === ".." || relative.startsWith(`..${path.sep}`))
-      return yield* configError("--import-map must resolve inside supabase/functions");
-    return runtimePath(path, relative);
+    const relative = path.relative(functionsRoot, sourcePath);
+    const contained =
+      !path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`);
+    return {
+      runtimePath: runtimePath(path, contained ? relative : sourcePath),
+      sourcePath,
+    };
   });
+
+interface ExplicitEnvironment {
+  readonly environment: Readonly<Record<string, Redacted.Redacted<string>>>;
+  readonly path: string;
+}
 
 const readExplicitEnvironment = (
   value: string,
   cwd: string,
 ): Effect.Effect<
-  Readonly<Record<string, Redacted.Redacted<string>>>,
+  ExplicitEnvironment,
   StackFunctionsServeError,
   FileSystem.FileSystem | Path.Path
 > =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const pathname = path.isAbsolute(value) ? path.normalize(value) : path.resolve(cwd, value);
+    const pathname = resolveFlagPath(path, value, cwd);
     const contents = yield* fs
       .readFileString(pathname)
       .pipe(Effect.mapError((cause) => configError(`Unable to read env file ${pathname}`, cause)));
@@ -47,10 +63,23 @@ const readExplicitEnvironment = (
       try: () => parseDotEnv(contents),
       catch: (cause) => configError(`Unable to parse env file ${pathname}`, cause),
     });
-    return Object.fromEntries(
-      Object.entries(values).map(([key, item]) => [key, Redacted.make(item)]),
-    );
+    return {
+      environment: Object.fromEntries(
+        Object.entries(values).map(([key, item]) => [key, Redacted.make(item)]),
+      ),
+      path: pathname,
+    };
   });
+
+export interface FunctionsServeStackConfigResult {
+  readonly config: StackConfig;
+  /** Legacy-compatible diagnostics that the handler writes to stderr. */
+  readonly warnings: ReadonlyArray<string>;
+  /** Absolute flag-derived files that restart the serve session when changed. */
+  readonly watchPaths: ReadonlyArray<string>;
+  /** Absolute caller-owned import map path used to prepare native and container runtimes. */
+  readonly importMapSource?: string;
+}
 
 export const functionsServeStackConfig = (input: {
   readonly config: StackConfig;
@@ -58,7 +87,11 @@ export const functionsServeStackConfig = (input: {
   readonly projectRoot: string;
   readonly cwd: string;
   readonly debug: boolean;
-}): Effect.Effect<StackConfig, StackFunctionsServeError, FileSystem.FileSystem | Path.Path> =>
+}): Effect.Effect<
+  FunctionsServeStackConfigResult,
+  StackFunctionsServeError,
+  FileSystem.FileSystem | Path.Path
+> =>
   Effect.gen(function* () {
     const capability = input.config.capabilities?.functions;
     if (capability?.enabled === false)
@@ -71,6 +104,9 @@ export const functionsServeStackConfig = (input: {
     let edgeRuntime: NonNullable<FunctionsSettings["edge_runtime"]> = {
       ...currentSettings.edge_runtime,
     };
+    const warnings: string[] = [];
+    const watchPaths: string[] = [];
+    let importMapSource: string | undefined;
 
     if (Option.isSome(input.flags.noVerifyJwt)) {
       const verifyJwt = !input.flags.noVerifyJwt.value;
@@ -90,28 +126,38 @@ export const functionsServeStackConfig = (input: {
         input.projectRoot,
         input.cwd,
       );
-      edgeRuntime = { ...edgeRuntime, import_map_default: resolved };
+      importMapSource = resolved.sourcePath;
+      watchPaths.push(resolved.sourcePath);
+      edgeRuntime = { ...edgeRuntime, import_map_default: resolved.runtimePath };
       const functionsRoot = path.join(input.projectRoot, "supabase", "functions");
-      const absolute = path.isAbsolute(input.flags.importMap.value)
-        ? path.normalize(input.flags.importMap.value)
-        : path.resolve(input.cwd, input.flags.importMap.value);
       functions = Object.fromEntries(
         Object.entries(functions).map(([name, value]) => [
           name,
           {
             ...value,
-            import_map: runtimePath(path, path.relative(path.join(functionsRoot, name), absolute)),
+            import_map: runtimePath(
+              path,
+              path.relative(path.join(functionsRoot, name), resolved.sourcePath),
+            ),
           },
         ]),
       );
     }
 
     if (Option.isSome(input.flags.envFile)) {
-      const environment = yield* readExplicitEnvironment(input.flags.envFile.value, input.cwd);
-      edgeRuntime = { ...edgeRuntime, secrets: environment };
-      functions = Object.fromEntries(
-        Object.entries(functions).map(([name, value]) => [name, { ...value, env: {} }]),
+      const explicit = yield* readExplicitEnvironment(input.flags.envFile.value, input.cwd);
+      watchPaths.push(explicit.path);
+      const environment = Object.fromEntries(
+        Object.entries({ ...edgeRuntime.secrets, ...explicit.environment }).filter(([name]) => {
+          if (!name.startsWith("SUPABASE_")) return true;
+          warnings.push(`Env name cannot start with SUPABASE_, skipping: ${name}\n`);
+          return false;
+        }),
       );
+      edgeRuntime = {
+        ...edgeRuntime,
+        secrets: environment,
+      };
     }
 
     const inspector = yield* Effect.try({
@@ -135,13 +181,18 @@ export const functionsServeStackConfig = (input: {
       functions,
     };
     return {
-      ...input.config,
-      capabilities: {
-        ...input.config.capabilities,
-        functions: {
-          ...capability,
-          settings,
+      config: {
+        ...input.config,
+        capabilities: {
+          ...input.config.capabilities,
+          functions: {
+            ...capability,
+            settings,
+          },
         },
       },
+      warnings,
+      watchPaths,
+      ...(importMapSource === undefined ? {} : { importMapSource }),
     };
   });
