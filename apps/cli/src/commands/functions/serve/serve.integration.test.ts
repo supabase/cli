@@ -1,3 +1,4 @@
+import { FetchHttpClient } from "effect/unstable/http";
 import { existsSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -404,7 +405,12 @@ function setupServe(options: SetupOptions = {}) {
   const layer = Layer.mergeAll(
     buildTestRuntime({
       out,
-      api,
+      api: {
+        ...api,
+        httpClientLayer: FetchHttpClient.layer.pipe(
+          Layer.provide(Layer.succeed(FetchHttpClient.Fetch, globalThis.fetch)),
+        ),
+      },
       cliSettings,
       telemetry: telemetry.layer,
       runtimeInfo: mockRuntimeInfo({

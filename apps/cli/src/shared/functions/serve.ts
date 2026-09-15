@@ -687,10 +687,9 @@ const finalizeAuthArtifacts = Effect.fnUntraced(function* (local: ServeLocalAuth
   const keys: unknown[] = [];
   if (local.issuerUrl !== undefined) {
     const issuerUrl = local.issuerUrl;
-    const remoteJwks = yield* Effect.tryPromise({
-      try: () => resolveRemoteJwks(issuerUrl),
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    }).pipe(Effect.catch(() => Effect.succeed([] as ReadonlyArray<unknown>)));
+    const remoteJwks = yield* resolveRemoteJwks(issuerUrl).pipe(
+      Effect.catchTag("RemoteJwksError", () => Effect.succeed<ReadonlyArray<unknown>>([])),
+    );
     keys.push(...remoteJwks);
   }
   keys.push(...local.localKeys);
@@ -701,7 +700,9 @@ const finalizeAuthArtifacts = Effect.fnUntraced(function* (local: ServeLocalAuth
     jwtSecret: local.jwtSecret,
     anonKey: local.anonKey,
     serviceRoleKey: local.serviceRoleKey,
-    jwks: JSON.stringify({ keys }),
+    jwks: yield* Schema.encodeEffect(
+      Schema.fromJsonString(Schema.Struct({ keys: Schema.Array(Schema.Unknown) })),
+    )({ keys }),
   } satisfies ServeAuthArtifacts;
 });
 

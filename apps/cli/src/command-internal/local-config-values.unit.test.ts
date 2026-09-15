@@ -3,7 +3,8 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { CliConfigSchema, type CliConfig } from "@supabase/config";
-import { Schema } from "effect";
+import { Effect, Schema } from "effect";
+import { FetchHttpClient } from "effect/unstable/http";
 import { importJWK, jwtVerify } from "jose";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -41,6 +42,14 @@ import {
   resolveLocalConfigValues,
   resolveLocalJwks,
 } from "./local-config-values.ts";
+
+const runLocalJwks = (...args: Parameters<typeof resolveLocalJwks>) =>
+  Effect.runPromise(
+    resolveLocalJwks(...args).pipe(
+      Effect.provide(FetchHttpClient.layer),
+      Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
+    ),
+  );
 
 const decodeConfig = Schema.decodeUnknownSync(CliConfigSchema);
 const WORKDIR = "/tmp/local-config-values-test";
@@ -4144,7 +4153,7 @@ describe("resolveLocalJwks", () => {
 
   it("includes the default ES256 signing key and the oct JWT-secret fallback when no signing_keys_path is configured", async () => {
     const config = baseConfig();
-    const jwks = await resolveLocalJwks(config, tempRoot.current, "a".repeat(32));
+    const jwks = await runLocalJwks(config, tempRoot.current, "a".repeat(32));
     expect(JSON.parse(jwks)).toEqual({
       keys: [
         {
@@ -4167,7 +4176,7 @@ describe("resolveLocalJwks", () => {
     const jwk = generateRsaJwk();
     writeSigningKeys(tempRoot.current, [jwk]);
     const config = baseConfig({ auth: { signing_keys_path: "signing_keys.json" } });
-    const jwks = await resolveLocalJwks(config, tempRoot.current, "a".repeat(32));
+    const jwks = await runLocalJwks(config, tempRoot.current, "a".repeat(32));
     const parsed = JSON.parse(jwks) as { keys: ReadonlyArray<Record<string, unknown>> };
 
     expect(parsed.keys).toHaveLength(1);
@@ -4186,7 +4195,7 @@ describe("resolveLocalJwks", () => {
     const jwk = { ...generateRsaJwk(), use: "sig", ext: true, key_ops: ["sign", "verify"] };
     writeSigningKeys(tempRoot.current, [jwk]);
     const config = baseConfig({ auth: { signing_keys_path: "signing_keys.json" } });
-    const jwks = await resolveLocalJwks(config, tempRoot.current, "a".repeat(32));
+    const jwks = await runLocalJwks(config, tempRoot.current, "a".repeat(32));
     const parsed = JSON.parse(jwks) as { keys: ReadonlyArray<Record<string, unknown>> };
 
     expect(parsed.keys[0]).toMatchObject({ use: "sig", ext: true, key_ops: ["verify"] });
@@ -4197,7 +4206,7 @@ describe("resolveLocalJwks", () => {
     const config = baseConfig({
       auth: { enabled: false, signing_keys_path: "signing_keys.json" },
     });
-    const jwks = await resolveLocalJwks(config, tempRoot.current, "a".repeat(32));
+    const jwks = await runLocalJwks(config, tempRoot.current, "a".repeat(32));
     expect(JSON.parse(jwks)).toEqual({
       keys: [
         {
@@ -4217,7 +4226,7 @@ describe("resolveLocalJwks", () => {
 
   it("throws a Go-worded error when the signing keys file does not exist", async () => {
     const config = baseConfig({ auth: { signing_keys_path: "missing.json" } });
-    await expect(resolveLocalJwks(config, tempRoot.current, "a".repeat(32))).rejects.toThrow(
+    await expect(runLocalJwks(config, tempRoot.current, "a".repeat(32))).rejects.toThrow(
       "failed to read signing keys: ",
     );
   });
@@ -4227,7 +4236,7 @@ describe("resolveLocalJwks", () => {
     mkdirSync(supabaseDir, { recursive: true });
     writeFileSync(join(supabaseDir, "signing_keys.json"), "not valid json");
     const config = baseConfig({ auth: { signing_keys_path: "signing_keys.json" } });
-    await expect(resolveLocalJwks(config, tempRoot.current, "a".repeat(32))).rejects.toThrow(
+    await expect(runLocalJwks(config, tempRoot.current, "a".repeat(32))).rejects.toThrow(
       "failed to decode signing keys: ",
     );
   });
@@ -4239,7 +4248,7 @@ describe("resolveLocalJwks", () => {
 
     it("rejects an enabled third-party provider missing its required field", async () => {
       const config = baseConfig({ auth: { third_party: { firebase: { enabled: true } } } });
-      await expect(resolveLocalJwks(config, WORKDIR, "a".repeat(32))).rejects.toThrow(
+      await expect(runLocalJwks(config, WORKDIR, "a".repeat(32))).rejects.toThrow(
         "Invalid config: auth.third_party.firebase is enabled but without a project_id.",
       );
     });
@@ -4253,7 +4262,7 @@ describe("resolveLocalJwks", () => {
           },
         },
       });
-      await expect(resolveLocalJwks(config, WORKDIR, "a".repeat(32))).rejects.toThrow(
+      await expect(runLocalJwks(config, WORKDIR, "a".repeat(32))).rejects.toThrow(
         "Invalid config: Only one third_party provider allowed to be enabled at a time.",
       );
     });
@@ -4287,7 +4296,7 @@ describe("resolveLocalJwks", () => {
           },
         },
       });
-      const jwksJson = await resolveLocalJwks(config, WORKDIR, "a".repeat(32));
+      const jwksJson = await runLocalJwks(config, WORKDIR, "a".repeat(32));
       const jwks = JSON.parse(jwksJson) as { keys: ReadonlyArray<{ kid?: string }> };
       expect(jwks.keys.some((key) => key.kid === "firebase-key")).toBe(true);
       fetchMock.mockRestore();
@@ -4302,7 +4311,7 @@ describe("resolveLocalJwks", () => {
         },
       });
 
-      const jwksJson = await resolveLocalJwks(config, WORKDIR, "a".repeat(32));
+      const jwksJson = await runLocalJwks(config, WORKDIR, "a".repeat(32));
       const jwks = JSON.parse(jwksJson) as { keys: ReadonlyArray<unknown> };
 
       expect(fetchMock).not.toHaveBeenCalled();
@@ -4333,7 +4342,7 @@ describe("resolveLocalJwks", () => {
       const config = baseConfig({
         auth: { third_party: { workos: { enabled: true, issuer_url: "https://issuer.example" } } },
       });
-      const jwks = await resolveLocalJwks(config, WORKDIR, "a".repeat(32));
+      const jwks = await runLocalJwks(config, WORKDIR, "a".repeat(32));
       const parsed = JSON.parse(jwks) as { keys: ReadonlyArray<Record<string, unknown>> };
 
       expect(parsed.keys).toEqual(
@@ -4350,8 +4359,8 @@ describe("resolveLocalJwks", () => {
       const config = baseConfig({
         auth: { third_party: { workos: { enabled: true, issuer_url: "https://issuer.example" } } },
       });
-      await expect(resolveLocalJwks(config, WORKDIR, "a".repeat(32))).rejects.toThrow(
-        "oidc discovery failed",
+      await expect(runLocalJwks(config, WORKDIR, "a".repeat(32))).rejects.toThrow(
+        "Failed to fetch https://issuer.example/.well-known/openid-configuration",
       );
     });
   });
@@ -4372,7 +4381,7 @@ describe("resolveLocalJwks", () => {
       writeSigningKeys(tempRoot.current, [generateRsaJwk()]);
       process.env["SUPABASE_AUTH_SIGNING_KEYS_PATH"] = "missing-file.json";
       const config = baseConfig({ auth: { signing_keys_path: "signing_keys.json" } });
-      const jwks = await resolveLocalJwks(
+      const jwks = await runLocalJwks(
         config,
         tempRoot.current,
         "a".repeat(32),
@@ -4388,7 +4397,7 @@ describe("resolveLocalJwks", () => {
       writeSigningKeys(tempRoot.current, [generateRsaJwk()]);
       process.env["SUPABASE_AUTH_SIGNING_KEYS_PATH"] = "missing-file.json";
       const config = baseConfig({ auth: { signing_keys_path: "signing_keys.json" } });
-      await expect(resolveLocalJwks(config, tempRoot.current, "a".repeat(32))).rejects.toThrow(
+      await expect(runLocalJwks(config, tempRoot.current, "a".repeat(32))).rejects.toThrow(
         "failed to read signing keys: ",
       );
     });
@@ -4420,7 +4429,7 @@ describe("resolveLocalJwks", () => {
           third_party: { workos: { enabled: true, issuer_url: "https://remote-issuer.example" } },
         },
       });
-      const jwks = await resolveLocalJwks(
+      const jwks = await runLocalJwks(
         config,
         WORKDIR,
         "a".repeat(32),
@@ -4436,14 +4445,14 @@ describe("resolveLocalJwks", () => {
       process.env["SUPABASE_AUTH_ENABLED"] = "not-a-bool";
       const config = baseConfig({ auth: { enabled: false } });
       await expect(
-        resolveLocalJwks(config, WORKDIR, "a".repeat(32), undefined, new Set(["auth.enabled"])),
+        runLocalJwks(config, WORKDIR, "a".repeat(32), undefined, new Set(["auth.enabled"])),
       ).resolves.toEqual(expect.any(String));
     });
 
     it("still rejects a malformed SUPABASE_AUTH_ENABLED when no remote block matched", async () => {
       process.env["SUPABASE_AUTH_ENABLED"] = "not-a-bool";
       const config = baseConfig({ auth: { enabled: false } });
-      await expect(resolveLocalJwks(config, WORKDIR, "a".repeat(32))).rejects.toThrow(
+      await expect(runLocalJwks(config, WORKDIR, "a".repeat(32))).rejects.toThrow(
         'Invalid config for auth.enabled: cannot parse "not-a-bool" as a bool',
       );
     });

@@ -1470,14 +1470,15 @@ describe("start integration", () => {
     it.live(
       "fails when a configured third-party auth issuer's JWKS endpoint is unreachable",
       () => {
-        // `resolveLocalJwks` fetches the JWKS document via a raw `fetch`, not the `HttpClient`
-        // service this suite otherwise mocks, so it needs its own `globalThis.fetch` stub — the
-        // only way this failure surfaces.
-        const previousFetch = globalThis.fetch;
-        globalThis.fetch = Object.assign(() => Promise.reject(new Error("ECONNREFUSED")), {
-          preconnect: previousFetch.preconnect,
-        });
         const { layer, child } = setup({
+          httpClientLayer: Layer.succeed(
+            HttpClient.HttpClient,
+            HttpClient.make((request) =>
+              Effect.succeed(
+                HttpClientResponse.fromWeb(request, new Response(null, { status: 503 })),
+              ),
+            ),
+          ),
           configContents:
             'project_id = "demo"\n[auth.third_party.firebase]\nenabled = true\nproject_id = "fb-project"\n',
         });
@@ -1488,14 +1489,7 @@ describe("start integration", () => {
             expect(JSON.stringify(exit.cause)).toContain("StartInvalidConfigError");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-        }).pipe(
-          Effect.provide(layer),
-          Effect.ensuring(
-            Effect.sync(() => {
-              globalThis.fetch = previousFetch;
-            }),
-          ),
-        );
+        }).pipe(Effect.provide(layer));
       },
     );
 
@@ -3241,7 +3235,7 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   // Real time, not `it.effect`/`TestClock`: genuine async I/O deep inside the forked effect
-  // (`resolveLocalJwks`'s `Effect.tryPromise`, `resolveDbImage`'s file read) needs real Node
+  // (HTTP requests and `resolveDbImage`'s file read) needs real Node
   // event-loop turns to settle, so a virtualized clock would never let the fiber reach the
   // health-check phase. Exercises the real 30s `serviceTimeout` bulk health-check wait, hence
   // the generous timeout.
