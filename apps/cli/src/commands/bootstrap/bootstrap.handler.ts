@@ -26,11 +26,7 @@ import { getProjectApiKeys } from "../../command-internal/get-api-keys.ts";
 import { sanitizeErrorBody } from "../../command-internal/http-errors.ts";
 import type { ConnectSuggestionContext } from "../../command-internal/connect-errors.ts";
 import { resolveLinkedConn } from "../../command-internal/db-config.layer.ts";
-import {
-  applyProjectEnv,
-  checkDbToml,
-  loadProjectEnv,
-} from "../../command-internal/db-config.toml-read.ts";
+import { checkDbToml, loadProjectEnv } from "../../command-internal/db-config.toml-read.ts";
 import { dbPushCore } from "../../command-internal/db-push-core.ts";
 import { linkServicesCore } from "../../command-internal/link-services-core.ts";
 import { projectCreateCore } from "../../command-internal/project-create-core.ts";
@@ -203,10 +199,8 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
     const { anon } = extractServiceKeys(keys);
 
     // Config load must run before link/health/`.env` steps: a malformed config.toml aborts here
-    // rather than after side effects start. `applyProjectEnv`'s scope stays open for the rest of
-    // this handler (closed by the outer `Effect.scoped` below).
+    // rather than after side effects start.
     const projectEnv = yield* loadProjectEnv(fs, path, workdir);
-    yield* applyProjectEnv(projectEnv);
     const pushYes = yield* resolveYesWithProjectEnv(projectEnv);
     const toml = yield* checkDbToml(fs, path, workdir, projectRef);
     if (toml.appliedRemote !== undefined) {
@@ -342,11 +336,6 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
       ),
     ),
     Effect.ensuring(telemetryState.flush),
-    // `applyProjectEnv` above uses `Effect.acquireRelease` to revert
-    // `SUPABASE_INTERNAL_IMAGE_REGISTRY` when its scope closes; that scope must span the rest of
-    // this handler (link services, health poll, `.env` write, and the push step's own use of
-    // that var), so it's closed here rather than narrowly around a single step.
-    Effect.scoped,
   );
 });
 

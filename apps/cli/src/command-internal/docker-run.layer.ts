@@ -36,16 +36,17 @@ export const dockerRunLayer: Layer.Layer<DockerRun, never, ProcessControl | Chil
         return bytes;
       };
 
-      const resolveImage = makeDockerImageResolver(spawner);
-
       const withResolvedOptions = Effect.fnUntraced(function* (opts: DockerRunOpts) {
-        const image = opts.skipImageResolve === true ? opts.image : yield* resolveImage(opts.image);
+        const image =
+          opts.skipImageResolve === true
+            ? opts.image
+            : yield* makeDockerImageResolver(spawner, opts.projectEnvValues)(opts.image);
         const inBitbucket = yield* isBitbucketPipeline(opts.projectEnvValues).pipe(
           Effect.mapError(
             (error) =>
               new DockerRunError({
                 message: `failed to resolve Docker environment: ${error.message}`,
-                reason: "inspect",
+                reason: "config",
                 daemonDown: false,
               }),
           ),

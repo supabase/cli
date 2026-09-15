@@ -279,13 +279,28 @@ const resolveShadowCacheKeyInputs = <E>(
     const overrides = input.setup.serviceVersionOverrides;
     // Same registry rewrite the real migrate job applies when it runs — see
     // {@link ShadowCacheServiceInput.image}.
-    const resolveJobImage = (image: string): string =>
-      getRegistryImageUrl(image, input.setup.projectEnvValues);
+    const resolveJobImage = Effect.fnUntraced(function* (image: string) {
+      return yield* getRegistryImageUrl(image, input.setup.projectEnvValues).pipe(
+        Effect.map(Option.some),
+        Effect.catchTag("ConfigError", () => Effect.succeed(Option.none<string>())),
+      );
+    });
     // Same compound gate a real cold provision uses to decide whether the realtime job's JWKS
     // effect ever runs.
     const realtimeConsumesJwks =
       input.setup.majorVersion >= 15 && input.setup.config.realtime.enabled;
     const jwks = realtimeConsumesJwks ? yield* input.setup.jwks : "";
+    const realtimeImage = yield* resolveJobImage(
+      resolvePinnedImage("realtime", "realtime", overrides),
+    );
+    const storageImage = yield* resolveJobImage(
+      resolvePinnedImage("storage", "storage", overrides),
+    );
+    const authImage = yield* resolveJobImage(resolvePinnedImage("gotrue", "auth", overrides));
+    if (Option.isNone(realtimeImage) || Option.isNone(storageImage) || Option.isNone(authImage)) {
+      return Option.none();
+    }
+
     return Option.some({
       postgresImage: input.image,
       majorVersion: input.db.major_version,
@@ -305,15 +320,15 @@ const resolveShadowCacheKeyInputs = <E>(
       services: {
         realtime: {
           enabled: input.setup.config.realtime.enabled,
-          image: resolveJobImage(resolvePinnedImage("realtime", "realtime", overrides)),
+          image: realtimeImage.value,
         },
         storage: {
           enabled: input.setup.config.storage.enabled,
-          image: resolveJobImage(resolvePinnedImage("storage", "storage", overrides)),
+          image: storageImage.value,
         },
         auth: {
           enabled: input.setup.config.auth.enabled,
-          image: resolveJobImage(resolvePinnedImage("gotrue", "auth", overrides)),
+          image: authImage.value,
         },
       },
     } satisfies ShadowCacheKeyInputs);

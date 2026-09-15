@@ -213,7 +213,15 @@ export const declarativeSeamLayer = Layer.effect(
               );
             }
             const actual = resolveContainerInspectImageName(stdout);
-            const expected = getRegistryImageUrl(image).trim();
+            const expected = yield* getRegistryImageUrl(image, toml.projectEnv).pipe(
+              Effect.mapError(
+                (error) =>
+                  new DeclarativeShadowDbError({
+                    message: `failed to resolve local Postgres image registry: ${error.message}`,
+                  }),
+              ),
+              Effect.map((value) => value.trim()),
+            );
             const actualTag = dockerImageTag(actual);
             const expectedTag = dockerImageTag(expected);
             if (actual.length === 0 || actualTag.length === 0 || expectedTag.length === 0) {
