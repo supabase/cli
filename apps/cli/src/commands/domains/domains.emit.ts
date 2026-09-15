@@ -67,6 +67,8 @@ const GO_HOSTNAME_RESPONSE = goStruct([
 ]);
 
 function normalizeHostnameResponse(response: HostnameResponse): Record<string, unknown> {
+  const ownershipVerification = response.data.result.ownership_verification;
+  const ssl = response.data.result.ssl;
   return {
     ...response,
     status: response.status ?? "",
@@ -75,14 +77,22 @@ function normalizeHostnameResponse(response: HostnameResponse): Record<string, u
       ...response.data,
       result: {
         ...response.data.result,
-        ownership_verification: response.data.result.ownership_verification ?? {
-          type: "",
-          name: "",
-          value: "",
+        custom_origin_server: response.data.result.custom_origin_server ?? "",
+        ownership_verification: {
+          ...ownershipVerification,
+          type: ownershipVerification?.type ?? "",
+          name: ownershipVerification?.name ?? "",
+          value: ownershipVerification?.value ?? "",
         },
         ssl: {
-          ...response.data.result.ssl,
-          validation_records: response.data.result.ssl?.validation_records ?? [],
+          ...ssl,
+          status: ssl?.status ?? "",
+          validation_records:
+            ssl?.validation_records?.map((record) => ({
+              ...record,
+              txt_name: record.txt_name ?? "",
+              txt_value: record.txt_value ?? "",
+            })) ?? [],
         },
       },
     },

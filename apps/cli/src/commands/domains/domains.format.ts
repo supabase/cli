@@ -34,12 +34,20 @@ function getHostnameStatus(response: HostnameResponse): HostnameStatus | undefin
 export function formatHostnameStatus(response: HostnameResponse): string {
   switch (getHostnameStatus(response)) {
     case "5_services_reconfigured":
-      return `Custom hostname setup completed. Project is now accessible at ${response.custom_hostname}.`;
-    case "4_origin_setup_completed":
+      return response.custom_hostname
+        ? `Custom hostname setup completed. Project is now accessible at ${response.custom_hostname}.`
+        : "Custom hostname setup completed.";
+    case "4_origin_setup_completed": {
+      const customHostname = response.custom_hostname;
+      const customOriginServer = response.data.result.custom_origin_server;
+      if (!customHostname || !customOriginServer) {
+        return "Custom hostname configuration complete, and ready for activation.";
+      }
       return `Custom hostname configuration complete, and ready for activation.
 
 Please ensure that your custom domain is set up as a CNAME record to your Supabase subdomain:
-${response.custom_hostname} CNAME -> ${response.data.result.custom_origin_server}`;
+${customHostname} CNAME -> ${customOriginServer}`;
+    }
     case "3_challenge_verified":
     case "2_initiated": {
       const ssl = response.data.result.ssl;
@@ -64,7 +72,7 @@ ${response.custom_hostname} CNAME -> ${response.data.result.custom_origin_server
       let out =
         "Custom hostname verification in-progress; please configure the appropriate DNS entries and request re-verification.\nRequired outstanding validation records:\n";
       const rec = validationRecords[0];
-      if (rec !== undefined && rec.txt_name !== "") {
+      if (rec?.txt_name && rec.txt_value) {
         out += `\t${rec.txt_name} TXT -> ${rec.txt_value}`;
       }
       return out;
@@ -86,7 +94,7 @@ export function formatSslStructDump(ssl: HostnameSsl): string {
       ? "<nil>"
       : `&[${ssl.validation_errors.map((e) => `{Message:${e.message}}`).join(" ")}]`;
   const validationRecords = (ssl.validation_records ?? [])
-    .map((r) => `{TxtName:${r.txt_name} TxtValue:${r.txt_value}}`)
+    .map((r) => `{TxtName:${r.txt_name ?? ""} TxtValue:${r.txt_value ?? ""}}`)
     .join(" ");
-  return `{Status:${ssl.status} ValidationErrors:${validationErrors} ValidationRecords:[${validationRecords}]}`;
+  return `{Status:${ssl.status ?? ""} ValidationErrors:${validationErrors} ValidationRecords:[${validationRecords}]}`;
 }
