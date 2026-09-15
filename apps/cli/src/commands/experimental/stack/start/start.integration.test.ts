@@ -16,11 +16,13 @@ import {
   StackStateInvalidError,
 } from "@supabase/stack/effect";
 import type {
+  CapabilityState,
   EffectStack,
   StackStartError as ApiStackStartError,
   StackStatus,
 } from "@supabase/stack/effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import { mockOutput, mockTty } from "../../../../../tests/helpers/mocks.ts";
 import {
   mockCommandSettings,
@@ -77,6 +79,16 @@ const writeStartMigration = (root: string) => {
 const emptyProject = (): string =>
   mkdtempSync(join(tmpdir(), "supabase-experimental-stack-start-empty-"));
 
+/** Overwrites the project's `config.toml` with a single configured bucket and one seed file. */
+const writeBucketsConfig = (root: string) => {
+  writeFileSync(
+    join(root, "supabase", "config.toml"),
+    'project_id = "start-test"\n[storage.buckets.assets]\nobjects_path = "buckets/assets"\n',
+  );
+  mkdirSync(join(root, "supabase", "buckets", "assets"), { recursive: true });
+  writeFileSync(join(root, "supabase", "buckets", "assets", "logo.png"), "fake-bytes");
+};
+
 const resolverLayer = stackTargetResolverLayer.pipe(
   Layer.provideMerge(stackApiLayer),
   Layer.provide(BunServices.layer),
@@ -117,6 +129,49 @@ const status = (id: string, runtime: "native" | "container" = "native") =>
     })),
     artifacts: [],
   }) satisfies StackStatus;
+
+/** `status()` with the `storage` capability's state overridden. */
+const statusWithStorageState = (id: string, storageState: CapabilityState): StackStatus => ({
+  ...status(id),
+  capabilities: status(id).capabilities.map((capability) =>
+    capability.name === "storage" ? { ...capability, state: storageState } : capability,
+  ),
+});
+
+/** Records every request the seed-buckets gateway client issues, responding 200 to all. */
+function recordingStackStorageHttpClient(opts: { readonly bucketCreateStatus?: number } = {}) {
+  const requests: Array<{
+    readonly method: string;
+    readonly url: string;
+    readonly authorization: string;
+  }> = [];
+  const layer = Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) => {
+      requests.push({
+        method: request.method,
+        url: request.url,
+        authorization: request.headers["authorization"] ?? "",
+      });
+      if (request.method !== "GET" && opts.bucketCreateStatus !== undefined) {
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response("server error", { status: opts.bucketCreateStatus }),
+          ),
+        );
+      }
+      const body = request.method === "GET" ? "[]" : JSON.stringify({ name: "bucket" });
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(body, { status: 200, headers: { "content-type": "application/json" } }),
+        ),
+      );
+    }),
+  );
+  return { layer, requests };
+}
 
 function fakeStack(
   id: string,
@@ -186,6 +241,8 @@ function handlerLayer(opts: {
   stack: EffectStack;
   onCreate?: (options: unknown) => void;
   onOpen?: () => void;
+  /** Overrides the default dying `HttpClient` stub, for tests exercising bucket seeding. */
+  httpClient?: Layer.Layer<HttpClient.HttpClient>;
 }) {
   const out = mockOutput();
   const telemetry = mockTelemetryStateTracked();
@@ -224,10 +281,11 @@ function handlerLayer(opts: {
       Layer.succeed(CliArgs, { args: ["stack", "start"] }),
       // The bucket-seeding path statically requires these even on the default fixture's
       // no-buckets `config.toml`, where the short-circuit never reaches them at runtime.
-      Layer.succeed(
-        HttpClient.HttpClient,
-        HttpClient.make(() => Effect.die("unused")),
-      ),
+      opts.httpClient ??
+        Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make(() => Effect.die("unused")),
+        ),
       Layer.succeed(CommandPlatformApiFactory, { make: Effect.die("unused") }),
       stdinLayer.pipe(Layer.provide(mockTty({ stdinIsTty: false, stdoutIsTty: false }))),
       mockTty({ stdinIsTty: false, stdoutIsTty: false }),
@@ -964,6 +1022,167 @@ enabled = false
       expect(setup.telemetry.flushed).toBe(true);
     }).pipe(
       Effect.provide(layer),
+      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+    );
+  });
+});
+
+describe("stack start bucket seeding", () => {
+  it.live("seeds configured buckets through the stack gateway when storage is dormant", () => {
+    const root = project();
+    writeBucketsConfig(root);
+    const client = recordingStackStorageHttpClient();
+    const stack = {
+      ...fakeStack("1".repeat(64), () =>
+        Effect.succeed(statusWithStorageState("1".repeat(64), "dormant")),
+      ),
+      credentials: Effect.succeed({
+        database: {
+          url: Redacted.make("postgresql://postgres:secret@127.0.0.1:54329/postgres"),
+          password: Redacted.make("secret"),
+        },
+        api: {
+          publishableKey: "anon",
+          secretKey: Redacted.make("service"),
+          anonJwt: "anon",
+          serviceRoleJwt: Redacted.make("created-stack-jwt"),
+        },
+      }),
+    } satisfies EffectStack;
+    const setup = handlerLayer({
+      root,
+      target: { projectRoot: root },
+      stack,
+      httpClient: client.layer,
+    });
+    return Effect.gen(function* () {
+      const result = yield* stackStart(flags());
+      expect(result.capabilities.find((c) => c.name === "storage")?.state).toBe("dormant");
+      expect(
+        client.requests.some(
+          (r) => r.method === "POST" && r.url === "http://127.0.0.1:55420/storage/v1/bucket",
+        ),
+      ).toBe(true);
+      expect(
+        client.requests.some(
+          (r) => r.url === "http://127.0.0.1:55420/storage/v1/object/assets/logo.png",
+        ),
+      ).toBe(true);
+      expect(client.requests.every((r) => r.authorization.includes("created-stack-jwt"))).toBe(
+        true,
+      );
+      expect(setup.out.stdoutText).toContain("Stack");
+    }).pipe(
+      Effect.provide(setup.layer),
+      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live("skips seeding without a warning when storage is disabled", () => {
+    const root = project();
+    writeBucketsConfig(root);
+    const client = recordingStackStorageHttpClient();
+    const stack = fakeStack("2".repeat(64), () =>
+      Effect.succeed(statusWithStorageState("2".repeat(64), "disabled")),
+    );
+    const setup = handlerLayer({
+      root,
+      target: { projectRoot: root },
+      stack,
+      httpClient: client.layer,
+    });
+    return Effect.gen(function* () {
+      yield* stackStart(flags({ exclude: ["storage"] }));
+      expect(client.requests).toHaveLength(0);
+      expect(setup.out.stderrText).not.toContain("skipped seeding storage buckets");
+    }).pipe(
+      Effect.provide(setup.layer),
+      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live("warns and issues no requests when storage failed to start", () => {
+    const root = project();
+    writeBucketsConfig(root);
+    const client = recordingStackStorageHttpClient();
+    const stack = fakeStack("3".repeat(64), () =>
+      Effect.succeed(statusWithStorageState("3".repeat(64), "failed")),
+    );
+    const setup = handlerLayer({
+      root,
+      target: { projectRoot: root },
+      stack,
+      httpClient: client.layer,
+    });
+    return Effect.gen(function* () {
+      yield* stackStart(flags());
+      expect(setup.out.stderrText).toContain(
+        "WARNING: skipped seeding storage buckets: Storage is failed for this stack.",
+      );
+      expect(client.requests).toHaveLength(0);
+    }).pipe(
+      Effect.provide(setup.layer),
+      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live("never seeds buckets when opening an existing stack", () => {
+    const root = project();
+    writeBucketsConfig(root);
+    const client = recordingStackStorageHttpClient();
+    const stack = fakeStack(
+      "4".repeat(64),
+      () => Effect.succeed(statusWithStorageState("4".repeat(64), "dormant")),
+      "running",
+    );
+    const setup = handlerLayer({
+      root,
+      target: { projectRoot: root, id: "4".repeat(64) },
+      stack,
+      httpClient: client.layer,
+    });
+    return Effect.gen(function* () {
+      yield* stackStart(flags({ stackId: Option.some("4".repeat(64)) }));
+      expect(client.requests).toHaveLength(0);
+    }).pipe(
+      Effect.provide(setup.layer),
+      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live("fails with reason 'seed' and never stops/destroys the stack on a gateway error", () => {
+    const root = project();
+    writeBucketsConfig(root);
+    const client = recordingStackStorageHttpClient({ bucketCreateStatus: 500 });
+    let stopped = false;
+    let destroyed = false;
+    const stack = {
+      ...fakeStack("5".repeat(64), () =>
+        Effect.succeed(statusWithStorageState("5".repeat(64), "dormant")),
+      ),
+      stop: Effect.sync(() => {
+        stopped = true;
+      }),
+      destroy: Effect.sync(() => {
+        destroyed = true;
+      }),
+    } satisfies EffectStack;
+    const setup = handlerLayer({
+      root,
+      target: { projectRoot: root },
+      stack,
+      httpClient: client.layer,
+    });
+    return Effect.gen(function* () {
+      const failure = yield* stackStart(flags()).pipe(Effect.flip);
+      expect(failure).toBeInstanceOf(StackCommandStartError);
+      if (failure instanceof StackCommandStartError) {
+        expect(failure.reason).toBe("seed");
+      }
+      expect(stopped).toBe(false);
+      expect(destroyed).toBe(false);
+    }).pipe(
+      Effect.provide(setup.layer),
       Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
     );
   });
