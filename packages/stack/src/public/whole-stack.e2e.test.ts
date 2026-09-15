@@ -1260,16 +1260,18 @@ const exerciseWholeStackFunctions = async (scenario: WholeStackScenario): Promis
     const importMapPath = join(projectRoot, "functions-serve-import-map.json");
     const functionFile = join(projectRoot, "supabase", "functions", functionSlug, "index.ts");
     const sessionId = randomId();
-    await writeFile(
-      importMapPath,
-      JSON.stringify({
-        imports: {
-          "stack-e2e-marker":
-            "data:text/javascript,export%20default%20%22transient-import-map%22%3B",
-        },
-      }),
+    await runNode(
+      writeFile(
+        importMapPath,
+        JSON.stringify({
+          imports: {
+            "stack-e2e-marker":
+              "data:text/javascript,export%20default%20%22transient-import-map%22%3B",
+          },
+        }),
+      ),
     );
-    await writeFile(functionFile, transientImportMapFunctionSource);
+    await runNode(writeFile(functionFile, transientImportMapFunctionSource));
     try {
       await stack.serveFunctions({
         sessionId,
@@ -1288,16 +1290,22 @@ const exerciseWholeStackFunctions = async (scenario: WholeStackScenario): Promis
         },
       });
       expect(
-        await jsonObject(
-          await request(api.url, functionPath, { headers: apiHeaders(credentials) }),
+        await runNode(
+          request(api.url, functionPath, { headers: apiHeaders(credentials) }).pipe(
+            Effect.flatMap(jsonObject),
+          ),
         ),
       ).toEqual({ marker: "transient-import-map", multiline: "first line\nsecond line" });
     } finally {
-      await writeFile(functionFile, functionSource(table, markers.live));
+      await runNode(writeFile(functionFile, functionSource(table, markers.live)));
       await stack.serveFunctions({ sessionId });
     }
     expect(
-      await jsonObject(await request(api.url, functionPath, { headers: apiHeaders(credentials) })),
+      await runNode(
+        request(api.url, functionPath, { headers: apiHeaders(credentials) }).pipe(
+          Effect.flatMap(jsonObject),
+        ),
+      ),
     ).toEqual(
       expect.objectContaining({
         marker: markers.live,
