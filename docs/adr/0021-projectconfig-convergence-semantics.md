@@ -83,7 +83,7 @@ Concrete behavior families, by normalizer:
   limitations, not a permanent semantic ceiling.
 
 - **CLI-only fields with no hosted counterpart on EITHER arm** (CLI-2316, `DOCUMENT_ONLY_LOCAL_PATHS`,
-  `project-config.ts`) — a family DISTINCT from the unmanaged-by-push family above, despite the
+  `hosted-sections.ts`) — a family DISTINCT from the unmanaged-by-push family above, despite the
   similar-looking mechanism (both drop a document-declared value from the projection): this family's
   omissions are a PERMANENT semantic ceiling, not a push-capability gap CLI-2266's lockstep rule
   governs. `api.port`/`api.tls`/`api.external_url`, `db.port`/`db.shadow_port`/`db.health_timeout`,
@@ -93,7 +93,9 @@ Concrete behavior families, by normalizer:
   ever converge toward, confirmed directly against the OpenAPI-generated schema
   (`packages/api/src/generated/contracts.ts`), not assumed. There is no "push gains the capability"
   future for these: a hosted project has no port to bind or Docker image to select, so unlike the
-  family above, extending push could never make one of these comparable.
+  family above, extending push could never make one of these comparable. The exclusion is now
+  enforced at the `ProjectConfig` type and at `ProjectConfigSchema`/`toProjectConfigJsonSchema`
+  too, not only by `fromConfigDocument`'s runtime stripping.
 
   **A field that DOES have a `v2GetProjectConfig` counterpart is never a member of this family, even
   when `config push` cannot write it** (PR #6451 review round, correcting this family's initial

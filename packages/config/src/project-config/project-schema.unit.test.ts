@@ -7,13 +7,34 @@ import * as SmolToml from "smol-toml";
 import { CliConfigSchema } from "../base.ts";
 import { isSecretPath, secretPathPatterns } from "../lib/secret-paths.ts";
 import { getDefaultCliConfig } from "../sparse.ts";
-import { HOSTED_SECTION_KEYS } from "./hosted-sections.ts";
+import { DOCUMENT_ONLY_LOCAL_PATHS, HOSTED_SECTION_KEYS } from "./hosted-sections.ts";
 import { fromApiProjectConfig, fromConfigDocument, toProjectConfig } from "./project-config.ts";
 import type { ProjectConfig } from "./project-config.ts";
 import { ProjectConfigSchema, toProjectConfigJsonSchema } from "./project-schema.ts";
 
 const decodeCliConfig = Schema.decodeUnknownSync(CliConfigSchema);
 const decodeProjectConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
+
+/**
+ * Walks an AST along `pattern` (`"*"` descends into an index signature, anything else into a
+ * same-named property signature); returns `undefined` once the path can no longer be followed.
+ */
+function findAtPattern(
+  ast: SchemaAST.AST,
+  pattern: ReadonlyArray<string>,
+): SchemaAST.AST | undefined {
+  let current: SchemaAST.AST | undefined = ast;
+  for (const segment of pattern) {
+    if (current === undefined || !SchemaAST.isObjects(current)) {
+      return undefined;
+    }
+    current =
+      segment === "*"
+        ? current.indexSignatures[0]?.type
+        : current.propertySignatures.find((property) => property.name === segment)?.type;
+  }
+  return current;
+}
 
 const legacyFixturePath = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -109,28 +130,6 @@ describe("ProjectConfigSchema secret-strip exhaustiveness", () => {
       expect(isSecretPath(concretePath)).toBe(true);
     }
   });
-
-  /**
-   * Walks {@link ProjectConfigSchema}'s AST along `pattern` (`"*"` descends into an index
-   * signature, anything else into a same-named property signature); returns `undefined` once the
-   * path can no longer be followed.
-   */
-  function findAtPattern(
-    ast: SchemaAST.AST,
-    pattern: ReadonlyArray<string>,
-  ): SchemaAST.AST | undefined {
-    let current: SchemaAST.AST | undefined = ast;
-    for (const segment of pattern) {
-      if (current === undefined || !SchemaAST.isObjects(current)) {
-        return undefined;
-      }
-      current =
-        segment === "*"
-          ? current.indexSignatures[0]?.type
-          : current.propertySignatures.find((property) => property.name === segment)?.type;
-    }
-    return current;
-  }
 
   test("no x-secret path from the schema's own pattern list survives in ProjectConfigSchema's AST", () => {
     for (const pattern of reachablePatterns) {
@@ -235,14 +234,151 @@ describe("ProjectConfigSchema secret-strip exhaustiveness", () => {
 describe("ProjectConfigSchema hosted-section keys", () => {
   // Asserts against the schema's own public AST rather than the module's private struct, so a
   // schema-module import can't crash a consumer for a condition this test already covers.
-  test("the schema's own top-level property names are exactly HOSTED_SECTION_KEYS", () => {
+  // `realtime`'s three fields (`enabled`, `ip_version`, `max_header_length`) are all
+  // `DOCUMENT_ONLY_LOCAL_PATHS` entries, so the whole section collapses to nothing and is dropped,
+  // matching `fromConfigDocument`'s own empty-container pruning.
+  test("the schema's own top-level property names are HOSTED_SECTION_KEYS minus the fully-local realtime section", () => {
     if (!SchemaAST.isObjects(ProjectConfigSchema.ast)) {
       throw new Error("expected ProjectConfigSchema.ast to be an Objects node");
     }
     const actualKeys = ProjectConfigSchema.ast.propertySignatures.map((property) =>
       String(property.name),
     );
-    expect(actualKeys.toSorted()).toEqual([...HOSTED_SECTION_KEYS].toSorted());
+    expect(actualKeys.toSorted()).toEqual(
+      HOSTED_SECTION_KEYS.filter((key) => key !== "realtime").toSorted(),
+    );
+  });
+});
+
+describe("ProjectConfigSchema local-only path exhaustiveness", () => {
+  const KNOWN_ALL_LOCAL_ONLY_COLLAPSED_CONTAINER_PARENTS: ReadonlyArray<ReadonlyArray<string>> = [
+    ["realtime"],
+  ];
+
+  function isKnownAllLocalOnlyContainer(parentPattern: ReadonlyArray<string>): boolean {
+    return KNOWN_ALL_LOCAL_ONLY_COLLAPSED_CONTAINER_PARENTS.some(
+      (known) =>
+        known.length === parentPattern.length &&
+        known.every((segment, index) => segment === parentPattern[index]),
+    );
+  }
+
+  test("guards the probe against a broken import silently emptying the path list", () => {
+    expect(DOCUMENT_ONLY_LOCAL_PATHS.length).toBeGreaterThan(0);
+  });
+
+  test("no DOCUMENT_ONLY_LOCAL_PATHS entry survives in ProjectConfigSchema's AST", () => {
+    for (const path of DOCUMENT_ONLY_LOCAL_PATHS) {
+      expect(findAtPattern(ProjectConfigSchema.ast, path)).toBeUndefined();
+    }
+  });
+
+  test("the parent of every excluded path is still reachable, except the fully-local realtime section", () => {
+    for (const path of DOCUMENT_ONLY_LOCAL_PATHS) {
+      const parentPath = path.slice(0, -1);
+      const parent =
+        parentPath.length === 0
+          ? ProjectConfigSchema.ast
+          : findAtPattern(ProjectConfigSchema.ast, parentPath);
+
+      if (parent !== undefined) {
+        continue;
+      }
+
+      expect(
+        isKnownAllLocalOnlyContainer(parentPath),
+        `parent of ${JSON.stringify(path)} vanished unexpectedly (not a known all-local-only collapsed container)`,
+      ).toBe(true);
+
+      const grandparentPath = parentPath.slice(0, -1);
+      const grandparent =
+        grandparentPath.length === 0
+          ? ProjectConfigSchema.ast
+          : findAtPattern(ProjectConfigSchema.ast, grandparentPath);
+      expect(grandparent, `grandparent of ${JSON.stringify(path)} vanished`).toBeDefined();
+
+      const droppedName = parentPath[parentPath.length - 1];
+      if (grandparent !== undefined && SchemaAST.isObjects(grandparent)) {
+        expect(
+          grandparent.propertySignatures.some((property) => property.name === droppedName),
+        ).toBe(false);
+      }
+    }
+  });
+
+  test("no DOCUMENT_ONLY_LOCAL_PATHS entry survives in the JSON schema, and the drop is per-field, not section-wide", () => {
+    const document = JSON.parse(JSON.stringify(toProjectConfigJsonSchema())) as Record<
+      string,
+      unknown
+    >;
+
+    function navigateToParentProperties(
+      path: ReadonlyArray<string>,
+    ): Record<string, unknown> | undefined {
+      let current: Record<string, unknown> | undefined = document;
+      for (const segment of path.slice(0, -1)) {
+        const properties = current?.["properties"];
+        if (!(typeof properties === "object" && properties !== null)) {
+          return undefined;
+        }
+        current = (properties as Record<string, unknown>)[segment] as
+          | Record<string, unknown>
+          | undefined;
+      }
+      const properties = current?.["properties"];
+      return typeof properties === "object" && properties !== null
+        ? (properties as Record<string, unknown>)
+        : undefined;
+    }
+
+    for (const path of DOCUMENT_ONLY_LOCAL_PATHS) {
+      const parentPath = path.slice(0, -1);
+      const parentProperties = navigateToParentProperties(path);
+      const leafName = path[path.length - 1] as string;
+
+      if (parentProperties === undefined) {
+        expect(
+          isKnownAllLocalOnlyContainer(parentPath),
+          `properties container for ${JSON.stringify(path)} vanished unexpectedly`,
+        ).toBe(true);
+        continue;
+      }
+      expect(Object.hasOwn(parentProperties, leafName)).toBe(false);
+    }
+
+    expect(Object.hasOwn(document.properties as Record<string, unknown>, "realtime")).toBe(false);
+
+    const apiProperties = (document.properties as Record<string, any>).api.properties;
+    expect(Object.hasOwn(apiProperties, "max_rows")).toBe(true);
+    expect(Object.hasOwn(apiProperties, "port")).toBe(false);
+
+    const poolerProperties = (document.properties as Record<string, any>).db.properties.pooler
+      .properties;
+    expect(Object.hasOwn(poolerProperties, "pool_mode")).toBe(true);
+    expect(Object.hasOwn(poolerProperties, "enabled")).toBe(false);
+    expect(Object.hasOwn(poolerProperties, "port")).toBe(false);
+  });
+
+  test("every DOCUMENT_ONLY_LOCAL_PATHS entry decodes to undefined through ProjectConfigSchema, while hosted siblings survive", () => {
+    function readAtPath(root: unknown, path: ReadonlyArray<string>): unknown {
+      let current = root;
+      for (const segment of path) {
+        if (current === null || typeof current !== "object" || Array.isArray(current)) {
+          return undefined;
+        }
+        current = (current as Record<string, unknown>)[segment];
+      }
+      return current;
+    }
+
+    const result = decodeProjectConfig(getDefaultCliConfig());
+
+    for (const path of DOCUMENT_ONLY_LOCAL_PATHS) {
+      expect(readAtPath(result, path)).toBeUndefined();
+    }
+    expect((result as Record<string, any>).api?.max_rows).toBeDefined();
+    expect((result as Record<string, any>).db?.pooler?.pool_mode).toBeDefined();
+    expect(Object.hasOwn(result, "realtime")).toBe(false);
   });
 });
 
@@ -348,8 +484,10 @@ describe("toProjectConfigJsonSchema", () => {
     expect(typedDocument.$schema).toBe("https://json-schema.org/draft/2020-12/schema");
   });
 
-  test("top-level properties are exactly the seven hosted sections", () => {
-    expect(Object.keys(document.properties).sort()).toEqual([...HOSTED_SECTION_KEYS].toSorted());
+  test("top-level properties are the seven hosted sections minus the fully-local realtime section", () => {
+    expect(Object.keys(document.properties).sort()).toEqual(
+      HOSTED_SECTION_KEYS.filter((key) => key !== "realtime").toSorted(),
+    );
   });
 
   test("no required array forces presence anywhere spot-checked", () => {
@@ -388,5 +526,25 @@ describe("ProjectConfigSchema type-level pin", () => {
   test("both assignability directions compile", () => {
     expect(typeof _derivedAssignableToExpected).toBe("function");
     expect(typeof _expectedAssignableToDerived).toBe("function");
+  });
+});
+
+describe("ProjectConfig type-level local-only exclusion pin", () => {
+  // @ts-expect-error api.port is local-only
+  const localScalar: ProjectConfig = { api: { port: 54321 } };
+  // @ts-expect-error db.pooler.port is local-only
+  const localNestedScalar: ProjectConfig = { db: { pooler: { port: 54329 } } };
+  // @ts-expect-error experimental.pgdelta is a local-only subtree
+  const localSubtree: ProjectConfig = { experimental: { pgdelta: { enabled: true } } };
+  const hostedSiblings: ProjectConfig = {
+    api: { max_rows: 1 },
+    db: { pooler: { pool_mode: "transaction" } },
+  };
+
+  test("a future edit that reintroduces a local-only field into ProjectConfig fails tsc, not this test", () => {
+    expect(localScalar).toBeDefined();
+    expect(localNestedScalar).toBeDefined();
+    expect(localSubtree).toBeDefined();
+    expect(hostedSiblings).toBeDefined();
   });
 });

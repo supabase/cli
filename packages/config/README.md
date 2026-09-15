@@ -267,6 +267,10 @@ specific, narrower validation contract — what it does and does not promise:
   validates even without whatever sibling fields would otherwise be required.
 - **`x-secret` leaves removed** — no secret-marked field exists in this schema at all, matching
   the converters' own secret-omission behavior.
+- **Local-only fields removed** — a `DOCUMENT_ONLY_LOCAL_PATHS` field (local bind ports/TLS,
+  `db.migrations`/`db.seed`, every `[realtime]` field, and local-only `experimental.*` engine
+  selection) is absent from this schema and from `ProjectConfig`'s own type, matching
+  `fromConfigDocument`'s runtime omission.
 - **Cross-field checks stripped** — whole-struct business-rule refinements from the base schema
   (e.g. "if `enabled`, then `host` is required") are removed, since a deliberately sparse overlay
   can legitimately violate them.

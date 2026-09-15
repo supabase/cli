@@ -12,6 +12,24 @@ export type DeepPartial<T> =
       ? { readonly [K in keyof T]?: DeepPartial<T[K]> }
       : T;
 
+type ChildPaths<Paths, K extends PropertyKey> = Paths extends readonly [K, ...infer Rest]
+  ? Rest
+  : never;
+
+/** `T` with every property addressed by a tuple in the `Paths` union removed, at any depth; arrays are left whole. */
+export type OmitPaths<T, Paths extends ReadonlyArray<string>> = [Paths] extends [never]
+  ? T
+  : T extends ReadonlyArray<unknown>
+    ? T
+    : T extends object
+      ? {
+          [K in keyof T as [] extends ChildPaths<Paths, K> ? never : K]: OmitPaths<
+            T[K],
+            ChildPaths<Paths, K>
+          >;
+        }
+      : T;
+
 export type SparseCliConfig = DeepPartial<CliConfig>;
 
 /**
