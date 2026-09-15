@@ -1212,7 +1212,7 @@ const configInput = (
   };
   const signing = jwtSigning();
   const capability = <T>(enabled: boolean, settings: T) =>
-    enabled ? { settings } : { enabled: false as const, settings };
+    enabled ? { settings } : { enabled: false as const };
   return {
     capabilities: {
       database: {

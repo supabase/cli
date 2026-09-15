@@ -27,9 +27,9 @@ export const excludeStackCapabilities = (
   const capabilities = { ...config.capabilities };
   for (const name of CAPABILITY_NAMES) {
     if (name === "database" || !disabled.has(name)) continue;
-    const current = capabilities[name];
-    capabilities[name] =
-      current === undefined ? { enabled: false } : { ...current, enabled: false };
+    // Disabled optional capabilities must not carry settings; StackConfigSchema allows
+    // only `{ enabled: false }` on that union branch.
+    capabilities[name] = { enabled: false };
   }
   return { ...config, capabilities };
 };

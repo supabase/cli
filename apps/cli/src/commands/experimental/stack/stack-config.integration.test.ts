@@ -422,9 +422,7 @@ enabled = true
 enabled = false
 `);
       const config = yield* load(root);
-      expect(config.capabilities?.functions).toEqual(
-        expect.objectContaining({ enabled: false, settings: expect.any(Object) }),
-      );
+      expect(config.capabilities?.functions).toEqual({ enabled: false });
     });
   });
 
@@ -464,9 +462,7 @@ enabled = false
 env = { TOKEN = "env(SUPABASE_STACK_TEST_DISABLED_MISSING_ENV)" }
 `);
       const config = yield* load(root);
-      expect(config.capabilities?.functions).toEqual(
-        expect.objectContaining({ enabled: false, settings: expect.any(Object) }),
-      );
+      expect(config.capabilities?.functions).toEqual({ enabled: false });
     });
   });
 
@@ -483,9 +479,7 @@ enabled = false
         "lowercase=value\n",
       );
       const config = yield* load(root);
-      expect(config.capabilities?.functions).toEqual(
-        expect.objectContaining({ enabled: false, settings: expect.any(Object) }),
-      );
+      expect(config.capabilities?.functions).toEqual({ enabled: false });
     }).pipe(Effect.provide(BunServices.layer));
   });
 
