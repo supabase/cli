@@ -142,7 +142,7 @@ const resolveFunctionsEdgeRuntimeSecrets = (
     if (
       [...value].some((character) => {
         const code = character.codePointAt(0) ?? 0;
-        return code <= 0x1f || code === 0x7f;
+        return (code <= 0x1f && character !== "\r" && character !== "\n") || code === 0x7f;
       })
     )
       return Effect.fail(failure("Functions Edge Runtime secret value is invalid", { name }));

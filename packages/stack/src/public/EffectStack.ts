@@ -139,6 +139,12 @@ export interface StartStackOptions {
 /** Invocation-only configuration for activating Functions on a running stack. */
 export interface ServeFunctionsOptions {
   readonly config?: StackConfig;
+  /** Opaque caller-owned lease. Different sessions cannot replace one another. */
+  readonly sessionId?: string;
+  /** Invocation-authorized import map resolved from the caller's working directory. */
+  readonly importMapSource?: string;
+  /** Waits for this session's Functions workload to stop or fail. */
+  readonly waitForTermination?: boolean;
 }
 export interface PrepareStackOptions {
   readonly config?: StackConfig;
@@ -630,24 +636,33 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
     const serveFunctions = (serveOptions?: ServeFunctionsOptions) =>
       invoke(
         (rpc) =>
-          serveOptions?.config === undefined
-            ? rpc.serveFunctions({})
-            : rpc.serveFunctions({ config: serveOptions.config }),
+          rpc.serveFunctions({
+            ...(serveOptions?.config === undefined ? {} : { config: serveOptions.config }),
+            ...(serveOptions?.sessionId === undefined ? {} : { sessionId: serveOptions.sessionId }),
+            ...(serveOptions?.importMapSource === undefined
+              ? {}
+              : { importMapSource: serveOptions.importMapSource }),
+            ...(serveOptions?.waitForTermination === true ? { waitForTermination: true } : {}),
+          }),
         serveFunctionsError,
       ).pipe(
         Effect.catchTag("StackOwnershipConflictError", (ownershipError) =>
           options.readOfflineState.pipe(
             Effect.mapError(serveFunctionsError),
-            Effect.flatMap((state): Effect.Effect<never, ServeFunctionsError> =>
+            Effect.flatMap((state): Effect.Effect<StackStatus, ServeFunctionsError> =>
               Option.isNone(state)
                 ? Effect.fail(stackNotFound())
                 : isStoppedState(state.value)
-                  ? Effect.fail(
-                      new StackNotRunningError({
-                        stackId: id,
-                        message: "Stack must be running before serving Functions",
-                      }),
-                    )
+                  ? serveOptions?.sessionId !== undefined &&
+                    serveOptions.config === undefined &&
+                    serveOptions.importMapSource === undefined
+                    ? statusFor(id, state.value, [], new Set<CapabilityName>(), "stopped")
+                    : Effect.fail(
+                        new StackNotRunningError({
+                          stackId: id,
+                          message: "Stack must be running before serving Functions",
+                        }),
+                      )
                   : Effect.fail(ownershipError),
             ),
             Effect.catchTag("StackOwnershipConflictError", () => Effect.fail(ownershipError)),

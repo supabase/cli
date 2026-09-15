@@ -37,6 +37,10 @@ export interface RuntimeDriver {
     key: RuntimeWorkloadKey,
     workload: PlannedWorkload,
   ) => Effect.Effect<ObservedWorkload, RuntimeDriverError>;
+  /** Waits for the currently registered exact resource to stop or fail. */
+  readonly awaitTermination?: (
+    key: RuntimeWorkloadKey,
+  ) => Effect.Effect<ObservedWorkload, RuntimeDriverError>;
   /** Stops one exact resource; no other stack may be touched. */
   readonly stop: (key: RuntimeWorkloadKey) => Effect.Effect<void, RuntimeDriverError>;
   /** Removes one exact resource; no other stack may be touched. */

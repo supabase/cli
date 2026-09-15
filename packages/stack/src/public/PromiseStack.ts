@@ -166,7 +166,14 @@ export const adaptEffectStack = (effectStack: EffectStack): PromiseStack => {
         withConfig(options, (config) =>
           options === undefined
             ? effectStack.serveFunctions()
-            : effectStack.serveFunctions(config === undefined ? {} : { config }),
+            : effectStack.serveFunctions({
+                ...(config === undefined ? {} : { config }),
+                ...(options.sessionId === undefined ? {} : { sessionId: options.sessionId }),
+                ...(options.importMapSource === undefined
+                  ? {}
+                  : { importMapSource: options.importMapSource }),
+                ...(options.waitForTermination === true ? { waitForTermination: true } : {}),
+              }),
         ),
       ),
     stop: () => invoke(effectStack.stop),

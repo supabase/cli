@@ -29,6 +29,11 @@ export interface LifecycleInput {
   readonly definition: StackDefinition;
   readonly secrets: PersistedSecretValues;
   readonly plan: ExecutionPlan;
+  /** Invocation-only Functions material; never written to durable state. */
+  readonly functions?: Readonly<{
+    readonly importMapSource?: string;
+    readonly releaseInspectorPort?: Effect.Effect<void>;
+  }>;
 }
 
 export interface LifecycleBackend {
