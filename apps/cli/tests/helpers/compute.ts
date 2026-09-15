@@ -348,19 +348,26 @@ export function makeComputeProject(files: Readonly<Record<string, string>> = {})
  * `CommandSettingsShape` requires.
  */
 const testCliConfigLayer = (workdir: string, explicitWorkdir: boolean) =>
-  Layer.succeed(CommandSettings, {
-    profileEnvValue: undefined,
-    profile: "supabase",
-    apiUrl: "https://api.supabase.com",
-    projectHost: "supabase.co",
-    poolerHost: "pooler.supabase.com",
-    dashboardUrl: "https://supabase.com/dashboard",
-    accessToken: Option.some(Redacted.make("sbp_test")),
-    projectId: Option.none(),
-    workdir,
-    explicitWorkdir,
-    userAgent: "supabase",
-  });
+  Layer.effect(
+    CommandSettings,
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      return CommandSettings.of({
+        profile: "supabase",
+        profileEnvValue: Option.none(),
+        supabaseHome: path.join(workdir, ".supabase"),
+        apiUrl: "https://api.supabase.com",
+        projectHost: "supabase.co",
+        poolerHost: "pooler.supabase.com",
+        dashboardUrl: "https://supabase.com/dashboard",
+        accessToken: Option.some(Redacted.make("sbp_test")),
+        projectId: Option.none(),
+        workdir,
+        explicitWorkdir,
+        userAgent: "supabase",
+      });
+    }),
+  ).pipe(Layer.provide(BunServices.layer));
 
 /** The resolver, stubbed: `--project-ref` wins, else the linked project. */
 const testProjectRefLayer = (linked: boolean) =>

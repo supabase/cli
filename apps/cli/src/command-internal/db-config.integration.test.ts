@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer, Option } from "effect";
+import { ConfigProvider, Effect, Exit, Layer, Option } from "effect";
 
 import {
   mockAnalytics,
@@ -96,7 +96,13 @@ const resolve = (
   Effect.gen(function* () {
     const resolver = yield* DbConfigResolver;
     return yield* resolver.resolve(flags);
-  }).pipe(Effect.provide(buildResolver(workdir, opts)));
+  }).pipe(
+    Effect.provide(buildResolver(workdir, opts)),
+    Effect.provideService(
+      ConfigProvider.ConfigProvider,
+      ConfigProvider.fromEnvRecord(process.env, { preserveEmptyStrings: true }),
+    ),
+  );
 
 const resolvePoolerFallback = (
   workdir: string,
@@ -106,7 +112,49 @@ const resolvePoolerFallback = (
   Effect.gen(function* () {
     const resolver = yield* DbConfigResolver;
     return yield* resolver.resolvePoolerFallback(flags);
-  }).pipe(Effect.provide(buildResolver(workdir, opts)));
+  }).pipe(
+    Effect.provide(buildResolver(workdir, opts)),
+    Effect.provideService(
+      ConfigProvider.ConfigProvider,
+      ConfigProvider.fromEnvRecord(process.env, { preserveEmptyStrings: true }),
+    ),
+  );
+
+let savedResolverConfigEnv:
+  | {
+      readonly projectId: string | undefined;
+      readonly profile: string | undefined;
+      readonly home: string | undefined;
+      readonly workdir: string | undefined;
+    }
+  | undefined;
+
+beforeEach(() => {
+  savedResolverConfigEnv = {
+    projectId: process.env["SUPABASE_PROJECT_ID"],
+    profile: process.env["SUPABASE_PROFILE"],
+    home: process.env["SUPABASE_HOME"],
+    workdir: process.env["SUPABASE_WORKDIR"],
+  };
+  delete process.env["SUPABASE_PROJECT_ID"];
+  delete process.env["SUPABASE_PROFILE"];
+  delete process.env["SUPABASE_HOME"];
+  delete process.env["SUPABASE_WORKDIR"];
+});
+
+afterEach(() => {
+  const saved = savedResolverConfigEnv;
+  if (saved === undefined) return;
+  if (saved.projectId === undefined) delete process.env["SUPABASE_PROJECT_ID"];
+  else process.env["SUPABASE_PROJECT_ID"] = saved.projectId;
+  if (saved.profile === undefined) delete process.env["SUPABASE_PROFILE"];
+  else process.env["SUPABASE_PROFILE"] = saved.profile;
+  if (saved.home === undefined) delete process.env["SUPABASE_HOME"];
+  else process.env["SUPABASE_HOME"] = saved.home;
+  if (saved.workdir === undefined) delete process.env["SUPABASE_WORKDIR"];
+  else process.env["SUPABASE_WORKDIR"] = saved.workdir;
+  savedResolverConfigEnv = undefined;
+});
 
 const localFlags: DbConfigFlags = {
   dbUrl: Option.none(),
@@ -343,6 +391,7 @@ describe("dbConfigResolver (linked config ordering)", () => {
         ].join("\n"),
       );
       // The linked ref is sourced via the project-ref resolver's env fallback.
+      const previousProjectId = process.env["SUPABASE_PROJECT_ID"];
       process.env["SUPABASE_PROJECT_ID"] = ref;
       return resolve(dir, linkedFlags).pipe(
         Effect.exit,
@@ -354,7 +403,12 @@ describe("dbConfigResolver (linked config ordering)", () => {
                 "Failed reading config: Invalid db.major_version: 99.",
               );
             }
-            delete process.env["SUPABASE_PROJECT_ID"];
+          }),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previousProjectId === undefined) delete process.env["SUPABASE_PROJECT_ID"];
+            else process.env["SUPABASE_PROJECT_ID"] = previousProjectId;
             rmSync(dir, { recursive: true, force: true });
           }),
         ),

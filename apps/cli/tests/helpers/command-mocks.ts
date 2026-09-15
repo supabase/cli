@@ -390,6 +390,7 @@ export function mockCommandSettings(opts: {
   readonly workdir: string;
   readonly explicitWorkdir?: boolean;
   readonly profile?: string;
+  readonly profileEnvValue?: Option.Option<string>;
   readonly apiUrl?: string;
   readonly projectHost?: string;
   readonly poolerHost?: string;
@@ -397,11 +398,12 @@ export function mockCommandSettings(opts: {
   readonly accessToken?: Option.Option<Redacted.Redacted<string>>;
   readonly projectId?: Option.Option<string>;
   readonly userAgent?: string;
-  readonly profileEnvValue?: string;
+  readonly supabaseHome?: string;
 }): Layer.Layer<CommandSettings> {
   return Layer.succeed(CommandSettings, {
-    profileEnvValue: opts.profileEnvValue,
     profile: opts.profile ?? "supabase",
+    profileEnvValue: opts.profileEnvValue ?? Option.none(),
+    supabaseHome: opts.supabaseHome ?? join(opts.workdir, ".supabase"),
     apiUrl: opts.apiUrl ?? DEFAULT_API_URL,
     projectHost: opts.projectHost ?? "supabase.co",
     poolerHost: opts.poolerHost ?? "supabase.com",
