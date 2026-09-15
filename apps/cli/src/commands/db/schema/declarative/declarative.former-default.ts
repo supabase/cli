@@ -19,7 +19,7 @@ const formerDeclarativeDefaultWarning = (formerDirRel: string, defaultDirRel: st
 /**
  * Warns when a project still has a declarative tree at the former default `supabase/database`
  * while relying on the implicit default, which now resolves to `supabase/schemas` — otherwise an
- * upgraded project silently stops reading its existing tree. See docs/go-cli-divergences.md.
+ * upgraded project silently stops reading its existing tree.
  *
  * Fires only when `declarative_schema_path` is unset, the new default directory has no entries,
  * and the former default contains `.sql` files or an export manifest; probe failures read as

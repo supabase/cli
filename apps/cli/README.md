@@ -14,17 +14,12 @@ This workspace contains:
 This workspace contains the stable, shipped `supabase` CLI. Earlier revisions carried two shells
 (a `legacy/` tree and an experimental `next/` tree); both are gone and `src/` is the single CLI tree.
 
-For current migration/parity status, see:
-
-- [`docs/go-cli-divergences.md`](./docs/go-cli-divergences.md) — TS-only flags and behavioral divergences from the old Go CLI
-
 For the generated command/reference docs, see:
 
-- [`docs/go-cli-reference.md`](./docs/go-cli-reference.md)
 - [`docs/supabase-home.md`](./docs/supabase-home.md)
 - [`../../packages/stack/docs/service-versioning.md`](../../packages/stack/docs/service-versioning.md)
 
-The README is intentionally brief. Command details should live in the generated docs and the parity tracker above.
+The README is intentionally brief. Command details should live in the generated docs above.
 
 ## Run From Source
 
@@ -42,9 +37,6 @@ pnpm dev -- hello
 ```
 
 ### Running from source
-
-No command in the CLI proxies to the Go CLI binary; `apps/cli-go/` builds and ships alongside
-`supabase` but nothing in `apps/cli/src` spawns it (CLI-2432).
 
 For convenience, create a shell alias instead of using `pnpm dev` directly. For example in `.zshrc`:
 
@@ -78,11 +70,10 @@ The shim resolves `SUPABASE_CLI_BINARY_OVERRIDE` (an absolute binary path) befor
 Used at release time to produce the compiled binaries that go into the platform-specific npm packages:
 
 ```sh
-# CLI (TS SFE + Go binary for each platform)
 bun scripts/build.ts --version X.Y.Z
 ```
 
-For the CLI, this also cross-compiles the Go CLI binary from `apps/cli-go/` and places both binaries in `packages/cli-{platform}/bin/`.
+This cross-compiles the CLI binary for each platform and places it in `packages/cli-{platform}/bin/`.
 
 See [`docs/binary-distribution.md`](./docs/binary-distribution.md) for a full explanation of the packaging model.
 
@@ -152,12 +143,8 @@ Platform-specific packages live under:
 - `packages/cli-linux-*`
 - `packages/cli-windows-*`
 
-Each platform package ships two binaries for the stable channel:
+Each platform package ships a single compiled binary for the stable channel:
 
 - `bin/supabase` — the compiled TypeScript SFE (Bun single-file executable)
-- `bin/supabase-go` — the compiled Go CLI binary, unused by `bin/supabase` (see
-  [`docs/binary-distribution.md`](./docs/binary-distribution.md))
-
-The Go binary is compiled from `apps/cli-go/` at release time. Run `pnpm repos:install` after a fresh clone to make that source available.
 
 See [`docs/binary-distribution.md`](./docs/binary-distribution.md) for the full packaging model.

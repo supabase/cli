@@ -5,7 +5,7 @@ name: Mirror template images
 # parses as the single source of truth for local service images. When the
 # Dockerfile changes on develop — most often via a merged dependabot `docker`
 # bump — this workflow detects any tag that is not yet mirrored and backfills
-# it the same way `cli-go-mirror-image.yml` does.
+# it the same way `mirror-image.yml` does.
 #
 # It runs on `push` to develop (not on the PR) on purpose: mirroring needs the
 # AWS role + packages:write, which a dependabot-triggered `pull_request` run
@@ -13,10 +13,9 @@ name: Mirror template images
 # backfill runs as soon as the bump lands on develop, repopulating ghcr.io/ECR
 # so anyone pinning SUPABASE_INTERNAL_IMAGE_REGISTRY=ghcr.io doesn't inherit a
 # `manifest unknown` failure. (No CI job pins that registry anymore -- the
-# `cli-go-ci.yml` `Start` job that used to made it CI-observable was removed in
-# CLI-1966 along with `internal/start`; this mirror now only serves users who
-# opt into the mirror directly, and a mirroring failure no longer turns any
-# check red.)
+# `Start` job that used to make it CI-observable was removed in CLI-1966 along
+# with `internal/start`; this mirror now only serves users who opt into the
+# mirror directly, and a mirroring failure no longer turns any check red.)
 
 on:
   push:
@@ -80,7 +79,7 @@ jobs:
       matrix:
         image: ${{ fromJson(needs.detect.outputs.missing) }}
     # Reuse the existing mirror logic (docker.io -> public.ecr.aws + ghcr.io).
-    uses: ./.github/workflows/cli-go-mirror-image.yml
+    uses: ./.github/workflows/mirror-image.yml
     with:
       image: ${{ matrix.image }}
     secrets:

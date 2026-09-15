@@ -90,8 +90,7 @@ const DEPRECATION_LINE =
 
 /**
  * Explains the in-sync non-zero exit instead of the generic "Try rerunning the command with
- * --debug…" footer, which would read like a crash for what is really a finding. See
- * `docs/go-cli-divergences.md` for the established message/exit-code contract.
+ * --debug…" footer, which would read like a crash for what is really a finding.
  */
 const IN_SYNC_SUGGESTION =
   "The remote database is already in sync with your local migrations — nothing to pull.";

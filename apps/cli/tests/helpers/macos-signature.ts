@@ -38,8 +38,7 @@ export async function verifyMacSignature(binPath: string): Promise<SignatureChec
   const info = [display.stdout, display.stderr].filter(Boolean).join("\n");
 
   // Match the whole identifier value (codesign prints `Identifier=<id>` on its
-  // own line) so the SFE's `com.supabase.cli` can't satisfy the sidecar's
-  // `com.supabase.cli-go` by substring.
+  // own line) rather than substring-matching within the surrounding signature output.
   const actualId = info.match(/^Identifier=(.+)$/m)?.[1]?.trim();
   if (actualId !== expectedId) {
     return { passed: false, detail: `expected Identifier=${expectedId}, got:\n${info}` };
