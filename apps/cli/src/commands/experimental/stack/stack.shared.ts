@@ -8,6 +8,7 @@ import {
   openStack,
   type StackRuntimePreference,
   type StackDiscoveryResult,
+  type StackStatus,
 } from "@supabase/stack/effect";
 import type { StackId } from "@supabase/stack";
 import { StackNotFoundError } from "@supabase/stack/effect";
@@ -124,6 +125,35 @@ export const rejectStackOutput = (
         }),
       )
     : Effect.void;
+
+export const stackStatusPayload = (status: StackStatus) => ({
+  id: status.id,
+  lifecycle: status.lifecycle,
+  desired_lifecycle: status.desiredLifecycle,
+  runtime: status.runtime,
+  endpoints: status.endpoints,
+  versions: status.versions,
+  capabilities: status.capabilities,
+  artifacts: status.artifacts,
+});
+
+export const renderStackStatus = (status: StackStatus): string => {
+  const lines = [
+    `Stack ${status.id}`,
+    `Runtime: ${status.runtime.kind}`,
+    `Lifecycle: ${status.lifecycle}`,
+  ];
+  const endpoints = Object.entries(status.endpoints);
+  if (endpoints.length > 0) {
+    lines.push("Endpoints:");
+    for (const [name, endpoint] of endpoints)
+      if (endpoint !== undefined) lines.push(`  ${name}: ${endpoint.url}`);
+  }
+  const dormant = status.capabilities.filter(({ state }) => state === "dormant");
+  if (dormant.length > 0)
+    lines.push(`Dormant capabilities: ${dormant.map(({ name }) => name).join(", ")}`);
+  return `${lines.join("\n")}\n`;
+};
 
 export const stackApiLayer = Layer.effect(
   StackApi,

@@ -287,7 +287,7 @@ stack = true
       ])?.candidates.map(({ name }) => name);
       expect(stackCommands).toEqual(
         backend === "stack"
-          ? ["destroy", "list", "logs", "prepare", "start", "status", "stop"]
+          ? ["destroy", "list", "logs", "prepare", "restart", "start", "status", "stop"]
           : [],
       );
     }
