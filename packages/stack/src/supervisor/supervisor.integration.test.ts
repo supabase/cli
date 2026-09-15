@@ -295,7 +295,10 @@ const makeFixture = (
             ...current.filter((entry) => entry.workloadId !== key.workloadId),
             ready,
           ]);
-          if (fixtureOptions.startFinished !== undefined && workload.id === "rest:rest")
+          if (
+            fixtureOptions.startFinished !== undefined &&
+            workload.id === (fixtureOptions.startWorkload ?? "rest:rest")
+          )
             yield* Deferred.succeed(fixtureOptions.startFinished, undefined);
           if (fixtureOptions.startQueue !== undefined)
             yield* Queue.offer(fixtureOptions.startQueue, workload.id);
@@ -2361,6 +2364,81 @@ describe("Supervisor composition", () => {
     ),
   );
 
+  it.live("retains preparation and cleanup causes after a launched workload", () =>
+    run(
+      Effect.gen(function* () {
+        const prepareFailureRef = yield* Ref.make(false);
+        const prepareGateEnabledRef = yield* Ref.make(false);
+        const prepareActivationStarted = yield* Deferred.make<void>();
+        const prepareGate = yield* Deferred.make<void>();
+        const startStarted = yield* Deferred.make<void>();
+        const startFinished = yield* Deferred.make<void>();
+        const workloadRemoveFailFirst = yield* Ref.make(true);
+        const ingressCloseFailFirst = yield* Ref.make(false);
+        const fixture = yield* makeFixture({
+          prepareActivationStarted,
+          prepareGate,
+          prepareGateEnabledRef,
+          prepareFailureRef,
+          startStarted,
+          startWorkload: "studio:studio",
+          startFinished,
+          workloadRemoveFailFirst,
+          ingress: {
+            acquire: () =>
+              Effect.succeed({
+                assignments: {},
+                privateAssignments: [],
+                hostListeners: [],
+                fresh: true,
+                ownershipToken: Symbol(),
+              }),
+            open: () => Effect.void,
+            close: Effect.gen(function* () {
+              if (yield* Ref.get(ingressCloseFailFirst)) {
+                yield* Ref.set(ingressCloseFailFirst, false);
+                return yield* new StackCleanupError({ message: "injected ingress close failure" });
+              }
+            }),
+          },
+        });
+        yield* fixture.supervisor.start({
+          config: {
+            capabilities: {
+              rest: { activation: "eager" },
+              studio: { activation: "lazy" },
+            },
+          },
+        });
+        yield* Ref.set(ingressCloseFailFirst, true);
+        yield* Ref.set(prepareFailureRef, true);
+        yield* Ref.set(prepareGateEnabledRef, true);
+        const activation = yield* Effect.forkChild(fixture.supervisor.activate("studio"), {
+          startImmediately: true,
+        });
+        yield* Deferred.await(prepareActivationStarted).pipe(
+          Effect.timeout("5 seconds"),
+          Effect.orDie,
+        );
+        yield* Deferred.await(startStarted).pipe(Effect.timeout("5 seconds"), Effect.orDie);
+        yield* Deferred.await(startFinished).pipe(Effect.timeout("5 seconds"), Effect.orDie);
+        yield* Deferred.succeed(prepareGate, undefined);
+
+        const failed = yield* Fiber.join(activation).pipe(Effect.exit);
+        expect(Exit.isFailure(failed)).toBe(true);
+        if (Exit.isFailure(failed)) {
+          const message = Cause.pretty(failed.cause);
+          expect(message).toContain("injected preparation failure");
+          expect(message).toContain("injected workload remove failure");
+          expect(message).toContain("injected ingress close failure");
+        }
+        expect((yield* fixture.supervisor.status).lifecycle).toBe("stopping");
+        expect((yield* fixture.supervisor.maintenanceHandlers.stop).ok).toBe(true);
+        expect((yield* fixture.supervisor.status).lifecycle).toBe("stopped");
+      }),
+    ),
+  );
+
   it.live("keeps accepted start work alive when its caller is interrupted", () =>
     run(
       Effect.gen(function* () {
@@ -3153,7 +3231,14 @@ describe("Supervisor composition", () => {
         yield* Ref.set(fixture.calls, []);
 
         const response = yield* fixture.supervisor.maintenanceHandlers.stop;
-        expect(response.ok).toBe(false);
+        expect(response).toEqual({
+          ok: false,
+          error: {
+            tag: "operation-failed",
+            message: "Session cleanup is unresolved for rest:rest: injected workload stop failure",
+            stackErrorTag: "StackCleanupError",
+          },
+        });
         expect(yield* Ref.get(fixture.calls)).toContain("cleanup:stop");
         expect((yield* fixture.supervisor.status).lifecycle).toBe("stopping");
       }),
@@ -4250,6 +4335,38 @@ describe("Supervisor composition", () => {
         yield* Deferred.succeed(activationGate, undefined);
         yield* Fiber.join(activation);
         yield* Fiber.join(stop);
+        const status = yield* fixture.supervisor.status;
+        expect(status.lifecycle).toBe("stopped");
+        expect(status.capabilities.find(({ name }) => name === "functions")?.state).toBe("stopped");
+      }),
+    ),
+  );
+
+  it.live("stops cleanly when stop is queued during activation", () =>
+    run(
+      Effect.gen(function* () {
+        const activationStarted = yield* Deferred.make<void>();
+        const activationGate = yield* Deferred.make<void>();
+        const fixture = yield* makeFixture({
+          activationStarted,
+          activationGate,
+        });
+        yield* fixture.supervisor.start({
+          config: { capabilities: { functions: { activation: "lazy" } } },
+        });
+        const activation = yield* Effect.forkChild(fixture.supervisor.activate("functions"), {
+          startImmediately: true,
+        });
+        yield* Deferred.await(activationStarted).pipe(Effect.timeout("5 seconds"), Effect.orDie);
+        const stopping = yield* Effect.forkChild(fixture.supervisor.maintenanceHandlers.stop, {
+          startImmediately: true,
+        });
+        expect((yield* fixture.supervisor.status).lifecycle).toBe("stopping");
+
+        yield* Deferred.succeed(activationGate, undefined);
+        expect(Exit.isSuccess(yield* Fiber.join(activation).pipe(Effect.exit))).toBe(true);
+        expect((yield* Fiber.join(stopping)).ok).toBe(true);
+
         const status = yield* fixture.supervisor.status;
         expect(status.lifecycle).toBe("stopped");
         expect(status.capabilities.find(({ name }) => name === "functions")?.state).toBe("stopped");

@@ -23,6 +23,14 @@ const observedForCapability = (
 ): ReadonlyArray<ObservedWorkload> =>
   observed.filter((entry) => entry.workloadId.startsWith(`${name}:`));
 
+const observedFailureError = (failures: ReadonlyArray<ObservedWorkload>): string | undefined => {
+  if (failures.length === 1) return failures[0]?.error;
+  const details = failures.flatMap((entry) =>
+    entry.error === undefined ? [] : [`${entry.workloadId}: ${entry.error}`],
+  );
+  return details.length === 0 ? undefined : details.join("; ");
+};
+
 /** Projects one authoritative Supervisor snapshot while preserving observed runtime failures. */
 export const statusForSnapshot = (
   id: StackId,
@@ -44,7 +52,8 @@ export const statusForSnapshot = (
       const control = snapshot.capabilities.get(name);
       const configured = definition?.capabilities[name];
       const observedEntries = observedForCapability(name, observed);
-      const observedFailure = observedEntries.find((entry) => entry.state === "failed");
+      const observedFailures = observedEntries.filter((entry) => entry.state === "failed");
+      const observedError = observedFailureError(observedFailures);
       const projected =
         control === undefined
           ? configured === undefined || !configured.enabled
@@ -54,7 +63,7 @@ export const statusForSnapshot = (
       const observedStarting = observedEntries.some((entry) => entry.state === "starting");
       const observedUnready = observedEntries.some((entry) => entry.state !== "ready");
       const capability =
-        observedFailure !== undefined && projected === "ready"
+        observedFailures.length > 0 && projected === "ready"
           ? "failed"
           : projected === "ready" && observedStarting
             ? "starting"
@@ -74,9 +83,9 @@ export const statusForSnapshot = (
         activation:
           configured?.activation ?? (name === "database" ? ("eager" as const) : ("lazy" as const)),
         state: capability,
-        ...(cleanupError === undefined && observedFailure?.error === undefined
+        ...(cleanupError === undefined && observedError === undefined
           ? {}
-          : { error: cleanupError ?? observedFailure?.error }),
+          : { error: cleanupError ?? observedError }),
       };
     });
     const versions: Partial<Record<CapabilityName, string>> = {};

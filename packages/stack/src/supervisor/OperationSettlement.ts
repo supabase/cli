@@ -177,7 +177,9 @@ export const settleActivationOwner = (
             { _tag: "resolved", endpoint: event.result.value.endpoint },
             true,
           )
-        : restoreStarting(current);
+        : Predicate.isTagged(snapshot.stack, "stopped")
+          ? { _tag: "stopped" as const }
+          : restoreStarting(current);
       return {
         ...snapshot,
         capabilities: new Map(snapshot.capabilities).set(event.capability, next),

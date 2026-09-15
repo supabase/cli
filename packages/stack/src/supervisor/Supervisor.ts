@@ -177,6 +177,22 @@ const credentialsUnavailable = rpcError(
 const stateErrorMessage = (error: StackError | { readonly message?: string }): string =>
   typeof error.message === "string" ? error.message : "Stack operation failed";
 
+const sessionCleanupMessage = (error: SessionCleanupError): string => {
+  const failure = Cause.findErrorOption(error.cause);
+  if (Option.isSome(failure)) {
+    if (failure.value instanceof RuntimeDriverError) {
+      const workload =
+        failure.value.workloadId === undefined ? "" : ` for ${failure.value.workloadId}`;
+      return `Session cleanup is unresolved${workload}: ${failure.value.message}`;
+    }
+    return sessionCleanupMessage(failure.value);
+  }
+  const details = Cause.pretty(error.cause);
+  return details.length === 0
+    ? "Session cleanup is unresolved"
+    : `Session cleanup is unresolved: ${details}`;
+};
+
 const credentialHost = (address: string): string =>
   address.includes(":") && !address.startsWith("[") ? `[${address}]` : address;
 
@@ -185,7 +201,7 @@ const mapRuntimeError = (error: unknown): StackError => {
   if (error instanceof ContainerEngineError) return error;
   if (error instanceof RuntimeDriverError && isStackError(error.cause)) return error.cause;
   if (error instanceof SessionCleanupError)
-    return new StackCleanupError({ message: "Session cleanup is unresolved", cause: error });
+    return new StackCleanupError({ message: sessionCleanupMessage(error), cause: error });
   return new StackRuntimeError({
     message: error instanceof Error ? error.message : String(error),
     cause: error,
@@ -194,6 +210,8 @@ const mapRuntimeError = (error: unknown): StackError => {
 
 const mapCleanupError = (error: unknown): StackError => {
   if (error instanceof StackStateInvalidError) return error;
+  if (error instanceof SessionCleanupError)
+    return new StackCleanupError({ message: sessionCleanupMessage(error), cause: error });
   return new StackCleanupError({
     message: error instanceof Error ? error.message : String(error),
     cause: error,
@@ -1168,7 +1186,7 @@ export const makeSupervisor = (
                     admitted.reason === "stop-required"
                       ? "Exact runtime cleanup is required; retry stop before starting"
                       : admitted.reason === "destroy-required"
-                        ? "Destructive cleanup is required; retry destroy before starting"
+                        ? "Destructive cleanup is required; retry destroy before proceeding"
                         : `Lifecycle operation ${kind} is already in progress`,
                 });
               yield* Ref.set(machine, { ...snapshot, stack: admitted.state });
@@ -1280,19 +1298,22 @@ export const makeSupervisor = (
             ? yield* runtime.ingress.close.pipe(Effect.mapError(mapRuntimeError), Effect.exit)
             : Exit.succeed(undefined);
           let cause: Cause.Cause<StackError> = Cause.map(prepared.cause, mapRuntimeError);
-          if (Exit.isFailure(closed)) cause = Cause.combine(cause, closed.cause);
           let workloadCleanup: CleanupOutcome = { _tag: "proven" };
           if (Predicate.isTagged(launch, "started")) {
             workloadCleanup = mapSessionCleanup(yield* launch.launch.rollback);
+            if (Predicate.isTagged(workloadCleanup, "unproven"))
+              cause = Cause.combine(cause, workloadCleanup.cause);
           } else {
             const launchCause = Cause.map(launch.cause, mapRuntimeError);
             cause = Cause.combine(cause, launchCause);
             workloadCleanup = mapSessionCleanup(launch.cleanup);
           }
-          const cleanup: CleanupOutcome = Exit.isFailure(closed)
+          const closedCleanup: CleanupOutcome = Exit.isFailure(closed)
             ? { _tag: "unproven", cause: closed.cause }
-            : workloadCleanup;
-          if (Predicate.isTagged(cleanup, "unproven")) cause = Cause.combine(cause, cleanup.cause);
+            : { _tag: "proven" };
+          const cleanup = combineCleanupOutcome(workloadCleanup, closedCleanup);
+          if (Predicate.isTagged(closedCleanup, "unproven"))
+            cause = Cause.combine(cause, closedCleanup.cause);
           return {
             _tag: "failed",
             cause,
@@ -1304,16 +1325,18 @@ export const makeSupervisor = (
             ? yield* runtime.ingress.close.pipe(Effect.mapError(mapRuntimeError), Effect.exit)
             : Exit.succeed(undefined);
           const launchCause = Cause.map(launch.cause, mapRuntimeError);
-          const cause = Exit.isFailure(closed)
-            ? Cause.combine(launchCause, closed.cause)
-            : launchCause;
+          let cause: Cause.Cause<StackError> = launchCause;
           const workloadCleanup = mapSessionCleanup(launch.cleanup);
+          const closedCleanup: CleanupOutcome = Exit.isFailure(closed)
+            ? { _tag: "unproven", cause: closed.cause }
+            : { _tag: "proven" };
+          const cleanup = combineCleanupOutcome(workloadCleanup, closedCleanup);
+          if (Predicate.isTagged(closedCleanup, "unproven"))
+            cause = Cause.combine(cause, closedCleanup.cause);
           return {
             _tag: "failed",
             cause,
-            cleanup: Exit.isFailure(closed)
-              ? { _tag: "unproven", cause: closed.cause }
-              : workloadCleanup,
+            cleanup,
           } satisfies LifecycleLaunchResult;
         }
         const rollback: Effect.Effect<CleanupOutcome> = Effect.gen(function* () {
@@ -1538,9 +1561,14 @@ export const makeSupervisor = (
           owner.capability,
           Predicate.isTagged(owner, "endpoint") ? owner.priorRoot : undefined,
         );
-        const fiber = execution
-          .withPermit(
-            admission
+        const fiber = Effect.uninterruptibleMask((restore) =>
+          Effect.gen(function* () {
+            const acquired = yield* restore(execution.take(1)).pipe(Effect.exit);
+            if (Exit.isFailure(acquired)) {
+              yield* settleOwner({ ...owner, result: Exit.failCause(acquired.cause) });
+              return yield* Effect.failCause(acquired.cause);
+            }
+            const guarded = admission
               .withPermit(
                 Ref.get(machine).pipe(
                   Effect.map((snapshot) => matchesActivationOwner(snapshot, owner)),
@@ -1559,17 +1587,19 @@ export const makeSupervisor = (
                         }),
                       ),
                 ),
+              );
+            yield* restore(guarded).pipe(
+              Effect.onExit((result) =>
+                settleOwner(
+                  Predicate.isTagged(owner, "endpoint")
+                    ? { ...owner, result: Exit.map(result, (value) => value.endpoint) }
+                    : { ...owner, result },
+                ),
               ),
-          )
-          .pipe(
-            Effect.onExit((result) =>
-              settleOwner(
-                Predicate.isTagged(owner, "endpoint")
-                  ? { ...owner, result: Exit.map(result, (value) => value.endpoint) }
-                  : { ...owner, result },
-              ),
-            ),
-          );
+              Effect.ensuring(execution.release(1)),
+            );
+          }),
+        );
         yield* FiberSet.run(ownedFibers, fiber, { startImmediately: true });
       });
     const activate: Supervisor["activate"] = (capability) =>
@@ -1612,48 +1642,44 @@ export const makeSupervisor = (
                   reject(`Capability ${capability} cleanup failed; retry stop before activating`),
                 ),
                 Match.when({ _tag: "ready" }, (state) =>
-                  Effect.gen(function* () {
-                    if ((yield* currentPhase()) !== "running")
-                      return yield* reject(`Capability ${capability} is already transitioning`);
-                    return yield* Match.value(state.endpoint).pipe(
-                      Match.when({ _tag: "resolved" }, (endpoint) =>
-                        Effect.succeed({
-                          _tag: "exit",
-                          result: Exit.succeed({ capability, endpoint: endpoint.endpoint }),
-                        } satisfies ActivationToken),
-                      ),
-                      Match.when({ _tag: "resolving" }, (endpoint) =>
-                        Effect.succeed({
+                  Match.value(state.endpoint).pipe(
+                    Match.when({ _tag: "resolved" }, (endpoint) =>
+                      Effect.succeed({
+                        _tag: "exit",
+                        result: Exit.succeed({ capability, endpoint: endpoint.endpoint }),
+                      } satisfies ActivationToken),
+                    ),
+                    Match.when({ _tag: "resolving" }, (endpoint) =>
+                      Effect.succeed({
+                        _tag: "endpoint",
+                        capability,
+                        result: endpoint.deferred,
+                      } satisfies ActivationToken),
+                    ),
+                    Match.when({ _tag: "unresolved" }, () =>
+                      Effect.gen(function* () {
+                        const endpoint = yield* Deferred.make<EndpointExit, never>();
+                        yield* updateCapability(capability, () => ({
+                          ...state,
+                          root: true,
+                          endpoint: { _tag: "resolving", deferred: endpoint },
+                        }));
+                        const owner: ActivationOwner = {
                           _tag: "endpoint",
                           capability,
-                          result: endpoint.deferred,
-                        } satisfies ActivationToken),
-                      ),
-                      Match.when({ _tag: "unresolved" }, () =>
-                        Effect.gen(function* () {
-                          const endpoint = yield* Deferred.make<EndpointExit, never>();
-                          yield* updateCapability(capability, () => ({
-                            ...state,
-                            root: true,
-                            endpoint: { _tag: "resolving", deferred: endpoint },
-                          }));
-                          const owner: ActivationOwner = {
-                            _tag: "endpoint",
-                            capability,
-                            endpoint,
-                            priorRoot: state.root,
-                          };
-                          yield* runActivationOwner(owner);
-                          return {
-                            _tag: "endpoint",
-                            capability,
-                            result: endpoint,
-                          } satisfies ActivationToken;
-                        }),
-                      ),
-                      Match.exhaustive,
-                    );
-                  }),
+                          endpoint,
+                          priorRoot: state.root,
+                        };
+                        yield* runActivationOwner(owner);
+                        return {
+                          _tag: "endpoint",
+                          capability,
+                          result: endpoint,
+                        } satisfies ActivationToken;
+                      }),
+                    ),
+                    Match.exhaustive,
+                  ),
                 ),
                 Match.when({ _tag: "starting" }, (state) =>
                   Match.value(state.completion).pipe(

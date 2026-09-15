@@ -41,6 +41,9 @@ await stack.start({
 });
 ```
 
+To change `idleTimeoutSeconds` on a running stack, call `stop()` and then `start()` with the updated
+configuration.
+
 Eager capabilities never auto-stop. PostgreSQL, Storage, Functions, Mail, and Analytics do not opt
 into traffic stopping yet. Studio and its `pg-meta` companion are stopped and started together.
 Dependency protection keeps required dependencies available while a capability is running.

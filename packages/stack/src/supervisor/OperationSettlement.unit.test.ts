@@ -1,8 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Deferred, Effect, Exit, Predicate } from "effect";
-import type { BackendEndpoint } from "../gateway/Gateway.ts";
+import type { ActivationResult, BackendEndpoint } from "../gateway/Gateway.ts";
 import { StackRuntimeError, type StackError } from "../public/Errors.ts";
-import { ready } from "./CapabilityState.ts";
+import { beginStarting, dormant, ready } from "./CapabilityState.ts";
 import { settleActivationOwner, settleLifecycleOwner } from "./OperationSettlement.ts";
 
 const snapshotFor = (capability: ReturnType<typeof ready>) => ({
@@ -111,6 +111,38 @@ describe("operation settlement", () => {
       if (Predicate.isTagged("lifecycle")(settlement.notification))
         expect(settlement.notification.result).toEqual(Exit.failCause(cause));
       else expect.fail("expected lifecycle notification");
+    }),
+  );
+
+  it.effect("stops a queued activation that settles after the stack stopped", () =>
+    Effect.gen(function* () {
+      const completion = yield* Deferred.make<Exit.Exit<ActivationResult, StackError>, never>();
+      const sessionId = Symbol("session");
+      const current = beginStarting(dormant(sessionId), Symbol("operation"), {
+        _tag: "activation",
+        deferred: completion,
+      });
+      const snapshot = {
+        stack: { _tag: "stopped" as const, session: "initialized" as const },
+        sessionId,
+        plan: undefined,
+        capabilities: new Map([["rest" as const, current]]),
+      };
+      const result = Exit.fail(new StackRuntimeError({ message: "activation rejected" }));
+      const settlement = settleActivationOwner(snapshot, {
+        _tag: "activation",
+        capability: "rest",
+        completion,
+        result,
+      });
+
+      expect(settlement.snapshot.capabilities.get("rest")).toEqual({ _tag: "stopped" });
+      if (Predicate.isTagged("activation")(settlement.notification)) {
+        expect(settlement.notification.completion).toBe(completion);
+        expect(settlement.notification.result).toEqual(result);
+      } else {
+        expect.fail("expected activation notification");
+      }
     }),
   );
 });
