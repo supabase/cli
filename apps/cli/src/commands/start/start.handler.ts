@@ -610,7 +610,9 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       return statusValuesFromState(state, new Map());
     });
 
-    const inBitbucketPipeline = isBitbucketPipeline();
+    const inBitbucketPipeline = yield* isBitbucketPipeline(projectEnvValues).pipe(
+      Effect.mapError((error) => new StartConfigLoadError({ message: error.message })),
+    );
 
     // 3. A missing container proceeds to startup; other inspect failures propagate. Stopped
     // stacks are recovered unless Bitbucket's lack of named volumes makes removal destructive.
@@ -798,6 +800,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
           Option.none(),
           Option.none(),
           cliSettings.workdir,
+          projectEnvValues,
         )
       : new Set<string>();
 
