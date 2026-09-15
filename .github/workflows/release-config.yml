@@ -260,9 +260,11 @@ jobs:
               echo "  registry: ${registry_integrity}" >&2
               echo "  reviewed: ${reviewed_integrity}" >&2
               echo "Refusing to tag a commit for bytes this run never reviewed — cut forward by landing a new releasable commit." >&2
-              echo "If config-v${VERSION} is also missing from origin, landing a new commit won't help: the planner" >&2
-              echo "recomputes the same version from the last tag. Instead, re-run this workflow at the commit the" >&2
-              echo "published bytes were built from, so the registry probe matches and the tag push completes." >&2
+              echo "If config-v${VERSION} is also missing from origin, re-running this workflow won't help: semantic-release" >&2
+              echo "refuses to plan from any commit behind develop's tip, so a re-run at the old commit reports no release." >&2
+              echo "Instead, create config-v${VERSION} directly at the commit the published bytes were built from. That tag" >&2
+              echo "is protected by a repo ruleset only the releaser GitHub App can bypass, so a repo admin must temporarily" >&2
+              echo "grant themselves bypass on the ruleset, push the tag, then restore the ruleset." >&2
               exit 1
             fi
             echo "@supabase/config@${VERSION} already on npm with matching integrity; skipping publish."
