@@ -105,10 +105,12 @@ function makeLayer(
     home?: string;
     platform?: NodeJS.Platform;
     debug?: boolean;
+    fs?: Layer.Layer<FileSystem.FileSystem>;
   } = {},
 ) {
   const home = opts.home ?? tempHome;
   const env = { HOME: home, ...opts.env };
+  const envLayer = processEnvLayer(env);
   const runtimeInfoLayer = mockRuntimeInfo({
     homeDir: home,
     cwd: home,
@@ -121,15 +123,16 @@ function makeLayer(
     Layer.provide(Layer.succeed(WorkdirFlag, Option.none<string>())),
     Layer.provide(runtimeInfoLayer),
     Layer.provide(BunServices.layer),
-    Layer.provide(processEnvLayer(env)),
+    Layer.provide(envLayer),
   );
   return commandCredentialsLayer.pipe(
     Layer.provide(cliSettingsLayer),
     Layer.provide(debugLoggerLayer),
     Layer.provide(Layer.succeed(DebugFlag, opts.debug ?? false)),
     Layer.provide(runtimeInfoLayer),
+    Layer.provide(opts.fs ?? BunServices.layer),
     Layer.provide(BunServices.layer),
-    Layer.provide(processEnvLayer(env)),
+    Layer.provide(envLayer),
   );
 }
 
@@ -177,6 +180,36 @@ function captureStderr() {
 }
 
 describe("commandCredentialsLayer.getAccessToken", () => {
+  it.effect("surfaces a filesystem read failure instead of treating it as no token", () => {
+    const fallbackPath = join(tempHome, ".supabase", "access-token");
+    const fsLayer = Layer.succeed(
+      FileSystem.FileSystem,
+      FileSystem.makeNoop({
+        exists: (path) => Effect.succeed(!path.includes("/proc/sys/kernel/osrelease")),
+        readFileString: () =>
+          Effect.fail(
+            PlatformError.systemError({
+              _tag: "PermissionDenied",
+              module: "FileSystem",
+              method: "readFileString",
+              description: "permission denied",
+              pathOrDescriptor: fallbackPath,
+            }),
+          ),
+      }),
+    );
+    return Effect.gen(function* () {
+      const { getAccessToken } = yield* CommandCredentials;
+      const exit = yield* Effect.exit(getAccessToken);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const error = Exit.findErrorOption(exit);
+        expect(Option.isSome(error)).toBe(true);
+        if (Option.isSome(error)) expect(error.value).toBeInstanceOf(PlatformError.PlatformError);
+      }
+    }).pipe(Effect.provide(makeLayer({ env: { SUPABASE_NO_KEYRING: "1" }, fs: fsLayer })));
+  });
+
   it.effect("returns the SUPABASE_ACCESS_TOKEN env value (highest precedence)", () => {
     passwords.set("Supabase CLI/supabase", "sbp_" + "9".repeat(40));
     return Effect.gen(function* () {
@@ -346,6 +379,36 @@ describe("commandCredentialsLayer.getAccessToken", () => {
 });
 
 describe("commandCredentialsLayer.saveAccessToken", () => {
+  it.effect("surfaces a fallback directory write failure as PlatformError", () => {
+    throwOnSetPassword = true;
+    const fallbackDir = join(tempHome, ".supabase");
+    const fsLayer = Layer.succeed(
+      FileSystem.FileSystem,
+      FileSystem.makeNoop({
+        makeDirectory: () =>
+          Effect.fail(
+            PlatformError.systemError({
+              _tag: "PermissionDenied",
+              module: "FileSystem",
+              method: "makeDirectory",
+              description: "permission denied",
+              pathOrDescriptor: fallbackDir,
+            }),
+          ),
+      }),
+    );
+    return Effect.gen(function* () {
+      const { saveAccessToken } = yield* CommandCredentials;
+      const exit = yield* Effect.exit(saveAccessToken(VALID_TOKEN));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const error = Exit.findErrorOption(exit);
+        expect(Option.isSome(error)).toBe(true);
+        if (Option.isSome(error)) expect(error.value).toBeInstanceOf(PlatformError.PlatformError);
+      }
+    }).pipe(Effect.provide(makeLayer({ fs: fsLayer })));
+  });
+
   it.effect("rejects invalid token formats up front", () =>
     Effect.gen(function* () {
       const { saveAccessToken } = yield* CommandCredentials;

@@ -547,6 +547,29 @@ enabled = false
     });
   });
 
+  it.live("renders stack recovery guidance returned by the Effect API", () => {
+    return Effect.gen(function* () {
+      const root = yield* project();
+      const stackId = "d".repeat(64);
+      const stack = fakeStack(stackId, () =>
+        Effect.succeed({
+          ...status(stackId),
+          recovery: {
+            operation: "destroy" as const,
+            message: "Destroy is required before this stack can be started again.",
+          },
+        }),
+      );
+      const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
+      yield* stackStart(flags()).pipe(Effect.provide(setup.layer));
+      expect(setup.out.stdoutText).toContain(
+        "Recovery: Destroy is required before this stack can be started again.",
+      );
+      expect(setup.out.stdoutText).toContain(`supabase stack destroy --stack-id ${stackId}`);
+      expect(setup.out.stdoutText).toContain("Warning: destroy is destructive");
+    });
+  });
+
   it.live("opens an addressed existing stack using its own project root", () => {
     return Effect.gen(function* () {
       const settingsRoot = yield* project();

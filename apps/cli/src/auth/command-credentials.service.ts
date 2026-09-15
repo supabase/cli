@@ -1,5 +1,6 @@
 import type { Effect, Option, Redacted } from "effect";
 import { Context } from "effect";
+import type { PlatformError } from "effect/PlatformError";
 
 import type {
   CredentialDeleteError,
@@ -11,15 +12,20 @@ import type {
 interface CommandCredentialsShape {
   readonly getAccessToken: Effect.Effect<
     Option.Option<Redacted.Redacted<string>>,
-    InvalidAccessTokenError
+    InvalidAccessTokenError | PlatformError
   >;
-  readonly saveAccessToken: (token: string) => Effect.Effect<void, InvalidAccessTokenError>;
+  readonly saveAccessToken: (
+    token: string,
+  ) => Effect.Effect<void, InvalidAccessTokenError | PlatformError>;
   /**
    * Deletes the access token: removes the fallback file, best-effort deletes the legacy keyring
    * account, then deletes the profile keyring account, which alone decides the result. The file
    * is removed even on a no-keyring host, where the call still fails `NotLoggedInError`.
    */
-  readonly deleteAccessToken: Effect.Effect<void, NotLoggedInError | DeleteTokenError>;
+  readonly deleteAccessToken: Effect.Effect<
+    void,
+    NotLoggedInError | DeleteTokenError | PlatformError
+  >;
   /**
    * Deletes every entry in the `"Supabase CLI"` keyring namespace (project database passwords
    * stored by `link`). Best-effort: never fails, and no-ops when the keyring is unavailable.

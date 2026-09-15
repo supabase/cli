@@ -138,7 +138,11 @@ export const suggestUpgrade = Effect.fnUntraced(function* (opts: {
       return false;
     }
 
-    const tokenOpt = opts.accessToken ?? (yield* resolveAccessToken);
+    const tokenOpt =
+      opts.accessToken ??
+      (yield* resolveAccessToken.pipe(
+        Effect.catchTag("PlatformError", () => Effect.succeed(Option.none())),
+      ));
     const authHeader: (
       req: HttpClientRequest.HttpClientRequest,
     ) => HttpClientRequest.HttpClientRequest = Option.isSome(tokenOpt)

@@ -124,7 +124,8 @@ import {
   type ContainerEngineResolverShape,
 } from "../runtime/ContainerEngineResolver.ts";
 import type { ContainerEngineFailure } from "../runtime/ContainerEngine.ts";
-import { statusFor } from "../supervisor/StatusProjection.ts";
+import { statusForSnapshot } from "../supervisor/StatusProjection.ts";
+import type { SupervisorSnapshot } from "../supervisor/SupervisorState.ts";
 import { EMPTY_LOG_CURSOR, readRetainedLogs, selectLogBatch } from "../supervisor/LogStore.ts";
 import {
   makeProductionRuntimeArtifactPreparer,
@@ -553,8 +554,15 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
               Effect.mapError(statusError),
               Effect.flatMap((state): Effect.Effect<StackStatus, StackStatusError> => {
                 if (Option.isNone(state)) return Effect.fail(stackNotFound());
-                if (isStoppedState(state.value))
-                  return statusFor(id, state.value, [], new Set<CapabilityName>(), "stopped");
+                if (isStoppedState(state.value)) {
+                  const fallback: SupervisorSnapshot = {
+                    stack: { _tag: "stopped", session: "initialized" },
+                    sessionId: Symbol("offline-status"),
+                    plan: undefined,
+                    capabilities: new Map(),
+                  };
+                  return statusForSnapshot(id, state.value, { _tag: "unavailable" }, fallback);
+                }
                 return Effect.fail(
                   new StackOwnershipConflictError({ message: "No Supervisor owns this stack" }),
                 );

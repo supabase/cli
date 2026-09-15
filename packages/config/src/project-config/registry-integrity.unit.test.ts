@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { CliConfigSchema } from "../base.ts";
 import { ProjectConfigApiAttributesSchema } from "./api-attributes.ts";
+import { DOCUMENT_ONLY_LOCAL_PATHS } from "./hosted-sections.ts";
 import {
   DISABLED_SENTINEL_ENTRY_SWEEPS,
   DISABLED_SENTINEL_PRUNES,
@@ -190,6 +191,25 @@ describe("disabled-sentinel tables: every path/key resolves against CliConfigSch
         ).toBe(true);
       });
     }
+  }
+});
+
+/**
+ * `DOCUMENT_ONLY_LOCAL_PATHS` (`./hosted-sections.ts`) names static struct fields by hand; a
+ * renamed or removed {@link CliConfig} field would leave a stale entry that silently stops
+ * excluding anything from {@link ProjectConfig} instead of failing loudly.
+ */
+describe("DOCUMENT_ONLY_LOCAL_PATHS: every path resolves against CliConfigSchema", () => {
+  test("DOCUMENT_ONLY_LOCAL_PATHS actually has entries to check", () => {
+    expect(DOCUMENT_ONLY_LOCAL_PATHS.length).toBeGreaterThan(0);
+  });
+
+  for (const path of DOCUMENT_ONLY_LOCAL_PATHS) {
+    const pathLabel = path.join(".");
+
+    test(`DOCUMENT_ONLY_LOCAL_PATHS entry "${pathLabel}" resolves against CliConfigSchema`, () => {
+      expect(pathResolves(CliConfigSchema.ast, path)).toBe(true);
+    });
   }
 });
 

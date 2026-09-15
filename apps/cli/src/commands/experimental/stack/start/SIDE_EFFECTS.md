@@ -57,7 +57,10 @@ a stopped Docker daemon still selects Docker. Existing stacks reuse their persis
 runtime. `docker` and `native` select the requested runtime without fallback.
 `--preparation` controls background versus
 on-demand artifact preparation, and `--eager` requests enabled capabilities be
-activated before the command returns.
+activated before the command returns. Eager capabilities do not receive automatic
+idle stops. Per-capability `idleTimeoutSeconds` values are available through the
+package's Effect API only; the CLI does not expose them as command or project
+configuration settings.
 `--exclude` accepts repeated or comma-separated capability names (`rest`, `auth`, `realtime`,
 `storage`, `functions`, `studio`, `mail`, `analytics`, and `pooler`) and disables those services
 in the effective start configuration. The database cannot be excluded. Exclusions are applied in

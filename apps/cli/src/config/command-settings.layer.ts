@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Layer, Option, Path, Redacted } from "effect";
+import { Config, ConfigProvider, Effect, FileSystem, Layer, Option, Path, Redacted } from "effect";
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
 import { lastExplicitLongFlagValue } from "../shared/cli/cobra-flag-groups.ts";
 import { CLI_VERSION } from "../shared/cli/version.ts";
@@ -11,7 +11,7 @@ import {
 import { DebugLogger, type DebugLoggerShape } from "../command-internal/debug-logger.service.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { CommandSettings } from "./command-settings.service.ts";
-import { profileFilePath } from "./profile-file.ts";
+import { resolveSupabaseHomeValue } from "../shared/config/supabase-home.ts";
 
 function unknownMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -25,10 +25,9 @@ function unknownMessage(error: unknown): string {
 function resolveProfile(
   flagValue: string,
   explicitFlagValue: string | undefined,
-  envValue: string | undefined,
+  envValue: Option.Option<string>,
   fs: FileSystem.FileSystem,
-  path: Path.Path,
-  homeDir: string,
+  profilePath: string,
   debugLogger: DebugLoggerShape,
 ): Effect.Effect<LoadedProfile, ProfileLoadError> {
   return Effect.gen(function* () {
@@ -37,13 +36,13 @@ function resolveProfile(
       const flag = explicitFlagValue ?? flagValue;
       yield* debugLogger.debug(`Loading profile from flag: ${flag}`);
       token = flag;
-    } else if (envValue !== undefined && envValue.length > 0) {
+    } else if (Option.isSome(envValue) && envValue.value.length > 0) {
       // Debug output can't distinguish an env value from an explicitly set flag; both log
       // the same message.
-      yield* debugLogger.debug(`Loading profile from flag: ${envValue}`);
-      token = envValue;
+      yield* debugLogger.debug(`Loading profile from flag: ${envValue.value}`);
+      token = envValue.value;
     } else {
-      const filePath = profileFilePath(path, homeDir);
+      const filePath = profilePath;
       const content = yield* fs.readFileString(filePath).pipe(
         Effect.tap(() => debugLogger.debug(`Loading profile from file: ${filePath}`)),
         Effect.map(Option.some),
@@ -74,7 +73,7 @@ function resolveProfile(
  */
 export function resolveWorkdir(
   flagValue: Option.Option<string>,
-  envValue: string | undefined,
+  envValue: Option.Option<string>,
   cwd: string,
   configTomlExists: (path: string) => Effect.Effect<boolean>,
   path: Path.Path,
@@ -83,8 +82,8 @@ export function resolveWorkdir(
     if (Option.isSome(flagValue) && flagValue.value.length > 0) {
       return { workdir: path.resolve(cwd, flagValue.value), explicit: true };
     }
-    if (envValue !== undefined && envValue.length > 0) {
-      return { workdir: path.resolve(cwd, envValue), explicit: true };
+    if (Option.isSome(envValue) && envValue.value.length > 0) {
+      return { workdir: path.resolve(cwd, envValue.value), explicit: true };
     }
     let current = cwd;
     while (true) {
@@ -113,9 +112,11 @@ export const commandSettingsLayer = Layer.unwrap(
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const runtimeInfo = yield* RuntimeInfo;
-        // The live `process.env` proxy, not a `Config` snapshot: the snapshot is
-        // case-sensitive and breaks Windows env lookup parity.
-        const env = process.env;
+        const provider = yield* ConfigProvider.ConfigProvider;
+        const read = <A>(config: Config.Config<A>) => config.parse(provider);
+        const profileEnvValue = yield* read(Config.option(Config.string("SUPABASE_PROFILE")));
+        const supabaseHome = yield* read(Config.option(Config.string("SUPABASE_HOME")));
+        const resolvedSupabaseHome = resolveSupabaseHomeValue(supabaseHome, runtimeInfo.homeDir);
 
         // Optional service: tests without argv default to "not explicit". An empty command
         // path scans all of argv up to `--`, matching pflag.
@@ -125,9 +126,6 @@ export const commandSettingsLayer = Layer.unwrap(
           onSome: ({ args }) => lastExplicitLongFlagValue(args, [], "profile"),
         });
 
-        const rawProfileEnv = env["SUPABASE_PROFILE"];
-        const profileEnvValue =
-          rawProfileEnv === undefined || rawProfileEnv.length === 0 ? undefined : rawProfileEnv;
         const {
           name: profile,
           apiUrl,
@@ -139,36 +137,29 @@ export const commandSettingsLayer = Layer.unwrap(
           explicitProfileFlag,
           profileEnvValue,
           fs,
-          path,
-          runtimeInfo.homeDir,
+          path.join(resolvedSupabaseHome, "profile"),
           debugLogger,
         );
 
-        const rawDbPassword = env["SUPABASE_DB_PASSWORD"];
-        const dbPassword =
-          rawDbPassword === undefined || rawDbPassword.length === 0
-            ? Option.none<Redacted.Redacted<string>>()
-            : Option.some(Redacted.make(rawDbPassword, { label: "SUPABASE_DB_PASSWORD" }));
+        const rawDbPassword = yield* read(Config.option(Config.string("SUPABASE_DB_PASSWORD")));
+        const dbPassword = Option.filter(rawDbPassword, (value) => value.length > 0).pipe(
+          Option.map((value) => Redacted.make(value, { label: "SUPABASE_DB_PASSWORD" })),
+        );
 
-        const rawGithubToken = env["GITHUB_TOKEN"];
-        const githubToken =
-          rawGithubToken === undefined || rawGithubToken.length === 0
-            ? Option.none<Redacted.Redacted<string>>()
-            : Option.some(Redacted.make(rawGithubToken, { label: "GITHUB_TOKEN" }));
+        const rawGithubToken = yield* read(Config.option(Config.string("GITHUB_TOKEN")));
+        const githubToken = Option.filter(rawGithubToken, (value) => value.length > 0).pipe(
+          Option.map((value) => Redacted.make(value, { label: "GITHUB_TOKEN" })),
+        );
 
-        const rawAccessToken = env["SUPABASE_ACCESS_TOKEN"];
-        const accessToken =
-          rawAccessToken === undefined || rawAccessToken.length === 0
-            ? Option.none<Redacted.Redacted<string>>()
-            : Option.some(Redacted.make(rawAccessToken, { label: "SUPABASE_ACCESS_TOKEN" }));
+        const rawAccessToken = yield* read(Config.option(Config.string("SUPABASE_ACCESS_TOKEN")));
+        const accessToken = Option.filter(rawAccessToken, (value) => value.length > 0).pipe(
+          Option.map((value) => Redacted.make(value, { label: "SUPABASE_ACCESS_TOKEN" })),
+        );
 
-        const rawProjectId = env["SUPABASE_PROJECT_ID"];
-        const projectId =
-          rawProjectId === undefined || rawProjectId.length === 0
-            ? Option.none<string>()
-            : Option.some(rawProjectId);
+        const rawProjectId = yield* read(Config.option(Config.string("SUPABASE_PROJECT_ID")));
+        const projectId = Option.filter(rawProjectId, (value) => value.length > 0);
 
-        const workdirEnvValue = env["SUPABASE_WORKDIR"];
+        const workdirEnvValue = yield* read(Config.option(Config.string("SUPABASE_WORKDIR")));
         const { workdir, explicit: explicitWorkdir } = yield* resolveWorkdir(
           workdirFlag,
           workdirEnvValue,
@@ -181,11 +172,12 @@ export const commandSettingsLayer = Layer.unwrap(
 
         return CommandSettings.of({
           profile,
+          profileEnvValue,
+          supabaseHome: resolvedSupabaseHome,
           apiUrl,
           projectHost,
           poolerHost,
           dashboardUrl,
-          profileEnvValue,
           accessToken,
           dbPassword,
           githubToken,

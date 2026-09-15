@@ -25,7 +25,7 @@ const stackId = StackIdSchema.make(
 const status = (
   lifecycle: StackStatus["lifecycle"],
   includeApi = true,
-  functionsState: "ready" | "dormant" | "stopped" = "dormant",
+  functionsState: "ready" | "dormant" | "stopping" | "stopped" = "dormant",
   failedCapability?: string,
 ): StackStatus => ({
   id: stackId,
@@ -65,7 +65,7 @@ type FakeStackOptions = {
   readonly failStart?: boolean;
   readonly reachesReadiness?: boolean;
   readonly includeApi?: boolean;
-  readonly functionsState?: "ready" | "dormant" | "stopped";
+  readonly functionsState?: "ready" | "dormant" | "stopping" | "stopped";
   readonly failedCapability?: string;
 };
 const fakeStack = (events: Array<string>, options: FakeStackOptions = {}): PromiseStack => {
@@ -452,6 +452,18 @@ describe("test stack resource", () => {
         expect(createTestStackWith({}, operations)).rejects.toThrow("stopping"),
       );
       expect(events).toEqual(["start", "destroy"]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+  it.live("accepts a lazy capability that is stopping during a running stack", () =>
+    Effect.gen(function* () {
+      const { events, operations } = setupFixture("/tmp/stack-test-lazy-stopping", {
+        functionsState: "stopping",
+      });
+      const stack = yield* Effect.promise(() =>
+        createTestStackWith({ config: { capabilities: { functions: {} } } }, operations),
+      );
+      yield* Effect.promise(() => stack[Symbol.asyncDispose]());
+      expect(events).toEqual(["create:/tmp/stack-test-lazy-stopping", "start", "destroy"]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
   it.live("uses the managed state root while test stacks overlap", () =>

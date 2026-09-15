@@ -95,7 +95,9 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
 
   yield* Effect.gen(function* () {
     // Reads the prefixed `SUPABASE_WORKDIR` only (never plain `WORKDIR`).
-    const workdirRaw = Option.isSome(workdirFlag) ? workdirFlag.value : cliSettings.workdirEnvValue;
+    const workdirRaw = Option.isSome(workdirFlag)
+      ? workdirFlag.value
+      : Option.getOrUndefined(cliSettings.workdirEnvValue);
     const workdirInput =
       workdirRaw ??
       (yield* output.promptText(

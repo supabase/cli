@@ -135,7 +135,32 @@ export const stackStatusPayload = (status: StackStatus) => ({
   versions: status.versions,
   capabilities: status.capabilities,
   artifacts: status.artifacts,
+  ...(status.recovery === undefined ? {} : { recovery: status.recovery }),
 });
+
+export const stackStatusIssueLines = (status: StackStatus): ReadonlyArray<string> => {
+  const lines: Array<string> = [];
+  const diagnostics = status.capabilities.filter(({ error }) => error !== undefined);
+  if (diagnostics.length > 0) {
+    lines.push("Capability diagnostics:");
+    for (const capability of diagnostics) {
+      const detail = capability.error?.split(/\r?\n/u)[0] ?? "No diagnostic was recorded.";
+      lines.push(`  ${capability.name}: ${capability.state} — ${detail}`);
+    }
+  }
+  if (status.recovery !== undefined) {
+    lines.push(`Recovery: ${status.recovery.message}`);
+    if (status.recovery.operation === "stop") {
+      lines.push(
+        `Recovery command: supabase stack stop --stack-id ${status.id} && supabase stack start --stack-id ${status.id}`,
+      );
+    } else {
+      lines.push(`Recovery command: supabase stack destroy --stack-id ${status.id}`);
+      lines.push("Warning: destroy is destructive and removes the stack data.");
+    }
+  }
+  return lines;
+};
 
 export const renderStackStatus = (status: StackStatus): string => {
   const lines = [
@@ -152,6 +177,7 @@ export const renderStackStatus = (status: StackStatus): string => {
   const dormant = status.capabilities.filter(({ state }) => state === "dormant");
   if (dormant.length > 0)
     lines.push(`Dormant capabilities: ${dormant.map(({ name }) => name).join(", ")}`);
+  lines.push(...stackStatusIssueLines(status));
   return `${lines.join("\n")}\n`;
 };
 

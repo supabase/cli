@@ -13,6 +13,10 @@ export type ProfileName = "supabase" | "supabase-staging" | "supabase-local" | "
 interface CommandSettingsShape {
   readonly profile: string;
   readonly apiUrl: string;
+  /** Raw SUPABASE_PROFILE value; Some("") differs from an absent variable. */
+  readonly profileEnvValue: Option.Option<string>;
+  /** Resolved global state directory used for profiles and credentials. */
+  readonly supabaseHome: string;
   /**
    * Project subdomain host for the active profile. Used to build the
    * expected CNAME target (`<ref>.<projectHost>`) in `domains create`.
@@ -27,12 +31,6 @@ interface CommandSettingsShape {
   readonly poolerHost: string;
   /** Dashboard base URL for the active profile, used by the connect-failure network-restrictions hint. */
   readonly dashboardUrl: string;
-  /**
-   * Raw `SUPABASE_PROFILE` value captured at settings resolution (name or YAML path,
-   * unvalidated; empty captures as `undefined`). `login` persists it verbatim when no
-   * explicit flag names a profile.
-   */
-  readonly profileEnvValue: string | undefined;
   readonly accessToken: Option.Option<Redacted.Redacted<string>>;
   /** `SUPABASE_DB_PASSWORD` captured at settings resolution; empty captures as none. */
   readonly dbPassword: Option.Option<Redacted.Redacted<string>>;
@@ -46,8 +44,8 @@ interface CommandSettingsShape {
    * directories; see `shouldSearchAncestors` in `command-internal/workdir-search.ts`.
    */
   readonly explicitWorkdir: boolean;
-  /** Raw `SUPABASE_WORKDIR` exactly as found in the environment; an empty string is preserved. */
-  readonly workdirEnvValue: string | undefined;
+  /** Raw `SUPABASE_WORKDIR` value; `Some("")` differs from an absent variable and is used verbatim. */
+  readonly workdirEnvValue: Option.Option<string>;
   readonly userAgent: string;
 }
 

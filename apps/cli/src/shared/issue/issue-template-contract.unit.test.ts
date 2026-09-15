@@ -35,7 +35,7 @@ function isBodyItem(value: unknown): value is IssueFormBodyItem {
 }
 
 function issueTemplateDir() {
-  return resolve(process.cwd(), "../../.github/ISSUE_TEMPLATE");
+  return resolve(import.meta.dirname, "../../../../../.github/ISSUE_TEMPLATE");
 }
 
 function readTemplate(template: string): ReadonlyArray<IssueFormBodyItem> {
