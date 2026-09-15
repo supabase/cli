@@ -15,7 +15,6 @@ const settings = (accessToken: Option.Option<Redacted.Redacted<string>>) =>
     projectHost: "supabase.co",
     poolerHost: "supabase.com",
     dashboardUrl: "https://supabase.com/dashboard",
-    profileEnvValue: undefined,
     accessToken,
     projectId: Option.none(),
     workdir: "/tmp/supabase-cli-resolve-token",
