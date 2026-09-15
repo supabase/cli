@@ -10,15 +10,16 @@ export const HOSTED_SECTION_KEYS = [
 ] as const;
 
 /**
- * The seven keys {@link ProjectConfig}/{@link ProjectConfigSchema} can carry. A section whose every
- * field is a {@link DOCUMENT_ONLY_LOCAL_PATHS} member (`realtime` today) has no schema node at all.
+ * The seven keys a hosted-section response can speak for. A section whose every field is a
+ * {@link DOCUMENT_ONLY_LOCAL_PATHS} member (`realtime` today) is absent from both `ProjectConfig`
+ * and its schema, so `HostedSectionKey` is broader than the keys a `ProjectConfig` value can carry.
  */
 export type HostedSectionKey = (typeof HOSTED_SECTION_KEYS)[number];
 
 /**
  * Paths inside a hosted section with no real hosted counterpart on either arm, excluded from
- * {@link ProjectConfig}'s shape, {@link ProjectConfigSchema}/`toProjectConfigJsonSchema`, and
- * {@link fromConfigDocument}'s output alike: local bind ports/TLS overrides, `db.pooler`'s
+ * `ProjectConfig`'s shape, `ProjectConfigSchema`/`toProjectConfigJsonSchema`, and
+ * `fromConfigDocument`'s output alike: local bind ports/TLS overrides, `db.pooler`'s
  * `enabled`/`port`, the `db.migrations`/`db.seed` subtrees, every config-side `realtime.*` field,
  * and local-only `experimental.*` engine/backend selection.
  *

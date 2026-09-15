@@ -310,7 +310,7 @@ document — the whole reason `ConfigAbsencePolicy` exists to be named as a call
 rather than an implicit side effect of which overload happened to be called.
 
 **5. Correct the record.** A related claim lives outside this ADR's own text, in
-`project-config.ts`'s `DOCUMENT_ONLY_LOCAL_PATHS` docstring (added by PR #6451/CLI-2316, predating
+`hosted-sections.ts`'s `DOCUMENT_ONLY_LOCAL_PATHS` docstring (added by PR #6451/CLI-2316, predating
 this branch, left as-is — out of this addendum's scope): that `auth.oauth_server` "starts
 UNDECLARED and only becomes `unmanaged` on ITS first pull," contrasted there against
 `db.major_version`/`db.pooler.*` (permanently unmanaged because the `supabase init` template always
@@ -320,7 +320,7 @@ with `authorization_url_path = "/oauth/consent"` in the stock template, exactly 
 was being contrasted against — every stock project has always had this path declared from
 `supabase init` onward, never "starting undeclared." A similar "first pull" framing was also echoed
 in `pull.handler.ts`/`pull.plan.ts`'s own comments; this commit corrects those two directly (Part D
-of this reconciliation), so only the `project-config.ts` original remains uncorrected. Separately,
+of this reconciliation), so only the `hosted-sections.ts` original remains uncorrected. Separately,
 commit `23ae41d02` on this branch made `oauth_server.{enabled,allow_dynamic_registration,
 authorization_url_path}` genuinely pushable through the v1 auth endpoint (`oauth_server_enabled`,
 `oauth_server_allow_dynamic_registration`, `oauth_server_authorization_path`) — so as of this

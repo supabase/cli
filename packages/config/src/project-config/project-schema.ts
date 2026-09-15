@@ -2,7 +2,7 @@
  * Runtime schema for {@link ProjectConfig}, derived from {@link CliConfigSchema} so the two shapes
  * cannot drift independently: picks the seven hosted-section fields, strips down to the decoded
  * shape, then makes every property deep-optional while dropping secret-only (`x-secret`) leaves,
- * every {@link DOCUMENT_ONLY_LOCAL_PATHS} entry, and containers and struct-level `.check()`
+ * every `DOCUMENT_ONLY_LOCAL_PATHS` entry, and containers and struct-level `.check()`
  * refinements a sparse overlay can't satisfy. Always permissive (`additionalProperties: true`);
  * `_apiResponse` is non-enumerable, so it's excluded.
  */

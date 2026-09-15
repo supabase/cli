@@ -536,6 +536,10 @@ describe("ProjectConfig type-level local-only exclusion pin", () => {
   const localNestedScalar: ProjectConfig = { db: { pooler: { port: 54329 } } };
   // @ts-expect-error experimental.pgdelta is a local-only subtree
   const localSubtree: ProjectConfig = { experimental: { pgdelta: { enabled: true } } };
+  // @ts-expect-error realtime is fully local-only and has no key
+  const emptyRealtimeSection: ProjectConfig = { realtime: {} };
+  // @ts-expect-error realtime is fully local-only and has no key
+  const realtimeField: ProjectConfig = { realtime: { enabled: true } };
   const hostedSiblings: ProjectConfig = {
     api: { max_rows: 1 },
     db: { pooler: { pool_mode: "transaction" } },
@@ -545,6 +549,8 @@ describe("ProjectConfig type-level local-only exclusion pin", () => {
     expect(localScalar).toBeDefined();
     expect(localNestedScalar).toBeDefined();
     expect(localSubtree).toBeDefined();
+    expect(emptyRealtimeSection).toBeDefined();
+    expect(realtimeField).toBeDefined();
     expect(hostedSiblings).toBeDefined();
   });
 });

@@ -57,10 +57,11 @@ its own curated error only when invoked (see "Entrypoints" below).
 - `CliConfig` — the config _document_ (`supabase/config.toml`/`.json`) — the full local superset
   the CLI reads and writes.
 - `ProjectConfig` — the hosted-project subset: a sparse overlay of the hosted sections (`api`,
-  `auth`, `db`, `realtime`, `storage`, `compute`, `experimental`) describing what a Supabase
-  project looks like on the platform. Produced by `toProjectConfig` from either a `CliConfig`
-  document or a Management API response — see "ProjectConfig: producing and validating values"
-  below.
+  `auth`, `db`, `storage`, `compute`, `experimental`) describing what a Supabase project looks
+  like on the platform. `realtime` is one of the seven sections a hosted response can speak for,
+  but every one of its config-side fields is local-only, so a `ProjectConfig` value never carries
+  a `realtime` key. Produced by `toProjectConfig` from either a `CliConfig` document or a
+  Management API response — see "ProjectConfig: producing and validating values" below.
 - `CliSettings` — the CLI's own runtime settings; lives in `apps/cli`, not this package.
 
 Use the `Cli*` prefix for the local checkout side and a bare `Project*` name for the hosted
@@ -203,9 +204,10 @@ Effect:
 - `toProjectConfig(source)` — thin dispatcher over the two normalizers below; pass `{ cliConfig }`
   or `{ apiResponse }`. Throws `ProjectConfigParseError` when `source` carries neither key or both.
 - `fromConfigDocument(cliConfig)` — projection of a `CliConfig` document (or any `EffectiveConfig`)
-  onto the hosted sections (`api`, `auth`, `db`, `realtime`, `storage`, `compute`, `experimental`),
-  omitting every `x-secret` leaf and canonicalizing duration/byte-size fields the same way the API
-  side would. **Not a verbatim rendering of the document** — see
+  onto the hosted sections (`api`, `auth`, `db`, `storage`, `compute`, `experimental`; `realtime`
+  never surfaces, since every one of its config-side fields is local-only), omitting every
+  `x-secret` leaf and canonicalizing duration/byte-size fields the same way the API side would.
+  **Not a verbatim rendering of the document** — see
   [ADR 0021](https://github.com/supabase/cli/blob/develop/docs/adr/0021-projectconfig-convergence-semantics.md) for the push-precedence
   and sentinel-pruning semantics this applies.
 - `fromApiProjectConfig(input)` — translation of a Management API v2 project-config response (the
@@ -260,8 +262,9 @@ schema, not only Effect code.
 `ProjectConfigSchema` is derived from `CliConfigSchema`, never hand-declared, which gives it a
 specific, narrower validation contract — what it does and does not promise:
 
-- **Hosted sections only** — the same seven sections `ProjectConfig` itself carries; nothing else
-  validates.
+- **Hosted sections only** — the same sections `ProjectConfig` carries: `api`, `auth`, `db`,
+  `storage`, `compute`, `experimental`. `realtime` is absent because every one of its config-side
+  fields is local-only; nothing else validates.
 - **Deeply optional** — every key at every level is optional, mirroring `ProjectConfig`'s own
   `DeepPartial` shape, so a sparse fragment like `{ auth: { email: { smtp: { enabled: true } } } }`
   validates even without whatever sibling fields would otherwise be required.
@@ -270,7 +273,8 @@ specific, narrower validation contract — what it does and does not promise:
 - **Local-only fields removed** — a `DOCUMENT_ONLY_LOCAL_PATHS` field (local bind ports/TLS,
   `db.migrations`/`db.seed`, every `[realtime]` field, and local-only `experimental.*` engine
   selection) is absent from this schema and from `ProjectConfig`'s own type, matching
-  `fromConfigDocument`'s runtime omission.
+  `fromConfigDocument`'s runtime omission. A section emptied entirely by that removal — `realtime`
+  today — is absent from both altogether, not merely present as an empty object.
 - **Cross-field checks stripped** — whole-struct business-rule refinements from the base schema
   (e.g. "if `enabled`, then `host` is required") are removed, since a deliberately sparse overlay
   can legitimately violate them.

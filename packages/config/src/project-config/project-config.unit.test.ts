@@ -968,7 +968,7 @@ describe("fromApiProjectConfig — realtime section", () => {
       postgres_changes_pool: null,
     };
     const result = fromApiProjectConfig({ realtime: attributes });
-    expect(result.realtime).toBeUndefined();
+    expect(Object.hasOwn(result, "realtime")).toBe(false);
     expect(unmappedApiFields(result)).toEqual({ realtime: attributes });
   });
 });
