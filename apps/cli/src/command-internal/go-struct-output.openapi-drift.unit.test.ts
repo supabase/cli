@@ -1,6 +1,5 @@
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import openApiSpec from "@supabase/api/openapi.json";
 
 import { GO_BRANCH_RESPONSE } from "../commands/branches/branches.go-payload.ts";
 import { GO_ORGANIZATION_RESPONSE } from "../commands/orgs/orgs.go-payload.ts";
@@ -10,8 +9,9 @@ import type { GoType } from "./go-struct-output.encoders.ts";
 
 /**
  * Mechanical drift check for the `*.go-payload.ts` specs against the live OpenAPI schemas they
- * mirror — field-name set, `goPtr` vs `required`, and field order must all match, or a future
- * spec edit silently changes `-o yaml`/`-o toml` bytes instead of failing a test.
+ * mirror — field-name set, `goPtr` vs `required`, field order, and value type/kind must all
+ * match, or a future spec edit silently changes `-o yaml`/`-o toml` bytes instead of failing a
+ * test.
  *
  * oapi-codegen names its Go struct fields from the schema's JSON keys and declares them in
  * alphabetical order, not the schema's own `properties` order, so field order here is compared
@@ -20,14 +20,13 @@ import type { GoType } from "./go-struct-output.encoders.ts";
  * Go-identifier sort diverges from a plain JSON-key sort.
  */
 
-const OPENAPI_PATH = fileURLToPath(
-  new URL("../../../../packages/api/src/generated/openapi.json", import.meta.url),
-);
-
 interface JsonSchema {
   readonly type?: string;
+  readonly format?: string;
   readonly properties?: Readonly<Record<string, JsonSchema>>;
   readonly required?: ReadonlyArray<string>;
+  readonly items?: JsonSchema;
+  readonly additionalProperties?: JsonSchema | boolean;
   readonly $ref?: string;
 }
 
@@ -37,7 +36,7 @@ interface OpenApiDocument {
   };
 }
 
-const openapi = JSON.parse(readFileSync(OPENAPI_PATH, "utf8")) as OpenApiDocument;
+const openapi = openApiSpec as OpenApiDocument;
 const SCHEMAS = openapi.components.schemas;
 
 function resolveSchema(schema: JsonSchema): JsonSchema {
@@ -116,6 +115,11 @@ function comparePointerRequired(
   const required = new Set(schema.required ?? []);
   const mismatches: Array<DriftMismatch> = [];
   for (const field of fields) {
+    // oapi-codegen never pointer-wraps a Go map regardless of the schema's `required` list, so
+    // this is the one field kind the goPtr/required rule doesn't hold for.
+    if (unwrapPointer(field.type).kind === "map") {
+      continue;
+    }
     const isRequired = required.has(field.json);
     const isPointer = isPointerType(field.type);
     if (isRequired === isPointer) {
@@ -126,6 +130,119 @@ function comparePointerRequired(
           : `spec does not mark "${field.json}" as goPtr, but the schema marks it optional`,
       });
     }
+  }
+  return mismatches;
+}
+
+function compareValueType(
+  type: GoType,
+  schema: JsonSchema,
+  path: string,
+): ReadonlyArray<DriftMismatch> {
+  const resolved = resolveSchema(schema);
+  switch (type.kind) {
+    case "any":
+      return [];
+    case "string":
+      if (
+        resolved.type !== "string" ||
+        resolved.format === "date-time" ||
+        resolved.format === "uuid"
+      ) {
+        return [
+          {
+            path,
+            message: `expected a plain string schema, got type=${resolved.type ?? "<none>"} format=${resolved.format ?? "<none>"}`,
+          },
+        ];
+      }
+      return [];
+    case "time":
+      if (resolved.type !== "string" || resolved.format !== "date-time") {
+        return [
+          {
+            path,
+            message: `expected type=string format=date-time (Go time.Time), got type=${resolved.type ?? "<none>"} format=${resolved.format ?? "<none>"}`,
+          },
+        ];
+      }
+      return [];
+    case "uuid":
+      if (resolved.type !== "string" || resolved.format !== "uuid") {
+        return [
+          {
+            path,
+            message: `expected type=string format=uuid, got type=${resolved.type ?? "<none>"} format=${resolved.format ?? "<none>"}`,
+          },
+        ];
+      }
+      return [];
+    case "int":
+      if (resolved.type !== "integer") {
+        return [{ path, message: `expected type=integer, got type=${resolved.type ?? "<none>"}` }];
+      }
+      return [];
+    case "float":
+      if (resolved.type !== "number") {
+        return [{ path, message: `expected type=number, got type=${resolved.type ?? "<none>"}` }];
+      }
+      return [];
+    case "bool":
+      if (resolved.type !== "boolean") {
+        return [{ path, message: `expected type=boolean, got type=${resolved.type ?? "<none>"}` }];
+      }
+      return [];
+    case "struct":
+      if (resolved.type !== "object") {
+        return [{ path, message: `expected type=object, got type=${resolved.type ?? "<none>"}` }];
+      }
+      return [];
+    case "slice": {
+      if (resolved.type !== "array") {
+        return [{ path, message: `expected type=array, got type=${resolved.type ?? "<none>"}` }];
+      }
+      if (resolved.items === undefined) {
+        return [{ path, message: `expected the schema to declare "items" for the array` }];
+      }
+      return compareValueType(type.elem, resolved.items, `${path}[]`);
+    }
+    case "map": {
+      const additionalProperties = resolved.additionalProperties;
+      if (
+        resolved.type !== "object" ||
+        additionalProperties === undefined ||
+        additionalProperties === false
+      ) {
+        return [
+          {
+            path,
+            message: `expected type=object with additionalProperties, got type=${resolved.type ?? "<none>"}`,
+          },
+        ];
+      }
+      if (additionalProperties === true) {
+        return [];
+      }
+      return compareValueType(type.value, additionalProperties, `${path}{}`);
+    }
+    case "ptr":
+    case "nullable":
+      return compareValueType(type.elem, schema, path);
+  }
+}
+
+function compareValueTypes(
+  fields: ReadonlyArray<GoStructField>,
+  schema: JsonSchema,
+  path: string,
+): ReadonlyArray<DriftMismatch> {
+  const mismatches: Array<DriftMismatch> = [];
+  for (const field of fields) {
+    const fieldSchema = schema.properties?.[field.json];
+    if (fieldSchema === undefined) {
+      continue;
+    }
+    mismatches.push(...compareValueType(field.type, fieldSchema, `${path}.${field.json}`));
   }
   return mismatches;
 }
@@ -153,17 +270,15 @@ function compareFieldOrder(
 
 /**
  * Walks a {@link GoType} struct spec and the corresponding OpenAPI schema in lockstep, returning
- * every mismatch found. `topLevelOnly` skips recursing into nested struct fields — used for
- * `GetProviderResponse`, whose nested `saml.attribute_mapping.keys` is a Go map that oapi-codegen
- * never pointer-wraps regardless of the schema's `required` list, so the `goPtr` vs `required`
- * rule this test asserts does not hold once you cross into it.
+ * every mismatch found. Recurses into a struct field, and into a slice field whose element is a
+ * struct, so both `saml`'s nested fields and `domains`' array elements get the same field-set,
+ * pointer/required, order, and value-type checks as the top-level struct.
  */
 function compareGoStructToSchema(
   spec: GoType,
   schema: JsonSchema,
   schemaName: string,
   path: string,
-  topLevelOnly = false,
 ): ReadonlyArray<DriftMismatch> {
   const resolved = resolveSchema(schema);
   const fields = structFieldsOf(spec);
@@ -172,24 +287,34 @@ function compareGoStructToSchema(
     ...compareFieldSet(fields, resolved, path),
     ...comparePointerRequired(fields, resolved, path),
     ...compareFieldOrder(fields, resolved, schemaKey, path),
+    ...compareValueTypes(fields, resolved, path),
   ];
-
-  if (topLevelOnly) {
-    return mismatches;
-  }
 
   for (const field of fields) {
     const inner = unwrapPointer(field.type);
-    if (inner.kind !== "struct") {
-      continue;
-    }
     const nestedSchema = resolved.properties?.[field.json];
     if (nestedSchema === undefined) {
       continue;
     }
-    mismatches.push(
-      ...compareGoStructToSchema(inner, nestedSchema, schemaName, `${path}.${field.json}`),
-    );
+    if (inner.kind === "struct") {
+      mismatches.push(
+        ...compareGoStructToSchema(inner, nestedSchema, schemaName, `${path}.${field.json}`),
+      );
+      continue;
+    }
+    if (inner.kind === "slice") {
+      const elem = unwrapPointer(inner.elem);
+      if (elem.kind !== "struct") {
+        continue;
+      }
+      const itemsSchema = resolveSchema(nestedSchema).items;
+      if (itemsSchema === undefined) {
+        continue;
+      }
+      mismatches.push(
+        ...compareGoStructToSchema(elem, itemsSchema, schemaName, `${path}.${field.json}[]`),
+      );
+    }
   }
 
   return mismatches;
@@ -199,7 +324,6 @@ interface GoPayloadSpecEntry {
   readonly specName: string;
   readonly spec: GoType;
   readonly schemaName: string;
-  readonly topLevelOnly?: boolean;
 }
 
 const GO_PAYLOAD_SPEC_REGISTRY: ReadonlyArray<GoPayloadSpecEntry> = [
@@ -218,19 +342,18 @@ const GO_PAYLOAD_SPEC_REGISTRY: ReadonlyArray<GoPayloadSpecEntry> = [
     specName: "GO_SSO_PROVIDER_RESPONSE",
     spec: GO_SSO_PROVIDER_RESPONSE,
     schemaName: "GetProviderResponse",
-    topLevelOnly: true,
   },
 ];
 
 describe("go-payload specs vs the OpenAPI schema (drift check)", () => {
   it.each(GO_PAYLOAD_SPEC_REGISTRY)(
     "$specName matches the $schemaName schema with zero drift",
-    ({ spec, schemaName, topLevelOnly }) => {
+    ({ spec, schemaName }) => {
       const schema = SCHEMAS[schemaName];
       if (schema === undefined) {
         throw new Error(`missing OpenAPI schema "${schemaName}"`);
       }
-      expect(compareGoStructToSchema(spec, schema, schemaName, "$", topLevelOnly)).toEqual([]);
+      expect(compareGoStructToSchema(spec, schema, schemaName, "$")).toEqual([]);
     },
   );
 
@@ -305,6 +428,35 @@ describe("go-payload specs vs the OpenAPI schema (drift check)", () => {
       expect.objectContaining({
         path: "$.git_branch",
         message: expect.stringContaining("goPtr"),
+      }),
+    );
+  });
+
+  it("has teeth: reports a mismatch when a field's value type diverges from the schema", () => {
+    // A hand-mutated copy of the real SslEnforcementResponse schema with `appliedSuccessfully`
+    // retyped from boolean to string.
+    const mutatedSchema: JsonSchema = {
+      type: "object",
+      properties: {
+        appliedSuccessfully: { type: "string" },
+        currentConfig: {
+          type: "object",
+          properties: { database: { type: "boolean" } },
+          required: ["database"],
+        },
+      },
+      required: ["appliedSuccessfully", "currentConfig"],
+    };
+    const mismatches = compareGoStructToSchema(
+      GO_SSL_ENFORCEMENT_RESPONSE,
+      mutatedSchema,
+      "SslEnforcementResponse",
+      "$",
+    );
+    expect(mismatches).toContainEqual(
+      expect.objectContaining({
+        path: "$.appliedSuccessfully",
+        message: expect.stringContaining("boolean"),
       }),
     );
   });
