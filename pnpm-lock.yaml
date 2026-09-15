@@ -326,8 +326,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/config
       '@supabase/pg-delta':
-        specifier: 1.0.0-alpha.49
-        version: 1.0.0-alpha.49(@supabase/pg-topo@1.0.0-alpha.6(supports-color@7.2.0))(supports-color@7.2.0)
+        specifier: 1.0.0-alpha.52
+        version: 1.0.0-alpha.52(@supabase/pg-topo@1.0.0-alpha.6(supports-color@7.2.0))(supports-color@7.2.0)
       '@supabase/pg-topo':
         specifier: 1.0.0-alpha.6
         version: 1.0.0-alpha.6(supports-color@7.2.0)
@@ -2756,8 +2756,8 @@ packages:
     resolution: {integrity: sha512-DQ0aVH8wSQAccVqNoEkec62qCu2QRNyoGN53RqsVZ1k6F1zq4/v8scrlR6LNT2RJmT97apiTmORijPVhErCS2g==}
     engines: {node: '>=22.0.0'}
 
-  '@supabase/pg-delta@1.0.0-alpha.49':
-    resolution: {integrity: sha512-sVsi4VTV3xWYwDo04kLuoO7VBtmJSLhhN3ac/1l1+Dfh+RIyLoFZlLh9wBiGU6cOEt9awZaX/xWI2v5KpT4TZw==}
+  '@supabase/pg-delta@1.0.0-alpha.52':
+    resolution: {integrity: sha512-mp1knQPI3x06O2YaqZqaGQzoI7ZYs7rlSYgdYCkX0ktkEj5VvMb+kT64Oatg3hElr2D4Jslqg8XcgOVlT6gqCQ==}
     engines: {node: '>=20.0.0'}
     hasBin: true
     peerDependencies:
@@ -8469,7 +8469,7 @@ snapshots:
     dependencies:
       tslib: 2.8.1
 
-  '@supabase/pg-delta@1.0.0-alpha.49(@supabase/pg-topo@1.0.0-alpha.6(supports-color@7.2.0))(supports-color@7.2.0)':
+  '@supabase/pg-delta@1.0.0-alpha.52(@supabase/pg-topo@1.0.0-alpha.6(supports-color@7.2.0))(supports-color@7.2.0)':
     dependencies:
       '@types/debug': 4.1.13
       '@types/pg': 8.23.1
