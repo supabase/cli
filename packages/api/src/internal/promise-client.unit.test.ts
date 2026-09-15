@@ -250,4 +250,21 @@ describe("makePromiseClient", () => {
       await runtime.dispose();
     }
   });
+
+  test("disposes the runtime and rejects subsequent operations", async () => {
+    const runtime = ManagedRuntime.make(
+      httpClientLayer((request) => Effect.succeed(jsonResponse(request, 200, []))),
+    );
+
+    try {
+      const effectClient = await runtime.runPromise(makeApiClient(config));
+      const client = makePromiseClient(runtime, effectClient);
+
+      await client.dispose();
+
+      await expect(client.v1.listAllProjects()).rejects.toThrow("ManagedRuntime disposed");
+    } finally {
+      await runtime.dispose();
+    }
+  });
 });
