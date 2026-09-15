@@ -260,6 +260,9 @@ jobs:
               echo "  registry: ${registry_integrity}" >&2
               echo "  reviewed: ${reviewed_integrity}" >&2
               echo "Refusing to tag a commit for bytes this run never reviewed — cut forward by landing a new releasable commit." >&2
+              echo "If config-v${VERSION} is also missing from origin, landing a new commit won't help: the planner" >&2
+              echo "recomputes the same version from the last tag. Instead, re-run this workflow at the commit the" >&2
+              echo "published bytes were built from, so the registry probe matches and the tag push completes." >&2
               exit 1
             fi
             echo "@supabase/config@${VERSION} already on npm with matching integrity; skipping publish."
@@ -272,12 +275,35 @@ jobs:
             npm publish "./${tarball}" --ignore-scripts --provenance --tag "${NPM_TAG}"
           fi
 
+      - name: Configure git for release pushes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      # Runs directly after publish, ahead of every verification step: once npm has accepted the
+      # bytes, the tag must land regardless of how the registry-visibility probes below fare,
+      # since an untagged version deadlocks the release train (release-plan.ts derives the next
+      # version from the last config-v* tag, never from npm — see the 2026-09-14 incident where a
+      # slow-to-propagate publish left 0.7.0 live on npm but untagged, with every later run
+      # re-planning the same stuck version). Idempotent: skips if the tag is already on origin.
+      - name: Push version tag
+        run: |
+          set -euo pipefail
+          tag="config-v${VERSION}"
+          if git ls-remote --tags origin "refs/tags/${tag}" | grep -q .; then
+            echo "Tag ${tag} already on origin; skipping push."
+          else
+            git tag -a "${tag}" -m "Release ${tag}"
+            git push origin "${tag}"
+          fi
+
       # "Published successfully" for the notification jobs means registry-visible with the
       # reviewed bytes: probe npm until the version resolves and its integrity matches. Runs
-      # before the tag push so a tag is never blessed for unconfirmed bytes; the dist-tag
-      # assertion instead lives after the tag push so a propagation hiccup can't strand the
-      # release published but origin-untagged. A re-run of this job re-arms the approval gate and
-      # costs a second human approval, hence the generous (~2 minute) visibility budget.
+      # after the tag push on purpose: the tag is already safely on origin (see above), so a slow
+      # registry read here can fail without ever stranding the release published-but-untagged.
+      # A re-run of this job re-arms the approval gate and costs a second human approval, hence
+      # the generous (~10 minute) visibility budget — the 2026-09-14 incident's ~112 second budget
+      # gave up ~70 seconds before the version actually became visible.
       - name: Verify the release is live on npm
         working-directory: ${{ runner.temp }}/config-release
         run: |
@@ -286,7 +312,7 @@ jobs:
           reviewed_integrity="sha512-$(openssl dgst -sha512 -binary "${tarball}" | base64 -w0)"
           npm_err="$RUNNER_TEMP/npm-view-err.log"
           registry_integrity=""
-          for delay in 0 2 3 5 8 13 21 30 30; do
+          for delay in 0 2 3 5 8 13 21 30 30 30 60 60 60 60 60 60 60 60; do
             sleep "$delay"
             if registry_integrity="$(npm view --prefer-online "@supabase/config@${VERSION}" dist.integrity 2>"$npm_err")" \
               && [[ -n "$registry_integrity" ]]; then
@@ -310,30 +336,9 @@ jobs:
           fi
           echo "@supabase/config@${VERSION} live on npm with the reviewed bytes."
 
-      - name: Configure git for release pushes
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-      # Pushes the tag as soon as npm has the bytes, before any downstream step that can fail —
-      # otherwise a later failure leaves origin untagged for a version already live on npm, and a
-      # subsequent plan would recompute the same version against stale bytes. Idempotent: skips
-      # if the tag is already on origin.
-      - name: Push version tag
-        run: |
-          set -euo pipefail
-          tag="config-v${VERSION}"
-          if git ls-remote --tags origin "refs/tags/${tag}" | grep -q .; then
-            echo "Tag ${tag} already on origin; skipping push."
-          else
-            git tag -a "${tag}" -m "Release ${tag}"
-            git push origin "${tag}"
-          fi
-
-      # Asserted after the tag push on purpose: npm already holds the reviewed bytes (verified
-      # above), so a dist-tag propagation hiccup must not strand the release npm-published but
-      # origin-untagged. Retries until the tag points at this version, since a stale packument is
-      # a retryable state, not a terminal mismatch.
+      # The tag was already pushed above, so this and the probe above are both post-tag
+      # confirmations — this one waits for the dist-tag pointer specifically, since a stale
+      # packument (tag not yet updated) is retryable, not a terminal mismatch.
       - name: Verify the npm dist-tag
         run: |
           set -euo pipefail
