@@ -237,7 +237,6 @@ function v2Response(
       capabilities: { list_v2: true, iceberg_catalog: false },
       upstream_target: "main",
       migration_version: "20240701",
-      database_pool_mode: "transaction",
     },
   };
   return {

@@ -499,8 +499,7 @@ const storageSectionRows: ReadonlyArray<ProjectConfigMappingRow> = [
     normalizeDocument: clampDocumentUint,
   },
   // Unmapped: storage.features.purge_cache.enabled, storage.capabilities.{list_v2,
-  // iceberg_catalog}, storage.upstream_target, storage.migration_version,
-  // storage.database_pool_mode.
+  // iceberg_catalog}, storage.upstream_target, storage.migration_version.
 ];
 
 // Zero rows here, intentionally: `../realtime.ts`'s config section is entirely local

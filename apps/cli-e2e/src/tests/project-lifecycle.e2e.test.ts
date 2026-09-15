@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, inject, test } from "vitest";
 import { createHarness, exec, makeTempDir } from "@supabase/cli-test-helpers";
@@ -128,6 +128,9 @@ describe("link", () => {
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain("Finished supabase link");
       expect(existsSync(join(workspace.path, "supabase", ".temp", "project-ref"))).toBe(true);
+      expect(
+        readFileSync(join(workspace.path, "supabase", ".temp", "storage-migration"), "utf8"),
+      ).toBe("operation-ergonomics");
     },
   );
 

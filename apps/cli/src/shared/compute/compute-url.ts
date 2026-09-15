@@ -1,12 +1,12 @@
 /**
  * Every compute gets a path on the project's own API host, like an Edge Function:
- * `<ref>.supabase.co/workers/v1/<name>` next to `.../functions/v1/<name>`. Nothing is
+ * `<ref>.supabase.co/compute/v1/<name>` next to `.../functions/v1/<name>`. Nothing is
  * provisioned per-compute in DNS, so the URL is derived from the name rather than returned by the
  * API.
  */
 
 /** Path prefix compute are served under, mirroring `functions/v1`. */
-const COMPUTE_PATH_PREFIX = "/workers/v1";
+const COMPUTE_PATH_PREFIX = "/compute/v1";
 
 /** The canonical URL of a compute on its project's API host. */
 export function computeUrl(projectRef: string, projectHost: string, name: string): string {
