@@ -12,7 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
-import { Effect, Exit, Layer, Option, Context, Tracer } from "effect";
+import { ConfigProvider, Effect, Exit, Layer, Option, Context, Tracer } from "effect";
 import { cliSettingsLayer } from "../config/cli-settings.layer.ts";
 import type { TelemetryConfig } from "./types.ts";
 import {
@@ -46,12 +46,20 @@ function buildLayer(opts: { home: string; env?: Record<string, string>; stdoutIs
     arch: "x64",
   });
   const cliProjectContextLayer = mockCliProjectContext();
+  const configProviderLayer = ConfigProvider.layer(
+    ConfigProvider.fromEnvRecord(env, { preserveEmptyStrings: true }),
+  );
   return Layer.mergeAll(
     fsLayer,
     runtimeInfoLayer,
     cliProjectContextLayer,
     processEnvLayer(env),
-    cliSettingsLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(cliProjectContextLayer)),
+    cliSettingsLayer.pipe(
+      Layer.provide(runtimeInfoLayer),
+      Layer.provide(cliProjectContextLayer),
+      Layer.provide(configProviderLayer),
+    ),
+    configProviderLayer,
     mockTty({
       stdoutIsTty: opts.stdoutIsTty ?? false,
       stdinIsTty: false,
