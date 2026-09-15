@@ -249,6 +249,7 @@ function parseContainerState(stdout: string): {
   readonly running: boolean;
   readonly status: string;
   readonly exitCode: number;
+  readonly oomKilled: boolean;
   readonly health?: string;
 } {
   const trimmed = stdout.trim();
@@ -265,12 +266,15 @@ function parseContainerState(stdout: string): {
   const status = typeof state["Status"] === "string" ? state["Status"] : "";
   const running = state["Running"] === true;
   const exitCode = typeof state["ExitCode"] === "number" ? state["ExitCode"] : 0;
+  // Docker sets `OOMKilled` only when the container's own memory limit was hit; a host-level
+  // out-of-memory kill reports the same exit code with `OOMKilled: false`.
+  const oomKilled = state["OOMKilled"] === true;
   const health = state["Health"];
   const healthStatus =
     isJsonRecord(health) && typeof health["Status"] === "string" ? health["Status"] : undefined;
   return healthStatus !== undefined
-    ? { running, status, exitCode, health: healthStatus }
-    : { running, status, exitCode };
+    ? { running, status, exitCode, oomKilled, health: healthStatus }
+    : { running, status, exitCode, oomKilled };
 }
 
 function isJsonRecord(value: unknown): value is { readonly [key: string]: unknown } {
