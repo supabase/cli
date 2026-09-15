@@ -22,6 +22,8 @@
     "!apps/cli/src/commands/orgs/**",
     "!apps/cli/src/commands/postgres-config/**",
     "!apps/cli/src/commands/projects/**",
+    "!apps/cli/src/commands/pull/**",
+    "!apps/cli/src/commands/secrets/**",
     "!apps/cli/src/commands/services/**",
     "!apps/cli/src/commands/snippets/**",
     "!apps/cli/src/commands/ssl-enforcement/**",

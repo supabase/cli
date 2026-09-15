@@ -1,3 +1,4 @@
+import { Effect, Schema } from "effect";
 import { expect } from "vitest";
 
 import { requireLiveSuccess, test } from "../../../tests/helpers/live.ts";
@@ -5,34 +6,41 @@ import { requireLiveSuccess, test } from "../../../tests/helpers/live.ts";
 // Golden path only: the real four-step orchestration reaching a live Management API and its
 // project's data plane in one pass, against a fresh `supabase init` checkout. Branch coverage for
 // other dispositions lives in pull.aggregate.unit.test.ts and handler-level integration tests.
-test("pulls config, migration history, db schema, and functions from a fresh project", async ({
-  cli,
+test("pulls config, migration history, db schema, and functions from a fresh project", ({
+  cliEffect,
   project,
-}) => {
-  const result = await cli([
-    "pull",
-    "--project-ref",
-    project.ref,
-    "--output-format",
-    "json",
-    "--yes",
-  ]);
-  requireLiveSuccess(result, "pull");
+  signal,
+}) =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const result = yield* cliEffect([
+        "pull",
+        "--project-ref",
+        project.ref,
+        "--output-format",
+        "json",
+        "--yes",
+      ]);
+      requireLiveSuccess(result, "pull");
 
-  const payload = JSON.parse(result.stdout);
-  expect(payload).toEqual(
-    expect.objectContaining({
-      schema_version: 1,
-      target: expect.objectContaining({ project_ref: project.ref }),
-      steps: expect.objectContaining({
-        config: expect.objectContaining({ status: expect.not.stringMatching(/^failed$/) }),
-        migration_history: expect.objectContaining({
-          status: expect.not.stringMatching(/^failed$/),
+      const payload = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
+        result.stdout,
+      );
+      expect(payload).toEqual(
+        expect.objectContaining({
+          schema_version: 1,
+          target: expect.objectContaining({ project_ref: project.ref }),
+          steps: expect.objectContaining({
+            config: expect.objectContaining({ status: expect.not.stringMatching(/^failed$/) }),
+            migration_history: expect.objectContaining({
+              status: expect.not.stringMatching(/^failed$/),
+            }),
+            db: expect.objectContaining({ status: expect.not.stringMatching(/^failed$/) }),
+            functions: expect.objectContaining({ status: expect.not.stringMatching(/^failed$/) }),
+          }),
         }),
-        db: expect.objectContaining({ status: expect.not.stringMatching(/^failed$/) }),
-        functions: expect.objectContaining({ status: expect.not.stringMatching(/^failed$/) }),
-      }),
+      );
+      expect(payload).toMatchObject({ counts: { failed: 0 } });
     }),
-  );
-  expect(payload.counts.failed).toBe(0);
-});
+    { signal },
+  ));
