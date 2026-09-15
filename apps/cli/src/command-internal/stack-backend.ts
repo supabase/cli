@@ -22,6 +22,7 @@ const STACK_BACKEND_COMMANDS = new Set([
   "test",
   "gen",
   "inspect",
+  "pull",
 ]);
 
 export class StackRoutingError extends Data.TaggedError("StackRoutingError")<{

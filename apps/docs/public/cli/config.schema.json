@@ -2406,7 +2406,7 @@
         },
         "stack": {
           "type": "boolean",
-          "description": "Use the new local stack backend for top-level start, stop, and status commands."
+          "description": "Use the new local stack backend for start, stop, and status, and for --local targets of the db, migration, test db, gen types, inspect, and pull command families."
         },
         "orioledb_version": {
           "type": "string",
@@ -4913,7 +4913,7 @@
                       },
                       "stack": {
                         "type": "boolean",
-                        "description": "Use the new local stack backend for top-level start, stop, and status commands."
+                        "description": "Use the new local stack backend for start, stop, and status, and for --local targets of the db, migration, test db, gen types, inspect, and pull command families."
                       },
                       "orioledb_version": {
                         "type": "string",

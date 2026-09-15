@@ -155,7 +155,7 @@ const markerFor = (runtime: StackRuntime, snapshotKey?: string): RuntimeMarker =
 });
 
 const sameSnapshotKey = (marker: RuntimeMarker, expected: string | undefined): boolean =>
-  expected === undefined || marker.snapshotKey === undefined || marker.snapshotKey === expected;
+  expected === undefined ? marker.snapshotKey === undefined : marker.snapshotKey === expected;
 
 const encodeMarker = (marker: RuntimeMarker): string => JSON.stringify(marker);
 
@@ -367,6 +367,7 @@ interface ContainerResources {
   readonly engine: ContainerEngine;
   networkName?: string;
   volumeName?: string;
+  containerName?: string;
   networkId?: string;
   volumeId?: string;
   containerId?: string;
@@ -732,10 +733,12 @@ const startContainer = (
             password,
           }),
         );
+        const containerName = resources.containerName ?? resourceName(cluster.identity, "database");
+        resources.containerName = containerName;
         const created = yield* Effect.uninterruptibleMask((restore) =>
           restore(
             resources.engine.createContainer({
-              name: resourceName(cluster.identity, "database"),
+              name: containerName,
               image,
               labels: {
                 stackId: cluster.identity,
@@ -876,7 +879,7 @@ const peekSnapshotRuntime = (
         ),
         Effect.flatMap(decodeMarker),
       );
-    if (!sameRuntime(marker, runtime) || !sameSnapshotKey(marker, snapshotKey))
+    if (!sameRuntime(marker, runtime))
       return yield* ephemeralError(
         "Ephemeral Postgres snapshot was produced by a different runtime",
         {
@@ -884,6 +887,11 @@ const peekSnapshotRuntime = (
           path: restoreFrom,
         },
       );
+    if (!sameSnapshotKey(marker, snapshotKey))
+      return yield* ephemeralError("Ephemeral Postgres snapshot key does not match", {
+        reason: "restore-mismatch",
+        path: restoreFrom,
+      });
     yield* fs.remove(peekRoot, { recursive: true }).pipe(Effect.ignore);
   });
 
@@ -892,10 +900,9 @@ const destroyCluster = (cluster: Cluster): Effect.Effect<void, never, FileSystem
     if (cluster.resources.kind === "native") yield* stopNative(cluster).pipe(Effect.ignore);
     else {
       yield* stopContainer(cluster).pipe(Effect.ignore);
-      if (cluster.resources.containerId !== undefined)
-        yield* cluster.resources.engine
-          .removeContainer(cluster.resources.containerId)
-          .pipe(Effect.ignore);
+      const containerRef = cluster.resources.containerId ?? cluster.resources.containerName;
+      if (containerRef !== undefined)
+        yield* cluster.resources.engine.removeContainer(containerRef).pipe(Effect.ignore);
       const volumeRef = cluster.resources.volumeId ?? cluster.resources.volumeName;
       if (volumeRef !== undefined)
         yield* cluster.resources.engine.removeVolume(volumeRef).pipe(Effect.ignore);
@@ -1070,8 +1077,10 @@ export const createEphemeralPostgresCluster = (
       const engineKind = cluster.runtime.kind === "container" ? cluster.runtime.engine : "docker";
       const networkName = resourceName(identity, "network");
       const volumeName = resourceName(identity, "database-volume");
+      const containerName = resourceName(identity, "database");
       resources.networkName = networkName;
       resources.volumeName = volumeName;
+      resources.containerName = containerName;
       yield* Effect.uninterruptibleMask((restore) =>
         restore(
           engine.createNetwork({

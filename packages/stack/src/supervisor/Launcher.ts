@@ -22,6 +22,7 @@ import { resolveStackPaths } from "../state/Paths.ts";
 import { StackIdSchema, type StackId } from "../public/StackId.ts";
 import {
   readOwnerMetadata,
+  StackRuntimeEnvironment,
   type OwnerMetadata,
   type StackRuntimeEnvironmentValue,
 } from "../state/Ownership.ts";
@@ -79,6 +80,14 @@ export const defaultRuntimeEnvironment: Effect.Effect<StackRuntimeEnvironmentVal
     };
   },
 );
+
+/** Injected `StackRuntimeEnvironment` when present, otherwise the process default. */
+export const resolveRuntimeEnvironment: Effect.Effect<StackRuntimeEnvironmentValue> =
+  Effect.serviceOption(StackRuntimeEnvironment).pipe(
+    Effect.flatMap((configured) =>
+      Option.isSome(configured) ? Effect.succeed(configured.value) : defaultRuntimeEnvironment,
+    ),
+  );
 
 type ReadinessResult =
   | { readonly kind: "ready"; readonly stackId: StackId; readonly ownerSessionId: string }

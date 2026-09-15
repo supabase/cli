@@ -101,3 +101,8 @@ shell inherits the suppressing variables and is missed.
     suggestion uses the generic `ipv6Suggestion()` text rather than one that
     prefills the project's specific pooler connection string. Surfacing that
     exact URL needs the pooler string exposed at this seam.
+- **Stack backend host rewrite.** `--local` native stacks use PATH `pg_dump`.
+  Container dumps use `isLocal` (config host+port match), not `connType ===
+  "local"`: a `--db-url` that matches `config.toml` is rewritten like a published
+  stack target (`host.docker.internal` / host network) and does not require a
+  project stack. Engine/runtime selection still uses `connType`.

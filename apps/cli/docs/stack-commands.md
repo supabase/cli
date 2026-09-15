@@ -89,16 +89,20 @@ Other values are rejected. The override is applied before reading the project co
 
 When the flag is on, `--local` targets of the `db`, `migration`, `test db`, `gen types`, and
 `inspect` families use the project stack and provision throwaway shadow Postgres through
-`@supabase/stack` (`EphemeralPostgres`). Linked and `--db-url` targets stay on the Management
-API. Compose names (`supabase_db_*`, `supabase_network_*`, `db:5432`) are not used. The stack
-backend requires the in-process pg-delta engine; `--use-migra`, `--use-pgadmin`,
-`--use-pg-schema`, and `--diff-engine migra` are rejected. The flag does not switch functions or
-storage command families.
+`@supabase/stack` (`EphemeralPostgres`). Top-level `supabase pull` uses the same stack shadow
+as `db pull`. Linked and `--db-url` targets stay on the Management API for engine selection.
+A `--db-url` that matches `config.toml` host and port is still rewritten like a published
+stack target for dump's tool container. Compose names (`supabase_db_*`, `supabase_network_*`,
+`db:5432`) are not used. The stack backend requires the in-process pg-delta engine;
+`--use-migra`, `--use-pgadmin`, `--use-pg-schema`, and `db pull --diff-engine migra` are
+rejected. The flag does not switch functions or storage command families.
 
 `db start` brings up a postgres-only project stack on first create. An existing stack resumes
 its persisted services (webhooks setup only; no second overlay or migrate-and-seed).
-`--from-backup` is not supported on the stack path. `db reset --local` and declarative
-`--apply` wipe Postgres through `resetDatabase` and then migrate or seed on stack credentials.
+`supabase start` while that postgres-only stack is running stops it and starts the full
+configured stack, keeping data. `--from-backup` is not supported on the stack path. `db reset
+--local` and declarative `--apply` wipe Postgres through `resetDatabase` and then migrate or
+seed on stack credentials.
 
 `gen types --local` and `inspect db … --local` resolve the project stack through the same
 `--local` database target as `db dump`. They do not start a stack.

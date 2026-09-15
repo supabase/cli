@@ -79,9 +79,10 @@ describe("supabase db start (e2e)", () => {
         expect(diff.exitCode, diff.stderr).not.toBe(0);
         expect(`${diff.stdout}${diff.stderr}`).toContain("pg-delta engine");
       } finally {
-        await runSupabase(["stop", "--no-backup"], {
+        await runSupabase(["stack", "destroy", "--yes"], {
           cwd: project.dir,
           home: home.dir,
+          env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
           exitTimeoutMs: DB_START_CLEANUP_TIMEOUT_MS,
         }).catch(() => undefined);
       }

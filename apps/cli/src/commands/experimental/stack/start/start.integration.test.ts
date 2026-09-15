@@ -773,6 +773,39 @@ enabled = false
     });
   });
 
+  it.live("stops a running postgres-only stack before starting the full config", () => {
+    return Effect.gen(function* () {
+      const root = yield* project();
+      const events: Array<string> = [];
+      const id = "a".repeat(64);
+      const stack = {
+        ...fakeStack(
+          id,
+          () => {
+            events.push("start");
+            return Effect.succeed(status(id));
+          },
+          "running",
+        ),
+        status: Effect.succeed({
+          ...status(id),
+          lifecycle: "running" as const,
+          desiredLifecycle: "running" as const,
+          capabilities: status(id).capabilities.map((capability) => ({
+            ...capability,
+            state: capability.name === "database" ? ("ready" as const) : ("disabled" as const),
+          })),
+        }),
+        stop: Effect.sync(() => {
+          events.push("stop");
+        }),
+      } satisfies EffectStack;
+      const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
+      yield* stackStart(flags()).pipe(Effect.provide(setup.layer));
+      expect(events).toEqual(["stop", "start"]);
+    });
+  });
+
   it.live("classifies registry pull failures separately from engine failures", () => {
     return Effect.gen(function* () {
       const root = yield* project();

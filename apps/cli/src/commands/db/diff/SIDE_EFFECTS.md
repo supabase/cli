@@ -9,7 +9,7 @@ delegation on this command — a documented keep-in-Go exception (CLI-1960), not
 pending port.
 
 When `[experimental].stack` is on, the shadow is `EphemeralPostgres` under
-`~/.supabase/ephemeral-postgres/<identity>/`. Migra, pgAdmin, and `--use-pg-schema` are
+`$SUPABASE_HOME/managed/ephemeral-postgres/<identity>/` (`~/.supabase/managed/…` by default). Migra, pgAdmin, and `--use-pg-schema` are
 rejected because that shadow is always stack.
 
 Pg-delta runs in-process. Coverage gaps warn, while `--strict-coverage` makes

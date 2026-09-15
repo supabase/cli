@@ -42,7 +42,7 @@ import {
   type PersistedStackState,
 } from "../state/StackState.ts";
 import { makeStackStateStore } from "../state/StackStateStore.ts";
-import { defaultRuntimeEnvironment } from "../supervisor/Launcher.ts";
+import { resolveRuntimeEnvironment } from "../supervisor/Launcher.ts";
 import { makeProductionRuntimeArtifactPreparer } from "../preparation/RuntimeArtifacts.ts";
 import { catalogReleaseFor } from "../model/WorkloadCatalog.ts";
 import type { ContainerEngine, ContainerHostRoute } from "./ContainerEngine.ts";
@@ -414,7 +414,7 @@ export const schemaInitWorkloads = (
         runtime: target.runtime,
         config: schemaInitCompileConfig(target.config, names),
       });
-      const shared = yield* defaultRuntimeEnvironment;
+      const shared = yield* resolveRuntimeEnvironment;
       let persistedSecrets: PersistedSecretValues | undefined;
       if (target.kind === "live") {
         const liveState = yield* (yield* makeStackStateStore({ stateRoot: shared.stateRoot })).read(
@@ -625,7 +625,7 @@ export const schemaInitWorkloads = (
               return yield* runtimeError(key, `Container image is unavailable for ${workload.id}`);
             const encoded = yield* encodeRuntimeEnvFile(env);
             const envFile = path.join(tempRoot, `${encodeURIComponent(workload.id)}.env`);
-            yield* fs.writeFileString(envFile, encoded).pipe(
+            yield* fs.writeFileString(envFile, encoded, { mode: 0o600 }).pipe(
               Effect.mapError(
                 (cause) =>
                   new StackPreparationError({

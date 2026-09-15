@@ -153,6 +153,30 @@ describe.sequential("ephemeral Postgres", () => {
     ).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.live("refuses a keyless snapshot marker when a snapshot key is expected", () =>
+    withIsolatedRoot(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tarPath = path.join(yield* fs.makeTempDirectoryScoped(), "keyless.tar");
+        yield* writeForeignMarkerTar(tarPath, { kind: "native" });
+        const exit = yield* createEphemeralPostgres({
+          runtime: { kind: "native" },
+          restoreFrom: tarPath,
+          snapshotKey: "expected-cache-key",
+          ...secrets,
+        }).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (!Exit.isFailure(exit)) return;
+        const error = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
+        expect(error).toBeInstanceOf(EphemeralPostgresError);
+        if (!(error instanceof EphemeralPostgresError)) return;
+        expect(error.reason).toBe("restore-mismatch");
+        expect(error.message).toContain("snapshot key");
+      }),
+    ).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.live(
     "starts a native cluster, snapshots, restores, and destroys without a stack identity",
     () =>

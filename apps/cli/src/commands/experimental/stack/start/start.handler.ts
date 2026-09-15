@@ -2,7 +2,9 @@ import { Effect, FileSystem, Match, Option, Path } from "effect";
 import {
   excludeStackCapabilities,
   isStackError,
+  type StackConfig,
   type StackRuntimePreference,
+  type StackStatus,
 } from "@supabase/stack/effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import {
@@ -36,6 +38,20 @@ const eagerlyActivate = <
 >(
   value: T,
 ): T => (value.enabled === false ? value : Object.assign({}, value, { activation: "eager" }));
+
+const isPostgresOnlyStatus = (status: StackStatus): boolean => {
+  const database = status.capabilities.find((capability) => capability.name === "database");
+  if (status.lifecycle !== "running" || database?.state !== "ready") return false;
+  return STACK_START_EXCLUDABLE_CAPABILITIES.every(
+    (name) =>
+      status.capabilities.find((capability) => capability.name === name)?.state === "disabled",
+  );
+};
+
+const isPostgresOnlyConfig = (config: StackConfig): boolean =>
+  STACK_START_EXCLUDABLE_CAPABILITIES.every(
+    (name) => config.capabilities?.[name]?.enabled === false,
+  );
 
 const validateExclusions = (exclusions: ReadonlyArray<string>) => {
   const unknown = exclusions.filter(
@@ -161,6 +177,12 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     const addressed = yield* stack.status.pipe(Effect.mapError(stackStartError));
     const firstCreate = addressed.desiredLifecycle === "unconfigured";
     const starting = yield* output.task("Starting local Supabase stack...");
+    if (isPostgresOnlyStatus(addressed) && !isPostgresOnlyConfig(startConfig)) {
+      yield* stack.stop.pipe(
+        Effect.tapError((error) => starting.fail(error.message)),
+        Effect.mapError(stackStartError),
+      );
+    }
     const status = yield* stack.start({ config: startConfig }).pipe(
       Effect.tapError((error) => starting.fail(error.message)),
       Effect.mapError(stackStartError),

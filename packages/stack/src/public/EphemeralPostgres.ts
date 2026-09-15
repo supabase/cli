@@ -24,7 +24,7 @@ export interface CreateEphemeralPostgresOptions {
   readonly healthTimeout?: string;
   /** Stopped-cluster PGDATA tar to restore before the first start. */
   readonly restoreFrom?: string;
-  /** Cache identity written into the snapshot runtime marker. Keyless snapshots stay valid. */
+  /** Cache identity written into the snapshot runtime marker. Restore without a key still accepts a keyless marker. */
   readonly snapshotKey?: string;
 }
 

@@ -8,7 +8,7 @@ suggests `migration repair` (local target) or prompts to baseline the remote
 migration-history table to match.
 
 When `[experimental].stack` is on, the shadow is `EphemeralPostgres` under
-`~/.supabase/ephemeral-postgres/<identity>/`.
+`$SUPABASE_HOME/managed/ephemeral-postgres/<identity>/` (`~/.supabase/managed/…` by default).
 
 ## Files Read
 

@@ -66,10 +66,13 @@ through the catalog Postgres image.
 
 ### (c) `[experimental].stack` covers the db/migration family
 
-`SUPABASE_EXPERIMENTAL_STACK` / `[experimental].stack` select the stack backend for `db` and
-`migration` as well as `start`/`stop`/`status`. Flag off keeps the legacy Docker shadow and
-`supabase_db_*` local target. Linked / `--db-url` targets stay URL/linked connections; they do
-not switch the local engine. Top-level `status` **is** aliased (`STACK_BACKEND_COMMANDS`).
+`SUPABASE_EXPERIMENTAL_STACK` / `[experimental].stack` select the stack backend for `db`,
+`migration`, `test`, `gen`, `inspect`, and top-level `pull` as well as `start`/`stop`/`status`.
+Flag off keeps the legacy Docker shadow and `supabase_db_*` local target. Linked /
+`--db-url` targets stay URL/linked connections for engine and runtime selection
+(`connType`); they do not switch the local engine. A `--db-url` whose host and port
+match `config.toml` is still `isLocal` for dump's tool-container host rewrite. Top-level
+`status` **is** aliased (`STACK_BACKEND_COMMANDS`).
 
 Shadow baseline for the stack backend is slim-init, stack bootstrap, schema init for the
 platform trio (auth, storage, realtime), and the CLI overlay. Cache files use a distinct

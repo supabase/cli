@@ -60,6 +60,9 @@ stack = true
         expect(yield* resolve({ args: ["db", "test"], cwd: root, env: {} })).toBe("stack");
         expect(yield* resolve({ args: ["test", "db"], cwd: root, env: {} })).toBe("stack");
         expect(yield* resolve({ args: ["migration", "squash"], cwd: root, env: {} })).toBe("stack");
+        expect(yield* resolve({ args: ["pull"], cwd: root, env: {} })).toBe("stack");
+        expect(yield* resolve({ args: ["gen", "types"], cwd: root, env: {} })).toBe("stack");
+        expect(yield* resolve({ args: ["inspect", "db"], cwd: root, env: {} })).toBe("stack");
       }),
     );
   });
