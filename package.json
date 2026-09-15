@@ -9,7 +9,7 @@
     "record": "pnpm exec turbo run @supabase/cli-e2e#record --",
     "test:smoke": "pnpm exec turbo run supabase#test:smoke --",
     "dev:docs": "pnpm exec turbo run @supabase/docs#dev",
-    "test:unit": "pnpm exec turbo run test:unit:run --filter=!@supabase/cli-go --",
+    "test:unit": "pnpm exec turbo run test:unit:run --",
     "test:integration": "pnpm exec turbo run test:integration:run --",
     "test:e2e": "pnpm exec turbo run supabase#build && pnpm exec turbo run test:e2e:run --only --concurrency=1 --",
     "check:all": "pnpm exec turbo run types:check lint:check fmt:check knip:check lint:effect:check",

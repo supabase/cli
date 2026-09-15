@@ -71,10 +71,6 @@ jobs:
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
 
-      - name: Pre-download Go modules
-        working-directory: apps/cli-go
-        run: go mod download -x
-
       - name: Install nfpm
         env:
           NFPM_VERSION: "2.47.0"
@@ -118,6 +114,9 @@ jobs:
           done
           echo "Checking dist/..."
           ls -la dist/
+          # Single-binary invariant (CLI-2432): no channel may ship a second executable.
+          ! ls packages/*/bin/supabase-go* 2>/dev/null
+          for a in dist/*.tar.gz; do ! tar -tzf "$a" | grep -q 'supabase-go'; done
 
       - name: Check existing build artifacts cache
         id: build-artifacts-cache
