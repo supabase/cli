@@ -378,6 +378,7 @@ function mockDockerLogSpawner(behaviors: ReadonlyArray<LogProcessBehavior>) {
 }
 
 interface SetupOptions {
+  readonly fetch?: typeof globalThis.fetch;
   readonly debug?: boolean;
   readonly workdir?: string;
   readonly networkId?: Option.Option<string>;
@@ -407,9 +408,13 @@ function setupServe(options: SetupOptions = {}) {
       out,
       api: {
         ...api,
-        httpClientLayer: FetchHttpClient.layer.pipe(
-          Layer.provide(Layer.succeed(FetchHttpClient.Fetch, globalThis.fetch)),
-        ),
+        ...(options.fetch === undefined
+          ? {}
+          : {
+              httpClientLayer: FetchHttpClient.layer.pipe(
+                Layer.provide(Layer.succeed(FetchHttpClient.Fetch, options.fetch)),
+              ),
+            }),
       },
       cliSettings,
       telemetry: telemetry.layer,
@@ -2821,7 +2826,7 @@ describe("functions serve integration", () => {
       );
       yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
 
-      const { layer } = setupServe({ childSpawner });
+      const { layer } = setupServe({ childSpawner, fetch: fetchMock });
       const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
       expect(error).toBeInstanceOf(Error);
@@ -2908,7 +2913,7 @@ describe("functions serve integration", () => {
         );
         yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
 
-        const { layer } = setupServe({ childSpawner });
+        const { layer } = setupServe({ childSpawner, fetch: fetchMock });
         const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
         expect(error).toBeInstanceOf(Error);
