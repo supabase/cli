@@ -284,8 +284,8 @@ Tests follow consumed boundaries:
 
 - stack integration covers identity, sticky ports, durable lifecycle,
   ownership, stale-owner recovery, and interrupted cleanup;
-- supervisor integration covers detached ownership, RPC, stop, and
-  destroy; dedicated idle-stop integration covers retirement and wake-up; and
+- supervisor integration covers detached ownership, RPC, stop, destroy,
+  retirement, and wake-up; and
 - one shared stack-package E2E journey runs in native and Docker modes, starts
   with PostgreSQL alone, activates every other service through realistic
   traffic, verifies cross-service behavior, then exercises

@@ -46,12 +46,7 @@ export const statusForSnapshot = (
           ? configured === undefined || !configured.enabled
             ? "disabled"
             : "stopped"
-          : snapshot.stack._tag === "starting" &&
-              snapshot.stack.prior._tag === "stopped" &&
-              control._tag === "starting" &&
-              control.completion._tag === "workload"
-            ? "starting"
-            : publicCapabilityState(control);
+          : publicCapabilityState(control);
       const observedStarting = observedEntries.some((entry) => entry.state === "starting");
       const observedUnready = observedEntries.some((entry) => entry.state !== "ready");
       const capability =

@@ -1882,7 +1882,7 @@ describe("managed Supabase stack whole-stack E2E", () => {
         expect(await supervisorPid(stack.id)).toBe(initialSupervisorPid);
       },
     );
-    test.skipIf(mode.runtime.kind === "container")(
+    test(
       `settles live HTTP, WebSocket, and TCP transports on stop in ${mode.name} mode`,
       { timeout: E2E_TIMEOUT_MS },
       async () => {

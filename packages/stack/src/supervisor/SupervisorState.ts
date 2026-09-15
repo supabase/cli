@@ -32,7 +32,7 @@ type StartRecoveryState = {
 };
 
 export type LifecycleKind = "start" | "stop" | "destroy";
-export type LifecycleCompletion = Deferred.Deferred<Exit.Exit<void, StackError>, never>;
+type LifecycleCompletion = Deferred.Deferred<Exit.Exit<void, StackError>, never>;
 type CommandRejectionReason = "lifecycle-transition" | "stop-required" | "destroy-required";
 
 export type StackControlState =
@@ -63,7 +63,7 @@ type TransitionState =
   | Extract<StackControlState, { readonly _tag: "stopping" }>
   | Extract<StackControlState, { readonly _tag: "destroying" }>;
 
-export type CommandAdmission =
+type CommandAdmission =
   | { readonly _tag: "accepted"; readonly state: TransitionState }
   | {
       readonly _tag: "rejected";

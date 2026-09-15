@@ -9,14 +9,14 @@ export interface GatewayActivity {
   ) => Effect.Effect<A, E>;
 }
 
-export interface GatewayActivityCallbacks {
-  readonly begin: (capability: CapabilityName) => Effect.Effect<unknown>;
-  readonly end: (capability: CapabilityName, lease: unknown) => Effect.Effect<void>;
+export interface GatewayActivityCallbacks<Lease> {
+  readonly begin: (capability: CapabilityName) => Effect.Effect<Lease>;
+  readonly end: (capability: CapabilityName, lease: Lease) => Effect.Effect<void>;
 }
 
 /** Adapts gateway lifetimes to the Supervisor-owned traffic controller. */
-export const makeGatewayActivity = (
-  callbacks: GatewayActivityCallbacks,
+export const makeGatewayActivity = <Lease>(
+  callbacks: GatewayActivityCallbacks<Lease>,
 ): Effect.Effect<GatewayActivity> =>
   Effect.succeed({
     track: (capability, effect) =>

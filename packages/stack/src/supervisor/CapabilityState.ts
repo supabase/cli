@@ -2,7 +2,7 @@ import { Match, type Cause, type Deferred, type Exit, type Fiber } from "effect"
 import type { ActivationResult, BackendEndpoint } from "../gateway/Gateway.ts";
 import type { GatewayActivationError, StackError } from "../public/Errors.ts";
 
-export type EndpointState =
+type EndpointState =
   | { readonly _tag: "unresolved" }
   | {
       readonly _tag: "resolving";

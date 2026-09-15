@@ -80,6 +80,7 @@ import {
   publicPhase,
   command,
   isTransitioning,
+  type LifecycleKind,
   type StackControlState,
   type SupervisorSnapshot,
 } from "./SupervisorState.ts";
@@ -248,7 +249,6 @@ export const makeSupervisor = (
     });
     const currentPhase = (): Effect.Effect<ActualPhase> =>
       Ref.get(machine).pipe(Effect.map((snapshot) => publicPhase(snapshot.stack)));
-    type LifecycleKind = "start" | "stop" | "destroy";
     type LifecycleResult = Deferred.Deferred<Exit.Exit<void, StackError>, never>;
     type ActiveLifecycle = Readonly<{ kind: LifecycleKind; result: LifecycleResult }>;
     const activeCommand = (): Effect.Effect<ActiveLifecycle | undefined> =>
@@ -970,7 +970,7 @@ export const makeSupervisor = (
       });
     });
 
-    type TrafficLease = Readonly<{ readonly sessionId: symbol; readonly token: symbol }>;
+    type TrafficLease = Readonly<{ readonly sessionId: symbol }>;
     const beginTraffic = (capability: CapabilityName): Effect.Effect<TrafficLease> =>
       Effect.gen(function* () {
         const acquired = yield* admission.withPermit(
@@ -1001,7 +1001,8 @@ export const makeSupervisor = (
             else if (
               current?._tag === "dormant" ||
               current?._tag === "starting" ||
-              current?._tag === "stopping"
+              current?._tag === "stopping" ||
+              current?._tag === "cleanup-failed"
             )
               yield* updateCapability(capability, (state) => {
                 if (state === undefined) return state;
@@ -1009,26 +1010,20 @@ export const makeSupervisor = (
                   case "dormant":
                   case "starting":
                   case "stopping":
+                  case "cleanup-failed":
                     return { ...state, traffic: state.traffic + 1 };
                   default:
                     return state;
                 }
               });
-            return { fiber: entry, lease: { sessionId: snapshot.sessionId, token: Symbol() } };
+            return { fiber: entry, lease: { sessionId: snapshot.sessionId } };
           }),
         );
         if (acquired.fiber !== undefined) yield* Fiber.interrupt(acquired.fiber);
         return acquired.lease;
       });
-    const endTraffic = (capability: CapabilityName, lease: unknown): Effect.Effect<void> =>
+    const endTraffic = (capability: CapabilityName, lease: TrafficLease): Effect.Effect<void> =>
       Effect.gen(function* () {
-        if (
-          typeof lease !== "object" ||
-          lease === null ||
-          !("sessionId" in lease) ||
-          typeof lease.sessionId !== "symbol"
-        )
-          return;
         const shouldArm = yield* admission.withPermit(
           Effect.gen(function* () {
             const sessionId = (yield* Ref.get(machine)).sessionId;
