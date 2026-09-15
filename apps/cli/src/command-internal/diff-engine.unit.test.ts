@@ -9,19 +9,10 @@ import {
 } from "./diff-engine.ts";
 
 describe("shouldUsePgDelta", () => {
-  it("is the OR of config, flag, and env", () => {
-    expect(
-      shouldUsePgDelta({ configEnabled: false, usePgDeltaFlag: false, envEnabled: false }),
-    ).toBe(false);
-    expect(
-      shouldUsePgDelta({ configEnabled: true, usePgDeltaFlag: false, envEnabled: false }),
-    ).toBe(true);
-    expect(
-      shouldUsePgDelta({ configEnabled: false, usePgDeltaFlag: true, envEnabled: false }),
-    ).toBe(true);
-    expect(
-      shouldUsePgDelta({ configEnabled: false, usePgDeltaFlag: false, envEnabled: true }),
-    ).toBe(true);
+  it("follows the config default and lets --use-pg-delta override an explicit rollback", () => {
+    expect(shouldUsePgDelta({ configEnabled: false, usePgDeltaFlag: false })).toBe(false);
+    expect(shouldUsePgDelta({ configEnabled: true, usePgDeltaFlag: false })).toBe(true);
+    expect(shouldUsePgDelta({ configEnabled: false, usePgDeltaFlag: true })).toBe(true);
   });
 });
 

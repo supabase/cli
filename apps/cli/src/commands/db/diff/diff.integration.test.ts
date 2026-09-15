@@ -498,35 +498,40 @@ const PGADMIN_SOURCE_URL =
 const PGADMIN_TARGET_URL = "postgresql://postgres:postgres@127.0.0.1:54320/postgres";
 
 describe("db diff", () => {
-  it.effect("diffs local with the default migra engine and prints SQL to stdout", () => {
-    const s = setup(tmp.current, { diffSql: "create table players ();\n" });
-    return Effect.gen(function* () {
-      yield* dbDiff(flags());
-      expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
-      expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
-      expect(stdout(s.out)).toBe("create table players ();\n\n");
-      expect(stderr(s.out)).toContain("Creating shadow database...");
-      expect(stderr(s.out)).toContain("Diffing schemas...");
-      expect(stderr(s.out)).toContain("Finished supabase db diff on branch");
-      expect(s.telemetry.flushed).toBe(true);
-      const expectedHost = FAKE_SHADOW_CONTAINER_ID.slice(0, 12);
-      expect(s.shadowSetupJobCalls.length).toBeGreaterThan(0);
-      let sawHost = false;
-      for (const call of s.shadowSetupJobCalls) {
-        if (call.env["DB_HOST"] !== undefined) {
-          expect(call.env["DB_HOST"]).toBe(expectedHost);
-          sawHost = true;
-        }
-        for (const value of Object.values(call.env)) {
-          if (value.includes("@") && value.includes(":")) {
-            expect(value).toContain(`@${expectedHost}:`);
+  it.effect(
+    "diffs local with the default pg-delta engine (no pgdelta config section) and prints SQL to stdout",
+    () => {
+      const s = setup(tmp.current, { diffSql: "create table players ();\n" });
+      return Effect.gen(function* () {
+        yield* dbDiff(flags());
+        expect(s.databaseDiffCalls).toHaveLength(1);
+        expect(s.edgeCalls).toEqual([]);
+        expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
+        expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
+        expect(stdout(s.out)).toBe("create table players ();\n\n");
+        expect(stderr(s.out)).toContain("Creating shadow database...");
+        expect(stderr(s.out)).toContain("Diffing schemas...");
+        expect(stderr(s.out)).toContain("Finished supabase db diff on branch");
+        expect(s.telemetry.flushed).toBe(true);
+        const expectedHost = FAKE_SHADOW_CONTAINER_ID.slice(0, 12);
+        expect(s.shadowSetupJobCalls.length).toBeGreaterThan(0);
+        let sawHost = false;
+        for (const call of s.shadowSetupJobCalls) {
+          if (call.env["DB_HOST"] !== undefined) {
+            expect(call.env["DB_HOST"]).toBe(expectedHost);
             sawHost = true;
           }
+          for (const value of Object.values(call.env)) {
+            if (value.includes("@") && value.includes(":")) {
+              expect(value).toContain(`@${expectedHost}:`);
+              sawHost = true;
+            }
+          }
         }
-      }
-      expect(sawHost).toBe(true);
-    }).pipe(Effect.provide(s.layer));
-  });
+        expect(sawHost).toBe(true);
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
 
   it.effect("diffs local with pgdelta when --use-pg-delta is set", () => {
     const s = setup(tmp.current, { diffSql: "create table p ();\n" });
@@ -557,6 +562,38 @@ describe("db diff", () => {
       expect(s.edgeCalls).toEqual([]);
       expect(stderr(s.out)).toContain("Diffing schemas: public");
       expect(stdout(s.out)).toBe("create table p ();\n\n");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("an explicit [experimental.pgdelta] enabled = false selects the migra engine", () => {
+    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+    writeFileSync(
+      join(tmp.current, "supabase", "config.toml"),
+      "[experimental.pgdelta]\nenabled = false\n",
+    );
+    const s = setup(tmp.current, { diffSql: "create table players ();\n" });
+    return Effect.gen(function* () {
+      yield* dbDiff(flags());
+      // Explicitly disabling pg-delta opts back into migra: the diff runs through
+      // migra's edge-runtime script (not pg-delta's `renderPlanFiles` script, and
+      // not the pg-delta engine service).
+      expect(s.databaseDiffCalls).toEqual([]);
+      expect(s.edgeCalls).toHaveLength(1);
+      expect(s.edgeCalls[0]?.script).not.toContain("renderPlanFiles");
+      expect(stdout(s.out)).toBe("create table players ();\n\n");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("--use-migra overrides the pg-delta default when no pgdelta config exists", () => {
+    const s = setup(tmp.current, { diffSql: "create table players ();\n" });
+    return Effect.gen(function* () {
+      yield* dbDiff(flags({ useMigra: Option.some(true) }));
+      // No `[experimental.pgdelta]` section, so pg-delta is the default — the
+      // `--use-migra` flag must still win and route through migra.
+      expect(s.databaseDiffCalls).toEqual([]);
+      expect(s.edgeCalls).toHaveLength(1);
+      expect(s.edgeCalls[0]?.script).not.toContain("renderPlanFiles");
+      expect(stdout(s.out)).toBe("create table players ();\n\n");
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -941,7 +978,9 @@ describe("db diff", () => {
       writeFileSync(join(tmp.current, "supabase", "schemas", "public.sql"), "select 1;\n");
       const s = setup(tmp.current, { diffSql: "create table o ();\n" });
       return Effect.gen(function* () {
-        yield* dbDiff(flags());
+        // Migra is opt-in now that pg-delta is the default engine (CLI-1588);
+        // pg-delta ignores the declarative contrib_regression override entirely.
+        yield* dbDiff(flags({ useMigra: Option.some(true) }));
         expect(stdout(s.out)).toBe("create table o ();\n\n");
         expect(s.shadowConnectedDatabases).toContain("contrib_regression");
         expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
@@ -1759,7 +1798,7 @@ describe("db diff", () => {
   it.effect("emits a json envelope with --output-format json (payload-only stdout)", () => {
     const s = setup(tmp.current, { format: "json", diffSql: "create table j ();\n" });
     return Effect.gen(function* () {
-      yield* dbDiff(flags());
+      yield* dbDiff(flags({ useMigra: Option.some(true) }));
       expect(stdout(s.out)).toBe("");
       const success = s.out.messages.find((m) => m.type === "success");
       expect(success?.data).toMatchObject({
@@ -1785,7 +1824,9 @@ describe("db diff", () => {
         "error diffing schema: error running script:\nTypeError: Cannot read properties of undefined (reading 'constraints')\nPGDELTA_SCRIPT_ERROR\n",
     });
     return Effect.gen(function* () {
-      const exit = yield* dbDiff(flags()).pipe(Effect.exit);
+      // Migra is opt-in now that pg-delta is the default engine (CLI-1588); the
+      // crash is injected into migra's edge-runtime script run.
+      const exit = yield* dbDiff(flags({ useMigra: Option.some(true) })).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(stderr(s.out)).not.toContain("No schema changes found");
     }).pipe(Effect.provide(s.layer));
@@ -1794,8 +1835,9 @@ describe("db diff", () => {
   it.effect("falls back to the migra Docker image when edge-runtime OOMs", () => {
     const s = setup(tmp.current, { oom: true, diffSql: "create table fb ();\n", isLocal: true });
     return Effect.gen(function* () {
+      // Migra is opt-in now that pg-delta is the default engine (CLI-1588).
       // Pass --schema so the fallback does not need a live DB to list schemas.
-      yield* dbDiff(flags({ schema: ["public"] }));
+      yield* dbDiff(flags({ useMigra: Option.some(true), schema: ["public"] }));
       expect(s.dockerCalls).toHaveLength(1);
       expect(stdout(s.out)).toBe("create table fb ();\n\n");
     }).pipe(Effect.provide(s.layer));
@@ -1810,7 +1852,8 @@ describe("db diff", () => {
       networkId: "my-net",
     });
     return Effect.gen(function* () {
-      yield* dbDiff(flags({ schema: ["public"] }));
+      // Migra is opt-in now that pg-delta is the default engine (CLI-1588).
+      yield* dbDiff(flags({ useMigra: Option.some(true), schema: ["public"] }));
       expect(s.dockerCalls).toHaveLength(1);
       expect((s.dockerCalls[0] as { network: unknown }).network).toEqual({
         _tag: "named",

@@ -66,5 +66,9 @@ Same envelope as migration-style `db pull`.
 ## Notes
 
 - Deprecated: use `db pull` instead.
+- pg-delta is the default shadow-diff engine, running in-process exactly as for
+  migration-style `db pull`. Rollback is `[experimental.pgdelta] enabled = false`
+  in `config.toml` — this command has no per-run engine flag, so it always follows
+  the config default.
 - `--schema` / `-s` restricts the commit to specific schemas.
 - `--db-url` and `--linked` are mutually exclusive.

@@ -156,7 +156,7 @@ interface BaselineTomlConfig {
 
 /** The `[experimental.pgdelta]` subtree. */
 export interface PgDeltaTomlConfig {
-  /** `[experimental.pgdelta] enabled`, default false. */
+  /** `[experimental.pgdelta] enabled`, default true. */
   readonly enabled: boolean;
   /**
    * `[experimental.pgdelta] declarative_schema_path`, resolved to a
@@ -1381,7 +1381,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     ? undefined
     : envOverride("SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED");
   // `"1"` counts as true and a malformed value aborts the load. The env override wins,
-  // then the TOML bool, then an `env(VAR)` string, defaulting to false when absent.
+  // then the TOML bool, then an `env(VAR)` string, defaulting to true when absent.
   let enabled: boolean;
   if (enabledEnv !== undefined) {
     // An `env(VAR)` indirection in the override is expanded before the bool parse.
@@ -1411,7 +1411,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     }
     enabled = parsed;
   } else {
-    enabled = false;
+    enabled = true;
   }
 
   const declarativeSchemaPathRaw = pgDeltaRaw?.["declarative_schema_path"];

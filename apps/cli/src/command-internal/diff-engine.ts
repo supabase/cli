@@ -5,23 +5,22 @@ export const schemaPathsTransitionWarning =
   "WARNING: [db.migrations].schema_paths no longer changes the migrations baseline used by db diff or migration-style db pull. These commands always compare local migrations with the selected database. Use `supabase db schema declarative sync` to compare declarative schema files.\n";
 
 /**
- * Whether pg-delta is the active default engine: the resolved config flag
- * (`[experimental.pgdelta].enabled`), the command's `--use-pg-delta` flag, or the
- * `SUPABASE_EXPERIMENTAL_PG_DELTA` env var, whichever is set.
+ * Whether pg-delta is the active engine. Config `enabled` (default true) or the
+ * command's `--use-pg-delta` flag. `SUPABASE_EXPERIMENTAL_PG_DELTA` is not an
+ * input: a stale opt-in would silently defeat `[experimental.pgdelta] enabled = false`.
  */
 export function shouldUsePgDelta(inputs: {
   readonly configEnabled: boolean;
   readonly usePgDeltaFlag: boolean;
-  readonly envEnabled: boolean;
 }): boolean {
-  return inputs.configEnabled || inputs.usePgDeltaFlag || inputs.envEnabled;
+  return inputs.configEnabled || inputs.usePgDeltaFlag;
 }
 
 /**
  * Reports whether `db diff` should run in pg-delta mode. An explicit `--use-migra`,
- * `--use-pgadmin`, or `--use-pg-schema` is an authoritative rollback that clears pg-delta mode;
- * `--use-migra` defaults to true, so only an explicit pass (`useMigraChanged`) counts as opting
- * out.
+ * `--use-pgadmin`, or `--use-pg-schema` is an authoritative rollback that clears pg-delta
+ * mode. `--use-migra` is off unless passed, so only an explicit pass (`useMigraChanged`)
+ * counts as opting out.
  */
 export function resolveDiffEngine(inputs: {
   readonly useMigraChanged: boolean;

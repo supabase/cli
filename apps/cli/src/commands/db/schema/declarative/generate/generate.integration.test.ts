@@ -270,10 +270,24 @@ const flags = (
 const failError = (exit: Exit.Exit<unknown, unknown>) =>
   Exit.isFailure(exit) ? exit.cause.reasons.find(Cause.isFailReason)?.error : undefined;
 
+// pg-delta is the default schema diff engine (CLI-1588): an absent
+// `[experimental.pgdelta]` section resolves to enabled = true, so gate-closed
+// scenarios must now disable it explicitly.
+const seedPgDeltaDisabledConfig = (workdir: string) => {
+  mkdirSync(join(workdir, "supabase"), { recursive: true });
+  writeFileSync(
+    join(workdir, "supabase", "config.toml"),
+    "[experimental.pgdelta]\nenabled = false\n",
+  );
+};
+
 describe("db schema declarative generate integration", () => {
   const tmp = useTempWorkdir();
 
-  it.effect("gate: fails when neither --experimental nor config enables pg-delta", () => {
+  it.effect("gate: fails when config disables pg-delta and --experimental is not passed", () => {
+    // pg-delta is the default engine (CLI-1588): the gate only closes when the
+    // config EXPLICITLY sets `enabled = false` and --experimental is absent.
+    seedPgDeltaDisabledConfig(tmp.current);
     const { layer } = setup(tmp.current, { experimental: false });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -283,6 +297,19 @@ describe("db schema declarative generate integration", () => {
       expect(failError(exit)?.constructor.name).toBe("DeclarativeNotEnabledError");
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect(
+    "gate: open by default — no [experimental.pgdelta] section and no --experimental",
+    () => {
+      // The pg-delta default flip (CLI-1588): an absent section resolves to
+      // enabled = true, so generate proceeds without --experimental.
+      const s = setup(tmp.current, { experimental: false });
+      return Effect.gen(function* () {
+        yield* dbSchemaDeclarativeGenerate(flags({ local: Option.some(true) }));
+        expect(s.engineExportCalls).toHaveLength(1);
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
 
   it.effect("--local --linked with --experimental fails with the mutex error", () => {
     const { layer } = setup(tmp.current, { experimental: true });
@@ -302,6 +329,8 @@ describe("db schema declarative generate integration", () => {
   it.effect(
     "--local --linked without --experimental fails with the gate error, not the mutex error",
     () => {
+      // Gate is open by default; disable pg-delta so this hits DeclarativeNotEnabledError.
+      seedPgDeltaDisabledConfig(tmp.current);
       const { layer } = setup(tmp.current, { experimental: false });
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
@@ -343,6 +372,8 @@ describe("db schema declarative generate integration", () => {
   it.effect(
     "an explicit --experimental=false closes the gate even when SUPABASE_EXPERIMENTAL is set",
     () => {
+      // Absent pg-delta config would keep the gate open even with --experimental=false.
+      seedPgDeltaDisabledConfig(tmp.current);
       const { layer } = setup(tmp.current, {
         experimental: false,
         args: ["db", "schema", "declarative", "generate", "--experimental=false"],
@@ -698,6 +729,8 @@ describe("db schema declarative generate integration", () => {
         join(tmp.current, "supabase", "config.toml"),
         [
           'project_id = "base"',
+          "[experimental.pgdelta]",
+          "enabled = false",
           "[remotes.prod]",
           `project_id = "${ref}"`,
           "[remotes.prod.experimental.pgdelta]",

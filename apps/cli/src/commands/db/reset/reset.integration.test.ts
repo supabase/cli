@@ -1186,7 +1186,7 @@ describe("db reset", () => {
         // `checkDbToml`) into the final `migrateAndSeed` call — the raw `["schema.sql"]` pattern
         // would glob-match against the workdir root instead of `supabase/schema.sql`.
         const { layer, conn } = setup(tmp.current, {
-          toml: 'project_id = "test"\n[db]\nmajor_version = 14\n[db.migrations]\nschema_paths = ["schema.sql"]\n',
+          toml: 'project_id = "test"\n[db]\nmajor_version = 14\n[db.migrations]\nschema_paths = ["schema.sql"]\n[experimental.pgdelta]\nenabled = false\n',
           files: { "supabase/schema.sql": "create table schema_paths_marker ();" },
           args: ["db", "reset", "--local"],
           isLocal: true,
@@ -1621,7 +1621,7 @@ describe("db reset", () => {
       "applies schema files across multiple schema_paths patterns in declaration order, sorted within each pattern",
       () => {
         const { layer, conn } = setup(tmp.current, {
-          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["zz/*.sql", "aa/*.sql"]\n',
+          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["zz/*.sql", "aa/*.sql"]\n\n[experimental.pgdelta]\nenabled = false\n',
           files: {
             "supabase/zz/b.sql": "create table zz_b ();",
             "supabase/zz/a.sql": "create table zz_a ();",
@@ -1645,7 +1645,7 @@ describe("db reset", () => {
       "expands a schema_paths directory entry to its nested .sql files on an experimental remote reset",
       () => {
         const { layer, conn } = setup(tmp.current, {
-          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["some-dir"]\n',
+          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["some-dir"]\n\n[experimental.pgdelta]\nenabled = false\n',
           files: {
             "supabase/some-dir/01_top.sql": "create table dir_top ();",
             "supabase/some-dir/nested/02_nested.sql": "create table dir_nested ();",
@@ -1665,7 +1665,7 @@ describe("db reset", () => {
       "silently applies nothing when schema_paths is unset on an experimental remote reset (Go's undocumented default-config behavior)",
       () => {
         const { layer, out, conn } = setup(tmp.current, {
-          toml: 'project_id = "test"\n',
+          toml: 'project_id = "test"\n\n[experimental.pgdelta]\nenabled = false\n',
           files: migrationFile("20240101000000", "create table migrated_table ();"),
           experimental: true,
           confirm: [true],
@@ -1701,10 +1701,35 @@ describe("db reset", () => {
     );
 
     it.live(
+      "replays migrations instead of schema files on an experimental remote reset with no pgdelta config section (pg-delta default, CLI-1588)",
+      () => {
+        // With NO `[experimental.pgdelta]` section, `enabled` now defaults to
+        // TRUE, so an experimental versionless remote reset suppresses the
+        // schema-files branch and replays migrations — only an explicit
+        // `enabled = false` re-enables the schema-files path.
+        const { layer, out, conn } = setup(tmp.current, {
+          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n',
+          files: {
+            "supabase/schemas/01_users.sql": "create table schema_users ();",
+            ...migrationFile("20240101000000", "create table migrated_table ();"),
+          },
+          experimental: true,
+          confirm: [true],
+        });
+        return Effect.gen(function* () {
+          yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+          expect(conn.execs.some((s) => s.includes("create table migrated_table"))).toBe(true);
+          expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(false);
+          expect(out.stderrText).toContain("Applying migration");
+        });
+      },
+    );
+
+    it.live(
       "replays migrations instead of schema files on an experimental remote reset with a resolved version",
       () => {
         const { layer, conn } = setup(tmp.current, {
-          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n',
+          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n\n[experimental.pgdelta]\nenabled = false\n',
           files: {
             "supabase/schemas/01_users.sql": "create table schema_users ();",
             ...migrationFile("20240101000000", "create table migrated_table ();"),
@@ -1728,7 +1753,7 @@ describe("db reset", () => {
       "fails an experimental remote reset when no schema_paths pattern matches anything",
       () => {
         const { layer, conn } = setup(tmp.current, {
-          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["nomatch/*.sql"]\n',
+          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["nomatch/*.sql"]\n\n[experimental.pgdelta]\nenabled = false\n',
           experimental: true,
           confirm: [true],
         });
@@ -1750,7 +1775,7 @@ describe("db reset", () => {
 
     it.live("ignores a partial schema_paths glob failure once at least one pattern matches", () => {
       const { layer, out, conn } = setup(tmp.current, {
-        toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql", "typo/*.sql"]\n',
+        toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql", "typo/*.sql"]\n\n[experimental.pgdelta]\nenabled = false\n',
         files: {
           "supabase/schemas/01_users.sql": "create table schema_users ();",
           // Present so the seed glob's own "no files matched" warning doesn't show up here too.
@@ -1770,7 +1795,7 @@ describe("db reset", () => {
       "attaches Go's schema-file suggestion when a schema file fails to apply on an experimental remote reset",
       () => {
         const { layer } = setup(tmp.current, {
-          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n',
+          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n\n[experimental.pgdelta]\nenabled = false\n',
           files: { "supabase/schemas/01_users.sql": "not valid sql;" },
           experimental: true,
           confirm: [true],
@@ -1800,7 +1825,7 @@ describe("db reset", () => {
       () => {
         const schemaFile = join(tmp.current, "supabase", "schemas", "01_users.sql");
         const { layer, conn } = setup(tmp.current, {
-          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n',
+          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n\n[experimental.pgdelta]\nenabled = false\n',
           files: { "supabase/schemas/01_users.sql": "create table schema_users ();" },
           experimental: true,
           confirm: [true],
@@ -1826,7 +1851,7 @@ describe("db reset", () => {
       () => {
         const schemasDir = join(tmp.current, "supabase", "schemas");
         const { layer, conn } = setup(tmp.current, {
-          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas"]\n',
+          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas"]\n\n[experimental.pgdelta]\nenabled = false\n',
           files: { "supabase/schemas/01_users.sql": "create table schema_users ();" },
           experimental: true,
           confirm: [true],
@@ -1855,7 +1880,7 @@ describe("db reset", () => {
         const previous = process.env["SUPABASE_EXPERIMENTAL"];
         delete process.env["SUPABASE_EXPERIMENTAL"];
         const { layer, out, conn } = setup(tmp.current, {
-          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n',
+          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n\n[experimental.pgdelta]\nenabled = false\n',
           files: {
             "supabase/.env": "SUPABASE_EXPERIMENTAL=true\n",
             "supabase/schemas/01_users.sql": "create table schema_users ();",
@@ -1900,7 +1925,7 @@ describe("db reset", () => {
       "applies configured schema files and skips seeding on an experimental remote --db-url reset",
       () => {
         const { layer, conn, resolver } = setup(tmp.current, {
-          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n',
+          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n\n[experimental.pgdelta]\nenabled = false\n',
           files: { "supabase/schemas/01_users.sql": "create table schema_users ();" },
           experimental: true,
           args: ["db", "reset", "--db-url", "postgresql://db.example.com:5432/postgres"],
@@ -2109,7 +2134,7 @@ describe("db reset", () => {
       "seeds from --sql-paths on an experimental remote reset, independently of the schema-files apply",
       () => {
         const { layer, out, conn } = setup(tmp.current, {
-          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n',
+          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n\n[experimental.pgdelta]\nenabled = false\n',
           files: {
             "supabase/schemas/01_users.sql": "create table schema_users ();",
             "supabase/custom-seed.sql": "insert into t values (2);",

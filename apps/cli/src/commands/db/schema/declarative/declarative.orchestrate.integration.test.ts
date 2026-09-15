@@ -50,7 +50,7 @@ const toml: DbTomlValues = {
   orioledbVersion: Option.none(),
   denoVersion: 2,
   pgDelta: {
-    enabled: false,
+    enabled: true,
     declarativeSchemaPath: Option.none(),
     formatOptions: Option.none(),
   },

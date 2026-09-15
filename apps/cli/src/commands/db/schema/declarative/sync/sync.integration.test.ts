@@ -119,34 +119,49 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   // shadow also connects through this fake `DbConnection`, so its SQL must be excluded from
   // `dbExec`, which every "not yet applied" assertion expects to stay empty until real apply.
   const SHADOW_PORT = 54320;
+  // `applyFails` fails only the FIRST attempt at the migration's ALTER statement.
+  // With pg-delta enabled by default (CLI-1588), the recovery reset's in-process
+  // `resetLocalDatabase` replays timestamped migration files natively
+  // (`migrateAndSeed`'s migrations branch — it no longer takes the
+  // experimental schema-files branch, whose empty `schema_paths = []` default
+  // applied nothing), so the reapply on the freshly reset database must succeed,
+  // mirroring a failure that a reset actually recovers from.
+  let applyFailed = false;
   const dbConn = Layer.succeed(DbConnection, {
     connect: (cfg: PgConnInput) =>
       Effect.succeed({
         exec: (sql: string) =>
-          opts.applyFails === true && sql.startsWith("ALTER")
-            ? Effect.fail({ _tag: "DbExecError", message: "boom" } as never)
-            : Effect.sync(() => {
-                if (cfg.port !== SHADOW_PORT) dbExec.push(sql);
-              }),
-        execBatch: (statements: ReadonlyArray<DbBatchStatement>) => {
-          const sql = statements.map((statement) => statement.sql);
-          const failureIndex =
-            opts.applyFails === true
-              ? sql.findIndex((statement) => statement.startsWith("ALTER"))
-              : -1;
-          return failureIndex >= 0
-            ? Effect.fail({
+          Effect.suspend(() => {
+            if (opts.applyFails === true && !applyFailed && sql.startsWith("ALTER")) {
+              applyFailed = true;
+              return Effect.fail({ _tag: "DbExecError", message: "boom" } as never);
+            }
+            return Effect.sync(() => {
+              if (cfg.port !== SHADOW_PORT) dbExec.push(sql);
+            });
+          }),
+        execBatch: (statements: ReadonlyArray<DbBatchStatement>) =>
+          Effect.suspend(() => {
+            const sql = statements.map((statement) => statement.sql);
+            const failureIndex =
+              opts.applyFails === true && !applyFailed
+                ? sql.findIndex((statement) => statement.startsWith("ALTER"))
+                : -1;
+            if (failureIndex >= 0) {
+              applyFailed = true;
+              return Effect.fail({
                 _tag: "DbExecError",
                 message: "boom",
                 statementIndex: failureIndex,
-              } as never)
-            : Effect.sync(() => {
-                if (cfg.port !== SHADOW_PORT) {
-                  dbBatches.push(sql);
-                  dbExec.push(...sql);
-                }
-              });
-        },
+              } as never);
+            }
+            return Effect.sync(() => {
+              if (cfg.port !== SHADOW_PORT) {
+                dbBatches.push(sql);
+                dbExec.push(...sql);
+              }
+            });
+          }),
         query: (sql: string) =>
           Effect.sync(() => {
             if (cfg.port !== SHADOW_PORT) dbExec.push(sql);
@@ -301,6 +316,17 @@ const seedDeclarative = (workdir: string) => {
   writeFileSync(join(dir, "public.sql"), "create table a();");
 };
 
+// pg-delta is the default schema diff engine (CLI-1588): an absent
+// `[experimental.pgdelta]` section resolves to enabled = true, so gate-closed
+// scenarios must now disable it explicitly.
+const seedPgDeltaDisabledConfig = (workdir: string) => {
+  mkdirSync(join(workdir, "supabase"), { recursive: true });
+  writeFileSync(
+    join(workdir, "supabase", "config.toml"),
+    "[experimental.pgdelta]\nenabled = false\n",
+  );
+};
+
 const seedUuidDeclarative = (workdir: string, directory = "schemas") => {
   const dir = join(workdir, "supabase", directory);
   mkdirSync(join(dir, "schemas", "app", "tables"), { recursive: true });
@@ -344,14 +370,31 @@ describe("db schema declarative sync integration", () => {
   const tmp = useTempWorkdir();
   useShadowCacheDisabled();
 
-  it.effect("gate: fails when pg-delta is not enabled", () => {
+  it.effect("gate: fails when config disables pg-delta and --experimental is not passed", () => {
+    // pg-delta is the default engine (CLI-1588): the gate only closes when the
+    // config EXPLICITLY sets `enabled = false` and --experimental is absent.
     seedDeclarative(tmp.current);
+    seedPgDeltaDisabledConfig(tmp.current);
     const { layer } = setup(tmp.current, { experimental: false });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(dbSchemaDeclarativeSync(flags()));
       expect(failError(exit)?.constructor.name).toBe("DeclarativeNotEnabledError");
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect(
+    "gate: open by default — no [experimental.pgdelta] section and no --experimental",
+    () => {
+      // The pg-delta default flip (CLI-1588): an absent section resolves to
+      // enabled = true, so sync proceeds without --experimental.
+      seedDeclarative(tmp.current);
+      const s = setup(tmp.current, { experimental: false, diffSql: "" });
+      return Effect.gen(function* () {
+        yield* dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
+        expect(s.out.rawChunks.some((c) => c.text.includes("No schema changes found"))).toBe(true);
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
 
   it.effect("--apply and --no-apply together with --experimental fail with the mutex error", () => {
     const { layer } = setup(tmp.current, { experimental: true });
@@ -371,6 +414,8 @@ describe("db schema declarative sync integration", () => {
   it.effect(
     "--apply and --no-apply together without --experimental fail with the gate error, not the mutex error",
     () => {
+      // Gate is open by default; disable pg-delta so this hits DeclarativeNotEnabledError.
+      seedPgDeltaDisabledConfig(tmp.current);
       const { layer } = setup(tmp.current, { experimental: false });
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
@@ -408,6 +453,8 @@ describe("db schema declarative sync integration", () => {
   it.effect(
     "an explicit --experimental=false closes the gate even when SUPABASE_EXPERIMENTAL is set",
     () => {
+      // Absent pg-delta config would keep the gate open even with --experimental=false.
+      seedPgDeltaDisabledConfig(tmp.current);
       const { layer } = setup(tmp.current, {
         experimental: false,
         args: ["db", "schema", "declarative", "sync", "--experimental=false"],
@@ -1175,6 +1222,10 @@ describe("db schema declarative sync integration", () => {
         );
         expect(localResetRemovedContainers(s.child.spawned)).toContain("supabase_db_test");
         expect(localResetCreateArgs(s.child.spawned)).not.toBeUndefined();
+        // With pg-delta enabled by default (CLI-1588), the reset replays the
+        // just-written migration file natively — the reapply succeeds on the
+        // freshly reset database.
+        expect(s.dbExec.some((sql) => sql.includes("ALTER TABLE a ADD COLUMN b int"))).toBe(true);
         expect(s.out.rawChunks.some((c) => c.text.includes("Resetting local database"))).toBe(true);
         expect(
           s.out.rawChunks.some((c) =>
