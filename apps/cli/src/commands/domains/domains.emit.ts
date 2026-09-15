@@ -82,7 +82,7 @@ function normalizeHostnameResponse(response: HostnameResponse): Record<string, u
         },
         ssl: {
           ...response.data.result.ssl,
-          validation_records: response.data.result.ssl.validation_records ?? [],
+          validation_records: response.data.result.ssl?.validation_records ?? [],
         },
       },
     },

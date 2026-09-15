@@ -7,7 +7,7 @@ import { type V1GetHostnameConfigOutput } from "@supabase/api/effect";
  */
 export type HostnameResponse = typeof V1GetHostnameConfigOutput.Type;
 
-type HostnameSsl = HostnameResponse["data"]["result"]["ssl"];
+type HostnameSsl = NonNullable<HostnameResponse["data"]["result"]["ssl"]>;
 
 type HostnameStatus = Exclude<HostnameResponse["status"], undefined>;
 
@@ -18,8 +18,8 @@ function getHostnameStatus(response: HostnameResponse): HostnameStatus | undefin
   const result = response.data.result;
   if (
     result.status === "pending" ||
-    result.ssl.status === "initializing" ||
-    result.ssl.validation_records !== undefined ||
+    result.ssl?.status === "initializing" ||
+    result.ssl?.validation_records !== undefined ||
     result.ownership_verification !== undefined
   ) {
     return "2_initiated";
@@ -43,7 +43,7 @@ ${response.custom_hostname} CNAME -> ${response.data.result.custom_origin_server
     case "3_challenge_verified":
     case "2_initiated": {
       const ssl = response.data.result.ssl;
-      if (ssl.status === "initializing") {
+      if (ssl === undefined || ssl.status === "initializing") {
         return "Custom hostname setup is being initialized; please request re-verification in a few seconds.\n";
       }
       const validationErrors = ssl.validation_errors;

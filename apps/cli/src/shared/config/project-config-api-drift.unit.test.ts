@@ -230,7 +230,6 @@ describe("project-config API type drift guard", () => {
             capabilities: { list_v2: true, iceberg_catalog: false },
             upstream_target: "main",
             migration_version: "v1",
-            database_pool_mode: "transaction",
           },
         },
       },

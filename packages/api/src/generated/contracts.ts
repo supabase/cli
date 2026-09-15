@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 
 // non-recursive definitions
-export const SupavisorConfigResponse = Schema.Struct({
+export const SupavisorConfigResponse_Output = Schema.Struct({
   identifier: Schema.String,
   database_type: Schema.Literals(["PRIMARY", "READ_REPLICA"]),
   is_using_scram_auth: Schema.Boolean,
@@ -50,8 +50,8 @@ export const SupavisorConfigResponse = Schema.Struct({
     Schema.Null,
   ]),
   pool_mode: Schema.Literals(["transaction", "session"]),
-}).annotate({ identifier: "SupavisorConfigResponse" });
-export const ApiKeyResponse = Schema.Struct({
+}).annotate({ identifier: "SupavisorConfigResponse_Output" });
+export const ApiKeyResponse_Output = Schema.Struct({
   api_key: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   id: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   type: Schema.optionalKey(
@@ -73,8 +73,8 @@ export const ApiKeyResponse = Schema.Struct({
   updated_at: Schema.optionalKey(
     Schema.Union([Schema.String.annotate({ format: "date-time" }), Schema.Null]),
   ),
-}).annotate({ identifier: "ApiKeyResponse" });
-export const V1ServiceHealthResponse = Schema.Struct({
+}).annotate({ identifier: "ApiKeyResponse_Output" });
+export const V1ServiceHealthResponse_Output = Schema.Struct({
   name: Schema.Literals([
     "auth",
     "db",
@@ -114,8 +114,8 @@ export const V1ServiceHealthResponse = Schema.Struct({
     ]),
   ),
   error: Schema.optionalKey(Schema.String),
-}).annotate({ identifier: "V1ServiceHealthResponse" });
-export const BranchResponse = Schema.Struct({
+}).annotate({ identifier: "V1ServiceHealthResponse_Output" });
+export const BranchResponse_Output = Schema.Struct({
   id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
       new RegExp(
@@ -186,16 +186,16 @@ export const BranchResponse = Schema.Struct({
       "RESIZING",
     ]),
   ),
-}).annotate({ identifier: "BranchResponse" });
-export const V1StorageBucketResponse = Schema.Struct({
+}).annotate({ identifier: "BranchResponse_Output" });
+export const V1StorageBucketResponse_Output = Schema.Struct({
   id: Schema.String,
   name: Schema.String,
   owner: Schema.String,
   created_at: Schema.String,
   updated_at: Schema.String,
   public: Schema.Boolean,
-}).annotate({ identifier: "V1StorageBucketResponse" });
-export const FunctionResponse = Schema.Struct({
+}).annotate({ identifier: "V1StorageBucketResponse_Output" });
+export const FunctionResponse_Output = Schema.Struct({
   id: Schema.String,
   slug: Schema.String,
   name: Schema.String,
@@ -240,8 +240,8 @@ export const FunctionResponse = Schema.Struct({
   entrypoint_path: Schema.optionalKey(Schema.String),
   import_map_path: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   ezbr_sha256: Schema.optionalKey(Schema.String),
-}).annotate({ identifier: "FunctionResponse" });
-export const OrganizationResponseV1 = Schema.Struct({
+}).annotate({ identifier: "FunctionResponse_Output" });
+export const OrganizationResponseV1_Output = Schema.Struct({
   id: Schema.String.annotate({ description: "Deprecated: Use `slug` instead." }),
   slug: Schema.String.annotate({ description: "Organization slug" }).check(
     Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
@@ -249,8 +249,8 @@ export const OrganizationResponseV1 = Schema.Struct({
     }),
   ),
   name: Schema.String,
-}).annotate({ identifier: "OrganizationResponseV1" });
-export const V1ProjectWithDatabaseResponse = Schema.Struct({
+}).annotate({ identifier: "OrganizationResponseV1_Output" });
+export const V1ProjectWithDatabaseResponse_Output = Schema.Struct({
   id: Schema.String.annotate({ description: "Deprecated: Use `ref` instead." }),
   ref: Schema.String.annotate({ description: "Project ref" })
     .check(Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }))
@@ -294,21 +294,21 @@ export const V1ProjectWithDatabaseResponse = Schema.Struct({
     postgres_engine: Schema.String.annotate({ description: "Database engine" }),
     release_channel: Schema.String.annotate({ description: "Release channel" }),
   }),
-}).annotate({ identifier: "V1ProjectWithDatabaseResponse" });
-export const SecretResponse = Schema.Struct({
+}).annotate({ identifier: "V1ProjectWithDatabaseResponse_Output" });
+export const SecretResponse_Output = Schema.Struct({
   name: Schema.String,
   value: Schema.String,
   updated_at: Schema.optionalKey(Schema.String),
-}).annotate({ identifier: "SecretResponse" });
-export const V1OrganizationMemberResponse = Schema.Struct({
+}).annotate({ identifier: "SecretResponse_Output" });
+export const V1OrganizationMemberResponse_Output = Schema.Struct({
   user_id: Schema.String,
   user_name: Schema.String,
   email: Schema.optionalKey(Schema.String),
-  role_name: Schema.String,
+  role_name: Schema.optionalKey(Schema.String),
   mfa_enabled: Schema.Boolean,
   avatar_url: Schema.Union([Schema.String, Schema.Null]),
-}).annotate({ identifier: "V1OrganizationMemberResponse" });
-export const ThirdPartyAuth = Schema.Struct({
+}).annotate({ identifier: "V1OrganizationMemberResponse_Output" });
+export const ThirdPartyAuth_Output = Schema.Struct({
   id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
       new RegExp(
@@ -327,68 +327,28 @@ export const ThirdPartyAuth = Schema.Struct({
   inserted_at: Schema.String,
   updated_at: Schema.String,
   resolved_at: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-}).annotate({ identifier: "ThirdPartyAuth" });
+}).annotate({ identifier: "ThirdPartyAuth_Output" });
 // recursive definitions
-export type UpdateCustomHostnameResponseJsonValue =
+export type JsonValue_Output =
   | string
   | number
   | boolean
   | null
-  | ReadonlyArray<UpdateCustomHostnameResponseJsonValue>
-  | { readonly [x: string]: UpdateCustomHostnameResponseJsonValue };
-export const UpdateCustomHostnameResponseJsonValue = Schema.Union([
+  | ReadonlyArray<JsonValue_Output>
+  | { readonly [x: string]: JsonValue_Output };
+export const JsonValue_Output = Schema.Union([
   Schema.Union([
     Schema.String,
     Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
     Schema.Boolean,
     Schema.Null,
   ]),
-  Schema.Array(
-    Schema.suspend(
-      (): Schema.Codec<UpdateCustomHostnameResponseJsonValue> =>
-        UpdateCustomHostnameResponseJsonValue,
-    ),
-  ),
+  Schema.Array(Schema.suspend((): Schema.Codec<JsonValue_Output> => JsonValue_Output)),
   Schema.Record(
     Schema.String,
-    Schema.suspend(
-      (): Schema.Codec<UpdateCustomHostnameResponseJsonValue> =>
-        UpdateCustomHostnameResponseJsonValue,
-    ),
+    Schema.suspend((): Schema.Codec<JsonValue_Output> => JsonValue_Output),
   ),
-]).annotate({
-  description: "Any JSON-serializable value",
-  identifier: "UpdateCustomHostnameResponseJsonValue",
-});
-export type ListProjectAddonsResponseJsonValue =
-  | string
-  | number
-  | boolean
-  | null
-  | ReadonlyArray<ListProjectAddonsResponseJsonValue>
-  | { readonly [x: string]: ListProjectAddonsResponseJsonValue };
-export const ListProjectAddonsResponseJsonValue = Schema.Union([
-  Schema.Union([
-    Schema.String,
-    Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
-    Schema.Boolean,
-    Schema.Null,
-  ]),
-  Schema.Array(
-    Schema.suspend(
-      (): Schema.Codec<ListProjectAddonsResponseJsonValue> => ListProjectAddonsResponseJsonValue,
-    ),
-  ),
-  Schema.Record(
-    Schema.String,
-    Schema.suspend(
-      (): Schema.Codec<ListProjectAddonsResponseJsonValue> => ListProjectAddonsResponseJsonValue,
-    ),
-  ),
-]).annotate({
-  description: "Any JSON-serializable value",
-  identifier: "ListProjectAddonsResponseJsonValue",
-});
+]).annotate({ description: "Any JSON-serializable value", identifier: "JsonValue_Output" });
 // binary input helpers
 export const BinaryInput = Schema.Union([
   Schema.Uint8Array,
@@ -437,9 +397,7 @@ export const V1AcceptInviteExternalJitAccessOutput = Schema.Struct({
   ),
   user_roles: Schema.Array(
     Schema.Struct({
-      role: Schema.String.check(
-        Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
-      ),
+      role: Schema.String,
       expires_at: Schema.optionalKey(
         Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
       ),
@@ -507,26 +465,37 @@ export const V1ActivateCustomHostnameOutput = Schema.Struct({
   custom_hostname: Schema.optionalKey(Schema.String),
   data: Schema.Struct({
     success: Schema.Boolean,
-    errors: Schema.Array(UpdateCustomHostnameResponseJsonValue),
-    messages: Schema.Array(UpdateCustomHostnameResponseJsonValue),
+    errors: Schema.Array(JsonValue_Output),
+    messages: Schema.Array(JsonValue_Output),
     result: Schema.Struct({
       id: Schema.String,
       hostname: Schema.String,
-      ssl: Schema.Struct({
-        status: Schema.String,
-        validation_records: Schema.optionalKey(
-          Schema.Array(Schema.Struct({ txt_name: Schema.String, txt_value: Schema.String })),
-        ),
-        validation_errors: Schema.optionalKey(
-          Schema.Array(Schema.Struct({ message: Schema.String })),
-        ),
-      }),
-      ownership_verification: Schema.optionalKey(
-        Schema.Struct({ type: Schema.String, name: Schema.String, value: Schema.String }),
+      ssl: Schema.optionalKey(
+        Schema.Struct({
+          status: Schema.optionalKey(Schema.String),
+          validation_records: Schema.optionalKey(
+            Schema.Array(
+              Schema.Struct({
+                txt_name: Schema.optionalKey(Schema.String),
+                txt_value: Schema.optionalKey(Schema.String),
+              }),
+            ),
+          ),
+          validation_errors: Schema.optionalKey(
+            Schema.Array(Schema.Struct({ message: Schema.String })),
+          ),
+        }),
       ),
-      custom_origin_server: Schema.String,
+      ownership_verification: Schema.optionalKey(
+        Schema.Struct({
+          type: Schema.optionalKey(Schema.String),
+          name: Schema.optionalKey(Schema.String),
+          value: Schema.optionalKey(Schema.String),
+        }),
+      ),
+      custom_origin_server: Schema.optionalKey(Schema.String),
       verification_errors: Schema.optionalKey(Schema.Array(Schema.String)),
-      status: Schema.String,
+      status: Schema.optionalKey(Schema.String),
     }),
   }),
 });
@@ -647,20 +616,21 @@ export const V1AuthorizeJitAccessInput = Schema.Struct({
   ]),
 });
 export const V1AuthorizeJitAccessOutput = Schema.Struct({
-  user_id: Schema.String.annotate({ format: "uuid" }).check(
-    Schema.isPattern(
-      new RegExp(
-        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-      ),
-    ).annotate({
-      expected:
-        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-    }),
-  ),
-  user_role: Schema.Struct({
-    role: Schema.String.check(
-      Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+  user_id: Schema.optionalKey(
+    Schema.String.annotate({ format: "uuid" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      }),
     ),
+  ),
+  act: Schema.optionalKey(Schema.String),
+  user_role: Schema.Struct({
+    role: Schema.String,
     expires_at: Schema.optionalKey(
       Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
     ),
@@ -1323,8 +1293,8 @@ export const V1CreateASsoProviderInput = Schema.Struct({
         Schema.Struct({
           name: Schema.optionalKey(Schema.String),
           names: Schema.optionalKey(Schema.Array(Schema.String)),
-          default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
           array: Schema.optionalKey(Schema.Boolean),
+          default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
         }),
       ),
     }),
@@ -1353,8 +1323,8 @@ export const V1CreateASsoProviderOutput = Schema.Struct({
               Schema.Struct({
                 name: Schema.optionalKey(Schema.String),
                 names: Schema.optionalKey(Schema.Array(Schema.String)),
-                default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
                 array: Schema.optionalKey(Schema.Boolean),
+                default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
               }),
             ),
           ),
@@ -1874,8 +1844,8 @@ export const V1DeleteASsoProviderOutput = Schema.Struct({
               Schema.Struct({
                 name: Schema.optionalKey(Schema.String),
                 names: Schema.optionalKey(Schema.Array(Schema.String)),
-                default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
                 array: Schema.optionalKey(Schema.Boolean),
+                default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
               }),
             ),
           ),
@@ -2524,9 +2494,7 @@ export const V1GetAMigrationInput = Schema.Struct({
   ),
 });
 export const V1GetAMigrationOutput = Schema.Struct({
-  version: Schema.String.check(
-    Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
-  ),
+  version: Schema.String,
   name: Schema.optionalKey(Schema.String),
   statements: Schema.optionalKey(Schema.Array(Schema.String)),
   rollback: Schema.optionalKey(Schema.Array(Schema.String)),
@@ -2612,8 +2580,8 @@ export const V1GetASsoProviderOutput = Schema.Struct({
               Schema.Struct({
                 name: Schema.optionalKey(Schema.String),
                 names: Schema.optionalKey(Schema.Array(Schema.String)),
-                default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
                 array: Schema.optionalKey(Schema.Boolean),
+                default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
               }),
             ),
           ),
@@ -3292,6 +3260,7 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
       ),
     Schema.Null,
   ]),
+  security_update_password_require_current_password: Schema.Union([Schema.Boolean, Schema.Null]),
   security_update_password_require_reauthentication: Schema.Union([Schema.Boolean, Schema.Null]),
   sessions_inactivity_timeout: Schema.Union([
     Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
@@ -3619,17 +3588,10 @@ export const V1GetDatabaseMetadataInput = Schema.Struct({
 });
 export const V1GetDatabaseMetadataOutput = Schema.Struct({
   databases: Schema.Array(
-    Schema.StructWithRest(
-      Schema.Struct({
-        name: Schema.String,
-        schemas: Schema.Array(
-          Schema.StructWithRest(Schema.Struct({ name: Schema.String }), [
-            Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })),
-          ]),
-        ),
-      }),
-      [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
-    ),
+    Schema.Struct({
+      name: Schema.String,
+      schemas: Schema.Array(Schema.Struct({ name: Schema.String })),
+    }),
   ),
 });
 export const V1GetDatabaseOpenapiInput = Schema.Struct({
@@ -3693,26 +3655,37 @@ export const V1GetHostnameConfigOutput = Schema.Struct({
   custom_hostname: Schema.optionalKey(Schema.String),
   data: Schema.Struct({
     success: Schema.Boolean,
-    errors: Schema.Array(UpdateCustomHostnameResponseJsonValue),
-    messages: Schema.Array(UpdateCustomHostnameResponseJsonValue),
+    errors: Schema.Array(JsonValue_Output),
+    messages: Schema.Array(JsonValue_Output),
     result: Schema.Struct({
       id: Schema.String,
       hostname: Schema.String,
-      ssl: Schema.Struct({
-        status: Schema.String,
-        validation_records: Schema.optionalKey(
-          Schema.Array(Schema.Struct({ txt_name: Schema.String, txt_value: Schema.String })),
-        ),
-        validation_errors: Schema.optionalKey(
-          Schema.Array(Schema.Struct({ message: Schema.String })),
-        ),
-      }),
-      ownership_verification: Schema.optionalKey(
-        Schema.Struct({ type: Schema.String, name: Schema.String, value: Schema.String }),
+      ssl: Schema.optionalKey(
+        Schema.Struct({
+          status: Schema.optionalKey(Schema.String),
+          validation_records: Schema.optionalKey(
+            Schema.Array(
+              Schema.Struct({
+                txt_name: Schema.optionalKey(Schema.String),
+                txt_value: Schema.optionalKey(Schema.String),
+              }),
+            ),
+          ),
+          validation_errors: Schema.optionalKey(
+            Schema.Array(Schema.Struct({ message: Schema.String })),
+          ),
+        }),
       ),
-      custom_origin_server: Schema.String,
+      ownership_verification: Schema.optionalKey(
+        Schema.Struct({
+          type: Schema.optionalKey(Schema.String),
+          name: Schema.optionalKey(Schema.String),
+          value: Schema.optionalKey(Schema.String),
+        }),
+      ),
+      custom_origin_server: Schema.optionalKey(Schema.String),
       verification_errors: Schema.optionalKey(Schema.Array(Schema.String)),
-      status: Schema.String,
+      status: Schema.optionalKey(Schema.String),
     }),
   }),
 });
@@ -3742,9 +3715,7 @@ export const V1GetJitAccessOutput = Schema.Struct({
   ),
   user_roles: Schema.Array(
     Schema.Struct({
-      role: Schema.String.check(
-        Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
-      ),
+      role: Schema.String,
       expires_at: Schema.optionalKey(
         Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
       ),
@@ -3808,6 +3779,7 @@ export const V1GetJitAccessConfigOutput = Schema.Union(
     Schema.Struct({
       state: Schema.Literal("unavailable"),
       unavailableReason: Schema.Literals([
+        "platform_unsupported",
         "postgres_upgrade_required",
         "ssl_enforcement_required",
         "temporarily_unavailable",
@@ -4024,90 +3996,87 @@ export const V1GetPerformanceAdvisorsInput = Schema.Struct({
 });
 export const V1GetPerformanceAdvisorsOutput = Schema.Struct({
   lints: Schema.Array(
-    Schema.StructWithRest(
-      Schema.Struct({
-        name: Schema.Literals([
-          "unindexed_foreign_keys",
-          "auth_users_exposed",
-          "auth_rls_initplan",
-          "no_primary_key",
-          "unused_index",
-          "multiple_permissive_policies",
-          "policy_exists_rls_disabled",
-          "rls_enabled_no_policy",
-          "duplicate_index",
-          "security_definer_view",
-          "function_search_path_mutable",
-          "rls_disabled_in_public",
-          "extension_in_public",
-          "rls_references_user_metadata",
-          "materialized_view_in_api",
-          "foreign_table_in_api",
-          "unsupported_reg_types",
-          "auth_otp_long_expiry",
-          "auth_otp_short_length",
-          "ssl_not_enforced",
-          "log_connections_not_enabled",
-          "network_restrictions_not_set",
-          "password_requirements_min_length",
-          "pitr_not_enabled",
-          "auth_leaked_password_protection",
-          "auth_insufficient_mfa_options",
-          "auth_password_policy_missing",
-          "leaked_service_key",
-          "no_backup_admin",
-          "vulnerable_postgres_version",
-          "db_not_reachable",
-          "db_connection_failing",
-          "db_connection_limit_reached",
-          "instance_telemetry_lost",
-          "instance_db_down",
-          "instance_alert_firing",
-          "log_service_error_rate_high",
-          "project_not_active",
-          "advisor_check_unavailable",
-        ]),
-        title: Schema.String,
-        level: Schema.Literals(["ERROR", "WARN", "INFO"]),
-        facing: Schema.Literal("EXTERNAL"),
-        categories: Schema.Array(Schema.Literals(["PERFORMANCE", "SECURITY", "HEALTH"])),
-        description: Schema.String,
-        detail: Schema.String,
-        remediation: Schema.String,
-        metadata: Schema.optionalKey(
-          Schema.StructWithRest(
-            Schema.Struct({
-              schema: Schema.optionalKey(Schema.String),
-              name: Schema.optionalKey(Schema.String),
-              entity: Schema.optionalKey(Schema.String),
-              type: Schema.optionalKey(
-                Schema.Literals([
-                  "table",
-                  "view",
-                  "materialized view",
-                  "foreign table",
-                  "auth",
-                  "function",
-                  "extension",
-                  "compliance",
-                  "health",
-                ]),
-              ),
-              fkey_name: Schema.optionalKey(Schema.String),
-              fkey_columns: Schema.optionalKey(
-                Schema.Array(
-                  Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
-                ),
-              ),
-            }),
-            [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+    Schema.Struct({
+      name: Schema.Literals([
+        "unindexed_foreign_keys",
+        "auth_users_exposed",
+        "auth_rls_initplan",
+        "no_primary_key",
+        "unused_index",
+        "multiple_permissive_policies",
+        "policy_exists_rls_disabled",
+        "rls_enabled_no_policy",
+        "duplicate_index",
+        "security_definer_view",
+        "function_search_path_mutable",
+        "rls_disabled_in_public",
+        "extension_in_public",
+        "rls_references_user_metadata",
+        "materialized_view_in_api",
+        "foreign_table_in_api",
+        "unsupported_reg_types",
+        "auth_otp_long_expiry",
+        "auth_otp_short_length",
+        "ssl_not_enforced",
+        "log_connections_not_enabled",
+        "network_restrictions_not_set",
+        "password_requirements_min_length",
+        "pitr_not_enabled",
+        "auth_leaked_password_protection",
+        "auth_insufficient_mfa_options",
+        "auth_password_policy_missing",
+        "leaked_service_key",
+        "no_backup_admin",
+        "vulnerable_postgres_version",
+        "db_not_reachable",
+        "db_connection_failing",
+        "db_connection_limit_reached",
+        "instance_telemetry_lost",
+        "instance_db_down",
+        "instance_alert_firing",
+        "log_data_api_error_rate_high",
+        "log_auth_error_rate_high",
+        "log_storage_error_rate_high",
+        "log_edge_function_error_rate_high",
+        "project_not_active",
+        "advisor_check_unavailable",
+      ]),
+      title: Schema.String,
+      level: Schema.Literals(["ERROR", "WARN", "INFO"]),
+      facing: Schema.Literal("EXTERNAL"),
+      categories: Schema.Array(Schema.Literals(["PERFORMANCE", "SECURITY", "HEALTH"])),
+      description: Schema.String,
+      detail: Schema.String,
+      remediation: Schema.String,
+      metadata: Schema.optionalKey(
+        Schema.Struct({
+          schema: Schema.optionalKey(Schema.String),
+          name: Schema.optionalKey(Schema.String),
+          entity: Schema.optionalKey(Schema.String),
+          type: Schema.optionalKey(
+            Schema.Literals([
+              "table",
+              "view",
+              "materialized view",
+              "foreign table",
+              "auth",
+              "function",
+              "extension",
+              "compliance",
+              "health",
+            ]),
           ),
-        ),
-        cache_key: Schema.String,
-        observed_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
-      }),
-      [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
-    ),
+          fkey_name: Schema.optionalKey(Schema.String),
+          fkey_columns: Schema.optionalKey(
+            Schema.Array(
+              Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+            ),
+          ),
+        }),
+      ),
+      cache_key: Schema.String,
+      observed_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+    }),
   ),
 });
 export const V1GetPgsodiumConfigInput = Schema.Struct({
@@ -4137,7 +4106,7 @@ export const V1GetPoolerConfigInput = Schema.Struct({
       }),
     ),
 });
-export const V1GetPoolerConfigOutput = Schema.Array(SupavisorConfigResponse);
+export const V1GetPoolerConfigOutput = Schema.Array(SupavisorConfigResponse_Output);
 export const V1GetPostgresConfigInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
@@ -4432,6 +4401,7 @@ export const V1GetPostgresUpgradeEligibilityOutput = Schema.Struct({
         Schema.Struct({ type: Schema.Literal("pg_graphql_introspection_change") }),
         Schema.Struct({ type: Schema.Literal("ltree_reindex_required") }),
         Schema.Struct({ type: Schema.Literal("operator_estimator_gate") }),
+        Schema.Struct({ type: Schema.Literal("btree_gist_nan_reindex") }),
       ],
       { mode: "oneOf" },
     ),
@@ -4454,9 +4424,7 @@ export const V1GetPostgresUpgradeStatusOutput = Schema.Struct({
     Schema.Struct({
       initiated_at: Schema.String,
       latest_status_at: Schema.String,
-      target_version: Schema.Number.check(
-        Schema.isFinite().annotate({ expected: "a finite number" }),
-      ),
+      target_version: Schema.String,
       error: Schema.optionalKey(
         Schema.Literals([
           "1_upgraded_instance_launch_failed",
@@ -4670,7 +4638,7 @@ export const V1GetProjectApiKeysInput = Schema.Struct({
     ),
   reveal: Schema.optionalKey(Schema.Union([Schema.String, Schema.Boolean])),
 });
-export const V1GetProjectApiKeysOutput = Schema.Array(ApiKeyResponse);
+export const V1GetProjectApiKeysOutput = Schema.Array(ApiKeyResponse_Output);
 export const V1GetProjectClaimTokenInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
@@ -5375,90 +5343,87 @@ export const V1GetSecurityAdvisorsInput = Schema.Struct({
 });
 export const V1GetSecurityAdvisorsOutput = Schema.Struct({
   lints: Schema.Array(
-    Schema.StructWithRest(
-      Schema.Struct({
-        name: Schema.Literals([
-          "unindexed_foreign_keys",
-          "auth_users_exposed",
-          "auth_rls_initplan",
-          "no_primary_key",
-          "unused_index",
-          "multiple_permissive_policies",
-          "policy_exists_rls_disabled",
-          "rls_enabled_no_policy",
-          "duplicate_index",
-          "security_definer_view",
-          "function_search_path_mutable",
-          "rls_disabled_in_public",
-          "extension_in_public",
-          "rls_references_user_metadata",
-          "materialized_view_in_api",
-          "foreign_table_in_api",
-          "unsupported_reg_types",
-          "auth_otp_long_expiry",
-          "auth_otp_short_length",
-          "ssl_not_enforced",
-          "log_connections_not_enabled",
-          "network_restrictions_not_set",
-          "password_requirements_min_length",
-          "pitr_not_enabled",
-          "auth_leaked_password_protection",
-          "auth_insufficient_mfa_options",
-          "auth_password_policy_missing",
-          "leaked_service_key",
-          "no_backup_admin",
-          "vulnerable_postgres_version",
-          "db_not_reachable",
-          "db_connection_failing",
-          "db_connection_limit_reached",
-          "instance_telemetry_lost",
-          "instance_db_down",
-          "instance_alert_firing",
-          "log_service_error_rate_high",
-          "project_not_active",
-          "advisor_check_unavailable",
-        ]),
-        title: Schema.String,
-        level: Schema.Literals(["ERROR", "WARN", "INFO"]),
-        facing: Schema.Literal("EXTERNAL"),
-        categories: Schema.Array(Schema.Literals(["PERFORMANCE", "SECURITY", "HEALTH"])),
-        description: Schema.String,
-        detail: Schema.String,
-        remediation: Schema.String,
-        metadata: Schema.optionalKey(
-          Schema.StructWithRest(
-            Schema.Struct({
-              schema: Schema.optionalKey(Schema.String),
-              name: Schema.optionalKey(Schema.String),
-              entity: Schema.optionalKey(Schema.String),
-              type: Schema.optionalKey(
-                Schema.Literals([
-                  "table",
-                  "view",
-                  "materialized view",
-                  "foreign table",
-                  "auth",
-                  "function",
-                  "extension",
-                  "compliance",
-                  "health",
-                ]),
-              ),
-              fkey_name: Schema.optionalKey(Schema.String),
-              fkey_columns: Schema.optionalKey(
-                Schema.Array(
-                  Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
-                ),
-              ),
-            }),
-            [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+    Schema.Struct({
+      name: Schema.Literals([
+        "unindexed_foreign_keys",
+        "auth_users_exposed",
+        "auth_rls_initplan",
+        "no_primary_key",
+        "unused_index",
+        "multiple_permissive_policies",
+        "policy_exists_rls_disabled",
+        "rls_enabled_no_policy",
+        "duplicate_index",
+        "security_definer_view",
+        "function_search_path_mutable",
+        "rls_disabled_in_public",
+        "extension_in_public",
+        "rls_references_user_metadata",
+        "materialized_view_in_api",
+        "foreign_table_in_api",
+        "unsupported_reg_types",
+        "auth_otp_long_expiry",
+        "auth_otp_short_length",
+        "ssl_not_enforced",
+        "log_connections_not_enabled",
+        "network_restrictions_not_set",
+        "password_requirements_min_length",
+        "pitr_not_enabled",
+        "auth_leaked_password_protection",
+        "auth_insufficient_mfa_options",
+        "auth_password_policy_missing",
+        "leaked_service_key",
+        "no_backup_admin",
+        "vulnerable_postgres_version",
+        "db_not_reachable",
+        "db_connection_failing",
+        "db_connection_limit_reached",
+        "instance_telemetry_lost",
+        "instance_db_down",
+        "instance_alert_firing",
+        "log_data_api_error_rate_high",
+        "log_auth_error_rate_high",
+        "log_storage_error_rate_high",
+        "log_edge_function_error_rate_high",
+        "project_not_active",
+        "advisor_check_unavailable",
+      ]),
+      title: Schema.String,
+      level: Schema.Literals(["ERROR", "WARN", "INFO"]),
+      facing: Schema.Literal("EXTERNAL"),
+      categories: Schema.Array(Schema.Literals(["PERFORMANCE", "SECURITY", "HEALTH"])),
+      description: Schema.String,
+      detail: Schema.String,
+      remediation: Schema.String,
+      metadata: Schema.optionalKey(
+        Schema.Struct({
+          schema: Schema.optionalKey(Schema.String),
+          name: Schema.optionalKey(Schema.String),
+          entity: Schema.optionalKey(Schema.String),
+          type: Schema.optionalKey(
+            Schema.Literals([
+              "table",
+              "view",
+              "materialized view",
+              "foreign table",
+              "auth",
+              "function",
+              "extension",
+              "compliance",
+              "health",
+            ]),
           ),
-        ),
-        cache_key: Schema.String,
-        observed_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
-      }),
-      [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
-    ),
+          fkey_name: Schema.optionalKey(Schema.String),
+          fkey_columns: Schema.optionalKey(
+            Schema.Array(
+              Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+            ),
+          ),
+        }),
+      ),
+      cache_key: Schema.String,
+      observed_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+    }),
   ),
 });
 export const V1GetServicesHealthInput = Schema.Struct({
@@ -5503,7 +5468,7 @@ export const V1GetServicesHealthInput = Schema.Struct({
       ),
   ),
 });
-export const V1GetServicesHealthOutput = Schema.Array(V1ServiceHealthResponse);
+export const V1GetServicesHealthOutput = Schema.Array(V1ServiceHealthResponse_Output);
 export const V1GetSslEnforcementConfigInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
@@ -5609,10 +5574,13 @@ export const V1GetStorageConfigOutput = Schema.Struct({
         ),
     }),
   }),
-  capabilities: Schema.Struct({ list_v2: Schema.Boolean, iceberg_catalog: Schema.Boolean }),
+  capabilities: Schema.Struct({
+    list_v2: Schema.Boolean,
+    iceberg_catalog: Schema.Boolean,
+    object_versioning: Schema.Boolean,
+  }),
   external: Schema.Struct({ upstreamTarget: Schema.Literals(["main", "canary"]) }),
-  migrationVersion: Schema.String,
-  databasePoolMode: Schema.optionalKey(Schema.String),
+  migrationVersion: Schema.Union([Schema.String, Schema.Null]),
 });
 export const V1GetVanitySubdomainConfigInput = Schema.Struct({
   ref: Schema.String.check(
@@ -5726,9 +5694,7 @@ export const V1InviteExternalJitAccessOutput = Schema.Struct({
   ),
   user_roles: Schema.Array(
     Schema.Struct({
-      role: Schema.String.check(
-        Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
-      ),
+      role: Schema.String,
       expires_at: Schema.optionalKey(
         Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
       ),
@@ -5913,7 +5879,7 @@ export const V1ListAllBranchesInput = Schema.Struct({
       }),
     ),
 });
-export const V1ListAllBranchesOutput = Schema.Array(BranchResponse);
+export const V1ListAllBranchesOutput = Schema.Array(BranchResponse_Output);
 export const V1ListAllBucketsInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
@@ -5925,7 +5891,7 @@ export const V1ListAllBucketsInput = Schema.Struct({
       }),
     ),
 });
-export const V1ListAllBucketsOutput = Schema.Array(V1StorageBucketResponse);
+export const V1ListAllBucketsOutput = Schema.Array(V1StorageBucketResponse_Output);
 export const V1ListAllFunctionsInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
@@ -5937,7 +5903,7 @@ export const V1ListAllFunctionsInput = Schema.Struct({
       }),
     ),
 });
-export const V1ListAllFunctionsOutput = Schema.Array(FunctionResponse);
+export const V1ListAllFunctionsOutput = Schema.Array(FunctionResponse_Output);
 export const V1ListAllNetworkBansInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
@@ -5973,9 +5939,9 @@ export const V1ListAllNetworkBansEnrichedOutput = Schema.Struct({
   ),
 });
 export const V1ListAllOrganizationsInput = Schema.Record(Schema.String, Schema.Never);
-export const V1ListAllOrganizationsOutput = Schema.Array(OrganizationResponseV1);
+export const V1ListAllOrganizationsOutput = Schema.Array(OrganizationResponseV1_Output);
 export const V1ListAllProjectsInput = Schema.Record(Schema.String, Schema.Never);
-export const V1ListAllProjectsOutput = Schema.Array(V1ProjectWithDatabaseResponse);
+export const V1ListAllProjectsOutput = Schema.Array(V1ProjectWithDatabaseResponse_Output);
 export const V1ListAllSecretsInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
@@ -5987,7 +5953,7 @@ export const V1ListAllSecretsInput = Schema.Struct({
       }),
     ),
 });
-export const V1ListAllSecretsOutput = Schema.Array(SecretResponse);
+export const V1ListAllSecretsOutput = Schema.Array(SecretResponse_Output);
 export const V1ListAllSnippetsInput = Schema.Struct({
   project_ref: Schema.optionalKey(
     Schema.String.check(
@@ -6060,8 +6026,8 @@ export const V1ListAllSsoProviderOutput = Schema.Struct({
                   Schema.Struct({
                     name: Schema.optionalKey(Schema.String),
                     names: Schema.optionalKey(Schema.Array(Schema.String)),
-                    default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
                     array: Schema.optionalKey(Schema.Boolean),
+                    default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
                   }),
                 ),
               ),
@@ -6141,9 +6107,7 @@ export const V1ListJitAccessOutput = Schema.Struct({
         expires_at: Schema.Null,
         user_roles: Schema.Array(
           Schema.Struct({
-            role: Schema.String.check(
-              Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
-            ),
+            role: Schema.String,
             expires_at: Schema.optionalKey(
               Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
             ),
@@ -6203,9 +6167,7 @@ export const V1ListJitAccessOutput = Schema.Struct({
         expires_at: Schema.String,
         user_roles: Schema.Array(
           Schema.Struct({
-            role: Schema.String.check(
-              Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
-            ),
+            role: Schema.String,
             expires_at: Schema.optionalKey(
               Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
             ),
@@ -6264,12 +6226,7 @@ export const V1ListMigrationHistoryInput = Schema.Struct({
     ),
 });
 export const V1ListMigrationHistoryOutput = Schema.Array(
-  Schema.Struct({
-    version: Schema.String.check(
-      Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
-    ),
-    name: Schema.optionalKey(Schema.String),
-  }),
+  Schema.Struct({ version: Schema.String, name: Schema.optionalKey(Schema.String) }),
 );
 export const V1ListOrganizationMembersInput = Schema.Struct({
   slug: Schema.String.check(
@@ -6278,7 +6235,7 @@ export const V1ListOrganizationMembersInput = Schema.Struct({
     }),
   ),
 });
-export const V1ListOrganizationMembersOutput = Schema.Array(V1OrganizationMemberResponse);
+export const V1ListOrganizationMembersOutput = Schema.Array(V1OrganizationMemberResponse_Output);
 export const V1ListProjectAddonsInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
@@ -6340,7 +6297,7 @@ export const V1ListProjectAddonsOutput = Schema.Struct({
           interval: Schema.Literals(["monthly", "hourly"]),
           amount: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
         }),
-        meta: Schema.optionalKey(ListProjectAddonsResponseJsonValue),
+        meta: Schema.optionalKey(JsonValue_Output),
       }),
     }),
   ),
@@ -6397,7 +6354,7 @@ export const V1ListProjectAddonsOutput = Schema.Struct({
               Schema.isFinite().annotate({ expected: "a finite number" }),
             ),
           }),
-          meta: Schema.optionalKey(ListProjectAddonsResponseJsonValue),
+          meta: Schema.optionalKey(JsonValue_Output),
         }),
       ),
     }),
@@ -6414,7 +6371,7 @@ export const V1ListProjectTpaIntegrationsInput = Schema.Struct({
       }),
     ),
 });
-export const V1ListProjectTpaIntegrationsOutput = Schema.Array(ThirdPartyAuth);
+export const V1ListProjectTpaIntegrationsOutput = Schema.Array(ThirdPartyAuth_Output);
 export const V1MergeABranchInput = Schema.Struct({
   branch_id_or_ref: Schema.Union([
     Schema.String.annotate({ description: "Project ref" })
@@ -7220,8 +7177,8 @@ export const V1UpdateASsoProviderInput = Schema.Struct({
         Schema.Struct({
           name: Schema.optionalKey(Schema.String),
           names: Schema.optionalKey(Schema.Array(Schema.String)),
-          default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
           array: Schema.optionalKey(Schema.Boolean),
+          default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
         }),
       ),
     }),
@@ -7250,8 +7207,8 @@ export const V1UpdateASsoProviderOutput = Schema.Struct({
               Schema.Struct({
                 name: Schema.optionalKey(Schema.String),
                 names: Schema.optionalKey(Schema.Array(Schema.String)),
-                default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
                 array: Schema.optionalKey(Schema.Boolean),
+                default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
               }),
             ),
           ),
@@ -7514,21 +7471,29 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   security_captcha_secret: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   sessions_timebox: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })).check(
-        Schema.isGreaterThanOrEqualTo(0).annotate({
-          expected: "a value greater than or equal to 0",
-        }),
-      ),
+      Schema.Number.annotate({
+        description: "Session timebox in hours. Maximum 8760 hours (1 year).",
+      })
+        .check(Schema.isFinite().annotate({ expected: "a finite number" }))
+        .check(
+          Schema.isGreaterThanOrEqualTo(0).annotate({
+            expected: "a value greater than or equal to 0",
+          }),
+        ),
       Schema.Null,
     ]),
   ),
   sessions_inactivity_timeout: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })).check(
-        Schema.isGreaterThanOrEqualTo(0).annotate({
-          expected: "a value greater than or equal to 0",
-        }),
-      ),
+      Schema.Number.annotate({
+        description: "Session inactivity timeout in hours. Maximum 8760 hours (1 year).",
+      })
+        .check(Schema.isFinite().annotate({ expected: "a finite number" }))
+        .check(
+          Schema.isGreaterThanOrEqualTo(0).annotate({
+            expected: "a value greater than or equal to 0",
+          }),
+        ),
       Schema.Null,
     ]),
   ),
@@ -7694,9 +7659,20 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   security_update_password_require_reauthentication: Schema.optionalKey(
     Schema.Union([Schema.Boolean, Schema.Null]),
   ),
+  security_update_password_require_current_password: Schema.optionalKey(
+    Schema.Union([
+      Schema.Boolean.annotate({
+        description: "Require the user's current password when updating their password.",
+      }),
+      Schema.Null,
+    ]),
+  ),
   security_refresh_token_reuse_interval: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      Schema.Number.annotate({
+        description: "Refresh token reuse interval in seconds. Maximum 300 seconds (5 minutes).",
+      })
+        .check(Schema.isInt().annotate({ expected: "an integer" }))
         .check(
           Schema.isGreaterThanOrEqualTo(0).annotate({
             expected: "a value greater than or equal to 0",
@@ -8477,6 +8453,7 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
       ),
     Schema.Null,
   ]),
+  security_update_password_require_current_password: Schema.Union([Schema.Boolean, Schema.Null]),
   security_update_password_require_reauthentication: Schema.Union([Schema.Boolean, Schema.Null]),
   sessions_inactivity_timeout: Schema.Union([
     Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
@@ -8683,26 +8660,37 @@ export const V1UpdateHostnameConfigOutput = Schema.Struct({
   custom_hostname: Schema.optionalKey(Schema.String),
   data: Schema.Struct({
     success: Schema.Boolean,
-    errors: Schema.Array(UpdateCustomHostnameResponseJsonValue),
-    messages: Schema.Array(UpdateCustomHostnameResponseJsonValue),
+    errors: Schema.Array(JsonValue_Output),
+    messages: Schema.Array(JsonValue_Output),
     result: Schema.Struct({
       id: Schema.String,
       hostname: Schema.String,
-      ssl: Schema.Struct({
-        status: Schema.String,
-        validation_records: Schema.optionalKey(
-          Schema.Array(Schema.Struct({ txt_name: Schema.String, txt_value: Schema.String })),
-        ),
-        validation_errors: Schema.optionalKey(
-          Schema.Array(Schema.Struct({ message: Schema.String })),
-        ),
-      }),
-      ownership_verification: Schema.optionalKey(
-        Schema.Struct({ type: Schema.String, name: Schema.String, value: Schema.String }),
+      ssl: Schema.optionalKey(
+        Schema.Struct({
+          status: Schema.optionalKey(Schema.String),
+          validation_records: Schema.optionalKey(
+            Schema.Array(
+              Schema.Struct({
+                txt_name: Schema.optionalKey(Schema.String),
+                txt_value: Schema.optionalKey(Schema.String),
+              }),
+            ),
+          ),
+          validation_errors: Schema.optionalKey(
+            Schema.Array(Schema.Struct({ message: Schema.String })),
+          ),
+        }),
       ),
-      custom_origin_server: Schema.String,
+      ownership_verification: Schema.optionalKey(
+        Schema.Struct({
+          type: Schema.optionalKey(Schema.String),
+          name: Schema.optionalKey(Schema.String),
+          value: Schema.optionalKey(Schema.String),
+        }),
+      ),
+      custom_origin_server: Schema.optionalKey(Schema.String),
       verification_errors: Schema.optionalKey(Schema.Array(Schema.String)),
-      status: Schema.String,
+      status: Schema.optionalKey(Schema.String),
     }),
   }),
 });
@@ -8791,9 +8779,7 @@ export const V1UpdateJitAccessOutput = Schema.Struct({
   ),
   user_roles: Schema.Array(
     Schema.Struct({
-      role: Schema.String.check(
-        Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
-      ),
+      role: Schema.String,
       expires_at: Schema.optionalKey(
         Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
       ),
@@ -8858,6 +8844,7 @@ export const V1UpdateJitAccessConfigOutput = Schema.Union(
     Schema.Struct({
       state: Schema.Literal("unavailable"),
       unavailableReason: Schema.Literals([
+        "platform_unsupported",
         "postgres_upgrade_required",
         "ssl_enforcement_required",
         "temporarily_unavailable",
@@ -9899,26 +9886,37 @@ export const V1VerifyDnsConfigOutput = Schema.Struct({
   custom_hostname: Schema.optionalKey(Schema.String),
   data: Schema.Struct({
     success: Schema.Boolean,
-    errors: Schema.Array(UpdateCustomHostnameResponseJsonValue),
-    messages: Schema.Array(UpdateCustomHostnameResponseJsonValue),
+    errors: Schema.Array(JsonValue_Output),
+    messages: Schema.Array(JsonValue_Output),
     result: Schema.Struct({
       id: Schema.String,
       hostname: Schema.String,
-      ssl: Schema.Struct({
-        status: Schema.String,
-        validation_records: Schema.optionalKey(
-          Schema.Array(Schema.Struct({ txt_name: Schema.String, txt_value: Schema.String })),
-        ),
-        validation_errors: Schema.optionalKey(
-          Schema.Array(Schema.Struct({ message: Schema.String })),
-        ),
-      }),
-      ownership_verification: Schema.optionalKey(
-        Schema.Struct({ type: Schema.String, name: Schema.String, value: Schema.String }),
+      ssl: Schema.optionalKey(
+        Schema.Struct({
+          status: Schema.optionalKey(Schema.String),
+          validation_records: Schema.optionalKey(
+            Schema.Array(
+              Schema.Struct({
+                txt_name: Schema.optionalKey(Schema.String),
+                txt_value: Schema.optionalKey(Schema.String),
+              }),
+            ),
+          ),
+          validation_errors: Schema.optionalKey(
+            Schema.Array(Schema.Struct({ message: Schema.String })),
+          ),
+        }),
       ),
-      custom_origin_server: Schema.String,
+      ownership_verification: Schema.optionalKey(
+        Schema.Struct({
+          type: Schema.optionalKey(Schema.String),
+          name: Schema.optionalKey(Schema.String),
+          value: Schema.optionalKey(Schema.String),
+        }),
+      ),
+      custom_origin_server: Schema.optionalKey(Schema.String),
       verification_errors: Schema.optionalKey(Schema.Array(Schema.String)),
-      status: Schema.String,
+      status: Schema.optionalKey(Schema.String),
     }),
   }),
 });
@@ -9971,6 +9969,150 @@ export const V2AssignOrganizationMemberRoleOutput = Schema.Struct({
       }),
       projects: Schema.Array(Schema.Struct({ ref: Schema.String, name: Schema.String })).annotate({
         description: "Project refs this role is scoped to. Empty array for org-level roles.",
+      }),
+    }),
+  }),
+});
+export const V2CreateABranchInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  data: Schema.Struct({
+    type: Schema.Literal("branch").annotate({ description: "Resource type." }),
+    attributes: Schema.Struct({
+      name: Schema.String.annotate({ description: "Name of the branch." }).check(
+        Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+      ),
+      git_branch: Schema.optionalKey(
+        Schema.String.annotate({
+          description:
+            "Git branch to track. Must exist on the connected GitHub repository when the project has one.",
+        }).check(
+          Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+        ),
+      ),
+      region: Schema.optionalKey(
+        Schema.String.annotate({
+          description:
+            "Region to create the branch in. Omit to inherit the region of the project it branches from.",
+        }),
+      ),
+      persistent: Schema.optionalKey(
+        Schema.Boolean.annotate({
+          description:
+            "Whether the branch is kept when its git branch is deleted or its PR is merged.",
+        }),
+      ),
+      with_data: Schema.optionalKey(
+        Schema.Boolean.annotate({
+          description: "Whether to seed the branch from the project's latest physical backup.",
+        }),
+      ),
+      desired_instance_size: Schema.optionalKey(
+        Schema.Literals([
+          "nano",
+          "micro",
+          "small",
+          "medium",
+          "large",
+          "xlarge",
+          "2xlarge",
+          "4xlarge",
+          "8xlarge",
+          "12xlarge",
+          "16xlarge",
+          "24xlarge",
+          "24xlarge_optimized_memory",
+          "24xlarge_optimized_cpu",
+          "24xlarge_high_memory",
+          "48xlarge",
+          "48xlarge_optimized_memory",
+          "48xlarge_optimized_cpu",
+          "48xlarge_high_memory",
+        ]).annotate({
+          description:
+            "Desired instance size. Omit this field to always default to the smallest possible size.",
+        }),
+      ),
+      desired_disk_size_gb: Schema.optionalKey(
+        Schema.Number.annotate({
+          description:
+            "Desired disk size in GB. Omit this field to default to the smallest disk size available on the plan.",
+        })
+          .check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isGreaterThanOrEqualTo(8).annotate({
+              expected: "a value greater than or equal to 8",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(61440).annotate({
+              expected: "a value less than or equal to 61440",
+            }),
+          ),
+      ),
+      notify_url: Schema.optionalKey(
+        Schema.String.annotate({
+          description: "HTTP endpoint to receive branch status updates.",
+          format: "uri",
+        }),
+      ),
+    }),
+  }),
+});
+export const V2CreateABranchOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("branch").annotate({ description: "Resource type." }),
+    id: Schema.String.annotate({ description: "ID of the branch.", format: "uuid" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      }),
+    ),
+    attributes: Schema.Struct({
+      name: Schema.String.annotate({ description: "Name of the branch." }),
+      project_ref: Schema.String.annotate({
+        description: "Ref of the project backing this branch.",
+      }),
+      parent_project_ref: Schema.String.annotate({
+        description: "Ref of the project it branches from.",
+      }),
+      is_default: Schema.Boolean.annotate({
+        description: "Whether this is the default branch of the project.",
+      }),
+      persistent: Schema.Boolean.annotate({
+        description:
+          "Whether the branch is kept when its git branch is deleted or its PR is merged.",
+      }),
+      with_data: Schema.Boolean.annotate({
+        description: "Whether the branch is seeded from the project's data.",
+      }),
+      git_branch: Schema.optionalKey(
+        Schema.String.annotate({ description: "Git branch being tracked." }),
+      ),
+      notify_url: Schema.optionalKey(
+        Schema.String.annotate({
+          description: "HTTP endpoint receiving branch status updates.",
+          format: "uri",
+        }),
+      ),
+      created_at: Schema.String.annotate({
+        description: "Creation timestamp.",
+        format: "date-time",
+      }),
+      updated_at: Schema.String.annotate({
+        description: "Last update timestamp.",
+        format: "date-time",
       }),
     }),
   }),
@@ -11388,10 +11530,13 @@ export const V2GetProjectConfigOutput = Schema.Struct({
               ),
           }),
         }),
-        capabilities: Schema.Struct({ list_v2: Schema.Boolean, iceberg_catalog: Schema.Boolean }),
+        capabilities: Schema.Struct({
+          list_v2: Schema.Boolean,
+          iceberg_catalog: Schema.Boolean,
+          object_versioning: Schema.Boolean,
+        }),
         upstream_target: Schema.Literals(["main", "canary"]),
-        migration_version: Schema.String,
-        database_pool_mode: Schema.String,
+        migration_version: Schema.Union([Schema.String, Schema.Null]),
       }).annotate({
         description:
           "Read from the storage service's admin API rather than the middleware DB, so unlike the rest of this resource it reflects the tenant's live config.",
@@ -12230,7 +12375,10 @@ export const V2RunProjectAdvisorsInput = Schema.Struct({
               "instance_telemetry_lost",
               "instance_db_down",
               "instance_alert_firing",
-              "log_service_error_rate_high",
+              "log_data_api_error_rate_high",
+              "log_auth_error_rate_high",
+              "log_storage_error_rate_high",
+              "log_edge_function_error_rate_high",
             ]),
           }),
         )
@@ -12288,7 +12436,10 @@ export const V2RunProjectAdvisorsOutput = Schema.Struct({
             "instance_telemetry_lost",
             "instance_db_down",
             "instance_alert_firing",
-            "log_service_error_rate_high",
+            "log_data_api_error_rate_high",
+            "log_auth_error_rate_high",
+            "log_storage_error_rate_high",
+            "log_edge_function_error_rate_high",
             "project_not_active",
             "advisor_check_unavailable",
           ]),
@@ -12786,6 +12937,7 @@ export const openApiOperationIdMap = {
   "v1-upsert-a-migration": "v1UpsertAMigration",
   "v1-verify-dns-config": "v1VerifyDnsConfig",
   "v2-assign-organization-member-role": "v2AssignOrganizationMemberRole",
+  "v2-create-a-branch": "v2CreateABranch",
   "v2-create-compute-instance-upload": "v2CreateComputeInstanceUpload",
   "v2-create-log-drain": "v2CreateLogDrain",
   "v2-create-organization-invitations": "v2CreateOrganizationInvitations",
@@ -12827,7 +12979,8 @@ export const operationDefinitions = {
   },
   v1ActivateCustomHostname: {
     id: "v1ActivateCustomHostname",
-    description: "[Beta] Activates a custom hostname for a project.",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/projects/{ref}/custom-hostname/activate",
     pathParams: ["ref"],
@@ -12840,7 +12993,8 @@ export const operationDefinitions = {
   },
   v1ActivateVanitySubdomainConfig: {
     id: "v1ActivateVanitySubdomainConfig",
-    description: "[Beta] Activates a vanity subdomain for a project.",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/projects/{ref}/vanity-subdomain/activate",
     pathParams: ["ref"],
@@ -12901,7 +13055,8 @@ export const operationDefinitions = {
   },
   v1AuthorizeUser: {
     id: "v1AuthorizeUser",
-    description: "[Beta] Authorize user through oauth",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "GET",
     path: "/v1/oauth/authorize",
     pathParams: [],
@@ -12979,7 +13134,8 @@ export const operationDefinitions = {
   },
   v1CheckVanitySubdomainAvailability: {
     id: "v1CheckVanitySubdomainAvailability",
-    description: "[Beta] Checks vanity subdomain availability",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/projects/{ref}/vanity-subdomain/check-availability",
     pathParams: ["ref"],
@@ -13151,7 +13307,8 @@ export const operationDefinitions = {
   },
   v1CreateLoginRole: {
     id: "v1CreateLoginRole",
-    description: "[Beta] Create a login role for CLI with temporary password",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/projects/{ref}/cli/login-role",
     pathParams: ["ref"],
@@ -13241,7 +13398,8 @@ export const operationDefinitions = {
   },
   v1DeactivateVanitySubdomainConfig: {
     id: "v1DeactivateVanitySubdomainConfig",
-    description: "[Beta] Deletes a project's vanity subdomain configuration",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "DELETE",
     path: "/v1/projects/{ref}/vanity-subdomain",
     pathParams: ["ref"],
@@ -13254,7 +13412,8 @@ export const operationDefinitions = {
   },
   v1DeleteHostnameConfig: {
     id: "v1DeleteHostnameConfig",
-    description: "[Beta] Deletes a project's custom hostname configuration",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "DELETE",
     path: "/v1/projects/{ref}/custom-hostname",
     pathParams: ["ref"],
@@ -13346,7 +13505,8 @@ export const operationDefinitions = {
   },
   v1DeleteLoginRoles: {
     id: "v1DeleteLoginRoles",
-    description: "[Beta] Delete existing login roles used by CLI",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "DELETE",
     path: "/v1/projects/{ref}/cli/login-role",
     pathParams: ["ref"],
@@ -13359,7 +13519,8 @@ export const operationDefinitions = {
   },
   v1DeleteNetworkBans: {
     id: "v1DeleteNetworkBans",
-    description: "[Beta] Remove network bans.",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "DELETE",
     path: "/v1/projects/{ref}/network-bans",
     pathParams: ["ref"],
@@ -13428,7 +13589,8 @@ export const operationDefinitions = {
   },
   v1DiffABranch: {
     id: "v1DiffABranch",
-    description: "Diffs the specified database branch",
+    description:
+      "Diffs the specified database branch\n\nThis endpoint is currently in its **Beta** stage.",
     method: "GET",
     path: "/v1/branches/{branch_id_or_ref}/diff",
     pathParams: ["branch_id_or_ref"],
@@ -13467,7 +13629,8 @@ export const operationDefinitions = {
   },
   v1EnableDatabaseWebhook: {
     id: "v1EnableDatabaseWebhook",
-    description: "[Beta] Enables Database Webhooks on the project",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/projects/{ref}/database/webhooks/enable",
     pathParams: ["ref"],
@@ -13481,7 +13644,7 @@ export const operationDefinitions = {
   v1ExchangeOauthToken: {
     id: "v1ExchangeOauthToken",
     description:
-      "Supports `authorization_code`, `refresh_token`, and `urn:ietf:params:oauth:grant-type:jwt-bearer` grant types. The `jwt-bearer` grant type (IDJAG — identity-directed JWT assertion) is in beta and available on Team and Enterprise plans only.",
+      "Supports `authorization_code`, `refresh_token`, and `urn:ietf:params:oauth:grant-type:jwt-bearer` grant types. The `jwt-bearer` grant type (IDJAG — identity-directed JWT assertion) is in beta and available on Team and Enterprise plans only.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/oauth/token",
     pathParams: [],
@@ -13664,7 +13827,8 @@ export const operationDefinitions = {
   },
   v1GetAvailableRegions: {
     id: "v1GetAvailableRegions",
-    description: "[Beta] Gets the list of available regions that can be used for a new project",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "GET",
     path: "/v1/projects/available-regions",
     pathParams: [],
@@ -13744,7 +13908,8 @@ export const operationDefinitions = {
   },
   v1GetHostnameConfig: {
     id: "v1GetHostnameConfig",
-    description: "[Beta] Gets project's custom hostname config",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "GET",
     path: "/v1/projects/{ref}/custom-hostname",
     pathParams: ["ref"],
@@ -13770,7 +13935,8 @@ export const operationDefinitions = {
   },
   v1GetJitAccessConfig: {
     id: "v1GetJitAccessConfig",
-    description: "[Beta] Get project's temporary access configuration.",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "GET",
     path: "/v1/projects/{ref}/jit-access",
     pathParams: ["ref"],
@@ -13797,7 +13963,8 @@ export const operationDefinitions = {
   },
   v1GetNetworkRestrictions: {
     id: "v1GetNetworkRestrictions",
-    description: "[Beta] Gets project's network restrictions",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "GET",
     path: "/v1/projects/{ref}/network-restrictions",
     pathParams: ["ref"],
@@ -13851,7 +14018,8 @@ export const operationDefinitions = {
   },
   v1GetPgsodiumConfig: {
     id: "v1GetPgsodiumConfig",
-    description: "[Beta] Gets project's pgsodium config",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "GET",
     path: "/v1/projects/{ref}/pgsodium",
     pathParams: ["ref"],
@@ -13890,7 +14058,8 @@ export const operationDefinitions = {
   },
   v1GetPostgresUpgradeEligibility: {
     id: "v1GetPostgresUpgradeEligibility",
-    description: "[Beta] Returns the project's eligibility for upgrades",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "GET",
     path: "/v1/projects/{ref}/upgrade/eligibility",
     pathParams: ["ref"],
@@ -13903,7 +14072,8 @@ export const operationDefinitions = {
   },
   v1GetPostgresUpgradeStatus: {
     id: "v1GetPostgresUpgradeStatus",
-    description: "[Beta] Gets the latest status of the project's upgrade",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "GET",
     path: "/v1/projects/{ref}/upgrade/status",
     pathParams: ["ref"],
@@ -14206,7 +14376,8 @@ export const operationDefinitions = {
   },
   v1GetSslEnforcementConfig: {
     id: "v1GetSslEnforcementConfig",
-    description: "[Beta] Get project's SSL enforcement configuration.",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "GET",
     path: "/v1/projects/{ref}/ssl-enforcement",
     pathParams: ["ref"],
@@ -14232,7 +14403,8 @@ export const operationDefinitions = {
   },
   v1GetVanitySubdomainConfig: {
     id: "v1GetVanitySubdomainConfig",
-    description: "[Beta] Gets current vanity subdomain config",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "GET",
     path: "/v1/projects/{ref}/vanity-subdomain",
     pathParams: ["ref"],
@@ -14324,7 +14496,8 @@ export const operationDefinitions = {
   },
   v1ListAllNetworkBans: {
     id: "v1ListAllNetworkBans",
-    description: "[Beta] Gets project's network bans",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/projects/{ref}/network-bans/retrieve",
     pathParams: ["ref"],
@@ -14338,7 +14511,7 @@ export const operationDefinitions = {
   v1ListAllNetworkBansEnriched: {
     id: "v1ListAllNetworkBansEnriched",
     description:
-      "[Beta] Gets project's network bans with additional information about which databases they affect",
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/projects/{ref}/network-bans/retrieve/enriched",
     pathParams: ["ref"],
@@ -14557,7 +14730,8 @@ export const operationDefinitions = {
   },
   v1PatchNetworkRestrictions: {
     id: "v1PatchNetworkRestrictions",
-    description: "[Alpha] Updates project's network restrictions by adding or removing CIDRs",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Alpha** stage.",
     method: "PATCH",
     path: "/v1/projects/{ref}/network-restrictions",
     pathParams: ["ref"],
@@ -14596,7 +14770,8 @@ export const operationDefinitions = {
   },
   v1ReadOnlyQuery: {
     id: "v1ReadOnlyQuery",
-    description: "All entity references must be schema qualified.",
+    description:
+      "All entity references must be schema qualified.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/projects/{ref}/database/query/read-only",
     pathParams: ["ref"],
@@ -14609,7 +14784,8 @@ export const operationDefinitions = {
   },
   v1RemoveAReadReplica: {
     id: "v1RemoveAReadReplica",
-    description: "[Beta] Remove a read replica",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/projects/{ref}/read-replicas/remove",
     pathParams: ["ref"],
@@ -14732,7 +14908,8 @@ export const operationDefinitions = {
   },
   v1RevokeToken: {
     id: "v1RevokeToken",
-    description: "[Beta] Revoke oauth app authorization and it's corresponding tokens",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/oauth/revoke",
     pathParams: [],
@@ -14762,7 +14939,8 @@ export const operationDefinitions = {
   },
   v1RunAQuery: {
     id: "v1RunAQuery",
-    description: "[Beta] Run sql query",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/projects/{ref}/database/query",
     pathParams: ["ref"],
@@ -14793,7 +14971,8 @@ export const operationDefinitions = {
   },
   v1SetupAReadReplica: {
     id: "v1SetupAReadReplica",
-    description: "[Beta] Set up a read replica",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/projects/{ref}/read-replicas/setup",
     pathParams: ["ref"],
@@ -15009,6 +15188,7 @@ export const operationDefinitions = {
         "password_required_characters",
         "security_manual_linking_enabled",
         "security_update_password_require_reauthentication",
+        "security_update_password_require_current_password",
         "security_refresh_token_reuse_interval",
         "mailer_otp_exp",
         "mailer_otp_length",
@@ -15204,7 +15384,8 @@ export const operationDefinitions = {
   },
   v1UpdateHostnameConfig: {
     id: "v1UpdateHostnameConfig",
-    description: "[Beta] Updates project's custom hostname configuration",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/projects/{ref}/custom-hostname/initialize",
     pathParams: ["ref"],
@@ -15230,7 +15411,8 @@ export const operationDefinitions = {
   },
   v1UpdateJitAccessConfig: {
     id: "v1UpdateJitAccessConfig",
-    description: "[Beta] Update project's temporary access configuration.",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "PUT",
     path: "/v1/projects/{ref}/jit-access",
     pathParams: ["ref"],
@@ -15243,7 +15425,8 @@ export const operationDefinitions = {
   },
   v1UpdateNetworkRestrictions: {
     id: "v1UpdateNetworkRestrictions",
-    description: "[Beta] Updates project's network restrictions",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/projects/{ref}/network-restrictions/apply",
     pathParams: ["ref"],
@@ -15261,7 +15444,7 @@ export const operationDefinitions = {
   v1UpdatePgsodiumConfig: {
     id: "v1UpdatePgsodiumConfig",
     description:
-      "[Beta] Updates project's pgsodium config. Updating the root_key can cause all data encrypted with the older key to become inaccessible.",
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "PUT",
     path: "/v1/projects/{ref}/pgsodium",
     pathParams: ["ref"],
@@ -15445,7 +15628,8 @@ export const operationDefinitions = {
   },
   v1UpdateSslEnforcementConfig: {
     id: "v1UpdateSslEnforcementConfig",
-    description: "[Beta] Update project's SSL enforcement configuration.",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "PUT",
     path: "/v1/projects/{ref}/ssl-enforcement",
     pathParams: ["ref"],
@@ -15475,7 +15659,8 @@ export const operationDefinitions = {
   },
   v1UpgradePostgresVersion: {
     id: "v1UpgradePostgresVersion",
-    description: "[Beta] Upgrades the project's Postgres version",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/projects/{ref}/upgrade",
     pathParams: ["ref"],
@@ -15510,7 +15695,7 @@ export const operationDefinitions = {
   v1VerifyDnsConfig: {
     id: "v1VerifyDnsConfig",
     description:
-      "[Beta] Attempts to verify the DNS configuration for project's custom hostname configuration",
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/projects/{ref}/custom-hostname/reverify",
     pathParams: ["ref"],
@@ -15534,6 +15719,20 @@ export const operationDefinitions = {
     response: { kind: "json" },
     inputSchema: V2AssignOrganizationMemberRoleInput,
     outputSchema: V2AssignOrganizationMemberRoleOutput,
+  },
+  v2CreateABranch: {
+    id: "v2CreateABranch",
+    description:
+      "Creates a database branch from the specified project. Compute and disk size can be set here so the branch is provisioned at the requested size, instead of being resized after creation.",
+    method: "POST",
+    path: "/v2/projects/{ref}/branches",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "json", contentType: "application/json", fields: ["data"] },
+    response: { kind: "json" },
+    inputSchema: V2CreateABranchInput,
+    outputSchema: V2CreateABranchOutput,
   },
   v2CreateComputeInstanceUpload: {
     id: "v2CreateComputeInstanceUpload",
@@ -15689,7 +15888,7 @@ export const operationDefinitions = {
   v2GetProjectConfig: {
     id: "v2GetProjectConfig",
     description:
-      "Returns the project's database, pooler, Auth, Data API, Realtime and Storage configuration — the same configuration a branch inherits from its base project. Each is the effective config, so a setting the project has never overridden is reported at its platform default rather than as null. Auth secrets are returned as an HMAC of their value. `storage` is read live from the storage service; the rest come from this platform's own records.",
+      "Returns the project's database, pooler, Auth, Data API, Realtime and Storage configuration — the same configuration a branch inherits from its base project. Each is the effective config, so a setting the project has never overridden is reported at its platform default rather than as null. Auth secrets are returned as an HMAC of their value. `storage` is read live from the storage service; the rest come from this platform's own records.\n\nThis endpoint is currently in its **Alpha** stage.",
     method: "GET",
     path: "/v2/projects/{ref}/config",
     pathParams: ["ref"],

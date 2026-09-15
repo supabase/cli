@@ -572,7 +572,7 @@ describe("makeSupabaseApiClient", () => {
       ),
     );
 
-    expect(result.data.result.ssl.validation_records).toBeUndefined();
+    expect(result.data.result.ssl?.validation_records).toBeUndefined();
   });
 
   test("accepts missing custom-hostname ownership verification", async () => {
@@ -611,7 +611,7 @@ describe("makeSupabaseApiClient", () => {
     );
 
     expect(result.data.result.ownership_verification).toBeUndefined();
-    expect(result.data.result.ssl.validation_records).toBeUndefined();
+    expect(result.data.result.ssl?.validation_records).toBeUndefined();
   });
 
   test("accepts processing custom-hostname responses without top-level status or hostname", async () => {
@@ -654,7 +654,7 @@ describe("makeSupabaseApiClient", () => {
 
     expect(result.status).toBeUndefined();
     expect(result.custom_hostname).toBeUndefined();
-    expect(result.data.result.ssl.validation_records).toBeUndefined();
+    expect(result.data.result.ssl?.validation_records).toBeUndefined();
   });
 
   test("does not retry 5xx responses for POST requests", async () => {
@@ -1123,10 +1123,13 @@ describe("makeSupabaseApiClient", () => {
                         },
                         vector_buckets: { enabled: false, max_buckets: 0, max_indexes: 0 },
                       },
-                      capabilities: { list_v2: true, iceberg_catalog: true },
+                      capabilities: {
+                        list_v2: true,
+                        iceberg_catalog: true,
+                        object_versioning: true,
+                      },
                       upstream_target: "main",
                       migration_version: "1",
-                      database_pool_mode: "transaction",
                     },
                   },
                 },

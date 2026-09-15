@@ -93,7 +93,11 @@ const linkStorageMigration = (
   writeTempFile: WriteTempFile,
 ) =>
   api.v1.getStorageConfig({ ref }).pipe(
-    Effect.flatMap((config) => writeTempFile(storageMigrationPath, config.migrationVersion)),
+    Effect.flatMap((config) =>
+      config.migrationVersion === null
+        ? Effect.void
+        : writeTempFile(storageMigrationPath, config.migrationVersion),
+    ),
     Effect.ignore,
   );
 

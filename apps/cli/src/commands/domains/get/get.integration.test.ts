@@ -125,9 +125,35 @@ describe("domains get integration", () => {
     const { layer, out } = setup({ goOutput: "json", response });
     return Effect.gen(function* () {
       yield* domainsGet(baseFlags);
-      const parsed = JSON.parse(out.stdoutText) as typeof V1GetHostnameConfigOutput.Type;
-      expect(parsed.data.result.ownership_verification).toEqual({ type: "", name: "", value: "" });
-      expect(parsed.data.result.ssl.validation_records).toEqual([]);
+      const parsed: unknown = JSON.parse(out.stdoutText);
+      expect(parsed).toMatchObject({
+        data: {
+          result: {
+            ownership_verification: { type: "", name: "", value: "" },
+            ssl: { validation_records: [] },
+          },
+        },
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("handles a pending hostname response without SSL details", () => {
+    const { ssl: _ssl, ...resultWithoutSsl } = HOSTNAME_RESPONSE.data.result;
+    const response: typeof V1GetHostnameConfigOutput.Type = {
+      ...HOSTNAME_RESPONSE,
+      status: "2_initiated",
+      data: {
+        ...HOSTNAME_RESPONSE.data,
+        result: { ...resultWithoutSsl, status: "pending" },
+      },
+    };
+    const { layer, out } = setup({ response });
+    return Effect.gen(function* () {
+      yield* domainsGet(baseFlags);
+      expect(out.stderrText).toBe(
+        "Custom hostname setup is being initialized; please request re-verification in a few seconds.\n",
+      );
+      expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(layer));
   });
 

@@ -312,6 +312,14 @@ describe("link integration", () => {
       }).pipe(Effect.provide(layer));
     });
 
+    it.live("skips the storage migration file when the API has no migration version", () => {
+      const { layer, workdir } = setup({ storageConfig: { ok: { migrationVersion: null } } });
+      return Effect.gen(function* () {
+        yield* link(flags());
+        expect(existsTemp(workdir, "storage-migration")).toBe(false);
+      }).pipe(Effect.provide(layer));
+    });
+
     it.live("writes linked-project.json with ref/name/org metadata", () => {
       const { layer, workdir } = setup();
       return Effect.gen(function* () {

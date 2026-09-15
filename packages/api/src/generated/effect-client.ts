@@ -2355,6 +2355,20 @@ export const versionedEffectOperations = {
           input,
         );
       }),
+    createABranch: (
+      input: typeof operationDefinitions.v2CreateABranch.inputSchema.Type,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2CreateABranch.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2CreateABranch">(
+          operationDefinitions.v2CreateABranch,
+          input,
+        );
+      }),
     createComputeInstanceUpload: (
       input: typeof operationDefinitions.v2CreateComputeInstanceUpload.inputSchema.Type,
     ): Effect.Effect<
@@ -3373,6 +3387,10 @@ export function executeApiClientOperation(
       return Schema.decodeUnknownEffect(
         operationDefinitions.v2AssignOrganizationMemberRole.inputSchema,
       )(input).pipe(Effect.flatMap((decoded) => api.v2.assignOrganizationMemberRole(decoded)));
+    case "v2CreateABranch":
+      return Schema.decodeUnknownEffect(operationDefinitions.v2CreateABranch.inputSchema)(
+        input,
+      ).pipe(Effect.flatMap((decoded) => api.v2.createABranch(decoded)));
     case "v2CreateComputeInstanceUpload":
       return Schema.decodeUnknownEffect(
         operationDefinitions.v2CreateComputeInstanceUpload.inputSchema,
