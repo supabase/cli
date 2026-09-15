@@ -9,7 +9,7 @@
  * invocation only, emitted by its own handler after calling this function.
  */
 
-import { Data, Duration, Effect, FileSystem, Option, Path, Redacted, Schedule } from "effect";
+import { Data, Effect, FileSystem, Option, Path } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { detectGitBranch } from "../../shared/git/git-branch.ts";
@@ -33,6 +33,7 @@ import { DbConnection } from "../db-connection.service.ts";
 import { loadLocalProjectContext } from "../local-project-context.ts";
 import { migrateAndSeed } from "../migrate-and-seed.ts";
 import { seedBucketsRun } from "../seed-buckets.ts";
+import { SeedConfigLoadError } from "../../commands/seed/buckets/buckets.errors.ts";
 import { awaitStorageReady } from "./await-storage-ready.ts";
 import { resolveResetSeedConfig } from "./db-setup.ts";
 import { buildLocalDbContainerInputs } from "./local-container-inputs.ts";
@@ -40,6 +41,11 @@ import { isLocalDbRunning } from "./local-db-running.ts";
 import { recreateLocalDatabase } from "./recreate-local-database.ts";
 import { currentStackBackend } from "../stack-backend.ts";
 import { stackLocalDatabaseConn, stackOpenReadyProject } from "../stack-local-database.ts";
+import {
+  classifyStorageCapability,
+  describeStorageCapability,
+  stackStorageEndpointFor,
+} from "../stack-storage.ts";
 import { loadStackConfig } from "../stack-config.ts";
 import { StackCatalogSetup } from "../stack-catalog-setup.ts";
 
@@ -158,88 +164,68 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
         }).pipe(Effect.mapError((cause) => resetFailed(cause.message)));
       }),
     );
-    const inspectStatus = opened.value.stack.status.pipe(
+    const status = yield* opened.value.stack.status.pipe(
       Effect.mapError((cause) =>
         resetFailed(`failed to inspect stack after reset: ${cause.message}`),
       ),
     );
-    const after = yield* inspectStatus;
-    const storageState = (status: typeof after) =>
-      status.capabilities.find((capability) => capability.name === "storage")?.state;
-    const readyStatus =
-      storageState(after) === "starting"
-        ? yield* inspectStatus.pipe(
-            Effect.filterOrFail(
-              (status) => storageState(status) !== "starting",
-              () => "starting" as const,
-            ),
-            Effect.retry({
-              schedule: Schedule.spaced(Duration.millis(200)),
-              while: (error) => error === "starting",
-            }),
-            Effect.timeoutOrElse({
-              duration: Duration.seconds(30),
-              orElse: () => Effect.succeed(undefined),
-            }),
-            Effect.catchIf(
-              (error): error is "starting" => error === "starting",
-              () => Effect.succeed(undefined),
-            ),
-          )
-        : after;
-    if (storageState(after) === "starting" && readyStatus === undefined) {
-      yield* output.raw(
-        `${yellow("WARNING:")} timed out waiting for storage to become ready; skipped seeding storage buckets.\n`,
+    // Bucket creation and object seeding are owned by the CLI, not the stack runtime; the
+    // gateway's lazy activation serves requests through `dormant`/`starting`, so seeding never
+    // waits for `ready`. See docs/stack-commands.md#storage-and-bucket-seeding.
+    const skipSeeding = (
+      reason: string,
+      nextStep = "Run supabase seed buckets --local once Storage is available.",
+    ) =>
+      output.raw(
+        `${yellow("WARNING:")} skipped seeding storage buckets: ${reason} ${nextStep}\n`,
         "stderr",
       );
-    }
-    const status = readyStatus ?? after;
-    if (storageState(status) === "ready") {
-      const context = yield* loadLocalProjectContext(workdir, (message) => resetFailed(message));
-      const credentials = yield* opened.value.stack.credentials.pipe(
-        Effect.mapError((cause) =>
-          resetFailed(`failed to read stack credentials after reset: ${cause.message}`),
+    const capability = status.capabilities.find((entry) => entry.name === "storage");
+    const decision = classifyStorageCapability(capability);
+    if (decision !== "proceed") {
+      // Only a project that configures buckets has anything to skip; an unreadable config
+      // still warns so a real skip is never silent.
+      const configuresBuckets = yield* loadLocalProjectContext(
+        workdir,
+        (message) => new SeedConfigLoadError({ message }),
+      ).pipe(
+        Effect.map(
+          (context) =>
+            Object.keys(context.config.storage.buckets ?? {}).length > 0 ||
+            Object.keys(context.config.storage.vector.buckets).length > 0,
         ),
+        Effect.orElseSucceed(() => true),
       );
-      const apiEndpoint = status.endpoints.api;
-      const storageEndpoint = credentials.storage?.endpoint.replace(/\/s3\/?$/, "");
-      const gatewayUrl = apiEndpoint?.url ?? storageEndpoint;
-      const apiPort = apiEndpoint?.port;
-      const serviceRoleJwt =
-        credentials.api === undefined ? undefined : Redacted.value(credentials.api.serviceRoleJwt);
-      yield* seedBucketsRun({
-        projectRef: "",
-        emitSummary: false,
-        interactive: false,
-        yes,
-        resolvedConfig: {
-          config: {
-            ...context.config,
-            api: {
-              ...context.config.api,
-              ...(apiPort === undefined ? {} : { port: apiPort }),
-              ...(gatewayUrl === undefined ? {} : { external_url: gatewayUrl }),
-            },
-            ...(serviceRoleJwt === undefined
-              ? {}
-              : {
-                  auth: {
-                    ...context.config.auth,
-                    service_role_key: serviceRoleJwt,
-                  },
-                }),
-          },
-          document: context.loaded?.document,
-        },
-        projectEnvValues: projectEnv,
-      }).pipe(
-        Effect.catchTag("SeedConfigLoadError", (error) =>
-          output.raw(
-            `${yellow("WARNING:")} skipped seeding storage buckets: ${error.message}\n`,
-            "stderr",
-          ),
-        ),
-      );
+      if (configuresBuckets) {
+        yield* skipSeeding(
+          describeStorageCapability(capability),
+          decision === "disabled"
+            ? "Set [storage] enabled = true in supabase/config.toml or start without -x storage, run supabase stack restart, then supabase seed buckets --local."
+            : undefined,
+        );
+      }
+    } else {
+      // Bucket seeding never fails the reset: the database is already rebuilt, so any
+      // typed failure here (config load, credential resolution, gateway error, or a
+      // filesystem error walking `objects_path`) only warns and skips; defects and
+      // interruption still propagate.
+      yield* Effect.gen(function* () {
+        const context = yield* loadLocalProjectContext(
+          workdir,
+          (message) => new SeedConfigLoadError({ message }),
+        );
+        const credentials = yield* stackStorageEndpointFor(opened.value.stack, status);
+        yield* seedBucketsRun({
+          projectRef: "",
+          emitSummary: false,
+          interactive: false,
+          yes,
+          credentials,
+          resolvedConfig: { config: context.config, document: context.loaded?.document },
+          projectEnvValues: projectEnv,
+          workdir,
+        });
+      }).pipe(Effect.catch((error) => skipSeeding(error.message)));
     }
     const branch = Option.getOrElse(yield* detectGitBranch(workdir), () => "main");
     yield* output.raw(
@@ -314,7 +300,7 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
   });
 
   // Seed objects from supabase/buckets when storage is up; summary is suppressed since reset
-  // emits its own result.
+  // emits its own result. See docs/stack-commands.md#storage-and-bucket-seeding.
   const storageReady = yield* awaitStorageReady(spawner, projectId);
   if (storageReady) {
     // Non-interactive: overwrite/prune confirmations take their defaults instead of blocking on

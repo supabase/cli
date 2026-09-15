@@ -135,20 +135,34 @@ const databaseReady = (stack: EffectStack) =>
     return Option.some({ stack, runtime: status.runtime });
   });
 
+/**
+ * Finds and opens the registered project stack, or `None` when the stack API is unavailable or
+ * no stack is registered for this project. `onFailure` maps the underlying find/open failure to
+ * the caller's own error type.
+ */
+export const stackOpenProjectBy = <E>(
+  onFailure: (cause: { readonly message: string }) => E,
+): Effect.Effect<Option.Option<EffectStack>, E, CommandSettings> =>
+  Effect.gen(function* () {
+    const api = yield* Effect.serviceOption(StackApi);
+    if (Option.isNone(api)) return Option.none();
+    const cliSettings = yield* CommandSettings;
+    const descriptor = yield* api.value
+      .findStack({ projectRoot: cliSettings.workdir })
+      .pipe(Effect.mapError((cause) => onFailure(cause)));
+    if (Option.isNone(descriptor)) return Option.none();
+    const stack = yield* api.value
+      .openStack(descriptor.value.id)
+      .pipe(Effect.mapError((cause) => onFailure(cause)));
+    return Option.some(stack);
+  });
+
 /** Ready project stack, or none when the stack is missing or the database is not ready. */
-export const stackOpenReadyProject = Effect.gen(function* () {
-  const api = yield* Effect.serviceOption(StackApi);
-  if (Option.isNone(api)) return Option.none();
-  const cliSettings = yield* CommandSettings;
-  const descriptor = yield* api.value
-    .findStack({ projectRoot: cliSettings.workdir })
-    .pipe(Effect.mapError((cause) => notRunning(cause.message)));
-  if (Option.isNone(descriptor)) return Option.none();
-  const stack = yield* api.value
-    .openStack(descriptor.value.id)
-    .pipe(Effect.mapError((cause) => notRunning(cause.message)));
-  return yield* databaseReady(stack);
-});
+export const stackOpenReadyProject = stackOpenProjectBy((cause) => notRunning(cause.message)).pipe(
+  Effect.flatMap((opened) =>
+    Option.isNone(opened) ? Effect.succeed(Option.none()) : databaseReady(opened.value),
+  ),
+);
 
 export const stackProjectRuntime: Effect.Effect<StackRuntime | undefined, never, CommandSettings> =
   Effect.gen(function* () {

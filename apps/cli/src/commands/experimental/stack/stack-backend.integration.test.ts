@@ -60,6 +60,32 @@ stack = true
         expect(yield* resolve({ args: ["db", "test"], cwd: root, env: {} })).toBe("stack");
         expect(yield* resolve({ args: ["test", "db"], cwd: root, env: {} })).toBe("stack");
         expect(yield* resolve({ args: ["migration", "squash"], cwd: root, env: {} })).toBe("stack");
+        expect(yield* resolve({ args: ["storage", "ls"], cwd: root, env: {} })).toBe("stack");
+        expect(yield* resolve({ args: ["seed", "buckets"], cwd: root, env: {} })).toBe("stack");
+      }),
+    );
+  });
+
+  it.effect("keeps storage on legacy when the feature flag is disabled", () => {
+    return withServices(
+      Effect.gen(function* () {
+        const root = yield* project("[experimental]\nstack = true\n");
+        expect(
+          yield* resolve({
+            args: ["storage", "ls"],
+            cwd: root,
+            env: { SUPABASE_EXPERIMENTAL_STACK: "0" },
+          }),
+        ).toBe("legacy");
+      }),
+    );
+  });
+
+  it.effect("keeps an unrouted command on legacy even when the feature flag is enabled", () => {
+    return withServices(
+      Effect.gen(function* () {
+        const root = yield* project("[experimental]\nstack = true\n");
+        expect(yield* resolve({ args: ["link"], cwd: root, env: {} })).toBe("legacy");
       }),
     );
   });

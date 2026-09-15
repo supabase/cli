@@ -22,11 +22,14 @@ import {
   StackStateInvalidError,
 } from "@supabase/stack/effect";
 import type {
+  CapabilityState,
   EffectStack,
   StackStartError as ApiStackStartError,
   StackStatus,
 } from "@supabase/stack/effect";
-import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import { mockOutput, mockTty } from "../../../../../tests/helpers/mocks.ts";
 import {
   mockCommandSettings,
   mockTelemetryStateTracked,
@@ -47,8 +50,15 @@ import { stackStartCommand } from "./start.command.ts";
 import { textCliOutputFormatter } from "../../../../shared/output/text-formatter.ts";
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
-import { ExperimentalFlag, OutputFlag } from "../../../../command-internal/global-flags.ts";
+import {
+  ExperimentalFlag,
+  OutputFlag,
+  YesFlag,
+} from "../../../../command-internal/global-flags.ts";
 import { DbConnection } from "../../../../command-internal/db-connection.service.ts";
+import { stackBackendLayer } from "../../../../command-internal/stack-backend.ts";
+import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
+import { CommandPlatformApiFactory } from "../../../../auth/command-platform-api-factory.service.ts";
 import {
   actionability,
   ErrorActionabilityId,
@@ -92,6 +102,24 @@ const writeStartMigration = (root: string) =>
     );
   });
 
+/** Overwrites the project's `config.toml` with a single configured bucket and one seed file. */
+const writeBucketsConfig = (root: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    yield* fs.writeFileString(
+      path.join(root, "supabase", "config.toml"),
+      'project_id = "start-test"\n[storage.buckets.assets]\nobjects_path = "buckets/assets"\n',
+    );
+    yield* fs.makeDirectory(path.join(root, "supabase", "buckets", "assets"), {
+      recursive: true,
+    });
+    yield* fs.writeFileString(
+      path.join(root, "supabase", "buckets", "assets", "logo.png"),
+      "fake-bytes",
+    );
+  });
+
 const resolverLayer = stackTargetResolverLayer.pipe(
   Layer.provideMerge(stackApiLayer),
   Layer.provide(BunServices.layer),
@@ -103,7 +131,14 @@ const status = (id: string, runtime: "native" | "container" = "native") =>
     lifecycle: "running",
     desiredLifecycle: "running",
     runtime: runtime === "native" ? { kind: "native" } : { kind: "container", engine: "docker" },
-    endpoints: {},
+    endpoints: {
+      api: {
+        protocol: "http" as const,
+        address: "127.0.0.1",
+        port: 55420,
+        url: "http://127.0.0.1:55420",
+      },
+    },
     versions: {},
     capabilities: (
       [
@@ -126,26 +161,118 @@ const status = (id: string, runtime: "native" | "container" = "native") =>
     artifacts: [],
   }) satisfies StackStatus;
 
+/** `status()` with the `storage` capability's state overridden. */
+const statusWithStorageState = (id: string, storageState: CapabilityState): StackStatus => ({
+  ...status(id),
+  capabilities: status(id).capabilities.map((capability) =>
+    capability.name === "storage" ? { ...capability, state: storageState } : capability,
+  ),
+});
+
+/** `status()` with the `storage` capability entry removed entirely. */
+const statusWithoutStorageCapability = (id: string): StackStatus => ({
+  ...status(id),
+  capabilities: status(id).capabilities.filter((capability) => capability.name !== "storage"),
+});
+
+/** Records every request the seed-buckets gateway client issues, responding 200 to all. */
+function recordingStackStorageHttpClient(opts: { readonly bucketCreateStatus?: number } = {}) {
+  const requests: Array<{
+    readonly method: string;
+    readonly url: string;
+    readonly authorization: string;
+  }> = [];
+  const layer = Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) => {
+      requests.push({
+        method: request.method,
+        url: request.url,
+        authorization: request.headers["authorization"] ?? "",
+      });
+      if (request.method !== "GET" && opts.bucketCreateStatus !== undefined) {
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response("server error", { status: opts.bucketCreateStatus }),
+          ),
+        );
+      }
+      const body = request.method === "GET" ? "[]" : JSON.stringify({ name: "bucket" });
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(body, { status: 200, headers: { "content-type": "application/json" } }),
+        ),
+      );
+    }),
+  );
+  return { layer, requests };
+}
+
+/** Records every request the seed-buckets gateway client issues, responding 503 to every GET. */
+function recordingStackStorageHttpClientGet503() {
+  const requests: Array<{ readonly method: string; readonly url: string }> = [];
+  const layer = Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) => {
+      requests.push({ method: request.method, url: request.url });
+      if (request.method === "GET") {
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(request, new Response("unavailable", { status: 503 })),
+        );
+      }
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(JSON.stringify({ name: "bucket" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        ),
+      );
+    }),
+  );
+  return { layer, requests };
+}
+
 function fakeStack(
   id: string,
   start: (config?: { readonly config?: unknown }) => Effect.Effect<StackStatus, ApiStackStartError>,
   desiredLifecycle: "unconfigured" | "stopped" | "running" = "unconfigured",
 ) {
+  // Mirrors a real stack: `.status` reflects the pre-start lifecycle (read by `firstCreate`)
+  // until `start` succeeds, then reflects `start`'s own return value (read by the bucket-seeding
+  // gate that follows it).
+  let currentStatus: StackStatus = {
+    ...status(id),
+    lifecycle: desiredLifecycle === "unconfigured" ? "unconfigured" : desiredLifecycle,
+    desiredLifecycle,
+  };
   return {
     id: StackIdSchema.make(id),
-    status: Effect.succeed({
-      ...status(id),
-      lifecycle: desiredLifecycle === "unconfigured" ? "unconfigured" : desiredLifecycle,
-      desiredLifecycle,
-    }),
+    status: Effect.suspend(() => Effect.succeed(currentStatus)),
     credentials: Effect.succeed({
       database: {
         url: Redacted.make("postgresql://postgres:secret@127.0.0.1:54329/postgres"),
         password: Redacted.make("secret"),
       },
+      api: {
+        publishableKey: "anon",
+        secretKey: Redacted.make("service"),
+        anonJwt: "anon",
+        serviceRoleJwt: Redacted.make("service"),
+      },
     }),
     prepare: () => Effect.die("prepare not used in start test"),
-    start,
+    start: (config?: { readonly config?: unknown }) =>
+      start(config).pipe(
+        Effect.tap((result) =>
+          Effect.sync(() => {
+            currentStatus = result;
+          }),
+        ),
+      ),
     stop: Effect.void,
     destroy: Effect.die("destroy not used in start test"),
     resetDatabase: Effect.die("resetDatabase not used in start test"),
@@ -177,6 +304,8 @@ function handlerLayer(opts: {
   stack: EffectStack;
   onCreate?: (options: unknown) => void;
   onOpen?: () => void;
+  /** Overrides the default dying `HttpClient` stub, for tests exercising bucket seeding. */
+  httpClient?: Layer.Layer<HttpClient.HttpClient>;
 }) {
   const out = mockOutput();
   const telemetry = mockTelemetryStateTracked();
@@ -209,10 +338,23 @@ function handlerLayer(opts: {
       mockCommandSettings({ workdir: opts.root }),
       targetLayer,
       apiLayer,
+      // Root provides the stack backend for every `stack` command; seeding guidance reads it.
+      stackBackendLayer("stack"),
       BunServices.layer,
       noopStackCatalogSetupLayer,
       Layer.succeed(ExperimentalFlag, false),
       Layer.succeed(CliArgs, { args: ["stack", "start"] }),
+      // The bucket-seeding path statically requires these even on the default fixture's
+      // no-buckets `config.toml`, where the short-circuit never reaches them at runtime.
+      opts.httpClient ??
+        Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make(() => Effect.die("unused")),
+        ),
+      Layer.succeed(CommandPlatformApiFactory, { make: Effect.die("unused") }),
+      stdinLayer.pipe(Layer.provide(mockTty({ stdinIsTty: false, stdoutIsTty: false }))),
+      mockTty({ stdinIsTty: false, stdoutIsTty: false }),
+      Layer.succeed(YesFlag, false),
       Layer.succeed(DbConnection, {
         connect: () =>
           Effect.succeed({
@@ -922,6 +1064,14 @@ enabled = false
               queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
             }),
         }),
+        Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make(() => Effect.die("unused")),
+        ),
+        Layer.succeed(CommandPlatformApiFactory, { make: Effect.die("unused") }),
+        stdinLayer.pipe(Layer.provide(mockTty({ stdinIsTty: false, stdoutIsTty: false }))),
+        mockTty({ stdinIsTty: false, stdoutIsTty: false }),
+        Layer.succeed(YesFlag, false),
       );
       const failure = yield* stackStart(
         flags({ stack: Option.some("feature"), stackId: Option.some("e".repeat(64)) }),
@@ -931,6 +1081,283 @@ enabled = false
       expect(created).toBe(false);
       expect(setup.telemetry.flushed).toBe(true);
     });
+  });
+});
+
+describe("stack start bucket seeding", () => {
+  it.live("seeds configured buckets through the stack gateway when storage is dormant", () => {
+    return Effect.gen(function* () {
+      const root = yield* project();
+      yield* writeBucketsConfig(root);
+      const client = recordingStackStorageHttpClient();
+      const stack = {
+        ...fakeStack("1".repeat(64), () =>
+          Effect.succeed(statusWithStorageState("1".repeat(64), "dormant")),
+        ),
+        credentials: Effect.succeed({
+          database: {
+            url: Redacted.make("postgresql://postgres:secret@127.0.0.1:54329/postgres"),
+            password: Redacted.make("secret"),
+          },
+          api: {
+            publishableKey: "anon",
+            secretKey: Redacted.make("service"),
+            anonJwt: "anon",
+            serviceRoleJwt: Redacted.make("created-stack-jwt"),
+          },
+        }),
+      } satisfies EffectStack;
+      const setup = handlerLayer({
+        root,
+        target: { projectRoot: root },
+        stack,
+        httpClient: client.layer,
+      });
+      const result = yield* stackStart(flags()).pipe(Effect.provide(setup.layer));
+      expect(result.capabilities.find((c) => c.name === "storage")?.state).toBe("dormant");
+      expect(
+        client.requests.some(
+          (r) => r.method === "POST" && r.url === "http://127.0.0.1:55420/storage/v1/bucket",
+        ),
+      ).toBe(true);
+      expect(
+        client.requests.some(
+          (r) => r.url === "http://127.0.0.1:55420/storage/v1/object/assets/logo.png",
+        ),
+      ).toBe(true);
+      expect(client.requests.every((r) => r.authorization.includes("created-stack-jwt"))).toBe(
+        true,
+      );
+      expect(setup.out.stdoutText).toContain("Stack");
+    }).pipe(Effect.provide(BunServices.layer));
+  });
+
+  it.live("skips seeding without a warning when storage is disabled", () => {
+    return Effect.gen(function* () {
+      const root = yield* project();
+      yield* writeBucketsConfig(root);
+      const client = recordingStackStorageHttpClient();
+      const stack = fakeStack("2".repeat(64), () =>
+        Effect.succeed(statusWithStorageState("2".repeat(64), "disabled")),
+      );
+      const setup = handlerLayer({
+        root,
+        target: { projectRoot: root },
+        stack,
+        httpClient: client.layer,
+      });
+      yield* stackStart(flags({ exclude: ["storage"] })).pipe(Effect.provide(setup.layer));
+      expect(client.requests).toHaveLength(0);
+      expect(setup.out.stderrText).not.toContain("skipped seeding storage buckets");
+    }).pipe(Effect.provide(BunServices.layer));
+  });
+
+  it.live("warns and issues no requests when storage failed to start", () => {
+    return Effect.gen(function* () {
+      const root = yield* project();
+      yield* writeBucketsConfig(root);
+      const client = recordingStackStorageHttpClient();
+      const stack = fakeStack("3".repeat(64), () =>
+        Effect.succeed(statusWithStorageState("3".repeat(64), "failed")),
+      );
+      const setup = handlerLayer({
+        root,
+        target: { projectRoot: root },
+        stack,
+        httpClient: client.layer,
+      });
+      yield* stackStart(flags()).pipe(Effect.provide(setup.layer));
+      expect(setup.out.stderrText).toContain(
+        "WARNING: skipped seeding storage buckets: Storage failed to start for this stack.",
+      );
+      expect(client.requests).toHaveLength(0);
+    }).pipe(Effect.provide(BunServices.layer));
+  });
+
+  it.live(
+    "warns without failing when first-start seeding cannot resolve the stack's API credentials (Auth disabled)",
+    () => {
+      return Effect.gen(function* () {
+        const root = yield* project();
+        yield* writeBucketsConfig(root);
+        const client = recordingStackStorageHttpClient();
+        const stack = {
+          ...fakeStack("a".repeat(64), () =>
+            Effect.succeed(statusWithStorageState("a".repeat(64), "dormant")),
+          ),
+          credentials: Effect.succeed({
+            database: {
+              url: Redacted.make("postgresql://postgres:secret@127.0.0.1:54329/postgres"),
+              password: Redacted.make("secret"),
+            },
+          }),
+        } satisfies EffectStack;
+        const setup = handlerLayer({
+          root,
+          target: { projectRoot: root },
+          stack,
+          httpClient: client.layer,
+        });
+        yield* stackStart(flags()).pipe(Effect.provide(setup.layer));
+        expect(setup.out.stderrText).toContain("WARNING: skipped seeding storage buckets:");
+        expect(setup.out.stderrText).toContain("API credentials");
+        expect(setup.out.stderrText).toContain("Auth");
+        expect(client.requests).toHaveLength(0);
+      }).pipe(Effect.provide(BunServices.layer));
+    },
+  );
+
+  it.live("never seeds buckets when opening an existing stack", () => {
+    return Effect.gen(function* () {
+      const root = yield* project();
+      yield* writeBucketsConfig(root);
+      const client = recordingStackStorageHttpClient();
+      const stack = fakeStack(
+        "4".repeat(64),
+        () => Effect.succeed(statusWithStorageState("4".repeat(64), "dormant")),
+        "running",
+      );
+      const setup = handlerLayer({
+        root,
+        target: { projectRoot: root, id: "4".repeat(64) },
+        stack,
+        httpClient: client.layer,
+      });
+      yield* stackStart(flags({ stackId: Option.some("4".repeat(64)) })).pipe(
+        Effect.provide(setup.layer),
+      );
+      expect(client.requests).toHaveLength(0);
+    }).pipe(Effect.provide(BunServices.layer));
+  });
+
+  it.live(
+    "never seeds a plain start of an already-configured stack (no --stack-id, dormant storage)",
+    () => {
+      return Effect.gen(function* () {
+        const root = yield* project();
+        yield* writeBucketsConfig(root);
+        const client = recordingStackStorageHttpClient();
+        const stack = fakeStack(
+          "6".repeat(64),
+          () => Effect.succeed(statusWithStorageState("6".repeat(64), "dormant")),
+          "running",
+        );
+        const setup = handlerLayer({
+          root,
+          target: { projectRoot: root },
+          stack,
+          httpClient: client.layer,
+        });
+        yield* stackStart(flags()).pipe(Effect.provide(setup.layer));
+        expect(client.requests).toHaveLength(0);
+      }).pipe(Effect.provide(BunServices.layer));
+    },
+  );
+
+  it.live(
+    "seeds an addressed stack prepared but never started, even though --stack-id names an existing id",
+    () => {
+      return Effect.gen(function* () {
+        const root = yield* project();
+        yield* writeBucketsConfig(root);
+        const client = recordingStackStorageHttpClient();
+        const id = "d".repeat(64);
+        const stack = fakeStack(id, () => Effect.succeed(statusWithStorageState(id, "dormant")));
+        const setup = handlerLayer({
+          root,
+          target: { projectRoot: root, id },
+          stack,
+          httpClient: client.layer,
+        });
+        yield* stackStart(flags({ stackId: Option.some(id) })).pipe(Effect.provide(setup.layer));
+        expect(
+          client.requests.some(
+            (r) => r.method === "POST" && r.url === "http://127.0.0.1:55420/storage/v1/bucket",
+          ),
+        ).toBe(true);
+      }).pipe(Effect.provide(BunServices.layer));
+    },
+  );
+
+  it.live(
+    "warns and issues no requests when the started status reports no storage capability at all",
+    () => {
+      return Effect.gen(function* () {
+        const root = yield* project();
+        yield* writeBucketsConfig(root);
+        const client = recordingStackStorageHttpClient();
+        const stack = fakeStack("2".repeat(64), () =>
+          Effect.succeed(statusWithoutStorageCapability("2".repeat(64))),
+        );
+        const setup = handlerLayer({
+          root,
+          target: { projectRoot: root },
+          stack,
+          httpClient: client.layer,
+        });
+        yield* stackStart(flags()).pipe(Effect.provide(setup.layer));
+        expect(setup.out.stderrText).toContain("WARNING: skipped seeding storage buckets");
+        expect(client.requests).toHaveLength(0);
+      }).pipe(Effect.provide(BunServices.layer));
+    },
+  );
+
+  it.live(
+    "warns and succeeds when the storage gateway returns 503 while activating during seeding",
+    () => {
+      return Effect.gen(function* () {
+        const root = yield* project();
+        yield* writeBucketsConfig(root);
+        const client = recordingStackStorageHttpClientGet503();
+        const stack = fakeStack("3".repeat(64), () =>
+          Effect.succeed(statusWithStorageState("3".repeat(64), "dormant")),
+        );
+        const setup = handlerLayer({
+          root,
+          target: { projectRoot: root },
+          stack,
+          httpClient: client.layer,
+        });
+        yield* stackStart(flags()).pipe(Effect.provide(setup.layer));
+        expect(setup.out.stderrText).toContain("WARNING:");
+        expect(setup.out.stderrText).toContain("HTTP 503 for Storage");
+        expect(setup.out.stderrText).not.toContain("activate");
+      }).pipe(Effect.provide(BunServices.layer));
+    },
+  );
+
+  it.live("fails with reason 'seed' and never stops/destroys the stack on a gateway error", () => {
+    return Effect.gen(function* () {
+      const root = yield* project();
+      yield* writeBucketsConfig(root);
+      const client = recordingStackStorageHttpClient({ bucketCreateStatus: 500 });
+      let stopped = false;
+      let destroyed = false;
+      const stack = {
+        ...fakeStack("5".repeat(64), () =>
+          Effect.succeed(statusWithStorageState("5".repeat(64), "dormant")),
+        ),
+        stop: Effect.sync(() => {
+          stopped = true;
+        }),
+        destroy: Effect.sync(() => {
+          destroyed = true;
+        }),
+      } satisfies EffectStack;
+      const setup = handlerLayer({
+        root,
+        target: { projectRoot: root },
+        stack,
+        httpClient: client.layer,
+      });
+      const failure = yield* stackStart(flags()).pipe(Effect.flip, Effect.provide(setup.layer));
+      expect(failure).toBeInstanceOf(StackCommandStartError);
+      if (failure instanceof StackCommandStartError) {
+        expect(failure.reason).toBe("seed");
+      }
+      expect(stopped).toBe(false);
+      expect(destroyed).toBe(false);
+    }).pipe(Effect.provide(BunServices.layer));
   });
 });
 

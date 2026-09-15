@@ -589,3 +589,85 @@ describe("storage cp", () => {
     });
   });
 });
+
+describe("stack backend", () => {
+  const tmp = useTempWorkdir("supabase-storage-cp-stack-");
+
+  it.live("uploads through the stack's api endpoint and JWT", () => {
+    writeFileSync(join(tmp.current, "readme.md"), "hello world");
+    const { layer, requests } = setupStorage(tmp.current, {
+      toml: 'project_id = "test"\n',
+      local: true,
+      stackBackend: true,
+      stackApi: { apiEndpoint: "http://127.0.0.1:59999", serviceRoleJwt: "stack-jwt" },
+      routes: [{ method: "POST", match: OBJECT("private/readme.md"), body: {} }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* storageCp(
+        cpFlags({ src: join(tmp.current, "readme.md"), dst: "ss:///private/readme.md" }),
+      ).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.url.startsWith("http://127.0.0.1:59999")).toBe(true);
+      expect(requests[0]?.headers["apikey"]).toBe("stack-jwt");
+    });
+  });
+
+  it.live(
+    "fails with StackStorageCapabilityError when Storage is disabled, before any request",
+    () => {
+      writeFileSync(join(tmp.current, "readme.md"), "hello world");
+      const { layer, requests } = setupStorage(tmp.current, {
+        toml: 'project_id = "test"\n',
+        local: true,
+        stackBackend: true,
+        stackApi: { storageState: "disabled" },
+      });
+      return Effect.gen(function* () {
+        const exit = yield* storageCp(
+          cpFlags({ src: join(tmp.current, "readme.md"), dst: "ss:///private/readme.md" }),
+        ).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        const json = JSON.stringify(exit);
+        expect(json).toContain("StackStorageCapabilityError");
+        expect(json).toContain("-x storage");
+        expect(requests).toHaveLength(0);
+      });
+    },
+  );
+
+  it.live(
+    "recursively uploads a directory through the stack, auto-creating a missing bucket",
+    () => {
+      mkdirSync(join(tmp.current, "upload"), { recursive: true });
+      writeFileSync(join(tmp.current, "upload", "readme.md"), "hello");
+      const { layer, requests } = setupStorage(tmp.current, {
+        toml: 'project_id = "test"\n',
+        local: true,
+        stackBackend: true,
+        routes: [
+          {
+            method: "POST",
+            match: OBJECT("upload/readme.md"),
+            status: 400,
+            body: { error: "Bucket not found" },
+          },
+          { method: "POST", match: "/storage/v1/bucket", body: { name: "upload" } },
+          { method: "POST", match: OBJECT("upload/readme.md"), body: {} },
+        ],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* storageCp(
+          cpFlags({ src: join(tmp.current, "upload"), dst: "ss://", recursive: true }),
+        ).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isSuccess(exit)).toBe(true);
+        const uploads = requests.filter((r) => r.url.includes(OBJECT("upload/readme.md")));
+        expect(uploads).toHaveLength(2);
+        expect(uploads[1]?.headers["x-upsert"]).toBe("true");
+        expect(
+          requests.some((r) => r.method === "POST" && r.url.endsWith("/storage/v1/bucket")),
+        ).toBe(true);
+      });
+    },
+  );
+});
