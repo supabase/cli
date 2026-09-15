@@ -61,23 +61,25 @@ stack = true
   });
 
   it.effect("selects the managed backend only for functions serve", () => {
-    const root = project("[experimental]\nstack = true\n");
-    return Effect.gen(function* () {
-      for (const args of [
-        ["functions", "serve"],
-        ["help", "functions", "serve"],
-        ["__complete", "functions", "serve", "--"],
-      ]) {
-        expect(yield* resolve({ args, cwd: root, env: {} })).toBe("stack");
-      }
-      for (const args of [
-        ["functions", "deploy"],
-        ["functions", "list"],
-        ["help", "functions", "deploy"],
-      ]) {
-        expect(yield* resolve({ args, cwd: root, env: {} })).toBe("legacy");
-      }
-    }).pipe(Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))));
+    return withServices(
+      Effect.gen(function* () {
+        const root = yield* project("[experimental]\nstack = true\n");
+        for (const args of [
+          ["functions", "serve"],
+          ["help", "functions", "serve"],
+          ["__complete", "functions", "serve", "--"],
+        ]) {
+          expect(yield* resolve({ args, cwd: root, env: {} })).toBe("stack");
+        }
+        for (const args of [
+          ["functions", "deploy"],
+          ["functions", "list"],
+          ["help", "functions", "deploy"],
+        ]) {
+          expect(yield* resolve({ args, cwd: root, env: {} })).toBe("legacy");
+        }
+      }),
+    );
   });
 
   it.effect("routes command-specific start completion through the selected backend", () => {
