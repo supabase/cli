@@ -404,6 +404,7 @@ const runStartMigrateJob = Effect.fnUntraced(function* (
     image: resolvedImage,
     cmd: opts.cmd,
     env: opts.env,
+    projectEnvValues: opts.projectEnvValues,
     binds: [],
     workingDir: Option.none(),
     securityOpt: [],

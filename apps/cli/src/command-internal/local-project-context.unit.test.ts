@@ -108,35 +108,33 @@ describe("loadLocalProjectContext", () => {
     },
   );
 
-  it.effect(
-    "installs a project .env's BITBUCKET_CLONE_DIR into process.env, matching Go's godotenv.Load preceding DockerStart's os.Getenv read",
-    () => {
-      delete process.env[BITBUCKET_CLONE_DIR_KEY];
-      const workdir = tempRoot.current;
-      writeDotEnv(workdir, `BITBUCKET_CLONE_DIR=/opt/atlassian/pipelines/agent/build\n`);
+  it.effect("keeps a project's Bitbucket marker in its resolved environment", () => {
+    delete process.env[BITBUCKET_CLONE_DIR_KEY];
+    const workdir = tempRoot.current;
+    writeDotEnv(workdir, `BITBUCKET_CLONE_DIR=/opt/atlassian/pipelines/agent/build\n`);
 
-      return loadLocalProjectContext(workdir, (message) => new Error(message)).pipe(
-        Effect.map(() => {
-          expect(process.env[BITBUCKET_CLONE_DIR_KEY]).toBe("/opt/atlassian/pipelines/agent/build");
-        }),
-        Effect.provide(BunServices.layer),
-      );
-    },
-  );
+    return loadLocalProjectContext(workdir, (message) => new Error(message)).pipe(
+      Effect.map((context) => {
+        expect(context.projectEnvValues[BITBUCKET_CLONE_DIR_KEY]).toBe(
+          "/opt/atlassian/pipelines/agent/build",
+        );
+        expect(process.env[BITBUCKET_CLONE_DIR_KEY]).toBeUndefined();
+      }),
+      Effect.provide(BunServices.layer),
+    );
+  });
 
-  it.effect(
-    "never overrides an already-set BITBUCKET_CLONE_DIR, matching godotenv.Load's shell-env-wins semantics",
-    () => {
-      process.env[BITBUCKET_CLONE_DIR_KEY] = "/real-shell-clone-dir";
-      const workdir = tempRoot.current;
-      writeDotEnv(workdir, `BITBUCKET_CLONE_DIR=/opt/atlassian/pipelines/agent/build\n`);
+  it.effect("keeps the shell Bitbucket marker ahead of the project value", () => {
+    process.env[BITBUCKET_CLONE_DIR_KEY] = "/real-shell-clone-dir";
+    const workdir = tempRoot.current;
+    writeDotEnv(workdir, `BITBUCKET_CLONE_DIR=/opt/atlassian/pipelines/agent/build\n`);
 
-      return loadLocalProjectContext(workdir, (message) => new Error(message)).pipe(
-        Effect.map(() => {
-          expect(process.env[BITBUCKET_CLONE_DIR_KEY]).toBe("/real-shell-clone-dir");
-        }),
-        Effect.provide(BunServices.layer),
-      );
-    },
-  );
+    return loadLocalProjectContext(workdir, (message) => new Error(message)).pipe(
+      Effect.map((context) => {
+        expect(context.projectEnvValues[BITBUCKET_CLONE_DIR_KEY]).toBe("/real-shell-clone-dir");
+        expect(process.env[BITBUCKET_CLONE_DIR_KEY]).toBe("/real-shell-clone-dir");
+      }),
+      Effect.provide(BunServices.layer),
+    );
+  });
 });
