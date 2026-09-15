@@ -64,9 +64,6 @@ describe("cachedPostgresArtifactRoot", () => {
       expect(yield* cachedPostgresArtifactRoot(cacheRoot, "15")).toBe(
         join(cacheRoot, "slim-services", "postgres", fifteen.version, target),
       );
-      expect(yield* cachedPostgresArtifactRoot(cacheRoot, "15")).not.toBe(
-        join(cacheRoot, "slim-services", "postgres", seventeen.version, target),
-      );
     }).pipe(Effect.provide(layer)),
   );
 });
