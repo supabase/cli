@@ -129,6 +129,25 @@ describe("managed stack Functions serve config", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
+  it.live("filters reserved config secrets without an explicit env file", () =>
+    Effect.gen(function* () {
+      const result = yield* functionsServeStackConfig({
+        config: baseConfig,
+        flags: flags(),
+        projectRoot: "/project",
+        cwd: "/project",
+        debug: false,
+      });
+      const functions = result.config.capabilities?.functions;
+      const settings = functions !== undefined && "settings" in functions ? functions.settings : {};
+
+      expect(settings?.edge_runtime?.secrets?.SUPABASE_CONFIG).toBeUndefined();
+      expect(result.warnings).toEqual([
+        "Env name cannot start with SUPABASE_, skipping: SUPABASE_CONFIG\n",
+      ]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
   it.live("rejects a project with Edge Functions disabled", () =>
     Effect.gen(function* () {
       const failure = yield* functionsServeStackConfig({

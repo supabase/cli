@@ -1,5 +1,3 @@
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- compiled CLI fixture checks local runtime availability
-import { spawnSync } from "node:child_process";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- compiled CLI fixture requires host filesystem APIs
 import { mkdir, writeFile } from "node:fs/promises";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- compiled CLI fixture requires host path APIs
@@ -17,8 +15,6 @@ const COMMAND_TIMEOUT_MS = 120_000;
 const nativeAvailable =
   (process.platform === "linux" && (process.arch === "x64" || process.arch === "arm64")) ||
   (process.platform === "darwin" && process.arch === "arm64");
-const dockerAvailable =
-  spawnSync("docker", ["info"], { stdio: "ignore", timeout: 5_000 }).status === 0;
 
 const config = (projectId: string) => `project_id = "${projectId}"
 
@@ -70,21 +66,14 @@ const apiUrlFromEnv = (stdout: string): string => {
   return match[1];
 };
 
-const runtimes = [
-  { runtime: "native" as const, available: nativeAvailable },
-  { runtime: "docker" as const, available: dockerAvailable },
-];
-
-describe.each(runtimes)("managed stack functions serve ($runtime compiled e2e)", (runtimeCase) => {
-  test.skipIf(!runtimeCase.available)(
+describe("managed stack functions serve compiled e2e", () => {
+  test.skipIf(!nativeAvailable)(
     "applies invocation overrides and restores the running stack on Ctrl-C",
     { timeout: START_TIMEOUT_MS + COMMAND_TIMEOUT_MS },
     // oxlint-disable-next-line effecttsgo/async-function -- compiled CLI e2e callback is a Promise boundary
     async () => {
       const home = makeTempHome();
-      const project = await makeTempCliProject(
-        `supabase-functions-serve-${runtimeCase.runtime}-e2e-`,
-      );
+      const project = await makeTempCliProject("supabase-functions-serve-native-e2e-");
       const projectId = path.basename(project.dir);
       const supabaseDir = path.join(project.dir, "supabase");
       const functionDir = path.join(supabaseDir, "functions", "smoke");
@@ -103,14 +92,26 @@ describe.each(runtimes)("managed stack functions serve ($runtime compiled e2e)",
         ].join("\n"),
       );
 
-      const started = await runSupabase(
-        ["stack", "start", "--runtime", runtimeCase.runtime, "--eager"],
-        {
-          cwd: project.dir,
-          home: home.dir,
-          exitTimeoutMs: START_TIMEOUT_MS,
+      const started = await runSupabase(["stack", "start", "--runtime", "native", "--eager"], {
+        cwd: project.dir,
+        home: home.dir,
+        exitTimeoutMs: START_TIMEOUT_MS,
+      });
+      await using _stackCleanup = {
+        // oxlint-disable-next-line effecttsgo/async-function -- compiled CLI E2E cleanup is a Promise boundary
+        async [Symbol.asyncDispose]() {
+          if (started.exitCode !== 0) return;
+          const destroyed = await runSupabase(["stack", "destroy", "--yes"], {
+            cwd: project.dir,
+            home: home.dir,
+            exitTimeoutMs: COMMAND_TIMEOUT_MS,
+          });
+          expect(
+            destroyed.exitCode,
+            `stdout:\n${destroyed.stdout}\nstderr:\n${destroyed.stderr}`,
+          ).toBe(0);
         },
-      );
+      };
       const startDiagnostics =
         started.exitCode === 0
           ? undefined

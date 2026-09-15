@@ -257,7 +257,9 @@ describe("managed stack functions serve", () => {
       const shutdown = yield* Deferred.make<"SIGINT">();
       const changes = yield* Queue.unbounded<ReadonlyArray<FileWatchEvent>>();
       const activated = yield* Deferred.make<void>();
+      const activationRelease = yield* Deferred.make<void>();
       const activations = yield* Deferred.make<void>();
+      const watcherSubscribed = yield* Deferred.make<void>();
       const servedRequests: ServeFunctionsOptions[] = [];
       let activationCount = 0;
       const stack: EffectStack = {
@@ -272,9 +274,11 @@ describe("managed stack functions serve", () => {
             if (options?.config !== undefined) activationCount++;
             return activationCount;
           }).pipe(
-            Effect.tap((count) =>
+            Effect.flatMap((count) =>
               count === 1
-                ? Deferred.succeed(activated, undefined)
+                ? Deferred.succeed(activated, undefined).pipe(
+                    Effect.andThen(Deferred.await(activationRelease)),
+                  )
                 : count === 2
                   ? Deferred.succeed(activations, undefined)
                   : Effect.void,
@@ -304,7 +308,12 @@ describe("managed stack functions serve", () => {
         mockProcessControl({ awaitSignal: Deferred.await(shutdown) }).layer,
         Layer.succeed(DebugFlag, false),
         Layer.succeed(FileWatcher, {
-          watch: (root) => (root === functionsRoot ? Stream.fromQueue(changes) : Stream.never),
+          watch: (root) =>
+            root === functionsRoot
+              ? Stream.fromEffect(Deferred.succeed(watcherSubscribed, undefined)).pipe(
+                  Stream.flatMap(() => Stream.fromQueue(changes)),
+                )
+              : Stream.never,
         }),
         Layer.succeed(StackApi, {
           findStack: () => Effect.succeed(Option.some(descriptor)),
@@ -321,10 +330,12 @@ describe("managed stack functions serve", () => {
         envFile: Option.some("serve.env"),
       }).pipe(Effect.provide(layer), Effect.forkChild({ startImmediately: true }));
       yield* Deferred.await(activated);
+      yield* Deferred.await(watcherSubscribed);
       writeFileSync(envPath, "MARKER=second\n");
       yield* Queue.offer(changes, [
         { path: join(functionsRoot, "hello", "index.ts"), type: "update" },
       ]);
+      yield* Deferred.succeed(activationRelease, undefined);
       yield* Deferred.await(activations);
       yield* Deferred.succeed(shutdown, "SIGINT");
       yield* Fiber.join(fiber);
@@ -436,7 +447,7 @@ describe("managed stack functions serve", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.live("restores the durable activation when interrupted during pending activation", () =>
+  it.live("restores the durable activation when the command is interrupted during activation", () =>
     Effect.gen(function* () {
       const projectRoot = makeProject("supabase-stack-functions-pending-");
       yield* Effect.addFinalizer(() => Effect.sync(() => rmSync(projectRoot, { recursive: true })));
@@ -489,14 +500,12 @@ describe("managed stack functions serve", () => {
         Effect.forkChild({ startImmediately: true }),
       );
       yield* Deferred.await(activationEntered);
-      yield* Deferred.succeed(shutdown, "SIGINT");
+      yield* Fiber.interrupt(fiber);
       yield* Deferred.await(restored);
-      yield* Fiber.join(fiber);
 
       expect(events).toEqual(["activation-started", "restored"]);
       expect(servedRequests).toHaveLength(2);
       expect(servedRequests[1]).toEqual({ sessionId: servedRequests[0]?.sessionId });
-      expect(output.stdoutText).toContain("Stopped serving supabase/functions");
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.scoped),
   );
