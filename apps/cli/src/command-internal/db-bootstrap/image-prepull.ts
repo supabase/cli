@@ -73,7 +73,11 @@ export function ensureImagesCached(
             failureReason = "docker_daemon";
           } else if (failure.reason === "config" && failureReason !== "docker_daemon") {
             failureReason = "config";
-          } else if (failure.reason === "pull" && failureReason !== "docker_daemon") {
+          } else if (
+            failure.reason === "pull" &&
+            failureReason !== "docker_daemon" &&
+            failureReason !== "config"
+          ) {
             failureReason = "registry_pull";
           }
         }

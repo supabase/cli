@@ -55,6 +55,8 @@ import {
 } from "../../../../tests/helpers/command-mocks.ts";
 import { mockChildProcessSpawner } from "../../../../tests/helpers/child-process-spawner.ts";
 import { textCliOutputFormatter } from "../../../shared/output/text-formatter.ts";
+import { dockerfileServiceImageRaw } from "../../../shared/services/dockerfile-images.ts";
+import { toSlimImage } from "../../../shared/services/slim-images.ts";
 import { processControlLayer } from "../../../shared/runtime/process-control.layer.ts";
 import { TelemetryRuntime } from "../../../shared/telemetry/runtime.service.ts";
 import { makeTelemetryIdentity } from "../../../shared/telemetry/identity.ts";
@@ -2581,7 +2583,7 @@ describe("gen types", () => {
           );
           writeFileSync(
             join(workdir, "supabase", ".env"),
-            "DOCKER_HOST=project-daemon\nSUPABASE_INTERNAL_IMAGE_REGISTRY=docker.io\nSUPABASE_DB_PASSWORD=dotenv-password\n",
+            "DOCKER_HOST=project-daemon\nSUPABASE_INTERNAL_IMAGE_REGISTRY=docker.io\nSUPABASE_USE_SLIM_IMAGES=1\nSUPABASE_DB_PASSWORD=dotenv-password\n",
           );
 
           const childCalls: Array<{
@@ -2597,9 +2599,14 @@ describe("gen types", () => {
             workdir,
             childLayer: child.layer,
           });
+          const configProvider = ConfigProvider.fromEnvRecord({}, { preserveEmptyStrings: true });
+          const expectedSlimImage = toSlimImage("pgmeta", dockerfileServiceImageRaw("pgmeta"));
 
           await Effect.runPromise(
-            genTypes(defaultFlags({ local: true })).pipe(Effect.provide(layer)),
+            genTypes(defaultFlags({ local: true })).pipe(
+              Effect.provide(layer),
+              Effect.provideService(ConfigProvider.ConfigProvider, configProvider),
+            ),
           );
 
           expect(out.stderrText).toContain("Connecting to db 5432");
@@ -2618,25 +2625,24 @@ describe("gen types", () => {
               "PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=public,custom",
             ),
           ).toBe(true);
-          expect(child.spawned[2]?.args).toContain(
-            Effect.runSync(
-              resolvePgmetaImage(undefined, { SUPABASE_INTERNAL_IMAGE_REGISTRY: "docker.io" }),
-            ),
-          );
+          expect(child.spawned[2]?.args).toContain(expectedSlimImage);
           expect(child.spawned[2]?.args.slice(-2)).toEqual(["node", "dist/server/server.js"]);
           expect(childCalls[0]?.options.env).toEqual({
             DOCKER_HOST: "project-daemon",
             SUPABASE_INTERNAL_IMAGE_REGISTRY: "docker.io",
+            SUPABASE_USE_SLIM_IMAGES: "1",
           });
           expect(childCalls[0]?.options.extendEnv).toBe(true);
           expect(childCalls[1]?.options.env).toEqual({
             DOCKER_HOST: "project-daemon",
             SUPABASE_INTERNAL_IMAGE_REGISTRY: "docker.io",
+            SUPABASE_USE_SLIM_IMAGES: "1",
           });
           expect(childCalls[1]?.options.extendEnv).toBe(true);
           expect(childCalls[2]?.options.env).toEqual({
             DOCKER_HOST: "project-daemon",
             SUPABASE_INTERNAL_IMAGE_REGISTRY: "docker.io",
+            SUPABASE_USE_SLIM_IMAGES: "1",
           });
           expect(childCalls[2]?.options.extendEnv).toBe(true);
           expect(linkedProjectCache.cached).toBe(false);

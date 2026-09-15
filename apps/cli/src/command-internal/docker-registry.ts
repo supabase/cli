@@ -71,19 +71,17 @@ export function getRegistryImageUrlCandidates(
   }
 
   return registryOverride(projectEnvValues).pipe(
-    Effect.flatMap((override) => {
+    Effect.map((override) => {
       const lastPart = getLastImageSegment(imageName);
       const image = rewriteRegistryImage(imageName, override);
       if (Option.isSome(override) && override.value.length > 0) {
-        return Effect.succeed([image]);
+        return [image];
       }
-      return Effect.succeed(
-        dedupe([
-          image,
-          `${GHCR_SUPABASE_REGISTRY}/${lastPart}`,
-          dockerHubFallbackImage(imageName, lastPart),
-        ]),
-      );
+      return dedupe([
+        image,
+        `${GHCR_SUPABASE_REGISTRY}/${lastPart}`,
+        dockerHubFallbackImage(imageName, lastPart),
+      ]);
     }),
   );
 }

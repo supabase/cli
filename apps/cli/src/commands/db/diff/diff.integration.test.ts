@@ -2028,7 +2028,7 @@ describe("db diff", () => {
     );
 
     it.effect(
-      "a supabase/.env-only SUPABASE_INTERNAL_IMAGE_REGISTRY reaches the differ's image resolver during the run, and reverts after",
+      "a supabase/.env-only SUPABASE_INTERNAL_IMAGE_REGISTRY reaches the differ's image resolver without global mutation",
       () => {
         // The project environment is passed to the differ explicitly, so a dotenv-only
         // registry override reaches image resolution without mutating the ambient environment.
