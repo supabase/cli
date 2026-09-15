@@ -7,6 +7,7 @@ import {
   resolveStorageCredentials,
   storageGatewayFetch,
 } from "../../command-internal/storage-credentials.ts";
+import { withStackStorageGuidance } from "../../command-internal/stack-storage.ts";
 import { makeStorageGateway, type StorageGateway } from "../../command-internal/storage-gateway.ts";
 import {
   GoUrlParseError,
@@ -113,7 +114,7 @@ export const connectStorageGateway = <E, R>(
       });
       return yield* body(gateway);
     });
-    return yield* gatewayOps.pipe(
+    return yield* withStackStorageGuidance(gatewayOps).pipe(
       Effect.provideService(FetchHttpClient.Fetch, storageGatewayFetch(credentials.localKongCa)),
     );
   });

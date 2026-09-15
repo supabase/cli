@@ -15,7 +15,10 @@ import {
   resolveStorageCredentials,
   storageGatewayFetch,
   validateLocalStorageConfig,
+  type StorageCredentials,
 } from "./storage-credentials.ts";
+import { currentStackBackend } from "./stack-backend.ts";
+import { withStackStorageGuidance } from "./stack-storage.ts";
 import { parseFileSizeLimit, resolveBucketProps } from "./storage-bucket-config.ts";
 import {
   type StorageGateway,
@@ -126,13 +129,25 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
    * credentials `SUPABASE_API_*` fold.
    */
   readonly projectEnvValues?: Readonly<Record<string, string>>;
+  /**
+   * Already-resolved Storage credentials, when the caller already holds them (`stack start`,
+   * which has the opened stack handle in scope). When omitted, resolved via
+   * {@link resolveStorageCredentials}.
+   */
+  readonly credentials?: StorageCredentials;
+  /**
+   * Overrides `CommandSettings.workdir` for config/env loading and `objects_path` resolution.
+   * Only `stack start` passes this: it may target a project root other than the current
+   * command's workdir.
+   */
+  readonly workdir?: string;
 }) {
   const output = yield* Output;
   const cliSettings = yield* CommandSettings;
+  const workdir = opts.workdir ?? cliSettings.workdir;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const projectEnvValues =
-    opts.projectEnvValues ?? (yield* loadProjectEnv(fs, path, cliSettings.workdir));
+  const projectEnvValues = opts.projectEnvValues ?? (yield* loadProjectEnv(fs, path, workdir));
   // `--yes` OR `SUPABASE_YES`.
   const yes = opts.yes ?? (yield* resolveYesWithProjectEnv(projectEnvValues));
   const { projectRef, emitSummary } = opts;
@@ -147,7 +162,7 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
   const loaded =
     opts.resolvedConfig !== undefined
       ? null
-      : yield* loadCliConfig(cliSettings.workdir, loadOptions).pipe(
+      : yield* loadCliConfig(workdir, loadOptions).pipe(
           Effect.catchTag(
             "CliConfigParseError",
             (cause) =>
@@ -195,8 +210,12 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
   if (projectRef === "" && bucketNames.length === 0 && !hasVectorBuckets) {
     // Config validation (SUPABASE_API_*/SUPABASE_AUTH_* overrides, TLS cert/key pairing)
     // still runs here even with nothing to seed; it's validate-only — the seeding path
-    // re-resolves these values through `resolveStorageCredentials`.
-    yield* validateLocalStorageConfig(config, projectEnvValues);
+    // re-resolves these values through `resolveStorageCredentials`. The stack backend never
+    // consults these legacy-only inputs, so it skips this validation entirely.
+    const backend = yield* currentStackBackend;
+    if (backend.kind !== "stack") {
+      yield* validateLocalStorageConfig(config, projectEnvValues);
+    }
     if (emitSummary && output.format !== "text") {
       yield* output.success("", { ...emptySummary() });
     }
@@ -204,11 +223,13 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
   }
 
   // Build the Storage service-gateway client (local or remote).
-  const credentials = yield* resolveStorageCredentials({
-    projectRef,
-    config,
-    projectEnvValues,
-  });
+  const credentials =
+    opts.credentials ??
+    (yield* resolveStorageCredentials({
+      projectRef,
+      config,
+      projectEnvValues,
+    }));
 
   // Gateway operations use an explicit non-DoH fetch (CA-trusting for local + https, plain
   // `globalThis.fetch` otherwise); the api-keys lookup in `resolveStorageCredentials` runs
@@ -251,7 +272,7 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
     }
 
     // Upload objects for each bucket with a configured objects_path.
-    yield* uploadObjects(fs, path, output, gateway, cliSettings.workdir, bucketsConfig, summary);
+    yield* uploadObjects(fs, path, output, gateway, workdir, bucketsConfig, summary);
 
     // Machine-readable summary; text mode emits nothing extra.
     if (emitSummary && output.format !== "text") {
@@ -259,7 +280,7 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
     }
   });
 
-  yield* gatewayOps.pipe(
+  yield* withStackStorageGuidance(gatewayOps).pipe(
     Effect.provideService(FetchHttpClient.Fetch, storageGatewayFetch(credentials.localKongCa)),
   );
 });

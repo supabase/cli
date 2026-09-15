@@ -55,6 +55,28 @@ stack = true
       expect(yield* resolve({ args: ["db", "test"], cwd: root, env: {} })).toBe("stack");
       expect(yield* resolve({ args: ["test", "db"], cwd: root, env: {} })).toBe("stack");
       expect(yield* resolve({ args: ["migration", "squash"], cwd: root, env: {} })).toBe("stack");
+      expect(yield* resolve({ args: ["storage", "ls"], cwd: root, env: {} })).toBe("stack");
+      expect(yield* resolve({ args: ["seed", "buckets"], cwd: root, env: {} })).toBe("stack");
+    }).pipe(Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))));
+  });
+
+  it.effect("keeps storage on legacy when the feature flag is disabled", () => {
+    const root = project("[experimental]\nstack = true\n");
+    return Effect.gen(function* () {
+      expect(
+        yield* resolve({
+          args: ["storage", "ls"],
+          cwd: root,
+          env: { SUPABASE_EXPERIMENTAL_STACK: "0" },
+        }),
+      ).toBe("legacy");
+    }).pipe(Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))));
+  });
+
+  it.effect("keeps an unrouted command on legacy even when the feature flag is enabled", () => {
+    const root = project("[experimental]\nstack = true\n");
+    return Effect.gen(function* () {
+      expect(yield* resolve({ args: ["link"], cwd: root, env: {} })).toBe("legacy");
     }).pipe(Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))));
   });
 

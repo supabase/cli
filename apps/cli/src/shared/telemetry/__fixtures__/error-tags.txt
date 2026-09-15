@@ -499,6 +499,8 @@ StackConfigError
 StackNativeEngineError
 StackRoutingError
 StackRuntimeUnavailableError
+StackStorageCapabilityError
+StackStorageUnavailableError
 StartBackupVolumeExistsError
 StartConfigLoadError
 StartInvalidConfigError

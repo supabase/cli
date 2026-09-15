@@ -195,7 +195,12 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
       );
     }
     const status = readyStatus ?? after;
-    if (storageState(status) === "ready") {
+    // The stack runtime's storage workload and StackCatalogSetup own schema/table
+    // preparation; bucket creation and `[storage.buckets]` object seeding are owned by the
+    // CLI here — the runtime never creates buckets. `dormant`/`starting` still accept
+    // requests through the gateway's lazy activation, so seeding proceeds on either state.
+    const seedableState = storageState(status);
+    if (seedableState === "ready" || seedableState === "dormant" || seedableState === "starting") {
       const context = yield* loadLocalProjectContext(workdir, (message) => resetFailed(message));
       const credentials = yield* opened.value.stack.credentials.pipe(
         Effect.mapError((cause) =>
@@ -240,6 +245,11 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
             "stderr",
           ),
         ),
+      );
+    } else {
+      yield* output.raw(
+        `${yellow("WARNING:")} skipped seeding storage buckets: Storage is ${seedableState ?? "unavailable"} for this stack.\n`,
+        "stderr",
       );
     }
     const branch = Option.getOrElse(yield* detectGitBranch(workdir), () => "main");
@@ -316,7 +326,8 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
   });
 
   // Seed objects from supabase/buckets when storage is up; summary is suppressed since reset
-  // emits its own result.
+  // emits its own result. Bucket creation and object seeding are owned by the CLI here, not
+  // the local storage container.
   const storageReady = yield* awaitStorageReady(spawner, projectId);
   if (storageReady) {
     // Non-interactive: overwrite/prune confirmations take their defaults instead of blocking on
