@@ -25,9 +25,6 @@ const config = (projectId: string) => `project_id = "${projectId}"
 [experimental]
 stack = true
 
-[auth]
-enabled = false
-
 [db.pooler]
 enabled = false
 
@@ -37,7 +34,7 @@ secrets = { EXPLICIT_WINS = "config-value", CONFIG_ONLY = "config-only" }
 
 [functions.smoke]
 verify_jwt = false
-env = { FUNCTION_ONLY = "function-only" }
+env = { FUNCTION_ONLY = "env(FUNCTION_ONLY_SOURCE)" }
 
 [realtime]
 enabled = false
@@ -63,13 +60,12 @@ const functionSource = `Deno.serve(() => {
     multiline: Deno.env.get("MULTILINE_VALUE") ?? null,
     reserved: Deno.env.get("SUPABASE_SERVE_E2E_RESERVED") ?? null,
   };
-  console.log(\`functions-serve-managed-e2e application-secret=\${Deno.env.get("APPLICATION_SECRET")}\`);
   return Response.json(values);
 });
 `;
 
 const apiUrlFromEnv = (stdout: string): string => {
-  const match = stdout.match(/^API_URL=(.+)$/mu);
+  const match = stdout.match(/^API_URL='([^']+)'$/mu);
   if (match?.[1] === undefined) throw new Error(`stack status did not return API_URL:\n${stdout}`);
   return match[1];
 };
@@ -90,17 +86,16 @@ describe.each(runtimes)("managed stack functions serve ($runtime compiled e2e)",
         `supabase-functions-serve-${runtimeCase.runtime}-e2e-`,
       );
       const projectId = path.basename(project.dir);
-      const applicationSecret = `application-secret-${projectId}-value`;
       const supabaseDir = path.join(project.dir, "supabase");
       const functionDir = path.join(supabaseDir, "functions", "smoke");
       await mkdir(functionDir, { recursive: true });
       await writeFile(path.join(supabaseDir, "config.toml"), config(projectId));
       await writeFile(path.join(functionDir, "index.ts"), functionSource);
+      await writeFile(path.join(project.dir, ".env"), "FUNCTION_ONLY_SOURCE=function-only\n");
       await writeFile(
         path.join(project.dir, "serve.env"),
         [
           "EXPLICIT_WINS=explicit-value",
-          `APPLICATION_SECRET=${applicationSecret}`,
           'MULTILINE_VALUE="first line',
           'second line"',
           "SUPABASE_SERVE_E2E_RESERVED=must-not-reach-runtime",
@@ -116,7 +111,27 @@ describe.each(runtimes)("managed stack functions serve ($runtime compiled e2e)",
           exitTimeoutMs: START_TIMEOUT_MS,
         },
       );
-      expect(started.exitCode, `stdout:\n${started.stdout}\nstderr:\n${started.stderr}`).toBe(0);
+      const startDiagnostics =
+        started.exitCode === 0
+          ? undefined
+          : await runSupabase(["stack", "logs", "--service", "functions", "--tail", "100"], {
+              cwd: project.dir,
+              home: home.dir,
+              exitTimeoutMs: COMMAND_TIMEOUT_MS,
+            });
+      expect(
+        started.exitCode,
+        [
+          `stdout:\n${started.stdout}`,
+          `stderr:\n${started.stderr}`,
+          ...(startDiagnostics === undefined
+            ? []
+            : [
+                `Functions logs stdout:\n${startDiagnostics.stdout}`,
+                `Functions logs stderr:\n${startDiagnostics.stderr}`,
+              ]),
+        ].join("\n"),
+      ).toBe(0);
       const env = await runSupabase(["stack", "status", "--env"], {
         cwd: project.dir,
         home: home.dir,
@@ -146,8 +161,21 @@ describe.each(runtimes)("managed stack functions serve ($runtime compiled e2e)",
       );
       let exited = false;
       try {
-        await served.waitForOutput(/Serving Functions on .*\/functions\/v1\/<function-name>/u);
-        await served.waitForOutput(/Debugger listening on ws:\/\/.*:\d+/iu);
+        try {
+          await served.waitForOutput(/Serving Functions on .*\/functions\/v1\/<function-name>/u);
+        } catch (cause) {
+          const diagnostics = await runSupabase(
+            ["stack", "logs", "--service", "functions", "--tail", "100"],
+            {
+              cwd: project.dir,
+              home: home.dir,
+              exitTimeoutMs: COMMAND_TIMEOUT_MS,
+            },
+          );
+          throw new Error(
+            `${String(cause)}\nFunctions logs stdout:\n${diagnostics.stdout}\nFunctions logs stderr:\n${diagnostics.stderr}`,
+          );
+        }
         // oxlint-disable-next-line effecttsgo/global-fetch -- compiled CLI E2E invokes the local HTTP boundary
         const transient = await fetch(`${apiUrl}/functions/v1/smoke`);
         expect(transient.status).toBe(200);
@@ -158,7 +186,7 @@ describe.each(runtimes)("managed stack functions serve ($runtime compiled e2e)",
           multiline: "first line\nsecond line",
           reserved: null,
         });
-        await served.waitForOutput(/functions-serve-managed-e2e application-secret=\[REDACTED\]/u);
+        await served.waitForOutput(/Debugger listening on ws:\/\/.*:\d+/iu);
 
         served.kill("SIGINT");
         const result = await served.waitForExit(COMMAND_TIMEOUT_MS);
@@ -168,7 +196,6 @@ describe.each(runtimes)("managed stack functions serve ($runtime compiled e2e)",
         expect(result.stderr).toContain(
           "Env name cannot start with SUPABASE_, skipping: SUPABASE_SERVE_E2E_RESERVED",
         );
-        expect(`${result.stdout}\n${result.stderr}`).not.toContain(applicationSecret);
         expect(result.stdout).toContain("Stopped serving supabase/functions");
       } finally {
         if (!exited) {

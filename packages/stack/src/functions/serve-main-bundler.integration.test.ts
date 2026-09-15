@@ -21,6 +21,8 @@ describe("stack-owned functions bootstrap", () => {
       yield* fs.writeFileString(path.join(root, "hello", "index.ts"), "export default 1");
       const secret = "bootstrap-test-secret";
       let serveOptions: ServeOptions | undefined;
+      let workerEnvironment: ReadonlyArray<readonly [string, string]> | undefined;
+      const multiline = '{"MULTILINE_VALUE":"first line\\nsecond line"}';
       const bundled = yield* bundleServeMainTemplate;
       const sandbox = {
         Deno: {
@@ -30,8 +32,10 @@ describe("stack-owned functions bootstrap", () => {
                 ? root
                 : name === "SUPABASE_INTERNAL_JWT_SECRET"
                   ? secret
-                  : undefined,
-            toObject: () => ({}),
+                  : name === "SUPABASE_INTERNAL_MULTILINE_ENV"
+                    ? multiline
+                    : undefined,
+            toObject: () => ({ SUPABASE_INTERNAL_MULTILINE_ENV: multiline }),
           },
           lstat: (filename: string) =>
             run(
@@ -52,7 +56,10 @@ describe("stack-owned functions bootstrap", () => {
         EdgeRuntime: {
           applySupabaseTag: () => undefined,
           userWorkers: {
-            create: () => Promise.resolve({ fetch: () => Promise.resolve(new Response("hello")) }),
+            create: (options: { envVars: ReadonlyArray<readonly [string, string]> }) => {
+              workerEnvironment = options.envVars;
+              return Promise.resolve({ fetch: () => Promise.resolve(new Response("hello")) });
+            },
           },
         },
         AbortController,
@@ -111,6 +118,8 @@ describe("stack-owned functions bootstrap", () => {
       const valid = yield* invoke(token);
       expect(valid.status).toBe(200);
       expect(yield* Effect.tryPromise(() => valid.text())).toBe("hello");
+      expect(workerEnvironment).toContainEqual(["MULTILINE_VALUE", "first line\nsecond line"]);
+      expect(workerEnvironment).not.toContainEqual(["SUPABASE_INTERNAL_MULTILINE_ENV", multiline]);
       const wrongToken = yield* Effect.tryPromise(() =>
         new SignJWT({ sub: "bootstrap-test" })
           .setProtectedHeader({ alg: "HS256" })
