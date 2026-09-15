@@ -29,7 +29,16 @@ describe("toGithubOutputLines", () => {
   });
 
   test("no due release emits an empty version sentinel the workflow's if: guards key off", () => {
-    expect(toGithubOutputLines({ due: false })).toEqual([
+    expect(toGithubOutputLines({ due: false, reason: "no-releasable-commits" })).toEqual([
+      "should_release=false",
+      "version=",
+      "npm_tag=latest",
+      "blocked_on_private=false",
+    ]);
+  });
+
+  test("the output contract is unchanged when the plan is blocked on a stale checkout", () => {
+    expect(toGithubOutputLines({ due: false, reason: "branch-behind-remote" })).toEqual([
       "should_release=false",
       "version=",
       "npm_tag=latest",
@@ -40,10 +49,27 @@ describe("toGithubOutputLines", () => {
 
 describe("renderStepSummary", () => {
   test("reports when no releasable commits touched the package", () => {
-    const summary = renderStepSummary({ due: false });
+    const summary = renderStepSummary({ due: false, reason: "no-releasable-commits" });
 
     expect(summary).toContain("## @supabase/config release plan");
     expect(summary).toContain("No release:");
+    expect(summary).toContain("no releasable commits touching");
+  });
+
+  test("names the stale-checkout cause instead of misreporting no releasable commits", () => {
+    const summary = renderStepSummary({ due: false, reason: "branch-behind-remote" });
+
+    expect(summary).not.toContain("no releasable commits");
+    expect(summary).toContain("behind");
+    expect(summary).toContain("Re-run the workflow from the tip of `develop`");
+  });
+
+  test("names a diverged checkout distinctly from a merely behind one", () => {
+    const summary = renderStepSummary({ due: false, reason: "branch-diverged" });
+
+    expect(summary).not.toContain("no releasable commits");
+    expect(summary).toContain("diverged");
+    expect(summary).toContain("Re-run the workflow from the tip of `develop`");
   });
 
   test("warns prominently when the package is still private", () => {
