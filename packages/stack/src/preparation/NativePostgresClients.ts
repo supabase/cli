@@ -23,27 +23,37 @@ export const nativePostgresClientBinDir = (
     return exists ? binDir : undefined;
   });
 
-const postgresCatalogRelease = (version?: string): WorkloadCatalogRelease | undefined => {
-  if (version === undefined) return catalogReleaseFor("database:database");
-  const exact = catalogReleaseFor("database:database", version);
-  if (exact !== undefined) return exact;
-  const major = Number.parseInt(version.split(".")[0] ?? "", 10);
-  if (!Number.isInteger(major)) return undefined;
+const versionParts = (version: string): ReadonlyArray<number> =>
+  version.split(".").map((part) => Number.parseInt(part, 10));
+
+const compareVersionsDesc = (left: string, right: string): number => {
+  const a = versionParts(left);
+  const b = versionParts(right);
+  for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
+    const diff = (b[index] ?? 0) - (a[index] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+};
+
+/** Newest catalog release for a Postgres major; the default release when no major is given. */
+const postgresCatalogRelease = (major?: number): WorkloadCatalogRelease | undefined => {
+  if (major === undefined) return catalogReleaseFor("database:database");
   const entry = catalogEntryFor("database:database");
   if (entry === undefined) return undefined;
-  const matched = Object.keys(entry.releases).find(
-    (release) => Number.parseInt(release.split(".")[0] ?? "", 10) === major,
-  );
+  const matched = Object.keys(entry.releases)
+    .filter((release) => versionParts(release)[0] === major)
+    .sort(compareVersionsDesc)[0];
   return matched === undefined ? undefined : catalogReleaseFor("database:database", matched);
 };
 
 /** Cache path for a prepared postgres slim artifact, when the extra tree is already on disk. */
 export const cachedPostgresArtifactRoot = (
   cacheRoot: string,
-  version?: string,
+  major?: number,
 ): Effect.Effect<string | undefined, never, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
-    const release = postgresCatalogRelease(version);
+    const release = postgresCatalogRelease(major);
     const target = targetForPlatform({ os: process.platform, arch: process.arch });
     if (release === undefined || target === undefined) return undefined;
     const fs = yield* FileSystem.FileSystem;

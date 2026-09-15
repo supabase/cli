@@ -103,8 +103,7 @@ export const nativeHostClientPathPrepend = (
       env.artifactCacheRoot === undefined
         ? path.join(path.resolve(env.stateRoot), "artifacts")
         : env.artifactCacheRoot;
-    const version = options?.major === undefined ? undefined : String(options.major);
-    const root = yield* cachedPostgresArtifactRoot(cacheRoot, version);
+    const root = yield* cachedPostgresArtifactRoot(cacheRoot, options?.major);
     if (root === undefined) return undefined;
     return yield* nativePostgresClientBinDir(root, command);
   });
