@@ -1744,7 +1744,7 @@ describe("Supervisor composition", () => {
     ),
   );
 
-  it.live("replaces Functions with transient settings without persisting them", () =>
+  it.live("replaces Functions transiently and restores durable settings without persisting", () =>
     run(
       Effect.gen(function* () {
         const timeline = yield* Ref.make<ReadonlyArray<string>>([]);
@@ -1805,6 +1805,22 @@ describe("Supervisor composition", () => {
         const events = yield* Ref.get(timeline);
         expect(events.filter((event) => event === "start:functions:edge-runtime")).toHaveLength(2);
         expect(events.filter((event) => event === "stop:functions:edge-runtime")).toHaveLength(1);
+        expect(yield* fixture.store.read(fixture.id)).toEqual(durable);
+
+        yield* fixture.supervisor.serveFunctions();
+        const restoredInput = (yield* Ref.get(activationInputs)).at(-1);
+        expect(restoredInput?.definition.capabilities.functions.settings.debug).toBeUndefined();
+        expect(
+          restoredInput?.state.secrets["secret:functions.settings.edge_runtime.secrets.TOKEN"]
+            ?.value,
+        ).toBe("durable");
+        const restoredEvents = yield* Ref.get(timeline);
+        expect(
+          restoredEvents.filter((event) => event === "start:functions:edge-runtime"),
+        ).toHaveLength(3);
+        expect(
+          restoredEvents.filter((event) => event === "stop:functions:edge-runtime"),
+        ).toHaveLength(2);
         expect(yield* fixture.store.read(fixture.id)).toEqual(durable);
       }),
     ),

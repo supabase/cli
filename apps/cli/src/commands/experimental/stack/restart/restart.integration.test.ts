@@ -82,6 +82,7 @@ const fixture = (options: {
       status: Effect.sync(() => ({ ...status(), lifecycle })),
       credentials: Effect.die("unused"),
       prepare: () => Effect.die("restart must not prepare explicitly"),
+      serveFunctions: () => Effect.die("unused"),
       stop: Effect.gen(function* () {
         calls.push("stop");
         if (options.stop === "fail")
@@ -412,6 +413,7 @@ describe("stack restart", () => {
             status: Effect.sync(state),
             credentials: Effect.die("unused"),
             prepare: () => Effect.die("restart must not prepare explicitly"),
+            serveFunctions: () => Effect.die("unused"),
             stop: Effect.sync(() => {
               calls.push("stop");
               lifecycle = "stopped";
