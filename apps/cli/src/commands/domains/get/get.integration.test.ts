@@ -1,6 +1,6 @@
 import { type V1GetHostnameConfigOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Option, Schema } from "effect";
 
 import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -40,6 +40,19 @@ interface SetupOpts {
   readonly network?: "fail";
   readonly response?: unknown;
 }
+
+/** Just enough of the Go JSON envelope to reach the fields under assertion. */
+const GoJsonResult = Schema.Struct({
+  data: Schema.Struct({
+    result: Schema.Struct({
+      ownership_verification: Schema.Unknown,
+      custom_origin_server: Schema.String,
+      ssl: Schema.Struct({ status: Schema.String, validation_records: Schema.Unknown }),
+    }),
+  }),
+});
+
+const GoJsonEnvelope = Schema.Record(Schema.String, Schema.Unknown);
 
 const tempRoot = useTempWorkdir("supabase-domains-get-int-");
 
@@ -110,6 +123,7 @@ describe("domains get integration", () => {
   it.live("backfills Go zero values in JSON output when the API omits nested fields", () => {
     const {
       ownership_verification: _ownershipVerification,
+      custom_origin_server: _customOriginServer,
       ...resultWithoutOwnershipVerification
     } = HOSTNAME_RESPONSE.data.result;
     const response: typeof V1GetHostnameConfigOutput.Type = {
@@ -118,16 +132,42 @@ describe("domains get integration", () => {
         ...HOSTNAME_RESPONSE.data,
         result: {
           ...resultWithoutOwnershipVerification,
-          ssl: { status: "pending_validation" },
+          ssl: { validation_records: [{ txt_name: "_acme" }] },
         },
       },
     };
     const { layer, out } = setup({ goOutput: "json", response });
     return Effect.gen(function* () {
       yield* domainsGet(baseFlags);
-      const parsed = JSON.parse(out.stdoutText) as typeof V1GetHostnameConfigOutput.Type;
+      const parsed = yield* Schema.decodeEffect(Schema.fromJsonString(GoJsonResult))(
+        out.stdoutText,
+      );
       expect(parsed.data.result.ownership_verification).toEqual({ type: "", name: "", value: "" });
-      expect(parsed.data.result.ssl.validation_records).toEqual([]);
+      expect(parsed.data.result.custom_origin_server).toBe("");
+      expect(parsed.data.result.ssl.status).toBe("");
+      expect(parsed.data.result.ssl.validation_records).toEqual([
+        { txt_name: "_acme", txt_value: "" },
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("handles a pending hostname response without SSL details", () => {
+    const { ssl: _ssl, ...resultWithoutSsl } = HOSTNAME_RESPONSE.data.result;
+    const response: typeof V1GetHostnameConfigOutput.Type = {
+      ...HOSTNAME_RESPONSE,
+      status: "2_initiated",
+      data: {
+        ...HOSTNAME_RESPONSE.data,
+        result: { ...resultWithoutSsl, status: "pending" },
+      },
+    };
+    const { layer, out } = setup({ response });
+    return Effect.gen(function* () {
+      yield* domainsGet(baseFlags);
+      expect(out.stderrText).toBe(
+        "Custom hostname setup is being initialized; please request re-verification in a few seconds.\n",
+      );
+      expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(layer));
   });
 
@@ -155,7 +195,9 @@ describe("domains get integration", () => {
     const { layer, out } = setup({ goOutput: "json", response });
     return Effect.gen(function* () {
       yield* domainsGet(baseFlags);
-      const parsed = JSON.parse(out.stdoutText) as Record<string, unknown>;
+      const parsed = yield* Schema.decodeEffect(Schema.fromJsonString(GoJsonEnvelope))(
+        out.stdoutText,
+      );
       expect(parsed.status).toBe("");
       expect(parsed.custom_hostname).toBe("");
       expect(parsed.data).toMatchObject({
@@ -233,6 +275,32 @@ describe("domains get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("does not print partial ACME validation records", () => {
+    const response: typeof V1GetHostnameConfigOutput.Type = {
+      ...HOSTNAME_RESPONSE,
+      status: "2_initiated",
+      data: {
+        ...HOSTNAME_RESPONSE.data,
+        result: {
+          ...HOSTNAME_RESPONSE.data.result,
+          ssl: {
+            status: "pending_validation",
+            validation_records: [{ txt_name: "_acme-challenge.shop.acme.dev" }],
+          },
+        },
+      },
+    };
+    const { layer, out } = setup({ response });
+    return Effect.gen(function* () {
+      yield* domainsGet(baseFlags);
+      expect(out.stderrText).toBe(
+        "Custom hostname verification in-progress; please configure the appropriate DNS entries and request re-verification.\n" +
+          "Required outstanding validation records:\n",
+      );
+      expect(out.stderrText).not.toContain("undefined");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("emits YAML to stdout for -o yaml", () => {
     const { layer, out } = setup({ goOutput: "yaml" });
     return Effect.gen(function* () {
@@ -294,9 +362,9 @@ describe("domains get integration", () => {
       const exit = yield* Effect.exit(domainsGet(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("DomainsUnexpectedStatusError");
-        expect(json).toContain("unexpected get hostname status 503");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("DomainsUnexpectedStatusError");
+        expect(causeText).toContain("unexpected get hostname status 503");
       }
       // PersistentPostRun still fires on failure.
       expect(telemetry.flushed).toBe(true);
@@ -361,9 +429,9 @@ describe("domains get integration", () => {
       const exit = yield* Effect.exit(domainsGet(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("DomainsNetworkError");
-        expect(json).toContain("failed to get custom hostname");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("DomainsNetworkError");
+        expect(causeText).toContain("failed to get custom hostname");
       }
     }).pipe(Effect.provide(layer));
   });

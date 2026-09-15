@@ -1,10 +1,10 @@
-import type { OrganizationResponseV1 } from "@supabase/api/effect";
+import type { OrganizationResponseV1_Output } from "@supabase/api/effect";
 
 import { renderGlamourTable } from "../../output/glamour-table.ts";
 
 const HEADERS = ["ID", "NAME"] as const;
 
-type Organization = typeof OrganizationResponseV1.Type;
+type Organization = typeof OrganizationResponseV1_Output.Type;
 
 /**
  * Renders the `orgs list` / `orgs create` table.

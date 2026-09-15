@@ -47,8 +47,7 @@ export interface LiveFixtures {
 }
 
 const base = vitestTest.extend<LiveFixtures>({
-  // eslint-disable-next-line no-empty-pattern
-  project: async ({}, use) => use(inject("liveProject")),
+  project: async ({ task: _task }, use) => use(inject("liveProject")),
 
   home: async ({ task: _task }, use) => {
     const home = makeTempHome();

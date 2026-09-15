@@ -51,7 +51,13 @@ export const servicesRuntimeLayer = (() => {
     commandRuntimeLayer(["services"]),
   ).pipe(Layer.provide(FetchHttpClient.layer));
 
-  const _serviceCoverageCheck: Layer.Layer<ServicesServices, unknown, unknown> = built;
+  // Compile-time coverage check: `Layer` is contravariant in its provided services,
+  // so this assignment breaks if `built` stops exposing any of `ServicesServices`.
+  const _serviceCoverageCheck: Layer.Layer<
+    ServicesServices,
+    Layer.Error<typeof built>,
+    Layer.Services<typeof built>
+  > = built;
   void _serviceCoverageCheck;
 
   return built;

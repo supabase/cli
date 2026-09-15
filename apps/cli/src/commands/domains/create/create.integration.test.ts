@@ -1,6 +1,6 @@
 import { type V1GetHostnameConfigOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Option } from "effect";
 
 import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -166,9 +166,9 @@ describe("domains create integration", () => {
       const exit = yield* Effect.exit(domainsCreate(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("DomainsCnameError");
-        expect(json).toContain("but it failed to resolve");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("DomainsCnameError");
+        expect(causeText).toContain("but it failed to resolve");
       }
       expect(postedToInitialize(api)).toBe(false);
     }).pipe(Effect.provide(layer));
@@ -180,7 +180,7 @@ describe("domains create integration", () => {
       const exit = yield* Effect.exit(domainsCreate(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to locate appropriate CNAME record");
+        expect(Cause.pretty(exit.cause)).toContain("failed to locate appropriate CNAME record");
       }
       expect(postedToInitialize(api)).toBe(false);
     }).pipe(Effect.provide(layer));
@@ -192,7 +192,7 @@ describe("domains create integration", () => {
       const exit = yield* Effect.exit(domainsCreate(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain(
+        expect(Cause.pretty(exit.cause)).toContain(
           "but it is currently set to 'wrong.example.com.'",
         );
       }
@@ -208,9 +208,9 @@ describe("domains create integration", () => {
       const exit = yield* Effect.exit(domainsCreate(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("but it failed to resolve");
-        expect(json).toContain("unexpected DNS query status 500");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("but it failed to resolve");
+        expect(causeText).toContain("unexpected DNS query status 500");
       }
       expect(postedToInitialize(api)).toBe(false);
     }).pipe(Effect.provide(layer));
@@ -258,7 +258,7 @@ describe("domains create integration", () => {
       const exit = yield* Effect.exit(domainsCreate(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("unexpected create hostname status 503");
+        expect(Cause.pretty(exit.cause)).toContain("unexpected create hostname status 503");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -269,7 +269,7 @@ describe("domains create integration", () => {
       const exit = yield* Effect.exit(domainsCreate(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to create custom hostname");
+        expect(Cause.pretty(exit.cause)).toContain("failed to create custom hostname");
       }
     }).pipe(Effect.provide(layer));
   });

@@ -7,15 +7,15 @@ FROM library/kong:2.8.1 AS kong
 FROM axllent/mailpit:v1.30.2 AS mailpit
 FROM postgrest/postgrest:v16.3 AS postgrest
 FROM supabase/postgres-meta:v0.99.0 AS pgmeta
-FROM supabase/studio:2026.09.07-sha-7996410 AS studio
+FROM supabase/studio:2026.09.14-sha-4dd8a95 AS studio
 FROM darthsim/imgproxy:v3.8.0 AS imgproxy
 FROM supabase/edge-runtime:v1.76.2 AS edgeruntime
 FROM timberio/vector:0.53.0-alpine AS vector
 FROM supabase/supavisor:2.9.13 AS supavisor
 FROM supabase/gotrue:v2.197.0 AS gotrue
-FROM supabase/realtime:v2.135.0 AS realtime
+FROM supabase/realtime:v2.135.3 AS realtime
 FROM supabase/storage-api:v1.77.0 AS storage
-FROM supabase/logflare:1.50.11 AS logflare
+FROM supabase/logflare:1.50.12 AS logflare
 # One-shot job images (not started as long-running containers); differ's alias
 # is resolved via dockerfileServiceImage("differ") in commands/db/diff/pgadmin-diff.ts.
 FROM supabase/pgadmin-schema-diff:cli-0.0.5 AS differ

@@ -1,5 +1,5 @@
 import { V1GetNetworkRestrictionsOutput } from "@supabase/api/effect";
-import { Schema } from "effect";
+import { Cause, Data, Effect, Exit, Schedule, Schema } from "effect";
 import { expect } from "vitest";
 
 import {
@@ -11,8 +11,8 @@ import {
   throwWithCleanup,
 } from "../../../../tests/helpers/live.ts";
 
-type LiveCli = LiveFixtures["cli"];
-type LiveRun = Awaited<ReturnType<LiveCli>>;
+type LiveCliEffect = LiveFixtures["cliEffect"];
+type LiveRun = Awaited<ReturnType<LiveFixtures["cli"]>>;
 
 // The worst case across four 60s commands (restore issued at most twice) and two 102s proof
 // polls is 444s, plus the workspace fixture's ~60s init — all bounded by the 20-minute Live
@@ -44,6 +44,18 @@ interface Posture {
   readonly applied: boolean;
 }
 
+/** Typed proof failures keep the poll retrying transient exits and unpropagated reads alike. */
+class LivePostureError extends Data.TaggedError("LivePostureError")<{
+  readonly message: string;
+  readonly cause?: unknown;
+}> {}
+
+const postureFailure = (error: unknown): LivePostureError =>
+  new LivePostureError({
+    message: error instanceof Error ? error.message : String(error),
+    cause: error,
+  });
+
 function updateArgs(cidrs: AllowedCidrs, flags: ReadonlyArray<string>): string[] {
   return [
     "network-restrictions",
@@ -60,126 +72,144 @@ function describeAttempt(attempt: number, result: LiveRun): string {
 // An absent family reads as `[]` like an explicitly empty one; `configured`
 // records whether any family key was present, which is what separates a
 // never-configured project from one explicitly locked down to block-all.
-async function readPosture(
-  cli: LiveCli,
+function readPosture(
+  cliEffect: LiveCliEffect,
   flags: ReadonlyArray<string>,
   label: string,
   exitTimeoutMs: number,
-): Promise<Posture> {
-  const result = await cli(["network-restrictions", "get", ...flags, "-o", "json"], {
-    exitTimeoutMs,
+): Effect.Effect<Posture, LivePostureError> {
+  return Effect.gen(function* () {
+    const result = yield* cliEffect(["network-restrictions", "get", ...flags, "-o", "json"], {
+      exitTimeoutMs,
+    }).pipe(Effect.mapError(postureFailure));
+    const payload = yield* Effect.try({
+      try: () => {
+        requireLiveSuccess(result, label);
+        return requireLiveJson(result, label);
+      },
+      catch: postureFailure,
+    });
+    if (!Schema.is(V1GetNetworkRestrictionsOutput)(payload)) {
+      return yield* new LivePostureError({
+        message: `${label}: unexpected network-restrictions get payload\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+      });
+    }
+    const v4 = payload.config.dbAllowedCidrs;
+    const v6 = payload.config.dbAllowedCidrsV6;
+    return {
+      cidrs: { v4: v4 ?? [], v6: v6 ?? [] },
+      configured: v4 !== undefined || v6 !== undefined,
+      applied: payload.status === "applied",
+    };
   });
-  requireLiveSuccess(result, label);
-  const payload = requireLiveJson(result, label);
-  if (!Schema.is(V1GetNetworkRestrictionsOutput)(payload)) {
-    throw new Error(
-      `${label}: unexpected network-restrictions get payload\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
-    );
-  }
-  const v4 = payload.config.dbAllowedCidrs;
-  const v6 = payload.config.dbAllowedCidrsV6;
-  return {
-    cidrs: { v4: v4 ?? [], v6: v6 ?? [] },
-    configured: v4 !== undefined || v6 !== undefined,
-    applied: payload.status === "applied",
-  };
 }
 
 function sortedCidrs(cidrs: AllowedCidrs): AllowedCidrs {
   return { v4: [...cidrs.v4].sort(), v6: [...cidrs.v6].sort() };
 }
 
-// get reports `status: "stored"` until a requested allowlist has propagated
-// (see the `V1GetNetworkRestrictionsOutput` config annotation in
-// packages/api), so proving an update or a restore means polling get until
-// the requested allowlist is reported as applied.
+// get reports `status: "stored"` until the allowlist propagates, and the platform
+// exposes no signal to wait on, so proving an update means polling get (bounded).
 function expectApplied(
-  cli: LiveCli,
+  cliEffect: LiveCliEffect,
   flags: ReadonlyArray<string>,
   cidrs: AllowedCidrs,
   label: string,
-): Promise<void> {
-  return expect
-    .poll(
-      async () => {
-        const posture = await readPosture(cli, flags, label, POLL_ATTEMPT_EXIT_TIMEOUT_MS);
-        return { cidrs: sortedCidrs(posture.cidrs), applied: posture.applied };
-      },
-      {
-        interval: PROOF_INTERVAL_MS,
-        timeout: PROOF_TIMEOUT_MS,
-        message: label,
-      },
-    )
-    .toEqual({ cidrs: sortedCidrs(cidrs), applied: true });
+): Effect.Effect<void, LivePostureError> {
+  const expected = { cidrs: sortedCidrs(cidrs), applied: true };
+  return readPosture(cliEffect, flags, label, POLL_ATTEMPT_EXIT_TIMEOUT_MS).pipe(
+    Effect.flatMap((posture) =>
+      Effect.try({
+        try: () =>
+          expect({ cidrs: sortedCidrs(posture.cidrs), applied: posture.applied }, label).toEqual(
+            expected,
+          ),
+        catch: postureFailure,
+      }),
+    ),
+    Effect.retry(
+      Schedule.spaced(PROOF_INTERVAL_MS).pipe(Schedule.upTo({ duration: PROOF_TIMEOUT_MS })),
+    ),
+  );
 }
 
 test(
   "replaces the allowlist, get proves it, and restores the baseline allowlist",
   { timeout: LIVE_TIMEOUT_MS },
-  async ({ cli, project }) => {
-    const flags = experimentalProjectLiveFlags(project);
-    const captured = await readPosture(
-      cli,
-      flags,
-      "network-restrictions get capture for network-restrictions update",
-      EXIT_TIMEOUT_MS,
-    );
-    // A never-configured project has no allowlist to restore, so fall back to allow-all
-    // rather than leaving the shared project locked down for later tests. Any configured
-    // capture is restored as read, since posting an empty family is a faithful restrict-all
-    // restore.
-    const baselineCidrs: AllowedCidrs = captured.configured ? captured.cidrs : ALLOW_ALL_CIDRS;
-    let targetError: unknown;
-    const cleanupErrors: Array<unknown> = [];
-    try {
-      const updated = await cli([...updateArgs(TEST_CIDRS, flags), "-o", "json"], {
-        exitTimeoutMs: EXIT_TIMEOUT_MS,
-      });
-      expect(updated.exitCode, updated.stderr).toBe(0);
-      expect(requireLiveJson(updated, "network-restrictions update"), updated.stdout).toMatchObject(
-        { config: { dbAllowedCidrs: TEST_CIDRS.v4, dbAllowedCidrsV6: TEST_CIDRS.v6 } },
-      );
-
-      await expectApplied(
-        cli,
-        flags,
-        TEST_CIDRS,
-        "network-restrictions get proof for network-restrictions update",
-      );
-    } catch (error) {
-      targetError = error;
-    } finally {
-      try {
-        // One re-issue covers a transient restore failure. The proof alone decides success:
-        // a restore killed mid-request can exit non-zero even though the platform already
-        // applied it.
-        const restore = () =>
-          cli(updateArgs(baselineCidrs, flags), { exitTimeoutMs: EXIT_TIMEOUT_MS });
-        const first = await restore();
-        if (first.exitCode !== 0) {
-          console.warn("network-restrictions update restore retrying" + describeAttempt(1, first));
-        }
-        const restored = first.exitCode === 0 ? first : await restore();
-        if (restored.exitCode !== 0) {
-          cleanupErrors.push(
-            new Error(
-              "network-restrictions update restore of the baseline allowlist failed twice" +
-                describeAttempt(1, first) +
-                describeAttempt(2, restored),
-            ),
-          );
-        }
-        await expectApplied(
-          cli,
+  // Not wired to the test `signal`: an interrupt SIGKILLs an in-flight restore
+  // mid-request (the run's scope release kills the process group), so letting the
+  // bounded restore run out is strictly safer.
+  ({ cliEffect, project }) =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const flags = experimentalProjectLiveFlags(project);
+        const captured = yield* readPosture(
+          cliEffect,
           flags,
-          baselineCidrs,
-          "network-restrictions get proof of the restored allowlist for network-restrictions update",
+          "network-restrictions get capture for network-restrictions update",
+          EXIT_TIMEOUT_MS,
         );
-      } catch (error) {
-        cleanupErrors.push(error);
-      }
-    }
-    throwWithCleanup(targetError, cleanupErrors);
-  },
+        // A never-configured project has nothing to restore: fall back to allow-all so
+        // later tests aren't locked out; a configured capture is restored as read.
+        const baselineCidrs: AllowedCidrs = captured.configured ? captured.cidrs : ALLOW_ALL_CIDRS;
+        const cleanupErrors: Array<unknown> = [];
+
+        const target = Effect.gen(function* () {
+          const updated = yield* cliEffect([...updateArgs(TEST_CIDRS, flags), "-o", "json"], {
+            exitTimeoutMs: EXIT_TIMEOUT_MS,
+          });
+          expect(updated.exitCode, updated.stderr).toBe(0);
+          expect(
+            requireLiveJson(updated, "network-restrictions update"),
+            updated.stdout,
+          ).toMatchObject({
+            config: { dbAllowedCidrs: TEST_CIDRS.v4, dbAllowedCidrsV6: TEST_CIDRS.v6 },
+          });
+
+          yield* expectApplied(
+            cliEffect,
+            flags,
+            TEST_CIDRS,
+            "network-restrictions get proof for network-restrictions update",
+          );
+        });
+
+        const cleanup = Effect.gen(function* () {
+          // One re-issue covers a transient failure; the proof alone decides success,
+          // since a killed restore can exit non-zero after the platform applied it.
+          const restore = () =>
+            cliEffect(updateArgs(baselineCidrs, flags), { exitTimeoutMs: EXIT_TIMEOUT_MS });
+          const first = yield* restore();
+          if (first.exitCode !== 0) {
+            yield* Effect.logWarning(
+              "network-restrictions update restore retrying" + describeAttempt(1, first),
+            );
+          }
+          const restored = first.exitCode === 0 ? first : yield* restore();
+          if (restored.exitCode !== 0) {
+            cleanupErrors.push(
+              new Error(
+                "network-restrictions update restore of the baseline allowlist failed twice" +
+                  describeAttempt(1, first) +
+                  describeAttempt(2, restored),
+              ),
+            );
+          }
+          yield* expectApplied(
+            cliEffect,
+            flags,
+            baselineCidrs,
+            "network-restrictions get proof of the restored allowlist for network-restrictions update",
+          );
+        });
+
+        const targetExit = yield* Effect.exit(target);
+        const cleanupExit = yield* Effect.exit(cleanup);
+        if (Exit.isFailure(cleanupExit)) cleanupErrors.push(Cause.squash(cleanupExit.cause));
+        return {
+          targetError: Exit.isFailure(targetExit) ? Cause.squash(targetExit.cause) : undefined,
+          cleanupErrors,
+        };
+      }),
+    ).then(({ targetError, cleanupErrors }) => throwWithCleanup(targetError, cleanupErrors)),
 );

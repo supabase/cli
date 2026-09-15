@@ -62,7 +62,7 @@ describe("compute status", () => {
         expect(stdout).toContain(COMPUTE_PROJECT_REF);
         expect(stdout).toContain("v3");
         expect(stdout).toContain("2/3 ready, 3 live, 1 stale");
-        expect(stdout).toContain(`https://${COMPUTE_PROJECT_REF}.supabase.co/workers/v1/api`);
+        expect(stdout).toContain(`https://${COMPUTE_PROJECT_REF}.supabase.co/compute/v1/api`);
         expect(stdout).toContain(path.join("supabase", "compute", "api"));
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
@@ -504,7 +504,7 @@ describe("compute status", () => {
       const { layer, out, http } = setupCompute({
         workdir: repo.dir,
         routes: {
-          [`GET /v2/projects/${otherRef}/workers/api`]: {
+          [`GET /v2/projects/${otherRef}/compute/api`]: {
             status: 200,
             body: { data: computeResource({ name: "api", runtime: "node" }) },
           },
@@ -514,7 +514,7 @@ describe("compute status", () => {
       return yield* Effect.gen(function* () {
         yield* computeStatus({ name: "api", projectRef: Option.some(otherRef) });
 
-        expect(http.routeKeys).toEqual([`GET /v2/projects/${otherRef}/workers/api`]);
+        expect(http.routeKeys).toEqual([`GET /v2/projects/${otherRef}/compute/api`]);
         expect(out.stdoutText).toContain("active");
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),

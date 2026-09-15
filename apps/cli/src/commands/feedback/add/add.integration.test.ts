@@ -1,8 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
-import { Effect, Layer, Option, Stdio, Stream } from "effect";
+import { Effect, FileSystem, Layer, Option, Path, Schema, Stdio, Stream } from "effect";
 import { systemError } from "effect/PlatformError";
 import type { FeedbackSubmission } from "../../../shared/feedback/feedback-client.service.ts";
 import {
@@ -47,16 +45,26 @@ const tempRoot = useTempWorkdir("supabase-feedback-add-int-");
 // Seeds `<workdir>/supabase/.temp/project-ref`, the file `supabase link` writes.
 // Passing `asDirectory` creates the path as a directory instead, which makes the
 // read fail with a non-NotFound error (the "broken ref file" degradation path).
-function writeLinkedProjectRef(workdir: string, ref: string, opts: { asDirectory?: boolean } = {}) {
-  const tempDir = join(workdir, "supabase", ".temp");
-  mkdirSync(tempDir, { recursive: true });
-  const refPath = join(tempDir, "project-ref");
+const writeLinkedProjectRef = Effect.fnUntraced(function* (
+  workdir: string,
+  ref: string,
+  opts: { asDirectory?: boolean } = {},
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const tempDir = path.join(workdir, "supabase", ".temp");
+  yield* fs.makeDirectory(tempDir, { recursive: true });
+  const refPath = path.join(tempDir, "project-ref");
   if (opts.asDirectory === true) {
-    mkdirSync(refPath, { recursive: true });
+    yield* fs.makeDirectory(refPath, { recursive: true });
     return;
   }
-  writeFileSync(refPath, `${ref}\n`);
-}
+  yield* fs.writeFileString(refPath, `${ref}\n`);
+});
+
+// `JSON.stringify` via the schema codec: the whole event is scanned as one document.
+const jsonText = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+const jsonValue = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const MOCK_DELETE_TOKEN = "123e4567-e89b-12d3-a456-426614174000";
 
@@ -250,8 +258,8 @@ describe("feedback add", () => {
 
   it.live("attaches the linked project ref written by supabase link", () => {
     const { layer, out, submitter } = setupFeedback();
-    writeLinkedProjectRef(tempRoot.current, VALID_REF);
     return Effect.gen(function* () {
+      yield* writeLinkedProjectRef(tempRoot.current, VALID_REF);
       yield* feedbackAdd(addArgs(["linked project feedback"]));
 
       expect(submitter.submissions[0]?.projectRef).toBe(VALID_REF);
@@ -268,8 +276,8 @@ describe("feedback add", () => {
 
   it.live("prefers SUPABASE_PROJECT_ID over the linked ref file", () => {
     const { layer, submitter } = setupFeedback({ projectIdEnv: "envenvenvenvenvenvre" });
-    writeLinkedProjectRef(tempRoot.current, VALID_REF);
     return Effect.gen(function* () {
+      yield* writeLinkedProjectRef(tempRoot.current, VALID_REF);
       yield* feedbackAdd(addArgs(["env override feedback"]));
 
       expect(submitter.submissions[0]?.projectRef).toBe("envenvenvenvenvenvre");
@@ -280,8 +288,8 @@ describe("feedback add", () => {
     // Attribution from an unlinked (or differently linked) checkout, the same
     // way `feedback delete` and every other command accept the flag.
     const { layer, out, submitter } = setupFeedback({ projectIdEnv: "envenvenvenvenvenvre" });
-    writeLinkedProjectRef(tempRoot.current, VALID_REF);
     return Effect.gen(function* () {
+      yield* writeLinkedProjectRef(tempRoot.current, VALID_REF);
       yield* feedbackAdd(
         addArgs(["flag override feedback"], { projectRef: Option.some("flagflagflagflagflag") }),
       );
@@ -367,8 +375,8 @@ describe("feedback add", () => {
   it.live("still submits when the linked ref file cannot be read", () => {
     // A broken ref file must not block feedback — it degrades to "unlinked".
     const { layer, out, submitter } = setupFeedback();
-    writeLinkedProjectRef(tempRoot.current, VALID_REF, { asDirectory: true });
     return Effect.gen(function* () {
+      yield* writeLinkedProjectRef(tempRoot.current, VALID_REF, { asDirectory: true });
       yield* feedbackAdd(addArgs(["broken ref file feedback"]));
 
       expect(submitter.submissions[0]?.projectRef).toBeUndefined();
@@ -385,8 +393,8 @@ describe("feedback add", () => {
     // The fixture is shaped like a credential without matching any real token
     // format, so secret scanners don't flag the test source itself.
     const { layer, submitter } = setupFeedback();
-    writeLinkedProjectRef(tempRoot.current, "fake-access-token-0102030405060708");
     return Effect.gen(function* () {
+      yield* writeLinkedProjectRef(tempRoot.current, "fake-access-token-0102030405060708");
       yield* feedbackAdd(addArgs(["symlinked secret feedback"]));
 
       expect(submitter.submissions[0]?.projectRef).toBeUndefined();
@@ -398,8 +406,8 @@ describe("feedback add", () => {
     // for every command: a typo fails as invalid input rather than silently
     // falling through to the linked ref file (or to "unlinked").
     const { layer, submitter } = setupFeedback({ projectIdEnv: "not-a-valid-ref!" });
-    writeLinkedProjectRef(tempRoot.current, VALID_REF);
     return Effect.gen(function* () {
+      yield* writeLinkedProjectRef(tempRoot.current, VALID_REF);
       const error = yield* feedbackAdd(addArgs(["invalid env ref feedback"])).pipe(Effect.flip);
 
       expect(error).toMatchObject({
@@ -601,7 +609,8 @@ describe("feedback add", () => {
       expect(submitter.submissions).toHaveLength(1);
       expect(out.rawChunks).toHaveLength(1);
       expect(out.rawChunks[0]?.stream).toBe("stdout");
-      expect(JSON.parse(out.rawChunks[0]!.text)).toEqual({ delete_token: MOCK_DELETE_TOKEN });
+      const payload: unknown = yield* jsonValue(out.rawChunks[0]!.text);
+      expect(payload).toEqual({ delete_token: MOCK_DELETE_TOKEN });
       // No human-readable acknowledgement — stdout is payload-only.
       expect(out.messages).not.toContainEqual(expect.objectContaining({ type: "success" }));
       expect(out.messages).not.toContainEqual(expect.objectContaining({ type: "info" }));
@@ -691,7 +700,9 @@ describe("feedback add", () => {
       expect(events).toHaveLength(1);
       // Same treatment as `feedback delete`: the flag has no telemetry-safe
       // marking, so its value redacts and only the name survives.
-      expect(JSON.stringify(events[0])).not.toContain("abcdefghijklmnopqrst");
+      const scanned = yield* jsonText(events[0]);
+      expect(scanned).toContain("cli_command_executed");
+      expect(scanned).not.toContain("abcdefghijklmnopqrst");
       expect(Object.keys(events[0]?.properties.flags ?? {})).toEqual(["project-ref"]);
     }).pipe(Effect.provide(layer));
   });
@@ -706,7 +717,8 @@ describe("feedback add", () => {
       expect(submitter.submissions[0]?.message).toBe("my secret papercut");
       const events = analytics.captured.filter((c) => c.event === "cli_command_executed");
       expect(events).toHaveLength(1);
-      const serialized = JSON.stringify(events[0]);
+      const serialized = yield* jsonText(events[0]);
+      expect(serialized).toContain("cli_command_executed");
       expect(serialized).not.toContain("secret");
       expect(serialized).not.toContain("papercut");
       // Only the flag name survives into the event; positionals are

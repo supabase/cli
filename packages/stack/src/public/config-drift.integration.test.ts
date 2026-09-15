@@ -112,9 +112,9 @@ describe("inspectStack config drift", () => {
               "secrets.secret:functions.settings.edge_runtime.secrets.TOKEN",
             ]),
           );
-          // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- assertion checks redaction of serialized output
+          // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- JSON.stringify checks all fields for leaked secrets; schema encoding could omit unexpected fields.
           expect(JSON.stringify(changed.configDrift)).not.toContain("old-secret");
-          // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- assertion checks redaction of serialized output
+          // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- JSON.stringify checks all fields for leaked secrets; schema encoding could omit unexpected fields.
           expect(JSON.stringify(changed.configDrift)).not.toContain("new-secret");
         }),
       ),
@@ -152,7 +152,7 @@ describe("inspectStack config drift", () => {
           });
           const changed = yield* inspectStack(stack.id, { config: managed("new-managed-secret") });
           expect(changed.configDrift?.paths).toContain("secrets.secret:auth.settings.jwt_secret");
-          // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- assertion checks redaction of serialized output
+          // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- JSON.stringify checks all fields for leaked secrets; schema encoding could omit unexpected fields.
           expect(JSON.stringify(changed.configDrift)).not.toContain("managed-secret");
           const removed = yield* inspectStack(stack.id, {
             config: {
@@ -202,7 +202,7 @@ describe("inspectStack config drift", () => {
         Effect.tap((inspection) =>
           Effect.sync(() => {
             expect(inspection.configDrift?.status).toBe("changed");
-            // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- assertion checks redaction of serialized output
+            // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- JSON.stringify checks all fields for leaked secrets; schema encoding could omit unexpected fields.
             expect(JSON.stringify(inspection.configDrift)).not.toContain("old-secret");
           }),
         ),

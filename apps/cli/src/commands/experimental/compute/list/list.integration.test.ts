@@ -260,7 +260,7 @@ describe("compute list", () => {
             size: "2gb-1vcpu",
             state: "active",
             instances: 1,
-            url: `https://${COMPUTE_PROJECT_REF}.supabase.co/workers/v1/api`,
+            url: `https://${COMPUTE_PROJECT_REF}.supabase.co/compute/v1/api`,
           },
           {
             name: "old",
@@ -337,7 +337,7 @@ describe("compute list", () => {
             body: {
               error: {
                 code: "generic_not_found",
-                message: "Workers are not available for this project",
+                message: "Compute is not available for this project",
               },
             },
           },
@@ -375,14 +375,14 @@ describe("compute list", () => {
         workdir: repo.dir,
         linked: false,
         routes: {
-          "GET /v2/projects/qrstuvwxyzabcdefghij/workers": { status: 200, body: { data: [] } },
+          "GET /v2/projects/qrstuvwxyzabcdefghij/compute": { status: 200, body: { data: [] } },
         },
       });
 
       return yield* Effect.gen(function* () {
         yield* computeList({ projectRef: Option.some("qrstuvwxyzabcdefghij") });
 
-        expect(http.routeKeys).toEqual(["GET /v2/projects/qrstuvwxyzabcdefghij/workers"]);
+        expect(http.routeKeys).toEqual(["GET /v2/projects/qrstuvwxyzabcdefghij/compute"]);
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );

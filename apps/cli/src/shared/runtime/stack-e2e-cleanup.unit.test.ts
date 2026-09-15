@@ -280,8 +280,6 @@ describe("stack e2e cleanup manager", () => {
       dir: "/tmp/project",
       cleanup: async () => {
         calls.push("cleanup-project");
-        // The harness surfaces disposal failures as tagged errors carrying the errno
-        // as `cause`; the fallback must see through the real wrapper.
         throw new CliHomeDisposeError({ cause: permissionError() });
       },
     });

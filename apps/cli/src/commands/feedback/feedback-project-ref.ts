@@ -28,9 +28,10 @@ export const resolveFeedbackProjectRef = Effect.fnUntraced(function* (
 ) {
   if (Option.isSome(override)) {
     if (!PROJECT_REF_PATTERN.test(override.value)) {
-      return yield* Effect.fail(
-        new InvalidProjectRefError({ ref: override.value, message: INVALID_PROJECT_REF_MESSAGE }),
-      );
+      return yield* new InvalidProjectRefError({
+        ref: override.value,
+        message: INVALID_PROJECT_REF_MESSAGE,
+      });
     }
     return override;
   }

@@ -3,7 +3,7 @@ import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat } from "no
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { URL } from "node:url";
 import {
-  FunctionResponse,
+  FunctionResponse_Output,
   operationDefinitions,
   SupabaseApiInputError,
   type ApiClient,
@@ -145,7 +145,7 @@ interface BundledFunction {
   readonly body: Uint8Array;
 }
 
-type RemoteFunction = typeof FunctionResponse.Type;
+type RemoteFunction = typeof FunctionResponse_Output.Type;
 type DeployFunctionResponse = typeof operationDefinitions.v1DeployAFunction.outputSchema.Type;
 type BulkUpdateFunction =
   (typeof operationDefinitions.v1BulkUpdateFunctions.inputSchema.Type.body)[number];
@@ -168,7 +168,9 @@ const defaultManifestFunctionConfig: ManifestFunctionConfig = {
   env: {},
 };
 
-const decodeFunctionListResponseSchema = Schema.decodeUnknownSync(Schema.Array(FunctionResponse));
+const decodeFunctionListResponseSchema = Schema.decodeUnknownSync(
+  Schema.Array(FunctionResponse_Output),
+);
 const decodeDeployFunctionResponseSchema = Schema.decodeUnknownSync(
   operationDefinitions.v1DeployAFunction.outputSchema,
 );

@@ -35,13 +35,13 @@ and the command handler does not run. See the [Compute command guide](../../../.
 
 | Method | Path                                         | Auth                                        | Request body                                        | Response (used fields)                                 |
 | ------ | -------------------------------------------- | ------------------------------------------- | --------------------------------------------------- | ------------------------------------------------------ |
-| `POST` | `/v2/projects/{ref}/workers/{name}/uploads`  | Bearer token                                | none                                                | `data.id`, `data.attributes.url/method`                |
+| `POST` | `/v2/projects/{ref}/compute/{name}/uploads`  | Bearer token                                | none                                                | `data.id`, `data.attributes.url/method`                |
 | `PUT`  | presigned upload URL (control-plane storage) | URL signature — **no** Supabase credentials | `.tar.gz` build context                             | status only                                            |
-| `POST` | `/v2/projects/{ref}/workers/{name}/deploy`   | Bearer token                                | `{data:{type,attributes:{spec,context_upload_id}}}` | `data.attributes.build_state`                          |
-| `GET`  | `/v2/projects/{ref}/workers/{name}`          | Bearer token                                | none                                                | `build_state`, `state_reason`, `image_version`, `spec` |
+| `POST` | `/v2/projects/{ref}/compute/{name}/deploy`   | Bearer token                                | `{data:{type,attributes:{spec,context_upload_id}}}` | `data.attributes.build_state`                          |
+| `GET`  | `/v2/projects/{ref}/compute/{name}`          | Bearer token                                | none                                                | `build_state`, `state_reason`, `image_version`, `spec` |
 | `GET`  | `/v1/projects/{ref}`                         | Bearer token                                | none                                                | linked-project cache miss only — name, org, region     |
 
-`GET /v2/projects/{ref}/workers/{name}` is polled until `build_state` leaves
+`GET /v2/projects/{ref}/compute/{name}` is polled until `build_state` leaves
 `building`. It is skipped entirely in two cases: under `--no-wait`, and when
 the deploy response already carried a terminal `build_state`. Either way the
 run reports the accepted spec the deploy response returned.
