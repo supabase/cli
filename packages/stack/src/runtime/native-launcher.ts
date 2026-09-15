@@ -2,9 +2,9 @@
 // invokes Effect only for bounded asynchronous lifecycle work.
 import { Config, ConfigProvider, Duration, Effect, Option, Schema } from "effect";
 import { Socket } from "node:net";
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- FileSystem cannot adopt inherited fd3/fd4; Bun also requires synchronous fd4 reads.
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- FileSystem cannot adopt inherited fd3/fd4; Bun also requires synchronous fd4 reads at this process boundary.
 import { createReadStream, readFileSync, writeSync } from "node:fs";
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- the launcher owns its own process group; platform spawners own child-group shutdown instead.
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- workloads join the launcher's process group and need child-only signal forwarding; Effect spawners signal child process groups.
 import { spawn } from "node:child_process";
 
 interface LaunchSpec {

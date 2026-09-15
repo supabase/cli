@@ -6,7 +6,7 @@ import {
   request as requestHttp,
   type IncomingMessage,
   type ServerResponse,
-  // oxlint-disable-next-line effecttsgo/node-builtin-import -- ingress protocol fixture.
+  // oxlint-disable-next-line effecttsgo/node-builtin-import -- fixture needs Node request clients and server instances to exercise ingress forwarding and adoption.
 } from "node:http";
 import type { Duplex } from "node:stream";
 import { deriveStackId, type StackIdentity } from "../identity/Identity.ts";
