@@ -60,7 +60,7 @@ export interface PromiseStack {
   readonly credentials: () => Promise<PromiseStackCredentials>;
   readonly prepare: (options?: PromisePrepareStackOptions) => Promise<PrepareStackResult>;
   readonly start: (options?: PromiseStartStackOptions) => Promise<StackStatus>;
-  /** Replaces the Functions workload without changing durable stack configuration. */
+  /** Replaces Functions transiently with config, or restores the durable activation when omitted. */
   readonly serveFunctions: (options?: PromiseServeFunctionsOptions) => Promise<StackStatus>;
   readonly stop: () => Promise<void>;
   readonly destroy: () => Promise<void>;

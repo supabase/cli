@@ -198,7 +198,7 @@ export interface EffectStack {
     options?: PrepareStackOptions,
   ) => Effect.Effect<PrepareStackResult, PrepareStackError>;
   readonly start: (options?: StartStackOptions) => Effect.Effect<StackStatus, StackStartError>;
-  /** Replaces the Functions workload without changing durable stack configuration. */
+  /** Replaces Functions transiently with config, or restores the durable activation when omitted. */
   readonly serveFunctions: (
     options?: ServeFunctionsOptions,
   ) => Effect.Effect<StackStatus, ServeFunctionsError>;

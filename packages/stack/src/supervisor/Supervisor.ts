@@ -213,12 +213,13 @@ export const makeSupervisor = (
       CapabilityName,
       | {
           readonly _tag: "pending";
+          readonly transient: boolean;
           readonly result: Deferred.Deferred<
             Exit.Exit<ActivationResult, GatewayActivationError | StackError>,
             never
           >;
         }
-      | { readonly _tag: "ready"; readonly result: ActivationResult }
+      | { readonly _tag: "ready"; readonly transient: boolean; readonly result: ActivationResult }
     >();
     const initializeActivation = (plan: ExecutionPlan) => Ref.set(active, eagerCapabilities(plan));
     const resetForSession = (input: LifecycleInput) =>
@@ -645,6 +646,7 @@ export const makeSupervisor = (
             if (
               config === undefined &&
               current?._tag === "ready" &&
+              !current.transient &&
               (yield* Ref.get(phase)) === "running"
             )
               return {
@@ -652,7 +654,7 @@ export const makeSupervisor = (
                 result: Exit.succeed(current.result),
               } satisfies ActivationToken;
             if (current?._tag === "pending")
-              return config === undefined
+              return config === undefined && !current.transient
                 ? ({ _tag: "deferred", result: current.result } satisfies ActivationToken)
                 : ({ _tag: "wait-then-replace", result: current.result } satisfies ActivationToken);
             // Validate durable lifecycle state only for a new activation. Ready
@@ -662,7 +664,13 @@ export const makeSupervisor = (
               Exit.Exit<ActivationResult, GatewayActivationError | StackError>,
               never
             >();
-            activationOwned.set(capability, { _tag: "pending", result: deferred });
+            const restoreTransient =
+              config === undefined && current?._tag === "ready" && current.transient;
+            activationOwned.set(capability, {
+              _tag: "pending",
+              transient: config !== undefined,
+              result: deferred,
+            });
             const owner = Effect.gen(function* () {
               const result = yield* execution
                 .withPermit(
@@ -681,7 +689,7 @@ export const makeSupervisor = (
                                 config === undefined
                                   ? undefined
                                   : yield* transientFunctionsInput(config);
-                              if (input !== undefined) {
+                              if (input !== undefined || restoreTransient) {
                                 const reset = yield* launcher
                                   .resetCapability(capability)
                                   .pipe(Effect.mapError(mapCleanupError), Effect.exit);
@@ -712,7 +720,11 @@ export const makeSupervisor = (
                   const current = activationOwned.get(capability);
                   if (current?._tag !== "pending" || current.result !== deferred) return;
                   if (Exit.isSuccess(result))
-                    activationOwned.set(capability, { _tag: "ready", result: result.value });
+                    activationOwned.set(capability, {
+                      _tag: "ready",
+                      transient: config !== undefined,
+                      result: result.value,
+                    });
                   else activationOwned.delete(capability);
                 }),
               );
