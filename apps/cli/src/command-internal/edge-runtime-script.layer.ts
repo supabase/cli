@@ -96,6 +96,7 @@ export const edgeRuntimeScriptLayer = Layer.effect(
               entrypoint: Option.some("sh"),
               cmd: ["-c", entrypointBody],
               env,
+              projectEnvValues: opts.projectEnvValues,
               binds: opts.binds,
               workingDir: Option.none(),
               // SELinux-enforcing hosts (e.g. Fedora + rootless Podman) block the container from
