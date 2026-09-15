@@ -1,9 +1,10 @@
-import { Config, ConfigProvider, Console, Data, Effect, Option, Schema } from "effect";
+import { Cause, Config, ConfigProvider, Console, Data, Effect, Exit, Option, Schema } from "effect";
 import { dirname, join, STATUS_CODE, STATUS_TEXT, toFileUrl } from "./serve-main-deps.ts";
 
 import * as jose from "jose";
 
 interface DenoErrorConstructors {
+  readonly NotFound?: abstract new (...args: never[]) => Error;
   readonly InvalidWorkerCreation?: abstract new (...args: never[]) => Error;
   readonly InvalidWorkerResponse?: abstract new (...args: never[]) => Error;
   readonly WorkerRequestCancelled?: abstract new (...args: never[]) => Error;
@@ -140,7 +141,11 @@ const FunctionConfigSchema = Schema.Struct({
 const FunctionsConfigSchema = Schema.Record(Schema.String, FunctionConfigSchema);
 const JsonWebKeySetSchema = Schema.declare(
   (value): value is jose.JSONWebKeySet =>
-    typeof value === "object" && value !== null && "keys" in value && Array.isArray(value.keys),
+    typeof value === "object" &&
+    value !== null &&
+    "keys" in value &&
+    Array.isArray(value.keys) &&
+    value.keys.every((key) => typeof key === "object" && key !== null),
 );
 type FunctionConfig = Schema.Schema.Type<typeof FunctionConfigSchema>;
 
@@ -304,10 +309,10 @@ const jwks = Effect.runSync(
       }).pipe(Effect.option),
   }),
 );
+const selectedJwks = Option.getOrElse(jwks, () => jose.createRemoteJWKSet(JWKS_ENDPOINT));
 
-function isValidJWT(jwtUrl: URL, jwt: string): Effect.Effect<Option.Option<AuthFailure>> {
-  const resolver = Option.getOrElse(jwks, () => jose.createRemoteJWKSet(new URL(jwtUrl.href)));
-  return foreign(() => jose.jwtVerify(jwt, resolver)).pipe(
+function isValidJWT(jwt: string): Effect.Effect<Option.Option<AuthFailure>> {
+  return foreign(() => jose.jwtVerify(jwt, selectedJwks)).pipe(
     Effect.as(Option.none<AuthFailure>()),
     Effect.tapError((error) => Console.error("Asymmetric JWT verification error", error)),
     Effect.orElseSucceed(() => Option.some({ code: RequestErrors.InvalidAsymmetricJWT })),
@@ -339,7 +344,7 @@ export function verifyHybridJWT(
     }
 
     if (algorithm === "ES256" || algorithm === "RS256") {
-      return yield* isValidJWT(jwksUrl, jwt);
+      return yield* isValidJWT(jwt);
     }
 
     return Option.some({
@@ -364,9 +369,12 @@ function shouldUsePackageJsonDiscovery({
     return Effect.succeed(false);
   }
   const packageJsonPath = join(dirname(entrypointPath), "package.json");
+  const notFound = Deno.errors.NotFound;
   return foreign(() => Deno.lstat(packageJsonPath)).pipe(
     Effect.as(true),
-    Effect.orElseSucceed(() => false),
+    Effect.catchTag("BootstrapOperationError", ({ cause }) =>
+      Effect.succeed(notFound !== undefined && cause instanceof notFound ? false : true),
+    ),
   );
 }
 
@@ -385,7 +393,7 @@ export function prepareUserRequest(req: Request): Request {
 
 Deno.serve({
   handler: (req: Request) =>
-    Effect.runPromise(
+    Effect.runPromiseExit(
       Effect.gen(function* () {
         const url = new URL(req.url);
         const { pathname } = url;
@@ -510,7 +518,12 @@ Deno.serve({
         );
       }),
       { signal: req.signal },
-    ),
+    ).then((exit) => {
+      if (Exit.isSuccess(exit)) return exit.value;
+      if (req.signal.aborted && Cause.hasInterruptsOnly(exit.cause))
+        return new Response(null, { status: 499 });
+      throw Cause.squash(exit.cause);
+    }),
 
   onListen: () => {
     const MAX_FUNCTIONS_URL_EXAMPLES = 5;
