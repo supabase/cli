@@ -37,7 +37,7 @@ and the command handler does not run. See the [Compute command guide](../../../.
 
 | Method | Path                                | Auth         | Request body | Response (used fields)                                                                                                                 |
 | ------ | ----------------------------------- | ------------ | ------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET`  | `/v2/projects/{ref}/workers/{name}` | Bearer token | none         | `spec`, `build_state`, `state_reason`, `image_version`, `instances`, `instances_error`, `deleting`                                     |
+| `GET`  | `/v2/projects/{ref}/compute/{name}` | Bearer token | none         | `spec`, `build_state`, `state_reason`, `image_version`, `instances`, `instances_error`, `deleting`                                     |
 | `GET`  | `/v1/projects`                      | Bearer token | none         | `id`, `name`, `organization_slug`, `region` — only when no ref resolved and the session is interactive, to populate the project picker |
 
 ## Exit Codes

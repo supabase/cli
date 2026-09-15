@@ -1,7 +1,7 @@
 import type {
-  ApiKeyResponse,
-  BranchResponse,
-  SupavisorConfigResponse,
+  ApiKeyResponse_Output,
+  BranchResponse_Output,
+  SupavisorConfigResponse_Output,
   V1GetABranchConfigOutput,
 } from "@supabase/api/effect";
 
@@ -30,7 +30,7 @@ const GET_HEADERS = [
   "STATUS",
 ] as const;
 
-type Branch = typeof BranchResponse.Type;
+type Branch = typeof BranchResponse_Output.Type;
 
 /**
  * Renders the `branches list` table. Cell values pass through raw (including any literal `|` in
@@ -165,8 +165,8 @@ export function toPostgresUrl(config: PgConfig, connectTimeoutSeconds: number = 
   );
 }
 
-type ApiKey = typeof ApiKeyResponse.Type;
-type Pooler = typeof SupavisorConfigResponse.Type;
+type ApiKey = typeof ApiKeyResponse_Output.Type;
+type Pooler = typeof SupavisorConfigResponse_Output.Type;
 type Detail = typeof V1GetABranchConfigOutput.Type;
 
 export interface StandardEnvsResult {

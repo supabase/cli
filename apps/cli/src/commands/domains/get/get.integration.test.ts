@@ -46,7 +46,8 @@ const GoJsonResult = Schema.Struct({
   data: Schema.Struct({
     result: Schema.Struct({
       ownership_verification: Schema.Unknown,
-      ssl: Schema.Struct({ validation_records: Schema.Unknown }),
+      custom_origin_server: Schema.String,
+      ssl: Schema.Struct({ status: Schema.String, validation_records: Schema.Unknown }),
     }),
   }),
 });
@@ -122,6 +123,7 @@ describe("domains get integration", () => {
   it.live("backfills Go zero values in JSON output when the API omits nested fields", () => {
     const {
       ownership_verification: _ownershipVerification,
+      custom_origin_server: _customOriginServer,
       ...resultWithoutOwnershipVerification
     } = HOSTNAME_RESPONSE.data.result;
     const response: typeof V1GetHostnameConfigOutput.Type = {
@@ -130,7 +132,7 @@ describe("domains get integration", () => {
         ...HOSTNAME_RESPONSE.data,
         result: {
           ...resultWithoutOwnershipVerification,
-          ssl: { status: "pending_validation" },
+          ssl: { validation_records: [{ txt_name: "_acme" }] },
         },
       },
     };
@@ -141,7 +143,31 @@ describe("domains get integration", () => {
         out.stdoutText,
       );
       expect(parsed.data.result.ownership_verification).toEqual({ type: "", name: "", value: "" });
-      expect(parsed.data.result.ssl.validation_records).toEqual([]);
+      expect(parsed.data.result.custom_origin_server).toBe("");
+      expect(parsed.data.result.ssl.status).toBe("");
+      expect(parsed.data.result.ssl.validation_records).toEqual([
+        { txt_name: "_acme", txt_value: "" },
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("handles a pending hostname response without SSL details", () => {
+    const { ssl: _ssl, ...resultWithoutSsl } = HOSTNAME_RESPONSE.data.result;
+    const response: typeof V1GetHostnameConfigOutput.Type = {
+      ...HOSTNAME_RESPONSE,
+      status: "2_initiated",
+      data: {
+        ...HOSTNAME_RESPONSE.data,
+        result: { ...resultWithoutSsl, status: "pending" },
+      },
+    };
+    const { layer, out } = setup({ response });
+    return Effect.gen(function* () {
+      yield* domainsGet(baseFlags);
+      expect(out.stderrText).toBe(
+        "Custom hostname setup is being initialized; please request re-verification in a few seconds.\n",
+      );
+      expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(layer));
   });
 
@@ -246,6 +272,32 @@ describe("domains get integration", () => {
           "\t_acme-challenge.sbstg4.thewheatfield.org TXT -> i6XyXv3kU4SRX9YcCE8h4LExoHE6y_poV1-5R1cjpk4\n",
       );
       expect(out.stdoutText).toBe("");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("does not print partial ACME validation records", () => {
+    const response: typeof V1GetHostnameConfigOutput.Type = {
+      ...HOSTNAME_RESPONSE,
+      status: "2_initiated",
+      data: {
+        ...HOSTNAME_RESPONSE.data,
+        result: {
+          ...HOSTNAME_RESPONSE.data.result,
+          ssl: {
+            status: "pending_validation",
+            validation_records: [{ txt_name: "_acme-challenge.shop.acme.dev" }],
+          },
+        },
+      },
+    };
+    const { layer, out } = setup({ response });
+    return Effect.gen(function* () {
+      yield* domainsGet(baseFlags);
+      expect(out.stderrText).toBe(
+        "Custom hostname verification in-progress; please configure the appropriate DNS entries and request re-verification.\n" +
+          "Required outstanding validation records:\n",
+      );
+      expect(out.stderrText).not.toContain("undefined");
     }).pipe(Effect.provide(layer));
   });
 
