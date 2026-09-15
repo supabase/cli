@@ -230,6 +230,7 @@ describe("inspectContainerState", () => {
           running: true,
           status: "running",
           exitCode: 0,
+          oomKilled: false,
           health: "healthy",
         });
         expect(mock.spawned).toEqual([
@@ -248,7 +249,28 @@ describe("inspectContainerState", () => {
     });
     return inspectContainerState(mock.spawner, "supabase_kong_my-app").pipe(
       Effect.map((state) => {
-        expect(state).toEqual({ running: true, status: "running", exitCode: 0 });
+        expect(state).toEqual({ running: true, status: "running", exitCode: 0, oomKilled: false });
+      }),
+    );
+  });
+
+  it.live("reports a container killed for exceeding its memory limit", () => {
+    const mock = mockSpawner({
+      stdout: JSON.stringify({
+        Status: "exited",
+        Running: false,
+        ExitCode: 137,
+        OOMKilled: true,
+      }),
+    });
+    return inspectContainerState(mock.spawner, "supabase_edge_runtime_my-app").pipe(
+      Effect.map((state) => {
+        expect(state).toEqual({
+          running: false,
+          status: "exited",
+          exitCode: 137,
+          oomKilled: true,
+        });
       }),
     );
   });
@@ -259,7 +281,7 @@ describe("inspectContainerState", () => {
     });
     return inspectContainerState(mock.spawner, "supabase_kong_my-app").pipe(
       Effect.map((state) => {
-        expect(state).toEqual({ running: false, status: "exited", exitCode: 1 });
+        expect(state).toEqual({ running: false, status: "exited", exitCode: 1, oomKilled: false });
       }),
     );
   });
@@ -272,7 +294,7 @@ describe("inspectContainerState", () => {
       });
       return inspectContainerState(mock.spawner, "supabase_db_my-app").pipe(
         Effect.map((state) => {
-          expect(state).toEqual({ running: true, status: "paused", exitCode: 0 });
+          expect(state).toEqual({ running: true, status: "paused", exitCode: 0, oomKilled: false });
         }),
       );
     },
@@ -334,7 +356,7 @@ describe("inspectContainerState", () => {
     const mock = mockSpawner({ stdout: "" });
     return inspectContainerState(mock.spawner, "supabase_db_my-app").pipe(
       Effect.map((state) => {
-        expect(state).toEqual({ running: false, status: "", exitCode: 0 });
+        expect(state).toEqual({ running: false, status: "", exitCode: 0, oomKilled: false });
       }),
     );
   });
@@ -343,7 +365,7 @@ describe("inspectContainerState", () => {
     const mock = mockSpawner({ stdout: "null" });
     return inspectContainerState(mock.spawner, "supabase_db_my-app").pipe(
       Effect.map((state) => {
-        expect(state).toEqual({ running: false, status: "", exitCode: 0 });
+        expect(state).toEqual({ running: false, status: "", exitCode: 0, oomKilled: false });
       }),
     );
   });
