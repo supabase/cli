@@ -1,36 +1,29 @@
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- compiled CLI fixture checks local runtime availability
+import { spawnSync } from "node:child_process";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- compiled CLI fixture requires host filesystem APIs
 import { mkdir, writeFile } from "node:fs/promises";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- compiled CLI fixture requires host path APIs
 import path from "node:path";
 import { describe, expect, test } from "vitest";
 import {
+  makeTempCliProject,
   makeTempHome,
-  makeTempStackProject,
   runSupabase,
   spawnSupabase,
 } from "../../../../../../tests/helpers/cli.ts";
 
 const START_TIMEOUT_MS = 15 * 60_000;
 const COMMAND_TIMEOUT_MS = 120_000;
-const nativeSupported =
+const nativeAvailable =
   (process.platform === "linux" && (process.arch === "x64" || process.arch === "arm64")) ||
   (process.platform === "darwin" && process.arch === "arm64");
+const dockerAvailable =
+  spawnSync("docker", ["info"], { stdio: "ignore", timeout: 5_000 }).status === 0;
 
-const config = (ports: {
-  readonly apiPort: number;
-  readonly dbPort: number;
-  readonly edgeRuntimeInspectorPort: number;
-}) => `project_id = "functions-serve-managed-e2e"
+const config = (projectId: string) => `project_id = "${projectId}"
 
 [experimental]
 stack = true
-
-[api]
-enabled = false
-port = ${ports.apiPort}
-
-[db]
-port = ${ports.dbPort}
 
 [auth]
 enabled = false
@@ -40,10 +33,11 @@ enabled = false
 
 [edge_runtime]
 enabled = true
-inspector_port = ${ports.edgeRuntimeInspectorPort}
+secrets = { EXPLICIT_WINS = "config-value", CONFIG_ONLY = "config-only" }
 
 [functions.smoke]
 verify_jwt = false
+env = { FUNCTION_ONLY = "function-only" }
 
 [realtime]
 enabled = false
@@ -62,9 +56,15 @@ enabled = false
 `;
 
 const functionSource = `Deno.serve(() => {
-  const marker = Deno.env.get("FUNCTIONS_SERVE_E2E_MARKER") ?? null;
-  console.log(\`functions-serve-managed-e2e marker=\${marker}\`);
-  return Response.json({ marker });
+  const values = {
+    explicitWins: Deno.env.get("EXPLICIT_WINS") ?? null,
+    configOnly: Deno.env.get("CONFIG_ONLY") ?? null,
+    functionOnly: Deno.env.get("FUNCTION_ONLY") ?? null,
+    multiline: Deno.env.get("MULTILINE_VALUE") ?? null,
+    reserved: Deno.env.get("SUPABASE_SERVE_E2E_RESERVED") ?? null,
+  };
+  console.log(\`functions-serve-managed-e2e application-secret=\${Deno.env.get("APPLICATION_SECRET")}\`);
+  return Response.json(values);
 });
 `;
 
@@ -74,29 +74,48 @@ const apiUrlFromEnv = (stdout: string): string => {
   return match[1];
 };
 
-describe("managed stack functions serve (compiled e2e)", () => {
-  test.skipIf(!nativeSupported)(
-    "applies invocation env and restores the running stack on Ctrl-C",
+const runtimes = [
+  { runtime: "native" as const, available: nativeAvailable },
+  { runtime: "docker" as const, available: dockerAvailable },
+];
+
+describe.each(runtimes)("managed stack functions serve ($runtime compiled e2e)", (runtimeCase) => {
+  test.skipIf(!runtimeCase.available)(
+    "applies invocation overrides and restores the running stack on Ctrl-C",
     { timeout: START_TIMEOUT_MS + COMMAND_TIMEOUT_MS },
     // oxlint-disable-next-line effecttsgo/async-function -- compiled CLI e2e callback is a Promise boundary
     async () => {
       const home = makeTempHome();
-      const project = await makeTempStackProject("supabase-functions-serve-managed-e2e-");
+      const project = await makeTempCliProject(
+        `supabase-functions-serve-${runtimeCase.runtime}-e2e-`,
+      );
+      const projectId = path.basename(project.dir);
+      const applicationSecret = `application-secret-${projectId}-value`;
       const supabaseDir = path.join(project.dir, "supabase");
       const functionDir = path.join(supabaseDir, "functions", "smoke");
       await mkdir(functionDir, { recursive: true });
-      await writeFile(path.join(supabaseDir, "config.toml"), config(project.ports));
+      await writeFile(path.join(supabaseDir, "config.toml"), config(projectId));
       await writeFile(path.join(functionDir, "index.ts"), functionSource);
       await writeFile(
         path.join(project.dir, "serve.env"),
-        "FUNCTIONS_SERVE_E2E_MARKER=transient\n",
+        [
+          "EXPLICIT_WINS=explicit-value",
+          `APPLICATION_SECRET=${applicationSecret}`,
+          'MULTILINE_VALUE="first line',
+          'second line"',
+          "SUPABASE_SERVE_E2E_RESERVED=must-not-reach-runtime",
+          "",
+        ].join("\n"),
       );
 
-      const started = await runSupabase(["stack", "start", "--runtime", "native"], {
-        cwd: project.dir,
-        home: home.dir,
-        exitTimeoutMs: START_TIMEOUT_MS,
-      });
+      const started = await runSupabase(
+        ["stack", "start", "--runtime", runtimeCase.runtime, "--eager"],
+        {
+          cwd: project.dir,
+          home: home.dir,
+          exitTimeoutMs: START_TIMEOUT_MS,
+        },
+      );
       expect(started.exitCode, `stdout:\n${started.stdout}\nstderr:\n${started.stderr}`).toBe(0);
       const env = await runSupabase(["stack", "status", "--env"], {
         cwd: project.dir,
@@ -108,27 +127,48 @@ describe("managed stack functions serve (compiled e2e)", () => {
       // oxlint-disable-next-line effecttsgo/global-fetch -- compiled CLI E2E invokes the local HTTP boundary
       const baseline = await fetch(`${apiUrl}/functions/v1/smoke`);
       expect(baseline.status).toBe(200);
-      await expect(baseline.json()).resolves.toEqual({ marker: null });
-
-      const served = spawnSupabase(["functions", "serve", "--env-file", "serve.env"], {
-        cwd: project.dir,
-        home: home.dir,
-        env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
-        exitTimeoutMs: COMMAND_TIMEOUT_MS,
+      await expect(baseline.json()).resolves.toEqual({
+        explicitWins: "config-value",
+        configOnly: "config-only",
+        functionOnly: "function-only",
+        multiline: null,
+        reserved: null,
       });
+
+      const served = spawnSupabase(
+        ["functions", "serve", "--env-file", "serve.env", "--inspect-mode", "run"],
+        {
+          cwd: project.dir,
+          home: home.dir,
+          env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
+          exitTimeoutMs: COMMAND_TIMEOUT_MS,
+        },
+      );
       let exited = false;
       try {
         await served.waitForOutput(/Serving Functions on .*\/functions\/v1\/<function-name>/u);
+        await served.waitForOutput(/Debugger listening on ws:\/\/.*:\d+/iu);
         // oxlint-disable-next-line effecttsgo/global-fetch -- compiled CLI E2E invokes the local HTTP boundary
         const transient = await fetch(`${apiUrl}/functions/v1/smoke`);
         expect(transient.status).toBe(200);
-        await expect(transient.json()).resolves.toEqual({ marker: "transient" });
-        await served.waitForOutput(/functions-serve-managed-e2e marker=transient/u);
+        await expect(transient.json()).resolves.toEqual({
+          explicitWins: "explicit-value",
+          configOnly: "config-only",
+          functionOnly: "function-only",
+          multiline: "first line\nsecond line",
+          reserved: null,
+        });
+        await served.waitForOutput(/functions-serve-managed-e2e application-secret=\[REDACTED\]/u);
 
         served.kill("SIGINT");
         const result = await served.waitForExit(COMMAND_TIMEOUT_MS);
         exited = true;
         expect(result.exitCode, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`).toBe(0);
+        expect(result.stderr).toContain("Setting up Edge Functions runtime");
+        expect(result.stderr).toContain(
+          "Env name cannot start with SUPABASE_, skipping: SUPABASE_SERVE_E2E_RESERVED",
+        );
+        expect(`${result.stdout}\n${result.stderr}`).not.toContain(applicationSecret);
         expect(result.stdout).toContain("Stopped serving supabase/functions");
       } finally {
         if (!exited) {
@@ -140,14 +180,23 @@ describe("managed stack functions serve (compiled e2e)", () => {
       // oxlint-disable-next-line effecttsgo/global-fetch -- compiled CLI E2E invokes the local HTTP boundary
       const restored = await fetch(`${apiUrl}/functions/v1/smoke`);
       expect(restored.status).toBe(200);
-      await expect(restored.json()).resolves.toEqual({ marker: null });
-      const status = await runSupabase(["stack", "status"], {
+      await expect(restored.json()).resolves.toEqual({
+        explicitWins: "config-value",
+        configOnly: "config-only",
+        functionOnly: "function-only",
+        multiline: null,
+        reserved: null,
+      });
+      const stackStatus = await runSupabase(["stack", "status"], {
         cwd: project.dir,
         home: home.dir,
         exitTimeoutMs: COMMAND_TIMEOUT_MS,
       });
-      expect(status.exitCode, `stdout:\n${status.stdout}\nstderr:\n${status.stderr}`).toBe(0);
-      expect(status.stdout).toContain("Lifecycle: running");
+      expect(
+        stackStatus.exitCode,
+        `stdout:\n${stackStatus.stdout}\nstderr:\n${stackStatus.stderr}`,
+      ).toBe(0);
+      expect(stackStatus.stdout).toContain("Lifecycle: running");
     },
   );
 });

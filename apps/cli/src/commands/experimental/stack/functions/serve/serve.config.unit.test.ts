@@ -2,7 +2,7 @@
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- filesystem test fixture uses the host adapter at this boundary
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Option, Redacted } from "effect";
@@ -14,12 +14,21 @@ const baseConfig: StackConfig = {
   capabilities: {
     functions: {
       settings: {
-        edge_runtime: { secrets: { SHARED: Redacted.make("automatic") } },
+        edge_runtime: {
+          secrets: {
+            CONFIG_ONLY: Redacted.make("config"),
+            SHARED: Redacted.make("config"),
+            SUPABASE_CONFIG: Redacted.make("reserved-config"),
+          },
+        },
         functions: {
           hello: {
             verify_jwt: true,
             import_map: "deno.json",
-            env: { LOCAL: Redacted.make("function") },
+            env: {
+              LOCAL: Redacted.make("function"),
+              SHARED: Redacted.make("function"),
+            },
           },
         },
       },
@@ -42,38 +51,67 @@ const flags = (overrides: Partial<Parameters<typeof functionsServeStackConfig>[0
 describe("managed stack Functions serve config", () => {
   it.live("applies invocation overrides with legacy path and precedence rules", () =>
     Effect.gen(function* () {
-      const projectRoot = mkdtempSync(join(tmpdir(), "supabase-stack-functions-config-"));
+      const root = mkdtempSync(join(tmpdir(), "supabase-stack-functions-config-"));
+      const projectRoot = join(root, "project");
+      const cwd = join(root, "caller");
       mkdirSync(join(projectRoot, "supabase", "functions", "hello"), { recursive: true });
-      writeFileSync(join(projectRoot, "serve.env"), "SHARED=explicit\nMULTILINE=one\\ntwo\n");
-      writeFileSync(join(projectRoot, "supabase", "functions", "import_map.json"), "{}\n");
-      yield* Effect.addFinalizer(() => Effect.sync(() => rmSync(projectRoot, { recursive: true })));
+      mkdirSync(cwd, { recursive: true });
+      writeFileSync(
+        join(cwd, "serve.env"),
+        "SHARED=explicit\nMULTILINE=one\\ntwo\nSUPABASE_EXPLICIT=reserved\n",
+      );
+      const importMapPath = join(cwd, "import_map.json");
+      writeFileSync(importMapPath, "{}\n");
+      yield* Effect.addFinalizer(() => Effect.sync(() => rmSync(root, { recursive: true })));
 
-      const config = yield* functionsServeStackConfig({
+      const result = yield* functionsServeStackConfig({
         config: baseConfig,
         flags: flags({
           noVerifyJwt: Option.some(true),
           envFile: Option.some("serve.env"),
-          importMap: Option.some("supabase/functions/import_map.json"),
+          importMap: Option.some("import_map.json"),
           inspect: true,
           inspectMain: true,
         }),
         projectRoot,
-        cwd: projectRoot,
+        cwd,
         debug: true,
       });
+      const config = result.config;
       const capability = config.capabilities?.functions;
       if (capability?.enabled === false) return yield* Effect.die("Functions were disabled");
       const settings = capability?.settings;
       expect(settings?.debug).toBe(true);
       expect(settings?.inspector).toEqual({ mode: "brk", main: true });
       expect(settings?.edge_runtime?.verify_jwt_default).toBe(false);
-      expect(settings?.edge_runtime?.import_map_default).toBe("import_map.json");
+      expect(settings?.edge_runtime?.import_map_default).toBe(importMapPath);
+      expect(result.importMapSource).toBe(importMapPath);
+      expect(result.watchPaths).toEqual([importMapPath, join(cwd, "serve.env")]);
+      expect(result.warnings).toEqual([
+        "Env name cannot start with SUPABASE_, skipping: SUPABASE_CONFIG\n",
+        "Env name cannot start with SUPABASE_, skipping: SUPABASE_EXPLICIT\n",
+      ]);
+      const configOnly = settings?.edge_runtime?.secrets?.CONFIG_ONLY;
       const shared = settings?.edge_runtime?.secrets?.SHARED;
-      if (shared === undefined) return yield* Effect.die("Explicit environment was not applied");
+      if (configOnly === undefined || shared === undefined)
+        return yield* Effect.die("Explicit environment was not applied");
+      expect(Redacted.value(configOnly)).toBe("config");
       expect(Redacted.value(shared)).toBe("explicit");
+      expect(settings?.edge_runtime?.secrets?.SUPABASE_CONFIG).toBeUndefined();
+      expect(settings?.edge_runtime?.secrets?.SUPABASE_EXPLICIT).toBeUndefined();
       expect(settings?.functions?.hello?.verify_jwt).toBe(false);
-      expect(settings?.functions?.hello?.import_map).toBe("../import_map.json");
-      expect(settings?.functions?.hello?.env).toEqual({});
+      expect(settings?.functions?.hello?.import_map).toBe(
+        relative(join(projectRoot, "supabase", "functions", "hello"), importMapPath).replaceAll(
+          "\\",
+          "/",
+        ),
+      );
+      const local = settings?.functions?.hello?.env?.LOCAL;
+      const functionShared = settings?.functions?.hello?.env?.SHARED;
+      if (local === undefined || functionShared === undefined)
+        return yield* Effect.die("Config-defined function environment was not preserved");
+      expect(Redacted.value(local)).toBe("function");
+      expect(Redacted.value(functionShared)).toBe("function");
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 

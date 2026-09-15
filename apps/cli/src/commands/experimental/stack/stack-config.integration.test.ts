@@ -6,8 +6,8 @@ import { renderCliConfigTemplate } from "../../../shared/init/project-init.templ
 import { StackConfigError, loadStackConfig } from "./stack-config.ts";
 import { createStackConfigProject } from "../../../../tests/helpers/stack-config.ts";
 
-const load = (projectRoot: string) =>
-  loadStackConfig(projectRoot).pipe(Effect.provide(BunServices.layer));
+const load = (projectRoot: string, options?: Parameters<typeof loadStackConfig>[1]) =>
+  loadStackConfig(projectRoot, options).pipe(Effect.provide(BunServices.layer));
 const project = (contents: string) =>
   createStackConfigProject(contents, {
     sharedFunctionEnvironment: 'SHARED=shared\nOVERRIDE=shared\nQUOTED="hello # world" # comment\n',
@@ -124,6 +124,34 @@ env = { API_KEY = "env(CONFIG_FN)" }
       expect(config.security?.jwt?.signing?.kind).toBe("symmetric");
     }).pipe(Effect.provide(BunServices.layer));
   });
+
+  it.effect(
+    "can exclude discovered dotenv files while preserving config-defined function env",
+    () => {
+      return Effect.gen(function* () {
+        const root = yield* project(`
+project_id = "stack-config-explicit-functions-env"
+[edge_runtime]
+enabled = true
+[functions.hello]
+env = { API_KEY = "env(CONFIG_FN)", CONFIG_ONLY = "env(CONFIG_FN)" }
+`);
+        const config = yield* load(root, { discoverFunctionEnvFiles: false });
+        const capability = config.capabilities?.functions;
+        if (capability === undefined || !("settings" in capability))
+          return yield* Effect.die("Functions settings missing");
+        const settings = capability.settings;
+        expect(settings?.edge_runtime?.secrets?.SHARED).toBeUndefined();
+        const environment = settings?.functions?.hello?.env;
+        if (environment?.API_KEY === undefined || environment.CONFIG_ONLY === undefined)
+          return yield* Effect.die("Config-defined function environment missing");
+        expect(Redacted.value(environment.API_KEY)).toBe("config-value");
+        expect(Redacted.value(environment.CONFIG_ONLY)).toBe("config-value");
+        expect(environment.LOCAL).toBeUndefined();
+        expect(environment.SHARED).toBeUndefined();
+      }).pipe(Effect.provide(BunServices.layer));
+    },
+  );
 
   it.effect("rejects an enabled provider the stack cannot represent", () => {
     return Effect.gen(function* () {
