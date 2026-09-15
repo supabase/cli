@@ -1,46 +1,12 @@
-import { Cause, Data, Effect, Exit, Schema } from "effect";
+import { Cause, Effect, Exit, Schema } from "effect";
 import { expect } from "vitest";
 
 import {
-  expectPostgresConfigLiveOverride,
   experimentalProjectLiveFlags,
-  type LiveFixtures,
-  removePostgresConfigLiveOverride,
   test,
   throwWithCleanup,
 } from "../../../../tests/helpers/live.ts";
-
-/** Typed proof failures keep the bounded `get` poll and the restore attributable. */
-class PostgresConfigLiveError extends Data.TaggedError("PostgresConfigLiveError")<{
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
-
-const liveFailure = (error: unknown): PostgresConfigLiveError =>
-  new PostgresConfigLiveError({
-    message: error instanceof Error ? error.message : String(error),
-    cause: error,
-  });
-
-function proveOverride(
-  cli: LiveFixtures["cli"],
-  project: LiveFixtures["project"],
-  key: string,
-  expected: string | undefined,
-  label: string,
-) {
-  return Effect.tryPromise({
-    try: () => expectPostgresConfigLiveOverride(cli, project, key, expected, label),
-    catch: liveFailure,
-  });
-}
-
-function removeOverride(cli: LiveFixtures["cli"], project: LiveFixtures["project"], key: string) {
-  return Effect.tryPromise({
-    try: () => removePostgresConfigLiveOverride(cli, project, key),
-    catch: liveFailure,
-  });
-}
+import { proveOverride, removeOverride } from "../postgres-config.live-helpers.ts";
 
 // --no-restart skips the database restart; work_mem is a dynamic parameter, so
 // the override still takes effect.

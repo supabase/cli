@@ -1,47 +1,13 @@
-import { Cause, Data, Effect, Exit, Schema } from "effect";
+import { Cause, Effect, Exit, Schema } from "effect";
 import { expect } from "vitest";
 
 import {
-  expectPostgresConfigLiveOverride,
   experimentalProjectLiveFlags,
-  type LiveFixtures,
-  removePostgresConfigLiveOverride,
   requireLiveSuccess,
   test,
   throwWithCleanup,
 } from "../../../../tests/helpers/live.ts";
-
-/** Typed proof failures keep the bounded `get` poll and the cleanup attributable. */
-class PostgresConfigLiveError extends Data.TaggedError("PostgresConfigLiveError")<{
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
-
-const liveFailure = (error: unknown): PostgresConfigLiveError =>
-  new PostgresConfigLiveError({
-    message: error instanceof Error ? error.message : String(error),
-    cause: error,
-  });
-
-function proveOverride(
-  cli: LiveFixtures["cli"],
-  project: LiveFixtures["project"],
-  key: string,
-  expected: string | undefined,
-  label: string,
-) {
-  return Effect.tryPromise({
-    try: () => expectPostgresConfigLiveOverride(cli, project, key, expected, label),
-    catch: liveFailure,
-  });
-}
-
-function removeOverride(cli: LiveFixtures["cli"], project: LiveFixtures["project"], key: string) {
-  return Effect.tryPromise({
-    try: () => removePostgresConfigLiveOverride(cli, project, key),
-    catch: liveFailure,
-  });
-}
+import { liveFailure, proveOverride, removeOverride } from "../postgres-config.live-helpers.ts";
 
 // Seeds its own override and proves it landed before deleting, so the absence
 // assertion cannot be satisfied by the pre-seed state. Teardown removes the

@@ -3,7 +3,6 @@ import { expect } from "vitest";
 
 import { experimentalProjectLiveFlags, test } from "../../../../tests/helpers/live.ts";
 
-// A config override map: any key, but never an array, `null` or a scalar.
 const PostgresConfigPayload = Schema.Record(Schema.String, Schema.Unknown);
 
 // A freshly provisioned project can have zero overrides, so the golden path

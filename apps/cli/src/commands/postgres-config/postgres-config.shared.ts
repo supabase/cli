@@ -117,7 +117,6 @@ function mapTransportMessage<E>(
   return wrap({ message: message(String(cause)) });
 }
 
-// A JSON array, `null` or a scalar is rejected here, like any unparseable body.
 const decodeJsonObject = Schema.decodeEffect(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
 );
