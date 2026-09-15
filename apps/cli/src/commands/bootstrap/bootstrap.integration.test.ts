@@ -343,8 +343,7 @@ describe("bootstrap integration", () => {
         workdir: Option.none(),
         promptTextResponses: [tempRoot.current],
       });
-      // `mockCommandSettings` reports a non-explicit workdir, so the handler has no configured
-      // `--workdir`/`SUPABASE_WORKDIR` to use and must prompt.
+      // No `--workdir` flag and no captured `SUPABASE_WORKDIR`, so the handler must prompt.
       yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF).pipe(
         Effect.provide(s.layer),
       );
@@ -362,6 +361,7 @@ describe("bootstrap integration", () => {
       yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF).pipe(
         Effect.provide(s.layer),
       );
+      expect(s.out.promptTextCalls).toEqual([]);
       expect(yield* fs.exists(path.join(s.workdir, "supabase", "config.toml"))).toBe(true);
     }).pipe(Effect.provide(BunServices.layer)),
   );

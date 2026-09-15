@@ -227,20 +227,42 @@ describe("bootstrap linked-project cache location", () => {
           password: Option.some("s3cret"),
         };
 
-        // Token via env => ensure-login is a no-op and the cache has a bearer token. Both vars are
-        // pinned around the provide so the real `commandSettingsLayer` builds inside the sandbox.
+        // Token via env => ensure-login is a no-op and the cache has a bearer token. Every
+        // ambient input the settings layer reads is pinned around the provide — including
+        // `SUPABASE_HOME`, one hop down in the profile-file path — so the real
+        // `commandSettingsLayer` builds inside the sandbox.
         yield* withEnvVar(
           "SUPABASE_ACCESS_TOKEN",
           "sbp_" + "a".repeat(40),
           withEnvVar(
             "SUPABASE_WORKDIR",
             undefined,
-            Effect.gen(function* () {
-              const successTrailer = yield* SuccessTrailer;
-              yield* bootstrap(flags, FAST_BACKOFF);
+            withEnvVar(
+              "SUPABASE_HOME",
+              undefined,
+              withEnvVar(
+                "SUPABASE_PROFILE",
+                undefined,
+                withEnvVar(
+                  "SUPABASE_PROJECT_ID",
+                  undefined,
+                  withEnvVar(
+                    "SUPABASE_DB_PASSWORD",
+                    undefined,
+                    withEnvVar(
+                      "GITHUB_TOKEN",
+                      undefined,
+                      Effect.gen(function* () {
+                        const successTrailer = yield* SuccessTrailer;
+                        yield* bootstrap(flags, FAST_BACKOFF);
 
-              expect(yield* successTrailer.workingDirectory).toBe(bootstrapWorkdir);
-            }).pipe(Effect.provide(layer)),
+                        expect(yield* successTrailer.workingDirectory).toBe(bootstrapWorkdir);
+                      }).pipe(Effect.provide(layer)),
+                    ),
+                  ),
+                ),
+              ),
+            ),
           ),
         );
 
