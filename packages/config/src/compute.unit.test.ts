@@ -1,6 +1,6 @@
 import { Schema } from "effect";
 import { describe, expect, test } from "vitest";
-import { compute, RESERVED_COMPUTE_NAMES } from "./compute.ts";
+import { compute, RESERVED_COMPUTE_NAMES, rootFields } from "./compute.ts";
 
 const decode = Schema.decodeUnknownSync(compute);
 
@@ -76,6 +76,15 @@ describe("compute schema", () => {
     for (const reserved of RESERVED_COMPUTE_NAMES.filter((name) => !declaredSettings().has(name))) {
       expect(decode({ [reserved]: { runtime: "node" } })).toEqual({});
     }
+  });
+
+  test("declares exactly the settings `rootFields` lists", () => {
+    // The other direction of the guard below. That one allows a setting declared outside
+    // `rootFields` as long as its name was also reserved by hand, which is correct but
+    // leaves `rootFields` describing something the schema no longer reads — and the doc
+    // comment on it still telling the next contributor that is where settings go.
+    // Requiring equality makes going through `rootFields` the only way in.
+    expect([...declaredSettings()].sort()).toEqual(Object.keys(rootFields).sort());
   });
 
   test("reserves every settings key `[compute]` defines for itself", () => {

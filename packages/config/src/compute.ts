@@ -16,8 +16,11 @@ const tags = ["compute"];
  * Anything expressible as a default belongs in `[compute.defaults]` instead, where it
  * costs nothing because it is nested rather than sharing the namespace with compute names.
  * A key here costs a reserved word, so the bar is deliberately high.
+ *
+ * Exported so the schema's declared keys can be checked against this list: going through
+ * here is what reserves a name, so a setting declared any other way has to be caught.
  */
-const rootFields = {};
+export const rootFields = {};
 
 /**
  * Names reserved before the settings that will use them exist, so introducing one later is
