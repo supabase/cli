@@ -137,7 +137,6 @@ Useful source entry points:
 | Path              | Purpose                              |
 | ----------------- | ------------------------------------ |
 | `apps/cli`        | TypeScript/Bun CLI package           |
-| `apps/cli-go`     | Go CLI source used by the CLI        |
 | `packages/stack`  | Local Supabase stack runtime         |
 | `packages/config` | Config schema and generated types    |
 | `packages/api`    | Typed Supabase Management API client |

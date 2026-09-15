@@ -1,6 +1,6 @@
 # 0016. Legacy Port Completion and Go CLI Authority Scope
 
-**Status**: proposed
+**Status**: accepted (2026-08-11), superseded by [0028](0028-go-cli-removal.md)
 **Date**: 2026-08-11
 
 ## Problem Statement

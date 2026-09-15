@@ -18,7 +18,7 @@ Pull requests from external contributors that do not follow this workflow are co
 
 ### Tool versions
 
-This repo pins the versions of Node, Bun, Go, pnpm, and golangci-lint that contributors are expected to build against, and uses [`mise`](https://mise.jdx.dev/) — a polyglot version manager — to install and activate them automatically. If you don't already have these tools installed, `mise` is a great way to get up and running quickly.
+This repo pins the versions of Node, Bun, and pnpm that contributors are expected to build against, and uses [`mise`](https://mise.jdx.dev/) — a polyglot version manager — to install and activate them automatically. If you don't already have these tools installed, `mise` is a great way to get up and running quickly.
 
 #### Installing mise
 
@@ -50,21 +50,17 @@ mise install
 
 `mise install` resolves the versions this repo expects from a handful of files, rather than hardcoding them all in one place:
 
-| Tool          | Version source                                      |
-| ------------- | --------------------------------------------------- |
-| Bun           | `.bun-version`                                      |
-| Node.js       | `.node-version`                                     |
-| pnpm          | `devEngines.packageManager` field in `package.json` |
-| Go            | `mise.toml`                                         |
-| golangci-lint | `mise.toml`                                         |
-
-The Go and golangci-lint entries in `mise.toml` are intentionally temporary while the Go CLI remains in the repo. The canonical Go module metadata still lives in `apps/cli-go/go.mod`; keep the `mise.toml` entries aligned only until the Go code is removed.
+| Tool    | Version source                                      |
+| ------- | --------------------------------------------------- |
+| Bun     | `.bun-version`                                      |
+| Node.js | `.node-version`                                     |
+| pnpm    | `devEngines.packageManager` field in `package.json` |
 
 Once installed, `mise` activates these versions automatically whenever your shell is inside this repo — no manual `nvm use`, `gvm use`, or similar switching required.
 
 #### Without mise
 
-`mise` is not required. If you already have Bun, Node, pnpm, and Go installed and managed some other way, just make sure your versions match the ones pinned in `.bun-version`, `.node-version`, `mise.toml`, `package.json`, and `apps/cli-go/go.mod`.
+`mise` is not required. If you already have Bun, Node, and pnpm installed and managed some other way, just make sure your versions match the ones pinned in `.bun-version`, `.node-version`, and `package.json`.
 
 ### Install dependencies
 
@@ -176,16 +172,14 @@ pnpm run test:unit && pnpm run test:integration
 ```
 
 The root unit and integration scripts use Turbo to fan out the package-local
-`test:*:run` tasks across the standard TypeScript/Vitest workspaces. The Go
-workspace remains package-local because its tests run directly through Go:
-`pnpm --dir apps/cli-go run test:unit`. Go tests are covered by the dedicated
-Go CI workflow. Unit and integration tasks are uncached for now; e2e tasks are
-also uncached and run one package at a time. Forward a Vitest shard to every
-e2e package with `pnpm run test:e2e --shard=1/3`.
+`test:*:run` tasks across the standard TypeScript/Vitest workspaces. Unit and
+integration tasks are uncached for now; e2e tasks are also uncached and run
+one package at a time. Forward a Vitest shard to every e2e package with
+`pnpm run test:e2e --shard=1/3`.
 
 ## E2E Compatibility Test Suite
 
-`apps/cli-e2e` implements the replay-and-record compatibility harness for the TypeScript CLI. Live tests are owned by `apps/cli` and run from the command they cover. The CLI still shells out to the bundled Go binary for the handful of commands the TS port proxies (`db diff --use-pg-schema`, `db branch *`, `db remote changes`, `gen keys`, `functions download`), so `apps/cli-go/` is built alongside the TS CLI for these suites, but there is no Go-vs-TypeScript parity runner.
+`apps/cli-e2e` implements the replay-and-record compatibility harness for the TypeScript CLI. Live tests are owned by `apps/cli` and run from the command they cover.
 
 ### Architecture
 
@@ -282,7 +276,6 @@ Test a real end-to-end publish and install of the CLI against a local npm regist
 ### Prerequisites
 
 - **Bun** — for compiling the CLI binary and running the scripts
-- **Go** — required to build the `supabase-go` sidecar (commands proxied to the Go binary)
 - **pnpm** — already required by this repo
 - **Node.js** — required by `npx` / `npm install -g` to test the published package
 
@@ -329,8 +322,6 @@ supabase --version
 | Problem                                                                         | Fix                                                                                                                                                                                                                                                                                                                                                                                                             |
 | ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Error: Something is already running on port 4873`                              | Kill the leftover Verdaccio process (`lsof -ti:4873 \| xargs kill`) and retry                                                                                                                                                                                                                                                                                                                                   |
-| `go not found in PATH`                                                          | Install Go from https://go.dev/dl/                                                                                                                                                                                                                                                                                                                                                                              |
-| `Error: Go CLI source not found`                                                | Run `pnpm repos:install` to clone `apps/cli-go`                                                                                                                                                                                                                                                                                                                                                                 |
 | `npm` / `pnpm` tries to fetch from `localhost:4873` when no registry is running | Stale global registry override left behind by an older version of `local-registry.ts` (the current script never modifies global config). Run `npm config delete registry` and `pnpm config delete registry`. Note that pnpm stores the override in its own global config (`~/Library/Preferences/pnpm/auth.ini` on macOS, `~/.config/pnpm/` on Linux), not `~/.npmrc` — check there if the delete command fails |
 | `npx` resolves from npm instead of local                                        | Pass `--registry http://localhost:4873` explicitly to `npx` / `npm install`                                                                                                                                                                                                                                                                                                                                     |
 
@@ -359,15 +350,15 @@ pnpm run build
 pnpm run generate
 ```
 
-**Build only the CLI and its Go sidecar:**
+**Build only the CLI:**
 
 ```sh
 pnpm exec turbo run supabase#build
 ```
 
-The CLI build names its config and Go build prerequisites explicitly. The
-remaining CLI workspace dependencies intentionally have no build script, so
-strict Turbo task selection does not synthesize no-op `^build` tasks for them.
+The CLI build names its config build prerequisite explicitly. The remaining
+CLI workspace dependencies intentionally have no build script, so strict
+Turbo task selection does not synthesize no-op `^build` tasks for them.
 
 **Run the live suite:**
 

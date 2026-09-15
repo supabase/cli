@@ -60,8 +60,6 @@ jobs:
         uses: ./.github/actions/setup
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
-      - name: Unlock keyring (for cli-go keyring tests)
-        uses: t1m0thyj/unlock-keyring@cbcf205c879ebd86add70bab3a6abfcce59a5cae # v1.2.0
 
       - name: Check code quality
         run: pnpm run check:all
@@ -95,7 +93,6 @@ jobs:
         uses: ./.github/actions/setup
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
-          go-cache: "false"
 
       - name: Run unit tests
         run: pnpm run test:unit
@@ -118,7 +115,6 @@ jobs:
         uses: ./.github/actions/setup
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
-          go-cache: "false"
 
       - name: Run integration tests
         run: pnpm run test:integration
@@ -147,7 +143,6 @@ jobs:
         uses: ./.github/actions/setup
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
-          go-cache: "false"
 
       - name: Run stack integration tests
         working-directory: packages/stack
@@ -273,7 +268,6 @@ jobs:
         uses: ./.github/actions/setup
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
-          go-cache: "false"
 
       - name: Run stack end-to-end tests
         run: >-

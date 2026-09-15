@@ -6,9 +6,7 @@ name: Verify Install Channels
 # an already-published version.
 #
 # Performs a real install so a manifest/tarball checksum mismatch (as in CLI v2.107.0) reproduces
-# here instead of being trusted from the publish step. Each leg also directly checks that the
-# `supabase-go` sidecar binary is present and executable in the install directory, checking the
-# file rather than a CLI command, since a command could later be natively ported off the sidecar.
+# here instead of being trusted from the publish step.
 
 on:
   workflow_call:
@@ -137,23 +135,8 @@ jobs:
             echo "Version mismatch: expected ${expected}, got ${actual}" >&2
             exit 1
           fi
-      - name: Verify Go sidecar
-        run: |
-          set -euo pipefail
-          # Homebrew's `bin.install` symlinks both `supabase` and `supabase-go`
-          # into the same prefix bin/ directory, so the sidecar must sit right
-          # next to whichever `supabase` resolved from PATH.
-          bin_dir="$(dirname "$(command -v supabase)")"
-          sidecar="${bin_dir}/supabase-go"
-          if [ ! -e "${sidecar}" ]; then
-            echo "Go sidecar probe failed: ${sidecar} does not exist" >&2
-            exit 1
-          fi
-          if [ ! -x "${sidecar}" ]; then
-            echo "Go sidecar probe failed: ${sidecar} exists but is not executable" >&2
-            exit 1
-          fi
-          echo "Go sidecar probe OK: ${sidecar}"
+      - name: Exercise supabase --help
+        run: supabase --help
 
   scoop:
     name: Scoop (${{ inputs.scoop_name }})
@@ -191,23 +174,9 @@ jobs:
             echo "Version mismatch: expected ${expected}, got ${actual}" >&2
             exit 1
           fi
-      - name: Verify Go sidecar
+      - name: Exercise supabase --help
         shell: bash
-        run: |
-          set -euo pipefail
-          # Scoop's manifest only declares `supabase.exe` in `bin` (see
-          # apps/cli/scripts/update-scoop.ts), so only `supabase` gets a shim in
-          # ~/scoop/shims — `dirname "$(command -v supabase)"` would resolve to
-          # the shim directory, not the real install directory supabase-go.exe
-          # actually lives in. Go straight to the app's current version
-          # directory instead, which Scoop always maintains regardless of shims.
-          app_dir="${HOME}/scoop/apps/${SCOOP_NAME}/current"
-          sidecar="${app_dir}/supabase-go.exe"
-          if [ ! -e "${sidecar}" ]; then
-            echo "Go sidecar probe failed: ${sidecar} does not exist" >&2
-            exit 1
-          fi
-          echo "Go sidecar probe OK: ${sidecar}"
+        run: supabase --help
 
   install-script:
     name: install script (${{ matrix.runner }})
@@ -248,21 +217,6 @@ jobs:
             echo "Version mismatch: expected ${expected}, got ${actual}" >&2
             exit 1
           fi
-      - name: Verify Go sidecar
+      - name: Exercise supabase --help
         shell: bash
-        run: |
-          set -euo pipefail
-          # The install script places `supabase-go` right next to `supabase`,
-          # so the sidecar must sit in the same directory `supabase` resolved
-          # from on PATH.
-          bin_dir="$(dirname "$(command -v supabase)")"
-          sidecar="${bin_dir}/supabase-go"
-          if [ ! -e "${sidecar}" ]; then
-            echo "Go sidecar probe failed: ${sidecar} does not exist" >&2
-            exit 1
-          fi
-          if [ ! -x "${sidecar}" ]; then
-            echo "Go sidecar probe failed: ${sidecar} exists but is not executable" >&2
-            exit 1
-          fi
-          echo "Go sidecar probe OK: ${sidecar}"
+        run: supabase --help
