@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { Option, Context, Tracer } from "effect";
+import { Context, Effect, Option, Tracer } from "effect";
 import { formatSpanForDebugConsole, makeDebugConsoleExporter } from "./debug-console.ts";
 
 function makeEndedSpan(name: string, attrs: Record<string, unknown> = {}): Tracer.Span {
@@ -34,11 +34,13 @@ describe("debug-console exporter", () => {
   test("formats and writes ended span info", () => {
     let stderrOutput = "";
     const span = makeEndedSpan("test-span", { command: "login" });
-    const exportSpanToDebugConsole = makeDebugConsoleExporter((line) => {
-      stderrOutput += line;
-    });
+    const exportSpanToDebugConsole = makeDebugConsoleExporter((line) =>
+      Effect.sync(() => {
+        stderrOutput += line;
+      }),
+    );
 
-    exportSpanToDebugConsole(span);
+    Effect.runSync(exportSpanToDebugConsole(span));
 
     expect(stderrOutput).toContain("test-span");
     expect(stderrOutput).toContain("50ms");

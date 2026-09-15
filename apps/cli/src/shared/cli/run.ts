@@ -11,6 +11,7 @@ import {
   Fiber,
   Layer,
   Path,
+  PlatformError,
   Runtime,
   Scope,
   Stdio,
@@ -533,7 +534,11 @@ function cliProjectHomeLayerFor(runtimeLayer: Layer.Layer<never>) {
   );
 }
 
-type AnyAnalyticsLayer = Layer.Layer<Analytics, Config.ConfigError, any>;
+type AnyAnalyticsLayer = Layer.Layer<
+  Analytics,
+  Config.ConfigError | PlatformError.PlatformError,
+  any
+>;
 
 export interface RunCliOptions {
   /** Runs after runtime services are installed and before command parsing. */
