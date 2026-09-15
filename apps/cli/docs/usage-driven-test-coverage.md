@@ -4,7 +4,9 @@ This document ranks CLI commands, flags, and workflows by real usage from the
 `cli_command_executed` telemetry event and compares that ranking with the test suites we run.
 It exists so that coverage decisions follow what users, agents, and CI pipelines actually
 execute, not what is convenient to test. Numbers are shares and ranks from a four-week window
-(2026-08-17 to 2026-09-14); refresh them with the queries in the appendix.
+(2026-08-17 to 2026-09-14); refresh them with the queries in the appendix or from the
+[CLI eval priorities and usage dashboard](https://eu.posthog.com/project/34344/dashboard/954278),
+which carries the same weighting rules as the [Weighting](#weighting) section below.
 
 ## How runs are classified
 
@@ -20,6 +22,65 @@ four actor classes:
 
 `is_tty` reflects stdout, so a person piping `status -o env` into a shell script counts as
 headless. Human numbers are a lower bound.
+
+## Weighting
+
+Raw run counts are easy to distort: one environment in a retry loop can emit millions of events.
+Coverage priorities therefore use **device-day votes**: one vote per device, command, and UTC
+day, and for flag patterns one vote per device, command, exact flag-name set, and UTC day. A
+device that runs `db query` ten thousand times in a day counts once. The dashboard linked above
+computes every "adjusted share" this way and shows raw volume next to it as context.
+
+What device weighting changes:
+
+- `functions serve` falls from the ninth most run command to a long-tail one. Half of its raw
+  runs in the window came from a single macOS device on an old release looping the command,
+  and the eight busiest headless devices produce about five out of six of the `error:unknown`
+  fast failures. The command still touched tens of thousands of devices, so it stays a recovery
+  case, but it is no longer a mass failure.
+- `status` and `db query` shrink (agents repeat them within a session) while `start`, `stop`,
+  `link`, `test db`, `migration list`, and `projects list` grow. For CI, `start` overtakes
+  `status` as the most common command per pipeline day.
+- Other commands with a single device above one tenth of their volume: `inspect db db-stats`,
+  `backups list`, `db schema declarative sync`, `services`. Their raw ranks are inflated.
+
+Two caveats. Device IDs are environment proxies, not people; ephemeral CI runners and containers
+create a fresh ID per job, so device weighting inflates CI relative to agents (CI is about half of
+device-days but about a third of runs). Compare shares within an actor class, not across classes.
+And votes measure breadth of use, not task frequency: they say which paths many environments
+touch, not how often one environment repeats them.
+
+Device-day weighted share per actor class, last 30 complete days. Each column sums to 100%
+within the actor; the "all" column is the device-day share across every actor.
+
+| command            | all   | agent | ci    | human | headless |
+| ------------------ | ----- | ----- | ----- | ----- | -------- |
+| status             | 16.1% | 18.4% | 14.8% | 2.3%  | 17.8%    |
+| db query           | 14.7% | 28.0% | 4.7%  | 2.8%  | 23.1%    |
+| start              | 12.1% | 2.8%  | 17.5% | 7.7%  | 18.4%    |
+| functions deploy   | 7.6%  | 4.2%  | 10.8% | 15.5% | 1.2%     |
+| stop               | 6.8%  | 1.8%  | 11.2% | 3.6%  | 1.5%     |
+| test db            | 5.5%  | 5.0%  | 6.8%  | 1.1%  | 1.0%     |
+| db reset           | 5.3%  | 4.0%  | 7.1%  | 3.9%  | 1.2%     |
+| db push            | 4.5%  | 4.8%  | 3.8%  | 16.9% | 3.9%     |
+| migration list     | 2.9%  | 4.8%  | 1.7%  | 5.2%  | 1.5%     |
+| link               | 2.6%  | 1.8%  | 3.2%  | 8.8%  | 0.8%     |
+| gen types          | 2.3%  | 2.3%  | 2.5%  | <1%   | 1.3%     |
+| migration up       | 1.8%  | 1.9%  | 1.9%  | 2.1%  | 1.4%     |
+| functions serve    | 1.6%  | 0.3%  | 0.2%  | 0.9%  | 13.8%    |
+| db lint            | 1.5%  | 1.2%  | 1.9%  | 0.5%  | 0.3%     |
+| db dump            | 1.5%  | 1.0%  | 1.2%  | 1.9%  | 4.7%     |
+| projects list      | 1.4%  | 3.2%  | <1%   | 2.4%  | 1.9%     |
+| functions download | 1.4%  | 1.1%  | 1.8%  | 0.3%  | 0.6%     |
+| db start           | 1.3%  | 0.1%  | 2.4%  | <1%   | 0.9%     |
+| functions list     | 1.0%  | 1.8%  | 0.4%  | 0.8%  | 0.8%     |
+| projects api-keys  | 1.0%  | 2.0%  | 0.1%  | 0.1%  | 1.7%     |
+| migration repair   | 0.9%  | 0.7%  | 1.0%  | 1.7%  | 0.3%     |
+| migration new      | 0.7%  | 1.8%  | <1%   | 0.9%  | 0.1%     |
+| login              | 0.5%  | 0.4%  | 0.1%  | 10.9% | 0.1%     |
+
+Headless `functions serve` is spread across more than a million devices that each appear once,
+which is the signature of containers with a fresh home directory rather than a million users.
 
 ## What the data says
 
@@ -190,11 +251,14 @@ fingerprints, which tests should pin (message, exit code, and classification):
 
 Two telemetry gaps need fixing before failure rates can be trusted as a regression signal:
 
-- `functions serve` on current versions reports about three quarters of runs as `error:unknown`
-  with a sub-second duration in non-TTY mode. This is not a killed long-running server; the
-  process exits almost immediately with an unclassified error.
-- `gen types`, `functions deploy`, and `functions download` also emit a meaningful slice of
-  `error:unknown` fast failures.
+- `functions serve` on current versions reports most raw runs as `error:unknown` with a
+  sub-second duration in non-TTY mode. Device weighting shows this is concentrated: eight
+  headless devices in retry loops produce about five out of six of those runs. The remaining
+  tail still spans tens of thousands of devices, so the exit deserves a fingerprint, but it is a
+  recovery case, not a mass failure. Always read raw failure rates next to the dashboard's
+  largest-device sensitivity tile before acting on them.
+- `gen types`, `functions deploy`, and `functions download` also emit a slice of
+  `error:unknown` fast failures spread across many devices.
 
 ## Coverage today
 
@@ -245,9 +309,10 @@ case per suite and fails four times in five. `inspect db *` has no subprocess co
 
 ## Plan
 
-Priority is share of runs times distinct users, split by actor so each class gets its own
+Priority is device-day share (see [Weighting](#weighting)) times how much of the command's
+real invocation shape lacks a subprocess test, split by actor so each class gets its own
 invocation shape (agents: JSON output and structured errors; CI: non-TTY, `--yes`, `-o env`;
-humans: prompts and text errors).
+humans: prompts and text errors). Raw run counts are context, never the ranking key.
 
 ### Phase 1: local-stack golden paths in `apps/cli` E2E
 
@@ -267,7 +332,8 @@ already starts:
 7. `db dump --local --file`, `--role-only`, `--data-only --use-copy`, `--schema`.
 8. `db lint --local --level warning --fail-on error` exit codes.
 9. `functions serve` lifecycle: starts, answers a request, exits 0 on SIGINT; `--env-file` and
-   `--no-verify-jwt` variants. Root-cause the `error:unknown` fast failure first.
+   `--no-verify-jwt` variants. Lower priority than its raw rank suggests (see Weighting); give
+   the instant `error:unknown` exit a fingerprint as part of phase 5.
 
 ### Phase 2: platform paths in `apps/cli-e2e`
 
@@ -310,8 +376,9 @@ classification gaps so failure rate per command becomes a usable regression sign
 ### Keeping the ranking current
 
 Re-run the appendix queries quarterly, or when a command family changes, and update the tables.
-Tests added for a command that later falls below one run in a million can be reduced to a smoke
-case.
+The dashboard linked at the top keeps the device-weighted view live; use its adjusted shares for
+ranking and its concentration tile before trusting any raw spike. Tests added for a command that
+later falls below one run in a million can be reduced to a smoke case.
 
 ## Appendix: queries
 
@@ -459,4 +526,69 @@ FROM (
 GROUP BY command_set
 ORDER BY sessions DESC
 LIMIT 80
+```
+
+Device-day weighted share per actor (the ranking key; see Weighting):
+
+```sql
+SELECT
+  command,
+  actor,
+  votes,
+  round(votes / sum(votes) OVER (PARTITION BY actor), 4) AS adjusted_share,
+  raw_runs,
+  round(raw_runs / sum(raw_runs) OVER (PARTITION BY actor), 4) AS raw_share
+FROM (
+  SELECT
+    properties.command AS command,
+    multiIf(properties.is_agent = true, 'agent',
+            properties.is_ci = true, 'ci',
+            properties.is_tty = true, 'human_tty', 'headless_other') AS actor,
+    uniqExact(concat(toString(properties.device_id), '|', toString(toDate(timestamp)))) AS votes,
+    count() AS raw_runs
+  FROM events
+  WHERE event = 'cli_command_executed'
+    AND timestamp >= toDateTime('2026-08-16 00:00:00')
+    AND timestamp < toDateTime('2026-09-15 00:00:00')
+    AND properties.device_id IS NOT NULL
+    AND properties.command IS NOT NULL
+    AND properties.command NOT LIKE '%complet%'
+  GROUP BY command, actor
+)
+ORDER BY actor, votes DESC
+```
+
+Largest-device concentration per command (read before trusting a raw spike):
+
+```sql
+SELECT
+  command,
+  raw_runs,
+  devices,
+  votes,
+  round(largest_device_runs / raw_runs, 3) AS largest_device_share
+FROM (
+  SELECT
+    command,
+    sum(device_runs) AS raw_runs,
+    count() AS devices,
+    sum(active_days) AS votes,
+    max(device_runs) AS largest_device_runs
+  FROM (
+    SELECT
+      properties.command AS command,
+      properties.device_id AS device,
+      count() AS device_runs,
+      uniqExact(toDate(timestamp)) AS active_days
+    FROM events
+    WHERE event = 'cli_command_executed'
+      AND timestamp >= toDateTime('2026-08-16 00:00:00')
+      AND timestamp < toDateTime('2026-09-15 00:00:00')
+      AND properties.device_id IS NOT NULL
+    GROUP BY command, device
+  )
+  GROUP BY command
+)
+WHERE raw_runs >= 20000
+ORDER BY largest_device_share DESC
 ```
