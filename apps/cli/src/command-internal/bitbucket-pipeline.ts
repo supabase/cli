@@ -2,7 +2,11 @@ import { Config, Effect, Option } from "effect";
 
 const BITBUCKET_CLONE_DIR_ENV_KEY = "BITBUCKET_CLONE_DIR";
 
-/** Resolves the Bitbucket marker from project values or the ambient CLI provider. */
+/**
+ * Resolves the Bitbucket marker, preferring the supplied project value. Callers should provide a
+ * project map with ambient values already layered over dotenv values.
+ * @see https://support.atlassian.com/bitbucket-cloud/docs/run-docker-commands-in-bitbucket-pipelines/#Full-list-of-restricted-commands
+ */
 export const bitbucketCloneDir = Effect.fnUntraced(function* (
   projectEnvValues?: Readonly<Record<string, string>>,
 ) {

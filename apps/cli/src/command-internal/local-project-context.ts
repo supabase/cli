@@ -53,11 +53,6 @@ export const loadLocalProjectContext = <E>(
       catch: (cause) => mapConfigLoadError(`failed to read config: ${String(cause)}`),
     });
 
-    // Docker-client env vars (`DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG`, etc.) and
-    // `SUPABASE_SERVICES_HOSTNAME` are resolved once, earlier in process startup, so installing
-    // them here from a project dotenv file would have no effect and must not be added to the
-    // loop above.
-
     // An absent config.toml is not a failure — a project id still resolves from the workdir
     // basename default. Only a malformed file is a hard error.
     const loaded = yield* loadCliConfig(workdir, {

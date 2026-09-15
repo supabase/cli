@@ -1526,6 +1526,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
           const edgeRuntimeInput: EdgeRuntimeBringUpInput = {
             projectId,
             networkId,
+            projectEnvValues,
             image: resolveImage(edgeRuntimeDefaultImage),
             workdir: cliSettings.workdir,
             dbUrl: values.dbUrl,
