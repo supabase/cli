@@ -433,6 +433,16 @@ export const makeProductionRuntime = (
 > =>
   Effect.gen(function* () {
     const state = yield* currentStateReader(options);
+    const lifecycleInput = yield* Ref.make<LifecycleInput | undefined>(undefined);
+    const withLifecycleInput: SupervisorRuntime["withLifecycleInput"] = (input, effect) =>
+      Ref.get(lifecycleInput).pipe(
+        Effect.flatMap((previous) =>
+          Ref.set(lifecycleInput, input).pipe(
+            Effect.andThen(effect),
+            Effect.ensuring(Ref.set(lifecycleInput, previous)),
+          ),
+        ),
+      );
     const fileSystem = yield* FileSystem.FileSystem;
     const pathService = yield* Path.Path;
     const paths = yield* resolveStackPaths({
@@ -557,7 +567,10 @@ export const makeProductionRuntime = (
     // concurrently after their inputs are ready.
     const runtimeInputGate = yield* Semaphore.make(1);
     const freshState = (key: Pick<RuntimeWorkloadKey, "stackId" | "workloadId">) =>
-      currentStateReader(options).pipe(
+      Ref.get(lifecycleInput).pipe(
+        Effect.flatMap((input) =>
+          input === undefined ? currentStateReader(options) : Effect.succeed(input.state),
+        ),
         Effect.mapError((error) => mapDriverError(key, error)),
         Effect.flatMap((fresh) =>
           runtimeMatches(fresh.runtime, state.runtime)
@@ -1092,6 +1105,7 @@ export const makeProductionRuntime = (
     );
     return {
       driver: baseDriver,
+      withLifecycleInput,
       preflight,
       prepare: prepareFor,
       prefetch,

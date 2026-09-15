@@ -155,6 +155,7 @@ const makeStartupFixture = () =>
     };
     const runtime: SupervisorRuntime = {
       driver,
+      withLifecycleInput: (_input, effect) => effect,
       preflight: () => Effect.void,
       prepare: () => Effect.void,
       prefetch: () => Effect.void,

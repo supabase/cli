@@ -2625,7 +2625,7 @@ describe("production runtime", () => {
         logStore: memoryLogStore([]),
         bootstrapDatabase: () => Effect.void,
       });
-      return { fs, runtime, createdSpecs, copiedFiles, compiled };
+      return { fs, runtime, createdSpecs, copiedFiles, compiled, state: current.value };
     }).pipe(Effect.provide(NodeServices.layer));
 
   it.live("writes Auth owner material and confirmation template settings", () =>
@@ -2672,6 +2672,42 @@ describe("production runtime", () => {
 
         expect(functionsEnvironment).toContain("FACTORY_SECRET=factory-secret");
         expect(yield* fs.exists(firstBootstrap.source)).toBe(true);
+      }),
+    ),
+  );
+
+  it.live("uses lifecycle input secrets while replacing the Functions workload", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { fs, runtime, createdSpecs, compiled, state } = yield* makeOwnerMaterialFixture();
+        const functions = compiled.executionPlan.workloads.find(
+          (workload) => workload.id === "functions:edge-runtime",
+        );
+        if (functions === undefined) return yield* Effect.die("Expected Functions workload");
+        const slot = "secret:functions.settings.edge_runtime.secrets.FACTORY_SECRET";
+        const transientSecrets = {
+          ...state.secrets,
+          [slot]: { policy: "managed" as const, value: "transient-secret" },
+        };
+        const transientState = { ...state, secrets: transientSecrets };
+
+        yield* runtime.withLifecycleInput(
+          {
+            stackId,
+            state: transientState,
+            definition: compiled.definition,
+            secrets: transientSecrets,
+            plan: compiled.executionPlan,
+          },
+          runtime.driver.start({ stackId, workloadId: functions.id }, functions),
+        );
+        const functionsSpec = createdSpecs.find((spec) => spec.labels.workloadId === functions.id);
+        if (functionsSpec?.envFile === undefined)
+          return yield* Effect.die("Functions container was not captured");
+        const functionsEnvironment = yield* fs.readFileString(functionsSpec.envFile);
+
+        expect(functionsEnvironment).toContain("FACTORY_SECRET=transient-secret");
+        expect(functionsEnvironment).not.toContain("FACTORY_SECRET=factory-secret");
       }),
     ),
   );

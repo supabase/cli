@@ -88,6 +88,7 @@ const makeFixture = (
     readonly activationStarted?: Deferred.Deferred<void>;
     readonly activationCalls?: Ref.Ref<number>;
     readonly activationInputs?: Ref.Ref<ReadonlyArray<LifecycleInput>>;
+    readonly lifecycleInputs?: Ref.Ref<ReadonlyArray<LifecycleInput>>;
     readonly activationFailFirst?: Ref.Ref<boolean>;
     readonly startFailures?: Ref.Ref<number>;
     readonly preflightFailFirst?: Ref.Ref<boolean>;
@@ -333,6 +334,12 @@ const makeFixture = (
     };
     const runtime: SupervisorRuntime = {
       driver,
+      withLifecycleInput: (input, effect) =>
+        fixtureOptions.lifecycleInputs === undefined
+          ? effect
+          : Ref.update(fixtureOptions.lifecycleInputs, (current) => [...current, input]).pipe(
+              Effect.andThen(effect),
+            ),
       preflight: (_input) =>
         Effect.gen(function* () {
           if (fixtureOptions.preflightCalls !== undefined)
@@ -1742,7 +1749,8 @@ describe("Supervisor composition", () => {
       Effect.gen(function* () {
         const timeline = yield* Ref.make<ReadonlyArray<string>>([]);
         const activationInputs = yield* Ref.make<ReadonlyArray<LifecycleInput>>([]);
-        const fixture = yield* makeFixture({ timeline, activationInputs });
+        const lifecycleInputs = yield* Ref.make<ReadonlyArray<LifecycleInput>>([]);
+        const fixture = yield* makeFixture({ timeline, activationInputs, lifecycleInputs });
         yield* fixture.supervisor.start({
           config: {
             capabilities: {
@@ -1774,6 +1782,11 @@ describe("Supervisor composition", () => {
         expect(firstInput?.definition.capabilities.functions.settings.debug).toBe(true);
         expect(
           firstInput?.state.secrets["secret:functions.settings.edge_runtime.secrets.TOKEN"]?.value,
+        ).toBe("invocation");
+        expect(
+          (yield* Ref.get(lifecycleInputs)).at(-1)?.state.secrets[
+            "secret:functions.settings.edge_runtime.secrets.TOKEN"
+          ]?.value,
         ).toBe("invocation");
         expect(yield* fixture.store.read(fixture.id)).toEqual(durable);
 

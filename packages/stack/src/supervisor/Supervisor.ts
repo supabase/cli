@@ -81,6 +81,11 @@ interface SupervisorLaunchAttempt {
 /** Runtime construction is injected so catalog/artifact resolution can evolve independently. */
 export interface SupervisorRuntime {
   readonly driver: RuntimeDriver;
+  /** Runs workload resolution against this lifecycle input for the duration of an Effect. */
+  readonly withLifecycleInput: <A, E, R>(
+    input: LifecycleInput,
+    effect: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E, R>;
   readonly preflight: (input: LifecycleInput) => Effect.Effect<void, StackError>;
   /** Prepares artifacts before launching a newly selected workload closure. */
   readonly prepare: (
@@ -464,13 +469,13 @@ export const makeSupervisor = (
         const selected = selectedOverride ?? (yield* Ref.get(active));
         const plan = activeExecutionPlan(input.plan, selected);
         const reservation = yield* runtime.ingress.acquire(input);
-        const preparedAndLaunched = yield* Effect.all(
-          [
-            runtime.prepare(input, selected),
-            launcher.launch(plan).pipe(Effect.mapError(mapRuntimeError)),
-          ],
-          { concurrency: 2 },
-        ).pipe(
+        const launch = runtime.withLifecycleInput(
+          input,
+          launcher.launch(plan).pipe(Effect.mapError(mapRuntimeError)),
+        );
+        const preparedAndLaunched = yield* Effect.all([runtime.prepare(input, selected), launch], {
+          concurrency: 2,
+        }).pipe(
           Effect.map(([, launched]) => launched),
           Effect.exit,
         );
