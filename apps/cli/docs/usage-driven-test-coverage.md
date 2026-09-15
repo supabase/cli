@@ -29,7 +29,10 @@ Raw run counts are easy to distort: one environment in a retry loop can emit mil
 Coverage priorities therefore use **device-day votes**: one vote per device, command, and UTC
 day, and for flag patterns one vote per device, command, exact flag-name set, and UTC day. A
 device that runs `db query` ten thousand times in a day counts once. The dashboard linked above
-computes every "adjusted share" this way and shows raw volume next to it as context.
+computes every "adjusted share" this way and shows raw volume next to it as context. Its
+section 5 holds the live versions of every table in this document: command priority and flag
+patterns per actor class, largest-device concentration across all actors, session workflows,
+CI providers, platform by actor, and failure fingerprints by actor.
 
 What device weighting changes:
 
