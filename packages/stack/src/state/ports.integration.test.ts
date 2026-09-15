@@ -96,6 +96,44 @@ const run = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.scoped(effect).pipe(Effect.provide(NodeServices.layer));
 
 describe("port acquisition", () => {
+  it.live("reserves transient private ports without persisting or colliding with siblings", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-transient-port-" });
+        const store = yield* makeStackStateStore({ stateRoot: root });
+        const ownIdentity = identity(root, "transient-owner");
+        const ownId = yield* deriveStackId(ownIdentity);
+        const siblingIdentity = identity(root, "transient-sibling");
+        const siblingId = yield* deriveStackId(siblingIdentity);
+        yield* store.initialize(ownId, state(ownId, ownIdentity));
+        yield* store.initialize(
+          siblingId,
+          state(
+            siblingId,
+            siblingIdentity,
+            [],
+            [{ workloadId: "functions:edge-runtime", binding: "inspector", port: 31_337 }],
+          ),
+        );
+        const coordinator = makePortCoordinator(coordinatorOptions(store, root));
+
+        const conflict = yield* coordinator
+          .reserveTransientPrivate(ownId, "functions:edge-runtime:inspector", 31_337)
+          .pipe(Effect.exit);
+        const held = yield* coordinator.reserveTransientPrivate(
+          ownId,
+          "functions:edge-runtime:inspector",
+          "automatic",
+        );
+
+        expect(Exit.isFailure(conflict)).toBe(true);
+        expect(held.port).not.toBe(31_337);
+        expect((yield* store.read(ownId))?.privatePorts).toEqual([]);
+      }),
+    ),
+  );
+
   it.live("requires running state and fails closed on an unreadable sibling", () =>
     run(
       Effect.gen(function* () {

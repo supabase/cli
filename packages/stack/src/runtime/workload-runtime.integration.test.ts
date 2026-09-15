@@ -190,7 +190,9 @@ describe("workload runtime catalog", () => {
         projectRoot: state.identity.projectRoot,
         runtime: { kind: "native" },
         config: {
-          capabilities: { functions: { settings: { inspector: { mode: "run" } } } },
+          capabilities: {
+            functions: { settings: { debug: true, inspector: { mode: "run", main: true } } },
+          },
         },
       }).pipe(Effect.provide(NodeServices.layer));
       const functions = planned("functions:edge-runtime");
@@ -200,15 +202,62 @@ describe("workload runtime catalog", () => {
       };
       const spec = runtimeSpecFor(functions);
       expect(spec?.args(configured, functions, 30_007)).toContain("--inspect=127.0.0.1:30018");
+      expect(spec?.args(configured, functions, 30_007)).toContain("--inspect-main");
+      expect(spec?.args(configured, functions, 30_007)).toContain("--verbose");
+      expect(spec?.env(configured, functions, 30_007)).toMatchObject({
+        SUPABASE_INTERNAL_WALLCLOCK_LIMIT_SEC: "0",
+      });
       expect(spec?.privateEndpoint(configured, "inspector", "native")).toEqual({
         host: "127.0.0.1",
         port: 30_018,
       });
       expect(spec?.containerArgs(configured, functions, 9000)).toContain("--inspect=0.0.0.0:9229");
+      expect(spec?.containerArgs(configured, functions, 9000)).toContain("--inspect-main");
+      expect(spec?.containerArgs(configured, functions, 9000)).toContain("--verbose");
       expect(containerResolutionFor(configured, functions)?.publications).toContainEqual({
         address: "127.0.0.1",
         hostPort: 30_018,
         containerPort: 9229,
+      });
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("authorizes one transient import map for native and container Functions", () =>
+    Effect.gen(function* () {
+      const configured = yield* compileNestedConfiguredState();
+      const functions = planned("functions:edge-runtime");
+      const importMapSource = "/tmp/caller/import-map.json";
+      const inputs = {
+        functions: { importMapSource, secrets: { MULTILINE: "first line\nsecond line" } },
+      };
+      const spec = runtimeSpecFor(functions);
+      const nativeEnvironment = spec?.env(configured, functions, 9000, "native", inputs);
+      expect(
+        yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
+          nativeEnvironment?.SUPABASE_INTERNAL_FUNCTIONS_CONFIG ?? "{}",
+        ),
+      ).toMatchObject({
+        $default: { import_map_root: importMapSource },
+        hello: { import_map: importMapSource },
+      });
+      expect(nativeEnvironment?.SUPABASE_INTERNAL_IMPORT_MAP_SOURCE).toBe(importMapSource);
+      expect(nativeEnvironment?.MULTILINE).toBe("first line\nsecond line");
+
+      const container = containerResolutionFor(configured, functions, inputs);
+      const containerPath = `${FUNCTIONS_CONTAINER_ROOT}/.supabase-functions-serve-import-map.json`;
+      expect(
+        yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
+          container?.env.SUPABASE_INTERNAL_FUNCTIONS_CONFIG ?? "{}",
+        ),
+      ).toMatchObject({
+        $default: { import_map_root: containerPath },
+        hello: { import_map: containerPath },
+      });
+      expect(container?.env.SUPABASE_INTERNAL_IMPORT_MAP_SOURCE).toBe(containerPath);
+      expect(container?.mounts).toContainEqual({
+        source: importMapSource,
+        target: containerPath,
+        readOnly: true,
       });
     }).pipe(Effect.provide(NodeServices.layer)),
   );

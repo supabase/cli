@@ -10,7 +10,6 @@ import {
   FileSystem,
   Path,
   Ref,
-  Schedule,
   Schema,
   Scope,
   Stream,
@@ -203,23 +202,20 @@ describe("native runtime", { timeout: 15_000 }, () => {
         const ready = yield* runtime.start(keyFor("watch"), workload("watch"));
         expect(ready.state).toBe("ready");
         expect(startedProcess).toBeDefined();
+        if (runtime.awaitTermination === undefined)
+          return yield* Effect.die("Native termination signal is unavailable");
+        const terminated = yield* Effect.forkChild(runtime.awaitTermination(keyFor("watch")), {
+          startImmediately: true,
+        });
         yield* fs.writeFileString(triggerPath, "exit");
         if (startedProcess !== undefined) yield* startedProcess.exitCode;
-        const observed = yield* runtime.observe(stackId).pipe(
-          Effect.tap(() => Effect.yieldNow),
-          Effect.repeat({
-            until: (values) => values[0]?.state === "failed",
-            schedule: Schedule.forever,
-          }),
-          Effect.timeout("5 seconds"),
-        );
-        expect(observed).toEqual([
+        expect(yield* Fiber.join(terminated)).toEqual(
           expect.objectContaining({
             workloadId: keyFor("watch").workloadId,
             state: "failed",
             error: "Native workload exited before an explicit stop (code 1)",
           }),
-        ]);
+        );
         yield* runtime.remove(keyFor("watch"));
       }),
     ),
@@ -371,6 +367,27 @@ describe("native runtime", { timeout: 15_000 }, () => {
         const result = yield* runtime
           .start(keyFor("nonzero"), workload("nonzero"))
           .pipe(Effect.exit);
+        expect(Exit.isFailure(result)).toBe(true);
+        expect(yield* runtime.observe(stackId)).toEqual([]);
+      }),
+    ),
+  );
+
+  it.live("fails readiness when a native process exits cleanly without an explicit stop", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const readiness = yield* Deferred.make<void>();
+        const runtime = yield* makeNativeRuntime({
+          resolveProcess: () =>
+            Effect.succeed(
+              processPlan({ executable: process.execPath, args: ["-e", "process.exit(0)"] }),
+            ),
+          waitForReadiness: () => Deferred.await(readiness),
+        });
+        const result = yield* runtime
+          .start(keyFor("clean-exit"), workload("clean-exit"))
+          .pipe(Effect.exit);
+
         expect(Exit.isFailure(result)).toBe(true);
         expect(yield* runtime.observe(stackId)).toEqual([]);
       }),
