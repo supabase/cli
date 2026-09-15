@@ -45,4 +45,28 @@ describe("cachedPostgresArtifactRoot", () => {
       expect(yield* cachedPostgresArtifactRoot(cacheRoot)).toBe(root);
     }).pipe(Effect.provide(layer)),
   );
+
+  it.effect("selects the matching-major slim tree and ignores another major", () =>
+    Effect.gen(function* () {
+      const cacheRoot = mkdtempSync(join(tmpdir(), "native-pg-cache-"));
+      const target = targetForPlatform({ os: process.platform, arch: process.arch });
+      const fifteen = catalogReleaseFor("database:database", "15.14.1.168");
+      const seventeen = catalogReleaseFor("database:database");
+      expect(fifteen).toBeDefined();
+      expect(seventeen).toBeDefined();
+      if (fifteen === undefined || seventeen === undefined || target === undefined) return;
+      mkdirSync(join(cacheRoot, "slim-services", "postgres", fifteen.version, target), {
+        recursive: true,
+      });
+      mkdirSync(join(cacheRoot, "slim-services", "postgres", seventeen.version, target), {
+        recursive: true,
+      });
+      expect(yield* cachedPostgresArtifactRoot(cacheRoot, "15")).toBe(
+        join(cacheRoot, "slim-services", "postgres", fifteen.version, target),
+      );
+      expect(yield* cachedPostgresArtifactRoot(cacheRoot, "15")).not.toBe(
+        join(cacheRoot, "slim-services", "postgres", seventeen.version, target),
+      );
+    }).pipe(Effect.provide(layer)),
+  );
 });

@@ -32,8 +32,8 @@ describe("nativeHostClientPathPrepend", () => {
       const bin = join(root, "bin");
       mkdirSync(bin, { recursive: true });
       writeFileSync(join(bin, "pg_dump"), "");
-      expect(yield* nativeHostClientPathPrepend("pg_dump", root)).toBe(bin);
-      expect(yield* nativeHostClientPathPrepend("psql", root)).toBeUndefined();
+      expect(yield* nativeHostClientPathPrepend("pg_dump", { artifactRoot: root })).toBe(bin);
+      expect(yield* nativeHostClientPathPrepend("psql", { artifactRoot: root })).toBeUndefined();
     }).pipe(Effect.provide(BunServices.layer)),
   );
 });

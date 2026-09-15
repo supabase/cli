@@ -236,7 +236,9 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
         : undefined;
     const dumpMajor = serverMajor ?? tomlValues.majorVersion;
     const dumpCommand = roleOnly ? ("pg_dumpall" as const) : ("pg_dump" as const);
-    const pathPrepend = useHostClient ? yield* nativeHostClientPathPrepend(dumpCommand) : undefined;
+    const pathPrepend = useHostClient
+      ? yield* nativeHostClientPathPrepend(dumpCommand, { major: dumpMajor })
+      : undefined;
     const dumpClient = useHostClient
       ? {
           kind: "host" as const,

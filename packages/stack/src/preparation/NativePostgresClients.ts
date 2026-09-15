@@ -1,5 +1,10 @@
 import { Effect, FileSystem, Path } from "effect";
-import { catalogReleaseFor, targetForPlatform } from "../model/WorkloadCatalog.ts";
+import {
+  catalogEntryFor,
+  catalogReleaseFor,
+  targetForPlatform,
+  type WorkloadCatalogRelease,
+} from "../model/WorkloadCatalog.ts";
 
 export type NativePostgresClientCommand = "pg_dump" | "pg_dumpall" | "psql";
 
@@ -18,14 +23,27 @@ export const nativePostgresClientBinDir = (
     return exists ? binDir : undefined;
   });
 
+const postgresCatalogRelease = (version?: string): WorkloadCatalogRelease | undefined => {
+  if (version === undefined) return catalogReleaseFor("database:database");
+  const exact = catalogReleaseFor("database:database", version);
+  if (exact !== undefined) return exact;
+  const major = Number.parseInt(version.split(".")[0] ?? "", 10);
+  if (!Number.isInteger(major)) return undefined;
+  const entry = catalogEntryFor("database:database");
+  if (entry === undefined) return undefined;
+  const matched = Object.keys(entry.releases).find(
+    (release) => Number.parseInt(release.split(".")[0] ?? "", 10) === major,
+  );
+  return matched === undefined ? undefined : catalogReleaseFor("database:database", matched);
+};
+
 /** Cache path for a prepared postgres slim artifact, when the extra tree is already on disk. */
 export const cachedPostgresArtifactRoot = (
   cacheRoot: string,
   version?: string,
 ): Effect.Effect<string | undefined, never, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
-    const release =
-      catalogReleaseFor("database:database", version) ?? catalogReleaseFor("database:database");
+    const release = postgresCatalogRelease(version);
     const target = targetForPlatform({ os: process.platform, arch: process.arch });
     if (release === undefined || target === undefined) return undefined;
     const fs = yield* FileSystem.FileSystem;

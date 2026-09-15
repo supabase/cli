@@ -142,7 +142,9 @@ const squashMigrations = Effect.fnUntraced(function* (
           const expectedMajor =
             parsePostgresServerMajor(handle.ephemeral.version) ?? toml.majorVersion;
           const pathPrepend = nativeShadow
-            ? yield* nativeHostClientPathPrepend("pg_dump", handle.ephemeral.nativeArtifactRoot)
+            ? yield* nativeHostClientPathPrepend("pg_dump", {
+                artifactRoot: handle.ephemeral.nativeArtifactRoot,
+              })
             : undefined;
           const dumpClient = nativeShadow
             ? {

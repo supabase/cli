@@ -1887,10 +1887,16 @@ export const makeSupervisor = (
           cleanup: { _tag: "proven" as const },
           durable: "stopped" as const,
         } satisfies CommandResult;
-        const failedInPlace = (cause: Cause.Cause<StackError>): CommandResult => ({
+        const failedWithoutMutation = (cause: Cause.Cause<StackError>): CommandResult => ({
           _tag: "failed",
           cause,
           cleanup: { _tag: "proven" },
+          durable: "unsafe",
+        });
+        const failedAfterMutation = (cause: Cause.Cause<StackError>): CommandResult => ({
+          _tag: "failed",
+          cause,
+          cleanup: { _tag: "unproven", cause },
           durable: "unsafe",
         });
         const control = (yield* Ref.get(machine)).stack;
@@ -1901,7 +1907,7 @@ export const makeSupervisor = (
           return rejectNotRunning;
         const state = yield* read();
         if (state === undefined || state.definition === undefined)
-          return failedInPlace(
+          return failedWithoutMutation(
             Cause.fail(new StackStateInvalidError({ message: "Stack state is missing" })),
           );
         const status = yield* snapshot();
@@ -1935,23 +1941,23 @@ export const makeSupervisor = (
           (workload) => workload.id === "database:database",
         );
         if (databaseWorkload === undefined)
-          return failedInPlace(
+          return failedWithoutMutation(
             Cause.fail(new StackStateInvalidError({ message: "Database workload is missing" })),
           );
         const stopped = yield* launcher
           .stopCapabilities(new Set(["database", ...bounceNames]))
           .pipe(Effect.mapError(mapRuntimeError), Effect.exit);
-        if (Exit.isFailure(stopped)) return failedInPlace(stopped.cause);
+        if (Exit.isFailure(stopped)) return failedAfterMutation(stopped.cause);
         const wiped = yield* runtime.driver
           .wipePersistentData({ stackId: options.stackId, workloadId: databaseWorkload.id })
           .pipe(Effect.mapError(mapRuntimeError), Effect.exit);
-        if (Exit.isFailure(wiped)) return failedInPlace(wiped.cause);
+        if (Exit.isFailure(wiped)) return failedAfterMutation(wiped.cause);
         const launched = yield* launcher.launch({
           ...plan,
           workloads: [databaseWorkload, ...bounce],
         });
         if (Predicate.isTagged(launched, "failed"))
-          return failedInPlace(Cause.map(launched.cause, mapRuntimeError));
+          return failedAfterMutation(Cause.map(launched.cause, mapRuntimeError));
         return { _tag: "succeeded" } satisfies CommandResult;
       });
     const resetDatabase = Effect.gen(function* () {

@@ -681,7 +681,10 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
               Effect.map((value) =>
                 value.capabilities
                   .filter(
-                    (capability) => capability.state === "ready" || capability.state === "starting",
+                    (capability) =>
+                      capability.state === "ready" ||
+                      capability.state === "starting" ||
+                      capability.state === "stopping",
                   )
                   .map((capability) => capability.name),
               ),

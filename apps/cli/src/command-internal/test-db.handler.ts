@@ -116,7 +116,6 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
         ? yield* stackRequireProjectRuntime
         : undefined;
     const useHostProve = stackRuntime?.kind === "native" && runtimeInfo.platform !== "win32";
-    const pathPrepend = useHostProve ? yield* nativeHostClientPathPrepend("psql") : undefined;
     const stackContainerProve = backend.kind === "stack" && !useHostProve;
 
     const networkId = Option.getOrUndefined(networkIdFlag);
@@ -220,6 +219,7 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
           const expectedMajor =
             (backend.kind === "stack" ? yield* stackProjectDatabaseMajor : undefined) ??
             toml.majorVersion;
+          const pathPrepend = yield* nativeHostClientPathPrepend("psql", { major: expectedMajor });
           yield* requireHostPgProve(expectedMajor, pathPrepend);
           const hostPath = args.hostPaths[0];
           const hostWorkingDir =

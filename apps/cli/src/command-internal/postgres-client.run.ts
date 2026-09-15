@@ -92,17 +92,19 @@ export const prependHostClientPath = (
 /** Artifact `bin` when the extra exists in the prepared slim tree or the default cache. */
 export const nativeHostClientPathPrepend = (
   command: NativePostgresClientCommand,
-  artifactRoot?: string,
+  options?: { readonly artifactRoot?: string; readonly major?: number },
 ): Effect.Effect<string | undefined, never, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
-    if (artifactRoot !== undefined) return yield* nativePostgresClientBinDir(artifactRoot, command);
+    if (options?.artifactRoot !== undefined)
+      return yield* nativePostgresClientBinDir(options.artifactRoot, command);
     const path = yield* Path.Path;
     const env = yield* defaultRuntimeEnvironment;
     const cacheRoot =
       env.artifactCacheRoot === undefined
         ? path.join(path.resolve(env.stateRoot), "artifacts")
         : env.artifactCacheRoot;
-    const root = yield* cachedPostgresArtifactRoot(cacheRoot);
+    const version = options?.major === undefined ? undefined : String(options.major);
+    const root = yield* cachedPostgresArtifactRoot(cacheRoot, version);
     if (root === undefined) return undefined;
     return yield* nativePostgresClientBinDir(root, command);
   });
