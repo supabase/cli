@@ -4,6 +4,7 @@ import { NetworkIdFlag } from "./global-flags.ts";
 import { viperEnvStringWithProjectFallback } from "./viper-env.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { DockerRun } from "./docker-run.service.ts";
+import { DockerRunError } from "./docker-run.errors.ts";
 import { getRegistryImageUrl } from "./docker-registry.ts";
 
 /**
@@ -52,9 +53,20 @@ export const streamPgDump = Effect.fnUntraced(function* <E>(params: {
         : { _tag: "host" as const };
   const extraHosts = runtimeInfo.platform === "linux" ? ["host.docker.internal:host-gateway"] : [];
 
+  const image = yield* getRegistryImageUrl(params.image, params.projectEnvValues).pipe(
+    Effect.mapError(
+      (cause) =>
+        new DockerRunError({
+          message: `failed to resolve Docker image registry configuration: ${cause.message}`,
+          reason: "config",
+          daemonDown: false,
+        }),
+    ),
+  );
+
   return yield* docker.runStream<E>(
     {
-      image: yield* getRegistryImageUrl(params.image, params.projectEnvValues),
+      image,
       cmd: ["bash", "-c", params.script, "--"],
       env: params.env,
       binds: [],

@@ -20,12 +20,16 @@ import {
 
 const currentPgmeta = dockerfileServiceImageRaw("pgmeta");
 const currentPgmetaTag = currentPgmeta.split(":")[1] ?? "";
-const resolvePgmeta = (version?: string, env?: Readonly<Record<string, string>>) =>
+const resolvePgmeta = (
+  version?: string,
+  env?: Readonly<Record<string, string>>,
+  ambient: Readonly<Record<string, string | undefined>> = { ...process.env },
+) =>
   Effect.runSync(
     resolvePgmetaImage(version, env).pipe(
       Effect.provideService(
         ConfigProvider.ConfigProvider,
-        ConfigProvider.fromEnvRecord({ ...process.env }, { preserveEmptyStrings: true }),
+        ConfigProvider.fromEnvRecord(ambient, { preserveEmptyStrings: true }),
       ),
     ),
   );
@@ -209,6 +213,51 @@ describe("resolvePgmetaImage", () => {
       withEnv("SUPABASE_INTERNAL_IMAGE_REGISTRY", undefined, () => resolvePgmeta(currentPgmetaTag)),
     );
     expect(image).toBe(toSlimImage("pgmeta", currentPgmeta));
+  });
+
+  it("uses a project-only slim flag without mutating ambient configuration", () => {
+    const image = resolvePgmeta(
+      currentPgmetaTag,
+      {
+        SUPABASE_USE_SLIM_IMAGES: "1",
+        SUPABASE_INTERNAL_IMAGE_REGISTRY: "docker.io",
+      },
+      {},
+    );
+    expect(image).toBe(toSlimImage("pgmeta", currentPgmeta));
+  });
+
+  it.each(["", "false"])("treats a project %j slim flag as disabled", (value) => {
+    const image = resolvePgmeta(
+      currentPgmetaTag,
+      {
+        SUPABASE_USE_SLIM_IMAGES: value,
+        SUPABASE_INTERNAL_IMAGE_REGISTRY: "docker.io",
+      },
+      { SUPABASE_USE_SLIM_IMAGES: "1" },
+    );
+    expect(image).toBe(currentPgmeta);
+  });
+
+  it("uses the ambient slim flag when the project has no override", () => {
+    const image = resolvePgmeta(
+      currentPgmetaTag,
+      { SUPABASE_INTERNAL_IMAGE_REGISTRY: "docker.io" },
+      { SUPABASE_USE_SLIM_IMAGES: "1" },
+    );
+    expect(image).toBe(toSlimImage("pgmeta", currentPgmeta));
+  });
+
+  it("keeps a historical project pin on the source image under the project slim flag", () => {
+    const image = resolvePgmeta(
+      "1.2.3",
+      {
+        SUPABASE_USE_SLIM_IMAGES: "1",
+        SUPABASE_INTERNAL_IMAGE_REGISTRY: "docker.io",
+      },
+      {},
+    );
+    expect(image).toBe("supabase/postgres-meta:v1.2.3");
   });
 
   it("keeps a historical pg-meta pin on docker.io under the slim flag", () => {

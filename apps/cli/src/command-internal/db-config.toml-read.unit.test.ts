@@ -2467,9 +2467,9 @@ describe("readDbToml", () => {
         Effect.tap((env) =>
           Effect.sync(() => {
             expect(env).toEqual({ DEVELOPMENT_ONLY: "from-development" });
-            rmSync(dir, { recursive: true, force: true });
           }),
         ),
+        Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
       );
     },
   );

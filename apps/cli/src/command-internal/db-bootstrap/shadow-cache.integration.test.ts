@@ -15,7 +15,7 @@ import type { CliConfig } from "@supabase/config";
 import { CliConfigSchema } from "@supabase/config";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, FileSystem, Layer, Option, Path, Schema } from "effect";
+import { ConfigProvider, Effect, Exit, FileSystem, Layer, Option, Path, Schema } from "effect";
 
 import {
   FAKE_EMPTY_TAR,
@@ -171,6 +171,22 @@ const coldRun = (
   });
 
 describe("acquireShadowDatabase", () => {
+  it.live("treats registry configuration failure as an uncachable shadow", () => {
+    const out = mockOutput();
+    const configProvider = ConfigProvider.make(() =>
+      Effect.fail(new ConfigProvider.SourceError({ message: "injected registry config failure" })),
+    );
+    return withShadowCacheHome(
+      "1",
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const peek = yield* peekShadowBaseline(shadowInput(fs, path));
+        expect(peek).toEqual({ state: "uncachable" });
+      }).pipe(Effect.provideService(ConfigProvider.ConfigProvider, configProvider)),
+    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer)));
+  });
+
   it.live("is today's bare create when the cache is explicitly disabled", () => {
     const docker = mockDockerDaemonCliSpawner();
     const cluster = fakeCluster();
@@ -735,18 +751,24 @@ describe("acquireShadowDatabase", () => {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const input = shadowInput(fs, path);
-        yield* coldRun(docker, input);
+        const defaultRegistryInput = {
+          ...input,
+          setup: { ...input.setup, projectEnvValues: { SUPABASE_INTERNAL_IMAGE_REGISTRY: "" } },
+        };
+        yield* coldRun(docker, defaultRegistryInput);
         const defaultRegistryTar = yield* soleTarName(fs, path);
         expect(defaultRegistryTar).toHaveLength(1);
 
         // The one-shot migrate jobs resolve their images through
         // `SUPABASE_INTERNAL_IMAGE_REGISTRY`, so a different registry can bake different
         // realtime/storage/auth schema under identical tags — the snapshot must not be shared.
-        const mirrored = yield* withEnvVar(
-          "SUPABASE_INTERNAL_IMAGE_REGISTRY",
-          "mirror.internal.example",
-          coldRun(docker, input),
-        );
+        const mirrored = yield* coldRun(docker, {
+          ...input,
+          setup: {
+            ...input.setup,
+            projectEnvValues: { SUPABASE_INTERNAL_IMAGE_REGISTRY: "mirror.internal.example" },
+          },
+        });
         expect(mirrored.baselinePresent).toBe(false);
         const mirroredTar = yield* soleTarName(fs, path);
         // Distinct keys coexist in the global cache — the default-registry tar is not swept.

@@ -145,7 +145,17 @@ export function resolvePgmetaImage(
   const raw = dockerfileServiceImageRaw("pgmeta");
   const trimmed = versionOverride?.trim() ?? "";
   const pin = trimmed.length > 0 ? `v${trimmed.replace(/^v/i, "")}` : undefined;
-  return getRegistryImageUrl(slimImageForCurrentPin("pgmeta", raw, pin), projectEnvValues);
+  const projectSlimValue = Option.fromNullishOr(projectEnvValues?.["SUPABASE_USE_SLIM_IMAGES"]);
+  const useSlimImages = Option.isSome(projectSlimValue)
+    ? Effect.succeed(projectSlimValue.value === "true" || projectSlimValue.value === "1")
+    : Config.string("SUPABASE_USE_SLIM_IMAGES").pipe(
+        Config.withDefault(""),
+        Effect.map((value) => value === "true" || value === "1"),
+      );
+  return useSlimImages.pipe(
+    Effect.map((enabled) => slimImageForCurrentPin("pgmeta", raw, pin, enabled)),
+    Effect.flatMap((image) => getRegistryImageUrl(image, projectEnvValues)),
+  );
 }
 
 export function rootCaBundle() {
