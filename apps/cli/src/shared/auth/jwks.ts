@@ -213,7 +213,7 @@ export function thirdPartyIssuerUrlUnchecked(
 }
 
 /** Failure to discover or retrieve a provider's public signing keys. */
-export class RemoteJwksError extends Data.TaggedError("RemoteJwksError")<{
+class RemoteJwksError extends Data.TaggedError("RemoteJwksError")<{
   readonly message: string;
   readonly reason: "network" | "response" | "timeout";
   readonly cause?: unknown;
