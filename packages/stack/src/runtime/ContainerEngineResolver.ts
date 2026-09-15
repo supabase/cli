@@ -49,7 +49,7 @@ const hostContainerPlatform = (): ContainerPlatform => {
 
 const DOCKER_PROBE_TIMEOUT = "2 seconds";
 
-export const processUid = (): number | undefined =>
+const processUid = (): number | undefined =>
   typeof process.getuid === "function" ? process.getuid() : undefined;
 
 export const nativeRuntimeBlockedForUid = (uid = processUid()): boolean => uid === 0;

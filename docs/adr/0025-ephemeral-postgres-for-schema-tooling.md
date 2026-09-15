@@ -31,9 +31,9 @@ snapshot.
   upsert, and `roles.sql`. The CLI helper that runs schema init then overlay is not a fourth
   concept.
 - **Activation**: starting a capability’s long-running process and listeners. Not schema init.
-- **Disabled capability**: a capability with `enabled: false` that still carries its nested pins
-  (`version`, `settings`). Disable is not absence; schema-init can turn a disabled cap back on
-  without losing the pin.
+- **Disabled capability**: exactly `{ enabled: false }`; the stack config schema rejects nested
+  pins (`version`, `settings`) on a disabled capability. Disable is not absence: schema-init can
+  turn a disabled cap back on, compiling it with default settings.
 - **First create**: this start created the live project stack (`unconfigured` / no stack). Analog
   of Compose’s fresh volume: schema init, Overlay, and user migrate-and-seed run once here.
 - **Existing cluster**: a live project stack this start did not create (already-running or

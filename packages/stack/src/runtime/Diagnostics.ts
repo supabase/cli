@@ -6,7 +6,7 @@ const LEFTOVER_PERSISTENT_DATA =
   /exists but is not empty|directory not empty|not empty directory|PGDATA.*exist|initdb:.*exist|volume is in use|already exists.*volume/i;
 
 /** Wipe guidance when a first-create retry cannot launch over leftover PGDATA/volume. */
-export const LEFTOVER_PERSISTENT_DATA_GUIDANCE =
+const LEFTOVER_PERSISTENT_DATA_GUIDANCE =
   "Leftover files from a failed first start remain. db reset --local or stack destroy wipes them.";
 
 export const looksLikeLeftoverPersistentData = (message: string): boolean =>

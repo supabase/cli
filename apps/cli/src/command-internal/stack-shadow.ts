@@ -262,12 +262,14 @@ const postgresSettings = (value: unknown): EphemeralPostgresSettings | undefined
   );
 };
 
+// A disabled capability carries no nested pins, so re-enabling one for setup compiles defaults.
 const overlaySetupEnabled = <C extends { readonly enabled?: boolean } | undefined>(
   current: C,
   enabled: boolean,
 ): C | { readonly enabled: false } | { readonly enabled: true } => {
-  if (current === undefined) return { enabled };
-  return { ...current, enabled };
+  if (!enabled) return { enabled: false };
+  if (current === undefined) return { enabled: true };
+  return { ...current, enabled: true };
 };
 
 const overlaySetupTrio = (

@@ -378,7 +378,7 @@ export const resolveLinkedConn = Effect.fnUntraced(function* (
   return poolerConn.value;
 });
 
-export const dbConfigResolverLayer = Layer.effect(
+const dbConfigResolverLayer = Layer.effect(
   DbConfigResolver,
   Effect.gen(function* () {
     const cliSettings = yield* CommandSettings;

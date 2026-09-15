@@ -146,9 +146,7 @@ site_url = "from-config"
         undefined,
         Effect.gen(function* () {
           const disabled = yield* load(disabledRoot);
-          expect(disabled.capabilities?.auth).toEqual(
-            expect.objectContaining({ enabled: false, settings: expect.any(Object) }),
-          );
+          expect(disabled.capabilities?.auth).toEqual({ enabled: false });
 
           const enabled = yield* withEnvVar("SUPABASE_AUTH_ENABLED", "true", load(enabledRoot));
           if (
