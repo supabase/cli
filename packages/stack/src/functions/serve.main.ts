@@ -16,20 +16,24 @@ import {
 } from "./serve-main-resolver.ts";
 import * as jose from "jose";
 
-const restoreMultilineEnvironment = (): void => {
+const multilineEnvironment = (): Record<string, string> => {
   const encoded = Deno.env.get("SUPABASE_INTERNAL_MULTILINE_ENV");
-  if (!encoded) return;
+  if (!encoded) return {};
   try {
     const values = JSON.parse(encoded);
     if (values && typeof values === "object" && !Array.isArray(values)) {
-      for (const [name, value] of Object.entries(values))
-        if (typeof value === "string") Deno.env.set(name, value);
+      return Object.fromEntries(
+        Object.entries(values).filter(
+          (entry): entry is [string, string] => typeof entry[1] === "string",
+        ),
+      );
     }
-  } finally {
-    Deno.env.delete("SUPABASE_INTERNAL_MULTILINE_ENV");
+  } catch {
+    // Invalid optional environment input is ignored; the host validates invocation values.
   }
+  return {};
 };
-restoreMultilineEnvironment();
+const MULTILINE_ENV = multilineEnvironment();
 
 const EXCLUDED_ENVS = ["HOME", "HOSTNAME", "PATH", "PWD"];
 const HOST_PORT = Deno.env.get("SUPABASE_INTERNAL_HOST_PORT") ?? "8081";
@@ -265,6 +269,7 @@ Deno.serve({
         }
         const envVarsObj = {
           ...Deno.env.toObject(),
+          ...MULTILINE_ENV,
           ...Object.fromEntries(
             Object.entries(config.env ?? {}).filter(([name]) => !name.startsWith("SUPABASE_")),
           ),
