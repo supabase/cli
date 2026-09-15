@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Config, Effect, Option } from "effect";
 import { dockerfileServiceImageRaw } from "../../../shared/services/dockerfile-images.ts";
 import { slimImageForCurrentPin } from "../../../shared/services/slim-images.ts";
 import { getRegistryImageUrl } from "../../../command-internal/docker-registry.ts";
@@ -91,9 +91,10 @@ export function parseQueryTimeoutSeconds(
   });
 }
 
-export function localDbPassword() {
-  return process.env["SUPABASE_DB_PASSWORD"] ?? "postgres";
-}
+export const localDbPassword = Effect.fnUntraced(function* () {
+  const value = yield* Config.option(Config.string("SUPABASE_DB_PASSWORD"));
+  return Option.getOrElse(value, () => "postgres");
+});
 
 export function parseDatabaseUrl(
   url: string,
@@ -137,11 +138,14 @@ export function buildPostgresUrl(input: {
   );
 }
 
-export function resolvePgmetaImage(versionOverride?: string) {
+export function resolvePgmetaImage(
+  versionOverride?: string,
+  projectEnvValues?: Readonly<Record<string, string>>,
+) {
   const raw = dockerfileServiceImageRaw("pgmeta");
   const trimmed = versionOverride?.trim() ?? "";
   const pin = trimmed.length > 0 ? `v${trimmed.replace(/^v/i, "")}` : undefined;
-  return getRegistryImageUrl(slimImageForCurrentPin("pgmeta", raw, pin));
+  return getRegistryImageUrl(slimImageForCurrentPin("pgmeta", raw, pin), projectEnvValues);
 }
 
 export function rootCaBundle() {

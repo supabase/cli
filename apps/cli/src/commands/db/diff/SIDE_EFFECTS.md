@@ -92,7 +92,7 @@ of this command's own target resolve, ahead of the differ container.
 | `SUPABASE_EXPERIMENTAL_PG_DELTA`                                                      | force pg-delta engine                                                                                                                                                                                               | no        |
 | `PGDELTA_DEBUG`                                                                       | pg-delta debug capture                                                                                                                                                                                              | no        |
 | `SUPABASE_SSL_DEBUG`                                                                  | migra SSL debug logging                                                                                                                                                                                             | no        |
-| `SUPABASE_INTERNAL_IMAGE_REGISTRY`                                                    | overrides the differ's / shadow's image registry (shell **or** project `.env`, applied for the run via `applyProjectEnv`, matching `db push`/`db pull`/`db dump`)                                                   | no        |
+| `SUPABASE_INTERNAL_IMAGE_REGISTRY`                                                    | overrides the differ's / shadow's image registry (shell **or** project `.env`, passed to each image operation)                                                                                                      | no        |
 
 `SUPABASE_DB_SHADOW_PORT`/`SUPABASE_NETWORK_ID`/`--network-id`/`SUPABASE_PROJECT_ID`/
 `SUPABASE_DB_HEALTH_TIMEOUT` all apply to `--use-pgadmin` too — its shadow is provisioned
@@ -104,11 +104,9 @@ engine-selection lookup (`shouldUsePgDelta`) runs unconditionally, before the
 resulting `useDelta` value.
 
 `SUPABASE_INTERNAL_IMAGE_REGISTRY` applies to the differ's own image resolution too. The
-docker-run layer's resolver (`docker-run.layer.ts`) is built once, statically, with
-no `projectEnvValues` in scope, so it falls back to reading `process.env` directly at
-`runCapture` call time — the handler's own `applyProjectEnv(cfg.projectEnv)` call
-(right after the config load) is what makes a registry override set only in
-`supabase/.env`/project-root dotenv (not the ambient shell) visible to it by then.
+docker-run layer receives the loaded project environment on each invocation. A registry
+override set only in `supabase/.env`/project-root dotenv (not the ambient shell) remains
+visible without mutating the process environment.
 
 Explicitly **not** read by `--use-pgadmin`: `PGDELTA_*`, `SUPABASE_SSL_DEBUG` (both
 migra/pg-delta-engine-specific).

@@ -23,7 +23,7 @@ type Spawner = ChildProcessSpawner["Service"];
  */
 export class ImagePrepullError extends Data.TaggedError("ImagePrepullError")<{
   readonly message: string;
-  readonly reason: "docker_daemon" | "registry_pull" | "image_inspect";
+  readonly reason: "docker_daemon" | "config" | "registry_pull" | "image_inspect";
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     switch (this.reason) {
@@ -31,6 +31,8 @@ export class ImagePrepullError extends Data.TaggedError("ImagePrepullError")<{
         return { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" };
       case "registry_pull":
         return { ...actionability.externalNetwork, fingerprint_suffix: "registry_pull" };
+      case "config":
+        return { ...actionability.invalidConfig, fingerprint_suffix: "invalid_config" };
       default:
         return { ...actionability.invalidConfig, fingerprint_suffix: "image_inspect" };
     }
@@ -69,6 +71,8 @@ export function ensureImagesCached(
           const failure = result.failure;
           if (failure.reason === "spawn" || failure.daemonDown) {
             failureReason = "docker_daemon";
+          } else if (failure.reason === "config" && failureReason !== "docker_daemon") {
+            failureReason = "config";
           } else if (failure.reason === "pull" && failureReason !== "docker_daemon") {
             failureReason = "registry_pull";
           }

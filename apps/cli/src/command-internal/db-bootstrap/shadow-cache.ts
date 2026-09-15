@@ -279,8 +279,11 @@ const resolveShadowCacheKeyInputs = <E>(
     const overrides = input.setup.serviceVersionOverrides;
     // Same registry rewrite the real migrate job applies when it runs — see
     // {@link ShadowCacheServiceInput.image}.
-    const resolveJobImage = (image: string): string =>
-      getRegistryImageUrl(image, input.setup.projectEnvValues);
+    const resolveJobImage = Effect.fnUntraced(function* (image: string) {
+      return yield* getRegistryImageUrl(image, input.setup.projectEnvValues).pipe(
+        Effect.orElseSucceed(() => image),
+      );
+    });
     // Same compound gate a real cold provision uses to decide whether the realtime job's JWKS
     // effect ever runs.
     const realtimeConsumesJwks =
@@ -305,15 +308,15 @@ const resolveShadowCacheKeyInputs = <E>(
       services: {
         realtime: {
           enabled: input.setup.config.realtime.enabled,
-          image: resolveJobImage(resolvePinnedImage("realtime", "realtime", overrides)),
+          image: yield* resolveJobImage(resolvePinnedImage("realtime", "realtime", overrides)),
         },
         storage: {
           enabled: input.setup.config.storage.enabled,
-          image: resolveJobImage(resolvePinnedImage("storage", "storage", overrides)),
+          image: yield* resolveJobImage(resolvePinnedImage("storage", "storage", overrides)),
         },
         auth: {
           enabled: input.setup.config.auth.enabled,
-          image: resolveJobImage(resolvePinnedImage("gotrue", "auth", overrides)),
+          image: yield* resolveJobImage(resolvePinnedImage("gotrue", "auth", overrides)),
         },
       },
     } satisfies ShadowCacheKeyInputs);
