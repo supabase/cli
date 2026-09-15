@@ -1,6 +1,6 @@
 import { Schema } from "effect";
 import { describe, expect, test } from "vitest";
-import { compute, RESERVED_COMPUTE_NAMES, rootFields } from "./compute.ts";
+import { compute, RESERVED_COMPUTE_NAMES, settings } from "./compute.ts";
 
 const decode = Schema.decodeUnknownSync(compute);
 
@@ -13,7 +13,11 @@ function computeNamePattern(): string {
   return patterns[0] as string;
 }
 
-/** The fixed keys `[compute]` declares for its own settings, read back off the compiled schema. */
+/**
+ * The fixed keys `[compute]` declares for its own settings. Read off the generated schema
+ * rather than the struct: the exported schema is annotated and piped, so the underlying
+ * `StructWithRest` is not reachable through it, and the compiled output is what ships.
+ */
 function declaredSettings(): Set<string> {
   const json = JSON.parse(JSON.stringify(Schema.toJsonSchemaDocument(compute).schema));
   const objectSchema = json.anyOf?.find((entry: { type?: string }) => entry?.type === "object");
@@ -95,18 +99,17 @@ describe("compute schema", () => {
     }
   });
 
-  test("declares exactly the settings `rootFields` lists", () => {
+  test("is built from `settings`, not an inline struct", () => {
     // The other direction of the guard below. That one allows a setting declared outside
-    // `rootFields` as long as its name was also reserved by hand, which is correct but
-    // leaves `rootFields` describing something the schema no longer reads — and the doc
-    // comment on it still telling the next contributor that is where settings go.
-    // Requiring equality makes going through `rootFields` the only way in.
-    expect([...declaredSettings()].sort()).toEqual(Object.keys(rootFields).sort());
+    // `settings` as long as its name was also reserved by hand, which is correct but leaves
+    // `settings` describing something the section no longer holds — and its doc comment
+    // still telling the next contributor that is where settings go.
+    expect([...declaredSettings()].sort()).toEqual(Object.keys(settings.fields).sort());
   });
 
   test("reserves every settings key `[compute]` defines for itself", () => {
     // The guard for a setting added without reserving its name. The list is derived from
-    // `rootFields`, so adding one there reserves it automatically; this fails if a field is
+    // `settings`, so adding one there reserves it automatically; this fails if a field is
     // declared some other way, which would leave it able to collide with a compute name.
     for (const declared of declaredSettings()) {
       expect(RESERVED_COMPUTE_NAMES).toContain(declared);

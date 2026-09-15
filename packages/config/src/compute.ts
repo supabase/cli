@@ -11,10 +11,11 @@ const tags = ["compute"];
  * omits it. Anything expressible as one belongs in `[compute.defaults]`, nested rather than
  * sharing the namespace with compute names, so it costs no reserved word.
  *
- * Exported so the schema's declared keys can be checked against this list, since going
- * through here is what reserves a name.
+ * The struct itself rather than a plain object handed to one, so `[compute]` has a single
+ * declaration of what it holds and `.fields` is the schema's own view of it. Exported so a
+ * test can check the section is built from this and not an inline struct.
  */
-export const rootFields = {};
+export const settings = Schema.Struct({});
 
 // Reserved before the settings using them exist, so introducing one later does not break a
 // project that had already named a compute after it.
@@ -22,7 +23,7 @@ const forwardReserved = ["defaults"];
 
 /** Names a compute may not take, because `[compute]` uses them for itself. */
 export const RESERVED_COMPUTE_NAMES: ReadonlyArray<string> = [
-  ...Object.keys(rootFields),
+  ...Object.keys(settings.fields),
   ...forwardReserved,
 ];
 
@@ -103,16 +104,14 @@ const computeEntry = Schema.Struct({
 
 /**
  * `[compute]` — one `[compute.<name>]` table per Compute service, keyed by name, alongside
- * the settings in {@link rootFields} that apply to every compute.
+ * the settings in {@link settings} that apply to every compute.
  *
  * A struct-with-rest rather than a bare `Record` so both can share the one table: a `Record`
  * has no slot for a sibling key, so a setting would be read as a compute *named* after it.
- * Adding one is a field in {@link rootFields} and nothing else — `[compute.<name>]` does not
+ * Adding one is a field in {@link settings} and nothing else — `[compute.<name>]` does not
  * move, and the name is reserved automatically.
  */
-export const compute = Schema.StructWithRest(Schema.Struct(rootFields), [
-  Schema.Record(computeName, computeEntry),
-])
+export const compute = Schema.StructWithRest(settings, [Schema.Record(computeName, computeEntry)])
   .annotate({
     default: {},
     description: "Compute-specific configuration keyed by compute name.",
