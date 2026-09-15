@@ -1512,11 +1512,12 @@ describe("saveCliConfig atomic failures", () => {
     const { cwd, directory, filePath } = await prepareConfigFile();
 
     try {
+      const injectedError = injectedFailure("writeFileString", filePath);
       const exit = await runSaveWithFileSystem(cwd, (fs) => ({
         ...fs,
         writeFileString: (candidate, content, options) =>
           candidate.startsWith(`${filePath}.tmp.`)
-            ? Effect.fail(injectedFailure("writeFileString", candidate))
+            ? Effect.fail(injectedError)
             : fs.writeFileString(candidate, content, options),
       }));
 
@@ -1525,7 +1526,7 @@ describe("saveCliConfig atomic failures", () => {
       const error = Cause.findErrorOption(exit.cause);
       expect(Option.isSome(error)).toBe(true);
       if (Option.isSome(error)) {
-        expect(error.value).toBeInstanceOf(PlatformError.PlatformError);
+        expect(error.value).toBe(injectedError);
       }
       expect(JSON.parse(await readFile(filePath, "utf8"))).toEqual({ project_id: "old-ref" });
       expect(
@@ -1540,10 +1541,10 @@ describe("saveCliConfig atomic failures", () => {
     const { cwd, directory, filePath } = await prepareConfigFile();
 
     try {
+      const injectedError = injectedFailure("rename", filePath);
       const exit = await runSaveWithFileSystem(cwd, (fs) => ({
         ...fs,
-        rename: (from, to) =>
-          to === filePath ? Effect.fail(injectedFailure("rename", to)) : fs.rename(from, to),
+        rename: (from, to) => (to === filePath ? Effect.fail(injectedError) : fs.rename(from, to)),
       }));
 
       expect(Exit.isFailure(exit)).toBe(true);
@@ -1551,7 +1552,7 @@ describe("saveCliConfig atomic failures", () => {
       const error = Cause.findErrorOption(exit.cause);
       expect(Option.isSome(error)).toBe(true);
       if (Option.isSome(error)) {
-        expect(error.value).toBeInstanceOf(PlatformError.PlatformError);
+        expect(error.value).toBe(injectedError);
       }
       expect(JSON.parse(await readFile(filePath, "utf8"))).toEqual({ project_id: "old-ref" });
       expect(

@@ -662,10 +662,8 @@ const resolveSaveFormat = Effect.fnUntraced(function* (
   return "json" as const;
 });
 
-/** Fallback mode for a freshly created config file when no existing mode is available. */
 const DEFAULT_CLI_CONFIG_FILE_MODE = 0o644;
 
-/** Atomically replaces a config file, preserving its mode and cleaning up on every exit. */
 const writeFileAtomic = Effect.fnUntraced(function* (filePath: string, content: string) {
   const fs = yield* FileSystem.FileSystem;
   const tmpPath = `${filePath}.tmp.${Date.now()}.${randomBytes(3).toString("hex")}`;
