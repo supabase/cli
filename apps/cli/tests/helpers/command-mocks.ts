@@ -389,6 +389,7 @@ export function mockLinkedProjectCacheTracked(): {
 export function mockCommandSettings(opts: {
   readonly workdir: string;
   readonly explicitWorkdir?: boolean;
+  readonly workdirEnvValue?: string;
   readonly profile?: string;
   readonly apiUrl?: string;
   readonly projectHost?: string;
@@ -398,9 +399,13 @@ export function mockCommandSettings(opts: {
   readonly projectId?: Option.Option<string>;
   readonly userAgent?: string;
   readonly profileEnvValue?: string;
+  readonly dbPassword?: Option.Option<Redacted.Redacted<string>>;
+  readonly githubToken?: Option.Option<Redacted.Redacted<string>>;
 }): Layer.Layer<CommandSettings> {
   return Layer.succeed(CommandSettings, {
     profileEnvValue: opts.profileEnvValue,
+    dbPassword: opts.dbPassword ?? Option.none(),
+    githubToken: opts.githubToken ?? Option.none(),
     profile: opts.profile ?? "supabase",
     apiUrl: opts.apiUrl ?? DEFAULT_API_URL,
     projectHost: opts.projectHost ?? "supabase.co",
@@ -410,6 +415,7 @@ export function mockCommandSettings(opts: {
     projectId: opts.projectId ?? Option.some(VALID_REF),
     workdir: opts.workdir,
     explicitWorkdir: opts.explicitWorkdir ?? false,
+    workdirEnvValue: opts.workdirEnvValue,
     userAgent: opts.userAgent ?? DEFAULT_USER_AGENT,
   });
 }

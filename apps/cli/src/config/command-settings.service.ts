@@ -34,6 +34,10 @@ interface CommandSettingsShape {
    */
   readonly profileEnvValue: string | undefined;
   readonly accessToken: Option.Option<Redacted.Redacted<string>>;
+  /** `SUPABASE_DB_PASSWORD` captured at settings resolution; empty captures as none. */
+  readonly dbPassword: Option.Option<Redacted.Redacted<string>>;
+  /** Ambient `GITHUB_TOKEN`; raises anonymous GitHub API rate limits. Empty captures as none. */
+  readonly githubToken: Option.Option<Redacted.Redacted<string>>;
   readonly projectId: Option.Option<string>;
   readonly workdir: string;
   /**
@@ -42,6 +46,8 @@ interface CommandSettingsShape {
    * directories; see `shouldSearchAncestors` in `command-internal/workdir-search.ts`.
    */
   readonly explicitWorkdir: boolean;
+  /** Raw `SUPABASE_WORKDIR` exactly as found in the environment; an empty string is preserved. */
+  readonly workdirEnvValue: string | undefined;
   readonly userAgent: string;
 }
 

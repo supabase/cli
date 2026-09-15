@@ -86,6 +86,9 @@ function setup(
         CommandSettings,
         CommandSettings.of({
           profileEnvValue: undefined,
+          dbPassword: Option.none(),
+          githubToken: Option.none(),
+          workdirEnvValue: undefined,
           profile: "supabase",
           apiUrl: opts.apiUrl ?? "https://api.supabase.com",
           projectHost: "supabase.co",

@@ -43,6 +43,9 @@ function fakeDocker(result: { exitCode: number; stdout?: string; stderr?: string
 function makeCliSettings(workdir = "/nonexistent-workdir") {
   return Layer.succeed(CommandSettings, {
     profileEnvValue: undefined,
+    dbPassword: Option.none(),
+    githubToken: Option.none(),
+    workdirEnvValue: undefined,
     profile: "supabase",
     apiUrl: "https://api.supabase.com",
     projectHost: "supabase.co",

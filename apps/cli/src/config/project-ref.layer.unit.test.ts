@@ -21,6 +21,9 @@ const ANOTHER_REF = "qrstuvwxyzabcdefghij";
 function mockCliSettings(opts: { workdir: string; projectId?: string }) {
   return Layer.succeed(CommandSettings, {
     profileEnvValue: undefined,
+    dbPassword: Option.none(),
+    githubToken: Option.none(),
+    workdirEnvValue: undefined,
     profile: "supabase",
     apiUrl: "https://api.supabase.com",
     projectHost: "supabase.co",

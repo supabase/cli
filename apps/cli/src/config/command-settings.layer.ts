@@ -144,6 +144,18 @@ export const commandSettingsLayer = Layer.unwrap(
           debugLogger,
         );
 
+        const rawDbPassword = env["SUPABASE_DB_PASSWORD"];
+        const dbPassword =
+          rawDbPassword === undefined || rawDbPassword.length === 0
+            ? Option.none<Redacted.Redacted<string>>()
+            : Option.some(Redacted.make(rawDbPassword, { label: "SUPABASE_DB_PASSWORD" }));
+
+        const rawGithubToken = env["GITHUB_TOKEN"];
+        const githubToken =
+          rawGithubToken === undefined || rawGithubToken.length === 0
+            ? Option.none<Redacted.Redacted<string>>()
+            : Option.some(Redacted.make(rawGithubToken, { label: "GITHUB_TOKEN" }));
+
         const rawAccessToken = env["SUPABASE_ACCESS_TOKEN"];
         const accessToken =
           rawAccessToken === undefined || rawAccessToken.length === 0
@@ -156,9 +168,10 @@ export const commandSettingsLayer = Layer.unwrap(
             ? Option.none<string>()
             : Option.some(rawProjectId);
 
+        const workdirEnvValue = env["SUPABASE_WORKDIR"];
         const { workdir, explicit: explicitWorkdir } = yield* resolveWorkdir(
           workdirFlag,
-          env["SUPABASE_WORKDIR"],
+          workdirEnvValue,
           runtimeInfo.cwd,
           (filePath) => fs.exists(filePath).pipe(Effect.orElseSucceed(() => false)),
           path,
@@ -174,9 +187,12 @@ export const commandSettingsLayer = Layer.unwrap(
           dashboardUrl,
           profileEnvValue,
           accessToken,
+          dbPassword,
+          githubToken,
           projectId,
           workdir,
           explicitWorkdir,
+          workdirEnvValue,
           userAgent,
         });
       }),

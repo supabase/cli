@@ -350,6 +350,9 @@ export function makeComputeProject(files: Readonly<Record<string, string>> = {})
 const testCliConfigLayer = (workdir: string, explicitWorkdir: boolean) =>
   Layer.succeed(CommandSettings, {
     profileEnvValue: undefined,
+    dbPassword: Option.none(),
+    githubToken: Option.none(),
+    workdirEnvValue: undefined,
     profile: "supabase",
     apiUrl: "https://api.supabase.com",
     projectHost: "supabase.co",
