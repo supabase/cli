@@ -17,6 +17,8 @@ import {
 } from "../../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
+  jsonResponse,
+  withEnvVar,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockLocalDockerEngineUnavailableLayer,
@@ -411,6 +413,18 @@ function setup(
     // Local-reset-only knobs.
     route?: (args: ReadonlyArray<string>) => RouteResult;
     routeOpts?: DefaultRouteOpts;
+    /**
+     * Storage-gateway routes (method + URL substring → JSON body) for the bucket-seed step;
+     * replaces the always-200 HTTP client with a recording one, 404 on no match.
+     */
+    storageRoutes?: ReadonlyArray<{
+      readonly method: string;
+      readonly match: string;
+      readonly status?: number;
+      readonly body?: unknown;
+    }>;
+    /** Piped (non-TTY) stdin content, one line consumed per confirmation prompt. */
+    pipedStdin?: string;
     replicationSlotCounts?: ReadonlyArray<number>;
     replicationSlotQueryFails?: boolean;
     failStatement?: { readonly sql: string; readonly code?: string; readonly message: string };
@@ -444,6 +458,32 @@ function setup(
   });
   const route = opts.route ?? defaultLocalResetRoute(opts.routeOpts);
   const child = mockContainerCliSpawner(route);
+  const requests: Array<{ method: string; url: string; body: unknown }> = [];
+  const storageRoutes = opts.storageRoutes;
+  const httpLayer =
+    storageRoutes === undefined
+      ? alwaysReadyHttpClientLayer
+      : Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make((request) => {
+            const reqBody = request.body;
+            let body: unknown;
+            if (reqBody._tag === "Uint8Array") {
+              try {
+                body = JSON.parse(new TextDecoder().decode(reqBody.body));
+              } catch {
+                body = undefined;
+              }
+            }
+            requests.push({ method: request.method, url: request.url, body });
+            const matched = storageRoutes.find(
+              (r) => r.method === request.method && request.url.includes(r.match),
+            );
+            return matched === undefined
+              ? Effect.succeed(jsonResponse(request, 404, { message: "no mock route" }))
+              : Effect.succeed(jsonResponse(request, matched.status ?? 200, matched.body ?? {}));
+          }),
+        );
   const layer = Layer.mergeAll(
     out.layer,
     conn.layer,
@@ -454,13 +494,13 @@ function setup(
     mockLocalDockerEngineUnavailableLayer,
     mockRuntimeInfo({ platform: "linux" }),
     mockProcessControl().layer,
-    alwaysReadyHttpClientLayer,
+    httpLayer,
     dockerRunLayer.pipe(Layer.provide(child.layer), Layer.provide(mockProcessControl().layer)),
     Layer.succeed(NetworkIdFlag, Option.none()),
     // The remote-reset confirmation is answered through mockOutput's `promptConfirmResponses`
     // (the TTY/clack path); stdin is only required to satisfy the effect's service dependency.
     mockTty({ stdinIsTty: true }),
-    mockStdin(true),
+    mockStdin(true, opts.pipedStdin),
     // `loadProjectRef` gives an explicit `--project-ref` flag top precedence, mirrored here so a
     // test can prove the flag (not just `opts.ref`) drives the linked ref.
     Layer.succeed(ProjectRefResolver, {
@@ -494,6 +534,7 @@ function setup(
     linkedCache,
     resolver,
     child,
+    requests,
   };
 }
 
@@ -716,6 +757,150 @@ describe("db reset", () => {
         yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         expect(out.stderrText).toContain("Finished ");
       });
+    });
+
+    it.live(
+      "confirms overwriting an existing bucket non-interactively and applies the yes default",
+      () => {
+        const { layer, out, requests } = setup(tmp.current, {
+          toml: 'project_id = "test"\n[storage.buckets.images]\n',
+          args: ["db", "reset", "--local"],
+          isLocal: true,
+          storageRoutes: [
+            {
+              method: "GET",
+              match: "/storage/v1/bucket",
+              body: [{ name: "images", id: "images" }],
+            },
+            { method: "PUT", match: "/storage/v1/bucket/images", body: {} },
+          ],
+        });
+        // Ambient `SUPABASE_YES` would take the auto-confirm branch and echo a trailing `y`.
+        return withEnvVar(
+          "SUPABASE_YES",
+          undefined,
+          Effect.gen(function* () {
+            yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+            expect(out.stderrText).toContain(
+              "already exists. Do you want to overwrite its properties? [Y/n]",
+            );
+            expect(out.stderrText).not.toContain("overwrite its properties? [Y/n] y");
+            expect(out.stderrText).toContain("Updating Storage bucket: images");
+            expect(
+              requests.some((r) => r.method === "PUT" && r.url.includes("/bucket/images")),
+            ).toBe(true);
+            expect(out.stderrText).toContain("Finished ");
+          }),
+        );
+      },
+    );
+
+    it.live(
+      "keeps a vector bucket that is missing from config.toml (prune declines by default)",
+      () => {
+        const { layer, out, requests } = setup(tmp.current, {
+          toml: 'project_id = "test"\n[storage.vector]\nenabled = true\n[storage.vector.buckets.embeddings]\n',
+          args: ["db", "reset", "--local"],
+          isLocal: true,
+          storageRoutes: [
+            { method: "GET", match: "/storage/v1/bucket", body: [] },
+            {
+              method: "POST",
+              match: "/storage/v1/vector/ListVectorBuckets",
+              body: {
+                vectorBuckets: [
+                  { vectorBucketName: "embeddings" },
+                  { vectorBucketName: "stale-vec" },
+                ],
+              },
+            },
+          ],
+        });
+        return withEnvVar(
+          "SUPABASE_YES",
+          undefined,
+          Effect.gen(function* () {
+            yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+            expect(out.stderrText).toContain("Do you want to prune it? [y/N]");
+            expect(out.stderrText).not.toContain("Pruning vector bucket");
+            expect(requests.some((r) => r.url.includes("DeleteVectorBucket"))).toBe(false);
+            expect(out.stderrText).toContain("Finished ");
+          }),
+        );
+      },
+    );
+
+    it.live("prunes a stale vector bucket when SUPABASE_YES is set in the project dotenv", () => {
+      const { layer, out, requests } = setup(tmp.current, {
+        toml: 'project_id = "test"\n[storage.vector]\nenabled = true\n[storage.vector.buckets.embeddings]\n',
+        files: { "supabase/.env": "SUPABASE_YES=true\n" },
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        storageRoutes: [
+          { method: "GET", match: "/storage/v1/bucket", body: [] },
+          {
+            method: "POST",
+            match: "/storage/v1/vector/ListVectorBuckets",
+            body: {
+              vectorBuckets: [
+                { vectorBucketName: "embeddings" },
+                { vectorBucketName: "stale-vec" },
+              ],
+            },
+          },
+          { method: "POST", match: "/storage/v1/vector/DeleteVectorBucket", body: {} },
+        ],
+      });
+      // Shell `SUPABASE_YES` (any value) would shadow the project dotenv under test.
+      return withEnvVar(
+        "SUPABASE_YES",
+        undefined,
+        Effect.gen(function* () {
+          yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+          expect(out.stderrText).toContain("Do you want to prune it? [y/N] y");
+          expect(out.stderrText).toContain("Pruning vector bucket: stale-vec");
+          expect(
+            requests.some(
+              (r) =>
+                r.url.includes("DeleteVectorBucket") &&
+                JSON.stringify(r.body ?? "").includes("stale-vec"),
+            ),
+          ).toBe(true);
+        }),
+      );
+    });
+
+    it.live("prunes a stale vector bucket when a piped y answers the confirmation", () => {
+      const { layer, out, requests } = setup(tmp.current, {
+        toml: 'project_id = "test"\n[storage.vector]\nenabled = true\n[storage.vector.buckets.embeddings]\n',
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        pipedStdin: "y\n",
+        storageRoutes: [
+          { method: "GET", match: "/storage/v1/bucket", body: [] },
+          {
+            method: "POST",
+            match: "/storage/v1/vector/ListVectorBuckets",
+            body: {
+              vectorBuckets: [
+                { vectorBucketName: "embeddings" },
+                { vectorBucketName: "stale-vec" },
+              ],
+            },
+          },
+          { method: "POST", match: "/storage/v1/vector/DeleteVectorBucket", body: {} },
+        ],
+      });
+      return withEnvVar(
+        "SUPABASE_YES",
+        undefined,
+        Effect.gen(function* () {
+          yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+          expect(out.stderrText).toContain("Do you want to prune it? [y/N] y");
+          expect(out.stderrText).toContain("Pruning vector bucket: stale-vec");
+          expect(requests.some((r) => r.url.includes("DeleteVectorBucket"))).toBe(true);
+        }),
+      );
     });
 
     it.live("uses the detected git branch in the Finished line", () => {
