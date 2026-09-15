@@ -348,14 +348,14 @@ const readinessFor = (
   );
 };
 
-declare const SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE: string | undefined;
+declare const SUPABASE_STACK_FUNCTIONS_SERVE_MAIN_TEMPLATE: string | undefined;
 
 // Release builds inject the already-bundled Edge Runtime entrypoint. The
 // source-only fallback keeps local development/tests convenient while keeping
 // esbuild out of the shipped supervisor's runtime dependency graph.
 const bootstrapContent =
-  typeof SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE === "string"
-    ? Effect.succeed(SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE)
+  typeof SUPABASE_STACK_FUNCTIONS_SERVE_MAIN_TEMPLATE === "string"
+    ? Effect.succeed(SUPABASE_STACK_FUNCTIONS_SERVE_MAIN_TEMPLATE)
     : Effect.tryPromise({
         try: () => import("../functions/serve-main-bundler.ts"),
         catch: (cause) => preparationError("Unable to bundle functions bootstrap", cause),
