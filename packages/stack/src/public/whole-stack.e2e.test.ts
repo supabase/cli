@@ -496,12 +496,196 @@ const connect = (endpoint: StackEndpoint): Promise<void> =>
     }).pipe(Effect.timeout("2 seconds")),
   );
 
+const openTcpSocket = (endpoint: StackEndpoint): Promise<Socket> =>
+  Effect.runPromise(
+    Effect.callback<Socket, E2ERequestError>((resume) => {
+      const socket = new Socket();
+      let settled = false;
+      const cleanup = () => {
+        socket.off("connect", onConnect);
+        socket.off("error", onError);
+      };
+      const onConnect = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resume(Effect.succeed(socket));
+      };
+      const onError = (cause: Error) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        socket.destroy();
+        resume(Effect.fail(new E2ERequestError({ message: cause.message, cause })));
+      };
+      socket.once("connect", onConnect);
+      socket.once("error", onError);
+      socket.connect(endpoint.port, endpoint.address);
+      return Effect.sync(() => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        socket.destroy();
+      });
+    }).pipe(Effect.timeout(REQUEST_TIMEOUT_MS)),
+  );
+
+const waitForSocketClose = (socket: Socket | WebSocket): Promise<void> =>
+  Effect.runPromise(
+    Effect.callback<void, E2ERequestError>((resume) => {
+      if (socket instanceof WebSocket ? socket.readyState === WebSocket.CLOSED : socket.destroyed) {
+        resume(Effect.void);
+        return Effect.void;
+      }
+      let settled = false;
+      const finish = (result: Effect.Effect<void, E2ERequestError>) => {
+        if (settled) return;
+        settled = true;
+        socket.off("close", onClose);
+        socket.off("error", onError);
+        resume(result);
+      };
+      const onClose = () => finish(Effect.void);
+      const onError = (cause: Error) =>
+        finish(Effect.fail(new E2ERequestError({ message: cause.message, cause })));
+      socket.once("close", onClose);
+      socket.once("error", onError);
+      return Effect.sync(() => {
+        settled = true;
+        socket.off("close", onClose);
+        socket.off("error", onError);
+      });
+    }).pipe(Effect.timeout(REQUEST_TIMEOUT_MS)),
+  );
+
+const openHttpTransport = async (
+  endpoint: StackEndpoint,
+  credentials: PromiseStackCredentials,
+  path: string,
+): Promise<Socket> => {
+  const socket = await openTcpSocket(endpoint);
+  try {
+    await Effect.runPromise(
+      Effect.callback<void, E2ERequestError>((resume) => {
+        let settled = false;
+        let received = Buffer.alloc(0);
+        const finish = (result: Effect.Effect<void, E2ERequestError>) => {
+          if (settled) return;
+          settled = true;
+          socket.off("data", onData);
+          socket.off("error", onError);
+          socket.off("close", onClose);
+          resume(result);
+        };
+        const onData = (chunk: Buffer) => {
+          received = Buffer.concat([received, chunk]);
+          const headerEnd = received.indexOf("\r\n\r\n");
+          if (headerEnd === -1) return;
+          if (!received.subarray(0, headerEnd).toString("utf8").startsWith("HTTP/1.1 100")) {
+            finish(
+              Effect.fail(
+                new E2ERequestError({
+                  message: "HTTP transport did not acknowledge Expect: 100-continue",
+                }),
+              ),
+            );
+            return;
+          }
+          socket.write("{");
+          finish(Effect.void);
+        };
+        const onError = (cause: Error) =>
+          finish(Effect.fail(new E2ERequestError({ message: cause.message, cause })));
+        const onClose = () =>
+          finish(
+            Effect.fail(
+              new E2ERequestError({ message: "HTTP transport closed before 100-continue" }),
+            ),
+          );
+        socket.on("data", onData);
+        socket.once("error", onError);
+        socket.once("close", onClose);
+        socket.write(
+          [
+            `POST ${path} HTTP/1.1`,
+            `Host: ${endpoint.address}:${endpoint.port}`,
+            `Content-Length: 1000000`,
+            `Content-Type: application/json`,
+            `Expect: 100-continue`,
+            `apikey: ${apiCredentials(credentials).publishableKey}`,
+            `Authorization: Bearer ${apiCredentials(credentials).anonJwt}`,
+            `Connection: keep-alive`,
+            ``,
+            ``,
+          ].join("\r\n"),
+        );
+        return Effect.sync(() => {
+          settled = true;
+          socket.off("data", onData);
+          socket.off("error", onError);
+          socket.off("close", onClose);
+        });
+      }).pipe(Effect.timeout(REQUEST_TIMEOUT_MS)),
+    );
+  } catch (cause) {
+    socket.destroy();
+    throw cause;
+  }
+  return socket;
+};
+
 const expectEndpointsRefused = async (endpoints: ReadonlyArray<StackEndpoint>): Promise<void> => {
   for (const listener of endpoints) {
     await expect(
       connect(listener),
       `${listener.protocol} ${listener.url} should be closed`,
     ).rejects.toThrow();
+  }
+};
+
+const waitForLogEntry = async (
+  stack: Pick<TestStack, "logs" | "status">,
+  iterator: AsyncIterator<StackLogEntry>,
+  predicate: (entry: StackLogEntry) => boolean,
+): Promise<StackLogEntry> => {
+  const observation = Effect.gen(function* () {
+    while (true) {
+      const next = yield* Effect.tryPromise({
+        try: () => iterator.next(),
+        catch: (cause) =>
+          new E2ERequestError({
+            message: cause instanceof Error ? cause.message : String(cause),
+            cause,
+          }),
+      });
+      if (next.done)
+        return yield* new E2ERequestError({ message: "Stack log stream ended before idle stop" });
+      if (predicate(next.value)) return next.value;
+    }
+  });
+  try {
+    return await Effect.runPromise(
+      observation.pipe(
+        Effect.timeoutOrElse({
+          duration: REQUEST_TIMEOUT_MS,
+          orElse: () =>
+            Effect.fail(new E2ERequestError({ message: "Timed out waiting for idle stop log" })),
+        }),
+      ),
+    );
+  } catch (cause) {
+    let diagnostics = "unavailable";
+    try {
+      const [status, logs] = await Promise.all([stack.status(), stack.logs({ tail: 20 })]);
+      const rest = status.capabilities.find(({ name }) => name === "rest");
+      const recent = logs.entries
+        .map((entry) => `${entry.source}/${entry.stream}: ${entry.message}`)
+        .join("\n");
+      diagnostics = `lifecycle=${status.lifecycle}; rest=${rest?.state ?? "unavailable"}; recent logs:\n${recent}`;
+    } catch {
+      // Preserve the stream failure when diagnostics are unavailable.
+    }
+    throw new Error(`Idle stop observation failed: ${diagnostics}`, { cause });
   }
 };
 
@@ -1236,6 +1420,15 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
   await using stack: TestStack = await createTestStack({
     name: `stack-e2e-${identity}`,
     runtime: mode.runtime,
+    config: {
+      capabilities: {
+        rest: { idleTimeoutSeconds: false },
+        auth: { idleTimeoutSeconds: false },
+        realtime: { idleTimeoutSeconds: false },
+        studio: { idleTimeoutSeconds: false },
+        pooler: { idleTimeoutSeconds: false },
+      },
+    },
     setupProject: async (root) => {
       projectRoot = root;
       const directory = join(root, "supabase", "functions", functionSlug);
@@ -1587,6 +1780,197 @@ describe("managed Supabase stack whole-stack E2E", () => {
         if (cleanupFailure !== undefined) throw cleanupFailure;
       },
     );
+    test(
+      `stops and wakes idle REST in ${mode.name} mode`,
+      { timeout: E2E_TIMEOUT_MS },
+      async () => {
+        const identity = randomId().replaceAll("-", "").slice(0, 16).toLowerCase();
+        const table = `idle_${identity}`;
+        const marker = `idle-${identity}`;
+        await using stack: TestStack = await createTestStack({
+          name: `stack-idle-rest-${identity}`,
+          runtime: mode.runtime,
+          config: {
+            capabilities: {
+              database: {},
+              rest: { activation: "lazy", idleTimeoutSeconds: 5 },
+              // API gateway credentials are materialized by auth even while its workload stays lazy.
+              auth: {},
+              realtime: { enabled: false },
+              storage: { enabled: false },
+              functions: { enabled: false },
+              studio: { enabled: false },
+              mail: { enabled: false },
+              analytics: { enabled: false },
+              pooler: { enabled: false },
+            },
+          },
+        });
+        const initial = await stack.status();
+        expect(initial.lifecycle).toBe("running");
+        const api = endpoint(initial, "api");
+        const initialSupervisorPid = await supervisorPid(stack.id);
+        await expectOwnedWorkloads(mode, stack.id, ["database:database"]);
+
+        const credentials = await stack.credentials();
+        await databaseQuery(
+          credentials.database.url,
+          `CREATE TABLE public."${table}" (id integer PRIMARY KEY, payload text NOT NULL)`,
+        );
+        await databaseQuery(
+          credentials.database.url,
+          `GRANT SELECT ON public."${table}" TO anon, authenticated, service_role`,
+        );
+        expect(
+          await databaseQuery(
+            credentials.database.url,
+            `INSERT INTO public."${table}" (id, payload) VALUES (1, $1) RETURNING id, payload`,
+            [marker],
+          ),
+        ).toEqual([{ id: 1, payload: marker }]);
+
+        const restPath = `/rest/v1/${table}?select=id,payload`;
+        const beforeLogs = await stack.logs();
+        const logIterator = stack.followLogs({ cursor: beforeLogs.cursor })[Symbol.asyncIterator]();
+        const idleStopLog = waitForLogEntry(
+          stack,
+          logIterator,
+          (entry) =>
+            entry.source === "supervisor" &&
+            entry.stream === "internal" &&
+            entry.message === "Stopped rest after inactivity",
+        );
+        const observedIdleStopLog = idleStopLog.then(
+          (entry) => ({ ok: true as const, entry }),
+          (cause: unknown) => ({ ok: false as const, cause }),
+        );
+        try {
+          const firstRows = await jsonValue(
+            await request(api.url, restPath, {
+              headers: { ...apiHeaders(credentials), Accept: "application/json" },
+            }),
+          );
+          expect(firstRows).toEqual([{ id: 1, payload: marker }]);
+          const observed = await observedIdleStopLog;
+          if (!observed.ok) throw observed.cause;
+        } finally {
+          await logIterator.return?.();
+        }
+
+        await expectOwnedWorkloads(mode, stack.id, ["database:database"]);
+        const stoppedRest = await stack.status();
+        expect(capabilityState(stoppedRest, "rest")).toBe("dormant");
+        expect(endpoint(stoppedRest, "api").port).toBe(api.port);
+        expect(await supervisorPid(stack.id)).toBe(initialSupervisorPid);
+        expect(
+          await databaseQuery(
+            credentials.database.url,
+            `SELECT payload FROM public."${table}" WHERE id = 1`,
+          ),
+        ).toEqual([{ payload: marker }]);
+
+        const secondRows = await jsonValue(
+          await request(api.url, restPath, {
+            headers: { ...apiHeaders(credentials), Accept: "application/json" },
+          }),
+        );
+        expect(secondRows).toEqual([{ id: 1, payload: marker }]);
+        await expectOwnedWorkloads(mode, stack.id, ["database:database", "rest:rest"]);
+        const restartedRest = await stack.status();
+        expect(capabilityState(restartedRest, "rest")).toBe("ready");
+        expect(endpoint(restartedRest, "api").port).toBe(api.port);
+        expect(await supervisorPid(stack.id)).toBe(initialSupervisorPid);
+      },
+    );
+    test.skipIf(mode.runtime.kind === "container")(
+      `settles live HTTP, WebSocket, and TCP transports on stop in ${mode.name} mode`,
+      { timeout: E2E_TIMEOUT_MS },
+      async () => {
+        const identity = randomId().replaceAll("-", "").slice(0, 16).toLowerCase();
+        const table = `transport_stop_${identity}`;
+        await using stack: TestStack = await createTestStack({
+          name: `stack-transport-stop-${identity}`,
+          runtime: mode.runtime,
+          config: {
+            capabilities: {
+              database: {},
+              rest: {},
+              realtime: {},
+              pooler: {},
+              auth: {},
+              storage: { enabled: false },
+              functions: { enabled: false },
+              studio: { enabled: false },
+              mail: { enabled: false },
+              analytics: { enabled: false },
+            },
+          },
+        });
+        const running = await stack.status();
+        expect(running.lifecycle).toBe("running");
+        const api = endpoint(running, "api");
+        const pooler = endpoint(running, "pooler");
+        const credentials = await stack.credentials();
+        await databaseQuery(
+          credentials.database.url,
+          `CREATE TABLE public."${table}" (id integer PRIMARY KEY)`,
+        );
+        await databaseQuery(
+          credentials.database.url,
+          `GRANT INSERT ON public."${table}" TO anon, authenticated, service_role`,
+        );
+
+        const http = await activate(stack, "rest", () =>
+          openHttpTransport(api, credentials, `/rest/v1/${table}?select=id`),
+        );
+        let websocket: WebSocket | undefined;
+        let tcp: Socket | undefined;
+        try {
+          websocket = await activate(stack, "realtime", () =>
+            openSocket(makeRealtimeUrl(api, apiCredentials(credentials).publishableKey)),
+          );
+          await activate(stack, "pooler", async () => {
+            const poolerUrl = new URL(credentials.database.url);
+            poolerUrl.port = String(pooler.port);
+            poolerUrl.username = "postgres.pooler-dev";
+            return databaseQuery(poolerUrl.toString(), "SELECT 42 AS answer", [], {
+              connectTimeout: LAZY_POOLER_ACTIVATION_TIMEOUT,
+            });
+          });
+          tcp = await openTcpSocket(pooler);
+          expect(http.destroyed).toBe(false);
+          expect(websocket.readyState).toBe(WebSocket.OPEN);
+          expect(tcp.destroyed).toBe(false);
+          const closed = Promise.all([
+            waitForSocketClose(http),
+            waitForSocketClose(websocket),
+            waitForSocketClose(tcp),
+          ]);
+
+          await Promise.all([stack.stop(), closed]);
+          const stopped = await stack.status();
+          expect(stopped.lifecycle).toBe("stopped");
+          expect(
+            stopped.capabilities
+              .filter(({ name }) => ["pooler", "realtime", "rest"].includes(name))
+              .every(({ state }) => state === "stopped"),
+          ).toBe(true);
+          expect(stopped.artifacts).toEqual([]);
+          await expectOwnedWorkloads(mode, stack.id, []);
+          await expectRuntimeInputsAbsent(stack);
+          await expectEndpointsRefused(
+            Object.values(running.endpoints).filter(
+              (value): value is StackEndpoint => value !== undefined,
+            ),
+          );
+        } finally {
+          http.destroy();
+          websocket?.terminate();
+          tcp?.destroy();
+        }
+      },
+    );
+
     test(`supports the complete user flow in ${mode.name} mode`, { timeout: E2E_TIMEOUT_MS }, () =>
       runWholeStackScenario(mode),
     );

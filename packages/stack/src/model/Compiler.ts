@@ -2,7 +2,7 @@ import { Duration, Effect, Path, Redacted, Schema } from "effect";
 import { InvalidStackConfigError, StackVersionUnsupportedError } from "../public/Errors.ts";
 import { StackConfigSchema, type StackConfig, type PreparationMode } from "../public/Config.ts";
 import type { JwtSigning } from "../public/Config.ts";
-import type { CapabilityName } from "../public/Capability.ts";
+import { CAPABILITY_NAMES, type CapabilityName } from "../public/Capability.ts";
 import type { PortField } from "../public/Status.ts";
 import type { StackRuntime } from "../public/Runtime.ts";
 import {
@@ -476,14 +476,28 @@ const releaseFor = <T>(
 const enabledSettings = (
   name: CapabilityName,
   raw: unknown,
-): { enabled: boolean; activation: "eager" | "lazy"; settings: unknown; raw: unknown } => {
+): {
+  enabled: boolean;
+  activation: "eager" | "lazy";
+  idleTimeoutSeconds: number | false;
+  settings: unknown;
+  raw: unknown;
+} => {
+  const defaultIdleTimeout = CAPABILITY_MODULES[name].defaultIdleTimeoutSeconds ?? false;
   if (name === "database")
-    return { enabled: true, activation: "eager", settings: extract(raw, "settings") ?? {}, raw };
+    return {
+      enabled: true,
+      activation: "eager",
+      idleTimeoutSeconds: false,
+      settings: extract(raw, "settings") ?? {},
+      raw,
+    };
   if (raw === undefined || raw === null) {
     const module = CAPABILITY_MODULES[name];
     return {
       enabled: module.defaultEnabled,
       activation: module.defaultActivation,
+      idleTimeoutSeconds: module.defaultActivation === "lazy" ? defaultIdleTimeout : false,
       settings: module.defaultSettings,
       raw: {},
     };
@@ -492,19 +506,58 @@ const enabledSettings = (
     return {
       enabled: false,
       activation: CAPABILITY_MODULES[name].defaultActivation,
+      idleTimeoutSeconds: false,
       settings: CAPABILITY_MODULES[name].defaultSettings,
       raw,
     };
   const activation = extract(raw, "activation");
+  const idleTimeoutSeconds = extract(raw, "idleTimeoutSeconds");
+  const selectedActivation =
+    activation === "eager" || activation === "lazy"
+      ? activation
+      : CAPABILITY_MODULES[name].defaultActivation;
   return {
     enabled: true,
-    activation:
-      activation === "eager" || activation === "lazy"
-        ? activation
-        : CAPABILITY_MODULES[name].defaultActivation,
+    activation: selectedActivation,
+    idleTimeoutSeconds:
+      selectedActivation === "eager"
+        ? false
+        : idleTimeoutSeconds === false
+          ? false
+          : defaultIdleTimeout === false
+            ? false
+            : typeof idleTimeoutSeconds === "number" &&
+                Number.isFinite(idleTimeoutSeconds) &&
+                idleTimeoutSeconds > 0
+              ? idleTimeoutSeconds
+              : defaultIdleTimeout,
     settings: extract(raw, "settings") ?? {},
     raw,
   };
+};
+
+const validateIdleTimeouts = (
+  config: StackConfig,
+): Effect.Effect<void, InvalidStackConfigError> => {
+  const capabilities = config.capabilities;
+  if (capabilities === undefined) return Effect.void;
+  for (const name of CAPABILITY_NAMES) {
+    const raw = capabilities[name];
+    if (!isRecord(raw)) continue;
+    const timeout = "idleTimeoutSeconds" in raw ? raw.idleTimeoutSeconds : undefined;
+    if (
+      typeof timeout === "number" &&
+      (CAPABILITY_MODULES[name].defaultIdleTimeoutSeconds === undefined ||
+        CAPABILITY_MODULES[name].defaultIdleTimeoutSeconds === false)
+    )
+      return Effect.fail(
+        new InvalidStackConfigError({
+          message: `Invalid ${name} idleTimeoutSeconds: capability does not support idle stopping`,
+          setting: `capabilities.${name}.idleTimeoutSeconds`,
+        }),
+      );
+  }
+  return Effect.void;
 };
 
 const materializeCapability = <T>(
@@ -535,6 +588,7 @@ const materializeCapability = <T>(
     return {
       enabled: selected.enabled,
       activation: selected.activation,
+      idleTimeoutSeconds: selected.idleTimeoutSeconds,
       version,
       settings: completeSettings,
     };
@@ -566,6 +620,7 @@ export const compileStack = (
     const path = yield* Path.Path;
     yield* validateFunctionKeys(input.config ?? {});
     const config = yield* decodeConfig(input.config ?? {});
+    yield* validateIdleTimeouts(config);
     yield* validateDatabaseHealthTimeout(config);
     yield* validatePoolerKeys(config);
     yield* validateStorageFileSizes(config);

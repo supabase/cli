@@ -77,6 +77,7 @@ export interface ExecutionPlan {
 export interface MaterializedCapability<Settings> {
   readonly enabled: boolean;
   readonly activation: "eager" | "lazy";
+  readonly idleTimeoutSeconds: number | false;
   readonly version: string;
   readonly settings: MaterializedSettings<Settings>;
 }

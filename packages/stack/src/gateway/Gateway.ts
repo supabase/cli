@@ -4,6 +4,7 @@ import type { CapabilityName } from "../public/Capability.ts";
 import type { PortField } from "../public/Status.ts";
 import { makeHttpGateway, type HttpGateway, type HttpGatewayOptions } from "./HttpGateway.ts";
 import { makeTcpGateway, type TcpGateway, type TcpGatewayOptions } from "./TcpGateway.ts";
+import type { GatewayActivity } from "./ActivityTracker.ts";
 
 /** A private backend endpoint returned only after activation has completed. */
 export interface BackendEndpoint {
@@ -112,6 +113,8 @@ export interface StackGatewayOptions {
   readonly activate: (
     capability: CapabilityName,
   ) => Effect.Effect<ActivationResult, GatewayActivationError>;
+  /** Optional traffic lease shared by the supervisor's idle-stop controller. */
+  readonly activity?: GatewayActivity;
 }
 
 /** Compose the protocol gateways under one Supervisor-owned lifecycle scope. */
@@ -135,7 +138,11 @@ export const makeGateway = (
         });
       }
       const acquired = yield* Effect.exit(
-        makeHttpGateway({ ...entry.options, activate: options.activate }),
+        makeHttpGateway({
+          ...entry.options,
+          activate: options.activate,
+          activity: options.activity,
+        }),
       );
       if (Exit.isFailure(acquired)) {
         yield* closeValues(http.values());
@@ -151,7 +158,11 @@ export const makeGateway = (
         });
       }
       const acquired = yield* Effect.exit(
-        makeTcpGateway({ ...entry.options, activate: options.activate }),
+        makeTcpGateway({
+          ...entry.options,
+          activate: options.activate,
+          activity: options.activity,
+        }),
       );
       if (Exit.isFailure(acquired)) {
         yield* closeValues([...http.values(), ...tcp.values()]);

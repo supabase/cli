@@ -1,9 +1,5 @@
-import { Effect } from "effect";
-import {
-  CAPABILITY_NAMES,
-  type CapabilityName,
-  type CapabilityStatus,
-} from "../public/Capability.ts";
+import { Cause, Effect } from "effect";
+import { CAPABILITY_NAMES, type CapabilityName } from "../public/Capability.ts";
 import type { StackId } from "../public/StackId.ts";
 import {
   PORT_FIELD_PROTOCOL,
@@ -12,8 +8,14 @@ import {
 } from "../public/Status.ts";
 import type { ObservedWorkload } from "../runtime/RuntimeDriver.ts";
 import type { PersistedStackState } from "../state/StackState.ts";
+import type { SupervisorSnapshot } from "./SupervisorState.ts";
+import { publicCapabilityState } from "./CapabilityState.ts";
 
 export type ActualPhase = "stopped" | "starting" | "running" | "stopping" | "destroying";
+
+export type ObservedStatus =
+  | { readonly _tag: "available"; readonly workloads: ReadonlyArray<ObservedWorkload> }
+  | { readonly _tag: "unavailable" };
 
 const observedForCapability = (
   name: CapabilityName,
@@ -21,77 +23,60 @@ const observedForCapability = (
 ): ReadonlyArray<ObservedWorkload> =>
   observed.filter((entry) => entry.workloadId.startsWith(`${name}:`));
 
-const capabilityState = (
-  name: CapabilityName,
-  state: PersistedStackState,
-  observed: ReadonlyArray<ObservedWorkload>,
-  active: ReadonlySet<CapabilityName>,
-  phase: ActualPhase,
-): CapabilityStatus["state"] => {
-  const configured = state.definition?.capabilities[name];
-  if (configured === undefined || !configured.enabled) return "disabled";
-  if (
-    state.desiredLifecycle !== "running" ||
-    phase === "stopped" ||
-    phase === "stopping" ||
-    phase === "destroying"
-  )
-    return "stopped";
-  if (configured.activation === "lazy" && !active.has(name)) return "dormant";
-  if (phase === "starting") return "starting";
-  const resources = observedForCapability(name, observed);
-  if (resources.some((entry) => entry.state === "failed")) return "failed";
-  if (resources.some((entry) => entry.state === "starting")) return "starting";
-  if (resources.length > 0 && resources.every((entry) => entry.state === "ready")) return "ready";
-  return "stopped";
-};
-
-const capabilityError = (
-  name: CapabilityName,
-  observed: ReadonlyArray<ObservedWorkload>,
-  state: CapabilityStatus["state"],
-): string | undefined => {
-  if (state !== "failed") return undefined;
-  const failed = observedForCapability(name, observed).filter((entry) => entry.state === "failed");
-  if (failed.length === 1) return failed[0]?.error;
-  const details = failed.flatMap((entry) =>
-    entry.error === undefined ? [] : [`${entry.workloadId}: ${entry.error}`],
-  );
-  return details.length === 0 ? undefined : details.join("; ");
-};
-
-const stackLifecycle = (
-  state: PersistedStackState,
-  phase: ActualPhase,
-): StackStatus["lifecycle"] => {
-  if (phase === "stopping") return "stopping";
-  if (state.desiredLifecycle === "unconfigured") return "unconfigured";
-  if (phase === "destroying" || state.desiredLifecycle === "destroying") return "destroying";
-  if (phase === "starting") return "starting";
-  if (state.desiredLifecycle === "stopped") return "stopped";
-  if (phase === "running") return "running";
-  return "stopped";
-};
-
-export const statusFor = (
+/** Projects one authoritative Supervisor snapshot while preserving observed runtime failures. */
+export const statusForSnapshot = (
   id: StackId,
   state: PersistedStackState,
-  observed: ReadonlyArray<ObservedWorkload>,
-  active: ReadonlySet<CapabilityName>,
-  phase: ActualPhase,
+  observedStatus: ObservedStatus,
+  snapshot: SupervisorSnapshot,
   artifacts: ReadonlyArray<ArtifactPreparationStatus> = [],
 ): Effect.Effect<StackStatus> =>
   Effect.sync(() => {
     const definition = state.definition;
+    const observed: ReadonlyArray<ObservedWorkload> =
+      observedStatus._tag === "available" ? observedStatus.workloads : [];
+    const observationAvailable = observedStatus._tag === "available";
     const capabilities = CAPABILITY_NAMES.map((name) => {
-      const capability = capabilityState(name, state, observed, active, phase);
-      const error = capabilityError(name, observed, capability);
+      const control = snapshot.capabilities.get(name);
+      const configured = definition?.capabilities[name];
+      const observedEntries = observedForCapability(name, observed);
+      const observedFailure = observedEntries.find((entry) => entry.state === "failed");
+      const projected =
+        control === undefined
+          ? configured === undefined || !configured.enabled
+            ? "disabled"
+            : "stopped"
+          : snapshot.stack._tag === "starting" &&
+              snapshot.stack.prior._tag === "stopped" &&
+              control._tag === "starting" &&
+              control.completion._tag === "workload"
+            ? "starting"
+            : publicCapabilityState(control);
+      const observedStarting = observedEntries.some((entry) => entry.state === "starting");
+      const observedUnready = observedEntries.some((entry) => entry.state !== "ready");
+      const capability =
+        observedFailure !== undefined && projected === "ready"
+          ? "failed"
+          : projected === "ready" && observedStarting
+            ? "starting"
+            : projected === "ready" &&
+                observationAvailable &&
+                observedEntries.length === 0 &&
+                configured?.enabled === true
+              ? "stopped"
+              : projected === "ready" && observedEntries.length > 0 && observedUnready
+                ? "stopped"
+                : projected;
+      const cleanupError =
+        control?._tag === "cleanup-failed" ? Cause.pretty(control.cause) : undefined;
       return {
         name,
         activation:
-          definition?.capabilities[name].activation ?? (name === "database" ? "eager" : "lazy"),
+          configured?.activation ?? (name === "database" ? ("eager" as const) : ("lazy" as const)),
         state: capability,
-        ...(error === undefined ? {} : { error }),
+        ...(cleanupError === undefined && observedFailure?.error === undefined
+          ? {}
+          : { error: cleanupError ?? observedFailure?.error }),
       };
     });
     const versions: Partial<Record<CapabilityName, string>> = {};
@@ -112,7 +97,7 @@ export const statusFor = (
     }, {});
     return {
       id,
-      lifecycle: stackLifecycle(state, phase),
+      lifecycle: publicPhase(snapshot.stack, state),
       desiredLifecycle: state.desiredLifecycle,
       runtime: state.runtime,
       endpoints,
@@ -121,3 +106,24 @@ export const statusFor = (
       artifacts,
     } satisfies StackStatus;
   });
+
+const publicPhase = (
+  control: SupervisorSnapshot["stack"],
+  state: PersistedStackState,
+): StackStatus["lifecycle"] => {
+  switch (control._tag) {
+    case "stopped":
+      return state.desiredLifecycle === "unconfigured" ? "unconfigured" : "stopped";
+    case "running":
+      return "running";
+    case "starting":
+      return control.prior._tag === "running" ? "running" : "starting";
+    case "stopping":
+    case "start-recovery":
+    case "stop-required":
+      return "stopping";
+    case "destroying":
+    case "destroy-required":
+      return "destroying";
+  }
+};

@@ -305,6 +305,27 @@ describe("stack status", () => {
     );
   });
 
+  it.effect("reports a retiring capability as stopping in text and JSON", () => {
+    const base = makeStatus(id);
+    const status = {
+      ...base,
+      capabilities: base.capabilities.map((capability) =>
+        capability.name === "rest" ? { ...capability, state: "stopping" as const } : capability,
+      ),
+    };
+    const text = runStatus({ status });
+    const json = runStatus({ status, outputFormat: "json" });
+    return Effect.all([text.effect, json.effect]).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(text.out.stdoutText).toContain("Readiness: stopping");
+          const success = json.out.messages.find((message) => message.type === "success");
+          expect(success?.data).toMatchObject({ readiness: "stopping" });
+        }),
+      ),
+    );
+  });
+
   it.effect("emits the structured unavailable inspection for invalid config", () => {
     const run = runStatus({
       config: "invalid",

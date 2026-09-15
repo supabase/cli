@@ -74,6 +74,7 @@ const readiness = (status: StackStatus | undefined): string => {
   if (status === undefined) return "unknown";
   if (status.lifecycle !== "running") return status.lifecycle;
   if (status.capabilities.some(({ state }) => state === "failed")) return "degraded";
+  if (status.capabilities.some(({ state }) => state === "stopping")) return "stopping";
   if (status.capabilities.some(({ state }) => state === "starting")) return "starting";
   if (status.capabilities.some(({ state }) => state === "stopped")) return "stopped";
   if (status.capabilities.some(({ state }) => state === "dormant")) return "dormant";

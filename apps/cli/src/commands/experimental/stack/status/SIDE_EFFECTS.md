@@ -33,6 +33,10 @@ endpoints, and config drift. JSON output nests only the identity fields under
 `identity`; runtime, lifecycle, readiness, endpoints, and config drift remain
 top-level fields.
 
+When a running stack has a capability transitioning through `stopping`, readiness is reported as
+`stopping`. A failed capability takes precedence and reports `degraded`; otherwise readiness
+reports `starting`, `stopped`, `dormant`, or `ready` according to the live capability states.
+
 ## Exporting environment variables (`--env`)
 
 `--env` opens the target stack, requires it to be running, and exports its

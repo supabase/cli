@@ -164,6 +164,13 @@ including `--workdir` and `SUPABASE_WORKDIR`, and prefers JSON when both files e
 
 ## Service selection and shutdown
 
+Lazy REST, Auth, Realtime, Studio, and pooler services stop after 60 seconds without traffic. The
+active traffic lease keeps a capability running. Use `supabase stack start --eager` to keep these
+services running instead of applying idle stopping. A request arriving while a capability is stopping waits
+for cleanup and then wakes it when the stack still permits activation. Manual `supabase stack stop`
+prevents wake up until the stack is started again. A cleanup failure can fence new connections
+until `stop` and `start` complete recovery; a destroy failure can be retried with `destroy`.
+
 `supabase stack restart` reuses an existing stack's saved effective configuration. It stops and
 starts the same stack identity, preserving its data. Normal startup may still download missing
 artifacts according to the saved preparation policy. Select a stack with `--stack <name>` or
