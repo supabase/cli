@@ -13,6 +13,7 @@ import {
   Schema,
   Stream,
 } from "effect";
+import { runtimeInfoLayer } from "../../../../shared/runtime/runtime-info.layer.ts";
 import { CliOutput, Command } from "effect/unstable/cli";
 import {
   InvalidStackConfigError,
@@ -194,7 +195,8 @@ const runStatus = (options: {
       ...(options.legacyOutput === undefined
         ? []
         : [Layer.succeed(OutputFlag, Option.some(options.legacyOutput))]),
-      BunServices.layer,
+    BunServices.layer,
+    runtimeInfoLayer,
     );
     const effect = stackStatus(options.flags ?? flags()).pipe(Effect.provide(layer));
     return { effect, out, findInputs, inspectInputs, projectRoot, root };
@@ -618,7 +620,8 @@ describe("stack status", () => {
             telemetry.layer,
             discovery,
             mockCommandSettings({ workdir: run.projectRoot }),
-            BunServices.layer,
+          BunServices.layer,
+          runtimeInfoLayer,
           ),
         ),
         Effect.exit,

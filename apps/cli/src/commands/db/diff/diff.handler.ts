@@ -1,4 +1,4 @@
-import { Clock, Effect, FileSystem, Option, Path } from "effect";
+import { Clock, Crypto, Effect, FileSystem, Option, Path } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
@@ -134,6 +134,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
   const linkedProjectCache = yield* LinkedProjectCache;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const crypto = yield* Crypto.Crypto;
   const dnsResolver = yield* DnsResolverFlag;
   const debug = yield* DebugFlag;
 
@@ -254,7 +255,12 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
           switch (classifyExplicitRef(ref)) {
             case "local": {
               const connection = {
-                host: getHostname(),
+                host: yield* getHostname().pipe(
+                  Effect.provideService(RuntimeInfo, runtimeInfo),
+                  Effect.provideService(FileSystem.FileSystem, fs),
+                  Effect.provideService(Path.Path, path),
+                  Effect.provideService(Crypto.Crypto, crypto),
+                ),
                 port: cfg.port,
                 user: "postgres",
                 password: cfg.password,

@@ -1,6 +1,7 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Option, Path, Stream } from "effect";
+import { runtimeInfoLayer } from "../../../../shared/runtime/runtime-info.layer.ts";
 import {
   StackIdSchema,
   StackPreparationError,
@@ -154,6 +155,7 @@ const fixture = (options: {
         discoverStacks: () => Effect.succeed({ stacks: [], errors: [] }),
       }),
       BunServices.layer,
+      runtimeInfoLayer,
     );
     return {
       root,
@@ -454,6 +456,7 @@ describe("stack restart", () => {
               discoverStacks: () => Effect.succeed({ stacks: [], errors: [] }),
             }),
             BunServices.layer,
+            runtimeInfoLayer,
           );
           const initialStart = {
             exclude: ["studio"],

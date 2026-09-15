@@ -1,4 +1,4 @@
-import { Effect, type FileSystem, Option, type Path } from "effect";
+import { Effect, FileSystem, Option, Path } from "effect";
 
 import {
   DnsResolverFlag,
@@ -44,28 +44,29 @@ export interface SmartTargetFlags {
   readonly reset: boolean;
 }
 
-const localConnection = (local: LocalConn) => ({
-  // Host resolution order: SUPABASE_SERVICES_HOSTNAME → tcp DOCKER_HOST → 127.0.0.1, not a
-  // hardcoded loopback.
-  host: getHostname(),
-  port: local.port,
-  user: "postgres",
-  password: local.password,
-  database: "postgres",
+const localConnection = Effect.fnUntraced(function* (local: LocalConn) {
+  // Host resolution order: SUPABASE_SERVICES_HOSTNAME → tcp DOCKER_HOST → 127.0.0.1.
+  return {
+    host: yield* getHostname(),
+    port: local.port,
+    user: "postgres",
+    password: local.password,
+    database: "postgres",
+  };
 });
 
-export const localEndpoint = (
+export const localEndpoint = Effect.fnUntraced(function* (
   local: LocalConn,
   dnsResolver: "native" | "https",
-): PgDeltaDatabaseEndpoint => {
-  const connection = localConnection(local);
+) {
+  const connection = yield* localConnection(local);
   return {
     kind: "database",
     ref: toPostgresURL(connection),
     connection,
     connectOptions: { isLocal: true, dnsResolver },
-  };
-};
+  } satisfies PgDeltaDatabaseEndpoint;
+});
 
 /** Resolves a remote target without discarding TLS and connection options. */
 export const resolveRemoteEndpoint = Effect.fnUntraced(function* (flags: SmartTargetFlags) {
@@ -104,7 +105,7 @@ export const resolveSmartTargetEndpoint = Effect.fnUntraced(function* (
     // No migrations: generate from local, starting a stopped stack first.
     yield* beforeLocalTarget;
     yield* (yield* DeclarativeSeam).ensureLocalDatabaseStarted();
-    return localEndpoint(local, yield* DnsResolverFlag);
+    return yield* localEndpoint(local, yield* DnsResolverFlag);
   }
 
   const output = yield* Output;
@@ -189,5 +190,5 @@ export const resolveSmartTargetEndpoint = Effect.fnUntraced(function* (
       ),
     );
   }
-  return localEndpoint(local, yield* DnsResolverFlag);
+  return yield* localEndpoint(local, yield* DnsResolverFlag);
 });

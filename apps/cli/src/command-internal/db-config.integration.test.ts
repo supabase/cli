@@ -46,6 +46,7 @@ function buildResolver(
     readonly projectHost?: string;
     readonly poolerHost?: string;
     readonly dbConnection?: Layer.Layer<DbConnection>;
+    readonly configEnv?: Record<string, string | undefined>;
   } = {},
 ) {
   const deps = Layer.mergeAll(
@@ -75,6 +76,12 @@ function buildResolver(
       Layer.provide(BunServices.layer),
     ),
     BunServices.layer,
+    ConfigProvider.layer(
+      ConfigProvider.fromEnvRecord(
+        opts.configEnv ?? Object.fromEntries(Object.entries(process.env)),
+        { preserveEmptyStrings: true },
+      ),
+    ),
   );
   return dbConfigLayer.pipe(Layer.provide(deps));
 }
@@ -100,7 +107,7 @@ const resolve = (
     Effect.provide(buildResolver(workdir, opts)),
     Effect.provideService(
       ConfigProvider.ConfigProvider,
-      ConfigProvider.fromEnvRecord(process.env, { preserveEmptyStrings: true }),
+      ConfigProvider.fromEnvRecord(opts?.configEnv ?? process.env, { preserveEmptyStrings: true }),
     ),
   );
 
@@ -217,9 +224,10 @@ describe("dbConfigResolver (local + db-url)", () => {
   });
 
   it.effect("local mode: honors SUPABASE_SERVICES_HOSTNAME for the connection host", () => {
-    process.env["SUPABASE_SERVICES_HOSTNAME"] = "host.docker.internal";
     const dir = withWorkdir();
-    return resolve(dir, localFlags).pipe(
+    return resolve(dir, localFlags, {
+      configEnv: { SUPABASE_SERVICES_HOSTNAME: "host.docker.internal" },
+    }).pipe(
       Effect.tap((r) =>
         Effect.sync(() => {
           expect(r.conn.host).toBe("host.docker.internal");
@@ -391,9 +399,7 @@ describe("dbConfigResolver (linked config ordering)", () => {
         ].join("\n"),
       );
       // The linked ref is sourced via the project-ref resolver's env fallback.
-      const previousProjectId = process.env["SUPABASE_PROJECT_ID"];
-      process.env["SUPABASE_PROJECT_ID"] = ref;
-      return resolve(dir, linkedFlags).pipe(
+      return resolve(dir, linkedFlags, { configEnv: { SUPABASE_PROJECT_ID: ref } }).pipe(
         Effect.exit,
         Effect.tap((exit) =>
           Effect.sync(() => {
@@ -407,8 +413,6 @@ describe("dbConfigResolver (linked config ordering)", () => {
         ),
         Effect.ensuring(
           Effect.sync(() => {
-            if (previousProjectId === undefined) delete process.env["SUPABASE_PROJECT_ID"];
-            else process.env["SUPABASE_PROJECT_ID"] = previousProjectId;
             rmSync(dir, { recursive: true, force: true });
           }),
         ),
