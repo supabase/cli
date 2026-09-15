@@ -2031,7 +2031,7 @@ describe("Effect stack lifecycle handoff", () => {
                 tempRoot: env.tempRoot,
                 platform: env.platform,
               });
-              // set the root to `packages/stack` root
+              // bare imports in a `node -e` script resolve from cwd, so run from the package root
               const cwd = path.resolve(import.meta.dirname, "../..");
               const child = yield* ChildProcess.make(
                 process.execPath,

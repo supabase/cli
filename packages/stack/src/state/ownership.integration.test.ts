@@ -243,7 +243,7 @@ describe("stack ownership", () => {
           platform: "posix",
         };
         const moduleUrl = new URL("./Ownership.ts", import.meta.url).href;
-        // set the root to `packages/stack` root
+        // bare imports in a `node -e` script resolve from cwd, so run from the package root
         const cwd = path.resolve(import.meta.dirname, "../..");
         const script = `
           const { Effect } = await import("effect");
@@ -268,7 +268,7 @@ describe("stack ownership", () => {
           process.execPath,
           ["--input-type=module", "-e", script],
           {
-            cwd: cwd,
+            cwd,
             env: {
               OWNERSHIP_MODULE: moduleUrl,
               OWNERSHIP_STACK_ID: stackId,

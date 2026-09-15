@@ -32,7 +32,7 @@ describe("cross-process registry lease", () => {
         const enteredPath = path.join(root, "child-entered");
         const competingPath = path.join(root, "competing-entered");
         const moduleUrl = new URL("./StackStateStore.ts", import.meta.url).href;
-        // set the root to `packages/stack` root
+        // bare imports in a `node -e` script resolve from cwd, so run from the package root
         const cwd = path.resolve(import.meta.dirname, "../..");
         const script = `
           const { Effect, FileSystem } = await import("effect");

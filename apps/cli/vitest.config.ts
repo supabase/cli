@@ -18,9 +18,7 @@ function dockerfileTextPlugin() {
 
 // Workspace packages such as @supabase/config publish a `bun` export condition
 // pointing at their TypeScript source; without it, Vite falls through to `default`
-// and loads the built `dist/*.js`, which can be stale or missing. Each inline
-// `test.projects` entry below needs this too, since Vitest builds a separate Vite
-// config per project and does not inherit it from the root config.
+// and loads the built `dist/*.js`, which can be stale or missing.
 const workspacePackageResolve = { conditions: [...defaultClientConditions, "bun"] };
 const workspacePackageSsrResolve = { conditions: [...defaultServerConditions, "bun"] };
 
@@ -52,8 +50,6 @@ export default defineConfig({
     },
     projects: [
       {
-        resolve: workspacePackageResolve,
-        ssr: { resolve: workspacePackageSsrResolve },
         test: {
           name: "unit",
           include: ["**/*.unit.test.ts"],
@@ -61,16 +57,12 @@ export default defineConfig({
         },
       },
       {
-        resolve: workspacePackageResolve,
-        ssr: { resolve: workspacePackageSsrResolve },
         test: {
           name: "integration",
           include: ["**/*.integration.test.ts"],
         },
       },
       {
-        resolve: workspacePackageResolve,
-        ssr: { resolve: workspacePackageSsrResolve },
         test: {
           name: "e2e",
           include: ["**/*.e2e.test.ts"],
@@ -82,8 +74,6 @@ export default defineConfig({
         },
       },
       {
-        resolve: workspacePackageResolve,
-        ssr: { resolve: workspacePackageSsrResolve },
         test: {
           // Live tests run against one provisioned project on the configured
           // platform. They are never part of the default unit/integration/e2e
