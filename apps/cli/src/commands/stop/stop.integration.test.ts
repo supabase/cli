@@ -211,7 +211,6 @@ const setup = (opts: SetupOpts = {}) =>
     });
 
     const layer = Layer.mergeAll(
-      BunServices.layer,
       out.layer,
       cliSettings,
       telemetry.layer,

@@ -119,8 +119,8 @@ const remainingContainerIds = (projectId: string) =>
   }).pipe(Effect.scoped, Effect.timeout(DOCKER_INSPECT_TIMEOUT_MS));
 
 // `stop` never calls the Management API — it talks directly to the real local Docker stack
-// `start` creates. The suite gates on `SUPABASE_ACCESS_TOKEN` purely as a "real e2e runner"
-// signal, which also guarantees a Docker daemon; see AGENTS.md's "e2e tests" section.
+// `start` creates. The suite needs a Docker daemon and no platform credentials; see the
+// tests section of apps/cli/AGENTS.md.
 describe("supabase stop (e2e)", () => {
   it.live(
     "starts a real local stack, then stops it and removes its containers",
