@@ -78,7 +78,7 @@ describe("getHostname", () => {
     Effect.gen(function* () {
       expect(yield* getHostname({ SUPABASE_SERVICES_HOSTNAME: "db.internal" })).toBe("db.internal");
       expect(yield* getHostname({ SUPABASE_SERVICES_HOSTNAME: "" })).toBe("127.0.0.1");
-    }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, runtimeLayer))),
+    }).pipe(Effect.provide(configLayer({}))),
   );
 
   it.effect("reads ambient DOCKER_HOST and extracts IPv4 and IPv6 hosts", () =>
@@ -273,9 +273,28 @@ describe("platformDefaultDockerHost", () => {
 });
 
 describe("configureLoopbackProxyBypass", () => {
-  it("preserves the existing preferred spelling", () => {
-    const env = { NO_PROXY: "example.com" };
+  it.each([
+    ["sets NO_PROXY when neither spelling is configured", {}, { NO_PROXY: LOOPBACK_NO_PROXY }],
+    [
+      "preserves an existing NO_PROXY value",
+      { NO_PROXY: "example.com" },
+      { NO_PROXY: `example.com,${LOOPBACK_NO_PROXY}` },
+    ],
+    [
+      "updates the non-empty lowercase value preferred by Bun",
+      { NO_PROXY: "uppercase.example", no_proxy: "lowercase.example" },
+      {
+        NO_PROXY: "uppercase.example",
+        no_proxy: `lowercase.example,${LOOPBACK_NO_PROXY}`,
+      },
+    ],
+    [
+      "falls back to NO_PROXY when lowercase no_proxy is empty",
+      { NO_PROXY: "example.com", no_proxy: "" },
+      { NO_PROXY: `example.com,${LOOPBACK_NO_PROXY}`, no_proxy: "" },
+    ],
+  ])("%s", (_name, env, expected) => {
     configureLoopbackProxyBypass(env);
-    expect(env.NO_PROXY).toBe(`example.com,${LOOPBACK_NO_PROXY}`);
+    expect(env).toEqual(expected);
   });
 });

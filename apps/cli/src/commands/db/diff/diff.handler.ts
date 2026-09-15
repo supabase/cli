@@ -1,4 +1,4 @@
-import { Clock, Crypto, Effect, FileSystem, Option, Path } from "effect";
+import { Clock, Effect, FileSystem, Option, Path } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
@@ -134,7 +134,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
   const linkedProjectCache = yield* LinkedProjectCache;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const crypto = yield* Crypto.Crypto;
+  const runtimeInfo = yield* RuntimeInfo;
   const dnsResolver = yield* DnsResolverFlag;
   const debug = yield* DebugFlag;
 
@@ -250,17 +250,12 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
       // Each ref resolves in order; the `linked` branch re-merges the matching
       // `[remotes.<ref>]` block so a later `local` ref read and the trailing
       // `pgDeltaFormatOptions()` see the override. Thread the merged config through.
-      const resolveRef = (ref: string): Effect.Effect<PgDeltaEndpoint, unknown> =>
+      const resolveRef = (ref: string) =>
         Effect.gen(function* () {
           switch (classifyExplicitRef(ref)) {
             case "local": {
               const connection = {
-                host: yield* getHostname().pipe(
-                  Effect.provideService(RuntimeInfo, runtimeInfo),
-                  Effect.provideService(FileSystem.FileSystem, fs),
-                  Effect.provideService(Path.Path, path),
-                  Effect.provideService(Crypto.Crypto, crypto),
-                ),
+                host: yield* getHostname(),
                 port: cfg.port,
                 user: "postgres",
                 password: cfg.password,
@@ -454,7 +449,6 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
     }
 
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const runtimeInfo = yield* RuntimeInfo;
     const networkIdFlag = yield* NetworkIdFlag;
     // Built before `resolver.resolve()` below, not just before the "Creating shadow
     // database..." banner: this performs a second config load (distinct from `cfg` above) with
