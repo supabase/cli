@@ -147,16 +147,22 @@ export const functionsServeStackConfig = (input: {
     if (Option.isSome(input.flags.envFile)) {
       const explicit = yield* readExplicitEnvironment(input.flags.envFile.value, input.cwd);
       watchPaths.push(explicit.path);
-      const environment = Object.fromEntries(
-        Object.entries({ ...edgeRuntime.secrets, ...explicit.environment }).filter(([name]) => {
-          if (!name.startsWith("SUPABASE_")) return true;
-          warnings.push(`Env name cannot start with SUPABASE_, skipping: ${name}\n`);
-          return false;
-        }),
-      );
       edgeRuntime = {
         ...edgeRuntime,
-        secrets: environment,
+        secrets: { ...edgeRuntime.secrets, ...explicit.environment },
+      };
+    }
+
+    if (edgeRuntime.secrets !== undefined) {
+      edgeRuntime = {
+        ...edgeRuntime,
+        secrets: Object.fromEntries(
+          Object.entries(edgeRuntime.secrets).filter(([name]) => {
+            if (!name.startsWith("SUPABASE_")) return true;
+            warnings.push(`Env name cannot start with SUPABASE_, skipping: ${name}\n`);
+            return false;
+          }),
+        ),
       };
     }
 

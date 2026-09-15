@@ -1559,7 +1559,7 @@ const reloadKong = Effect.fnUntraced(function* (projectId: string) {
   }
 });
 
-const writeStoppedServingMessage = Effect.fnUntraced(function* () {
+export const writeStoppedServingMessage = Effect.fnUntraced(function* () {
   const output = yield* Output;
   yield* output.raw(`Stopped serving ${styleText("bold", functionsDirName)}\n`, "stdout");
 });

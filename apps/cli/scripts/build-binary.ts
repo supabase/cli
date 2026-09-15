@@ -1,4 +1,3 @@
-import { $ } from "bun";
 import { Effect } from "effect";
 
 import { bundleServeMainTemplate as bundleStackServeMainTemplate } from "../../../packages/stack/src/functions/serve-main-bundler.ts";
@@ -18,12 +17,18 @@ const packageJson = JSON.parse(
 if (packageJson.version === undefined || packageJson.version.length === 0) {
   throw new Error("CLI package version is required for a compiled build");
 }
-const versionDefine = `--define=SUPABASE_CLI_VERSION=${JSON.stringify(packageJson.version)}`;
-const defineArg = `--define=SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE=${JSON.stringify(
-  await bundleLegacyServeMainTemplate(),
-)}`;
-const stackDefineArg = `--define=SUPABASE_STACK_FUNCTIONS_SERVE_MAIN_TEMPLATE=${JSON.stringify(
-  await Effect.runPromise(bundleStackServeMainTemplate),
-)}`;
-
-await $`bun build ${entrypoint} --compile ${versionDefine} ${defineArg} ${stackDefineArg} --outfile ${outfile}`;
+const result = await Bun.build({
+  entrypoints: [entrypoint],
+  compile: { outfile },
+  define: {
+    SUPABASE_CLI_VERSION: JSON.stringify(packageJson.version),
+    SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE: JSON.stringify(await bundleLegacyServeMainTemplate()),
+    SUPABASE_STACK_FUNCTIONS_SERVE_MAIN_TEMPLATE: JSON.stringify(
+      await Effect.runPromise(bundleStackServeMainTemplate),
+    ),
+  },
+});
+if (!result.success) {
+  const messages = result.logs.map((log) => log.message).join("\n");
+  throw new Error(`CLI binary build failed:\n${messages}`);
+}
