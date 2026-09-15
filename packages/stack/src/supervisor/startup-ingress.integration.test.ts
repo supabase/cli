@@ -18,7 +18,7 @@ import {
   type ClientRequest,
   type IncomingMessage,
   type ServerResponse,
-  // oxlint-disable-next-line effecttsgo/node-builtin-import -- startup ingress protocol fixture.
+  // oxlint-disable-next-line effecttsgo/node-builtin-import -- fixture needs ClientRequest.end's sent callback and a mutable ClientRequest for cancellation; Effect HttpClient exposes neither.
 } from "node:http";
 import { deriveStackId } from "../identity/Identity.ts";
 import type { StackError } from "../public/Errors.ts";

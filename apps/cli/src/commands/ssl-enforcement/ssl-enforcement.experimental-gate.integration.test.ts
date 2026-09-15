@@ -1,8 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer } from "effect";
+import { Cause, Effect, Exit, Layer } from "effect";
 import { CliOutput, Command } from "effect/unstable/cli";
 
 import { textCliOutputFormatter } from "../../shared/output/text-formatter.ts";
+import { ExperimentalRequiredError } from "../../command-internal/experimental-gate.ts";
 import { GLOBAL_FLAGS } from "../../command-internal/global-flags.ts";
 import { mockOutput, mockTelemetryRuntime } from "../../../tests/helpers/mocks.ts";
 import {
@@ -53,6 +54,14 @@ function setup() {
   return { layer, api };
 }
 
+// The gate error is always a top-level typed failure, so ask the type directly.
+function expectGateDidNotFire(cause: Cause.Cause<unknown>): void {
+  const failures = cause.reasons.filter(Cause.isFailReason).map((reason) => reason.error);
+  // Vacuity guard: the check only means something for a typed failure.
+  expect(failures).not.toHaveLength(0);
+  expect(failures.some((error) => error instanceof ExperimentalRequiredError)).toBe(false);
+}
+
 describe("ssl-enforcement experimental gate (Go PersistentPreRunE parity)", () => {
   const leaves: ReadonlyArray<{ readonly name: string; readonly args: ReadonlyArray<string> }> = [
     { name: "get", args: ["ssl-enforcement", "get"] },
@@ -66,7 +75,7 @@ describe("ssl-enforcement experimental gate (Go PersistentPreRunE parity)", () =
         const exit = yield* Effect.exit(Command.runWith(testRoot, { version: "0.0.0-test" })(args));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("ExperimentalRequiredError");
+          expect(Cause.pretty(exit.cause)).toContain("ExperimentalRequiredError");
         }
         expect(api.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
@@ -80,9 +89,8 @@ describe("ssl-enforcement experimental gate (Go PersistentPreRunE parity)", () =
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const causeText = JSON.stringify(exit.cause);
-          expect(causeText).not.toContain("ExperimentalRequiredError");
-          expect(causeText).toContain("AccessTokenRequiredError");
+          expectGateDidNotFire(exit.cause);
+          expect(Cause.pretty(exit.cause)).toContain("AccessTokenRequiredError");
         }
         expect(api.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));

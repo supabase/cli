@@ -13,7 +13,7 @@ import {
   Semaphore,
 } from "effect";
 import { NodeSocket, NodeSocketServer } from "@effect/platform-node";
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- FileSystem.stat follows symlinks; control-path validation must reject them.
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- Effect FileSystem exposes stat but no no-follow lstat; this security check must reject symlinked control directories.
 import { lstat } from "node:fs/promises";
 import * as RpcClient from "effect/unstable/rpc/RpcClient";
 import { RpcClientError } from "effect/unstable/rpc/RpcClientError";

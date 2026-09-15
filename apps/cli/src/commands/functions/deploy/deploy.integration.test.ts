@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { Effect, Exit, Layer, Option, Stdio } from "effect";
 
 import { YesFlag } from "../../../command-internal/global-flags.ts";
+import { stripControlSequences } from "../../../shared/output/strip-control-sequences.ts";
 import {
   buildTestRuntime,
   jsonResponse,
@@ -61,10 +62,6 @@ async function writeLocalFunction(
   await writeFile(join(functionDir, "index.ts"), source);
   await writeFile(join(functionDir, "deno.json"), '{"imports":{}}\n');
 }
-
-// Strips ANSI SGR sequences so byte-assertions are stable regardless of color support.
-// eslint-disable-next-line no-control-regex
-const stripSgr = (text: string) => text.replace(/\x1b\[[0-9;]*m/gu, "");
 
 function resolveDockerOutputPath(args: ReadonlyArray<string>): string {
   const outputIndex = args.indexOf("--output");
@@ -154,7 +151,7 @@ describe("functions deploy", () => {
         "https://api.supabase.com/v1/projects/abcdefghijklmnopqrst/functions/deploy",
       );
       expect(deployRequest?.urlParams).toContain("slug=hello-world");
-      expect(stripSgr(out.stdoutText)).toContain(
+      expect(stripControlSequences(out.stdoutText)).toContain(
         "Deployed Functions on project abcdefghijklmnopqrst: hello-world\n",
       );
       expect(linkedProjectCache.cached).toBe(true);
@@ -221,7 +218,7 @@ describe("functions deploy", () => {
           (request) => request.method === "POST" && request.url.endsWith("/functions/deploy"),
         ),
       ).toHaveLength(1);
-      expect(stripSgr(out.stdoutText)).toContain(
+      expect(stripControlSequences(out.stdoutText)).toContain(
         "Deployed Functions on project abcdefghijklmnopqrst: hello-world, hello-world\n",
       );
     }).pipe(
@@ -359,7 +356,7 @@ describe("functions deploy", () => {
       });
 
       expect(api.requests).toHaveLength(2);
-      expect(stripSgr(out.stdoutText)).toContain(
+      expect(stripControlSequences(out.stdoutText)).toContain(
         "Deployed Functions on project abcdefghijklmnopqrst: hello-world\n",
       );
     }).pipe(
@@ -604,7 +601,7 @@ describe("functions deploy", () => {
         (request) => request.method === "POST" && request.url.endsWith("/functions/deploy"),
       );
       expect(deployRequest?.urlParams).toContain("slug=custom-entry");
-      expect(stripSgr(out.stdoutText)).toContain(
+      expect(stripControlSequences(out.stdoutText)).toContain(
         "Deployed Functions on project abcdefghijklmnopqrst: custom-entry\n",
       );
     }).pipe(
@@ -683,7 +680,7 @@ describe("functions deploy", () => {
       yield* functionsDeploy({ ...baseFlags, prune: true });
 
       expect(out.promptConfirmCalls).toHaveLength(0);
-      expect(stripSgr(out.stderrText)).toContain(
+      expect(stripControlSequences(out.stderrText)).toContain(
         "Do you want to delete the following Functions from your project?\n • remote-only\n\n [y/N] y\n",
       );
       expect(api.requests.some((request) => request.method === "DELETE")).toBe(true);
@@ -994,7 +991,7 @@ describe("functions deploy", () => {
           jobs: Option.some(2),
         });
 
-        expect(stripSgr(out.stdoutText)).toContain(
+        expect(stripControlSequences(out.stdoutText)).toContain(
           "Deployed Functions on project abcdefghijklmnopqrst: hello-world\n",
         );
       }).pipe(
@@ -1052,7 +1049,7 @@ describe("functions deploy", () => {
           jobs: Option.some(0),
         });
 
-        expect(stripSgr(out.stdoutText)).toContain(
+        expect(stripControlSequences(out.stdoutText)).toContain(
           "Deployed Functions on project abcdefghijklmnopqrst: hello-world\n",
         );
       }).pipe(
@@ -1118,7 +1115,7 @@ describe("functions deploy", () => {
 
         expect(child.spawned).toEqual([{ command: "docker", args: ["info"] }]);
         expect(out.stderrText).toContain("WARNING: Docker is not running\n");
-        expect(stripSgr(out.stdoutText)).toContain(
+        expect(stripControlSequences(out.stdoutText)).toContain(
           "Deployed Functions on project abcdefghijklmnopqrst: hello-world\n",
         );
       }).pipe(

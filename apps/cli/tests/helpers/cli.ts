@@ -82,7 +82,7 @@ export class CliStdinWriteError extends Data.TaggedError("CliStdinWriteError")<{
   }
 }
 
-/** Spawning the CLI failed before the child was usable: temp home, symlink, missing build artifacts, or stdio pipes. */
+/** Spawning the CLI failed before the child was usable. */
 export class CliSpawnError extends Data.TaggedError("CliSpawnError")<{
   readonly cause: unknown;
 }> {
@@ -507,8 +507,8 @@ export function spawnSupabase(
         }
       });
     }).pipe(
-      // Disposal can throw (`rmSync`); inside the `close` listener that escapes as an
-      // uncaught exception and leaves this effect pending, so it fails the caller here.
+      // Disposal can throw; run it here so it fails the caller instead of escaping the
+      // `close` listener and leaving this effect pending.
       Effect.tap(() =>
         Effect.try({
           try: disposeOwnHome,

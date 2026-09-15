@@ -1,36 +1,36 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Data, Deferred, Duration, Effect, Exit, Fiber, Option } from "effect";
+import { Cause, Data, Deferred, Duration, Effect, Exit, Fiber, Option, Predicate } from "effect";
 import * as TestClock from "effect/testing/TestClock";
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- integration test owns a real loopback listener.
-import { createServer as createHttpServer, type Server as HttpServer } from "node:http";
+import { NodeHttpServer, NodeHttpServerRequest } from "@effect/platform-node";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- NodeHttpServer.layer requires a native factory to bind loopback; layerTest does not expose a host option.
+import { createServer as createHttpServer } from "node:http";
 import { createServer as createTcpServer, type Server as TcpServer } from "node:net";
+import { HttpServer, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import { StackPreparationError } from "../public/Errors.ts";
 import { parseGoDuration } from "../model/capabilities/database.ts";
 import { probeReadiness } from "./ReadinessProbe.ts";
 
 class ListenerError extends Data.TaggedError("ListenerError")<{ readonly message: string }> {}
 
-const listenHttp = (
-  server: HttpServer,
-  handler: () => void,
-): Effect.Effect<number, ListenerError> =>
-  Effect.callback<number, ListenerError>((resume) => {
-    const onError = (cause: Error) =>
-      resume(Effect.fail(new ListenerError({ message: cause.message })));
-    server.once("error", onError);
-    server.once("request", handler);
-    server.listen(0, "127.0.0.1", () => {
-      server.off("error", onError);
-      const address = server.address();
-      if (typeof address !== "object" || address === null)
-        return resume(Effect.fail(new ListenerError({ message: "missing HTTP address" })));
-      resume(Effect.succeed(address.port));
-    });
-    return Effect.sync(() => {
-      server.off("error", onError);
-      server.close();
-    });
+const serveHttp = (
+  handler: Effect.Effect<
+    HttpServerResponse.HttpServerResponse,
+    never,
+    HttpServerRequest.HttpServerRequest
+  >,
+) =>
+  Effect.gen(function* () {
+    const server = yield* HttpServer.HttpServer;
+    yield* server.serve(handler);
+    if (!Predicate.isTagged(server.address, "TcpAddress"))
+      return yield* new ListenerError({ message: "missing HTTP address" });
+    return server.address.port;
   });
+
+const loopbackHttpLayer = NodeHttpServer.layer(createHttpServer, {
+  port: 0,
+  host: "127.0.0.1",
+});
 
 const listenTcp = (server: TcpServer): Effect.Effect<number, ListenerError> =>
   Effect.callback<number, ListenerError>((resume) => {
@@ -83,12 +83,14 @@ describe("private endpoint readiness probe", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const received = yield* Deferred.make<string>();
-        const server = createHttpServer((request, response) => {
-          Deferred.doneUnsafe(received, Effect.succeed(request.headers.host ?? ""));
-          response.statusCode = request.headers.host === "realtime-dev" ? 200 : 400;
-          response.end();
-        });
-        const port = yield* listenHttp(server, () => undefined);
+        const port = yield* serveHttp(
+          Effect.gen(function* () {
+            const request = yield* HttpServerRequest.HttpServerRequest;
+            const host = request.headers?.host ?? "";
+            yield* Deferred.succeed(received, host);
+            return HttpServerResponse.text("ok", { status: host === "realtime-dev" ? 200 : 400 });
+          }),
+        );
         yield* probeReadiness({
           mode: "http",
           host: "127.0.0.1",
@@ -98,7 +100,7 @@ describe("private endpoint readiness probe", () => {
         });
         expect(yield* Deferred.await(received)).toBe("realtime-dev");
       }),
-    ),
+    ).pipe(Effect.provide(loopbackHttpLayer)),
   );
 
   it.live("rejects invalid readiness header names and values", () =>
@@ -144,11 +146,9 @@ describe("private endpoint readiness probe", () => {
   it.live("probes HTTP and TCP endpoints with a Schedule retry policy", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const http = createHttpServer((_request, response) => {
-          response.statusCode = 200;
-          response.end("ok");
-        });
-        const httpPort = yield* listenHttp(http, () => undefined);
+        const httpPort = yield* serveHttp(
+          Effect.succeed(HttpServerResponse.text("ok", { status: 200 })),
+        );
         yield* probeReadiness(
           { mode: "http", host: "127.0.0.1", port: httpPort, path: "/health" },
           { retries: 1, retryDelay: 0 },
@@ -161,19 +161,19 @@ describe("private endpoint readiness probe", () => {
           { retries: 1, retryDelay: 0 },
         );
       }),
-    ),
+    ).pipe(Effect.provide(loopbackHttpLayer)),
   );
 
   it.live("reports a failed endpoint after bounded retries", () =>
     Effect.scoped(
       Effect.gen(function* () {
         let attempts = 0;
-        const server = createHttpServer((_request, response) => {
-          attempts += 1;
-          response.statusCode = 503;
-          response.end("not ready");
-        });
-        const port = yield* listenHttp(server, () => undefined);
+        const port = yield* serveHttp(
+          Effect.sync(() => {
+            attempts += 1;
+            return HttpServerResponse.text("not ready", { status: 503 });
+          }),
+        );
         const result = yield* probeReadiness(
           { mode: "http", host: "127.0.0.1", port },
           { retries: 1, retryDelay: 0 },
@@ -181,19 +181,19 @@ describe("private endpoint readiness probe", () => {
         expect(Exit.isFailure(result)).toBe(true);
         expect(attempts).toBe(2);
       }),
-    ),
+    ).pipe(Effect.provide(loopbackHttpLayer)),
   );
 
   it.live("performs exactly one immediate probe for a zero readiness budget", () =>
     Effect.scoped(
       Effect.gen(function* () {
         let count = 0;
-        const server = createHttpServer((_request, response) => {
-          count += 1;
-          response.statusCode = 503;
-          response.end("not ready");
-        });
-        const port = yield* listenHttp(server, () => undefined);
+        const port = yield* serveHttp(
+          Effect.sync(() => {
+            count += 1;
+            return HttpServerResponse.text("not ready", { status: 503 });
+          }),
+        );
         const result = yield* probeReadiness(
           { mode: "http", host: "127.0.0.1", port },
           { deadline: Duration.zero },
@@ -208,25 +208,29 @@ describe("private endpoint readiness probe", () => {
         }
         expect(count).toBe(1);
       }),
-    ),
+    ).pipe(Effect.provide(loopbackHttpLayer)),
   );
 
   it.live("interrupts an in-flight HTTP request and closes its owned socket", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const received = yield* Deferred.make<void>();
-        const server = createHttpServer((request) => {
-          Deferred.doneUnsafe(received, Effect.void);
-          request.once("error", () => undefined);
-        });
-        const port = yield* listenHttp(server, () => undefined);
+        const port = yield* serveHttp(
+          Effect.gen(function* () {
+            const serverRequest = yield* HttpServerRequest.HttpServerRequest;
+            const request = NodeHttpServerRequest.toIncomingMessage(serverRequest);
+            yield* Deferred.succeed(received, undefined);
+            request.once("error", () => undefined);
+            return yield* Effect.never.pipe(Effect.interruptible);
+          }),
+        );
         const fiber = yield* Effect.forkChild(
           probeReadiness({ mode: "http", host: "127.0.0.1", port, path: "/hang" }, { retries: 0 }),
         );
         yield* Deferred.await(received);
         yield* Fiber.interrupt(fiber);
       }),
-    ),
+    ).pipe(Effect.provide(loopbackHttpLayer)),
   );
 
   it.effect("interrupts an in-flight HTTP request at its total deadline", () =>
@@ -234,13 +238,17 @@ describe("private endpoint readiness probe", () => {
       Effect.gen(function* () {
         const received = yield* Deferred.make<void>();
         const closed = yield* Deferred.make<void>();
-        const server = createHttpServer((request) => {
-          Deferred.doneUnsafe(received, Effect.void);
-          request.once("close", () => {
-            Deferred.doneUnsafe(closed, Effect.void);
-          });
-        });
-        const port = yield* listenHttp(server, () => undefined);
+        const port = yield* serveHttp(
+          Effect.gen(function* () {
+            const serverRequest = yield* HttpServerRequest.HttpServerRequest;
+            const request = NodeHttpServerRequest.toIncomingMessage(serverRequest);
+            yield* Deferred.succeed(received, undefined);
+            request.once("close", () => {
+              Deferred.doneUnsafe(closed, Effect.void);
+            });
+            return yield* Effect.never.pipe(Effect.interruptible);
+          }),
+        );
         const fiber = yield* Effect.forkChild(
           probeReadiness(
             { mode: "http", host: "127.0.0.1", port, path: "/deadline" },
@@ -258,6 +266,6 @@ describe("private endpoint readiness probe", () => {
         }
         yield* Deferred.await(closed);
       }),
-    ),
+    ).pipe(Effect.provide(loopbackHttpLayer)),
   );
 });

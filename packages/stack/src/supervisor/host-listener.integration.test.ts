@@ -1,7 +1,7 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Fiber, Option, Predicate, Queue } from "effect";
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- fixture exercises native listener adoption.
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- fixture passes the native server instance into HostListener adoption APIs.
 import { createServer, request as httpRequest, type Server as HttpServer } from "node:http";
 import { connect as connectNet, type Server as NetServer, type Socket } from "node:net";
 import { PortUnavailableError } from "../public/Errors.ts";

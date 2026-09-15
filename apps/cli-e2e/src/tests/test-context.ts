@@ -47,13 +47,11 @@ interface BehaviourFixtures {
  *  server knows which ordered interaction sequence to serve. Auto-clears the
  *  request log, error overrides, and active scenario after every test. */
 export const testBehaviour = test.extend<BehaviourFixtures>({
-  // eslint-disable-next-line no-empty-pattern
-  projectRef: async ({}, use) => {
+  projectRef: async ({ task: _task }, use) => {
     await use(inject("projectRef") as string);
   },
 
-  // eslint-disable-next-line no-empty-pattern
-  orgId: async ({}, use) => {
+  orgId: async ({ task: _task }, use) => {
     await use(inject("orgId") as string);
   },
 
@@ -105,18 +103,15 @@ export const testBehaviour = test.extend<BehaviourFixtures>({
     await use((cmd) => exec(harness, cmd));
   },
 
-  // eslint-disable-next-line no-empty-pattern
-  storageBucket: async ({}, use) => {
+  storageBucket: async ({ task: _task }, use) => {
     await use(inject("storageBucket") as string);
   },
 
-  // eslint-disable-next-line no-empty-pattern
-  apiUrl: async ({}, use) => {
+  apiUrl: async ({ task: _task }, use) => {
     await use(inject("replayServerUrl"));
   },
 
-  // eslint-disable-next-line no-empty-pattern
-  pgMockPort: async ({}, use) => {
+  pgMockPort: async ({ task: _task }, use) => {
     await use(inject("pgMockPort") as number);
   },
 });

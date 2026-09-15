@@ -1,4 +1,4 @@
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- FileSystem.stat follows symlinks; the resolver fixture must expose lstat.
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- Effect FileSystem exposes stat but no no-follow lstat; the resolver fixture must verify symlink rejection.
 import { lstat } from "node:fs/promises";
 import { NodeServices } from "@effect/platform-node";
 import { Effect, FileSystem, Path } from "effect";
