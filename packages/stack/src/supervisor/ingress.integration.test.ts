@@ -15,6 +15,7 @@ import type { ExecutionPlan } from "../model/ExecutionPlan.ts";
 import {
   GatewayActivationError,
   PortUnavailableError,
+  StackLifecycleConflictError,
   StackPreparationError,
 } from "../public/Errors.ts";
 import { makeStackStateStore } from "../state/StackStateStore.ts";
@@ -338,11 +339,19 @@ describe("Supervisor ingress", () => {
         const backendAddress = backend.address();
         if (typeof backendAddress !== "object" || backendAddress === null)
           return yield* Effect.die("backend did not expose an address");
+        let recoveryRequired = false;
         yield* ingress.open(input, reservation, (capability) =>
-          Effect.succeed({
-            capability,
-            endpoint: { host: "127.0.0.1", port: backendAddress.port },
-          }),
+          recoveryRequired
+            ? Effect.fail(
+                new StackLifecycleConflictError({
+                  message: "cleanup failed",
+                  recovery: { operation: "stop", message: "backend cleanup failed" },
+                }),
+              )
+            : Effect.succeed({
+                capability,
+                endpoint: { host: "127.0.0.1", port: backendAddress.port },
+              }),
         );
         const api = reservation.assignments.api;
         if (api === undefined) return yield* Effect.die("API listener was not assigned");
@@ -352,8 +361,17 @@ describe("Supervisor ingress", () => {
         const internalResponse = yield* request(api.port, "/rest/v1/items", "GET", "::1");
         expect(internalResponse.status).toBe(200);
         expect(internalResponse.body).toBe("forwarded");
+        recoveryRequired = true;
+        const recoveryResponse = yield* request(api.port);
+        expect(recoveryResponse.status).toBe(503);
+        expect(recoveryResponse.body).toContain('"error":"STACK_RECOVERY_REQUIRED"');
+        expect(recoveryResponse.body).toContain('"operation":"stop"');
+        expect(recoveryResponse.body).toContain(
+          '"message":"Retry stack stop before activating workloads"',
+        );
         const reused = yield* ingress.acquire(input);
         expect(reused.fresh).toBe(false);
+        recoveryRequired = false;
         yield* ingress.open(input, reused, (capability) =>
           Effect.succeed({
             capability,

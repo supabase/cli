@@ -1,6 +1,7 @@
-import { Match, Predicate, type Cause, type Deferred, type Exit } from "effect";
+import { Cause, Match, Option, Predicate, type Deferred, type Exit } from "effect";
 import type { ExecutionPlan } from "../model/ExecutionPlan.ts";
 import type { StackError } from "../public/Errors.ts";
+import type { StackRecovery } from "../public/Status.ts";
 import type { CapabilityName } from "../public/Capability.ts";
 import type { CapabilityState } from "./CapabilityState.ts";
 
@@ -34,6 +35,38 @@ type StartRecoveryState = {
 export type LifecycleKind = "start" | "stop" | "destroy";
 type LifecycleCompletion = Deferred.Deferred<Exit.Exit<void, StackError>, never>;
 type CommandRejectionReason = "lifecycle-transition" | "stop-required" | "destroy-required";
+
+const causeMessage = (cause: Cause.Cause<StackError>, fallback: string): string => {
+  const error = Cause.findErrorOption(cause);
+  return Option.isSome(error) && error.value.message.length > 0 ? error.value.message : fallback;
+};
+
+export const recoveryForState = (state: StackControlState): StackRecovery | undefined =>
+  Match.value(state).pipe(
+    Match.when({ _tag: "stop-required" }, (value) => ({
+      operation: "stop" as const,
+      message: causeMessage(
+        value.cause,
+        "Runtime cleanup is required; retry stop before proceeding",
+      ),
+    })),
+    Match.when({ _tag: "destroy-required" }, (value) => ({
+      operation: "destroy" as const,
+      message: Predicate.isTagged(value.evidence, "failed")
+        ? causeMessage(
+            value.evidence.cause,
+            "Destructive cleanup is required; retry destroy before proceeding",
+          )
+        : "Destructive cleanup is required; retry destroy before proceeding",
+    })),
+    Match.when({ _tag: "stopped" }, () => undefined),
+    Match.when({ _tag: "running" }, () => undefined),
+    Match.when({ _tag: "starting" }, () => undefined),
+    Match.when({ _tag: "stopping" }, () => undefined),
+    Match.when({ _tag: "destroying" }, () => undefined),
+    Match.when({ _tag: "start-recovery" }, () => undefined),
+    Match.exhaustive,
+  );
 
 export type StackControlState =
   | StableStackState

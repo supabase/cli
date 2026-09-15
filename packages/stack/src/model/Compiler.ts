@@ -2,7 +2,7 @@ import { Duration, Effect, Path, Redacted, Schema } from "effect";
 import { InvalidStackConfigError, StackVersionUnsupportedError } from "../public/Errors.ts";
 import { StackConfigSchema, type StackConfig, type PreparationMode } from "../public/Config.ts";
 import type { JwtSigning } from "../public/Config.ts";
-import { CAPABILITY_NAMES, type CapabilityName } from "../public/Capability.ts";
+import type { CapabilityName } from "../public/Capability.ts";
 import type { PortField } from "../public/Status.ts";
 import type { StackRuntime } from "../public/Runtime.ts";
 import {
@@ -536,30 +536,6 @@ const enabledSettings = (
   };
 };
 
-const validateIdleTimeouts = (
-  config: StackConfig,
-): Effect.Effect<void, InvalidStackConfigError> => {
-  const capabilities = config.capabilities;
-  if (capabilities === undefined) return Effect.void;
-  for (const name of CAPABILITY_NAMES) {
-    const raw = capabilities[name];
-    if (!isRecord(raw)) continue;
-    const timeout = "idleTimeoutSeconds" in raw ? raw.idleTimeoutSeconds : undefined;
-    if (
-      typeof timeout === "number" &&
-      (CAPABILITY_MODULES[name].defaultIdleTimeoutSeconds === undefined ||
-        CAPABILITY_MODULES[name].defaultIdleTimeoutSeconds === false)
-    )
-      return Effect.fail(
-        new InvalidStackConfigError({
-          message: `Invalid ${name} idleTimeoutSeconds: capability does not support idle stopping`,
-          setting: `capabilities.${name}.idleTimeoutSeconds`,
-        }),
-      );
-  }
-  return Effect.void;
-};
-
 const materializeCapability = <T>(
   module: CapabilityModule<T>,
   raw: unknown,
@@ -620,7 +596,6 @@ export const compileStack = (
     const path = yield* Path.Path;
     yield* validateFunctionKeys(input.config ?? {});
     const config = yield* decodeConfig(input.config ?? {});
-    yield* validateIdleTimeouts(config);
     yield* validateDatabaseHealthTimeout(config);
     yield* validatePoolerKeys(config);
     yield* validateStorageFileSizes(config);

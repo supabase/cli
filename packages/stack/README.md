@@ -44,8 +44,15 @@ await stack.start({
 To change `idleTimeoutSeconds` on a running stack, call `stop()` and then `start()` with the updated
 configuration.
 
-Eager capabilities never auto-stop. PostgreSQL, Storage, Functions, Mail, and Analytics do not opt
-into traffic stopping yet. Studio and its `pg-meta` companion are stopped and started together.
+Stacks saved before idle stopping retain their previous policy: missing timeout values are read as
+`false`. Restarting with the saved definition preserves that policy. To adopt the current defaults,
+stop the stack and start it with the project configuration. Status can report changed effective
+defaults even when the project file is unchanged; a stack still marked running must be stopped
+before those defaults can be applied.
+
+Eager capabilities never auto-stop; an explicit timeout on an eager capability is ignored and its
+effective timeout is `false`. PostgreSQL, Storage, Functions, Mail, and Analytics do not accept
+idle timeout configuration. Studio and its `pg-meta` companion are stopped and started together.
 Dependency protection keeps required dependencies available while a capability is running.
 Stopping preserves listeners and data, and the next request wakes the lazy capability and restarts
 its workloads.
@@ -55,6 +62,9 @@ new activation across the stack. This is an operation-level result; the workload
 resources still requiring removal. Unrelated healthy capabilities retain their observations. An
 explicit stop retries the retained ledger. A failed committed destroy remains destroying and
 accepts only a destroy retry; successful cleanup is required before the managed state is removed.
+Status exposes the required recovery operation (`stop` or `destroy`) and its reason in `recovery`.
+Participating capability failure states describe incomplete cleanup, including shared listener
+cleanup; they do not imply that each workload process failed.
 
 The Effect API's `excludeStackCapabilities` helper disables requested optional capabilities and
 their dependents in an in-memory config. Excluding `rest` or `analytics` also disables `studio`,

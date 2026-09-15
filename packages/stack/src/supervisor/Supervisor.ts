@@ -80,6 +80,7 @@ import {
   publicPhase,
   command,
   isTransitioning,
+  recoveryForState,
   type LifecycleKind,
   type SupervisorSnapshot,
 } from "./SupervisorState.ts";
@@ -1100,11 +1101,12 @@ export const makeSupervisor = (
               }),
             ),
           ),
-          Match.when({ _tag: "stop-required" }, () =>
+          Match.when({ _tag: "stop-required" }, (stack) =>
             Effect.fail(
               new StackLifecycleConflictError({
                 stackId: options.stackId,
                 message: "Exact runtime cleanup is required; retry stop before activating",
+                recovery: recoveryForState(stack),
               }),
             ),
           ),
@@ -1116,11 +1118,12 @@ export const makeSupervisor = (
               }),
             ),
           ),
-          Match.when({ _tag: "destroy-required" }, () =>
+          Match.when({ _tag: "destroy-required" }, (stack) =>
             Effect.fail(
               new StackLifecycleConflictError({
                 stackId: options.stackId,
                 message: "Destructive cleanup is required; retry destroy before activating",
+                recovery: recoveryForState(stack),
               }),
             ),
           ),
@@ -1188,6 +1191,10 @@ export const makeSupervisor = (
                       : admitted.reason === "destroy-required"
                         ? "Destructive cleanup is required; retry destroy before proceeding"
                         : `Lifecycle operation ${kind} is already in progress`,
+                  recovery:
+                    admitted.reason === "stop-required" || admitted.reason === "destroy-required"
+                      ? recoveryForState(snapshot.stack)
+                      : undefined,
                 });
               yield* Ref.set(machine, { ...snapshot, stack: admitted.state });
               const owner = cancelIdleTimers.pipe(
@@ -1221,7 +1228,32 @@ export const makeSupervisor = (
                   }),
                 ),
               );
-              yield* FiberSet.run(ownedFibers, owner, { startImmediately: true });
+              const ownerFiber = yield* FiberSet.run(ownedFibers, owner, {
+                startImmediately: true,
+              });
+              // Effect rc112 has no safe Fiber.poll; FiberSet returns an already-interrupted fiber when closed.
+              const ownerExit = yield* Effect.sync(() => ownerFiber.pollUnsafe());
+              if (
+                ownerExit !== undefined &&
+                Exit.isFailure(ownerExit) &&
+                Cause.hasInterruptsOnly(ownerExit.cause)
+              ) {
+                const conflict = new StackLifecycleConflictError({
+                  stackId: options.stackId,
+                  message: "Stack owner scope is closed",
+                });
+                const cause = Cause.fail(conflict);
+                yield* settleOwnerInAdmission({
+                  _tag: "lifecycle",
+                  completion: deferred,
+                  result: {
+                    _tag: "failed",
+                    cause,
+                    cleanup: { _tag: "unproven", cause },
+                    durable: "unsafe",
+                  },
+                });
+              }
               return deferred;
             }),
           ),
@@ -1525,36 +1557,36 @@ export const makeSupervisor = (
           readonly _tag: "await";
           readonly result: Deferred.Deferred<Exit.Exit<void, StackError>, never>;
         };
+    const settleOwnerInAdmission = (owner: SettlementOwner): Effect.Effect<void> =>
+      Effect.gen(function* () {
+        const snapshot = yield* Ref.get(machine);
+        const settlement = Match.value(owner).pipe(
+          Match.when({ _tag: "lifecycle" }, (event) => settleLifecycleOwner(snapshot, event)),
+          Match.when({ _tag: "retirement" }, (event) => settleRetirementOwner(snapshot, event)),
+          Match.when({ _tag: "endpoint" }, (event) => settleActivationOwner(snapshot, event)),
+          Match.when({ _tag: "activation" }, (event) => settleActivationOwner(snapshot, event)),
+          Match.exhaustive,
+        );
+        yield* Ref.set(machine, settlement.snapshot);
+        if (settlement.reconcile === "all-ready") yield* reevaluateIdleTimersInAdmission();
+        yield* Match.value(settlement.notification).pipe(
+          Match.when({ _tag: "endpoint" }, (notification) =>
+            Deferred.succeed(notification.completion, notification.result),
+          ),
+          Match.when({ _tag: "activation" }, (notification) =>
+            Deferred.succeed(notification.completion, notification.result),
+          ),
+          Match.when({ _tag: "retirement" }, (notification) =>
+            Deferred.succeed(notification.completion, notification.result),
+          ),
+          Match.when({ _tag: "lifecycle" }, (notification) =>
+            Deferred.succeed(notification.completion, notification.result),
+          ),
+          Match.exhaustive,
+        );
+      });
     const settleOwner = (owner: SettlementOwner): Effect.Effect<void> =>
-      admission.withPermit(
-        Effect.gen(function* () {
-          const snapshot = yield* Ref.get(machine);
-          const settlement = Match.value(owner).pipe(
-            Match.when({ _tag: "lifecycle" }, (event) => settleLifecycleOwner(snapshot, event)),
-            Match.when({ _tag: "retirement" }, (event) => settleRetirementOwner(snapshot, event)),
-            Match.when({ _tag: "endpoint" }, (event) => settleActivationOwner(snapshot, event)),
-            Match.when({ _tag: "activation" }, (event) => settleActivationOwner(snapshot, event)),
-            Match.exhaustive,
-          );
-          yield* Ref.set(machine, settlement.snapshot);
-          if (settlement.reconcile === "all-ready") yield* reevaluateIdleTimersInAdmission();
-          yield* Match.value(settlement.notification).pipe(
-            Match.when({ _tag: "endpoint" }, (notification) =>
-              Deferred.succeed(notification.completion, notification.result),
-            ),
-            Match.when({ _tag: "activation" }, (notification) =>
-              Deferred.succeed(notification.completion, notification.result),
-            ),
-            Match.when({ _tag: "retirement" }, (notification) =>
-              Deferred.succeed(notification.completion, notification.result),
-            ),
-            Match.when({ _tag: "lifecycle" }, (notification) =>
-              Deferred.succeed(notification.completion, notification.result),
-            ),
-            Match.exhaustive,
-          );
-        }),
-      );
+      admission.withPermit(settleOwnerInAdmission(owner));
     const runActivationOwner = (owner: ActivationOwner): Effect.Effect<void> =>
       Effect.gen(function* () {
         const operation = activateOperation(
@@ -1600,7 +1632,22 @@ export const makeSupervisor = (
             );
           }),
         );
-        yield* FiberSet.run(ownedFibers, fiber, { startImmediately: true });
+        const ownerFiber = yield* FiberSet.run(ownedFibers, fiber, { startImmediately: true });
+        const ownerExit = yield* Effect.sync(() => ownerFiber.pollUnsafe());
+        if (
+          ownerExit !== undefined &&
+          Exit.isFailure(ownerExit) &&
+          Cause.hasInterruptsOnly(ownerExit.cause)
+        )
+          yield* settleOwnerInAdmission({
+            ...owner,
+            result: Exit.fail(
+              new StackLifecycleConflictError({
+                stackId: options.stackId,
+                message: "Stack owner scope is closed",
+              }),
+            ),
+          });
       });
     const activate: Supervisor["activate"] = (capability) =>
       Effect.gen(function* () {

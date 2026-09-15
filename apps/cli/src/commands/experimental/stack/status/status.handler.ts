@@ -13,6 +13,7 @@ import {
   StackApi,
   StackTargetError,
   rejectStackOutput,
+  stackStatusIssueLines,
   validateStackId,
   validateStackTarget,
 } from "../stack.shared.ts";
@@ -101,6 +102,7 @@ const payload = (inspection: StackInspection, configWarning?: string) => ({
   readiness: readiness(inspection.status),
   ...(inspection.status === undefined ? {} : { endpoints: inspection.status.endpoints }),
   ...(inspection.status === undefined ? {} : { capabilities: inspection.status.capabilities }),
+  ...(inspection.status?.recovery === undefined ? {} : { recovery: inspection.status.recovery }),
   config_drift:
     inspection.configDrift ??
     ({
@@ -135,6 +137,7 @@ const render = (inspection: StackInspection, configWarning?: string): string => 
       for (const [name, endpoint] of endpoints)
         if (endpoint !== undefined) lines.push(`  ${name}: ${endpoint.url}`);
     }
+    lines.push(...stackStatusIssueLines(inspection.status));
   }
   const drift = inspection.configDrift;
   lines.push(`Config drift: ${drift?.status ?? "unavailable"}`);

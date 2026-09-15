@@ -8,7 +8,7 @@ import {
 } from "../public/Status.ts";
 import type { ObservedWorkload } from "../runtime/RuntimeDriver.ts";
 import type { PersistedStackState } from "../state/StackState.ts";
-import type { SupervisorSnapshot } from "./SupervisorState.ts";
+import { recoveryForState, type SupervisorSnapshot } from "./SupervisorState.ts";
 import { publicCapabilityState } from "./CapabilityState.ts";
 
 export type ActualPhase = "stopped" | "starting" | "running" | "stopping" | "destroying";
@@ -104,6 +104,7 @@ export const statusForSnapshot = (
         },
       };
     }, {});
+    const recovery = recoveryForState(snapshot.stack);
     return {
       id,
       lifecycle: publicPhase(snapshot.stack, state),
@@ -113,6 +114,7 @@ export const statusForSnapshot = (
       versions,
       capabilities,
       artifacts,
+      ...(recovery === undefined ? {} : { recovery }),
     } satisfies StackStatus;
   });
 

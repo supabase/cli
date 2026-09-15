@@ -1680,6 +1680,32 @@ describe("Supervisor composition", () => {
     ),
   );
 
+  it.live("rejects lifecycle admission after the owner scope closes", () =>
+    run(
+      Effect.gen(function* () {
+        const ownerScope = yield* Scope.make();
+        const fixture = yield* makeFixture({ supervisorScope: ownerScope });
+        const config = { capabilities: { rest: { activation: "lazy" as const } } };
+        yield* fixture.supervisor.start({ config });
+        yield* Scope.close(ownerScope, Exit.void);
+        const activation = yield* Effect.exit(fixture.supervisor.activate("rest"));
+        expect(errorOf(activation)).toBeInstanceOf(StackLifecycleConflictError);
+        expect(
+          (yield* fixture.supervisor.status).capabilities.find(({ name }) => name === "rest")
+            ?.state,
+        ).toBe("dormant");
+        const retry = yield* Effect.exit(fixture.supervisor.start({ config }));
+        expect(errorOf(retry)).toBeInstanceOf(StackLifecycleConflictError);
+        const status = yield* fixture.supervisor.status;
+        expect(status.lifecycle).toBe("stopping");
+        expect(status.recovery).toEqual({
+          operation: "stop",
+          message: "Stack owner scope is closed",
+        });
+      }),
+    ),
+  );
+
   it.live("settles endpoint activation when launch owner scope closes", () =>
     run(
       Effect.gen(function* () {
@@ -1902,7 +1928,12 @@ describe("Supervisor composition", () => {
             expect.stringContaining("injected workload stop failure"),
           ]),
         );
-        expect((yield* fixture.supervisor.status).lifecycle).toBe("stopping");
+        const status = yield* fixture.supervisor.status;
+        expect(status.lifecycle).toBe("stopping");
+        expect(status.recovery).toEqual({
+          operation: "stop",
+          message: expect.stringContaining("injected workload stop failure"),
+        });
       }).pipe(Effect.provide(TestClock.layer())),
     ),
   );

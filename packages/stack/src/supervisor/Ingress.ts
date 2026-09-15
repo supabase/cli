@@ -12,6 +12,7 @@ import type { GatewayActivity } from "../gateway/ActivityTracker.ts";
 import {
   GatewayActivationError,
   PortUnavailableError,
+  StackLifecycleConflictError,
   StackPreparationError,
   type StackError,
 } from "../public/Errors.ts";
@@ -404,7 +405,14 @@ export const makeSupervisorIngress = (
                   Effect.mapError((error) =>
                     error instanceof GatewayActivationError
                       ? error
-                      : new GatewayActivationError({ message: error.message, cause: error }),
+                      : new GatewayActivationError({
+                          message: error.message,
+                          cause: error,
+                          recovery:
+                            error instanceof StackLifecycleConflictError
+                              ? error.recovery
+                              : undefined,
+                        }),
                   ),
                 ),
               activity,

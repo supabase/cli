@@ -193,6 +193,9 @@ requiring removal. Unrelated healthy capabilities retain their observations. An 
 retries the retained ledger. A committed destructive intent uses a separate destroy-required
 recovery state, projects destroying, and accepts only a destroy retry until durable state removal
 has completed.
+Public status exposes the recovery operation and reason separately from capability observations.
+CLI text includes those diagnostics and targets recovery commands to the selected stack. A shared
+cleanup failure describes the operation's incomplete cleanup, even when workload removal succeeded.
 
 In both modes, lazy activation prepares the requested dependency closure with
 bounded concurrency before starting its workloads. Explicit

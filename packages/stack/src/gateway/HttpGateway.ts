@@ -310,6 +310,24 @@ const mapFailure = (cause: Cause.Cause<unknown>): number => {
   return 503;
 };
 
+const recoveryFrom = (cause: Cause.Cause<unknown>) => {
+  const error = Cause.findErrorOption(cause);
+  return Option.isSome(error) && error.value instanceof GatewayActivationError
+    ? error.value.recovery
+    : undefined;
+};
+
+const recoveryResponse = (operation: "stop" | "destroy") => ({
+  error: "STACK_RECOVERY_REQUIRED",
+  recovery: {
+    operation,
+    message:
+      operation === "stop"
+        ? "Retry stack stop before activating workloads"
+        : "Retry stack destroy before activating workloads",
+  },
+});
+
 const cancelOnRequestClose = (
   request: IncomingMessage,
   response: ServerResponse,
@@ -394,13 +412,22 @@ const handleRequest = (
       return;
     }
     const status = mapFailure(exit.cause);
+    const recovery = recoveryFrom(exit.cause);
     respond(
       response,
       status,
-      JSON.stringify({
-        error:
-          status === 404 ? "Not found" : status === 503 ? "Service unavailable" : "Bad gateway",
-      }),
+      JSON.stringify(
+        recovery === undefined
+          ? {
+              error:
+                status === 404
+                  ? "Not found"
+                  : status === 503
+                    ? "Service unavailable"
+                    : "Bad gateway",
+            }
+          : recoveryResponse(recovery.operation),
+      ),
       options,
     );
   });
@@ -539,7 +566,25 @@ const handleUpgrade = (
   };
   fiber.addObserver(removeSocketCancellation);
   fiber.addObserver((exit) => {
-    if (Exit.isFailure(exit)) socket.destroy();
+    if (!Exit.isFailure(exit)) return;
+    const recovery = recoveryFrom(exit.cause);
+    if (recovery === undefined || socket.destroyed) {
+      socket.destroy();
+      return;
+    }
+    const body = JSON.stringify(recoveryResponse(recovery.operation));
+    const response = [
+      "HTTP/1.1 503 Service Unavailable",
+      "Content-Type: application/json",
+      `Content-Length: ${Buffer.byteLength(body)}`,
+      "Connection: close",
+      "",
+      body,
+    ].join("\r\n");
+    const onRecoveryError = () => socket.destroy();
+    socket.once("error", onRecoveryError);
+    socket.once("close", () => socket.off("error", onRecoveryError));
+    socket.end(response, () => socket.destroy());
   });
 };
 

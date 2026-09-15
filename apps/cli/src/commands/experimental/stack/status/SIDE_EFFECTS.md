@@ -33,6 +33,14 @@ endpoints, and config drift. JSON output nests only the identity fields under
 `identity`; runtime, lifecycle, readiness, endpoints, and config drift remain
 top-level fields.
 
+Each capability includes its current state and may include a diagnostic when
+cleanup or runtime readiness failed. When recovery is required, JSON adds a
+`recovery` object with the `operation` (`stop` or `destroy`) and its message.
+Text output includes that message and the matching recovery command; stop
+recovery prints `stop --stack-id <id> && start --stack-id <id>`, while destroy
+recovery prints the destructive destroy command and warns that stack data is
+removed.
+
 When a running stack has a capability transitioning through `stopping`, readiness is reported as
 `stopping`. A failed capability takes precedence and reports `degraded`; otherwise readiness
 reports `starting`, `stopped`, `dormant`, or `ready` according to the live capability states.

@@ -1,6 +1,6 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, Exit, Fiber, Option, Queue } from "effect";
+import { Deferred, Effect, Exit, Fiber, Option, Queue, Schema } from "effect";
 import { GatewayActivationError } from "../public/Errors.ts";
 import { connect as connectNet, createServer, type Server, type Socket } from "node:net";
 import {
@@ -42,6 +42,16 @@ const getStatus = (port: number, path: string) =>
     request.end();
     return Effect.sync(() => request.destroy());
   });
+
+const recoveryResponseSchema = Schema.fromJsonString(
+  Schema.Struct({
+    error: Schema.String,
+    recovery: Schema.Struct({
+      operation: Schema.Literals(["stop", "destroy"] as const),
+      message: Schema.String,
+    }),
+  }),
+);
 
 describe("stack gateway", () => {
   it.live("serves local HTTP routes before activation and rejects upgrades", () =>
@@ -132,6 +142,116 @@ describe("stack gateway", () => {
       }),
     ),
   );
+
+  for (const operation of ["stop", "destroy"] as const)
+    it.live(`returns recovery guidance for ${operation}-required HTTP activation`, () =>
+      withPlatform(
+        Effect.gen(function* () {
+          const sensitive = "internal cleanup detail that must stay private";
+          const gateway = yield* makeHttpGateway({
+            address: "127.0.0.1",
+            port: 0,
+            routes: [{ capability: "rest", match: () => true }],
+            activate: () =>
+              Effect.fail(
+                new GatewayActivationError({
+                  message: sensitive,
+                  recovery: { operation, message: sensitive },
+                }),
+              ),
+          });
+          const response = yield* Effect.callback<
+            { readonly status: number; readonly body: string },
+            Error
+          >((resume) => {
+            const request = requestHttp(
+              { host: "127.0.0.1", port: gateway.port, path: "/rest/items" },
+              (result) => {
+                const chunks: Buffer[] = [];
+                result.on("data", (chunk: Buffer) => chunks.push(chunk));
+                result.once("end", () =>
+                  resume(
+                    Effect.succeed({
+                      status: result.statusCode ?? 0,
+                      body: Buffer.concat(chunks).toString(),
+                    }),
+                  ),
+                );
+              },
+            );
+            request.once("error", (error) => resume(Effect.fail(error)));
+            request.end();
+            return Effect.sync(() => request.destroy());
+          });
+          expect(response.status).toBe(503);
+          const body = yield* Schema.decodeEffect(recoveryResponseSchema)(response.body);
+          expect(body).toEqual({
+            error: "STACK_RECOVERY_REQUIRED",
+            recovery: {
+              operation,
+              message:
+                operation === "stop"
+                  ? "Retry stack stop before activating workloads"
+                  : "Retry stack destroy before activating workloads",
+            },
+          });
+          expect(response.body).not.toContain(sensitive);
+          yield* gateway.close;
+        }),
+      ),
+    );
+
+  for (const operation of ["stop", "destroy"] as const)
+    it.live(`returns recovery guidance before a ${operation}-required WebSocket upgrade`, () =>
+      withPlatform(
+        Effect.gen(function* () {
+          const sensitive = "private activation failure detail";
+          const gateway = yield* makeHttpGateway({
+            address: "127.0.0.1",
+            port: 0,
+            routes: [{ capability: "realtime", match: () => true }],
+            activate: () =>
+              Effect.fail(
+                new GatewayActivationError({
+                  message: sensitive,
+                  recovery: { operation, message: sensitive },
+                }),
+              ),
+          });
+          const response = yield* Effect.callback<string, Error>((resume) => {
+            const socket = connectNet(gateway.port, "127.0.0.1");
+            const chunks: Buffer[] = [];
+            socket.once("connect", () =>
+              socket.write(
+                "GET /realtime/v1/websocket HTTP/1.1\r\nHost: gateway.test\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n",
+              ),
+            );
+            socket.on("data", (chunk: Buffer) => chunks.push(chunk));
+            socket.once("close", () => resume(Effect.succeed(Buffer.concat(chunks).toString())));
+            socket.once("error", (error) => resume(Effect.fail(error)));
+            return Effect.sync(() => socket.destroy());
+          });
+          expect(response).toContain("HTTP/1.1 503 Service Unavailable");
+          const separator = response.indexOf("\r\n\r\n");
+          expect(separator).toBeGreaterThan(0);
+          const body = yield* Schema.decodeEffect(recoveryResponseSchema)(
+            response.slice(separator + 4),
+          );
+          expect(body).toEqual({
+            error: "STACK_RECOVERY_REQUIRED",
+            recovery: {
+              operation,
+              message:
+                operation === "stop"
+                  ? "Retry stack stop before activating workloads"
+                  : "Retry stack destroy before activating workloads",
+            },
+          });
+          expect(response).not.toContain(sensitive);
+          yield* gateway.close;
+        }),
+      ),
+    );
 
   it.live("keeps local routing usable when a client disconnects mid-response", () =>
     withPlatform(
