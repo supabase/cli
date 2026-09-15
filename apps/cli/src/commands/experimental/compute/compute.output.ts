@@ -1,65 +1,14 @@
 import { Effect, Option } from "effect";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
+import { resourceOutput } from "../../../command-internal/resource-output.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import {
-  encodeGoJson,
-  encodeToml,
-  encodeYaml,
-} from "../../../command-internal/go-output.encoders.ts";
 import { ComputeEnvNotSupportedError } from "./compute.errors.ts";
 
-/**
- * Which `-o` values these commands answer with a payload.
- *
- * An allowlist, not a denylist, so an unrecognized future `-o` value falls
- * through to text instead of silently serializing as TOML. `env` is included
- * so it reaches the refusal below rather than being treated as unrecognized.
- */
-const PAYLOAD_FORMATS = new Set(["json", "yaml", "toml", "env"]);
-
-function emitsPayloadFor(goFormat: string | undefined): boolean {
-  return goFormat !== undefined && PAYLOAD_FORMATS.has(goFormat);
-}
-
-export const emitComputeMachineOutput = Effect.fnUntraced(function* (
-  payload: Record<string, unknown>,
-) {
-  const output = yield* Output;
-  const goFormat = Option.getOrUndefined(yield* OutputFlag);
-
-  if (!emitsPayloadFor(goFormat)) {
-    return false;
-  }
-
-  if (goFormat === "env") {
-    // Unreachable when the command called `rejectComputeEnvOutput` first,
-    // which is where the refusal belongs; here as the backstop that stops a new
-    // command silently emitting TOML for `-o env`.
-    return yield* new ComputeEnvNotSupportedError({
-      message: "--output env flag is not supported",
-    });
-  }
-
-  if (goFormat === "json") {
-    yield* output.raw(encodeGoJson(payload));
-    return true;
-  }
-  if (goFormat === "yaml") {
-    yield* output.raw(encodeYaml(payload));
-    return true;
-  }
-  yield* output.raw(encodeToml(payload));
-  return true;
-});
-
-/**
- * Whether a machine-readable stdout was requested via `-o`. Callers that emit
- * human lines *before* their payload need this: the `-o` branch runs at the end,
- * by which point those lines would already be on stdout.
- */
-export const computeMachineOutputRequested = Effect.fnUntraced(function* () {
-  return emitsPayloadFor(Option.getOrUndefined(yield* OutputFlag));
-});
+export const {
+  emit: emitComputeMachineOutput,
+  requested: computeMachineOutputRequested,
+  rejectEnv: rejectComputeEnvOutput,
+} = resourceOutput(ComputeEnvNotSupportedError);
 
 /**
  * The format a run actually renders in, with `-o` given priority over
@@ -73,23 +22,8 @@ export const computeMachineOutputRequested = Effect.fnUntraced(function* () {
 export const computeRenderFormat = Effect.fnUntraced(function* () {
   const output = yield* Output;
   const goFormat = Option.getOrUndefined(yield* OutputFlag);
-  const forcesText = goFormat !== undefined && !emitsPayloadFor(goFormat);
+  const forcesText = goFormat !== undefined && !(yield* computeMachineOutputRequested());
   return forcesText ? ("text" as const) : output.format;
-});
-
-/**
- * Refuses `-o env` before the command does anything.
- *
- * Every compute payload has structure a flat `KEY=value` list cannot hold.
- * Refused up front rather than at emit time, since for `push` that would mean
- * failing only after the remote project has already changed.
- */
-export const rejectComputeEnvOutput = Effect.fnUntraced(function* () {
-  if (Option.getOrUndefined(yield* OutputFlag) === "env") {
-    return yield* new ComputeEnvNotSupportedError({
-      message: "--output env flag is not supported",
-    });
-  }
 });
 
 /**
