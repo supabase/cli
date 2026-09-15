@@ -16,9 +16,15 @@ import { createApiClient } from "@supabase/api";
 
 const client = await createApiClient({ accessToken: "<token>" });
 
-const projects = await client.v1.listAllProjects();
-const projectConfig = await client.v2.getProjectConfig({ ref: "<project-ref>" });
+try {
+  const projects = await client.v1.listAllProjects();
+  const projectConfig = await client.v2.getProjectConfig({ ref: "<project-ref>" });
+} finally {
+  await client.dispose();
+}
 ```
+
+Call `dispose()` when the client is no longer needed so its runtime and client-owned HTTP resources are released.
 
 Operations are namespaced by version, derived from the leading path segment (`/v1/...` or
 `/v2/...`). Same-named operations can coexist under separate namespaces: `client.v1.listOrganizationMembers`
