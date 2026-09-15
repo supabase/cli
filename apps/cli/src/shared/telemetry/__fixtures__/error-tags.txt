@@ -428,6 +428,7 @@ PullOutputFlagUnsupportedError
 PullParentRefInvalidError
 PullUncommittedChangesError
 PullWorkdirError
+RemoteJwksError
 ResetLocalDbNotRunningError
 ResetReplicationSlotsError
 RestartServicesError

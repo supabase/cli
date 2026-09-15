@@ -1467,31 +1467,28 @@ describe("start integration", () => {
   });
 
   describe("config-driven container-spec branches", () => {
-    it.live(
-      "fails when a configured third-party auth issuer's JWKS endpoint is unreachable",
-      () => {
-        const { layer, child } = setup({
-          httpClientLayer: Layer.succeed(
-            HttpClient.HttpClient,
-            HttpClient.make((request) =>
-              Effect.succeed(
-                HttpClientResponse.fromWeb(request, new Response(null, { status: 503 })),
-              ),
+    it.live("fails when a configured third-party auth issuer returns an HTTP error", () => {
+      const { layer, child } = setup({
+        httpClientLayer: Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make((request) =>
+            Effect.succeed(
+              HttpClientResponse.fromWeb(request, new Response(null, { status: 503 })),
             ),
           ),
-          configContents:
-            'project_id = "demo"\n[auth.third_party.firebase]\nenabled = true\nproject_id = "fb-project"\n',
-        });
-        return Effect.gen(function* () {
-          const exit = yield* Effect.exit(start(flags()));
-          expect(Exit.isFailure(exit)).toBe(true);
-          if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("StartInvalidConfigError");
-          }
-          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-        }).pipe(Effect.provide(layer));
-      },
-    );
+        ),
+        configContents:
+          'project_id = "demo"\n[auth.third_party.firebase]\nenabled = true\nproject_id = "fb-project"\n',
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(start(flags()));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(JSON.stringify(exit.cause)).toContain("StartInvalidConfigError");
+        }
+        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+      }).pipe(Effect.provide(layer));
+    });
 
     it.live("reads and mounts a configured API TLS cert/key pair for Kong", () => {
       const { layer, workdir, child } = setup({
