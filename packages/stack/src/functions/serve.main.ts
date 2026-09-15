@@ -38,7 +38,8 @@ const MULTILINE_ENV = multilineEnvironment();
 const EXCLUDED_ENVS = ["HOME", "HOSTNAME", "PATH", "PWD"];
 const HOST_PORT = Deno.env.get("SUPABASE_INTERNAL_HOST_PORT") ?? "8081";
 const FUNCTIONS_ROOT = Deno.env.get("SUPABASE_INTERNAL_FUNCTIONS_ROOT") ?? "";
-const JWT_SECRET = Deno.env.get("SUPABASE_INTERNAL_JWT_SECRET") ?? "";
+const JWT_SECRET =
+  Deno.env.get("SUPABASE_INTERNAL_JWT_SECRET") ?? MULTILINE_ENV.SUPABASE_INTERNAL_JWT_SECRET ?? "";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "http://127.0.0.1:54321";
 const JWKS_ENDPOINT = new URL("/auth/v1/.well-known/jwks.json", SUPABASE_URL);
 const WALLCLOCK_LIMIT_SEC = Number.parseInt(

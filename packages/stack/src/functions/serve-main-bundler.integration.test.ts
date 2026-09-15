@@ -21,11 +21,14 @@ describe("stack-owned functions bootstrap", () => {
       yield* fs.writeFileString(path.join(root, "hello", "index.ts"), "export default 1");
       const importMapPath = path.join(root, "import-map.json");
       yield* fs.writeFileString(importMapPath, '{"imports":{}}');
-      const secret = "bootstrap-test-secret";
+      const secret = "bootstrap-test\nsecret";
       let serveOptions: ServeOptions | undefined;
       let workerEnvironment: ReadonlyArray<readonly [string, string]> | undefined;
       let workerContext: Readonly<Record<string, unknown>> | undefined;
-      const multiline = '{"MULTILINE_VALUE":"first line\\nsecond line"}';
+      const multiline = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
+        MULTILINE_VALUE: "first line\nsecond line",
+        SUPABASE_INTERNAL_JWT_SECRET: secret,
+      });
       const functionsConfig = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
         $default: { import_map_root: importMapPath },
       });
@@ -40,11 +43,9 @@ describe("stack-owned functions bootstrap", () => {
                   ? functionsConfig
                   : name === "SUPABASE_INTERNAL_IMPORT_MAP_SOURCE"
                     ? importMapPath
-                    : name === "SUPABASE_INTERNAL_JWT_SECRET"
-                      ? secret
-                      : name === "SUPABASE_INTERNAL_MULTILINE_ENV"
-                        ? multiline
-                        : undefined,
+                    : name === "SUPABASE_INTERNAL_MULTILINE_ENV"
+                      ? multiline
+                      : undefined,
             toObject: () => ({ SUPABASE_INTERNAL_MULTILINE_ENV: multiline }),
           },
           lstat: (filename: string) =>
