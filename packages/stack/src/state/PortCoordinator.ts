@@ -70,7 +70,6 @@ export interface PortCoordinator {
   >;
   /** Reserves one invocation-only private port without changing persisted assignments. */
   readonly reserveTransientPrivate: (
-    stackId: string,
     field: string,
     port: "automatic" | number,
   ) => Effect.Effect<
@@ -166,7 +165,7 @@ const retryable = (error: PortUnavailableError): boolean => {
 };
 
 export const makePortCoordinator = (options: PortCoordinatorOptions): PortCoordinator => ({
-  reserveTransientPrivate: (stackId, field, requestedPort) =>
+  reserveTransientPrivate: (field, requestedPort) =>
     withRegistryLock(
       options.stateRoot,
       Effect.gen(function* () {

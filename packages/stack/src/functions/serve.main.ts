@@ -297,7 +297,6 @@ Deno.serve({
                 : 400_000,
               noModuleCache: true,
               noNpm,
-              importMapPath: config.importMapPath,
               envVars,
               forceCreate: true,
               customModuleRoot: "",
@@ -305,7 +304,12 @@ Deno.serve({
               cpuTimeHardLimitMs: 2000,
               decoratorType: "tc39",
               maybeEntrypoint: toFileUrl(config.entrypointPath).href,
-              context: { useReadSyncFileAPI: true },
+              context: {
+                useReadSyncFileAPI: true,
+                ...(config.importMapPath.length === 0
+                  ? {}
+                  : { importMapPath: config.importMapPath }),
+              },
               staticPatterns: config.staticFiles,
             }),
           );

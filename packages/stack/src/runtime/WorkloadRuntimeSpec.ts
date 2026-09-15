@@ -371,7 +371,7 @@ const edgeRuntimeJwtEnvironment = (
   return { ...inputs.functions?.secrets, ...fixed };
 };
 
-const FUNCTIONS_IMPORT_MAP_CONTAINER_PATH = `${FUNCTIONS_CONTAINER_ROOT}/.supabase-functions-serve-import-map.json`;
+const FUNCTIONS_IMPORT_MAP_CONTAINER_PATH = "/root/.supabase-functions-serve-import-map.json";
 
 const functionsConfigEnvironment = (
   state: PersistedStackState,

@@ -431,7 +431,7 @@ export const makeSupervisorIngress = (
       close,
       reserveTransientPrivate: (field, port) =>
         coordinator
-          .reserveTransientPrivate(options.stackId, field, port)
+          .reserveTransientPrivate(field, port)
           .pipe(
             Effect.provideContext(options.context),
             Effect.provideService(Scope.Scope, ownerScope),

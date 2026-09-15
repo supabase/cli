@@ -303,7 +303,9 @@ const rememberSecrets = (
   Ref.update(knownSecrets, (known) => {
     const next = new Set(known);
     for (const entry of Object.values(secrets)) {
-      if (entry.value.length > 0) next.add(entry.value);
+      if (entry.value.length === 0) continue;
+      next.add(entry.value);
+      if (/\r|\n/u.test(entry.value)) next.add(JSON.stringify(entry.value).slice(1, -1));
     }
     return next;
   });
