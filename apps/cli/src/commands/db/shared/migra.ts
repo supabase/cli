@@ -249,6 +249,7 @@ export const diffMigra = Effect.fnUntraced(function* (
       env,
       binds: [`${edgeRuntimeId(ctx.projectId)}:/root/.cache/deno:rw`],
       errPrefix: "error diffing schema",
+      projectEnvValues: ctx.projectEnv,
       denoVersion: ctx.denoVersion,
       workdir: ctx.cwd,
     })

@@ -133,7 +133,9 @@ export const buildLocalDbContainerInputs = (
     const extraHosts = platform === "linux" ? ["host.docker.internal:host-gateway"] : [];
     const containerOpts: ContainerOpts = {
       projectId,
-      isBitbucketPipeline: isBitbucketPipeline(),
+      isBitbucketPipeline: yield* isBitbucketPipeline(projectEnvValues).pipe(
+        Effect.mapError((error) => mapError(`failed to read config: ${error.message}`)),
+      ),
       workdir,
       extraHosts,
     };

@@ -33,6 +33,8 @@ export interface EdgeRuntimeBringUpInput {
   readonly projectId: string;
   /** Docker network to attach to — the `--network-id` override or the project's default network. */
   readonly networkId: string;
+  /** Project dotenv values used for Bitbucket's Docker restrictions. */
+  readonly projectEnvValues: Readonly<Record<string, string>>;
   /** Already resolved/pulled by the caller (`resolveEdgeRuntimeImage`). */
   readonly image: string;
   /**
@@ -115,6 +117,7 @@ export const startStackEdgeRuntimeContainer = Effect.fn("start.edgeRuntime")(fun
     platform: input.platform,
     debug: input.debug,
     networkId: input.networkId,
+    projectEnvValues: input.projectEnvValues,
     // `start` has no CLI flags of its own for any of these; all zero values.
     envFile: Option.none(),
     discoverFunctionEnvFiles: false,
