@@ -13,7 +13,7 @@ import { DebugLogger } from "../command-internal/debug-logger.service.ts";
  * from. Logging one verbatim under `--debug` puts that in terminal scrollback
  * and in any CI log or bug report the output is pasted into.
  */
-const PRESIGNED_QUERY_KEYS = [
+const CREDENTIAL_QUERY_KEYS = [
   // AWS SigV4 and SigV2
   "x-amz-signature",
   "x-amz-credential",
@@ -27,6 +27,8 @@ const PRESIGNED_QUERY_KEYS = [
   "se",
   "signature",
   "token",
+  "apikey",
+  "access_token",
 ];
 
 /**
@@ -46,10 +48,10 @@ export function redactHttpUrl(url: string): string {
   if (parsed.search === "") {
     return url;
   }
-  const presigned = [...parsed.searchParams.keys()].some((key) =>
-    PRESIGNED_QUERY_KEYS.includes(key.toLowerCase()),
+  const credentialed = [...parsed.searchParams.keys()].some((key) =>
+    CREDENTIAL_QUERY_KEYS.includes(key.toLowerCase()),
   );
-  if (!presigned) {
+  if (!credentialed) {
     return url;
   }
   return `${parsed.origin}${parsed.pathname}?<redacted>`;

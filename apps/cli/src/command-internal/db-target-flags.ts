@@ -57,6 +57,25 @@ export const VALUE_CONSUMING_LONG_FLAGS = new Set([
   // `--log-level` is not listed: an argv giving it a flag-shaped value fails the real parse
   // before any scanner here runs, so nothing can mis-consume around it. `--completions` prints
   // and exits before any handler runs, so these scans never see it either.
+  "api-key",
+  "publishable-key",
+  "secret-key",
+  "user-token",
+  "email",
+  "timeout",
+  "server-log-level",
+  "categories",
+  "postgres",
+  "event",
+  "filter",
+  "select",
+  "replay-since",
+  "replay-limit",
+  "duration",
+  "events",
+  "as",
+  "count",
+  "url",
   // Every other value-consuming flag declared directly across commands/ (see the doc comment
   // above).
   "add-domains",
