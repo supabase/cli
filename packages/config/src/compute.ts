@@ -3,9 +3,52 @@ import { Effect, Schema } from "effect";
 
 const tags = ["compute"];
 
+/**
+ * Settings that apply to every compute rather than to one. Empty today.
+ *
+ * A key belongs here only when it cannot be expressed as a default — when setting it is
+ * *not* equivalent to writing the same key and value into every `[compute.<name>]` table
+ * that omits it. A base directory is the motivating example: the root value is combined
+ * with each compute's name to derive a different path per compute, so it is a rule for
+ * producing values rather than a value, and substituting it into each entry would point
+ * every compute at one directory.
+ *
+ * Anything expressible as a default belongs in `[compute.defaults]` instead, where it
+ * costs nothing because it is nested rather than sharing the namespace with compute names.
+ * A key here costs a reserved word, so the bar is deliberately high.
+ */
+const rootFields = {};
+
+/**
+ * Names reserved before the settings that will use them exist, so introducing one later is
+ * not a breaking change for a project that had already named a compute after it.
+ */
+const forwardReserved = ["defaults"];
+
+/**
+ * Names a compute may not take, because `[compute]` uses them for itself.
+ *
+ * Reserving a word is what makes a non-table setting possible at all. Every key under
+ * `[compute]` is checked against the rest record below, fixed keys included, so a scalar
+ * would otherwise have to satisfy the per-compute entry schema and no value could. Removing
+ * the word from the key schema takes it out of that check, leaving only the field's own type
+ * to apply.
+ */
+export const RESERVED_COMPUTE_NAMES: ReadonlyArray<string> = [
+  ...Object.keys(rootFields),
+  ...forwardReserved,
+];
+
 // Compute names end up in hostnames, so they must be valid DNS labels, matching the
 // Management API's own validation.
-const computeName = Schema.String.check(Schema.isPattern(/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/));
+const computeName = Schema.String.check(
+  Schema.isPattern(/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/),
+  Schema.makeFilter((name: string) =>
+    RESERVED_COMPUTE_NAMES.includes(name)
+      ? `"${name}" is reserved by the [compute] section and cannot name a compute`
+      : undefined,
+  ),
+);
 
 const computeEntry = Schema.Struct({
   runtime: Schema.optionalKey(
@@ -73,17 +116,15 @@ const computeEntry = Schema.Struct({
 });
 
 /**
- * `[compute]` — one `[compute.<name>]` table per Compute service, keyed by name, plus
- * room for settings that apply to every compute.
+ * `[compute]` — one `[compute.<name>]` table per Compute service, keyed by name, alongside
+ * the settings in {@link rootFields} that apply to every compute.
  *
- * A struct-with-rest rather than a bare `Record` so both can share the one table: a
- * `Record` has no slot for a sibling scalar, so `[compute] source = "./my-apps"` would
- * be read as a compute *named* `source` and rejected as a non-table. There are no such
- * settings yet. Adding the first one is a field in the struct below and nothing else —
- * `[compute.<name>]` does not move — at the cost of that name no longer being available
- * to a compute, which is why they are added deliberately rather than speculatively.
+ * A struct-with-rest rather than a bare `Record` so both can share the one table: a `Record`
+ * has no slot for a sibling key, so a setting would be read as a compute *named* after it.
+ * Adding one is a field in {@link rootFields} and nothing else — `[compute.<name>]` does not
+ * move, and the name is reserved automatically.
  */
-export const compute = Schema.StructWithRest(Schema.Struct({}), [
+export const compute = Schema.StructWithRest(Schema.Struct(rootFields), [
   Schema.Record(computeName, computeEntry),
 ])
   .annotate({

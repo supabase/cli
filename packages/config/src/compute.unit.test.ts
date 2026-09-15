@@ -1,6 +1,6 @@
 import { Schema } from "effect";
 import { describe, expect, test } from "vitest";
-import { compute } from "./compute.ts";
+import { compute, RESERVED_COMPUTE_NAMES } from "./compute.ts";
 
 const decode = Schema.decodeUnknownSync(compute);
 
@@ -59,6 +59,25 @@ describe("compute schema", () => {
 
   test("rejects a bare value where a compute table belongs", () => {
     expect(() => decode({ api: "node" })).toThrow();
+  });
+
+  test("does not accept a reserved word as a compute name", () => {
+    for (const reserved of RESERVED_COMPUTE_NAMES) {
+      // Dropped rather than thrown: an unusable key is filtered from the record, the same
+      // as any other name that is not a valid compute name. `validateComputeNameMessage`
+      // is what refuses it up front, before anything is scaffolded.
+      expect(decode({ [reserved]: { runtime: "node" } })).toEqual({});
+    }
+  });
+
+  test("reserves every settings key `[compute]` defines for itself", () => {
+    // The guard for a shared setting added without reserving its name: the reserved list is
+    // derived from the same fields, so this fails only if that derivation is broken.
+    const json = JSON.parse(JSON.stringify(Schema.toJsonSchemaDocument(compute).schema));
+    const objectSchema = json.anyOf?.find((entry: { type?: string }) => entry?.type === "object");
+    for (const declared of Object.keys(objectSchema?.properties ?? {})) {
+      expect(RESERVED_COMPUTE_NAMES).toContain(declared);
+    }
   });
 
   test("rejects a scalar setting until one is declared as a shared setting", () => {

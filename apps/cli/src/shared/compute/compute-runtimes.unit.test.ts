@@ -1,3 +1,4 @@
+import { RESERVED_COMPUTE_NAMES } from "@supabase/config";
 import { describe, expect, test } from "vitest";
 import {
   apiSizeFor,
@@ -63,6 +64,12 @@ describe("parseComputeExposure", () => {
 });
 
 describe("validateComputeNameMessage", () => {
+  test.each([...RESERVED_COMPUTE_NAMES])("rejects the reserved name %j", (name) => {
+    // A reserved name is a valid DNS label, so the pattern alone would accept it and `new`
+    // would scaffold before the schema silently declined to record the entry.
+    expect(validateComputeNameMessage(name)).toContain("reserved");
+  });
+
   test("accepts DNS labels", () => {
     expect(validateComputeNameMessage("api")).toBeUndefined();
     expect(validateComputeNameMessage("my-compute-1")).toBeUndefined();

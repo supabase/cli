@@ -1,3 +1,5 @@
+import { RESERVED_COMPUTE_NAMES } from "@supabase/config";
+
 /**
  * Runtime, size, and exposure are the CLI's own small closed sets, not the API's: the Compute API
  * takes `spec.size` as one opaque string (`2gb-1vcpu`) and `spec.exposure` as an unconstrained
@@ -136,7 +138,14 @@ const computeNameRequirement =
 /**
  * `undefined` when `name` can be recorded as `[compute.<name>]`, else the reason it can't — used
  * by `new` (which writes the section) and `push` (which deploys what `new` wrote).
+ *
+ * Reserved names are refused here as well as in the schema. The schema drops a key it can't read
+ * as a compute name rather than failing, so without this `new` would scaffold the starter files
+ * and only then find that recording them had no effect.
  */
 export function validateComputeNameMessage(name: string): string | undefined {
+  if (RESERVED_COMPUTE_NAMES.includes(name)) {
+    return `"${name}" is reserved by the [compute] section of config.toml. Choose another name.`;
+  }
   return COMPUTE_NAME_PATTERN.test(name) ? undefined : computeNameRequirement;
 }

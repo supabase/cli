@@ -12,6 +12,7 @@ export {
   type CliConfig,
   type CliConfigJson,
 } from "./base.ts";
+export { RESERVED_COMPUTE_NAMES } from "./compute.ts";
 export {
   CliConfigParseError,
   CliProjectEnvParseError,
