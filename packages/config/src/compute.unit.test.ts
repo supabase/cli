@@ -6,6 +6,13 @@ const decode = Schema.decodeUnknownSync(compute);
 
 const computeNamePattern = "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$";
 
+/** The fixed keys `[compute]` declares for its own settings, read back off the compiled schema. */
+function declaredSettings(): Set<string> {
+  const json = JSON.parse(JSON.stringify(Schema.toJsonSchemaDocument(compute).schema));
+  const objectSchema = json.anyOf?.find((entry: { type?: string }) => entry?.type === "object");
+  return new Set(Object.keys(objectSchema?.properties ?? {}));
+}
+
 describe("compute schema", () => {
   test("decodes a compute table with every dial set", () => {
     const every = {
@@ -61,21 +68,21 @@ describe("compute schema", () => {
     expect(() => decode({ api: "node" })).toThrow();
   });
 
-  test("does not accept a reserved word as a compute name", () => {
-    for (const reserved of RESERVED_COMPUTE_NAMES) {
-      // Dropped rather than thrown: an unusable key is filtered from the record, the same
-      // as any other name that is not a valid compute name. `validateComputeNameMessage`
-      // is what refuses it up front, before anything is scaffolded.
+  test("drops a reserved name that no setting backs yet", () => {
+    // A forward-reserved name has no field to claim it, so the key is filtered from the
+    // record exactly like any other name that is not a valid compute name. Once a setting
+    // does back the name, the refusal changes shape — the key meets that field's own type
+    // instead — so this only covers the names still waiting for one.
+    for (const reserved of RESERVED_COMPUTE_NAMES.filter((name) => !declaredSettings().has(name))) {
       expect(decode({ [reserved]: { runtime: "node" } })).toEqual({});
     }
   });
 
   test("reserves every settings key `[compute]` defines for itself", () => {
-    // The guard for a shared setting added without reserving its name: the reserved list is
-    // derived from the same fields, so this fails only if that derivation is broken.
-    const json = JSON.parse(JSON.stringify(Schema.toJsonSchemaDocument(compute).schema));
-    const objectSchema = json.anyOf?.find((entry: { type?: string }) => entry?.type === "object");
-    for (const declared of Object.keys(objectSchema?.properties ?? {})) {
+    // The guard for a setting added without reserving its name. The list is derived from
+    // `rootFields`, so adding one there reserves it automatically; this fails if a field is
+    // declared some other way, which would leave it able to collide with a compute name.
+    for (const declared of declaredSettings()) {
       expect(RESERVED_COMPUTE_NAMES).toContain(declared);
     }
   });
