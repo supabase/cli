@@ -19,12 +19,7 @@ import { ipv6Suggestion, isIPv6ConnectivityError } from "./connect-errors.ts";
 import { DbConfigResolver } from "./db-config.service.ts";
 import { resolveDbImage } from "./db-image.ts";
 import { DbConnection, type PgConnInput } from "./db-connection.service.ts";
-import {
-  applyProjectEnv,
-  loadProjectEnv,
-  readDbToml,
-  resolveDeclarativeDir,
-} from "./db-config.toml-read.ts";
+import { loadProjectEnv, readDbToml, resolveDeclarativeDir } from "./db-config.toml-read.ts";
 import type { DbConnType } from "./db-target-flags.ts";
 import { makeDir } from "./make-dir.ts";
 import { toPostgresURL } from "./postgres-url.ts";
@@ -180,10 +175,6 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
   let linkedRefForCache: string | undefined;
 
   return yield* Effect.gen(function* () {
-    // Make an allowlisted `supabase/.env` registry override visible to the
-    // synchronous `process.env` reader in `getRegistryImageUrl` (the pg_dump
-    // seed + migra/pg-delta diff images), reverted when this scope closes.
-    yield* applyProjectEnv(projectEnv);
     const name = Option.getOrElse(flags.name, () => "remote_schema");
     // `--declarative` and the deprecated `--use-pg-delta` both bind to the same
     // `useDeclarative` outcome. When both are passed, the last occurrence in argv wins
@@ -820,8 +811,5 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
       ),
     ),
     Effect.ensuring(telemetryState.flush),
-    // Scope the `SUPABASE_INTERNAL_IMAGE_REGISTRY`-from-`.env` apply above to this
-    // command run: `applyProjectEnv` registers a finalizer that reverts it.
-    Effect.scoped,
   );
 });

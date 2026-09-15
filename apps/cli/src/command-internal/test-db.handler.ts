@@ -8,7 +8,6 @@ import { DbConfigResolver } from "./db-config.service.ts";
 import { readDbToml } from "./db-config.toml-read.ts";
 import { DbConnection } from "./db-connection.service.ts";
 import { DockerRun } from "./docker-run.service.ts";
-import { getRegistryImageUrl } from "./docker-registry.ts";
 import { resolveDbTargetFlags } from "./db-target-flags.ts";
 import { DebugFlag, DnsResolverFlag, NetworkIdFlag } from "./global-flags.ts";
 import { Output } from "../shared/output/output.service.ts";
@@ -185,7 +184,7 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
         // teed live, as inheriting it did.
         return yield* docker.runStream(
           {
-            image: getRegistryImageUrl(PG_PROVE_IMAGE),
+            image: PG_PROVE_IMAGE,
             cmd: args.cmd,
             env: runEnv,
             binds: args.binds,

@@ -6,11 +6,7 @@ import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.serv
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import type { DbConnType } from "../../../command-internal/db-target-flags.ts";
-import {
-  applyProjectEnv,
-  loadProjectEnv,
-  readDbToml,
-} from "../../../command-internal/db-config.toml-read.ts";
+import { loadProjectEnv, readDbToml } from "../../../command-internal/db-config.toml-read.ts";
 import { resolveDbImage } from "../../../command-internal/db-image.ts";
 import {
   ipv6Suggestion,
@@ -79,10 +75,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
   let linkedRefForCache: string | undefined;
 
   yield* Effect.gen(function* () {
-    // Makes an allowlisted `supabase/.env` registry override visible to the synchronous
-    // `process.env` reader in `getRegistryImageUrl`; reverted when this scope closes.
     const projectEnv = yield* loadProjectEnv(fs, path, cliSettings.workdir);
-    yield* applyProjectEnv(projectEnv);
 
     // Resolves grouped boolean flags' effective values (default false) for code paths
     // that need the value, not just presence.
@@ -372,8 +365,5 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
       ),
     ),
     Effect.ensuring(telemetryState.flush),
-    // Scope the `SUPABASE_INTERNAL_IMAGE_REGISTRY`-from-`.env` apply above to this
-    // command run: `applyProjectEnv` registers a finalizer that reverts it.
-    Effect.scoped,
   );
 });

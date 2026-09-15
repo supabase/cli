@@ -204,11 +204,12 @@ export function processPgAdminDiffOutput(
 }
 
 function pgAdminDockerReason(
-  reason: "spawn" | "inspect" | "pull",
+  reason: "spawn" | "config" | "inspect" | "pull",
   daemonDown: boolean,
-): "docker_daemon" | "image_inspect" | "registry_pull" {
+): "docker_daemon" | "config" | "image_inspect" | "registry_pull" {
   if (reason === "spawn" || daemonDown) return "docker_daemon";
   if (reason === "pull") return "registry_pull";
+  if (reason === "config") return "config";
   return "image_inspect";
 }
 
@@ -218,6 +219,7 @@ export interface DiffSchemaPgAdminParams {
   /** The shadow database's raw connection string (not built via `toPostgresURL`). */
   readonly target: string;
   readonly schema: ReadonlyArray<string>;
+  readonly projectEnvValues?: Readonly<Record<string, string>>;
   /** Merged onto both docker container labels. */
   readonly projectId: string;
   /**
@@ -236,7 +238,7 @@ export interface DiffSchemaPgAdminParams {
  * `runCapture`, not `runStream`, because progress arrives on stderr, which cannot be
  * streamed incrementally today — so each run's status lines print only after that
  * run's container exits, not live. The image is passed unresolved so the registry
- * resolver picks up any project-level registry override from the caller's env scope.
+ * resolver can use the project's merged environment.
  */
 export const diffSchemaPgAdmin = (
   params: DiffSchemaPgAdminParams,
@@ -269,6 +271,7 @@ export const diffSchemaPgAdmin = (
           extraHosts: params.extraHosts,
           network,
           labels,
+          projectEnvValues: params.projectEnvValues,
         })
         .pipe(
           Effect.mapError(
