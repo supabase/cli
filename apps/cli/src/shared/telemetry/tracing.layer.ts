@@ -1,4 +1,4 @@
-import { Cause, Effect, Fiber, Layer, Queue, Stdio, Stream, Tracer } from "effect";
+import { Cause, Duration, Effect, Fiber, Layer, Queue, Stdio, Stream, Tracer } from "effect";
 import type { Exit } from "effect";
 
 import { makeDebugConsoleExporter } from "./exporters/debug-console.ts";
@@ -6,6 +6,8 @@ import { exportSpanToNdjson, initNdjsonExporter } from "./exporters/ndjson.ts";
 import { telemetryRuntimeLayer } from "./runtime.layer.ts";
 import { TelemetryRuntime } from "./runtime.service.ts";
 import { Tracing } from "./tracing.service.ts";
+
+const EXPORT_DRAIN_TIMEOUT = Duration.millis(2_000);
 
 class ExportableSpan extends Tracer.NativeSpan {
   constructor(
@@ -56,8 +58,14 @@ export const tracingLayer = Layer.effect(
       Effect.catchTag("Done", () => Effect.void),
     );
     const worker = yield* Effect.forkScoped(workerEffect);
+    // Match PostHog's 2-second shutdown cap so a stalled sink cannot hold scope closure forever.
     yield* Effect.addFinalizer(() =>
-      Queue.end(queue).pipe(Effect.andThen(Fiber.join(worker)), Effect.ignore),
+      Queue.end(queue).pipe(
+        Effect.andThen(
+          Effect.interruptible(Fiber.join(worker)).pipe(Effect.timeout(EXPORT_DRAIN_TIMEOUT)),
+        ),
+        Effect.ignore,
+      ),
     );
 
     const globalAttrs: Record<string, unknown> = {
