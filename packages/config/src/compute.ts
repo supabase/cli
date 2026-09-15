@@ -6,50 +6,33 @@ const tags = ["compute"];
 /**
  * Settings that apply to every compute rather than to one. Empty today.
  *
- * A key belongs here only when it cannot be expressed as a default — when setting it is
- * *not* equivalent to writing the same key and value into every `[compute.<name>]` table
- * that omits it. A base directory is the motivating example: the root value is combined
- * with each compute's name to derive a different path per compute, so it is a rule for
- * producing values rather than a value, and substituting it into each entry would point
- * every compute at one directory.
+ * A key belongs here only when it cannot be expressed as a default: when setting it is not
+ * equivalent to writing the same key and value into every `[compute.<name>]` table that
+ * omits it. Anything expressible as one belongs in `[compute.defaults]`, nested rather than
+ * sharing the namespace with compute names, so it costs no reserved word.
  *
- * Anything expressible as a default belongs in `[compute.defaults]` instead, where it
- * costs nothing because it is nested rather than sharing the namespace with compute names.
- * A key here costs a reserved word, so the bar is deliberately high.
- *
- * Exported so the schema's declared keys can be checked against this list: going through
- * here is what reserves a name, so a setting declared any other way has to be caught.
+ * Exported so the schema's declared keys can be checked against this list, since going
+ * through here is what reserves a name.
  */
 export const rootFields = {};
 
-/**
- * Names reserved before the settings that will use them exist, so introducing one later is
- * not a breaking change for a project that had already named a compute after it.
- */
+// Reserved before the settings using them exist, so introducing one later does not break a
+// project that had already named a compute after it.
 const forwardReserved = ["defaults"];
 
-/**
- * Names a compute may not take, because `[compute]` uses them for itself.
- *
- * Reserving a word is what makes a non-table setting possible at all. Every key under
- * `[compute]` is checked against the rest record below, fixed keys included, so a scalar
- * would otherwise have to satisfy the per-compute entry schema and no value could. Removing
- * the word from the key schema takes it out of that check, leaving only the field's own type
- * to apply.
- */
+/** Names a compute may not take, because `[compute]` uses them for itself. */
 export const RESERVED_COMPUTE_NAMES: ReadonlyArray<string> = [
   ...Object.keys(rootFields),
   ...forwardReserved,
 ];
 
 // Compute names end up in hostnames, so they must be valid DNS labels, matching the
-// Management API's own validation.
+// Management API's own validation. Reserved names are excluded by the same pattern rather
+// than a separate filter, so the generated JSON Schema carries the exclusion too — a filter
+// is not expressible there, which would let an editor accept a key the CLI drops.
 const computeName = Schema.String.check(
-  Schema.isPattern(/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/),
-  Schema.makeFilter((name: string) =>
-    RESERVED_COMPUTE_NAMES.includes(name)
-      ? `"${name}" is reserved by the [compute] section and cannot name a compute`
-      : undefined,
+  Schema.isPattern(
+    new RegExp(`^(?!(?:${RESERVED_COMPUTE_NAMES.join("|")})$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`),
   ),
 );
 

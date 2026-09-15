@@ -93,6 +93,7 @@ root.
 | `1`  | resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a directory (`ComputeNewWorkdirError`) — beats every prompt and filesystem write |
 | `1`  | authoritative project config is JSON (`ComputeJsonConfigUnsupportedError`)                                                                      |
 | `1`  | invalid compute name — the name must be a DNS label                                                                                             |
+| `1`  | the name is reserved by `[compute]` for one of its own settings                                                                                 |
 | `1`  | no name given, and nowhere to ask for one — stdin or stdout is not a terminal, or `-o` is in force                                              |
 | `1`  | bad `--source`: outside the project, or a path the CLI owns                                                                                     |
 | `1`  | destination exists and is not empty                                                                                                             |

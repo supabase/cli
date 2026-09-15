@@ -2356,7 +2356,7 @@
         {
           "type": "object",
           "patternProperties": {
-            "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$": {
+            "^(?!(?:defaults)$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$": {
               "type": "object",
               "properties": {
                 "runtime": {
@@ -4870,7 +4870,7 @@
                       {
                         "type": "object",
                         "patternProperties": {
-                          "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$": {
+                          "^(?!(?:defaults)$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$": {
                             "type": "object",
                             "properties": {
                               "runtime": {

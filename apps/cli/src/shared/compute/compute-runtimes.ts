@@ -1,4 +1,4 @@
-import { RESERVED_COMPUTE_NAMES } from "@supabase/config";
+import { RESERVED_COMPUTE_NAMES } from "@supabase/config/internal";
 
 /**
  * Runtime, size, and exposure are the CLI's own small closed sets, not the API's: the Compute API
@@ -136,16 +136,28 @@ const computeNameRequirement =
   "Use lowercase letters, digits and hyphens, starting and ending with a letter or digit.";
 
 /**
- * `undefined` when `name` can be recorded as `[compute.<name>]`, else the reason it can't — used
- * by `new` (which writes the section) and `push` (which deploys what `new` wrote).
+ * `undefined` when `name` could name a compute at all, else the reason it can't — used by every
+ * command that acts on one, including the remote-only `status`, `logs` and `delete`.
  *
- * Reserved names are refused here as well as in the schema. The schema drops a key it can't read
- * as a compute name rather than failing, so without this `new` would scaffold the starter files
- * and only then find that recording them had no effect.
+ * Not a reservation check: a compute named after a `[compute]` setting can already
+ * exist remotely, created before the name was reserved, and refusing here would leave no way to
+ * inspect or delete it. See {@link reservedComputeNameMessage} for the check that writing
+ * `[compute.<name>]` needs.
  */
 export function validateComputeNameMessage(name: string): string | undefined {
-  if (RESERVED_COMPUTE_NAMES.includes(name)) {
-    return `"${name}" is reserved by the [compute] section of config.toml. Choose another name.`;
-  }
   return COMPUTE_NAME_PATTERN.test(name) ? undefined : computeNameRequirement;
+}
+
+/**
+ * `undefined` when `name` may be recorded as `[compute.<name>]`, else the reason it may not.
+ *
+ * Separate from {@link validateComputeNameMessage} because this is a constraint on writing
+ * config, not on the name itself. The schema drops a key it can't read as a compute name rather
+ * than failing, so without this `new` would scaffold the starter files and only then find that
+ * recording them had no effect.
+ */
+export function reservedComputeNameMessage(name: string): string | undefined {
+  return RESERVED_COMPUTE_NAMES.includes(name)
+    ? "It is reserved by the [compute] section of config.toml for its own settings."
+    : undefined;
 }

@@ -12,7 +12,10 @@ import {
   computeRootDir,
   computeSourceDir,
 } from "../../../shared/compute/compute-paths.ts";
-import { validateComputeNameMessage } from "../../../shared/compute/compute-runtimes.ts";
+import {
+  reservedComputeNameMessage,
+  validateComputeNameMessage,
+} from "../../../shared/compute/compute-runtimes.ts";
 import {
   ComputeJsonConfigUnsupportedError,
   InvalidComputeNameError,
@@ -213,6 +216,22 @@ export const validateComputeName = Effect.fnUntraced(function* (name: string) {
     return yield* new InvalidComputeNameError({
       detail: `"${name}" is not a valid compute name. ${invalid}`,
       suggestion: "Compute names become hostnames, so they must be DNS labels.",
+    });
+  }
+  return name;
+});
+
+/**
+ * Reject a name that may not be written to `config.toml`, for the commands that record one.
+ * Separate from {@link validateComputeName} so the remote-only commands can still reach a
+ * compute whose name was reserved after it was created.
+ */
+export const validateWritableComputeName = Effect.fnUntraced(function* (name: string) {
+  const reserved = reservedComputeNameMessage(name);
+  if (reserved !== undefined) {
+    return yield* new InvalidComputeNameError({
+      detail: `"${name}" cannot be recorded in config.toml. ${reserved}`,
+      suggestion: "Choose a name that [compute] does not use for one of its own settings.",
     });
   }
   return name;

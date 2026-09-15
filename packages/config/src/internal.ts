@@ -6,6 +6,7 @@
  * functions `./effect` exports, re-typed here to widen their options parameter to the
  * internal-only `goViperCompat` knob.
  */
+export { RESERVED_COMPUTE_NAMES } from "./compute.ts";
 export { ENV_CAPTURE_REGEX } from "./lib/env.ts";
 export {
   type AppliedConfigEdit,

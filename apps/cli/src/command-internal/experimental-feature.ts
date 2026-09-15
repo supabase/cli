@@ -49,7 +49,7 @@ const UnknownFromJsonString = Schema.fromJsonString(Schema.Unknown);
 const featureEnabled = (configured: unknown): boolean | undefined => {
   if (typeof configured === "boolean") return configured;
   if (typeof configured === "object" && configured !== null && "enabled" in configured) {
-    const { enabled } = configured as { readonly enabled?: unknown };
+    const { enabled } = configured;
     return typeof enabled === "boolean" ? enabled : undefined;
   }
   return undefined;

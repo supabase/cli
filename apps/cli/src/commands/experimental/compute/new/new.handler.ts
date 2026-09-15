@@ -27,6 +27,7 @@ import {
   parseComputeExposure,
   parseComputeRuntime,
   parseComputeSize,
+  reservedComputeNameMessage,
   validateComputeNameMessage,
   vcpuForSize,
   COMPUTE_EXPOSURE_DESCRIPTIONS,
@@ -46,6 +47,7 @@ import {
 import {
   loadComputeProjectForEntryWrite,
   validateComputeName,
+  validateWritableComputeName,
   type ComputeProject,
 } from "../compute.shared.ts";
 import type { ComputeNewFlags } from "./new.command.ts";
@@ -101,7 +103,7 @@ const resolveName = Effect.fnUntraced(function* (options: {
     const output = yield* Output;
     return yield* output.promptText("What should this compute be called?", {
       validate: (value) => {
-        const invalid = validateComputeNameMessage(value);
+        const invalid = validateComputeNameMessage(value) ?? reservedComputeNameMessage(value);
         if (invalid !== undefined) {
           return invalid;
         }
@@ -254,6 +256,7 @@ export const computeNew = Effect.fn("compute.new")(function* (flags: ComputeNewF
 
     const name = yield* resolveName({ explicit: flags.name, canPrompt, project });
     yield* validateComputeName(name);
+    yield* validateWritableComputeName(name);
 
     // Refused before anything is asked or written. `new` creates a compute;
     // changing one that already exists is a `config.toml` edit, and the file is

@@ -4,7 +4,14 @@ import { compute, RESERVED_COMPUTE_NAMES, rootFields } from "./compute.ts";
 
 const decode = Schema.decodeUnknownSync(compute);
 
-const computeNamePattern = "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$";
+/** The sole `patternProperties` key of the generated schema: what a compute name may be. */
+function computeNamePattern(): string {
+  const json = JSON.parse(JSON.stringify(Schema.toJsonSchemaDocument(compute).schema));
+  const objectSchema = json.anyOf?.find((entry: { type?: string }) => entry?.type === "object");
+  const patterns = Object.keys(objectSchema?.patternProperties ?? {});
+  expect(patterns).toHaveLength(1);
+  return patterns[0] as string;
+}
 
 /** The fixed keys `[compute]` declares for its own settings, read back off the compiled schema. */
 function declaredSettings(): Set<string> {
@@ -78,6 +85,16 @@ describe("compute schema", () => {
     }
   });
 
+  test("excludes reserved names from the generated schema, not only at runtime", () => {
+    // A filter is not expressible in JSON Schema, so the exclusion lives in the pattern.
+    // Without it an editor validating config.toml would accept a key the CLI then drops.
+    const pattern = new RegExp(computeNamePattern());
+    expect(pattern.test("api")).toBe(true);
+    for (const reserved of RESERVED_COMPUTE_NAMES) {
+      expect(pattern.test(reserved)).toBe(false);
+    }
+  });
+
   test("declares exactly the settings `rootFields` lists", () => {
     // The other direction of the guard below. That one allows a setting declared outside
     // `rootFields` as long as its name was also reserved by hand, which is correct but
@@ -107,7 +124,7 @@ describe("compute schema", () => {
   test("includes compute properties in the generated JSON schema", () => {
     const json = JSON.parse(JSON.stringify(Schema.toJsonSchemaDocument(compute).schema));
     const objectSchema = json.anyOf?.find((entry: { type?: string }) => entry?.type === "object");
-    const computeSchema = objectSchema?.patternProperties?.[computeNamePattern];
+    const computeSchema = objectSchema?.patternProperties?.[computeNamePattern()];
 
     expect(computeSchema?.properties?.runtime).toBeDefined();
     expect(computeSchema?.properties?.size).toBeDefined();
@@ -119,7 +136,7 @@ describe("compute schema", () => {
   test("bounds instances as a non-negative integer in the generated JSON schema", () => {
     const json = JSON.parse(JSON.stringify(Schema.toJsonSchemaDocument(compute).schema));
     const objectSchema = json.anyOf?.find((entry: { type?: string }) => entry?.type === "object");
-    const computeSchema = objectSchema?.patternProperties?.[computeNamePattern];
+    const computeSchema = objectSchema?.patternProperties?.[computeNamePattern()];
 
     expect(computeSchema?.properties?.instances?.type).toBe("integer");
     expect(JSON.stringify(computeSchema?.properties?.instances)).toContain('"minimum":0');
