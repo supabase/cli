@@ -12,16 +12,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
-import {
-  ConfigProvider,
-  Effect,
-  Exit,
-  FileSystem,
-  Layer,
-  Option,
-  PlatformError,
-  Redacted,
-} from "effect";
+import { Effect, Exit, FileSystem, Layer, Option, PlatformError, Redacted } from "effect";
 import { afterEach, beforeEach, vi } from "vitest";
 
 import { DebugFlag, ProfileFlag, WorkdirFlag } from "../command-internal/global-flags.ts";
@@ -119,9 +110,7 @@ function makeLayer(
 ) {
   const home = opts.home ?? tempHome;
   const env = { HOME: home, ...opts.env };
-  const providerLayer = ConfigProvider.layer(
-    ConfigProvider.fromEnvRecord(env, { preserveEmptyStrings: true }),
-  );
+  const envLayer = processEnvLayer(env);
   const runtimeInfoLayer = mockRuntimeInfo({
     homeDir: home,
     cwd: home,
@@ -134,8 +123,7 @@ function makeLayer(
     Layer.provide(Layer.succeed(WorkdirFlag, Option.none<string>())),
     Layer.provide(runtimeInfoLayer),
     Layer.provide(BunServices.layer),
-    Layer.provide(processEnvLayer(env)),
-    Layer.provide(providerLayer),
+    Layer.provide(envLayer),
   );
   return commandCredentialsLayer.pipe(
     Layer.provide(cliSettingsLayer),
@@ -144,8 +132,7 @@ function makeLayer(
     Layer.provide(runtimeInfoLayer),
     Layer.provide(opts.fs ?? BunServices.layer),
     Layer.provide(BunServices.layer),
-    Layer.provide(processEnvLayer(env)),
-    Layer.provide(providerLayer),
+    Layer.provide(envLayer),
   );
 }
 

@@ -116,6 +116,7 @@ export const commandSettingsLayer = Layer.unwrap(
         const read = <A>(config: Config.Config<A>) => config.parse(provider);
         const profileEnvValue = yield* read(Config.option(Config.string("SUPABASE_PROFILE")));
         const supabaseHome = yield* read(Config.option(Config.string("SUPABASE_HOME")));
+        const resolvedSupabaseHome = resolveSupabaseHomeValue(supabaseHome, runtimeInfo.homeDir);
 
         // Optional service: tests without argv default to "not explicit". An empty command
         // path scans all of argv up to `--`, matching pflag.
@@ -139,7 +140,7 @@ export const commandSettingsLayer = Layer.unwrap(
           explicitProfileFlag,
           profileEnvValue,
           fs,
-          path.join(resolveSupabaseHomeValue(supabaseHome, runtimeInfo.homeDir), "profile"),
+          path.join(resolvedSupabaseHome, "profile"),
           debugLogger,
         );
 
@@ -164,7 +165,7 @@ export const commandSettingsLayer = Layer.unwrap(
         return CommandSettings.of({
           profile,
           profileEnvValue,
-          supabaseHome: resolveSupabaseHomeValue(supabaseHome, runtimeInfo.homeDir),
+          supabaseHome: resolvedSupabaseHome,
           apiUrl,
           projectHost,
           poolerHost,

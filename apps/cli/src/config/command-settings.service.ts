@@ -13,7 +13,9 @@ export type ProfileName = "supabase" | "supabase-staging" | "supabase-local" | "
 interface CommandSettingsShape {
   readonly profile: string;
   readonly apiUrl: string;
+  /** Raw SUPABASE_PROFILE value; Some("") differs from an absent variable. */
   readonly profileEnvValue: Option.Option<string>;
+  /** Resolved global state directory used for profiles and credentials. */
   readonly supabaseHome: string;
   /**
    * Project subdomain host for the active profile. Used to build the
