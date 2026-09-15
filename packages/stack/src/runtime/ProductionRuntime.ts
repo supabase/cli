@@ -967,6 +967,7 @@ export const makeProductionRuntime = (
         waitForReadiness,
         bootstrapDatabase: bootstrapWorkloadDatabase,
         logStore: logs,
+        knownSecrets: Ref.get(knownSecrets).pipe(Effect.map((values) => [...values])),
         wipeDatabaseData: Effect.gen(function* () {
           const dataPath = pathService.join(paths.data, "database");
           const key = { stackId: options.stackId, workloadId: "database:database" };

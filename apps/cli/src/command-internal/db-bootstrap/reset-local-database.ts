@@ -106,18 +106,25 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
 
   if (backend.kind === "stack") {
     const opened = yield* stackOpenReadyProject;
-    if (Option.isNone(opened)) return yield* Effect.fail(notRunning());
-    yield* output.raw(`Resetting local database${toLogMessage(input.version)}\n`, "stderr");
-    yield* opened.value.stack.resetDatabase.pipe(
-      Effect.catchTag("StackNotRunningError", () => Effect.fail(notRunning())),
-      Effect.mapError((cause) => resetFailed(`failed to reset local database: ${cause.message}`)),
-    );
+    if (Option.isNone(opened))
+      return yield* Effect.fail(
+        new ResetLocalDbNotRunningError({ message: "The local stack is not running." }),
+      );
     const catalog = yield* Effect.serviceOption(StackCatalogSetup);
     if (Option.isNone(catalog)) return yield* resetFailed("stack catalog setup is unavailable");
     const stackConfig = yield* loadStackConfig(workdir).pipe(
       Effect.mapError((cause) => resetFailed(cause.message)),
     );
     const toml = yield* readDbToml(fs, path, workdir);
+    yield* output.raw(`Resetting local database${toLogMessage(input.version)}\n`, "stderr");
+    yield* opened.value.stack.resetDatabase.pipe(
+      Effect.catchTag("StackNotRunningError", () =>
+        Effect.fail(
+          new ResetLocalDbNotRunningError({ message: "The local stack is not running." }),
+        ),
+      ),
+      Effect.mapError((cause) => resetFailed(`failed to reset local database: ${cause.message}`)),
+    );
     yield* catalog.value
       .apply({
         target: {

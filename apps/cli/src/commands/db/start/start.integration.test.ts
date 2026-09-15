@@ -289,7 +289,10 @@ interface SetupOpts {
 function setup(opts: SetupOpts = {}) {
   const catalog =
     opts.recordCatalog === true
-      ? recordingStackCatalogSetup((input) => input.target.kind)
+      ? recordingStackCatalogSetup((input) => ({
+          kind: input.target.kind,
+          analytics: input.optionalConfig?.capabilities?.analytics?.enabled,
+        }))
       : undefined;
   const workdir = opts.workdir ?? tempRoot.current;
   if (opts.skipConfig !== true) {
@@ -1639,7 +1642,7 @@ describe("db start stack backend", () => {
           rest: { enabled: false },
         },
       });
-      expect(catalogApplied).toEqual(["live"]);
+      expect(catalogApplied).toEqual([{ kind: "live", analytics: false }]);
       expect(out.stderrText).toContain("Applying migration 20240101000000_dogfood.sql");
     });
   });
@@ -1708,7 +1711,7 @@ describe("db start stack backend", () => {
           rest: { enabled: false },
         },
       });
-      expect(catalogApplied).toEqual(["live"]);
+      expect(catalogApplied).toEqual([{ kind: "live", analytics: false }]);
       expect(out.stderrText).toContain("Applying migration 20240101000000_dogfood.sql");
     });
   });

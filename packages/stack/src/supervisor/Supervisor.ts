@@ -44,6 +44,7 @@ import type { StackId } from "../public/StackId.ts";
 import type { LogQuery, StackLogBatch } from "../public/Logs.ts";
 import type { EffectStackCredentials } from "../public/Credentials.ts";
 import { RuntimeDriverError, type RuntimeDriver } from "../runtime/RuntimeDriver.ts";
+import { withLeftoverPersistentDataGuidance } from "../runtime/Diagnostics.ts";
 import type { PersistedStackState } from "../state/StackState.ts";
 import { isMissingStateRemnantError, type StackStateStore } from "../state/StackStateStore.ts";
 import { makeSessionLauncher, type SessionLauncher } from "./SessionLauncher.ts";
@@ -154,7 +155,9 @@ const mapRuntimeError = (error: unknown): StackError => {
   if (error instanceof ContainerEngineError) return error;
   if (error instanceof RuntimeDriverError && isStackError(error.cause)) return error.cause;
   return new StackRuntimeError({
-    message: error instanceof Error ? error.message : String(error),
+    message: withLeftoverPersistentDataGuidance(
+      error instanceof Error ? error.message : String(error),
+    ),
     cause: error,
   });
 };

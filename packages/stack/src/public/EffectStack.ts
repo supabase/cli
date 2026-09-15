@@ -124,9 +124,12 @@ import {
 } from "../supervisor/Launcher.ts";
 import {
   ContainerEngineResolver,
-  selectDefaultRuntime,
+  selectDefaultRuntimeSelection,
+  nativeRuntimeBlockedForUid,
+  NATIVE_ROOT_UNSUPPORTED_MESSAGE,
   type ContainerEngineResolverShape,
 } from "../runtime/ContainerEngineResolver.ts";
+import { formatStopTimeoutMessage } from "../runtime/Diagnostics.ts";
 import { statusFor } from "../supervisor/StatusProjection.ts";
 import { EMPTY_LOG_CURSOR, readRetainedLogs, selectLogBatch } from "../supervisor/LogStore.ts";
 import {
@@ -182,6 +185,8 @@ export interface EffectStack {
   readonly resetDatabase: Effect.Effect<StackStatus, ResetDatabaseError>;
   readonly logs: (query?: LogQuery) => Effect.Effect<StackLogBatch, StackLogsError>;
   readonly followLogs: (query?: LogQuery) => Stream.Stream<StackLogEntry, StackLogsError>;
+  /** Present when auto-select persisted native because the Docker daemon was down. */
+  readonly dockerFallbackNotice?: string;
 }
 
 const optionOf = <A>(value: A | undefined): Option.Option<A> =>
@@ -659,7 +664,33 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
         }
         yield* Fiber.join(closeFiber).pipe(Effect.ignore);
         yield* options.waitForRelease;
-      }).pipe(Effect.mapError(stopError));
+      }).pipe(
+        Effect.timeoutOrElse({
+          duration: "60 seconds",
+          orElse: () =>
+            Effect.gen(function* () {
+              const running = yield* status.pipe(
+                Effect.map((value) =>
+                  value.capabilities
+                    .filter(
+                      (capability) =>
+                        capability.state === "ready" || capability.state === "starting",
+                    )
+                    .map((capability) => capability.name),
+                ),
+                Effect.timeoutOrElse({
+                  duration: "2 seconds",
+                  orElse: () => Effect.succeed<ReadonlyArray<string>>([]),
+                }),
+                Effect.orElseSucceed(() => [] as ReadonlyArray<string>),
+              );
+              return yield* new StackLifecycleConflictError({
+                message: formatStopTimeoutMessage(running),
+              });
+            }),
+        }),
+        Effect.mapError(stopError),
+      );
     const launchAndStop = resolveClient(true, "maintenance").pipe(
       Effect.mapError(stopError),
       Effect.flatMap(({ client }) => stopOwner(client)),
@@ -1029,12 +1060,25 @@ export const createStack = (
     const resolverOption = yield* Effect.serviceOption(ContainerEngineResolver).pipe(
       Effect.map(Option.getOrUndefined),
     );
-    const requestedRuntime: StackRuntime =
-      options.runtime?.kind === "container"
-        ? { kind: "container", engine: options.runtime.engine ?? "docker" }
-        : options.runtime?.kind === "native"
-          ? { kind: "native" }
-          : (persisted?.runtime ?? (yield* selectDefaultRuntime(resolverOption)));
+    let dockerFallbackNotice: string | undefined;
+    let requestedRuntime: StackRuntime;
+    if (options.runtime?.kind === "container") {
+      requestedRuntime = { kind: "container", engine: options.runtime.engine ?? "docker" };
+    } else if (options.runtime?.kind === "native") {
+      requestedRuntime = { kind: "native" };
+    } else if (persisted !== undefined) {
+      requestedRuntime = persisted.runtime;
+    } else {
+      const selected = yield* selectDefaultRuntimeSelection(resolverOption);
+      requestedRuntime = selected.runtime;
+      dockerFallbackNotice = selected.dockerFallbackNotice;
+    }
+    if (
+      persisted === undefined &&
+      requestedRuntime.kind === "native" &&
+      nativeRuntimeBlockedForUid()
+    )
+      return yield* new StackRuntimeError({ message: NATIVE_ROOT_UNSUPPORTED_MESSAGE });
     const current = yield* store.initialize(stackId, stateInitial(identity, requestedRuntime));
     const runtimeMismatch =
       options.runtime !== undefined &&
@@ -1060,7 +1104,8 @@ export const createStack = (
       spawner,
       containerEngineResolver: resolverOption,
     });
-    return yield* makeHandle(stackId, dependencies);
+    const handle = yield* makeHandle(stackId, dependencies);
+    return dockerFallbackNotice === undefined ? handle : { ...handle, dockerFallbackNotice };
   });
 
 export const openStack = (

@@ -372,7 +372,43 @@ describe("native runtime", { timeout: 15_000 }, () => {
           .start(keyFor("nonzero"), workload("nonzero"))
           .pipe(Effect.exit);
         expect(Exit.isFailure(result)).toBe(true);
+        if (Exit.isFailure(result)) {
+          expect(Cause.pretty(result.cause)).toContain("stderr: native failed");
+        }
         expect(yield* runtime.observe(stackId)).toEqual([]);
+      }),
+    ),
+  );
+
+  it.live("attaches one-shot stderr and leftover wipe guidance to a startup failure", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const runtime = yield* makeNativeRuntime({
+          resolveProcess: () =>
+            Effect.succeed({
+              startup: [
+                {
+                  executable: process.execPath,
+                  args: [
+                    "-e",
+                    "process.stderr.write('initdb: directory exists but is not empty\\n'); process.exit(1)",
+                  ],
+                },
+              ],
+              main: fixtureProcess("unused-main"),
+            }),
+          waitForReadiness: () => Effect.void,
+        });
+        const result = yield* runtime
+          .start(keyFor("startup-leftover"), workload("startup-leftover"))
+          .pipe(Effect.exit);
+        expect(Exit.isFailure(result)).toBe(true);
+        if (Exit.isFailure(result)) {
+          const pretty = Cause.pretty(result.cause);
+          expect(pretty).toContain("stderr: initdb: directory exists but is not empty");
+          expect(pretty).toContain("db reset --local");
+          expect(pretty).toContain("stack destroy");
+        }
       }),
     ),
   );

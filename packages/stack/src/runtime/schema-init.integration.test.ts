@@ -3,8 +3,10 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
   ConfigProvider,
+  Deferred,
   Effect,
   Exit,
+  Fiber,
   FileSystem,
   Option,
   Redacted,
@@ -71,7 +73,9 @@ const fakeContainerEngine = (state: FakeContainerState): ContainerEngine => {
     removeNetwork: (resourceId: string) =>
       Effect.sync(() => {
         state.calls.push(`remove-network:${resourceId}`);
-        state.resources = state.resources.filter((resource) => resource.id !== resourceId);
+        state.resources = state.resources.filter(
+          (resource) => resource.id !== resourceId && resource.name !== resourceId,
+        );
       }),
     createVolume: (spec: ContainerVolumeSpec) =>
       Effect.sync(() => {
@@ -311,6 +315,57 @@ describe("schemaInit", () => {
       ).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.live("removes a schema-init network by name if create is interrupted", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const projectRoot = yield* fs.makeTempDirectoryScoped({
+          prefix: "schema-init-net-interrupt-",
+        });
+        const state: FakeContainerState = {
+          resources: [],
+          calls: [],
+          createdSpecs: [],
+          envFiles: new Map(),
+          nextId: 1,
+        };
+        const created = yield* Deferred.make<void>();
+        const engine = fakeContainerEngine(state);
+        const hanging: typeof engine = {
+          ...engine,
+          createNetwork: (spec) =>
+            Effect.gen(function* () {
+              yield* engine.createNetwork(spec);
+              yield* Deferred.succeed(created, undefined);
+              return yield* Effect.never;
+            }),
+        };
+        const fiber = yield* Effect.forkChild(
+          schemaInitWorkloads(
+            ["auth"],
+            {
+              kind: "ephemeral",
+              projectRoot,
+              runtime: { kind: "container", engine: "docker" },
+              config: {},
+              databaseUrl: "postgresql://postgres:s3cret@127.0.0.1:54322/postgres",
+              secrets: { databasePassword: password, jwtSecret },
+            },
+            {
+              containerEngine: hanging,
+              artifactPreparer: fakePreparer,
+              platform: "linux",
+            },
+          ),
+        );
+        yield* Deferred.await(created);
+        yield* Fiber.interrupt(fiber);
+        expect(state.resources.filter((resource) => resource.kind === "network")).toEqual([]);
+        expect(state.calls.some((call) => call.startsWith("remove-network:"))).toBe(true);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.live("resolves pooler env without an activated pooler process", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -528,6 +583,53 @@ describe("schemaInit", () => {
         expect(recorded[0]?.env.APP_NAME).toBe("realtime");
         expect(recorded[0]?.env.GEN_RPC_TCP_SERVER_PORT).toBe("5369");
         expect(recorded[0]?.env.GEN_RPC_SOCKET_IP).toBe("127.0.0.1");
+      }),
+    ).pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.provide(NodeServices.layer),
+    );
+  });
+
+  it.live("includes native schema-init stderr on a one-shot failure", () => {
+    const encoder = new TextEncoder();
+    const spawner = ChildProcessSpawner.make(() =>
+      Effect.succeed(
+        ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(999_998),
+          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+          isRunning: Effect.succeed(false),
+          kill: () => Effect.void,
+          stdin: Sink.drain,
+          stdout: Stream.empty,
+          stderr: Stream.fromIterable([encoder.encode("migrate failed\n")]),
+          all: Stream.empty,
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+          unref: Effect.succeed(Effect.void),
+        }),
+      ),
+    );
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const projectRoot = yield* fs.makeTempDirectoryScoped({
+          prefix: "schema-init-native-fail-",
+        });
+        const exit = yield* schemaInitWorkloads(
+          ["realtime"],
+          {
+            kind: "ephemeral",
+            projectRoot,
+            runtime: { kind: "native" },
+            config: {},
+            databaseUrl: "postgresql://postgres:s3cret@127.0.0.1:54322/postgres",
+            secrets: { databasePassword: password, jwtSecret },
+          },
+          { artifactPreparer: fakePreparer },
+        ).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit))
+          expect(Cause.pretty(exit.cause)).toContain("stderr: migrate failed");
       }),
     ).pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),

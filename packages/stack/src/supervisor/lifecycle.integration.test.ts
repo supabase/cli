@@ -212,7 +212,7 @@ describe("durable lifecycle controller", () => {
         const failed = yield* fixture.controller.start().pipe(Effect.exit);
         expect(errorOf(failed)).toBeInstanceOf(StackRuntimeError);
         const stopped = yield* fixture.store.read(fixture.id);
-        expect(stopped?.desiredLifecycle).toBe("stopped");
+        expect(stopped?.desiredLifecycle).toBe("unconfigured");
         expect(stopped?.ports).toEqual([{ field: "api", port: 54_321, intent: "automatic" }]);
         expect(stopped?.privatePorts).toEqual([
           { workloadId: "rest:rest", binding: "http", port: 54_322 },
@@ -246,6 +246,42 @@ describe("durable lifecycle controller", () => {
           config: { capabilities: { rest: { enabled: true } } },
         });
         expect(second.definition).toEqual(first.definition);
+      }),
+    ),
+  );
+
+  it.live("allows pass-through secret changes after a failed cold launch", () =>
+    run(
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        fixture.state.failLaunch = true;
+        const original = {
+          capabilities: {
+            functions: {
+              settings: {
+                functions: { hello: { env: { TOKEN: Redacted.make("one") } } },
+              },
+            },
+          },
+        };
+        const failed = yield* fixture.controller.start({ config: original }).pipe(Effect.exit);
+        expect(errorOf(failed)).toBeInstanceOf(StackRuntimeError);
+        expect((yield* fixture.store.read(fixture.id))?.desiredLifecycle).toBe("unconfigured");
+        fixture.state.failLaunch = false;
+        const changed = {
+          capabilities: {
+            functions: {
+              settings: {
+                functions: { hello: { env: { TOKEN: Redacted.make("two") } } },
+              },
+            },
+          },
+        };
+        const restarted = yield* fixture.controller.start({ config: changed });
+        expect(restarted.desiredLifecycle).toBe("running");
+        expect(restarted.secrets).toMatchObject({
+          "secret:functions.settings.functions.hello.env.TOKEN": { value: "two" },
+        });
       }),
     ),
   );

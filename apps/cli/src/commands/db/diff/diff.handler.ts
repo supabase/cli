@@ -295,7 +295,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
               if (Option.isNone(stackApi)) {
                 return yield* Effect.fail(
                   new DbDiffDbNotRunningError({
-                    message: "supabase start is not running.",
+                    message: "The local stack is not running.",
                   }),
                 );
               }

@@ -1,6 +1,12 @@
-import { Data, Effect, Option, Result, Stream } from "effect";
+import { Config, Data, Effect, FileSystem, Option, Path, Result, Stream } from "effect";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
+import {
+  cachedPostgresArtifactRoot,
+  defaultRuntimeEnvironment,
+  nativePostgresClientBinDir,
+  type NativePostgresClientCommand,
+} from "@supabase/stack/effect";
 
 import { ProcessControl } from "../shared/runtime/process-control.service.ts";
 import {
@@ -63,15 +69,55 @@ const majorMismatch = (command: string, actual: number | undefined, expected: nu
     suggestion: HOST_CLIENT_SUGGESTION,
   });
 
-const hostClientVersion = (command: string) =>
+const PATH_DELIMITER = process.platform === "win32" ? ";" : ":";
+const inheritedPath = Config.string("PATH").pipe(Effect.orElseSucceed(() => ""));
+
+const hostClientSpawnEnv = (pathPrepend: string | undefined, pathValue: string) =>
+  pathPrepend === undefined
+    ? {}
+    : {
+        env: { PATH: `${pathPrepend}${PATH_DELIMITER}${pathValue}` },
+        extendEnv: true as const,
+      };
+
+export const prependHostClientPath = (
+  env: Readonly<Record<string, string>>,
+  binDir: string | undefined,
+): Record<string, string> => {
+  if (binDir === undefined) return { ...env };
+  const current = env.PATH ?? "";
+  return { ...env, PATH: `${binDir}${PATH_DELIMITER}${current}` };
+};
+
+/** Artifact `bin` when the extra exists in the prepared slim tree or the default cache. */
+export const nativeHostClientPathPrepend = (
+  command: NativePostgresClientCommand,
+  artifactRoot?: string,
+): Effect.Effect<string | undefined, never, FileSystem.FileSystem | Path.Path> =>
+  Effect.gen(function* () {
+    if (artifactRoot !== undefined) return yield* nativePostgresClientBinDir(artifactRoot, command);
+    const path = yield* Path.Path;
+    const env = yield* defaultRuntimeEnvironment;
+    const cacheRoot =
+      env.artifactCacheRoot === undefined
+        ? path.join(path.resolve(env.stateRoot), "artifacts")
+        : env.artifactCacheRoot;
+    const root = yield* cachedPostgresArtifactRoot(cacheRoot);
+    if (root === undefined) return undefined;
+    return yield* nativePostgresClientBinDir(root, command);
+  });
+
+const hostClientVersion = (command: string, pathPrepend?: string) =>
   Effect.scoped(
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner;
+      const pathValue = yield* inheritedPath;
       const handle = yield* spawner.spawn(
         ChildProcess.make(command, ["--version"], {
           stdin: "ignore",
           stdout: "pipe",
           stderr: "pipe",
+          ...hostClientSpawnEnv(pathPrepend, pathValue),
         }),
       );
       const [exitCode, stdout, stderr] = yield* Effect.all(
@@ -98,9 +144,10 @@ const hostClientVersion = (command: string) =>
 export const requireHostPostgresClient = (
   command: string,
   expectedMajor: number,
+  pathPrepend?: string,
 ): Effect.Effect<void, HostPostgresClientError, ChildProcessSpawner> =>
   Effect.gen(function* () {
-    const output = yield* hostClientVersion(command);
+    const output = yield* hostClientVersion(command, pathPrepend);
     const major = parsePostgresClientMajor(output);
     if (major !== expectedMajor) return yield* majorMismatch(command, major, expectedMajor);
   });
@@ -108,11 +155,12 @@ export const requireHostPostgresClient = (
 /** `pg_prove --version` has no major; require it on PATH plus a matching `pg_dump` or `psql`. */
 export const requireHostPgProve = (
   expectedMajor: number,
+  pathPrepend?: string,
 ): Effect.Effect<void, HostPostgresClientError, ChildProcessSpawner> =>
   Effect.gen(function* () {
-    yield* hostClientVersion("pg_prove");
-    const dump = yield* hostClientVersion("pg_dump").pipe(Effect.result);
-    const psql = yield* hostClientVersion("psql").pipe(Effect.result);
+    yield* hostClientVersion("pg_prove", pathPrepend);
+    const dump = yield* hostClientVersion("pg_dump", pathPrepend).pipe(Effect.result);
+    const psql = yield* hostClientVersion("psql", pathPrepend).pipe(Effect.result);
     const dumpMajor = Result.isSuccess(dump) ? parsePostgresClientMajor(dump.success) : undefined;
     const psqlMajor = Result.isSuccess(psql) ? parsePostgresClientMajor(psql.success) : undefined;
     const matched = matchingHostPostgresClient(dumpMajor, psqlMajor, expectedMajor);
@@ -126,6 +174,7 @@ export const streamHostCommand = Effect.fnUntraced(function* <E>(params: {
   readonly args: ReadonlyArray<string>;
   readonly env: Readonly<Record<string, string>>;
   readonly cwd?: string;
+  readonly pathPrepend?: string;
   readonly onStdout: (chunk: Uint8Array) => Effect.Effect<void, E>;
   readonly teeStderr?: boolean;
   readonly captureStderr?: boolean;
@@ -139,6 +188,7 @@ export const streamHostCommand = Effect.fnUntraced(function* <E>(params: {
       if (Option.isSome(processControl)) {
         yield* processControl.value.holdSignals(["SIGINT", "SIGTERM", "SIGHUP"]);
       }
+      const pathValue = params.env.PATH ?? (yield* inheritedPath);
       const handle = yield* spawner
         .spawn(
           ChildProcess.make(params.command, [...params.args], {
@@ -146,7 +196,7 @@ export const streamHostCommand = Effect.fnUntraced(function* <E>(params: {
             stdout: "pipe",
             stderr: "pipe",
             cwd: params.cwd,
-            env: params.env,
+            env: prependHostClientPath({ ...params.env, PATH: pathValue }, params.pathPrepend),
             extendEnv: true,
           }),
         )

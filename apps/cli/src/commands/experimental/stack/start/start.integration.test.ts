@@ -342,6 +342,22 @@ describe("stack start targeting", () => {
     }).pipe(Effect.provide(BunServices.layer));
   });
 
+  it.live("threads excluded analytics into optional catalog downloads", () => {
+    return Effect.gen(function* () {
+      const root = yield* project();
+      yield* writeStartMigration(root);
+      const catalog = recordingStackCatalogSetup((input) => ({
+        analytics: input.optionalConfig?.capabilities?.analytics?.enabled,
+      }));
+      const stack = fakeStack("a".repeat(64), () => Effect.succeed(status("a".repeat(64))));
+      const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
+      yield* stackStart(flags({ exclude: ["analytics"] })).pipe(
+        Effect.provide(Layer.mergeAll(setup.layer, catalog.layer)),
+      );
+      expect(catalog.applied).toEqual([{ analytics: false }]);
+    }).pipe(Effect.provide(BunServices.layer));
+  });
+
   it.live("honors SUPABASE_EXPERIMENTAL from project .env on first-create migrate", () => {
     return Effect.gen(function* () {
       const root = yield* project();

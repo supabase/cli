@@ -53,6 +53,7 @@ import {
   spawnNativeProcess,
   type NativeProcessSpec,
 } from "./NativeProcess.ts";
+import { makeProcessOutputTail } from "./Diagnostics.ts";
 import { makeRuntimeInputOwner } from "./RuntimeInputOwner.ts";
 import { encodeRuntimeEnvFile } from "./RuntimeEnvFile.ts";
 import type { RuntimeWorkloadKey } from "./RuntimeDriver.ts";
@@ -326,9 +327,11 @@ const acquireEphemeralNetwork = (
   runtime: StackRuntime & { readonly kind: "container" },
 ): Effect.Effect<string, ContainerEngineError, Scope.Scope> =>
   Effect.gen(function* () {
+    const name = `supabase-${schemaInitId.slice(0, 16)}-schema-init-net`;
+    yield* Effect.addFinalizer(() => engine.removeNetwork(name).pipe(Effect.ignore));
     const created = yield* engine
       .createNetwork({
-        name: `supabase-${schemaInitId.slice(0, 16)}-schema-init-net`,
+        name,
         labels: {
           stackId: schemaInitId,
           ownerSessionId: schemaInitId.slice(0, 32),
@@ -340,23 +343,31 @@ const acquireEphemeralNetwork = (
           mapContainerEngineError(runtime, "Unable to create schema-init network", cause),
         ),
       );
-    yield* Effect.addFinalizer(() => engine.removeNetwork(created.id).pipe(Effect.ignore));
     return created.id;
   });
 
 const runNativeStartup = (
   spec: NativeProcessSpec,
   key: RuntimeWorkloadKey,
+  knownSecrets: ReadonlyArray<string> = [],
 ): Effect.Effect<void, StackRuntimeError, ChildProcessSpawner.ChildProcessSpawner | Scope.Scope> =>
   Effect.scoped(
     Effect.gen(function* () {
       const process = yield* spawnNativeProcess(spec, defaultNativeProcessLauncher(), key).pipe(
         Effect.mapError((error) => runtimeError(key, error.message, error)),
       );
-      const drain = Effect.all([Stream.runDrain(process.stdout), Stream.runDrain(process.stderr)], {
-        concurrency: "unbounded",
-        discard: true,
-      }).pipe(Effect.mapError((error) => runtimeError(key, error.message, error)));
+      const tail = makeProcessOutputTail();
+      const drain = Effect.all(
+        [
+          Stream.runForEach(process.stdout, (bytes) =>
+            Effect.sync(() => tail.pushBytes("stdout", bytes)),
+          ),
+          Stream.runForEach(process.stderr, (bytes) =>
+            Effect.sync(() => tail.pushBytes("stderr", bytes)),
+          ),
+        ],
+        { concurrency: "unbounded", discard: true },
+      ).pipe(Effect.mapError((error) => runtimeError(key, error.message, error)));
       const exit = process.exitCode.pipe(
         Effect.mapError((error) => runtimeError(key, error.message, error)),
       );
@@ -367,11 +378,14 @@ const runNativeStartup = (
             Effect.fail(runtimeError(key, `Native schema init timed out for ${key.workloadId}`)),
         }),
       );
-      if (exitCode !== 0)
+      if (exitCode !== 0) {
+        const diagnostic = tail.finish(knownSecrets);
+        const message = `Native schema init exited with code ${String(exitCode)} for ${key.workloadId}`;
         return yield* runtimeError(
           key,
-          `Native schema init exited with code ${String(exitCode)} for ${key.workloadId}`,
+          diagnostic.length === 0 ? message : `${message}\n${diagnostic}`,
         );
+      }
     }),
   );
 
@@ -590,6 +604,12 @@ export const schemaInitWorkloads = (
                 dummyPort,
                 inputs,
               );
+              const knownSecrets = [
+                Redacted.value(target.secrets.databasePassword),
+                ...(target.secrets.jwtSecret === undefined
+                  ? []
+                  : [Redacted.value(target.secrets.jwtSecret)]),
+              ];
               yield* Effect.forEach(
                 startups,
                 (startup) => {
@@ -603,6 +623,7 @@ export const schemaInitWorkloads = (
                       env: nativeEnv,
                     },
                     key,
+                    knownSecrets,
                   );
                 },
                 { discard: true },

@@ -23,7 +23,7 @@ import {
   databaseBootstrapIdentity,
   resolveEphemeralPostgresRelease,
   schemaInitArtifactIdentity,
-  selectDefaultRuntime,
+  selectDefaultRuntimeSelection,
   type CreateEphemeralPostgresOptions,
   type EffectEphemeralPostgres,
   type EphemeralPostgresRelease,
@@ -520,16 +520,26 @@ export const stackAcquireShadowDatabase = <E>(
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const apis = yield* ephemeralApis();
+    const output = yield* Output;
     const projectRuntime = yield* stackProjectRuntime;
     const preference = runtimePreference(projectRuntime, opts.runtime);
-    const runtime: StackRuntime =
-      preference?.kind === "container"
-        ? { kind: "container", engine: preference.engine ?? "docker" }
-        : preference?.kind === "native"
-          ? { kind: "native" }
-          : yield* selectDefaultRuntime(
-              Option.getOrUndefined(yield* Effect.serviceOption(ContainerEngineResolver)),
-            ).pipe(Effect.mapError(mapCreateError));
+    const selected: {
+      readonly runtime: StackRuntime;
+      readonly dockerFallbackNotice?: string;
+    } =
+      preference === undefined
+        ? yield* selectDefaultRuntimeSelection(
+            Option.getOrUndefined(yield* Effect.serviceOption(ContainerEngineResolver)),
+          ).pipe(Effect.mapError(mapCreateError))
+        : {
+            runtime:
+              preference.kind === "container"
+                ? { kind: "container", engine: preference.engine ?? "docker" }
+                : { kind: "native" },
+          };
+    if (selected.dockerFallbackNotice !== undefined)
+      yield* output.raw(`${selected.dockerFallbackNotice}\n`, "stderr");
+    const runtime = selected.runtime;
     const rolesSql = yield* readRolesSql(input.fs, input.path, input.workdir);
     const cacheOn = cacheEnabled(input.setup.projectEnvValues, opts.bypassCache === true);
     const cacheDir = shadowBaselineCacheDir(path);

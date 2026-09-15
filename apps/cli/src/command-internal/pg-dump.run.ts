@@ -79,6 +79,7 @@ export type PgDumpClient =
       readonly kind: "host";
       readonly command: "pg_dump" | "pg_dumpall";
       readonly expectedMajor: number;
+      readonly pathPrepend?: string;
     };
 
 export const pgDumpClientExitMessage = (client: PgDumpClient, exitCode: number): string =>
@@ -97,11 +98,16 @@ export const streamPgDumpWithClient = Effect.fnUntraced(function* <E>(params: {
   readonly forceHostNetwork?: boolean;
 }) {
   if (params.client.kind === "host") {
-    yield* requireHostPostgresClient(params.client.command, params.client.expectedMajor);
+    yield* requireHostPostgresClient(
+      params.client.command,
+      params.client.expectedMajor,
+      params.client.pathPrepend,
+    );
     return yield* streamHostCommand({
       command: "bash",
       args: ["-c", params.script, "--"],
       env: params.env,
+      pathPrepend: params.client.pathPrepend,
       onStdout: params.onStdout,
       teeStderr: true,
     });

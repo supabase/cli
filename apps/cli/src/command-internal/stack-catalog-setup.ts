@@ -73,6 +73,8 @@ interface EphemeralStackCatalogInput {
 export interface StackCatalogSetupInput {
   readonly target: LiveStackCatalogInput | EphemeralStackCatalogInput;
   readonly overlay: StackCatalogOverlay;
+  /** Used only for analytics/pooler one-shots. Platform trio stays on `target.config`. */
+  readonly optionalConfig?: StackConfig;
 }
 
 const capabilityEnabled = (config: StackConfig, name: SchemaInitCapabilityName): boolean => {
@@ -147,7 +149,8 @@ const applyCatalog = (input: StackCatalogSetupInput) =>
     const failClosed = PLATFORM_TRIO.filter((name) => capabilityEnabled(config, name));
     yield* runSchemaInit(failClosed, schemaTarget);
     if (input.target.kind === "live") {
-      const optional = OPTIONAL_CAPS.filter((name) => capabilityEnabled(config, name));
+      const optionalSource = input.optionalConfig ?? config;
+      const optional = OPTIONAL_CAPS.filter((name) => capabilityEnabled(optionalSource, name));
       yield* Effect.forEach(
         optional,
         (name) =>

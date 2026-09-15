@@ -86,10 +86,14 @@ The stack backend requires the in-process pg-delta engine. Migra, pgAdmin, and
 ### (d) Native dump, test, and squash clients
 
 `db dump`, `db test`, and `migration squash` talk to published loopback credentials. On native
-stacks they use PATH PostgreSQL clients except on Windows, where those commands run a one-shot
-Docker `pg_dump` / `pg_prove` client against the published URL (`host.docker.internal`). The stack
-stays native. If Docker is missing on that Windows path, the command fails and tells the user to
-install Docker Desktop (or Git Bash).
+stacks they prefer `pg_dump` / `pg_dumpall` / `psql` from the prepared slim postgres artifact when
+those extras exist in the cache. The extras are not catalog `requiredRuntimePaths`; missing them is
+normal and the commands keep today's PATH clients and matching-major check. `pg_prove` stays a
+PATH requirement; artifact `psql` is prepended when present so prove's client matches.
+
+Windows still runs a one-shot Docker `pg_dump` / `pg_prove` client against the published URL
+(`host.docker.internal`). The stack stays native. If Docker is missing on that Windows path, the
+command fails and tells the user to install Docker Desktop (or Git Bash).
 
 ### (e) Studio does not require analytics
 
@@ -111,6 +115,27 @@ whether **this start created the stack identity** (first create / `unconfigured`
 - If catalog or migrate-and-seed fails after the engine is already `running`, the command exits
   non-zero and Postgres stays up. The next start is an existing cluster and does not retry.
   Recover with `db reset`. Same stuck case as Compose after a failed fresh-volume setup.
+- If the engine never reached `running` and cleanup is proven, the identity stays `unconfigured`
+  so the next start retries first-create. Already-written secrets are kept; pass-through
+  secrets may change while `unconfigured`. Leftover PGDATA/volume is not auto-wiped. A later
+  launch that fails because remnants remain names `db reset --local` / `stack destroy` as the
+  wipe. Unproven cleanup stays the in-process stopping fence.
+
+### Default runtime and native-as-root
+
+Auto-selecting a **new** identity probes the Docker daemon (not only `docker --version`). A live
+daemon persists Docker. A present client with a dead daemon persists **native** and prints a
+notice that destroy-and-recreate (or a new `--stack` name) is required to get Docker later.
+Persisted runtime never flips. Explicit `--runtime docker` still requires a live daemon.
+
+Native Postgres is refused when the process uid is 0 (`initdb` refuses root). There is no
+uid-drop. Use `--runtime docker`.
+
+### Optional catalog downloads
+
+Live schema-init still fail-closes the platform trio (auth, storage, realtime) against the
+enabled/full config. Analytics and pooler one-shots follow the start/excluded config, so
+`--exclude analytics` and postgres-only `db start` skip those downloads.
 
 ## Rationale
 
@@ -137,8 +162,11 @@ leaving schema policy in the CLI.
 
 - Cache tars cannot be shared across native and container runtimes.
 - Migra/pgAdmin remain unavailable on stack backends (shadow is always ephemeral).
-- A failed first live setup is stuck until `db reset`, same as Compose.
+- A failed first live setup after the engine is running is stuck until `db reset`, same as
+  Compose. A failed cold launch that never reached running retries first-create.
 - Windows native dump/test/squash need a working Docker client even though Postgres itself is native.
+- Native stacks as uid 0 cannot start; Docker (or a non-root user) is required.
+- Auto-selected native after a dead Docker daemon is sticky until destroy or a new stack name.
 
 ## Alternatives Considered
 

@@ -50,6 +50,7 @@ import { stackWithShadowDatabase } from "../../../command-internal/stack-shadow.
 import { parsePostgresServerMajor } from "../../../command-internal/stack-local-database.ts";
 import {
   dumpConnForHostClient,
+  nativeHostClientPathPrepend,
   rewriteDumpHostForToolContainer,
   toolContainerUsesHostNetwork,
 } from "../../../command-internal/postgres-client.run.ts";
@@ -140,17 +141,21 @@ const squashMigrations = Effect.fnUntraced(function* (
           const nativeShadow = handle.runtime.kind === "native" && runtimeInfo.platform !== "win32";
           const expectedMajor =
             parsePostgresServerMajor(handle.ephemeral.version) ?? toml.majorVersion;
-          const release = yield* resolveEphemeralPostgresRelease(handle.ephemeral.version).pipe(
-            Effect.orElseSucceed(() => undefined),
-          );
-          const image = release?.image ?? localInputs.bootstrapConfig.postgresImage;
+          const pathPrepend = nativeShadow
+            ? yield* nativeHostClientPathPrepend("pg_dump", handle.ephemeral.nativeArtifactRoot)
+            : undefined;
           const dumpClient = nativeShadow
             ? {
                 kind: "host" as const,
                 command: "pg_dump" as const,
                 expectedMajor,
+                ...(pathPrepend === undefined ? {} : { pathPrepend }),
               }
             : { kind: "container" as const };
+          const release = yield* resolveEphemeralPostgresRelease(handle.ephemeral.version).pipe(
+            Effect.orElseSucceed(() => undefined),
+          );
+          const image = release?.image ?? localInputs.bootstrapConfig.postgresImage;
           const dumpConn: PgConnInput = nativeShadow
             ? dumpConnForHostClient(stackConn)
             : {

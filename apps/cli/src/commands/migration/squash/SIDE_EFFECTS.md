@@ -9,6 +9,7 @@ migration-history table to match.
 
 When `[experimental].stack` is on, the shadow is `EphemeralPostgres` under
 `$SUPABASE_HOME/managed/ephemeral-postgres/<identity>/` (`~/.supabase/managed/…` by default).
+Native shadows prefer artifact `pg_dump` when present, otherwise PATH.
 
 ## Files Read
 

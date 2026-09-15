@@ -25,6 +25,7 @@ import { currentStackBackend } from "./stack-backend.ts";
 import { stackProjectDatabaseMajor, stackRequireProjectRuntime } from "./stack-local-database.ts";
 import {
   rewriteDumpHostForToolContainer,
+  nativeHostClientPathPrepend,
   requireHostPgProve,
   streamHostCommand,
   toolContainerUsesHostNetwork,
@@ -115,6 +116,7 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
         ? yield* stackRequireProjectRuntime
         : undefined;
     const useHostProve = stackRuntime?.kind === "native" && runtimeInfo.platform !== "win32";
+    const pathPrepend = useHostProve ? yield* nativeHostClientPathPrepend("psql") : undefined;
     const stackContainerProve = backend.kind === "stack" && !useHostProve;
 
     const networkId = Option.getOrUndefined(networkIdFlag);
@@ -218,7 +220,7 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
           const expectedMajor =
             (backend.kind === "stack" ? yield* stackProjectDatabaseMajor : undefined) ??
             toml.majorVersion;
-          yield* requireHostPgProve(expectedMajor);
+          yield* requireHostPgProve(expectedMajor, pathPrepend);
           const hostPath = args.hostPaths[0];
           const hostWorkingDir =
             hostPath === undefined
@@ -233,6 +235,7 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
             args: hostArgs,
             env: runEnv,
             cwd: hostWorkingDir,
+            pathPrepend,
             onStdout,
             teeStderr: true,
             captureStderr: false,

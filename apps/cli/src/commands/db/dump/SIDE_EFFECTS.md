@@ -1,8 +1,8 @@
 # `supabase db dump`
 
 Native TypeScript port (`dump.handler.ts`). Streams a `pg_dump`/`pg_dumpall`
-script run inside the local Postgres image (or PATH `pg_dump`/`pg_dumpall` on
-a native stack) to stdout or `--file`.
+script run inside the local Postgres image (or artifact extras / PATH
+`pg_dump`/`pg_dumpall` on a native stack) to stdout or `--file`.
 
 ## Files Read
 
@@ -101,8 +101,10 @@ shell inherits the suppressing variables and is missed.
     suggestion uses the generic `ipv6Suggestion()` text rather than one that
     prefills the project's specific pooler connection string. Surfacing that
     exact URL needs the pooler string exposed at this seam.
-- **Stack backend host rewrite.** `--local` native stacks use PATH `pg_dump`.
-  Container dumps use `isLocal` (config host+port match), not `connType ===
-  "local"`: a `--db-url` that matches `config.toml` is rewritten like a published
+- **Stack backend host rewrite.** `--local` native stacks prefer `pg_dump` /
+  `pg_dumpall` from the prepared slim postgres artifact when those extras exist,
+  otherwise PATH clients and the matching-major check. Container dumps use
+  `isLocal` (config host+port match), not `connType ===
+"local"`: a `--db-url` that matches `config.toml` is rewritten like a published
   stack target (`host.docker.internal` / host network) and does not require a
   project stack. Engine/runtime selection still uses `connType`.

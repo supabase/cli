@@ -20,6 +20,15 @@ import {
   type NativeProcessLauncher,
   type NativeProcessSpec,
 } from "./NativeProcess.ts";
+import {
+  makeProcessOutputTail,
+  withLeftoverPersistentDataGuidance,
+  type ProcessOutputTail,
+} from "./Diagnostics.ts";
+import {
+  nativeRuntimeBlockedForUid,
+  NATIVE_ROOT_UNSUPPORTED_MESSAGE,
+} from "./ContainerEngineResolver.ts";
 
 export interface NativeRuntimeOptions {
   /**
@@ -50,6 +59,7 @@ export interface NativeRuntimeOptions {
   readonly logStore?: LogStore;
   /** Wipes native PGDATA after the database workload has been stopped and removed. */
   readonly wipeDatabaseData?: Effect.Effect<void, RuntimeDriverError>;
+  readonly knownSecrets?: Effect.Effect<ReadonlyArray<string>>;
 }
 
 /** One-shot startup processes followed by the long-lived workload process. */
@@ -69,6 +79,7 @@ interface Resource {
   readonly scope: Scope.Closeable;
   readonly state: Ref.Ref<ObservedWorkload>;
   readonly output: Readonly<{ stdout: OutputAccumulator; stderr: OutputAccumulator }>;
+  readonly tail: ProcessOutputTail;
   readonly result: Deferred.Deferred<ObservedWorkload, RuntimeDriverError>;
   readonly failure: Deferred.Deferred<never, RuntimeDriverError>;
   stopRequested: boolean;
@@ -88,7 +99,7 @@ const driverError = (
   cause?: unknown,
 ): RuntimeDriverError =>
   new RuntimeDriverError({
-    message,
+    message: withLeftoverPersistentDataGuidance(message),
     stackId: key.stackId,
     workloadId: key.workloadId,
     ...(cause === undefined ? {} : { cause }),
@@ -140,16 +151,6 @@ const flushLines = (
     .pipe(Effect.asVoid);
 };
 
-const observeOutput = (
-  logStore: LogStore,
-  resource: Resource,
-  process: NativeProcess,
-  stream: "stdout" | "stderr",
-) =>
-  Stream.runForEach(process[stream], (bytes) =>
-    appendLines(logStore, resource, stream, bytes),
-  ).pipe(Effect.andThen(flushLines(logStore, resource, stream)));
-
 /** Creates a Supervisor-owned native runtime with exact process identity fencing. */
 export const makeNativeRuntime = (
   options: NativeRuntimeOptions,
@@ -164,6 +165,36 @@ export const makeNativeRuntime = (
     const runtimeScope = yield* Scope.fork(parentScope, "parallel");
     const registration = yield* Semaphore.make(1);
     const resources = new Map<string, Resource>();
+
+    const knownSecrets = options.knownSecrets ?? Effect.succeed<ReadonlyArray<string>>([]);
+    const diagnosticMessage = (resource: Resource, message: string) =>
+      knownSecrets.pipe(
+        Effect.map((secrets) => {
+          const tail = resource.tail.finish(secrets);
+          return tail.length === 0 ? message : `${message}\n${tail}`;
+        }),
+      );
+
+    const consumeProcessOutput = (
+      resource: Resource,
+      process: NativeProcess,
+      logStore: LogStore | undefined,
+    ) =>
+      Effect.all(
+        (["stdout", "stderr"] as const).map((stream) =>
+          Stream.runForEach(process[stream], (bytes) =>
+            Effect.gen(function* () {
+              resource.tail.pushBytes(stream, bytes);
+              if (logStore !== undefined) yield* appendLines(logStore, resource, stream, bytes);
+            }),
+          ).pipe(
+            Effect.andThen(
+              logStore === undefined ? Effect.void : flushLines(logStore, resource, stream),
+            ),
+          ),
+        ),
+        { concurrency: "unbounded", discard: true },
+      );
 
     const cleanup = (resource: Resource): Effect.Effect<void, never> =>
       Scope.close(resource.scope, Exit.void).pipe(
@@ -201,11 +232,13 @@ export const makeNativeRuntime = (
         yield* Ref.update(resource.state, (current): ObservedWorkload =>
           current.state === "failed" ? current : next,
         );
-        if (!resource.stopRequested && Exit.isFailure(result))
-          yield* Deferred.fail(
-            resource.failure,
-            driverError(resource.key, `Native workload exited before readiness`, result.cause),
+        if (!resource.stopRequested && Exit.isFailure(result)) {
+          const message = yield* diagnosticMessage(
+            resource,
+            "Native workload exited before readiness",
           );
+          yield* Deferred.fail(resource.failure, driverError(resource.key, message, result.cause));
+        }
       }).pipe(Effect.ignore);
 
     const reportLogFailure = (
@@ -232,15 +265,10 @@ export const makeNativeRuntime = (
 
     const attachLogs = (resource: Resource, process: NativeProcess) => {
       const logStore = options.logStore;
-      if (logStore === undefined) return Effect.void;
-      const runOutput = (stream: "stdout" | "stderr") =>
-        observeOutput(logStore, resource, process, stream).pipe(
-          Effect.catch((error) => reportLogFailure(resource, error)),
-        );
-      return Effect.all([runOutput("stdout"), runOutput("stderr")], {
-        concurrency: "unbounded",
-        discard: true,
-      }).pipe(Effect.forkIn(resource.scope), Effect.asVoid);
+      const runOutput = consumeProcessOutput(resource, process, logStore).pipe(
+        Effect.catch((error) => reportLogFailure(resource, error)),
+      );
+      return runOutput.pipe(Effect.forkIn(resource.scope));
     };
 
     /** Runs one short-lived, service-owned startup process in its own scope. */
@@ -265,19 +293,7 @@ export const makeNativeRuntime = (
               Effect.mapError((error) => processError(error, resource.key, `${phase} wait`)),
             ),
           );
-          const consume =
-            options.logStore === undefined
-              ? Effect.all([Stream.runDrain(process.stdout), Stream.runDrain(process.stderr)], {
-                  concurrency: "unbounded",
-                  discard: true,
-                })
-              : Effect.all(
-                  [
-                    observeOutput(options.logStore, resource, process, "stdout"),
-                    observeOutput(options.logStore, resource, process, "stderr"),
-                  ],
-                  { concurrency: "unbounded", discard: true },
-                );
+          const consume = consumeProcessOutput(resource, process, options.logStore);
           const consumed = consume.pipe(
             Effect.mapError((error) =>
               driverError(
@@ -313,13 +329,19 @@ export const makeNativeRuntime = (
           if (Exit.isFailure(result))
             return yield* driverError(
               resource.key,
-              `Native ${phase} process failed for ${resource.key.workloadId}`,
+              yield* diagnosticMessage(
+                resource,
+                `Native ${phase} process failed for ${resource.key.workloadId}`,
+              ),
               result.cause,
             );
           if (result.value !== 0)
             return yield* driverError(
               resource.key,
-              `Native ${phase} process exited with code ${String(result.value)} for ${resource.key.workloadId}`,
+              yield* diagnosticMessage(
+                resource,
+                `Native ${phase} process exited with code ${String(result.value)} for ${resource.key.workloadId}`,
+              ),
             );
         });
         yield* Effect.uninterruptibleMask((restore) =>
@@ -387,14 +409,21 @@ export const makeNativeRuntime = (
           const exitFiber = yield* Effect.forkIn(process.exitCode, resource.scope);
           const exitCode = Fiber.join(exitFiber);
           yield* Effect.forkIn(watchProcess(resource, process, exitCode), resource.scope);
-          yield* attachLogs(resource, process);
+          const outputFiber = yield* attachLogs(resource, process);
           const readiness = options.waitForReadiness;
           const mainExit = exitCode.pipe(
             Effect.flatMap((code) =>
-              Effect.fail(
-                driverError(
-                  key,
-                  `Native workload ${key.workloadId} exited before readiness (${String(code)})`,
+              Fiber.join(outputFiber).pipe(
+                Effect.ignore,
+                Effect.timeoutOrElse({
+                  duration: "1 second",
+                  orElse: () => Effect.void,
+                }),
+                Effect.andThen(
+                  diagnosticMessage(
+                    resource,
+                    `Native workload ${key.workloadId} exited before readiness (${String(code)})`,
+                  ).pipe(Effect.flatMap((message) => Effect.fail(driverError(key, message)))),
                 ),
               ),
             ),
@@ -450,6 +479,8 @@ export const makeNativeRuntime = (
       key: RuntimeWorkloadKey,
       workload: PlannedWorkload,
     ): Effect.Effect<ObservedWorkload, RuntimeDriverError> => {
+      if (nativeRuntimeBlockedForUid())
+        return Effect.fail(driverError(key, NATIVE_ROOT_UNSUPPORTED_MESSAGE));
       if (workload.selected.kind === "container")
         return Effect.fail(
           new RuntimeDriverError({
@@ -485,6 +516,7 @@ export const makeNativeRuntime = (
                 stdout: { decoder: new TextDecoder(), remainder: "" },
                 stderr: { decoder: new TextDecoder(), remainder: "" },
               },
+              tail: makeProcessOutputTail(),
               stopRequested: false,
             };
             resources.set(id, resource);

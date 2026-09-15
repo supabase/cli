@@ -125,7 +125,7 @@ const materializeCandidate = (
       const plan = yield* rebuildExecutionPlan(runtime, state.definition);
       const resolved = yield* resolveSecrets(
         declarationsFromPersisted(state.secrets),
-        state.desiredLifecycle === "unconfigured" ? undefined : state.secrets,
+        state.secrets,
         state.desiredLifecycle,
       );
       return {
@@ -144,7 +144,7 @@ const materializeCandidate = (
     );
     const resolved = yield* resolveSecrets(
       declarationsFromCompiled(compiled),
-      state.desiredLifecycle === "unconfigured" ? undefined : state.secrets,
+      state.secrets,
       state.desiredLifecycle,
     );
     return {
@@ -192,9 +192,12 @@ export const makeLifecycleController = (
               : Effect.succeed(state),
           ),
         );
-    const persistStoppedAfterFailure = (
+    const persistNonRunningAfterFailure = (
       primary: Cause.Cause<StackError>,
-      cleanup: boolean,
+      restore: {
+        readonly cleanup: boolean;
+        readonly restoreLifecycle: "stopped" | "unconfigured";
+      },
     ): Effect.Effect<never, StackError, LifecycleRequirements> =>
       Effect.gen(function* () {
         const current = yield* options.stateStore.read(options.stackId).pipe(Effect.exit);
@@ -207,12 +210,12 @@ export const makeLifecycleController = (
           const persisted = yield* options.stateStore
             .replace(options.stackId, {
               ...current.value,
-              desiredLifecycle: "stopped" as const,
+              desiredLifecycle: restore.restoreLifecycle,
             })
             .pipe(Effect.exit);
           if (Exit.isFailure(persisted)) cause = Cause.combine(cause, persisted.cause);
         }
-        if (cleanup) {
+        if (restore.cleanup) {
           const cleaned = yield* options.backend.cleanup.pipe(Effect.exit);
           if (Exit.isFailure(cleaned)) cause = Cause.combine(cause, cleaned.cause);
         }
@@ -234,7 +237,11 @@ export const makeLifecycleController = (
           Effect.exit,
         );
         if (Exit.isFailure(materialized)) {
-          if (freshSession) return yield* persistStoppedAfterFailure(materialized.cause, false);
+          if (freshSession)
+            return yield* persistNonRunningAfterFailure(materialized.cause, {
+              cleanup: false,
+              restoreLifecycle: "stopped",
+            });
           return yield* Effect.failCause(materialized.cause);
         }
         const candidate = materialized.value;
@@ -249,7 +256,11 @@ export const makeLifecycleController = (
               message: "Running stack input changed; stop the stack before applying it",
               guidance: "Use stop() followed by start() to apply stopped-time changes",
             });
-            if (freshSession) return yield* persistStoppedAfterFailure(Cause.fail(error), false);
+            if (freshSession)
+              return yield* persistNonRunningAfterFailure(Cause.fail(error), {
+                cleanup: false,
+                restoreLifecycle: "stopped",
+              });
             return yield* error;
           }
           if (supplied !== undefined && !sameSecrets(candidate.secrets, initial.secrets)) {
@@ -258,7 +269,11 @@ export const makeLifecycleController = (
               message: "Running stack secrets changed; stop the stack before applying them",
               guidance: "Use stop() followed by start() to apply stopped-time changes",
             });
-            if (freshSession) return yield* persistStoppedAfterFailure(Cause.fail(error), false);
+            if (freshSession)
+              return yield* persistNonRunningAfterFailure(Cause.fail(error), {
+                cleanup: false,
+                restoreLifecycle: "stopped",
+              });
             return yield* error;
           }
           if (freshSession) {
@@ -266,7 +281,10 @@ export const makeLifecycleController = (
               .preflight(lifecycleInput(options.stackId, initial, candidate))
               .pipe(Effect.exit);
             if (Exit.isFailure(preflighted))
-              return yield* persistStoppedAfterFailure(preflighted.cause, false);
+              return yield* persistNonRunningAfterFailure(preflighted.cause, {
+                cleanup: false,
+                restoreLifecycle: "stopped",
+              });
           }
           const launched = yield* options.backend
             .launch(
@@ -275,7 +293,10 @@ export const makeLifecycleController = (
             )
             .pipe(Effect.exit);
           if (Exit.isFailure(launched) && freshSession)
-            return yield* persistStoppedAfterFailure(launched.cause, true);
+            return yield* persistNonRunningAfterFailure(launched.cause, {
+              cleanup: true,
+              restoreLifecycle: "stopped",
+            });
           if (Exit.isFailure(launched)) return yield* Effect.failCause(launched.cause);
           return initial;
         }
@@ -288,10 +309,13 @@ export const makeLifecycleController = (
           .pipe(Effect.exit);
         if (Exit.isSuccess(started)) return next;
 
-        // A failed cold launch never leaves a durable running intent behind. Cleanup is attempted
-        // before publishing the stopped state; if cleanup is not proven, the stopped fence remains
-        // durable and the Supervisor stays available for an explicit retry.
-        return yield* persistStoppedAfterFailure(started.cause, true);
+        // A failed cold launch never leaves a durable running intent. Proven cleanup restores
+        // unconfigured so the next start is still first-create; leftover PGDATA is kept.
+        return yield* persistNonRunningAfterFailure(started.cause, {
+          cleanup: true,
+          restoreLifecycle:
+            initial.desiredLifecycle === "unconfigured" ? "unconfigured" : "stopped",
+        });
       });
     };
 

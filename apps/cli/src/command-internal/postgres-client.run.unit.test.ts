@@ -1,11 +1,42 @@
+import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
+import { Effect } from "effect";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- unit fixture writes a fake artifact tree.
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- temp root for the fake artifact tree.
+import { tmpdir } from "node:os";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- join fixture paths.
+import { join } from "node:path";
 
 import {
   matchingHostPostgresClient,
+  nativeHostClientPathPrepend,
   parsePostgresClientMajor,
+  prependHostClientPath,
   rewriteDumpHostForToolContainer,
   toolContainerUsesHostNetwork,
 } from "./postgres-client.run.ts";
+
+describe("prependHostClientPath", () => {
+  it("prepends a bin directory to PATH", () => {
+    expect(prependHostClientPath({ PATH: "/usr/bin" }, "/artifact/bin").PATH).toMatch(
+      /^\/artifact\/bin/,
+    );
+  });
+});
+
+describe("nativeHostClientPathPrepend", () => {
+  it.effect("returns artifact bin when the extra exists, otherwise undefined", () =>
+    Effect.gen(function* () {
+      const root = mkdtempSync(join(tmpdir(), "native-host-client-"));
+      const bin = join(root, "bin");
+      mkdirSync(bin, { recursive: true });
+      writeFileSync(join(bin, "pg_dump"), "");
+      expect(yield* nativeHostClientPathPrepend("pg_dump", root)).toBe(bin);
+      expect(yield* nativeHostClientPathPrepend("psql", root)).toBeUndefined();
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+});
 
 describe("parsePostgresClientMajor", () => {
   it("reads the PostgreSQL major from client --version output", () => {

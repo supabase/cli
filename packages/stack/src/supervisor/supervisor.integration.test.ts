@@ -567,7 +567,7 @@ describe("Supervisor composition", () => {
     ),
   );
 
-  it.live("persists stopped after startup ingress failure", () =>
+  it.live("persists unconfigured after a cold startup ingress failure", () =>
     run(
       Effect.gen(function* () {
         const fixture = yield* makeFixture({
@@ -588,8 +588,8 @@ describe("Supervisor composition", () => {
           Exit.isFailure(yield* fixture.supervisor.start({ config: {} }).pipe(Effect.exit)),
         ).toBe(true);
         const status = yield* fixture.supervisor.status;
-        expect(status.desiredLifecycle).toBe("stopped");
-        expect(status.lifecycle).toBe("stopped");
+        expect(status.desiredLifecycle).toBe("unconfigured");
+        expect(status.lifecycle).toBe("unconfigured");
       }),
     ),
   );
@@ -809,7 +809,7 @@ describe("Supervisor composition", () => {
         const result = yield* Fiber.join(starting).pipe(Effect.exit);
         expect(Exit.isFailure(result)).toBe(true);
         expect(yield* Ref.get(fixture.calls)).toContain("cleanup:stop");
-        expect((yield* fixture.supervisor.status).lifecycle).toBe("stopped");
+        expect((yield* fixture.supervisor.status).lifecycle).toBe("unconfigured");
       }),
     ),
   );
@@ -1039,13 +1039,13 @@ describe("Supervisor composition", () => {
           .pipe(Effect.exit);
 
         expect(Exit.isFailure(failed)).toBe(true);
-        expect((yield* fixture.store.read(fixture.id))?.desiredLifecycle).toBe("stopped");
+        expect((yield* fixture.store.read(fixture.id))?.desiredLifecycle).toBe("unconfigured");
         expect((yield* fixture.supervisor.status).lifecycle).toBe("stopping");
         expect(yield* Ref.get(fixture.calls)).toContain("cleanup:stop");
 
         const retry = yield* fixture.supervisor.maintenanceHandlers.stop;
         expect(retry.ok).toBe(true);
-        expect((yield* fixture.supervisor.status).lifecycle).toBe("stopped");
+        expect((yield* fixture.supervisor.status).lifecycle).toBe("unconfigured");
       }),
     ),
   );
@@ -1059,8 +1059,8 @@ describe("Supervisor composition", () => {
           .start({ config: { capabilities: { functions: { activation: "eager" } } } })
           .pipe(Effect.exit);
         expect(Exit.isFailure(failed)).toBe(true);
-        expect((yield* fixture.store.read(fixture.id))?.desiredLifecycle).toBe("stopped");
-        expect((yield* fixture.supervisor.status).lifecycle).toBe("stopped");
+        expect((yield* fixture.store.read(fixture.id))?.desiredLifecycle).toBe("unconfigured");
+        expect((yield* fixture.supervisor.status).lifecycle).toBe("unconfigured");
         yield* fixture.supervisor.shutdownIfIdle;
         yield* fixture.supervisor.shutdown;
       }),

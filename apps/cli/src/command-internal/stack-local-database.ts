@@ -106,7 +106,7 @@ export const applyStackMigrateAndSeed = (
     ),
   );
 
-const notRunning = (message = "supabase start is not running.") =>
+const notRunning = (message = "The local stack is not running.") =>
   new LocalDbRunningError({ message });
 
 const startFailed = (cause: { readonly message: string }) =>
@@ -275,6 +275,7 @@ export const stackEnsurePostgresOnlyStarted = Effect.gen(function* () {
   const api = yield* Effect.serviceOption(StackApi);
   if (Option.isNone(api)) return yield* startFailed({ message: "stack API is unavailable" });
   const cliSettings = yield* CommandSettings;
+  const output = yield* Output;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const config = yield* loadStackConfig(cliSettings.workdir).pipe(Effect.mapError(startFailed));
@@ -293,6 +294,7 @@ export const stackEnsurePostgresOnlyStarted = Effect.gen(function* () {
             projectRoot: cliSettings.workdir,
             config,
           },
+          optionalConfig: postgresOnlyStackStartConfig(config),
           overlay: {
             webhooks: "config",
             webhooksEnabled: toml.webhooksEnabled,
@@ -312,6 +314,8 @@ export const stackEnsurePostgresOnlyStarted = Effect.gen(function* () {
           .createStack({ projectRoot: cliSettings.workdir })
           .pipe(Effect.mapError(startFailed))
       : yield* api.value.openStack(existing.value.id).pipe(Effect.mapError(startFailed));
+    if (stack.dockerFallbackNotice !== undefined)
+      yield* output.raw(`${stack.dockerFallbackNotice}\n`, "stderr");
     yield* stack
       .start({ config: postgresOnlyStackStartConfig(config) })
       .pipe(Effect.mapError(startFailed));

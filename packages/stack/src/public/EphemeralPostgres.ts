@@ -47,6 +47,10 @@ export interface EffectEphemeralPostgres {
   /** Catalog identity hashed into CLI shadow-cache keys. */
   readonly artifactIdentity: string;
   readonly url: Redacted.Redacted<string>;
+  /** Prepared postgres artifact root when extras such as `pg_dump` may be present. */
+  readonly nativeArtifactRoot?: string;
+  /** Present when auto-select persisted native because the Docker daemon was down. */
+  readonly dockerFallbackNotice?: string;
   /** Container network id so schema-init one-shots can join and dial `supabase-database:5432`. */
   readonly networkId?: string;
   readonly start: Effect.Effect<void, EphemeralPostgresError, EphemeralPostgresServices>;

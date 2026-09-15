@@ -881,6 +881,22 @@ describe("db reset", () => {
       });
     });
 
+    it.live("fails stack reset on a bad functions/.env before wiping", () => {
+      const { layer, stackApi } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        files: { "supabase/functions/.env": "lowercase=value\nSECRET=value\n" },
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        stackBackend: true,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) expect(JSON.stringify(exit.cause)).toContain("functions/.env");
+        expect(stackApi.resetCalls).toBe(0);
+      });
+    });
+
     it.live(
       "fails a local reset before the destructive recreate on a malformed config.toml",
       () => {

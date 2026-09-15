@@ -41,6 +41,7 @@ import {
 } from "../../../command-internal/pg-dump.run.ts";
 import {
   dumpConnForHostClient,
+  nativeHostClientPathPrepend,
   rewriteDumpHostForToolContainer,
   toolContainerUsesHostNetwork,
 } from "../../../command-internal/postgres-client.run.ts";
@@ -234,11 +235,14 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
         ? yield* stackProjectDatabaseMajor
         : undefined;
     const dumpMajor = serverMajor ?? tomlValues.majorVersion;
+    const dumpCommand = roleOnly ? ("pg_dumpall" as const) : ("pg_dump" as const);
+    const pathPrepend = useHostClient ? yield* nativeHostClientPathPrepend(dumpCommand) : undefined;
     const dumpClient = useHostClient
       ? {
           kind: "host" as const,
-          command: roleOnly ? ("pg_dumpall" as const) : ("pg_dump" as const),
+          command: dumpCommand,
           expectedMajor: dumpMajor,
+          ...(pathPrepend === undefined ? {} : { pathPrepend }),
         }
       : { kind: "container" as const };
 

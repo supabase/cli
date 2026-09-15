@@ -19,6 +19,7 @@ import {
   SupervisorReadySchema,
   type SupervisorArgs,
 } from "../supervisor/LaunchProtocol.ts";
+import { openSupervisorBootstrapLog } from "../supervisor/BootstrapLog.ts";
 
 class SupervisorReadinessError extends Data.TaggedError("SupervisorReadinessError")<{
   readonly message: string;
@@ -135,7 +136,29 @@ const parseSupervisorArgs = (argv: ReadonlyArray<string>) =>
 export const runSupervisorProcess = (argv: ReadonlyArray<string>): Promise<void> => {
   const readiness = { written: false } satisfies ReadinessState;
   return Effect.runPromise(
-    parseSupervisorArgs(argv).pipe(Effect.flatMap((args) => runSupervisor(args, readiness))),
+    parseSupervisorArgs(argv).pipe(
+      Effect.tap((args) =>
+        Effect.sync(() => {
+          const log = openSupervisorBootstrapLog(args.stateRoot, args.stackId);
+          if (log === undefined) return;
+          const writeChunk = (chunk: string | Uint8Array): void => {
+            if (typeof chunk === "string") NodeFs.writeSync(log.fd, chunk);
+            else NodeFs.writeSync(log.fd, chunk);
+          };
+          const hijack = (stream: NodeJS.WriteStream): void => {
+            stream.write = ((chunk: unknown, encoding?: unknown, callback?: unknown) => {
+              if (typeof chunk === "string" || chunk instanceof Uint8Array) writeChunk(chunk);
+              if (typeof encoding === "function") encoding();
+              else if (typeof callback === "function") (callback as () => void)();
+              return true;
+            }) as typeof stream.write;
+          };
+          hijack(process.stdout);
+          hijack(process.stderr);
+        }),
+      ),
+      Effect.flatMap((args) => runSupervisor(args, readiness)),
+    ),
   ).catch((error) => reportSupervisorFailure(error, readiness));
 };
 

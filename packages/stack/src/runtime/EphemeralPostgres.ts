@@ -29,6 +29,7 @@ import {
   EphemeralPostgresError,
   PortUnavailableError,
   StackPreparationError,
+  StackRuntimeError,
   type EphemeralPostgresCreateError,
 } from "../public/Errors.ts";
 import {
@@ -51,8 +52,11 @@ import { makeProductionRuntimeArtifactPreparer } from "../preparation/RuntimeArt
 import {
   resolveContainerEngine,
   ContainerEngineResolver,
-  selectDefaultRuntime,
+  selectDefaultRuntimeSelection,
+  nativeRuntimeBlockedForUid,
+  NATIVE_ROOT_UNSUPPORTED_MESSAGE,
   type ContainerEngineResolverShape,
+  type DefaultRuntimeSelection,
 } from "./ContainerEngineResolver.ts";
 import type { ContainerEngine } from "./ContainerEngine.ts";
 import { encodeRuntimeEnvFile } from "./RuntimeEnvFile.ts";
@@ -82,15 +86,27 @@ const ephemeralError = (
 const resolvedRuntime = (
   preference: CreateEphemeralPostgresOptions["runtime"] | undefined,
   resolver: ContainerEngineResolverShape | undefined,
-): Effect.Effect<StackRuntime, ContainerEngineError, ChildProcessSpawnerService> => {
+): Effect.Effect<
+  DefaultRuntimeSelection,
+  ContainerEngineError | StackRuntimeError,
+  ChildProcessSpawnerService
+> => {
   if (preference !== undefined) {
-    return Effect.succeed(
+    const runtime =
       preference.kind === "container"
-        ? { kind: "container", engine: preference.engine ?? "docker" }
-        : { kind: "native" },
-    );
+        ? ({ kind: "container", engine: preference.engine ?? "docker" } satisfies StackRuntime)
+        : ({ kind: "native" } satisfies StackRuntime);
+    return runtime.kind === "native" && nativeRuntimeBlockedForUid()
+      ? Effect.fail(new StackRuntimeError({ message: NATIVE_ROOT_UNSUPPORTED_MESSAGE }))
+      : Effect.succeed({ runtime });
   }
-  return selectDefaultRuntime(resolver);
+  return selectDefaultRuntimeSelection(resolver).pipe(
+    Effect.flatMap((selected) =>
+      selected.runtime.kind === "native" && nativeRuntimeBlockedForUid()
+        ? Effect.fail(new StackRuntimeError({ message: NATIVE_ROOT_UNSUPPORTED_MESSAGE }))
+        : Effect.succeed(selected),
+    ),
+  );
 };
 
 const plannedWorkload = (
@@ -385,6 +401,7 @@ interface Cluster {
   readonly runtime: StackRuntime;
   readonly artifactIdentity: string;
   readonly executable?: string;
+  readonly artifactRoot?: string;
   readonly image?: string;
   readonly lifecycle: Semaphore.Semaphore;
   running: boolean;
@@ -934,6 +951,7 @@ const clusterHandle = (
     version: cluster.version,
     runtime: cluster.runtime,
     artifactIdentity: cluster.artifactIdentity,
+    ...(cluster.artifactRoot === undefined ? {} : { nativeArtifactRoot: cluster.artifactRoot }),
     url: Redacted.make(databaseUrl(cluster.port, password)),
     ...(cluster.resources.kind === "container" && cluster.resources.networkId !== undefined
       ? { networkId: cluster.resources.networkId }
@@ -990,7 +1008,8 @@ export const createEphemeralPostgresCluster = (
     const resolver = yield* Effect.serviceOption(ContainerEngineResolver).pipe(
       Effect.map(Option.getOrUndefined),
     );
-    const runtime = yield* resolvedRuntime(options.runtime, resolver);
+    const selection = yield* resolvedRuntime(options.runtime, resolver);
+    const runtime = selection.runtime;
     const release = yield* resolveEphemeralPostgresRelease(options.version);
     const envOption = yield* Effect.serviceOption(StackRuntimeEnvironment);
     const env = Option.isSome(envOption) ? envOption.value : yield* defaultRuntimeEnvironment;
@@ -1062,6 +1081,7 @@ export const createEphemeralPostgresCluster = (
             executable: prepared.artifactRoot.endsWith("/")
               ? `${prepared.artifactRoot}${prepared.executablePath}`
               : `${prepared.artifactRoot}/${prepared.executablePath}`,
+            artifactRoot: prepared.artifactRoot,
           }),
       ...(prepared.image === undefined ? {} : { image: prepared.image }),
       lifecycle: Semaphore.makeUnsafe(1),
@@ -1132,5 +1152,10 @@ export const createEphemeralPostgresCluster = (
     }
     if (runtime.kind === "native") yield* startNative(cluster, options, healthTimeout, password);
     else yield* startContainer(cluster, options, healthTimeout, password);
-    return clusterHandle(cluster, options, healthTimeout, password);
+    return {
+      ...clusterHandle(cluster, options, healthTimeout, password),
+      ...(selection.dockerFallbackNotice === undefined
+        ? {}
+        : { dockerFallbackNotice: selection.dockerFallbackNotice }),
+    };
   });

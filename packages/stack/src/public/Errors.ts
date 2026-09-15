@@ -233,6 +233,7 @@ export const CREATE_STACK_ERROR_TAGS = [
   "StackOwnershipConflictError",
   "StackRuntimeMismatchError",
   "ContainerEngineError",
+  "StackRuntimeError",
   "StackStateInvalidError",
   "StackStateFormatUnsupportedError",
 ] as const satisfies ReadonlyArray<StackErrorTag>;
@@ -360,6 +361,7 @@ export const EPHEMERAL_POSTGRES_ERROR_TAGS = [
   "ArtifactIntegrityError",
   "ContainerPullError",
   "ContainerEngineError",
+  "StackRuntimeError",
 ] as const satisfies ReadonlyArray<StackErrorTag>;
 export type EphemeralPostgresCreateError = ErrorByTag<
   (typeof EPHEMERAL_POSTGRES_ERROR_TAGS)[number]

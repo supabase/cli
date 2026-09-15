@@ -173,6 +173,8 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
               ...(runtime === undefined ? {} : { runtime }),
             })
             .pipe(Effect.mapError(stackStartError));
+    if (stack.dockerFallbackNotice !== undefined)
+      yield* output.raw(`${stack.dockerFallbackNotice}\n`, "stderr");
     // `--stack-id` addresses this identity, not findStack(projectRoot, name).
     const addressed = yield* stack.status.pipe(Effect.mapError(stackStartError));
     const firstCreate = addressed.desiredLifecycle === "unconfigured";
@@ -223,6 +225,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
             projectRoot: target.projectRoot,
             config,
           },
+          optionalConfig: startConfig,
           overlay: {
             webhooks: "config",
             webhooksEnabled: toml.webhooksEnabled,
