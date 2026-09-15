@@ -34,6 +34,7 @@
     // `!` entry that would otherwise re-include them.
     "apps/cli/src/shared/compute/stacks/**",
     "!apps/cli/tests/helpers/compute.ts",
+    "!apps/cli/tests/helpers/postgres-config-live.ts",
     "!apps/cli/src/command-internal/experimental-feature.ts"
   ]
 }

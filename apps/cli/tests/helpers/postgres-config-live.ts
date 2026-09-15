@@ -4,7 +4,7 @@ import {
   expectPostgresConfigLiveOverride,
   type LiveFixtures,
   removePostgresConfigLiveOverride,
-} from "../../../tests/helpers/live.ts";
+} from "./live.ts";
 
 /** Typed proof failures keep the bounded `get` poll and the teardown attributable. */
 class PostgresConfigLiveError extends Data.TaggedError("PostgresConfigLiveError")<{

@@ -7,7 +7,11 @@ import {
   test,
   throwWithCleanup,
 } from "../../../../tests/helpers/live.ts";
-import { liveFailure, proveOverride, removeOverride } from "../postgres-config.live-helpers.ts";
+import {
+  liveFailure,
+  proveOverride,
+  removeOverride,
+} from "../../../../tests/helpers/postgres-config-live.ts";
 
 // Seeds its own override and proves it landed before deleting, so the absence
 // assertion cannot be satisfied by the pre-seed state. Teardown removes the

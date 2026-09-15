@@ -6,7 +6,7 @@ import {
   test,
   throwWithCleanup,
 } from "../../../../tests/helpers/live.ts";
-import { proveOverride, removeOverride } from "../postgres-config.live-helpers.ts";
+import { proveOverride, removeOverride } from "../../../../tests/helpers/postgres-config-live.ts";
 
 // --no-restart skips the database restart; work_mem is a dynamic parameter, so
 // the override still takes effect.
