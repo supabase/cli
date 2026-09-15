@@ -23,6 +23,7 @@ export const RestModule: CapabilityModule<RestSettings> = {
   },
   defaultEnabled: true,
   defaultActivation: "lazy",
+  defaultIdleTimeoutSeconds: 60,
   defaultVersion: version,
   dependencies: ["database"],
   releases: {

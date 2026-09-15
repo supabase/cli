@@ -13,6 +13,7 @@ import {
   StackApi,
   StackTargetError,
   rejectStackOutput,
+  stackStatusIssueLines,
   validateStackId,
   validateStackTarget,
 } from "../stack.shared.ts";
@@ -74,6 +75,7 @@ const readiness = (status: StackStatus | undefined): string => {
   if (status === undefined) return "unknown";
   if (status.lifecycle !== "running") return status.lifecycle;
   if (status.capabilities.some(({ state }) => state === "failed")) return "degraded";
+  if (status.capabilities.some(({ state }) => state === "stopping")) return "stopping";
   if (status.capabilities.some(({ state }) => state === "starting")) return "starting";
   if (status.capabilities.some(({ state }) => state === "stopped")) return "stopped";
   if (status.capabilities.some(({ state }) => state === "dormant")) return "dormant";
@@ -100,6 +102,7 @@ const payload = (inspection: StackInspection, configWarning?: string) => ({
   readiness: readiness(inspection.status),
   ...(inspection.status === undefined ? {} : { endpoints: inspection.status.endpoints }),
   ...(inspection.status === undefined ? {} : { capabilities: inspection.status.capabilities }),
+  ...(inspection.status?.recovery === undefined ? {} : { recovery: inspection.status.recovery }),
   config_drift:
     inspection.configDrift ??
     ({
@@ -134,6 +137,7 @@ const render = (inspection: StackInspection, configWarning?: string): string => 
       for (const [name, endpoint] of endpoints)
         if (endpoint !== undefined) lines.push(`  ${name}: ${endpoint.url}`);
     }
+    lines.push(...stackStatusIssueLines(inspection.status));
   }
   const drift = inspection.configDrift;
   lines.push(`Config drift: ${drift?.status ?? "unavailable"}`);

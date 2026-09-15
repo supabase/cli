@@ -1,6 +1,7 @@
 import { Data, Predicate } from "effect";
 import type { StackId } from "./StackId.ts";
 import type { ContainerEngineKind } from "../runtime/ContainerEngine.ts";
+import type { StackRecovery } from "./Status.ts";
 
 /** Common context present on every public stack error. */
 interface ErrorFields {
@@ -64,7 +65,7 @@ export class StackMustBeStoppedError extends Data.TaggedError("StackMustBeStoppe
   ErrorFields & { readonly slot?: string; readonly stackId?: StackId; readonly guidance?: string }
 > {}
 export class StackLifecycleConflictError extends Data.TaggedError("StackLifecycleConflictError")<
-  ErrorFields & { readonly stackId?: StackId }
+  ErrorFields & { readonly stackId?: StackId; readonly recovery?: StackRecovery }
 > {}
 
 export class StackStateInvalidError extends Data.TaggedError("StackStateInvalidError")<
@@ -101,7 +102,11 @@ export class PortUnavailableError extends Data.TaggedError("PortUnavailableError
 > {}
 
 export class GatewayActivationError extends Data.TaggedError("GatewayActivationError")<
-  ErrorFields & { readonly capability?: string; readonly workload?: string }
+  ErrorFields & {
+    readonly capability?: string;
+    readonly workload?: string;
+    readonly recovery?: StackRecovery;
+  }
 > {}
 
 export class StackPreparationError extends Data.TaggedError("StackPreparationError")<
