@@ -209,7 +209,9 @@ export const textOutputLayer = Layer.effect(
       event: (event: StreamEvent) =>
         event.type === "log-entry"
           ? Effect.sync(() => log.info(`[${event.service}] ${event.line}`))
-          : Effect.sync(() => log.info(JSON.stringify(event))),
+          : event.type === "realtime-frame"
+            ? Effect.sync(() => log.info(event.line))
+            : Effect.sync(() => log.info(JSON.stringify(event))),
       task: (message: string) =>
         Effect.sync(() => {
           let shown = false;

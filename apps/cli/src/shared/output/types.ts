@@ -16,6 +16,17 @@ export type StreamEvent =
       readonly source: "history" | "live";
     }
   | {
+      readonly type: "realtime-frame";
+      readonly timestamp: string;
+      readonly seq: number;
+      readonly category: string;
+      readonly event: string;
+      readonly label: string;
+      readonly line: string;
+      readonly payload: unknown;
+      readonly latencyMs?: number;
+    }
+  | {
       readonly type: "result";
       readonly data: unknown;
       readonly timestamp: string;
