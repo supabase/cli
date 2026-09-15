@@ -18,5 +18,6 @@
 - The command opens only the implicit managed stack for the current project. It never creates, stops, or destroys a stack.
 - Invocation-only env, import-map, JWT, inspector, and debug settings are applied to a transient Functions activation.
 - The Functions workload shares the selected stack's database, gateway, credentials, and ports.
+- Function source, environment, import-map, and project configuration changes restart the transient Functions activation.
 - Function logs are streamed until the stack stops or the command receives `SIGINT`, `SIGTERM`, or `SIGHUP`.
-- Exiting the command leaves the selected stack and its other capabilities running.
+- Exiting the command restores the durable Functions activation and leaves the selected stack and its other capabilities running.
