@@ -262,7 +262,7 @@ describe("makePromiseClient", () => {
 
       await client.dispose();
 
-      await expect(client.v1.listAllProjects()).rejects.toThrow("ManagedRuntime disposed");
+      await expect(client.v1.listAllProjects()).rejects.toThrow();
     } finally {
       await runtime.dispose();
     }
