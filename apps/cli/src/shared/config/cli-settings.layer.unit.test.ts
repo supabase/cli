@@ -10,6 +10,7 @@ import {
   mockRuntimeInfo,
   processEnvLayer,
 } from "../../../tests/helpers/mocks.ts";
+import { getEffectiveConsent } from "../telemetry/consent.ts";
 import { CliSettings } from "./cli-settings.service.ts";
 import { cliSettingsLayer } from "./cli-settings.layer.ts";
 import { cliProjectContextLayer } from "./cli-project-context.layer.ts";
@@ -19,7 +20,12 @@ function makeTempDir(): string {
   return mkdtempSync(join(tmpdir(), "supabase-cli-settings-"));
 }
 
-function buildLayer(opts: { cwd: string; env?: Record<string, string>; homeDir?: string }) {
+function buildLayer(opts: {
+  cwd: string;
+  env?: Record<string, string>;
+  providerEnv?: Record<string, string>;
+  homeDir?: string;
+}) {
   const runtimeInfoLayer = mockRuntimeInfo({
     cwd: opts.cwd,
     homeDir: opts.homeDir ?? join(opts.cwd, ".home"),
@@ -35,7 +41,9 @@ function buildLayer(opts: { cwd: string; env?: Record<string, string>; homeDir?:
     Layer.provide(discoveredCliProjectContextLayer),
     Layer.provide(
       ConfigProvider.layer(
-        ConfigProvider.fromEnvRecord(opts.env ?? {}, { preserveEmptyStrings: true }),
+        ConfigProvider.fromEnvRecord(opts.providerEnv ?? opts.env ?? {}, {
+          preserveEmptyStrings: true,
+        }),
       ),
     ),
   );
@@ -50,6 +58,30 @@ function buildLayer(opts: { cwd: string; env?: Record<string, string>; homeDir?:
 }
 
 describe("cliSettingsLayer", () => {
+  for (const optOut of ["SUPABASE_TELEMETRY_DISABLED", "DO_NOT_TRACK"]) {
+    it.live(`honors injected ${optOut} alongside discovered project settings`, () => {
+      const cwd = makeTempDir();
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() => mkdir(join(cwd, "supabase")));
+        yield* Effect.tryPromise(() =>
+          writeFile(join(cwd, "supabase", "config.toml"), 'project_id = "demo"\n'),
+        );
+        yield* Effect.tryPromise(() =>
+          writeFile(join(cwd, "supabase", ".env"), "SUPABASE_DEBUG=\n"),
+        );
+        yield* Effect.gen(function* () {
+          const settings = yield* CliSettings;
+          expect(settings.debug).toEqual(Option.some(""));
+          expect(yield* getEffectiveConsent(Option.none())).toBe("denied");
+        }).pipe(
+          Effect.provide(
+            buildLayer({ cwd, providerEnv: { [optOut]: "1", SUPABASE_DEBUG: "true" } }),
+          ),
+        );
+      }).pipe(Effect.ensuring(Effect.tryPromise(() => rm(cwd, { recursive: true, force: true }))));
+    });
+  }
+
   it.live("falls back to ambient env when no Supabase project is found", () => {
     const tempDir = makeTempDir();
     return Effect.gen(function* () {

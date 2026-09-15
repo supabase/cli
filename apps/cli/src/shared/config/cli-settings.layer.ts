@@ -16,7 +16,9 @@ const makeCliSettings = Effect.gen(function* () {
   const provider = Option.match(cliProjectContext.projectEnv, {
     onNone: () => ambientProvider,
     onSome: (projectEnv) =>
-      ConfigProvider.fromEnvRecord(projectEnv.values, { preserveEmptyStrings: true }),
+      ConfigProvider.fromEnvRecord(projectEnv.values, { preserveEmptyStrings: true }).pipe(
+        ConfigProvider.orElse(ambientProvider),
+      ),
   });
   const read = <A>(config: Config.Config<A>) => config.parse(provider);
   const posthogConfig = yield* resolvePosthogConfig(provider);
