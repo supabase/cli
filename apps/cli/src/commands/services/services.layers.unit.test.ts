@@ -82,7 +82,7 @@ describe("servicesRuntimeLayer — IdentityStitch exposure", () => {
       return Effect.gen(function* () {
         const stitch = yield* Effect.serviceOption(IdentityStitch);
         expect(Option.isSome(stitch)).toBe(true);
-      }).pipe(Effect.provide(servicesRuntimeLayer), Effect.provide(ambientStubs()));
+      }).pipe(Effect.provide(servicesRuntimeLayer.pipe(Layer.provide(ambientStubs()))));
     },
   );
 });

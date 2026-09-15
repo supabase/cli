@@ -1,10 +1,7 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
+import { BunServices } from "@effect/platform-bun";
 import { type V1GetSslEnforcementConfigOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, FileSystem, Option, Path } from "effect";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
@@ -198,54 +195,59 @@ describe("ssl-enforcement get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("reads supabase/.temp/project-ref when env and flag are unset", () => {
+  it.live("reads supabase/.temp/project-ref when env and flag are unset", () =>
     // This test owns its own workdir because it writes a project-ref file
     // before the layer is constructed (the resolver reads from
     // <workdir>/supabase/.temp/project-ref on layer-effect resolution).
-    const localTempRoot = mkdtempSync(join(tmpdir(), "supabase-ssl-get-int-fileref-"));
-    const fileRef = "filerefabcdefghijklm";
-    mkdirSync(join(localTempRoot, "supabase", ".temp"), { recursive: true });
-    writeFileSync(join(localTempRoot, "supabase", ".temp", "project-ref"), fileRef);
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const localTempRoot = yield* fs.makeTempDirectoryScoped({
+        prefix: "supabase-ssl-get-int-fileref-",
+      });
+      const path = yield* Path.Path;
+      const fileRef = "filerefabcdefghijklm";
+      yield* fs.makeDirectory(path.join(localTempRoot, "supabase", ".temp"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(localTempRoot, "supabase", ".temp", "project-ref"),
+        fileRef,
+      );
 
-    const out = mockOutput({ format: "text" });
-    const api = mockCommandPlatformApi({ response: { status: 200, body: SSL_ENFORCED } });
-    const cliSettings = mockCommandSettings({
-      workdir: localTempRoot,
-      projectId: Option.none(),
-    });
-    const layer = buildTestRuntime({ out, api, cliSettings });
+      const out = mockOutput({ format: "text" });
+      const api = mockCommandPlatformApi({ response: { status: 200, body: SSL_ENFORCED } });
+      const cliSettings = mockCommandSettings({
+        workdir: localTempRoot,
+        projectId: Option.none(),
+      });
+      const layer = buildTestRuntime({ out, api, cliSettings });
 
-    return Effect.gen(function* () {
-      yield* sslEnforcementGet({ projectRef: Option.none() });
+      yield* sslEnforcementGet({ projectRef: Option.none() }).pipe(Effect.provide(layer));
       expect(api.requests[0]?.url).toContain(`/v1/projects/${fileRef}/`);
-    }).pipe(
-      Effect.provide(layer),
-      Effect.ensuring(Effect.sync(() => rmSync(localTempRoot, { recursive: true, force: true }))),
-    );
-  });
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
 
-  it.live("fails with ProjectRefNotLinkedError when no ref source matches off-TTY", () => {
-    const localTempRoot = mkdtempSync(join(tmpdir(), "supabase-ssl-get-int-no-ref-"));
-    const out = mockOutput({ format: "text" });
-    const api = mockCommandPlatformApi({ response: { status: 200, body: SSL_ENFORCED } });
-    const cliSettings = mockCommandSettings({
-      workdir: localTempRoot,
-      projectId: Option.none(),
-    });
-    const layer = buildTestRuntime({ out, api, cliSettings });
+  it.live("fails with ProjectRefNotLinkedError when no ref source matches off-TTY", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const localTempRoot = yield* fs.makeTempDirectoryScoped({
+        prefix: "supabase-ssl-get-int-no-ref-",
+      });
+      const out = mockOutput({ format: "text" });
+      const api = mockCommandPlatformApi({ response: { status: 200, body: SSL_ENFORCED } });
+      const cliSettings = mockCommandSettings({
+        workdir: localTempRoot,
+        projectId: Option.none(),
+      });
+      const layer = buildTestRuntime({ out, api, cliSettings });
 
-    return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         sslEnforcementGet({ projectRef: Option.none() }).pipe(Effect.provide(layer)),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("ProjectRefNotLinkedError");
+        expect(Cause.pretty(exit.cause)).toContain("ProjectRefNotLinkedError");
       }
-    }).pipe(
-      Effect.ensuring(Effect.sync(() => rmSync(localTempRoot, { recursive: true, force: true }))),
-    );
-  });
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
 
   it.live("fails with InvalidProjectRefError when the resolved ref is malformed", () => {
     const { layer } = setup({ response: SSL_ENFORCED });
@@ -253,7 +255,7 @@ describe("ssl-enforcement get integration", () => {
       const exit = yield* Effect.exit(sslEnforcementGet({ projectRef: Option.some("BADREF") }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("InvalidProjectRefError");
+        expect(Cause.pretty(exit.cause)).toContain("InvalidProjectRefError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -264,9 +266,9 @@ describe("ssl-enforcement get integration", () => {
       const exit = yield* Effect.exit(sslEnforcementGet({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
-        expect(errorJson).toContain("SslEnforcementGetUnexpectedStatusError");
-        expect(errorJson).toContain("unexpected SSL enforcement status 503");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("SslEnforcementGetUnexpectedStatusError");
+        expect(causeText).toContain("unexpected SSL enforcement status 503");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -277,9 +279,9 @@ describe("ssl-enforcement get integration", () => {
       const exit = yield* Effect.exit(sslEnforcementGet({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
-        expect(errorJson).toContain("SslEnforcementGetNetworkError");
-        expect(errorJson).toContain("failed to retrieve SSL enforcement config");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("SslEnforcementGetNetworkError");
+        expect(causeText).toContain("failed to retrieve SSL enforcement config");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -312,34 +314,36 @@ describe("ssl-enforcement get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry even when ref resolution fails (no cache write)", () => {
+  it.live("flushes telemetry even when ref resolution fails (no cache write)", () =>
     // Telemetry must flush whether or not the resolver succeeds; the
     // linked-project cache only writes after a ref is resolved.
-    const localTempRoot = mkdtempSync(join(tmpdir(), "supabase-ssl-get-int-postrun-"));
-    const telemetry = mockTelemetryStateTracked();
-    const cache = mockLinkedProjectCacheTracked();
-    const out = mockOutput({ format: "text" });
-    const api = mockCommandPlatformApi({ response: { status: 200, body: SSL_ENFORCED } });
-    const cliSettings = mockCommandSettings({
-      workdir: localTempRoot,
-      projectId: Option.none(),
-    });
-    const layer = buildTestRuntime({
-      out,
-      api,
-      cliSettings,
-      telemetry: telemetry.layer,
-      linkedProjectCache: cache.layer,
-    });
-    return Effect.gen(function* () {
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const localTempRoot = yield* fs.makeTempDirectoryScoped({
+        prefix: "supabase-ssl-get-int-postrun-",
+      });
+      const telemetry = mockTelemetryStateTracked();
+      const cache = mockLinkedProjectCacheTracked();
+      const out = mockOutput({ format: "text" });
+      const api = mockCommandPlatformApi({ response: { status: 200, body: SSL_ENFORCED } });
+      const cliSettings = mockCommandSettings({
+        workdir: localTempRoot,
+        projectId: Option.none(),
+      });
+      const layer = buildTestRuntime({
+        out,
+        api,
+        cliSettings,
+        telemetry: telemetry.layer,
+        linkedProjectCache: cache.layer,
+      });
+
       const exit = yield* Effect.exit(
         sslEnforcementGet({ projectRef: Option.none() }).pipe(Effect.provide(layer)),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       expect(telemetry.flushed).toBe(true);
       expect(cache.cached).toBe(false);
-    }).pipe(
-      Effect.ensuring(Effect.sync(() => rmSync(localTempRoot, { recursive: true, force: true }))),
-    );
-  });
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
 });
