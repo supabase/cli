@@ -204,7 +204,7 @@ describe("stack start targeting", () => {
                   Effect.mapError(
                     (error) => new StackStateInvalidError({ message: error.message }),
                   ),
-            Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
+                  Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
                 );
                 expect(compiled.definition.capabilities[exclusion].enabled).toBe(false);
                 expect(compiled.definition.capabilities.studio.enabled).toBe(false);
