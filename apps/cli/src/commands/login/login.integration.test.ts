@@ -55,7 +55,6 @@ interface SetupOpts {
   readonly homeDir?: string;
   /** Raw argv for explicit `--profile` detection. */
   readonly argv?: ReadonlyArray<string>;
-
 }
 
 function flags(overrides: Partial<LoginFlags> = {}): LoginFlags {
@@ -399,7 +398,9 @@ describe("login integration", () => {
         profileEnvValue: Option.some(profilePath),
       });
       yield* login(flags({ token: Option.some(VALID_TOKEN) })).pipe(Effect.provide(layer));
-      expect(yield* fs.readFileString(path.join(tempRoot.current, ".supabase", "profile"))).toBe(profilePath);
+      expect(yield* fs.readFileString(path.join(tempRoot.current, ".supabase", "profile"))).toBe(
+        profilePath,
+      );
     }).pipe(Effect.provide(BunServices.layer)),
   );
 

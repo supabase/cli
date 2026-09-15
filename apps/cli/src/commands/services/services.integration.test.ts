@@ -87,7 +87,6 @@ function setup(
       Layer.succeed(
         CommandSettings,
         CommandSettings.of({
-          profileEnvValue: undefined,
           profile: "supabase",
           profileEnvValue: Option.none(),
           supabaseHome: "/tmp/.supabase",

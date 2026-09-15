@@ -144,11 +144,11 @@ describe("commandSettingsLayer", () => {
     ),
   );
 
-  it.effect("captures an empty SUPABASE_PROFILE as undefined", () =>
+  it.effect("preserves an empty SUPABASE_PROFILE without selecting a profile", () =>
     Effect.gen(function* () {
       const config = yield* CommandSettings;
       expect(config.profile).toBe("supabase");
-      expect(config.profileEnvValue).toEqual(Option.none());
+      expect(config.profileEnvValue).toEqual(Option.some(""));
     }).pipe(Effect.provide(makeLayer({ env: { SUPABASE_PROFILE: "" }, cwd: tempRoot }))),
   );
 
@@ -322,7 +322,7 @@ describe("commandSettingsLayer", () => {
     return Effect.gen(function* () {
       const config = yield* CommandSettings;
       expect(config.profile).toBe("cli-e2e");
-      expect(config.profileEnvValue).toBe(profilePath);
+      expect(config.profileEnvValue).toEqual(Option.some(profilePath));
       expect(config.apiUrl).toBe("http://127.0.0.1:9999");
       expect(config.projectHost).toBe("localhost");
       expect(config.poolerHost).toBe("staging.example.com");

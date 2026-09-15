@@ -33,7 +33,6 @@ function mockCliSettings(opts: {
   projectHost?: string;
 }) {
   return Layer.succeed(CommandSettings, {
-    profileEnvValue: undefined,
     profile: opts.profile ?? "supabase",
     profileEnvValue: Option.none(),
     supabaseHome: "/tmp/.supabase",

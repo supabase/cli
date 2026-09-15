@@ -126,9 +126,6 @@ export const commandSettingsLayer = Layer.unwrap(
           onSome: ({ args }) => lastExplicitLongFlagValue(args, [], "profile"),
         });
 
-        const rawProfileEnv = env["SUPABASE_PROFILE"];
-        const profileEnvValue =
-          rawProfileEnv === undefined || rawProfileEnv.length === 0 ? undefined : rawProfileEnv;
         const {
           name: profile,
           apiUrl,
@@ -170,7 +167,6 @@ export const commandSettingsLayer = Layer.unwrap(
           projectHost,
           poolerHost,
           dashboardUrl,
-          profileEnvValue,
           accessToken,
           projectId,
           workdir,
