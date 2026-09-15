@@ -4,7 +4,7 @@ import { mkdtempSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Effect, Layer, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option } from "effect";
 import { mockRuntimeInfo, processEnvLayer } from "../../../tests/helpers/mocks.ts";
 import { cliSettingsLayer } from "./cli-settings.layer.ts";
 import { cliProjectContextLayer } from "./cli-project-context.layer.ts";
@@ -55,6 +55,41 @@ function buildLayer(opts: { cwd: string; env?: Record<string, string>; homeDir?:
 }
 
 describe("cliProjectLocalServiceVersionsLayer", () => {
+  it.live("fails with a tagged error when local service versions are malformed", () => {
+    const tempDir = makeTempDir();
+    const projectRoot = join(tempDir, "repo");
+
+    return Effect.gen(function* () {
+      yield* Effect.tryPromise(() => mkdir(join(projectRoot, "supabase"), { recursive: true }));
+      yield* Effect.tryPromise(() => writeFile(join(projectRoot, "supabase", "config.toml"), ""));
+
+      const layer = buildLayer({ cwd: projectRoot });
+      const { cliProjectHome, localVersions } = yield* Effect.gen(function* () {
+        return {
+          cliProjectHome: yield* CliProjectHome,
+          localVersions: yield* CliProjectLocalServiceVersions,
+        };
+      }).pipe(Effect.provide(layer));
+
+      yield* cliProjectHome.ensureCliProjectHomeDir;
+      yield* Effect.tryPromise(() =>
+        writeFile(cliProjectHome.projectLocalVersionsPath, "{not-json"),
+      );
+
+      const exit = yield* Effect.exit(localVersions.load);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const error = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(error)).toBe(true);
+        if (Option.isSome(error)) {
+          expect(error.value).toMatchObject({ _tag: "InvalidLocalServiceVersionsStateError" });
+        }
+      }
+    }).pipe(
+      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+    );
+  });
+
   it.live("loads local service version overrides from repo-local state", () => {
     const tempDir = makeTempDir();
     const projectRoot = join(tempDir, "repo");

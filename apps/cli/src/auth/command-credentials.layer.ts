@@ -1,4 +1,5 @@
-import { Effect, FileSystem, Layer, Option, Path, Redacted, Result } from "effect";
+import { Effect, FileSystem, Layer, Option, Path, Predicate, Redacted, Result } from "effect";
+import type { PlatformError } from "effect/PlatformError";
 
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { normalizeKeyringToken } from "../shared/auth/keyring-token.ts";
@@ -356,11 +357,11 @@ const readKeyringForAccount = (
 const readFallbackFile = (
   fs: FileSystem.FileSystem,
   fallbackPath: string,
-): Effect.Effect<Option.Option<string>> =>
+): Effect.Effect<Option.Option<string>, PlatformError> =>
   Effect.gen(function* () {
-    const exists = yield* fs.exists(fallbackPath).pipe(Effect.orElseSucceed(() => false));
+    const exists = yield* fs.exists(fallbackPath);
     if (!exists) return Option.none<string>();
-    const content = yield* fs.readFileString(fallbackPath).pipe(Effect.orElseSucceed(() => ""));
+    const content = yield* fs.readFileString(fallbackPath);
     const trimmed = content.trim();
     return trimmed.length === 0 ? Option.none<string>() : Option.some(trimmed);
   });
@@ -473,22 +474,24 @@ const makeCommandCredentials = Effect.gen(function* () {
         }
         // The containing directory is world-readable (0755); only the token file itself must
         // be private (0600).
-        yield* fs.makeDirectory(fallbackDir, { recursive: true, mode: 0o755 }).pipe(Effect.orDie);
-        yield* fs.writeFileString(fallbackPath, token, { mode: 0o600 }).pipe(Effect.orDie);
+        yield* fs.makeDirectory(fallbackDir, { recursive: true, mode: 0o755 });
+        yield* fs.writeFileString(fallbackPath, token, { mode: 0o600 });
       }),
 
     deleteAccessToken: Effect.gen(function* () {
       // Removes the fallback token file first; a missing file is ignored, but any other
       // failure aborts before the keyring is touched.
-      const exists = yield* fs.exists(fallbackPath).pipe(Effect.orElseSucceed(() => false));
+      const exists = yield* fs.exists(fallbackPath);
       if (exists) {
         yield* fs.remove(fallbackPath).pipe(
-          Effect.catch((error) =>
-            Effect.fail(
-              new DeleteTokenError({
-                message: `failed to remove access token file: ${error.message}`,
-              }),
-            ),
+          Effect.catchTag("PlatformError", (error) =>
+            Predicate.isTagged(error.reason, "NotFound")
+              ? Effect.void
+              : Effect.fail(
+                  new DeleteTokenError({
+                    message: `failed to remove access token file: ${error.message}`,
+                  }),
+                ),
           ),
         );
       }
@@ -502,7 +505,7 @@ const makeCommandCredentials = Effect.gen(function* () {
       // Deleting the profile keyring account decides the outcome; no keyring backend (WSL,
       // `SUPABASE_NO_KEYRING`, unsupported) maps to `NotLoggedInError`.
       if (Option.isNone(keyringModule)) {
-        return yield* Effect.fail(new NotLoggedInError({ message: NOT_LOGGED_IN_MESSAGE }));
+        return yield* new NotLoggedInError({ message: NOT_LOGGED_IN_MESSAGE });
       }
       const outcome = yield* deleteProfileKeyringEntry(
         keyringModule.value,
@@ -510,7 +513,7 @@ const makeCommandCredentials = Effect.gen(function* () {
         runtimeInfo.platform,
       );
       if (outcome === "notFound") {
-        return yield* Effect.fail(new NotLoggedInError({ message: NOT_LOGGED_IN_MESSAGE }));
+        return yield* new NotLoggedInError({ message: NOT_LOGGED_IN_MESSAGE });
       }
     }),
 

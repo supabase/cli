@@ -4,7 +4,7 @@ import { mkdtempSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, FileSystem, Exit, Layer, Option, PlatformError } from "effect";
 import { mockRuntimeInfo, processEnvLayer } from "../../../tests/helpers/mocks.ts";
 import { cliSettingsLayer } from "./cli-settings.layer.ts";
 import { cliProjectContextLayer } from "./cli-project-context.layer.ts";
@@ -21,7 +21,12 @@ function makeTempDir(): string {
   return mkdtempSync(join(tmpdir(), "supabase-project-link-state-"));
 }
 
-function buildLayer(opts: { cwd: string; env?: Record<string, string>; homeDir?: string }) {
+function buildLayer(opts: {
+  cwd: string;
+  env?: Record<string, string>;
+  homeDir?: string;
+  fs?: Layer.Layer<FileSystem.FileSystem>;
+}) {
   const runtimeInfoLayer = mockRuntimeInfo({
     cwd: opts.cwd,
     homeDir: opts.homeDir ?? join(opts.cwd, ".home"),
@@ -43,7 +48,7 @@ function buildLayer(opts: { cwd: string; env?: Record<string, string>; homeDir?:
     Layer.provide(discoveredCliSettingsLayer),
   );
   const discoveredProjectLinkStateLayer = projectLinkStateLayer.pipe(
-    Layer.provide(BunServices.layer),
+    Layer.provide(opts.fs ?? BunServices.layer),
     Layer.provide(discoveredCliProjectHomeLayer),
   );
 
@@ -80,6 +85,45 @@ const SAMPLE_STATE = {
 } as const;
 
 describe("projectLinkStateLayer", () => {
+  it.live("surfaces a clear failure while preserving missing-file no-op behavior", () => {
+    const tempDir = makeTempDir();
+    const projectRoot = join(tempDir, "repo");
+    const linkPath = join(projectRoot, ".supabase", "project.json");
+    const fsLayer = Layer.succeed(
+      FileSystem.FileSystem,
+      FileSystem.makeNoop({
+        remove: () =>
+          Effect.fail(
+            PlatformError.systemError({
+              _tag: "PermissionDenied",
+              module: "FileSystem",
+              method: "remove",
+              description: "permission denied",
+              pathOrDescriptor: linkPath,
+            }),
+          ),
+      }),
+    );
+
+    return Effect.gen(function* () {
+      yield* Effect.tryPromise(() => mkdir(join(projectRoot, "supabase"), { recursive: true }));
+      const layer = buildLayer({ cwd: projectRoot, fs: fsLayer });
+      const linkState = yield* Effect.gen(function* () {
+        return yield* ProjectLinkState;
+      }).pipe(Effect.provide(layer));
+
+      const exit = yield* Effect.exit(linkState.clear);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const error = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(error)).toBe(true);
+        if (Option.isSome(error)) expect(error.value).toBeInstanceOf(PlatformError.PlatformError);
+      }
+    }).pipe(
+      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+    );
+  });
+
   it.live("saves and loads repo-local project link state", () => {
     const tempDir = makeTempDir();
     const projectRoot = join(tempDir, "repo");
