@@ -3,7 +3,8 @@ import { Buffer } from "node:buffer";
 import { encrypt, PrivateKey } from "eciesjs";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option, Redacted } from "effect";
+import { Cause, Effect, Exit, Layer, Option, Redacted } from "effect";
+import { runtimeInfoLayer } from "../../../shared/runtime/runtime-info.layer.ts";
 import { compileStack } from "../../../../../../packages/stack/src/model/Compiler.ts";
 
 import { withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
@@ -35,7 +36,9 @@ const project = (
   }).pipe(Effect.provide(BunServices.layer));
 
 const load = (projectRoot: string) =>
-  loadStackConfig(projectRoot).pipe(Effect.provide(BunServices.layer));
+  loadStackConfig(projectRoot).pipe(
+    Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
+  );
 
 const encrypted = (privateKey: string, plaintext: string): string =>
   `encrypted:${Buffer.from(
@@ -727,7 +730,7 @@ openai_api_key = "config-studio-key"
         projectRoot: root,
         runtime: { kind: "native" },
         config,
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)));
       expect(compiled.definition.capabilities.pooler.enabled).toBe(true);
       expect(compiled.definition.capabilities.pooler.activation).toBe("lazy");
       expect(compiled.definition.capabilities.storage.settings.image_transformation?.enabled).toBe(
@@ -753,7 +756,7 @@ openai_api_key = "config-studio-key"
         projectRoot: root,
         runtime: { kind: "native" },
         config,
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)));
       expect(compiled.definition.capabilities.pooler.enabled).toBe(true);
       expect(compiled.definition.capabilities.pooler.settings.default_pool_size).toBe(37);
       expect(compiled.definition.listeners.pooler.enabled).toBe(true);
@@ -783,7 +786,7 @@ enabled = false
         projectRoot: enabled,
         runtime: { kind: "native" },
         config: enabledConfig,
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)));
       expect(enabledCompiled.definition.capabilities.pooler.enabled).toBe(true);
       expect(
         enabledCompiled.definition.capabilities.storage.settings.image_transformation?.enabled,
@@ -797,7 +800,7 @@ enabled = false
         projectRoot: disabled,
         runtime: { kind: "native" },
         config: disabledConfig,
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)));
       expect(disabledCompiled.definition.capabilities.pooler.enabled).toBe(false);
       expect(
         disabledCompiled.definition.capabilities.storage.settings.image_transformation?.enabled,

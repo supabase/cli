@@ -1,5 +1,7 @@
+import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit } from "effect";
+import { ConfigProvider, Effect, Exit, Layer } from "effect";
+import { runtimeInfoLayer } from "../../../shared/runtime/runtime-info.layer.ts";
 import { dockerfileServiceImageRaw } from "../../../shared/services/dockerfile-images.ts";
 import { toSlimImage } from "../../../shared/services/slim-images.ts";
 import { getHostname } from "../../../command-internal/hostname.ts";
@@ -226,18 +228,22 @@ describe("schema and id helpers", () => {
     expect(localDbContainerId(longId)).toBe(`supabase_db_${"a".repeat(40)}`);
   });
 
-  it("reads the services hostname and db password from the environment", () => {
-    expect(
-      withEnv("DOCKER_HOST", undefined, () =>
-        withEnv("SUPABASE_SERVICES_HOSTNAME", undefined, () => getHostname()),
+  it.effect("reads the services hostname and db password from the environment", () =>
+    Effect.gen(function* () {
+      expect(yield* getHostname({ SUPABASE_SERVICES_HOSTNAME: "" })).toBe("127.0.0.1");
+      expect(yield* getHostname({ SUPABASE_SERVICES_HOSTNAME: "db.internal" })).toBe("db.internal");
+      expect(withEnv("SUPABASE_DB_PASSWORD", undefined, () => localDbPassword())).toBe("postgres");
+      expect(withEnv("SUPABASE_DB_PASSWORD", "secret", () => localDbPassword())).toBe("secret");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          BunServices.layer,
+          runtimeInfoLayer,
+          ConfigProvider.layer(ConfigProvider.fromEnvRecord({ DOCKER_HOST: undefined })),
+        ),
       ),
-    ).toBe("127.0.0.1");
-    expect(withEnv("SUPABASE_SERVICES_HOSTNAME", "db.internal", () => getHostname())).toBe(
-      "db.internal",
-    );
-    expect(withEnv("SUPABASE_DB_PASSWORD", undefined, () => localDbPassword())).toBe("postgres");
-    expect(withEnv("SUPABASE_DB_PASSWORD", "secret", () => localDbPassword())).toBe("secret");
-  });
+    ),
+  );
 
   it("brackets ipv6 hosts in the generated postgres url", () => {
     const url = buildPostgresUrl({

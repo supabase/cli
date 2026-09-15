@@ -5,11 +5,12 @@ import { join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Option, Path } from "effect";
+import { ConfigProvider, Effect, FileSystem, Layer, Option, Path } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { mockContainerCliSpawner } from "../../../tests/helpers/local-reset.ts";
 import { DebugLogger } from "../debug-logger.service.ts";
+import { runtimeInfoLayer } from "../../shared/runtime/runtime-info.layer.ts";
 import {
   LocalDockerEngine,
   dockerEndpointSocketPath,
@@ -44,6 +45,10 @@ function withDockerHost<A, E, R>(
     const previous = process.env["DOCKER_HOST"];
     process.env["DOCKER_HOST"] = endpoint;
     return effect.pipe(
+      Effect.provideService(
+        ConfigProvider.ConfigProvider,
+        ConfigProvider.fromEnv({ preserveEmptyStrings: true }),
+      ),
       Effect.ensuring(
         Effect.sync(() => {
           if (previous === undefined) delete process.env["DOCKER_HOST"];
@@ -99,11 +104,16 @@ const makeEngineServer = (respond: (req: http.IncomingMessage, res: http.ServerR
       }),
   );
 
+const localDockerEngineTestLayer = localDockerEngineLayer.pipe(
+  Layer.provide(BunServices.layer),
+  Layer.provide(runtimeInfoLayer),
+);
+
 const engineContainerExists = (containerId: string) =>
   Effect.gen(function* () {
     const engine = yield* LocalDockerEngine;
     return yield* engine.containerExists(containerId);
-  }).pipe(Effect.provide(localDockerEngineLayer));
+  }).pipe(Effect.provide(localDockerEngineTestLayer));
 
 describe("LocalDockerEngine (direct Engine-API transport)", () => {
   describe.skipIf(process.platform === "win32")("over a per-test unix-socket Engine server", () => {
@@ -288,7 +298,7 @@ describe("LocalDockerEngine (direct Engine-API transport)", () => {
       const traced = Effect.gen(function* () {
         const engine = yield* LocalDockerEngine;
         return yield* engine.containerExists("supabase_db_engine-probe");
-      }).pipe(Effect.provide(localDockerEngineLayer.pipe(Layer.provide(recorder))));
+      }).pipe(Effect.provide(localDockerEngineTestLayer.pipe(Layer.provide(recorder))));
       return Effect.scoped(
         Effect.gen(function* () {
           const engine = yield* makeEngineServer((_req, res) => {
@@ -455,7 +465,7 @@ describe("isLocalDbRunning", () => {
       const missingDir = mkdtempSync(join(tmpdir(), "ldbgone-"));
       return withDockerHost(
         `unix://${join(missingDir, "never-created.sock")}`,
-        probe(mock.layer).pipe(Effect.provide(localDockerEngineLayer)),
+        probe(mock.layer).pipe(Effect.provide(localDockerEngineTestLayer)),
       ).pipe(
         Effect.ensuring(Effect.sync(() => rmSync(missingDir, { recursive: true, force: true }))),
         Effect.map((running) => {

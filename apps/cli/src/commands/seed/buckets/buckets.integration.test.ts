@@ -34,6 +34,7 @@ import { seedBuckets } from "./buckets.handler.ts";
 import type { BucketsFlags } from "./buckets.command.ts";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
+import { runtimeInfoLayer } from "../../../shared/runtime/runtime-info.layer.ts";
 
 interface MockRoute {
   readonly method: string;
@@ -195,6 +196,7 @@ function setupSeedBuckets(
     telemetry.layer,
     mockCommandSettings({ workdir, explicitWorkdir: opts.explicitWorkdir ?? false }),
     BunServices.layer,
+    runtimeInfoLayer,
     // Seed-bucket prompts model an interactive user answering via `confirm`.
     mockTty({ stdinIsTty: true, stdoutIsTty: false }),
     mockStdin(true, opts.pipedAnswers ? `${opts.pipedAnswers.join("\n")}\n` : undefined),
