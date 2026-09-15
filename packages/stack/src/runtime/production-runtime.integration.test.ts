@@ -19,6 +19,8 @@ import {
   Layer,
 } from "effect";
 import * as TestClock from "effect/testing/TestClock";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- NodeHttpServer.layer requires a native factory to bind loopback; layerTest does not expose a host option.
+import { createServer as createHttpServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
 import { HttpServer, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import type { StackLogEntry } from "../public/Logs.ts";
@@ -257,7 +259,10 @@ const listenForHttpFixture = (
 ) =>
   Effect.gen(function* () {
     const scope = yield* Effect.scope;
-    const context = yield* Layer.buildWithScope(Layer.fresh(NodeHttpServer.layerTest), scope);
+    const context = yield* Layer.buildWithScope(
+      Layer.fresh(NodeHttpServer.layer(createHttpServer, { port: 0, host: "127.0.0.1" })),
+      scope,
+    );
     const server = Context.get(context, HttpServer.HttpServer);
     yield* server.serve(Effect.flatMap(HttpServerRequest.HttpServerRequest, handler));
     return server;

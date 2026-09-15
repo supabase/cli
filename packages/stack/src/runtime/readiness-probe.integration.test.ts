@@ -2,6 +2,8 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Data, Deferred, Duration, Effect, Exit, Fiber, Option, Predicate } from "effect";
 import * as TestClock from "effect/testing/TestClock";
 import { NodeHttpServer, NodeHttpServerRequest } from "@effect/platform-node";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- NodeHttpServer.layer requires a native factory to bind loopback; layerTest does not expose a host option.
+import { createServer as createHttpServer } from "node:http";
 import { createServer as createTcpServer, type Server as TcpServer } from "node:net";
 import { HttpServer, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import { StackPreparationError } from "../public/Errors.ts";
@@ -24,6 +26,11 @@ const serveHttp = (
       return yield* new ListenerError({ message: "missing HTTP address" });
     return server.address.port;
   });
+
+const loopbackHttpLayer = NodeHttpServer.layer(createHttpServer, {
+  port: 0,
+  host: "127.0.0.1",
+});
 
 const listenTcp = (server: TcpServer): Effect.Effect<number, ListenerError> =>
   Effect.callback<number, ListenerError>((resume) => {
@@ -93,7 +100,7 @@ describe("private endpoint readiness probe", () => {
         });
         expect(yield* Deferred.await(received)).toBe("realtime-dev");
       }),
-    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+    ).pipe(Effect.provide(loopbackHttpLayer)),
   );
 
   it.live("rejects invalid readiness header names and values", () =>
@@ -154,7 +161,7 @@ describe("private endpoint readiness probe", () => {
           { retries: 1, retryDelay: 0 },
         );
       }),
-    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+    ).pipe(Effect.provide(loopbackHttpLayer)),
   );
 
   it.live("reports a failed endpoint after bounded retries", () =>
@@ -174,7 +181,7 @@ describe("private endpoint readiness probe", () => {
         expect(Exit.isFailure(result)).toBe(true);
         expect(attempts).toBe(2);
       }),
-    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+    ).pipe(Effect.provide(loopbackHttpLayer)),
   );
 
   it.live("performs exactly one immediate probe for a zero readiness budget", () =>
@@ -201,7 +208,7 @@ describe("private endpoint readiness probe", () => {
         }
         expect(count).toBe(1);
       }),
-    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+    ).pipe(Effect.provide(loopbackHttpLayer)),
   );
 
   it.live("interrupts an in-flight HTTP request and closes its owned socket", () =>
@@ -223,7 +230,7 @@ describe("private endpoint readiness probe", () => {
         yield* Deferred.await(received);
         yield* Fiber.interrupt(fiber);
       }),
-    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+    ).pipe(Effect.provide(loopbackHttpLayer)),
   );
 
   it.effect("interrupts an in-flight HTTP request at its total deadline", () =>
@@ -259,6 +266,6 @@ describe("private endpoint readiness probe", () => {
         }
         yield* Deferred.await(closed);
       }),
-    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+    ).pipe(Effect.provide(loopbackHttpLayer)),
   );
 });

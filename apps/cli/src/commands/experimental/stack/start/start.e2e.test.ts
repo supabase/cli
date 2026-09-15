@@ -274,7 +274,11 @@ describe("stack start (compiled e2e)", () => {
     if (projectDir !== undefined) {
       yield* remove(projectDir, { recursive: true, force: true });
     }
-    yield* Effect.sync(() => home?.[Symbol.dispose]());
+    yield* Effect.try({
+      try: () => home?.[Symbol.dispose](),
+      catch: (cause) =>
+        new StartE2eProcessError({ message: "Failed to dispose temporary CLI home", cause }),
+    });
     home = undefined;
     projectDir = undefined;
     stackId = undefined;

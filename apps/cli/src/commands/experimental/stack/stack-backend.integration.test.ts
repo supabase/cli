@@ -47,7 +47,7 @@ port = 55422
 enabled = true
 [experimental.webhooks]
 enabled = true
- [experimental]
+[experimental]
 stack = true
 `);
         const path = yield* Path.Path;

@@ -245,7 +245,7 @@ env = { TOKEN = "env(SUPABASE_STACK_TEST_MISSING_ENV)" }
       const root = yield* project(
         `project_id = "stack-config-windows-signing-path"
 [auth]
-        signing_keys_path = 'C:\\keys\\signing.json'
+signing_keys_path = 'C:\\keys\\signing.json'
 `,
       );
       const nativePath = yield* Path.Path;
@@ -530,7 +530,8 @@ enabled = false
 
   it.effect("uses default stack settings when no project config exists", () => {
     return Effect.gen(function* () {
-      const root = yield* createStackConfigProject("", { functionNames: [] });
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-config-" });
       const config = yield* loadStackConfig(root);
       expect(config.listeners).toEqual({});
       expect(config.capabilities?.database).toMatchObject({ settings: { health_timeout: "2m" } });

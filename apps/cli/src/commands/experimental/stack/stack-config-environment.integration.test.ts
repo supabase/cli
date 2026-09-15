@@ -34,11 +34,8 @@ const project = (
     ...options,
   }).pipe(Effect.provide(BunServices.layer));
 
-const load = (projectRoot: string | ReturnType<typeof project>) =>
-  (Effect.isEffect(projectRoot)
-    ? projectRoot.pipe(Effect.flatMap(loadStackConfig))
-    : loadStackConfig(projectRoot)
-  ).pipe(Effect.provide(BunServices.layer));
+const load = (projectRoot: string) =>
+  loadStackConfig(projectRoot).pipe(Effect.provide(BunServices.layer));
 
 const encrypted = (privateKey: string, plaintext: string): string =>
   `encrypted:${Buffer.from(
@@ -253,69 +250,75 @@ secret = "encrypted:not-a-real-ciphertext"
   });
 
   it.effect("re-enables a file-disabled Studio service with its env-provided listener port", () => {
-    const root = project(
+    return project(
       `project_id = "stack-config-studio-env-reenable"
 [studio]
 enabled = false
 port = 55440
 `,
-    );
-    return withEnvironment(
-      { SUPABASE_STUDIO_ENABLED: "true", SUPABASE_STUDIO_PORT: "55441" },
-      Effect.gen(function* () {
-        const config = yield* load(root);
-        if (
-          config.capabilities?.studio === undefined ||
-          !("settings" in config.capabilities.studio)
-        )
-          throw new Error("Studio settings missing");
-        expect(config.listeners?.studio).toEqual({ port: 55441 });
-      }),
+    ).pipe(
+      Effect.flatMap((root) =>
+        withEnvironment(
+          { SUPABASE_STUDIO_ENABLED: "true", SUPABASE_STUDIO_PORT: "55441" },
+          Effect.gen(function* () {
+            const config = yield* load(root);
+            if (
+              config.capabilities?.studio === undefined ||
+              !("settings" in config.capabilities.studio)
+            )
+              throw new Error("Studio settings missing");
+            expect(config.listeners?.studio).toEqual({ port: 55441 });
+          }),
+        ),
+      ),
     );
   });
 
   it.effect("validates unsupported Figma from effective provider presence", () => {
-    const disabledInFile = project(
-      `project_id = "stack-config-figma-env-enable"
+    return Effect.gen(function* () {
+      const disabledInFile = yield* project(
+        `project_id = "stack-config-figma-env-enable"
 [auth.external.figma]
 enabled = false
 `,
-    );
-    const enabledInFile = project(
-      `project_id = "stack-config-figma-env-disable"
+      );
+      const enabledInFile = yield* project(
+        `project_id = "stack-config-figma-env-disable"
 [auth.external.figma]
 enabled = true
 client_id = "figma-client"
 secret = "figma-secret"
 `,
-    );
-    return withEnvVar(
-      "SUPABASE_AUTH_EXTERNAL_FIGMA_ENABLED",
-      "true",
-      Effect.gen(function* () {
-        const enabled = yield* load(disabledInFile).pipe(Effect.exit);
-        expect(Exit.isFailure(enabled)).toBe(true);
-        if (Exit.isFailure(enabled)) expect(String(enabled.cause)).toContain("auth.external.figma");
+      );
+      return yield* withEnvVar(
+        "SUPABASE_AUTH_EXTERNAL_FIGMA_ENABLED",
+        "true",
+        Effect.gen(function* () {
+          const enabled = yield* load(disabledInFile).pipe(Effect.exit);
+          expect(Exit.isFailure(enabled)).toBe(true);
+          if (Exit.isFailure(enabled))
+            expect(String(enabled.cause)).toContain("auth.external.figma");
 
-        const disabled = yield* withEnvVar(
-          "SUPABASE_AUTH_EXTERNAL_FIGMA_ENABLED",
-          "false",
-          load(enabledInFile),
-        );
-        if (
-          disabled.capabilities?.auth === undefined ||
-          !("settings" in disabled.capabilities.auth)
-        )
-          throw new Error("auth settings missing");
-        expect(Object.hasOwn(disabled.capabilities.auth.settings?.external ?? {}, "figma")).toBe(
-          false,
-        );
-      }),
-    );
+          const disabled = yield* withEnvVar(
+            "SUPABASE_AUTH_EXTERNAL_FIGMA_ENABLED",
+            "false",
+            load(enabledInFile),
+          );
+          if (
+            disabled.capabilities?.auth === undefined ||
+            !("settings" in disabled.capabilities.auth)
+          )
+            throw new Error("auth settings missing");
+          expect(Object.hasOwn(disabled.capabilities.auth.settings?.external ?? {}, "figma")).toBe(
+            false,
+          );
+        }),
+      );
+    });
   });
 
   it.effect("overrides present SMTP, provider, and hook fields from SUPABASE_* values", () => {
-    const root = project(
+    return project(
       `project_id = "stack-config-auth-nested-overrides"
 [auth.email.smtp]
 enabled = true
@@ -349,32 +352,35 @@ uri = "config-hook"
           "",
         ].join("\n"),
       },
+    ).pipe(
+      Effect.flatMap((root) =>
+        Effect.gen(function* () {
+          const config = yield* load(root);
+          if (config.capabilities?.auth === undefined || !("settings" in config.capabilities.auth))
+            throw new Error("auth settings missing");
+          const auth = config.capabilities.auth.settings;
+          expect(auth?.email?.smtp).toMatchObject({
+            enabled: true,
+            host: "env-smtp",
+            port: 2526,
+            user: "env-user",
+            admin_email: "env-admin@example.test",
+            sender_name: "Env Sender",
+          });
+          expect(auth?.email?.smtp?.pass).toBeDefined();
+          if (auth?.email?.smtp?.pass === undefined) throw new Error("SMTP password missing");
+          expect(Redacted.value(auth.email.smtp.pass)).toBe("env-pass");
+          expect(auth?.external?.github).toMatchObject({
+            enabled: false,
+            client_id: "env-client",
+          });
+          expect(auth?.hook?.custom_access_token).toMatchObject({
+            enabled: false,
+            uri: "env-hook",
+          });
+        }),
+      ),
     );
-    return Effect.gen(function* () {
-      const config = yield* load(root);
-      if (config.capabilities?.auth === undefined || !("settings" in config.capabilities.auth))
-        throw new Error("auth settings missing");
-      const auth = config.capabilities.auth.settings;
-      expect(auth?.email?.smtp).toMatchObject({
-        enabled: true,
-        host: "env-smtp",
-        port: 2526,
-        user: "env-user",
-        admin_email: "env-admin@example.test",
-        sender_name: "Env Sender",
-      });
-      expect(auth?.email?.smtp?.pass).toBeDefined();
-      if (auth?.email?.smtp?.pass === undefined) throw new Error("SMTP password missing");
-      expect(Redacted.value(auth.email.smtp.pass)).toBe("env-pass");
-      expect(auth?.external?.github).toMatchObject({
-        enabled: false,
-        client_id: "env-client",
-      });
-      expect(auth?.hook?.custom_access_token).toMatchObject({
-        enabled: false,
-        uri: "env-hook",
-      });
-    });
   });
 
   it.effect("rejects incomplete auth sections after effective environment overrides", () => {
@@ -394,7 +400,7 @@ uri = "config-hook"
     ];
     return Effect.gen(function* () {
       for (const testCase of cases) {
-        const root = project(
+        const root = yield* project(
           `project_id = "stack-config-auth-invalid-${testCase.name}"\n${testCase.config}`,
           {
             supabaseEnv: testCase.env,
@@ -408,22 +414,22 @@ uri = "config-hook"
   });
 
   it.effect("gates auth validation on the effective auth capability", () => {
-    const root = project(
-      `project_id = "stack-config-auth-effective-gate"
+    return Effect.gen(function* () {
+      const root = yield* project(
+        `project_id = "stack-config-auth-effective-gate"
 [auth]
 enabled = false
 [auth.external.github]
 enabled = false
 `,
-      {
-        supabaseEnv: [
-          "SUPABASE_AUTH_ENABLED=true",
-          "SUPABASE_AUTH_EXTERNAL_GITHUB_ENABLED=true",
-          "",
-        ].join("\n"),
-      },
-    );
-    return Effect.gen(function* () {
+        {
+          supabaseEnv: [
+            "SUPABASE_AUTH_ENABLED=true",
+            "SUPABASE_AUTH_EXTERNAL_GITHUB_ENABLED=true",
+            "",
+          ].join("\n"),
+        },
+      );
       const enabled = yield* load(root).pipe(Effect.exit);
       expect(Exit.isFailure(enabled)).toBe(true);
       if (Exit.isFailure(enabled)) expect(String(enabled.cause)).toContain("auth.external.github");
@@ -435,7 +441,7 @@ enabled = false
 
   it.effect("accepts a valid encrypted HTTPS auth hook", () => {
     const hookSecret = `v1,whsec_${"A".repeat(32)}`;
-    const root = project(
+    return project(
       `project_id = "stack-config-auth-encrypted-hook"
 [auth.hook.custom_access_token]
 enabled = true
@@ -443,24 +449,28 @@ uri = "https://hooks.example.test"
 secrets = "${encrypted(privateKey, hookSecret)}"
 `,
       { supabaseEnv: `DOTENV_PRIVATE_KEY=${privateKey}\n` },
+    ).pipe(
+      Effect.flatMap((root) =>
+        Effect.gen(function* () {
+          const config = yield* load(root);
+          if (config.capabilities?.auth === undefined || !("settings" in config.capabilities.auth))
+            throw new Error("auth settings missing");
+          const hook = config.capabilities.auth.settings?.hook?.custom_access_token;
+          expect(hook?.uri).toBe("https://hooks.example.test");
+          expect(hook?.secrets).toBeDefined();
+          if (hook?.secrets === undefined) throw new Error("hook secret missing");
+          expect(Redacted.value(hook.secrets)).toBe(hookSecret);
+        }),
+      ),
     );
-    return Effect.gen(function* () {
-      const config = yield* load(root);
-      if (config.capabilities?.auth === undefined || !("settings" in config.capabilities.auth))
-        throw new Error("auth settings missing");
-      const hook = config.capabilities.auth.settings?.hook?.custom_access_token;
-      expect(hook?.uri).toBe("https://hooks.example.test");
-      expect(hook?.secrets).toBeDefined();
-      if (hook?.secrets === undefined) throw new Error("hook secret missing");
-      expect(Redacted.value(hook.secrets)).toBe(hookSecret);
-    });
   });
 
   it.effect(
     "redacts plaintext and encrypted Vonage API keys and preserves disabled SMTP shape",
     () => {
       const encryptedApiKey = encrypted(privateKey, "encrypted-vonage-api-key");
-      const plaintextRoot = project(`project_id = "stack-config-vonage-plaintext"
+      return Effect.gen(function* () {
+        const plaintextRoot = yield* project(`project_id = "stack-config-vonage-plaintext"
 [auth.email.smtp]
 enabled = false
 [auth.sms.vonage]
@@ -469,17 +479,16 @@ from = "from"
 api_key = "plaintext-vonage-api-key"
 api_secret = "vonage-api-secret"
 `);
-      const encryptedRoot = project(
-        `project_id = "stack-config-vonage-encrypted"
+        const encryptedRoot = yield* project(
+          `project_id = "stack-config-vonage-encrypted"
 [auth.sms.vonage]
 enabled = true
 from = "from"
 api_key = "${encryptedApiKey}"
 api_secret = "vonage-api-secret"
 `,
-        { supabaseEnv: `DOTENV_PRIVATE_KEY=${privateKey}\n` },
-      );
-      return Effect.gen(function* () {
+          { supabaseEnv: `DOTENV_PRIVATE_KEY=${privateKey}\n` },
+        );
         const plaintext = yield* load(plaintextRoot);
         const plaintextAuth = plaintext.capabilities?.auth;
         if (plaintextAuth === undefined || !("settings" in plaintextAuth))
@@ -503,8 +512,9 @@ api_secret = "vonage-api-secret"
   );
 
   it.effect("applies stack environment overrides while preserving optional settings", () => {
-    const root = project(
-      `project_id = "stack-config-stack-overrides"
+    return Effect.gen(function* () {
+      const root = yield* project(
+        `project_id = "stack-config-stack-overrides"
 [api]
 enabled = true
 auto_expose_new_tables = false
@@ -516,31 +526,30 @@ health_timeout = "2m"
 [auth]
 signing_keys_path = "keys.json"
 `,
-      {
-        supabaseEnv: [
-          "SUPABASE_API_AUTO_EXPOSE_NEW_TABLES=true",
-          "SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED=true",
-          "SUPABASE_DB_HEALTH_TIMEOUT=45s",
-          "SUPABASE_AUTH_SIGNING_KEYS_PATH=overridden-keys.json",
-          "SUPABASE_AUTH_EXTERNAL_APPLE_ENABLED=true",
-          "SUPABASE_AUTH_EXTERNAL_APPLE_CLIENT_ID=apple-client",
-          "SUPABASE_AUTH_EXTERNAL_APPLE_SECRET=apple-secret",
-          "",
-        ].join("\n"),
-      },
-    );
-    const absentImageRoot = project('project_id = "stack-config-absent-image"\n', {
-      supabaseEnv: "SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED=true\n",
-    });
-    const absentApiRoot = project('project_id = "stack-config-absent-api-field"\n');
-    const explicitFalseApiRoot = project(
-      `project_id = "stack-config-explicit-false-api-field"
+        {
+          supabaseEnv: [
+            "SUPABASE_API_AUTO_EXPOSE_NEW_TABLES=true",
+            "SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED=true",
+            "SUPABASE_DB_HEALTH_TIMEOUT=45s",
+            "SUPABASE_AUTH_SIGNING_KEYS_PATH=overridden-keys.json",
+            "SUPABASE_AUTH_EXTERNAL_APPLE_ENABLED=true",
+            "SUPABASE_AUTH_EXTERNAL_APPLE_CLIENT_ID=apple-client",
+            "SUPABASE_AUTH_EXTERNAL_APPLE_SECRET=apple-secret",
+            "",
+          ].join("\n"),
+        },
+      );
+      const absentImageRoot = yield* project('project_id = "stack-config-absent-image"\n', {
+        supabaseEnv: "SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED=true\n",
+      });
+      const absentApiRoot = yield* project('project_id = "stack-config-absent-api-field"\n');
+      const explicitFalseApiRoot = yield* project(
+        `project_id = "stack-config-explicit-false-api-field"
 [api]
 auto_expose_new_tables = true
 `,
-      { supabaseEnv: "SUPABASE_API_AUTO_EXPOSE_NEW_TABLES=false\n" },
-    );
-    return Effect.gen(function* () {
+        { supabaseEnv: "SUPABASE_API_AUTO_EXPOSE_NEW_TABLES=false\n" },
+      );
       const config = yield* load(root);
       if (config.capabilities?.rest === undefined || !("settings" in config.capabilities.rest))
         throw new Error("REST settings missing");
@@ -592,23 +601,27 @@ auto_expose_new_tables = true
   });
 
   it.effect("rejects an invalid analytics backend environment override", () => {
-    const root = project('project_id = "stack-config-invalid-analytics-backend"\n');
-    return withEnvVar(
-      "SUPABASE_ANALYTICS_BACKEND",
-      "invalid-backend",
-      Effect.gen(function* () {
-        const exit = yield* load(root).pipe(Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          expect(String(exit.cause)).toContain("analytics.backend");
-        }
-      }),
+    return project('project_id = "stack-config-invalid-analytics-backend"\n').pipe(
+      Effect.flatMap((root) =>
+        withEnvVar(
+          "SUPABASE_ANALYTICS_BACKEND",
+          "invalid-backend",
+          Effect.gen(function* () {
+            const exit = yield* load(root).pipe(Effect.exit);
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              expect(String(exit.cause)).toContain("analytics.backend");
+            }
+          }),
+        ),
+      ),
     );
   });
 
   it.effect("honors representative API, analytics, database, and Studio overrides", () => {
-    const root = project(
-      `project_id = "stack-config-representative-overrides"
+    return Effect.gen(function* () {
+      const root = yield* project(
+        `project_id = "stack-config-representative-overrides"
 [api]
 schemas = ["config-schema"]
 [db]
@@ -616,18 +629,17 @@ major_version = 15
 [studio]
 openai_api_key = "config-studio-key"
 `,
-      {
-        supabaseEnv: [
-          "SUPABASE_API_SCHEMAS=public,storage",
-          "SUPABASE_ANALYTICS_BACKEND=bigquery",
-          "SUPABASE_ANALYTICS_GCP_PROJECT_ID=env-project",
-          "SUPABASE_DB_MAJOR_VERSION=17",
-          "SUPABASE_STUDIO_OPENAI_API_KEY=env-studio-key",
-          "",
-        ].join("\n"),
-      },
-    );
-    return Effect.gen(function* () {
+        {
+          supabaseEnv: [
+            "SUPABASE_API_SCHEMAS=public,storage",
+            "SUPABASE_ANALYTICS_BACKEND=bigquery",
+            "SUPABASE_ANALYTICS_GCP_PROJECT_ID=env-project",
+            "SUPABASE_DB_MAJOR_VERSION=17",
+            "SUPABASE_STUDIO_OPENAI_API_KEY=env-studio-key",
+            "",
+          ].join("\n"),
+        },
+      );
       const config = yield* load(root);
       if (config.capabilities?.rest === undefined || !("settings" in config.capabilities.rest))
         throw new Error("REST settings missing");
@@ -652,46 +664,52 @@ openai_api_key = "config-studio-key"
   });
 
   it.effect("creates listeners from env-only ports and leaves omitted defaults dynamic", () => {
-    const root = project('project_id = "stack-config-env-only-ports"\n');
-    return withEnvironment(
-      { SUPABASE_API_PORT: "0xD431", SUPABASE_DB_PORT: "010" },
-      Effect.gen(function* () {
-        const overridden = yield* load(root);
-        expect(overridden.listeners?.api).toEqual({ port: 54321 });
-        expect(overridden.listeners?.database).toEqual({ port: 8 });
+    return project('project_id = "stack-config-env-only-ports"\n').pipe(
+      Effect.flatMap((root) =>
+        withEnvironment(
+          { SUPABASE_API_PORT: "0xD431", SUPABASE_DB_PORT: "010" },
+          Effect.gen(function* () {
+            const overridden = yield* load(root);
+            expect(overridden.listeners?.api).toEqual({ port: 54321 });
+            expect(overridden.listeners?.database).toEqual({ port: 8 });
 
-        const defaults = yield* withEnvironment(
-          { SUPABASE_API_PORT: undefined, SUPABASE_DB_PORT: undefined },
-          load(root),
-        );
-        expect(defaults.listeners).toEqual({});
-      }),
+            const defaults = yield* withEnvironment(
+              { SUPABASE_API_PORT: undefined, SUPABASE_DB_PORT: undefined },
+              load(root),
+            );
+            expect(defaults.listeners).toEqual({});
+          }),
+        ),
+      ),
     );
   });
 
   it.effect(
     "creates an env-only pooler capability and listener without a raw db.pooler table",
     () => {
-      const root = project('project_id = "stack-config-env-only-pooler"\n');
-      return withEnvironment(
-        { SUPABASE_DB_POOLER_ENABLED: "true", SUPABASE_DB_POOLER_PORT: "55450" },
-        Effect.gen(function* () {
-          const config = yield* load(root);
-          if (
-            config.capabilities?.pooler === undefined ||
-            !("settings" in config.capabilities.pooler)
-          )
-            throw new Error("pooler settings missing");
-          expect(config.listeners?.pooler).toEqual({ port: 55450 });
-        }),
+      return project('project_id = "stack-config-env-only-pooler"\n').pipe(
+        Effect.flatMap((root) =>
+          withEnvironment(
+            { SUPABASE_DB_POOLER_ENABLED: "true", SUPABASE_DB_POOLER_PORT: "55450" },
+            Effect.gen(function* () {
+              const config = yield* load(root);
+              if (
+                config.capabilities?.pooler === undefined ||
+                !("settings" in config.capabilities.pooler)
+              )
+                throw new Error("pooler settings missing");
+              expect(config.listeners?.pooler).toEqual({ port: 55450 });
+            }),
+          ),
+        ),
       );
     },
   );
 
   it.effect("defers omitted and empty pooler settings to the stack package", () => {
-    const omitted = project('project_id = "stack-config-omitted-pooler"\n');
-    const empty = project('project_id = "stack-config-empty-pooler"\n[db.pooler]\n');
     return Effect.gen(function* () {
+      const omitted = yield* project('project_id = "stack-config-omitted-pooler"\n');
+      const empty = yield* project('project_id = "stack-config-empty-pooler"\n[db.pooler]\n');
       expect((yield* load(omitted)).capabilities?.pooler).toEqual({
         settings: { pool_mode: "transaction", default_pool_size: 20, max_client_conn: 100 },
       });
@@ -791,30 +809,36 @@ enabled = false
   });
 
   it.effect("keeps an absent raw Studio section disabled through env overrides", () => {
-    const root = project('project_id = "stack-config-absent-studio-disabled"\n');
-    return withEnvironment(
-      { SUPABASE_STUDIO_ENABLED: "false", SUPABASE_STUDIO_PORT: "55451" },
-      Effect.gen(function* () {
-        const config = yield* load(root);
-        expect(config.capabilities?.studio).toEqual({ enabled: false });
-        expect(config.listeners?.studio).toEqual({ enabled: false });
-      }),
+    return project('project_id = "stack-config-absent-studio-disabled"\n').pipe(
+      Effect.flatMap((root) =>
+        withEnvironment(
+          { SUPABASE_STUDIO_ENABLED: "false", SUPABASE_STUDIO_PORT: "55451" },
+          Effect.gen(function* () {
+            const config = yield* load(root);
+            expect(config.capabilities?.studio).toEqual({ enabled: false });
+            expect(config.listeners?.studio).toEqual({ enabled: false });
+          }),
+        ),
+      ),
     );
   });
 
   it.effect("fails a malformed env-only port override as a config error", () => {
-    const root = project('project_id = "stack-config-malformed-env-port"\n');
-    return withEnvVar(
-      "SUPABASE_DB_PORT",
-      "not-a-port",
-      Effect.gen(function* () {
-        const exit = yield* load(root).pipe(Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          expect(String(exit.cause)).toContain("db.port");
-          expect(String(exit.cause)).not.toContain("StackConfigError: StackConfigError");
-        }
-      }),
+    return project('project_id = "stack-config-malformed-env-port"\n').pipe(
+      Effect.flatMap((root) =>
+        withEnvVar(
+          "SUPABASE_DB_PORT",
+          "not-a-port",
+          Effect.gen(function* () {
+            const exit = yield* load(root).pipe(Effect.exit);
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              expect(String(exit.cause)).toContain("db.port");
+              expect(String(exit.cause)).not.toContain("StackConfigError: StackConfigError");
+            }
+          }),
+        ),
+      ),
     );
   });
 
@@ -828,8 +852,9 @@ enabled = false
       const sharedSecret = "function-shared-secret";
       const localOverrideSecret = "function-local-override-secret";
       const localSecret = "function-local-secret";
-      const root = project(
-        `project_id = "stack-config-encrypted-values"
+      return Effect.gen(function* () {
+        const root = yield* project(
+          `project_id = "stack-config-encrypted-values"
 [auth]
 jwt_secret = "${encrypted(privateKey, authSecret)}"
 [studio]
@@ -840,88 +865,94 @@ secrets = { EDGE_SECRET = "${encrypted(privateKey, edgeSecret)}" }
 [functions.hello]
 env = { CONFIG_SECRET = "env(CONFIG_FN_SECRET)" }
 `,
-        {
-          supabaseEnv: `CONFIG_FN_SECRET=${encrypted(privateKey, functionConfigSecret)}\n`,
-          sharedFunctionEnvironment: `SHARED_SECRET=${encrypted(privateKey, sharedSecret)}\n`,
-          functionEnvironments: {
-            hello: `SHARED_SECRET=${encrypted(privateKey, localOverrideSecret)}\nLOCAL_SECRET=${encrypted(privateKey, localSecret)}\n`,
-            world: "",
+          {
+            supabaseEnv: `CONFIG_FN_SECRET=${encrypted(privateKey, functionConfigSecret)}\n`,
+            sharedFunctionEnvironment: `SHARED_SECRET=${encrypted(privateKey, sharedSecret)}\n`,
+            functionEnvironments: {
+              hello: `SHARED_SECRET=${encrypted(privateKey, localOverrideSecret)}\nLOCAL_SECRET=${encrypted(privateKey, localSecret)}\n`,
+              world: "",
+            },
           },
-        },
-      );
-      return withEnvironment(
-        {
-          DOTENV_PRIVATE_KEY: `${wrongPrivateKey},,${privateKey}`,
-          DOTENV_PRIVATE_KEY_TEST: wrongPrivateKey,
-        },
-        Effect.gen(function* () {
-          const config = yield* load(root);
-          if (config.capabilities?.auth === undefined || !("settings" in config.capabilities.auth))
-            throw new Error("auth settings missing");
-          if (
-            config.capabilities?.studio === undefined ||
-            !("settings" in config.capabilities.studio)
-          )
-            throw new Error("studio settings missing");
-          if (
-            config.capabilities?.functions === undefined ||
-            !("settings" in config.capabilities.functions)
-          )
-            throw new Error("functions settings missing");
-          const authSecretValue = config.capabilities.auth.settings?.jwt_secret;
-          const studioSecretValue = config.capabilities.studio.settings?.openai_api_key;
-          const functions = config.capabilities.functions.settings?.functions;
-          const edgeSecrets = config.capabilities.functions.settings?.edge_runtime?.secrets;
-          expect(authSecretValue).toBeDefined();
-          expect(studioSecretValue).toBeDefined();
-          expect(functions?.hello?.env?.CONFIG_SECRET).toBeDefined();
-          expect(functions?.hello?.env?.SHARED_SECRET).toBeDefined();
-          expect(functions?.hello?.env?.LOCAL_SECRET).toBeDefined();
-          expect(functions?.world?.env?.SHARED_SECRET).toBeDefined();
-          expect(edgeSecrets?.EDGE_SECRET).toBeDefined();
-          if (
-            authSecretValue === undefined ||
-            studioSecretValue === undefined ||
-            functions?.hello?.env?.CONFIG_SECRET === undefined ||
-            functions.hello.env.SHARED_SECRET === undefined ||
-            functions.hello.env.LOCAL_SECRET === undefined ||
-            functions.world?.env?.SHARED_SECRET === undefined ||
-            edgeSecrets?.EDGE_SECRET === undefined
-          )
-            throw new Error("encrypted settings missing");
-          expect(Redacted.value(authSecretValue)).toBe(authSecret);
-          expect(Redacted.value(studioSecretValue)).toBe(studioSecret);
-          expect(Redacted.value(functions.hello.env.CONFIG_SECRET)).toBe(functionConfigSecret);
-          expect(Redacted.value(functions.hello.env.SHARED_SECRET)).toBe(localOverrideSecret);
-          expect(Redacted.value(functions.hello.env.LOCAL_SECRET)).toBe(localSecret);
-          expect(Redacted.value(functions.world.env.SHARED_SECRET)).toBe(sharedSecret);
-          expect(Redacted.value(edgeSecrets.EDGE_SECRET)).toBe(edgeSecret);
-        }),
-      );
+        );
+        return yield* withEnvironment(
+          {
+            DOTENV_PRIVATE_KEY: `${wrongPrivateKey},,${privateKey}`,
+            DOTENV_PRIVATE_KEY_TEST: wrongPrivateKey,
+          },
+          Effect.gen(function* () {
+            const config = yield* load(root);
+            if (
+              config.capabilities?.auth === undefined ||
+              !("settings" in config.capabilities.auth)
+            )
+              throw new Error("auth settings missing");
+            if (
+              config.capabilities?.studio === undefined ||
+              !("settings" in config.capabilities.studio)
+            )
+              throw new Error("studio settings missing");
+            if (
+              config.capabilities?.functions === undefined ||
+              !("settings" in config.capabilities.functions)
+            )
+              throw new Error("functions settings missing");
+            const authSecretValue = config.capabilities.auth.settings?.jwt_secret;
+            const studioSecretValue = config.capabilities.studio.settings?.openai_api_key;
+            const functions = config.capabilities.functions.settings?.functions;
+            const edgeSecrets = config.capabilities.functions.settings?.edge_runtime?.secrets;
+            expect(authSecretValue).toBeDefined();
+            expect(studioSecretValue).toBeDefined();
+            expect(functions?.hello?.env?.CONFIG_SECRET).toBeDefined();
+            expect(functions?.hello?.env?.SHARED_SECRET).toBeDefined();
+            expect(functions?.hello?.env?.LOCAL_SECRET).toBeDefined();
+            expect(functions?.world?.env?.SHARED_SECRET).toBeDefined();
+            expect(edgeSecrets?.EDGE_SECRET).toBeDefined();
+            if (
+              authSecretValue === undefined ||
+              studioSecretValue === undefined ||
+              functions?.hello?.env?.CONFIG_SECRET === undefined ||
+              functions.hello.env.SHARED_SECRET === undefined ||
+              functions.hello.env.LOCAL_SECRET === undefined ||
+              functions.world?.env?.SHARED_SECRET === undefined ||
+              edgeSecrets?.EDGE_SECRET === undefined
+            )
+              throw new Error("encrypted settings missing");
+            expect(Redacted.value(authSecretValue)).toBe(authSecret);
+            expect(Redacted.value(studioSecretValue)).toBe(studioSecret);
+            expect(Redacted.value(functions.hello.env.CONFIG_SECRET)).toBe(functionConfigSecret);
+            expect(Redacted.value(functions.hello.env.SHARED_SECRET)).toBe(localOverrideSecret);
+            expect(Redacted.value(functions.hello.env.LOCAL_SECRET)).toBe(localSecret);
+            expect(Redacted.value(functions.world.env.SHARED_SECRET)).toBe(sharedSecret);
+            expect(Redacted.value(edgeSecrets.EDGE_SECRET)).toBe(edgeSecret);
+          }),
+        );
+      });
     },
   );
 
   it.effect("lets a valid encrypted auth env override replace invalid file ciphertext", () => {
     const plaintext = "valid-env-auth-secret-that-is-long-enough";
     const ciphertext = encrypted(privateKey, plaintext);
-    const root = project(
-      `project_id = "stack-config-encrypted-env-wins"
+    return Effect.gen(function* () {
+      const root = yield* project(
+        `project_id = "stack-config-encrypted-env-wins"
 [auth]
 jwt_secret = "encrypted:invalid-file-ciphertext"
 `,
-    );
-    return withEnvironment(
-      { DOTENV_PRIVATE_KEY: privateKey, SUPABASE_AUTH_JWT_SECRET: ciphertext },
-      Effect.gen(function* () {
-        const config = yield* load(root);
-        if (config.capabilities?.auth === undefined || !("settings" in config.capabilities.auth))
-          throw new Error("auth settings missing");
-        const signing = config.security?.jwt?.signing;
-        expect(signing?.kind).toBe("symmetric");
-        if (signing?.kind !== "symmetric") throw new Error("symmetric signing missing");
-        expect(Redacted.value(signing.secret)).toBe(plaintext);
-      }),
-    );
+      );
+      return yield* withEnvironment(
+        { DOTENV_PRIVATE_KEY: privateKey, SUPABASE_AUTH_JWT_SECRET: ciphertext },
+        Effect.gen(function* () {
+          const config = yield* load(root);
+          if (config.capabilities?.auth === undefined || !("settings" in config.capabilities.auth))
+            throw new Error("auth settings missing");
+          const signing = config.security?.jwt?.signing;
+          expect(signing?.kind).toBe("symmetric");
+          if (signing?.kind !== "symmetric") throw new Error("symmetric signing missing");
+          expect(Redacted.value(signing.secret)).toBe(plaintext);
+        }),
+      );
+    });
   });
 
   it.effect(
@@ -929,13 +960,13 @@ jwt_secret = "encrypted:invalid-file-ciphertext"
     () => {
       const plaintext = "secret-plaintext-that-must-not-appear";
       const ciphertext = encrypted(privateKey, plaintext);
-      const root = project(
-        `project_id = "stack-config-encrypted-error"
+      return Effect.gen(function* () {
+        const root = yield* project(
+          `project_id = "stack-config-encrypted-error"
 [auth]
 jwt_secret = "${ciphertext}"
 `,
-      );
-      return Effect.gen(function* () {
+        );
         for (const key of [undefined, wrongPrivateKey]) {
           const exit = yield* withEnvVar("DOTENV_PRIVATE_KEY", key, load(root).pipe(Effect.exit));
           expect(Exit.isFailure(exit)).toBe(true);
@@ -956,15 +987,15 @@ jwt_secret = "${ciphertext}"
   );
 
   it.effect("does not read a disabled function's dotenv file or unresolved env reference", () => {
-    const root = project(
-      `project_id = "stack-config-disabled-function-env"
+    return Effect.gen(function* () {
+      const root = yield* project(
+        `project_id = "stack-config-disabled-function-env"
 [functions.disabled]
 enabled = false
 env = { TOKEN = "env(MISSING_DISABLED_FUNCTION_ENV)" }
 `,
-      { functionEnvironments: { disabled: "lowercase=value\n!=secret-value\n" } },
-    );
-    return Effect.gen(function* () {
+        { functionEnvironments: { disabled: "lowercase=value\n!=secret-value\n" } },
+      );
       const config = yield* load(root);
       if (
         config.capabilities?.functions === undefined ||
