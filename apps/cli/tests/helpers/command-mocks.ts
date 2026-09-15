@@ -71,7 +71,7 @@ import {
 export const VALID_REF = "abcdefghijklmnopqrst";
 export const VALID_TOKEN = "sbp_" + "a".repeat(40);
 export const DEFAULT_API_URL = "https://api.supabase.com";
-export const DEFAULT_USER_AGENT = "SupabaseCLI/0.0.0-dev";
+const DEFAULT_USER_AGENT = "SupabaseCLI/0.0.0-dev";
 
 // No-op layers — drop-in for tests that don't assert on telemetry / cache state.
 export const mockLinkedProjectCacheLayer = Layer.succeed(LinkedProjectCache, {
@@ -390,6 +390,7 @@ export function mockCommandSettings(opts: {
   readonly workdir: string;
   readonly explicitWorkdir?: boolean;
   readonly profile?: string;
+  readonly profileEnvValue?: Option.Option<string>;
   readonly apiUrl?: string;
   readonly projectHost?: string;
   readonly poolerHost?: string;
@@ -397,11 +398,12 @@ export function mockCommandSettings(opts: {
   readonly accessToken?: Option.Option<Redacted.Redacted<string>>;
   readonly projectId?: Option.Option<string>;
   readonly userAgent?: string;
-  readonly profileEnvValue?: string;
+  readonly supabaseHome?: string;
 }): Layer.Layer<CommandSettings> {
   return Layer.succeed(CommandSettings, {
-    profileEnvValue: opts.profileEnvValue,
     profile: opts.profile ?? "supabase",
+    profileEnvValue: opts.profileEnvValue ?? Option.none(),
+    supabaseHome: opts.supabaseHome ?? join(opts.workdir, ".supabase"),
     apiUrl: opts.apiUrl ?? DEFAULT_API_URL,
     projectHost: opts.projectHost ?? "supabase.co",
     poolerHost: opts.poolerHost ?? "supabase.com",
@@ -470,7 +472,7 @@ function makeHttpClientLayer(
 // otherwise the raw decoded string is stored. Falsy bodies (no request body) record `undefined`.
 export type HttpMethod = "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
 
-export interface RecordedRequest {
+interface RecordedRequest {
   readonly url: string;
   readonly method: string;
   readonly headers: Readonly<Record<string, string | undefined>>;

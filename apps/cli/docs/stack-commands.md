@@ -195,6 +195,16 @@ Host listener assignment for `supabase stack` is documented in [Port intents](./
 
 ## Service selection and shutdown
 
+With the current defaults, lazy REST, Auth, Realtime, Studio, and pooler services stop after 60 seconds without traffic. An
+active HTTP request keeps a capability running; an idle HTTP keep-alive socket does not. Open
+WebSocket or TCP connections keep a capability running during idle periods. Use `supabase stack start --eager` to activate all enabled capabilities and
+disable automatic idle stops. Per-capability `idleTimeoutSeconds` values are available through the
+package's Effect API only; the CLI does not expose them as command or project configuration
+settings. A request arriving while a capability is stopping waits for cleanup and then wakes it
+when the stack still permits activation. Manual `supabase stack stop` prevents wake up until the
+stack is started again. A cleanup failure can block new connections until `stop` and `start`
+complete recovery; a destroy failure can be retried with `destroy`.
+
 `supabase stack restart` reuses an existing stack's saved effective configuration. It stops and
 starts the same stack identity, preserving its data. Normal startup may still download missing
 artifacts according to the saved preparation policy. Select a stack with `--stack <name>` or
@@ -203,6 +213,10 @@ artifacts according to the saved preparation policy. Select a stack with `--stac
 configuration, so feature routing does not depend on that configuration. Start flags such as `--exclude`, `--eager`, or
 `--preparation` remain in the saved stack configuration; a later normal `start` reloads the project
 configuration and current flags.
+Stacks saved before idle stopping keep it disabled when restarted. To adopt the current defaults,
+run `supabase stack stop` followed by `supabase stack start`. Status can report changed effective
+defaults even when the project file is unchanged; a stack still marked running must be stopped
+before those defaults can be applied.
 An unconfigured stack must be initialized with `supabase stack start` before it can be restarted.
 
 `supabase stack start --exclude studio,analytics -x mail` disables those services in the effective

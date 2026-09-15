@@ -33,19 +33,27 @@ export const ListenerConfigSchema = Schema.Union([
 ]);
 export type ListenerConfig = Schema.Schema.Type<typeof ListenerConfigSchema>;
 
+const capabilityFields = <S extends Schema.Top>(settings: S) => ({
+  enabled: Schema.optionalKey(Schema.Literal(true)),
+  activation: Schema.optionalKey(ActivationModeSchema),
+  version: Schema.optionalKey(Schema.String),
+  settings: Schema.optionalKey(settings),
+});
+
 const optionalCapability = <S extends Schema.Top>(settings: S) =>
   Schema.Union([
+    Schema.Struct({ enabled: Schema.Literal(false) }),
+    Schema.Struct(capabilityFields(settings)),
+  ]);
+
+const retirableCapability = <S extends Schema.Top>(settings: S) =>
+  Schema.Union([
+    Schema.Struct({ enabled: Schema.Literal(false) }),
     Schema.Struct({
-      enabled: Schema.Literal(false),
-      activation: Schema.optionalKey(ActivationModeSchema),
-      version: Schema.optionalKey(Schema.String),
-      settings: Schema.optionalKey(settings),
-    }),
-    Schema.Struct({
-      enabled: Schema.optionalKey(Schema.Literal(true)),
-      activation: Schema.optionalKey(ActivationModeSchema),
-      version: Schema.optionalKey(Schema.String),
-      settings: Schema.optionalKey(settings),
+      ...capabilityFields(settings),
+      idleTimeoutSeconds: Schema.optionalKey(
+        Schema.Union([Schema.Finite.check(Schema.isGreaterThan(0)), Schema.Literal(false)]),
+      ),
     }),
   ]);
 
@@ -58,15 +66,15 @@ export const DatabaseCapabilityConfigSchema = Schema.Struct({
 });
 export const StackCapabilitiesConfigSchema = Schema.Struct({
   database: Schema.optionalKey(DatabaseCapabilityConfigSchema),
-  rest: Schema.optionalKey(optionalCapability(RestSettingsSchema)),
-  auth: Schema.optionalKey(optionalCapability(AuthSettingsSchema)),
-  realtime: Schema.optionalKey(optionalCapability(RealtimeSettingsSchema)),
+  rest: Schema.optionalKey(retirableCapability(RestSettingsSchema)),
+  auth: Schema.optionalKey(retirableCapability(AuthSettingsSchema)),
+  realtime: Schema.optionalKey(retirableCapability(RealtimeSettingsSchema)),
   storage: Schema.optionalKey(optionalCapability(StorageSettingsSchema)),
   functions: Schema.optionalKey(optionalCapability(FunctionsSettingsSchema)),
-  studio: Schema.optionalKey(optionalCapability(StudioSettingsSchema)),
+  studio: Schema.optionalKey(retirableCapability(StudioSettingsSchema)),
   mail: Schema.optionalKey(optionalCapability(MailSettingsSchema)),
   analytics: Schema.optionalKey(optionalCapability(AnalyticsSettingsSchema)),
-  pooler: Schema.optionalKey(optionalCapability(PoolerSettingsSchema)),
+  pooler: Schema.optionalKey(retirableCapability(PoolerSettingsSchema)),
 });
 
 const listenerFields = {

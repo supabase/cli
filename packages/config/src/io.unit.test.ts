@@ -5,7 +5,20 @@ import { chmod, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/pr
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Redacted, Schema } from "effect";
+import {
+  Cause,
+  Deferred,
+  Effect,
+  Exit,
+  FileSystem,
+  Fiber,
+  Layer,
+  Option,
+  Path,
+  PlatformError,
+  Redacted,
+  Schema,
+} from "effect";
 import { CliConfigSchema, toCliConfigJsonSchema } from "./base.ts";
 import { loadCliConfig as loadCliConfigFromBun } from "./bun.ts";
 import {
@@ -1456,6 +1469,131 @@ enabled = true
       } else {
         process.env.lowercase_ref_default_on_test = previous;
       }
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("saveCliConfig atomic failures", () => {
+  async function prepareConfigFile() {
+    const cwd = makeTempProject();
+    const directory = join(cwd, "supabase");
+    const filePath = join(directory, "config.json");
+    await mkdir(directory, { recursive: true });
+    await writeFile(filePath, JSON.stringify({ project_id: "old-ref" }));
+    return { cwd, directory, filePath };
+  }
+
+  function runSaveWithFileSystem(
+    cwd: string,
+    decorate: (fs: FileSystem.FileSystem) => FileSystem.FileSystem,
+  ) {
+    return Effect.runPromiseExit(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        return yield* saveCliConfig({ cwd, config: sampleConfig }).pipe(
+          Effect.provideService(FileSystem.FileSystem, decorate(fs)),
+        );
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+  }
+
+  function injectedFailure(method: string, path: string) {
+    return PlatformError.systemError({
+      _tag: "PermissionDenied",
+      module: "FileSystem",
+      method,
+      pathOrDescriptor: path,
+      description: "injected failure",
+    });
+  }
+
+  test("surfaces a typed PlatformError when the temp-file write fails and leaves the original intact", async () => {
+    const { cwd, directory, filePath } = await prepareConfigFile();
+
+    try {
+      const injectedError = injectedFailure("writeFileString", filePath);
+      const exit = await runSaveWithFileSystem(cwd, (fs) => ({
+        ...fs,
+        writeFileString: (candidate, content, options) =>
+          candidate.startsWith(`${filePath}.tmp.`)
+            ? Effect.fail(injectedError)
+            : fs.writeFileString(candidate, content, options),
+      }));
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (!Exit.isFailure(exit)) return;
+      const error = Cause.findErrorOption(exit.cause);
+      expect(Option.isSome(error)).toBe(true);
+      if (Option.isSome(error)) {
+        expect(error.value).toBe(injectedError);
+      }
+      expect(JSON.parse(await readFile(filePath, "utf8"))).toEqual({ project_id: "old-ref" });
+      expect(
+        (await readdir(directory)).filter((entry) => entry.startsWith("config.json.tmp.")),
+      ).toEqual([]);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("surfaces a typed PlatformError when rename fails and cleans the temp file", async () => {
+    const { cwd, directory, filePath } = await prepareConfigFile();
+
+    try {
+      const injectedError = injectedFailure("rename", filePath);
+      const exit = await runSaveWithFileSystem(cwd, (fs) => ({
+        ...fs,
+        rename: (from, to) => (to === filePath ? Effect.fail(injectedError) : fs.rename(from, to)),
+      }));
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (!Exit.isFailure(exit)) return;
+      const error = Cause.findErrorOption(exit.cause);
+      expect(Option.isSome(error)).toBe(true);
+      if (Option.isSome(error)) {
+        expect(error.value).toBe(injectedError);
+      }
+      expect(JSON.parse(await readFile(filePath, "utf8"))).toEqual({ project_id: "old-ref" });
+      expect(
+        (await readdir(directory)).filter((entry) => entry.startsWith("config.json.tmp.")),
+      ).toEqual([]);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("cleans the temp file when interrupted during rename", async () => {
+    const { cwd, directory, filePath } = await prepareConfigFile();
+
+    try {
+      await Effect.runPromise(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const renameStarted = yield* Deferred.make<void>();
+          const interruptedFs: FileSystem.FileSystem = {
+            ...fs,
+            rename: (from, to) =>
+              to === filePath
+                ? Deferred.succeed(renameStarted, undefined).pipe(Effect.andThen(Effect.never))
+                : fs.rename(from, to),
+          };
+          const fiber = yield* Effect.forkChild(
+            saveCliConfig({ cwd, config: sampleConfig }).pipe(
+              Effect.provideService(FileSystem.FileSystem, interruptedFs),
+            ),
+            { startImmediately: true },
+          );
+          yield* Deferred.await(renameStarted);
+          yield* Fiber.interrupt(fiber);
+        }).pipe(Effect.provide(BunServices.layer)),
+      );
+
+      expect(JSON.parse(await readFile(filePath, "utf8"))).toEqual({ project_id: "old-ref" });
+      expect(
+        (await readdir(directory)).filter((entry) => entry.startsWith("config.json.tmp.")),
+      ).toEqual([]);
+    } finally {
       await rm(cwd, { recursive: true, force: true });
     }
   });

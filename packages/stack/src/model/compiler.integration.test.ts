@@ -25,9 +25,6 @@ describe("closed capability compiler", () => {
   it.live("compiles every optional exclusion and closes Studio dependents", () =>
     Effect.gen(function* () {
       for (const name of [
-        "rest",
-        "auth",
-        "realtime",
         "storage",
         "functions",
         "studio",
@@ -40,15 +37,15 @@ describe("closed capability compiler", () => {
         expect(config.capabilities?.rest).toEqual({ settings: { max_rows: 42 } });
         const result = yield* compile(excluded);
         expect(result.definition.capabilities[name].enabled).toBe(false);
-        if (name !== "rest") expect(result.definition.capabilities.rest.settings.max_rows).toBe(42);
-        if (name === "rest") expect(result.definition.capabilities.studio.enabled).toBe(false);
+        expect(result.definition.capabilities.rest.settings.max_rows).toBe(42);
         if (name === "analytics") expect(result.definition.capabilities.studio.enabled).toBe(true);
       }
-      const combined = excludeStackCapabilities({}, ["rest", "analytics"]);
+      const combined = excludeStackCapabilities({}, ["analytics", "pooler"]);
       const result = yield* compile(combined);
-      expect(result.definition.capabilities.studio.enabled).toBe(false);
-      expect(result.definition.capabilities.rest.enabled).toBe(false);
+      expect(result.definition.capabilities.studio.enabled).toBe(true);
+      expect(result.definition.capabilities.rest.enabled).toBe(true);
       expect(result.definition.capabilities.analytics.enabled).toBe(false);
+      expect(result.definition.capabilities.pooler.enabled).toBe(false);
       expect(result.definition.capabilities.auth.enabled).toBe(true);
       expect(excludeStackCapabilities({}, [])).toEqual({});
       const studioExcluded = yield* compile(excludeStackCapabilities({}, ["studio"]));

@@ -10,7 +10,6 @@ import {
   attachApiResponse,
   comparableProjectConfigPaths,
   DISABLED_SENTINEL_PRUNES,
-  DOCUMENT_ONLY_LOCAL_PATHS,
   fromApiProjectConfig,
   fromConfigDocument,
   isComparableProjectConfigPath,
@@ -19,6 +18,7 @@ import {
   type ProjectConfig,
   type ReadonlyJsonValue,
 } from "./project-config.ts";
+import { DOCUMENT_ONLY_LOCAL_PATHS } from "./hosted-sections.ts";
 
 const decodeCliConfig = Schema.decodeUnknownSync(CliConfigSchema);
 
@@ -968,7 +968,7 @@ describe("fromApiProjectConfig — realtime section", () => {
       postgres_changes_pool: null,
     };
     const result = fromApiProjectConfig({ realtime: attributes });
-    expect(result.realtime).toBeUndefined();
+    expect(Object.hasOwn(result, "realtime")).toBe(false);
     expect(unmappedApiFields(result)).toEqual({ realtime: attributes });
   });
 });

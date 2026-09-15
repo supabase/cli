@@ -1,4 +1,4 @@
-import { Context, type Effect, type Option } from "effect";
+import { Context, Config, type Effect, type Option } from "effect";
 import type { SupabaseApiInputError } from "@supabase/api/effect";
 import type * as HttpBody from "effect/unstable/http/HttpBody";
 import type { CommandPlatformApiFactoryError } from "../auth/command-platform-api-factory.service.ts";
@@ -28,6 +28,7 @@ import type { DbConfigFlags, ResolvedDbConfig } from "./db-config.types.ts";
 
 /** Every error the resolver can raise across the direct / local / linked paths. */
 export type DbConfigError =
+  | Config.ConfigError
   | DbConfigParseUrlError
   | DbConfigLoadError
   | LocalDbRunningError

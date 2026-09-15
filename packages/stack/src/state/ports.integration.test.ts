@@ -19,6 +19,7 @@ import { deriveStackId, type StackIdentity } from "../identity/Identity.ts";
 import {
   PortAllocationError,
   PortUnavailableError,
+  StackStateFormatUnsupportedError,
   StackStateInvalidError,
 } from "../public/Errors.ts";
 import {
@@ -27,7 +28,12 @@ import {
   type PortCoordinatorOptions,
 } from "./PortCoordinator.ts";
 import type { HostListener } from "../supervisor/HostListener.ts";
-import { makeStackStateStore, type PersistedStackState } from "./StackStateStore.ts";
+import {
+  makeStackStateStore,
+  PersistedStackStateSchema,
+  type PersistedStackState,
+} from "./StackStateStore.ts";
+import { compileStack } from "../model/Compiler.ts";
 import { bindHeldPort, bindHostListener, checkHostPort } from "../supervisor/HostListener.ts";
 import { withRegistryLock } from "./StackStateStore.ts";
 
@@ -93,9 +99,62 @@ const coordinatorOptions = (
 
 const run = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.scoped(effect).pipe(Effect.provide(NodeServices.layer));
-
 describe("port acquisition", () => {
-  it.live("requires running state and skips an unreadable sibling", () =>
+  it.live("reads legacy sibling state while allocating ports", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-ports-legacy-state-" });
+        const store = yield* makeStackStateStore({ stateRoot: root });
+        const ownIdentity = identity(root, "own");
+        const ownId = yield* deriveStackId(ownIdentity);
+        const siblingIdentity = identity(root, "legacy");
+        const siblingId = yield* deriveStackId(siblingIdentity);
+        const compiled = yield* compileStack({
+          projectRoot: root,
+          runtime: { kind: "native" },
+          config: {},
+        });
+        const sibling = {
+          ...state(siblingId, siblingIdentity),
+          definition: compiled.definition,
+        };
+        const encoded = yield* Schema.encodeEffect(PersistedStackStateSchema)(sibling);
+        const legacy = structuredClone(encoded) as unknown as {
+          definition: { capabilities: Record<string, { idleTimeoutSeconds?: unknown }> };
+        };
+        for (const capability of Object.values(legacy.definition.capabilities))
+          delete capability.idleTimeoutSeconds;
+        yield* store.initialize(ownId, {
+          ...state(ownId, ownIdentity),
+          desiredLifecycle: "running",
+        });
+        yield* fs.makeDirectory(path.join(root, siblingId), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(root, siblingId, "state.json"),
+          yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(legacy),
+        );
+
+        const result = yield* makePortCoordinator(coordinatorOptions(store, root)).acquire(
+          ownId,
+          intents(),
+          [],
+        );
+        const api = result.assignments.api;
+        expect(api?.port).toBeGreaterThan(0);
+        expect(yield* store.read(ownId)).toEqual(
+          expect.objectContaining({
+            ports: expect.arrayContaining([
+              expect.objectContaining({ field: "api", port: api?.port }),
+            ]),
+          }),
+        );
+      }),
+    ),
+  );
+
+  it.live("requires running state and fails closed on an unreadable sibling", () =>
     run(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -114,26 +173,7 @@ describe("port acquisition", () => {
         yield* fs.makeDirectory(siblingRoot, { recursive: true });
         yield* fs.writeFileString(path.join(siblingRoot, "state.json"), "not-json");
         yield* store.replaceUnlocked(id, { ...state(id, value), desiredLifecycle: "running" });
-        const result = yield* coordinator.acquire(id, intents(), []);
-        expect(result.assignments.api?.port).toBeGreaterThan(0);
-      }),
-    ),
-  );
-
-  it.live("fails closed on this stack's own unreadable state", () =>
-    run(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-ports-own-corrupt-" });
-        const store = yield* makeStackStateStore({ stateRoot: root });
-        const value = identity(root, "own-corrupt");
-        const id = yield* deriveStackId(value);
-        yield* store.initialize(id, state(id, value));
-        yield* fs.writeFileString(path.join(root, id, "state.json"), "not-json");
-        const result = yield* makePortCoordinator(coordinatorOptions(store, root))
-          .acquire(id, intents(), [])
-          .pipe(Effect.exit);
+        const result = yield* coordinator.acquire(id, intents(), []).pipe(Effect.exit);
         expect(Exit.isFailure(result)).toBe(true);
         if (Exit.isFailure(result))
           expect(Option.getOrUndefined(Cause.findErrorOption(result.cause))).toBeInstanceOf(
@@ -167,7 +207,7 @@ describe("port acquisition", () => {
     ),
   );
 
-  it.live("skips an unsupported sibling format and still allocates", () =>
+  it.live("preserves unsupported sibling format errors with sibling context", () =>
     run(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -187,45 +227,16 @@ describe("port acquisition", () => {
           Schema.fromJsonString(Schema.Unknown),
         )(siblingState);
         yield* fs.writeFileString(path.join(root, siblingId, "state.json"), encodedSiblingState);
-        const result = yield* makePortCoordinator(coordinatorOptions(store, root)).acquire(
-          ownId,
-          intents(),
-          [],
-        );
-        expect(result.assignments.api?.port).toBeGreaterThan(0);
-      }),
-    ),
-  );
-
-  it.live("skips a legacy sibling identity.checkoutRoot field and still allocates", () =>
-    run(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-ports-legacy-" });
-        const store = yield* makeStackStateStore({ stateRoot: root });
-        const ownIdentity = identity(root, "legacy-owner");
-        const ownId = yield* deriveStackId(ownIdentity);
-        const siblingId = yield* deriveStackId(identity(root, "legacy-sibling"));
-        yield* store.initialize(ownId, state(ownId, ownIdentity));
-        const siblingState = {
-          ...state(siblingId, identity(root, "legacy-sibling")),
-          identity: {
-            ...identity(root, "legacy-sibling"),
-            checkoutRoot: root,
-          },
-        };
-        yield* fs.makeDirectory(path.join(root, siblingId), { recursive: true });
-        const encodedSiblingState = yield* Schema.encodeEffect(
-          Schema.fromJsonString(Schema.Unknown),
-        )(siblingState);
-        yield* fs.writeFileString(path.join(root, siblingId, "state.json"), encodedSiblingState);
-        const result = yield* makePortCoordinator(coordinatorOptions(store, root)).acquire(
-          ownId,
-          intents(),
-          [],
-        );
-        expect(result.assignments.api?.port).toBeGreaterThan(0);
+        const result = yield* makePortCoordinator(coordinatorOptions(store, root))
+          .acquire(ownId, intents(), [])
+          .pipe(Effect.exit);
+        expect(Exit.isFailure(result)).toBe(true);
+        if (!Exit.isFailure(result)) return;
+        const error = Option.getOrUndefined(Cause.findErrorOption(result.cause));
+        expect(error).toBeInstanceOf(StackStateFormatUnsupportedError);
+        if (!(error instanceof StackStateFormatUnsupportedError)) return;
+        expect(error.format).toBe("supabase-stack-state-v2");
+        expect(error.message).toContain(siblingId);
       }),
     ),
   );

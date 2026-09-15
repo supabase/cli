@@ -57,6 +57,7 @@ jobs:
             process-compose
             stack
             ci
+            deps
             repo
             misc
             release

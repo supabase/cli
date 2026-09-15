@@ -71,6 +71,8 @@ import {
   StackRuntimeError,
   StackCleanupError,
   ContainerEngineError,
+  EphemeralPostgresError,
+  RequiresActivatedProcessError,
   StackStateInvalidError,
   StackStateFormatUnsupportedError,
   StackUpgradeRequiredError,
@@ -79,8 +81,6 @@ import {
   PortUnavailableError,
   GatewayActivationError,
   InvalidLogCursorError,
-  EphemeralPostgresError,
-  RequiresActivatedProcessError,
   type CreateStackError,
   type OpenStackError,
   type StackDiscoveryError,
@@ -130,7 +130,8 @@ import {
   type ContainerEngineResolverShape,
 } from "../runtime/ContainerEngineResolver.ts";
 import { formatStopTimeoutMessage } from "../runtime/Diagnostics.ts";
-import { statusFor } from "../supervisor/StatusProjection.ts";
+import { statusForSnapshot } from "../supervisor/StatusProjection.ts";
+import type { SupervisorSnapshot } from "../supervisor/SupervisorState.ts";
 import { EMPTY_LOG_CURSOR, readRetainedLogs, selectLogBatch } from "../supervisor/LogStore.ts";
 import {
   makeProductionRuntimeArtifactPreparer,
@@ -544,6 +545,30 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
         ),
       ),
     );
+    const resetDatabase: Effect.Effect<StackStatus, ResetDatabaseError> = Effect.suspend(
+      (): Effect.Effect<StackStatus, ResetDatabaseError> =>
+        invoke((rpc) => rpc.resetDatabase(undefined), resetDatabaseError).pipe(
+          Effect.catchTag("StackOwnershipConflictError", (ownershipError) => {
+            const offline: Effect.Effect<never, ResetDatabaseError> = options.readOfflineState.pipe(
+              Effect.mapError(resetDatabaseError),
+              Effect.flatMap((state): Effect.Effect<never, ResetDatabaseError> =>
+                Option.isNone(state)
+                  ? Effect.fail(stackNotFound())
+                  : isStoppedState(state.value)
+                    ? Effect.fail(
+                        new StackNotRunningError({
+                          stackId: id,
+                          message: "Stack is not running",
+                        }),
+                      )
+                    : Effect.fail(ownershipError),
+              ),
+              Effect.catchTag("StackOwnershipConflictError", () => Effect.fail(ownershipError)),
+            );
+            return offline;
+          }),
+        ),
+    );
     const status: Effect.Effect<StackStatus, StackStatusError> = Effect.suspend(
       (): Effect.Effect<StackStatus, StackStatusError> => {
         const rpcStatus = invoke((rpc) => rpc.status(undefined), statusError);
@@ -553,8 +578,15 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
               Effect.mapError(statusError),
               Effect.flatMap((state): Effect.Effect<StackStatus, StackStatusError> => {
                 if (Option.isNone(state)) return Effect.fail(stackNotFound());
-                if (isStoppedState(state.value))
-                  return statusFor(id, state.value, [], new Set<CapabilityName>(), "stopped");
+                if (isStoppedState(state.value)) {
+                  const fallback: SupervisorSnapshot = {
+                    stack: { _tag: "stopped", session: "initialized" },
+                    sessionId: Symbol("offline-status"),
+                    plan: undefined,
+                    capabilities: new Map(),
+                  };
+                  return statusForSnapshot(id, state.value, { _tag: "unavailable" }, fallback);
+                }
                 return Effect.fail(
                   new StackOwnershipConflictError({ message: "No Supervisor owns this stack" }),
                 );
@@ -590,30 +622,6 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
           }),
         ),
       );
-    const resetDatabase: Effect.Effect<StackStatus, ResetDatabaseError> = Effect.suspend(
-      (): Effect.Effect<StackStatus, ResetDatabaseError> =>
-        invoke((rpc) => rpc.resetDatabase(undefined), resetDatabaseError).pipe(
-          Effect.catchTag("StackOwnershipConflictError", (ownershipError) => {
-            const offline: Effect.Effect<never, ResetDatabaseError> = options.readOfflineState.pipe(
-              Effect.mapError(resetDatabaseError),
-              Effect.flatMap((state): Effect.Effect<never, ResetDatabaseError> =>
-                Option.isNone(state)
-                  ? Effect.fail(stackNotFound())
-                  : isStoppedState(state.value)
-                    ? Effect.fail(
-                        new StackNotRunningError({
-                          stackId: id,
-                          message: "Stack is not running",
-                        }),
-                      )
-                    : Effect.fail(ownershipError),
-              ),
-              Effect.catchTag("StackOwnershipConflictError", () => Effect.fail(ownershipError)),
-            );
-            return offline;
-          }),
-        ),
-    );
     const start = (startOptions?: StartStackOptions) => {
       return invoke(
         (rpc) =>
@@ -665,31 +673,32 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
         yield* Fiber.join(closeFiber).pipe(Effect.ignore);
         yield* options.waitForRelease;
       }).pipe(
+        Effect.mapError(stopError),
         Effect.timeoutOrElse({
           duration: "60 seconds",
           orElse: () =>
-            Effect.gen(function* () {
-              const running = yield* status.pipe(
-                Effect.map((value) =>
-                  value.capabilities
-                    .filter(
-                      (capability) =>
-                        capability.state === "ready" || capability.state === "starting",
-                    )
-                    .map((capability) => capability.name),
+            status.pipe(
+              Effect.map((value) =>
+                value.capabilities
+                  .filter(
+                    (capability) => capability.state === "ready" || capability.state === "starting",
+                  )
+                  .map((capability) => capability.name),
+              ),
+              Effect.timeoutOrElse({
+                duration: "2 seconds",
+                orElse: () => Effect.succeed<ReadonlyArray<string>>([]),
+              }),
+              Effect.orElseSucceed(() => [] as ReadonlyArray<string>),
+              Effect.flatMap((running) =>
+                Effect.fail(
+                  new StackLifecycleConflictError({
+                    message: formatStopTimeoutMessage(running),
+                  }),
                 ),
-                Effect.timeoutOrElse({
-                  duration: "2 seconds",
-                  orElse: () => Effect.succeed<ReadonlyArray<string>>([]),
-                }),
-                Effect.orElseSucceed(() => [] as ReadonlyArray<string>),
-              );
-              return yield* new StackLifecycleConflictError({
-                message: formatStopTimeoutMessage(running),
-              });
-            }),
+              ),
+            ),
         }),
-        Effect.mapError(stopError),
       );
     const launchAndStop = resolveClient(true, "maintenance").pipe(
       Effect.mapError(stopError),

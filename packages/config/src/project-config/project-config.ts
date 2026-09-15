@@ -7,12 +7,23 @@ import {
   ProjectConfigParseError,
 } from "../errors.ts";
 import { isSecretPath } from "../lib/secret-paths.ts";
-import { deepFreeze, setOwnProperty, type DeepPartial, type EffectiveConfig } from "../sparse.ts";
+import {
+  deepFreeze,
+  setOwnProperty,
+  type DeepPartial,
+  type EffectiveConfig,
+  type OmitPaths,
+} from "../sparse.ts";
 import {
   ProjectConfigApiAttributesSchema,
   type ProjectConfigApiAttributes,
 } from "./api-attributes.ts";
-import { HOSTED_SECTION_KEYS, type HostedSectionKey } from "./hosted-sections.ts";
+import {
+  HOSTED_SECTION_KEYS,
+  isDocumentOnlyLocalPath,
+  type DocumentOnlyLocalPath,
+  type HostedSectionKey,
+} from "./hosted-sections.ts";
 import { AUTH_HOOK_NAMES, unmappedSecretApiPaths } from "./registry-auth.ts";
 import { expectString } from "./registry-row.ts";
 import { projectConfigMappingRows } from "./registry.ts";
@@ -48,8 +59,13 @@ export type ReadonlyJsonValue =
  * {@link comparableProjectConfigPaths}/{@link isComparableProjectConfigPath} to restrict a
  * comparison to fields both sides speak for. Per ADR 0021, values are canonicalized toward the
  * state `config push` would converge on rather than mirroring their source verbatim.
+ *
+ * Every {@link DOCUMENT_ONLY_LOCAL_PATHS} path is excluded from the shape itself, not just from
+ * {@link fromConfigDocument}'s output.
  */
-export type ProjectConfig = DeepPartial<Pick<CliConfig, HostedSectionKey>> & {
+export type ProjectConfig = DeepPartial<
+  OmitPaths<Pick<CliConfig, HostedSectionKey>, DocumentOnlyLocalPath>
+> & {
   // Deep-frozen at runtime; a compile-permitted mutation throws a TypeError.
   readonly _apiResponse?: { readonly [key: string]: ReadonlyJsonValue };
 };
@@ -90,51 +106,6 @@ function copyHostedValueForDocument(value: unknown, path: ReadonlyArray<string>)
     return result;
   }
   return value;
-}
-
-/**
- * Paths inside a hosted section with no real hosted counterpart on either arm, so
- * {@link copyHostedValueForDocument} excludes them from a document-sourced `ProjectConfig`: local
- * bind ports/TLS overrides, `db.pooler`'s `enabled`/`port`, the `db.migrations`/`db.seed` subtrees,
- * every config-side `realtime.*` field, and local-only `experimental.*` engine/backend selection.
- *
- * `db.major_version` and `db.pooler`'s other three fields (`pool_mode`, `default_pool_size`,
- * `max_client_conn`) are real hosted facts and excluded from this list, so `config
- * diff`/`config pull` keep them comparable and can sync them from the platform. `auth.enabled`/
- * `storage.enabled` and `db.network_restrictions.enabled` are also excluded: each is a
- * genuine management opt-out a document can still declare, not a value to hide.
- *
- * Exact-match only; every path below names a static struct field.
- */
-export const DOCUMENT_ONLY_LOCAL_PATHS: ReadonlyArray<ReadonlyArray<string>> = [
-  ["api", "port"],
-  ["api", "tls"],
-  ["api", "external_url"],
-  ["db", "port"],
-  ["db", "shadow_port"],
-  ["db", "health_timeout"],
-  ["db", "pooler", "enabled"],
-  ["db", "pooler", "port"],
-  ["db", "migrations"],
-  ["db", "seed"],
-  ["realtime", "enabled"],
-  ["realtime", "ip_version"],
-  ["realtime", "max_header_length"],
-  ["experimental", "stack"],
-  ["experimental", "compute"],
-  ["experimental", "orioledb_version"],
-  ["experimental", "s3_host"],
-  ["experimental", "s3_region"],
-  ["experimental", "pgdelta"],
-  ["experimental", "inspect"],
-];
-
-function isDocumentOnlyLocalPath(path: ReadonlyArray<string>): boolean {
-  return DOCUMENT_ONLY_LOCAL_PATHS.some(
-    (excluded) =>
-      excluded.length === path.length &&
-      excluded.every((segment, index) => segment === path[index]),
-  );
 }
 
 /**

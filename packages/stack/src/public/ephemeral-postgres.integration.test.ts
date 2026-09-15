@@ -130,7 +130,7 @@ const reserveLoopbackPort = (): Effect.Effect<number> =>
     });
   });
 
-describe.sequential("ephemeral Postgres", () => {
+describe("ephemeral Postgres", () => {
   it.live("refuses a snapshot produced by a different runtime before starting Postgres", () =>
     withIsolatedRoot(
       Effect.gen(function* () {

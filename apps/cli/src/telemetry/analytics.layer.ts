@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Layer, Option, Path } from "effect";
+import { ConfigProvider, Effect, FileSystem, Layer, Option, Path } from "effect";
 import { aiToolLayer } from "../shared/telemetry/ai-tool.layer.ts";
 import { AiTool } from "../shared/telemetry/ai-tool.service.ts";
 import {
@@ -139,7 +139,7 @@ export const analyticsLayer = Layer.effect(
     const aiTool = yield* AiTool;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const posthogConfig = resolvePosthogConfig(process.env);
+    const posthogConfig = yield* resolvePosthogConfig(yield* ConfigProvider.ConfigProvider);
 
     if (runtime.consent !== "granted" || Option.isNone(posthogConfig.key)) {
       return Analytics.of({

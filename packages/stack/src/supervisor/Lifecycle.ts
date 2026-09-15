@@ -1,4 +1,4 @@
-import { Cause, Crypto, Effect, Exit, FileSystem, Path, Redacted } from "effect";
+import { Cause, Crypto, Effect, Exit, FileSystem, Path, Predicate, Redacted } from "effect";
 import type { StackDefinition, CompiledStack, SecretSlotInput } from "../model/Compiler.ts";
 import { compileStack, rebuildExecutionPlan, sameDefinition } from "../model/Compiler.ts";
 import type { ExecutionPlan } from "../model/ExecutionPlan.ts";
@@ -38,12 +38,33 @@ export interface LifecycleBackend {
   readonly launch: (
     input: LifecycleInput,
     session: "fresh" | "current",
-  ) => Effect.Effect<void, StackError>;
+  ) => Effect.Effect<LifecycleLaunchResult, StackError>;
   /** Removes runtime resources while retaining durable state/data (stop path). */
   readonly cleanup: Effect.Effect<void, StackError>;
   /** Removes all exact runtime resources and persistent data (destroy path). */
   readonly destroyData: Effect.Effect<void, StackError>;
 }
+
+export type CleanupOutcome =
+  | { readonly _tag: "proven" }
+  | { readonly _tag: "unproven"; readonly cause: Cause.Cause<StackError> };
+
+export type LifecycleLaunchResult =
+  | { readonly _tag: "started"; readonly rollback: Effect.Effect<CleanupOutcome> }
+  | {
+      readonly _tag: "failed";
+      readonly cause: Cause.Cause<StackError>;
+      readonly cleanup: CleanupOutcome;
+    };
+
+type LifecycleStartOutcome =
+  | { readonly _tag: "started"; readonly state: PersistedStackState }
+  | {
+      readonly _tag: "failed";
+      readonly cause: Cause.Cause<StackError>;
+      readonly cleanup: CleanupOutcome;
+      readonly durable: "stopped" | "unsafe";
+    };
 
 interface LifecycleStartOptions {
   readonly config?: StackConfig;
@@ -54,7 +75,7 @@ interface LifecycleStartOptions {
 export interface LifecycleController {
   readonly start: (
     options?: LifecycleStartOptions,
-  ) => Effect.Effect<PersistedStackState, StackError, LifecycleRequirements>;
+  ) => Effect.Effect<LifecycleStartOutcome, StackError, LifecycleRequirements>;
   readonly stop: Effect.Effect<PersistedStackState, StackError, LifecycleRequirements>;
   readonly destroy: Effect.Effect<void, StackError, LifecycleRequirements>;
 }
@@ -198,10 +219,11 @@ export const makeLifecycleController = (
         readonly cleanup: boolean;
         readonly restoreLifecycle: "stopped" | "unconfigured";
       },
-    ): Effect.Effect<never, StackError, LifecycleRequirements> =>
+    ): Effect.Effect<LifecycleStartOutcome, StackError, LifecycleRequirements> =>
       Effect.gen(function* () {
         const current = yield* options.stateStore.read(options.stackId).pipe(Effect.exit);
         let cause = primary;
+        let durable: "stopped" | "unsafe" = "unsafe";
         if (Exit.isFailure(current)) {
           cause = Cause.combine(cause, current.cause);
         } else if (current.value === undefined) {
@@ -214,20 +236,38 @@ export const makeLifecycleController = (
             })
             .pipe(Effect.exit);
           if (Exit.isFailure(persisted)) cause = Cause.combine(cause, persisted.cause);
+          else durable = "stopped";
         }
+        let cleanupOutcome: CleanupOutcome = { _tag: "proven" };
         if (restore.cleanup) {
           const cleaned = yield* options.backend.cleanup.pipe(Effect.exit);
-          if (Exit.isFailure(cleaned)) cause = Cause.combine(cause, cleaned.cause);
+          if (Exit.isFailure(cleaned)) {
+            cleanupOutcome = { _tag: "unproven", cause: cleaned.cause };
+            cause = Cause.combine(cause, cleaned.cause);
+          }
         }
-        return yield* Effect.failCause(cause);
+        return { _tag: "failed", cause, cleanup: cleanupOutcome, durable };
       });
 
-    const start = (
+    const startOutcome = (
       startOptions?: LifecycleStartOptions,
-    ): Effect.Effect<PersistedStackState, StackError, LifecycleRequirements> => {
+    ): Effect.Effect<LifecycleStartOutcome, StackError, LifecycleRequirements> => {
       const supplied = startOptions?.config;
+      const failed = (
+        cause: Cause.Cause<StackError>,
+        durable: "stopped" | "unsafe",
+      ): LifecycleStartOutcome => ({
+        _tag: "failed",
+        cause,
+        cleanup: { _tag: "proven" },
+        durable,
+      });
       return Effect.gen(function* () {
-        const initial = yield* read();
+        const initialRead = yield* options.stateStore.read(options.stackId).pipe(Effect.exit);
+        if (Exit.isFailure(initialRead)) return failed(initialRead.cause, "unsafe");
+        if (initialRead.value === undefined)
+          return failed(Cause.fail(missingState(options.stackId)), "stopped");
+        const initial = initialRead.value;
         if (initial.desiredLifecycle === "destroying")
           return yield* lifecycleConflict("Stack is being destroyed");
 
@@ -242,7 +282,10 @@ export const makeLifecycleController = (
               cleanup: false,
               restoreLifecycle: "stopped",
             });
-          return yield* Effect.failCause(materialized.cause);
+          return failed(
+            materialized.cause,
+            initial.desiredLifecycle === "running" ? "unsafe" : "stopped",
+          );
         }
         const candidate = materialized.value;
         if (initial.desiredLifecycle === "running") {
@@ -261,7 +304,7 @@ export const makeLifecycleController = (
                 cleanup: false,
                 restoreLifecycle: "stopped",
               });
-            return yield* error;
+            return failed(Cause.fail(error), "unsafe");
           }
           if (supplied !== undefined && !sameSecrets(candidate.secrets, initial.secrets)) {
             const error = new StackMustBeStoppedError({
@@ -274,7 +317,7 @@ export const makeLifecycleController = (
                 cleanup: false,
                 restoreLifecycle: "stopped",
               });
-            return yield* error;
+            return failed(Cause.fail(error), "unsafe");
           }
           if (freshSession) {
             const preflighted = yield* options.backend
@@ -297,20 +340,45 @@ export const makeLifecycleController = (
               cleanup: true,
               restoreLifecycle: "stopped",
             });
-          if (Exit.isFailure(launched)) return yield* Effect.failCause(launched.cause);
-          return initial;
+          if (Exit.isFailure(launched)) return failed(launched.cause, "unsafe");
+          if (Predicate.isTagged(launched.value, "failed")) {
+            if (freshSession)
+              return yield* persistNonRunningAfterFailure(launched.value.cause, {
+                cleanup: true,
+                restoreLifecycle: "stopped",
+              });
+            return {
+              _tag: "failed",
+              cause: launched.value.cause,
+              cleanup: launched.value.cleanup,
+              durable: "unsafe",
+            };
+          }
+          return { _tag: "started", state: initial };
         }
 
-        yield* options.backend.preflight(lifecycleInput(options.stackId, initial, candidate));
+        const preflighted = yield* options.backend
+          .preflight(lifecycleInput(options.stackId, initial, candidate))
+          .pipe(Effect.exit);
+        if (Exit.isFailure(preflighted)) return failed(preflighted.cause, "stopped");
         const next = stateWithCandidate(initial, candidate, "running");
-        yield* options.stateStore.replace(options.stackId, next);
+        const persisted = yield* options.stateStore
+          .replace(options.stackId, next)
+          .pipe(Effect.exit);
+        if (Exit.isFailure(persisted)) return failed(persisted.cause, "unsafe");
         const started = yield* options.backend
           .launch(lifecycleInput(options.stackId, next, candidate), "fresh")
           .pipe(Effect.exit);
-        if (Exit.isSuccess(started)) return next;
+        if (Exit.isSuccess(started)) {
+          if (Predicate.isTagged(started.value, "failed"))
+            return yield* persistNonRunningAfterFailure(started.value.cause, {
+              cleanup: true,
+              restoreLifecycle:
+                initial.desiredLifecycle === "unconfigured" ? "unconfigured" : "stopped",
+            });
+          return { _tag: "started", state: next };
+        }
 
-        // A failed cold launch never leaves a durable running intent. Proven cleanup restores
-        // unconfigured so the next start is still first-create; leftover PGDATA is kept.
         return yield* persistNonRunningAfterFailure(started.cause, {
           cleanup: true,
           restoreLifecycle:
@@ -363,5 +431,5 @@ export const makeLifecycleController = (
       },
     );
 
-    return { start, stop, destroy } satisfies LifecycleController;
+    return { start: startOutcome, stop, destroy } satisfies LifecycleController;
   });

@@ -3,8 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer, Option, Redacted, Stream } from "effect";
-import { CAPABILITY_NAMES, StackIdSchema, type EffectStack } from "@supabase/stack/effect";
+import { ConfigProvider, Effect, Exit, Layer, Option } from "effect";
 
 import {
   mockAnalytics,
@@ -23,12 +22,11 @@ import {
 } from "./global-flags.ts";
 import { DebugLogger } from "./debug-logger.service.ts";
 import { identityStitchLayer } from "./identity-stitch.ts";
-import { dbConfigLayer, dbConfigResolverLayer } from "./db-config.layer.ts";
+import { dbConfigLayer } from "./db-config.layer.ts";
 import { DbConfigResolver } from "./db-config.service.ts";
 import type { DbConfigFlags } from "./db-config.types.ts";
 import { DbConnection, type DbSession, type PgConnInput } from "./db-connection.service.ts";
-import { stackBackendLayer } from "./stack-backend.ts";
-import { StackApi } from "./stack-api.ts";
+
 // `--local` / `--db-url` never touch the Management API stack, so the resolver
 // builds with simple ambient stubs. The `--linked` sub-flow (login-role,
 // pooler, unban, backoff) requires the real management runtime with a mocked
@@ -48,8 +46,6 @@ function buildResolver(
     readonly projectHost?: string;
     readonly poolerHost?: string;
     readonly dbConnection?: Layer.Layer<DbConnection>;
-    readonly stackApi?: Layer.Layer<StackApi>;
-    readonly stackBackend?: "legacy" | "stack";
   } = {},
 ) {
   const deps = Layer.mergeAll(
@@ -80,14 +76,7 @@ function buildResolver(
     ),
     BunServices.layer,
   );
-  const resolver =
-    opts.stackApi !== undefined
-      ? dbConfigResolverLayer.pipe(Layer.provide(opts.stackApi), Layer.provide(deps))
-      : dbConfigLayer.pipe(Layer.provide(deps));
-  return Layer.mergeAll(
-    resolver,
-    opts.stackBackend !== undefined ? stackBackendLayer(opts.stackBackend) : Layer.empty,
-  );
+  return dbConfigLayer.pipe(Layer.provide(deps));
 }
 
 function withWorkdir(toml?: string) {
@@ -107,7 +96,13 @@ const resolve = (
   Effect.gen(function* () {
     const resolver = yield* DbConfigResolver;
     return yield* resolver.resolve(flags);
-  }).pipe(Effect.provide(buildResolver(workdir, opts)));
+  }).pipe(
+    Effect.provide(buildResolver(workdir, opts)),
+    Effect.provideService(
+      ConfigProvider.ConfigProvider,
+      ConfigProvider.fromEnvRecord(process.env, { preserveEmptyStrings: true }),
+    ),
+  );
 
 const resolvePoolerFallback = (
   workdir: string,
@@ -117,7 +112,49 @@ const resolvePoolerFallback = (
   Effect.gen(function* () {
     const resolver = yield* DbConfigResolver;
     return yield* resolver.resolvePoolerFallback(flags);
-  }).pipe(Effect.provide(buildResolver(workdir, opts)));
+  }).pipe(
+    Effect.provide(buildResolver(workdir, opts)),
+    Effect.provideService(
+      ConfigProvider.ConfigProvider,
+      ConfigProvider.fromEnvRecord(process.env, { preserveEmptyStrings: true }),
+    ),
+  );
+
+let savedResolverConfigEnv:
+  | {
+      readonly projectId: string | undefined;
+      readonly profile: string | undefined;
+      readonly home: string | undefined;
+      readonly workdir: string | undefined;
+    }
+  | undefined;
+
+beforeEach(() => {
+  savedResolverConfigEnv = {
+    projectId: process.env["SUPABASE_PROJECT_ID"],
+    profile: process.env["SUPABASE_PROFILE"],
+    home: process.env["SUPABASE_HOME"],
+    workdir: process.env["SUPABASE_WORKDIR"],
+  };
+  delete process.env["SUPABASE_PROJECT_ID"];
+  delete process.env["SUPABASE_PROFILE"];
+  delete process.env["SUPABASE_HOME"];
+  delete process.env["SUPABASE_WORKDIR"];
+});
+
+afterEach(() => {
+  const saved = savedResolverConfigEnv;
+  if (saved === undefined) return;
+  if (saved.projectId === undefined) delete process.env["SUPABASE_PROJECT_ID"];
+  else process.env["SUPABASE_PROJECT_ID"] = saved.projectId;
+  if (saved.profile === undefined) delete process.env["SUPABASE_PROFILE"];
+  else process.env["SUPABASE_PROFILE"] = saved.profile;
+  if (saved.home === undefined) delete process.env["SUPABASE_HOME"];
+  else process.env["SUPABASE_HOME"] = saved.home;
+  if (saved.workdir === undefined) delete process.env["SUPABASE_WORKDIR"];
+  else process.env["SUPABASE_WORKDIR"] = saved.workdir;
+  savedResolverConfigEnv = undefined;
+});
 
 const localFlags: DbConfigFlags = {
   dbUrl: Option.none(),
@@ -172,77 +209,6 @@ describe("dbConfigResolver (local + db-url)", () => {
               profileName: "supabase",
             },
           });
-          expect(r.isLocal).toBe(true);
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
-    );
-  });
-
-  it.effect("local mode: uses the stack credentials URL when the stack backend is on", () => {
-    const dir = withWorkdir(["[db]", "port = 55555", 'password = "hunter2"', ""].join("\n"));
-    const unused = Effect.die("unused");
-    const unusedFn = () => unused;
-    const stackId = StackIdSchema.make("a".repeat(64));
-    const stack: EffectStack = {
-      id: stackId,
-      status: Effect.succeed({
-        id: stackId,
-        lifecycle: "running",
-        desiredLifecycle: "running",
-        runtime: { kind: "native" },
-        endpoints: {},
-        versions: {},
-        capabilities: CAPABILITY_NAMES.map((name) => ({
-          name,
-          activation: name === "database" ? "eager" : "lazy",
-          state: name === "database" ? "ready" : "dormant",
-        })),
-        artifacts: [],
-      }),
-      credentials: Effect.succeed({
-        database: {
-          url: Redacted.make("postgresql://postgres:stack-secret@127.0.0.1:54329/postgres"),
-          password: Redacted.make("stack-secret"),
-        },
-        api: {
-          publishableKey: "anon",
-          secretKey: Redacted.make("service"),
-          anonJwt: "anon",
-          serviceRoleJwt: Redacted.make("service"),
-        },
-      }),
-      prepare: unusedFn,
-      start: unusedFn,
-      stop: unused,
-      destroy: unused,
-      resetDatabase: unused,
-      logs: unusedFn,
-      followLogs: () => Stream.empty,
-    };
-    const stackApi = Layer.succeed(StackApi, {
-      createStack: unusedFn,
-      findStack: () =>
-        Effect.succeed(
-          Option.some({
-            id: stackId,
-            projectRoot: dir,
-            name: "default",
-            branchContext: "main",
-            runtime: { kind: "native" },
-            desiredLifecycle: "running",
-          }),
-        ),
-      discoverStacks: unusedFn,
-      openStack: () => Effect.succeed(stack),
-      inspectStack: unusedFn,
-    });
-    return resolve(dir, localFlags, { stackBackend: "stack", stackApi }).pipe(
-      Effect.tap((r) =>
-        Effect.sync(() => {
-          expect(r.conn.host).toBe("127.0.0.1");
-          expect(r.conn.port).toBe(54329);
-          expect(r.conn.password).toBe("stack-secret");
           expect(r.isLocal).toBe(true);
           rmSync(dir, { recursive: true, force: true });
         }),
@@ -425,6 +391,7 @@ describe("dbConfigResolver (linked config ordering)", () => {
         ].join("\n"),
       );
       // The linked ref is sourced via the project-ref resolver's env fallback.
+      const previousProjectId = process.env["SUPABASE_PROJECT_ID"];
       process.env["SUPABASE_PROJECT_ID"] = ref;
       return resolve(dir, linkedFlags).pipe(
         Effect.exit,
@@ -436,7 +403,12 @@ describe("dbConfigResolver (linked config ordering)", () => {
                 "Failed reading config: Invalid db.major_version: 99.",
               );
             }
-            delete process.env["SUPABASE_PROJECT_ID"];
+          }),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previousProjectId === undefined) delete process.env["SUPABASE_PROJECT_ID"];
+            else process.env["SUPABASE_PROJECT_ID"] = previousProjectId;
             rmSync(dir, { recursive: true, force: true });
           }),
         ),

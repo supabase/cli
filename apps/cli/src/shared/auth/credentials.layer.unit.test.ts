@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, vi } from "vitest";
-import { Effect, FileSystem, Layer, Option, Redacted } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, PlatformError, Redacted } from "effect";
 import {
   mockCliProjectContext,
   mockRuntimeInfo,
@@ -64,17 +64,28 @@ vi.mock("@napi-rs/keyring", () => ({
   },
 }));
 
-function makeLayer(home: string, env: Record<string, string> = {}) {
+function makeLayer(
+  home: string,
+  env: Record<string, string> = {},
+  fsLayer: Layer.Layer<FileSystem.FileSystem> = BunServices.layer,
+) {
   const runtimeInfoLayer = mockRuntimeInfo({ homeDir: home });
   const cliProjectContextLayer = mockCliProjectContext();
+  const envLayer = processEnvLayer({ HOME: home, ...env });
   const baseLayer = Layer.mergeAll(
-    BunServices.layer,
     runtimeInfoLayer,
     cliProjectContextLayer,
-    processEnvLayer({ HOME: home, ...env }),
-    cliSettingsLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(cliProjectContextLayer)),
+    cliSettingsLayer.pipe(
+      Layer.provide(runtimeInfoLayer),
+      Layer.provide(cliProjectContextLayer),
+      Layer.provide(envLayer),
+    ),
   );
-  return credentialsLayer.pipe(Layer.provide(baseLayer));
+  return credentialsLayer.pipe(
+    Layer.provide(fsLayer),
+    Layer.provide(BunServices.layer),
+    Layer.provide(baseLayer),
+  );
 }
 
 let tempHome: string;
@@ -210,42 +221,102 @@ describe("Credentials", () => {
       }).pipe(Effect.provide(makeLayer(tempHome)));
     });
 
-    it.effect(
-      "returns None when filesystem check fails unexpectedly (orElseSucceed branch)",
-      () => {
-        throwOnGetPasswordAccounts.add("Supabase CLI/access-token");
-        throwOnGetPasswordAccounts.add("Supabase CLI/supabase");
-        const failingFs = Layer.succeed(FileSystem.FileSystem, {
-          exists: (_path: string) => Effect.fail(new Error("permission denied") as any),
-          readFileString: (_path: string) => Effect.fail(new Error("permission denied") as any),
-        } as any);
-        const runtimeInfoLayer = mockRuntimeInfo({ homeDir: tempHome });
-        const cliProjectContextLayer = mockCliProjectContext();
-        const layer = credentialsLayer.pipe(
-          Layer.provide(
-            Layer.mergeAll(
-              failingFs,
-              BunServices.layer,
-              runtimeInfoLayer,
-              cliProjectContextLayer,
-              processEnvLayer({ HOME: tempHome }),
-              cliSettingsLayer.pipe(
-                Layer.provide(runtimeInfoLayer),
-                Layer.provide(cliProjectContextLayer),
-              ),
+    it.effect("falls through when keyring returns empty passwords for both accounts", () => {
+      passwords.set("Supabase CLI/access-token", "");
+      passwords.set("Supabase CLI/supabase", "");
+      const supaDir = join(tempHome, ".supabase");
+      mkdirSync(supaDir, { recursive: true });
+      writeFileSync(join(supaDir, "access-token"), "fs-empty-keyring-fallback", { mode: 0o600 });
+      return Effect.gen(function* () {
+        const { getAccessToken } = yield* Credentials;
+        const token = yield* getAccessToken;
+        expectSomeToken(token, "fs-empty-keyring-fallback");
+      }).pipe(Effect.provide(makeLayer(tempHome)));
+    });
+
+    it.effect("surfaces a filesystem read failure instead of treating it as no token", () => {
+      throwOnGetPasswordAccounts.add("Supabase CLI/access-token");
+      throwOnGetPasswordAccounts.add("Supabase CLI/supabase");
+      const failingFs = Layer.succeed(
+        FileSystem.FileSystem,
+        FileSystem.makeNoop({
+          exists: (_path: string) =>
+            Effect.fail(
+              PlatformError.systemError({
+                _tag: "PermissionDenied",
+                module: "FileSystem",
+                method: "exists",
+                description: "permission denied",
+              }),
             ),
+          readFileString: (_path: string) =>
+            Effect.fail(
+              PlatformError.systemError({
+                _tag: "PermissionDenied",
+                module: "FileSystem",
+                method: "readFileString",
+                description: "permission denied",
+              }),
+            ),
+        }),
+      );
+      const runtimeInfoLayer = mockRuntimeInfo({ homeDir: tempHome });
+      const cliProjectContextLayer = mockCliProjectContext();
+      const envLayer = processEnvLayer({ HOME: tempHome, SUPABASE_NO_KEYRING: "1" });
+      const layer = credentialsLayer.pipe(
+        Layer.provide(failingFs),
+        Layer.provide(BunServices.layer),
+        Layer.provide(runtimeInfoLayer),
+        Layer.provide(cliProjectContextLayer),
+        Layer.provide(
+          cliSettingsLayer.pipe(
+            Layer.provide(runtimeInfoLayer),
+            Layer.provide(cliProjectContextLayer),
+            Layer.provide(envLayer),
           ),
-        );
-        return Effect.gen(function* () {
-          const { getAccessToken } = yield* Credentials;
-          const token = yield* getAccessToken;
-          expect(token).toEqual(Option.none());
-        }).pipe(Effect.provide(layer));
-      },
-    );
+        ),
+      );
+      return Effect.gen(function* () {
+        const { getAccessToken } = yield* Credentials;
+        const exit = yield* Effect.exit(getAccessToken);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const error = Cause.findErrorOption(exit.cause);
+          expect(Option.isSome(error)).toBe(true);
+          if (Option.isSome(error)) expect(error.value).toBeInstanceOf(PlatformError.PlatformError);
+        }
+      }).pipe(Effect.provide(layer));
+    });
   });
 
   describe("saveAccessToken", () => {
+    it.effect("surfaces a fallback directory write failure as PlatformError", () => {
+      const failingFs = Layer.succeed(
+        FileSystem.FileSystem,
+        FileSystem.makeNoop({
+          makeDirectory: () =>
+            Effect.fail(
+              PlatformError.systemError({
+                _tag: "PermissionDenied",
+                module: "FileSystem",
+                method: "makeDirectory",
+                description: "permission denied",
+              }),
+            ),
+        }),
+      );
+      return Effect.gen(function* () {
+        const { saveAccessToken } = yield* Credentials;
+        const exit = yield* Effect.exit(saveAccessToken("write-failure-token"));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const error = Cause.findErrorOption(exit.cause);
+          expect(Option.isSome(error)).toBe(true);
+          if (Option.isSome(error)) expect(error.value).toBeInstanceOf(PlatformError.PlatformError);
+        }
+      }).pipe(Effect.provide(makeLayer(tempHome, { SUPABASE_NO_KEYRING: "1" }, failingFs)));
+    });
+
     it.effect("saves to keyring when available", () => {
       return Effect.gen(function* () {
         const { saveAccessToken } = yield* Credentials;
@@ -285,6 +356,34 @@ describe("Credentials", () => {
   });
 
   describe("deleteAccessToken", () => {
+    it.effect("surfaces a fallback file delete failure as PlatformError", () => {
+      const failingFs = Layer.succeed(
+        FileSystem.FileSystem,
+        FileSystem.makeNoop({
+          exists: () => Effect.succeed(true),
+          remove: () =>
+            Effect.fail(
+              PlatformError.systemError({
+                _tag: "PermissionDenied",
+                module: "FileSystem",
+                method: "remove",
+                description: "permission denied",
+              }),
+            ),
+        }),
+      );
+      return Effect.gen(function* () {
+        const { deleteAccessToken } = yield* Credentials;
+        const exit = yield* Effect.exit(deleteAccessToken);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const error = Cause.findErrorOption(exit.cause);
+          expect(Option.isSome(error)).toBe(true);
+          if (Option.isSome(error)) expect(error.value).toBeInstanceOf(PlatformError.PlatformError);
+        }
+      }).pipe(Effect.provide(makeLayer(tempHome, { SUPABASE_NO_KEYRING: "1" }, failingFs)));
+    });
+
     it.effect("returns false when no token exists anywhere", () => {
       return Effect.gen(function* () {
         const { deleteAccessToken } = yield* Credentials;

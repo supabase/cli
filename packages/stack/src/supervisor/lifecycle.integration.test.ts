@@ -16,6 +16,7 @@ import {
   makeLifecycleController,
   type LifecycleBackend,
   type LifecycleInput,
+  type LifecycleLaunchResult,
 } from "./Lifecycle.ts";
 
 const layer = NodeServices.layer;
@@ -67,6 +68,10 @@ const backend = (state: BackendState): LifecycleBackend => ({
       if (state.waitBeforeLaunch !== undefined) yield* Deferred.await(state.waitBeforeLaunch);
       if (state.launchMutation !== undefined) yield* state.launchMutation();
       if (state.failLaunch) return yield* new StackRuntimeError({ message: "launch failed" });
+      return {
+        _tag: "started",
+        rollback: Effect.succeed({ _tag: "proven" }),
+      } satisfies LifecycleLaunchResult;
     }),
   cleanup: Effect.gen(function* () {
     state.calls.push(`cleanup:${state.lastLifecycle ?? "invalid"}`);
@@ -121,7 +126,20 @@ const makeFixture = (runtime: StackRuntime = { kind: "native" }) =>
       stateStore: persistedStore,
       backend: backend(state),
     });
-    return { id, root, store: persistedStore, state, controller };
+    const testController = {
+      ...controller,
+      start: (options?: Parameters<typeof controller.start>[0]) =>
+        controller
+          .start(options)
+          .pipe(
+            Effect.flatMap((outcome) =>
+              outcome._tag === "started"
+                ? Effect.succeed(outcome.state)
+                : Effect.failCause(outcome.cause),
+            ),
+          ),
+    };
+    return { id, root, store: persistedStore, state, controller: testController };
   });
 
 const run = <A, E, R>(effect: Effect.Effect<A, E, R>) =>

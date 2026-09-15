@@ -22,6 +22,7 @@ import type {
   PreparedGatewayRoute,
 } from "./Gateway.ts";
 import { GatewayRouteNotFoundError, isGatewayProxyRoute } from "./Gateway.ts";
+import type { GatewayActivity } from "./ActivityTracker.ts";
 import type {
   HostListener,
   HostListenerHttpEvent,
@@ -47,6 +48,7 @@ export interface HttpGatewayOptions {
   ) => Effect.Effect<BackendEndpoint, GatewayActivationError>;
   readonly cors?: Readonly<Record<string, string>>;
   readonly healthPaths?: ReadonlyArray<string>;
+  readonly activity?: GatewayActivity;
 }
 
 export interface HttpGateway {
@@ -230,9 +232,9 @@ const proxy = (
     const onIncomingError = (cause: Error) => {
       if (settled) return;
       settled = true;
-      cleanup();
       outgoing?.destroy();
       incoming?.destroy();
+      cleanup();
       resume(Effect.fail(new GatewayBackendError({ cause })));
     };
     const onIncomingAborted = () => onIncomingError(new Error("backend response aborted"));
@@ -249,7 +251,6 @@ const proxy = (
       onIncomingError(new Error("response closed"));
     };
     const cleanup = () => {
-      if (outgoing !== undefined) outgoing.off("error", onOutgoingError);
       request.off("aborted", onRequestAborted);
       response.off("close", onResponseClose);
       if (incoming !== undefined) {
@@ -294,9 +295,10 @@ const proxy = (
     response.once("close", onResponseClose);
     request.pipe(outgoing);
     return Effect.sync(() => {
-      cleanup();
+      settled = true;
       outgoing.destroy();
       incoming?.destroy();
+      cleanup();
     });
   });
 
@@ -307,6 +309,24 @@ const mapFailure = (cause: Cause.Cause<unknown>): number => {
   if (Option.isSome(error) && error.value instanceof GatewayBackendError) return 502;
   return 503;
 };
+
+const recoveryFrom = (cause: Cause.Cause<unknown>) => {
+  const error = Cause.findErrorOption(cause);
+  return Option.isSome(error) && error.value instanceof GatewayActivationError
+    ? error.value.recovery
+    : undefined;
+};
+
+const recoveryResponse = (operation: "stop" | "destroy") => ({
+  error: "STACK_RECOVERY_REQUIRED",
+  recovery: {
+    operation,
+    message:
+      operation === "stop"
+        ? "Retry stack stop before activating workloads"
+        : "Retry stack destroy before activating workloads",
+  },
+});
 
 const cancelOnRequestClose = (
   request: IncomingMessage,
@@ -380,9 +400,10 @@ const handleRequest = (
       proxy(request, response, backend, options, path, headers),
     ),
   );
+  const tracked = options.activity?.track(route.capability, activation) ?? activation;
   // Node invokes this handler outside Effect; use the owner-scoped FiberSet
   // runtime so cancellation of the gateway interrupts in-flight activation.
-  const fiber = runFork(activation);
+  const fiber = runFork(tracked);
   cancelOnRequestClose(request, response, fiber);
   fiber.addObserver((exit) => {
     if (!Exit.isFailure(exit) || response.writableEnded || response.destroyed) return;
@@ -391,13 +412,22 @@ const handleRequest = (
       return;
     }
     const status = mapFailure(exit.cause);
+    const recovery = recoveryFrom(exit.cause);
     respond(
       response,
       status,
-      JSON.stringify({
-        error:
-          status === 404 ? "Not found" : status === 503 ? "Service unavailable" : "Bad gateway",
-      }),
+      JSON.stringify(
+        recovery === undefined
+          ? {
+              error:
+                status === 404
+                  ? "Not found"
+                  : status === 503
+                    ? "Service unavailable"
+                    : "Bad gateway",
+            }
+          : recoveryResponse(recovery.operation),
+      ),
       options,
     );
   });
@@ -514,6 +544,7 @@ const handleUpgrade = (
       }),
     ),
   );
+  const tracked = options.activity?.track(route.capability, activation) ?? activation;
   const onSocketClose = () => fiber.interruptUnsafe();
   const onSocketEnd = () => fiber.interruptUnsafe();
   const onSocketError = () => fiber.interruptUnsafe();
@@ -522,7 +553,7 @@ const handleUpgrade = (
     socket.off("end", onSocketEnd);
     request.off("aborted", onRequestAborted);
   };
-  const fiber = runFork(activation);
+  const fiber = runFork(tracked);
   socket.once("close", onSocketClose);
   socket.once("end", onSocketEnd);
   socket.once("error", onSocketError);
@@ -535,7 +566,25 @@ const handleUpgrade = (
   };
   fiber.addObserver(removeSocketCancellation);
   fiber.addObserver((exit) => {
-    if (Exit.isFailure(exit)) socket.destroy();
+    if (!Exit.isFailure(exit)) return;
+    const recovery = recoveryFrom(exit.cause);
+    if (recovery === undefined || socket.destroyed) {
+      socket.destroy();
+      return;
+    }
+    const body = JSON.stringify(recoveryResponse(recovery.operation));
+    const response = [
+      "HTTP/1.1 503 Service Unavailable",
+      "Content-Type: application/json",
+      `Content-Length: ${Buffer.byteLength(body)}`,
+      "Connection: close",
+      "",
+      body,
+    ].join("\r\n");
+    const onRecoveryError = () => socket.destroy();
+    socket.once("error", onRecoveryError);
+    socket.once("close", () => socket.off("error", onRecoveryError));
+    socket.end(response, () => socket.destroy());
   });
 };
 
