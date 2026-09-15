@@ -163,14 +163,36 @@ elsewhere in the monorepo never releases `@supabase/config`, and vice versa.
   a human approves the `config-release` GitHub environment (reviewing the plan job's step summary:
   release notes + type-surface diff); then an OIDC/provenance publish job publishes **that exact
   tarball** (`npm publish <tgz> --ignore-scripts` — no rebuild, no repack, no lifecycle scripts:
-  the approved bytes are the published bytes). After publishing, the job verifies the version is
-  registry-visible with the reviewed tarball's integrity and the expected dist-tag before pushing
-  the `config-v*` tag.
+  the approved bytes are the published bytes). After publishing, the job pushes the `config-v*`
+  tag, then verifies the version is registry-visible with the reviewed tarball's integrity and the
+  expected dist-tag.
 - **`package.json`'s committed `version` (`0.1.0`) is a placeholder.** The real version is stamped
   into the tarball at pack time (`npm pkg set version` in the plan job) from the computed version —
-  never hand-bump the committed field, and never hand-push a `config-v*` tag.
+  never hand-bump the committed field. Hand-pushing a `config-v*` tag is reserved for the
+  documented recovery below.
 - **Local dry runs:** `scripts/release-plan.ts` runs the plan locally without publishing;
   `tools/config-release-gate.ts --tarball` rehearses the type-surface gate locally.
+
+### Recovering a published-but-untagged release
+
+- **Symptom:** npm holds a version whose `config-v*` tag never reached origin, because a step
+  after `npm publish` failed.
+- **Why it must be fixed:** the planner derives the next version from the last `config-v*` tag,
+  never from npm, so every later run re-plans the same version. As soon as any commit changes
+  `packages/config`, the repacked bytes diverge from the published ones and the publish job's
+  integrity guard refuses permanently.
+- **Recovery option 1 (preferred, while available):** re-run the failed publish job from the
+  original run, so it reuses the reviewed artifact rather than rebuilding. Two limits close this
+  option: release artifacts are kept 7 days, and re-running a workflow run discards the earlier
+  attempt's artifacts.
+- **Recovery option 2:** create the tag directly at the commit the published bytes were built
+  from. A full workflow re-run is not a substitute: semantic-release refuses to plan from any
+  commit behind the release branch's tip, so a re-run pinned to the original commit reports no
+  release and never reaches the publish job. `config-v*` tags are protected by a repo ruleset
+  whose only bypass actor is the releaser GitHub App, so this needs a repo admin to temporarily
+  grant themselves bypass on that ruleset, push the annotated tag, then restore the ruleset and
+  confirm it matches its prior state. Add the matching GitHub release with `--latest=false`, since
+  a config release must never become the repo's `latest` release.
 
 ### Standing release configuration (set up under CLI-2169)
 
@@ -191,8 +213,8 @@ release fails unexpectedly, and restore them if repo or npm settings are ever re
    cut `1.0.0` with release notes generated from the entire monorepo history — a whole-history
    changelog as both the approval artifact and the public GH release body — so
    `scripts/release-plan.ts` refuses to plan in that state (escape hatch:
-   `CONFIG_RELEASE_ALLOW_NO_BASELINE=1`). Seeding it was the single exception to the "never
-   hand-push a `config-v*` tag" rule above.
+   `CONFIG_RELEASE_ALLOW_NO_BASELINE=1`). Seeding it was a hand-pushed tag, same as the
+   recovery procedure above.
 4. **The "Protect `config-v*` release tags" ruleset** restricts creating, moving, and deleting
    `config-v*` tags to the `supabase-cli-releaser` App (the same App the release workflows mint
    tokens from). The last `config-v*` tag is the version oracle: a stray hand-pushed tag
