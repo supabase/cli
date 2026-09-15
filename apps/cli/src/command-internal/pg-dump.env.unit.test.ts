@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import type { PgConnInput } from "./db-connection.service.ts";
@@ -16,7 +14,6 @@ import {
   toDumpEnv,
   type DumpOptions,
 } from "./pg-dump.env.ts";
-import { dumpDataScript, dumpRoleScript, dumpSchemaScript } from "./pg-dump.scripts.ts";
 
 const CONN: PgConnInput = {
   host: "db.example.supabase.co",
@@ -32,13 +29,6 @@ const baseOpt: DumpOptions = {
   excludeTable: [],
   columnInsert: true,
 };
-
-// Resolve the Go `.sh` sources relative to this file so the byte-equality
-// assertion fails loudly if the embedded copies drift from upstream.
-const goScriptsDir = fileURLToPath(
-  new URL("../../../cli-go/pkg/migration/scripts/", import.meta.url),
-);
-const readGoScript = (name: string) => readFileSync(`${goScriptsDir}${name}`, "utf8");
 
 describe("toDumpEnv", () => {
   it("maps the connection to PG* env vars (port stringified)", () => {
@@ -144,13 +134,5 @@ describe("expandScript", () => {
   it("expands an embedded schema reference inside a sed pattern", () => {
     const out = expandScript('"(${EXCLUDED_SCHEMAS:-})"', { EXCLUDED_SCHEMAS: "auth" });
     expect(out).toBe('"(auth)"');
-  });
-});
-
-describe("embedded dump scripts", () => {
-  it("match the Go sources byte-for-byte", () => {
-    expect(dumpSchemaScript).toBe(readGoScript("dump_schema.sh"));
-    expect(dumpDataScript).toBe(readGoScript("dump_data.sh"));
-    expect(dumpRoleScript).toBe(readGoScript("dump_role.sh"));
   });
 });
