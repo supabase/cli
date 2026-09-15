@@ -11,7 +11,9 @@ import {
 import type { Duplex } from "node:stream";
 import { deriveStackId, type StackIdentity } from "../identity/Identity.ts";
 import { compileStack } from "../model/Compiler.ts";
+import { excludeStackCapabilities } from "../model/Exclusions.ts";
 import type { ExecutionPlan } from "../model/ExecutionPlan.ts";
+import { CAPABILITY_NAMES } from "../public/Capability.ts";
 import {
   GatewayActivationError,
   PortUnavailableError,
@@ -81,6 +83,7 @@ const persistedIngressState = (
   ports: [],
   privatePorts: privateBindingIntentsFor(compiled.executionPlan, {
     definition: compiled.definition,
+    runtime: { kind: "native" },
   }).map((binding, index) => ({
     ...binding,
     port: privatePortBase + index,
@@ -139,6 +142,7 @@ describe("Supervisor ingress", () => {
           ports: [],
           privatePorts: privateBindingIntentsFor(compiled.executionPlan, {
             definition: compiled.definition,
+            runtime: { kind: "native" },
           }).map((binding, index) => ({ ...binding, port: 30_000 + index })),
           secrets: {},
         });
@@ -193,6 +197,7 @@ describe("Supervisor ingress", () => {
           ports: [],
           privatePorts: privateBindingIntentsFor(compiled.executionPlan, {
             definition: compiled.definition,
+            runtime: { kind: "native" },
           }).map((binding, index) => ({
             ...binding,
             port: 30_000 + index,
@@ -525,6 +530,7 @@ describe("Supervisor ingress", () => {
           ports: [],
           privatePorts: privateBindingIntentsFor(compiled.executionPlan, {
             definition: compiled.definition,
+            runtime: { kind: "native" },
           }).map((binding, index) => ({
             ...binding,
             port: 30100 + index,
@@ -636,6 +642,53 @@ describe("Supervisor ingress", () => {
             { workloadId: "database:database", binding: "primary", port: expect.any(Number) },
           ]),
         );
+        yield* ingress.open(input, reservation, () =>
+          Effect.fail(new GatewayActivationError({ message: "not reached" })),
+        );
+        yield* ingress.close;
+      }),
+    ),
+  );
+
+  it.live("opens postgres-only stacks without resolving API gateway material", () =>
+    run(
+      Effect.gen(function* () {
+        const { context, root } = yield* makeIngressContext("supabase-ingress-pg-only-");
+        const stackIdentity = {
+          ...identity,
+          projectRoot: root,
+        };
+        const stackId = yield* deriveStackId(stackIdentity);
+        const compiled = yield* compileStack({
+          projectRoot: root,
+          runtime: { kind: "native" },
+          config: excludeStackCapabilities(
+            {},
+            CAPABILITY_NAMES.filter((name) => name !== "database"),
+          ),
+        });
+        expect(compiled.definition.listeners.api.enabled).toBe(true);
+        const store = yield* makeStackStateStore({ stateRoot: root });
+        const persisted = persistedIngressState(stackIdentity, compiled, 30300);
+        yield* store.initialize(stackId, persisted);
+        const ingress = yield* makeSupervisorIngress({
+          stackId,
+          stateRoot: root,
+          store,
+          context,
+          bindPrivate,
+        });
+        const input = {
+          stackId,
+          desiredLifecycle: "running" as const,
+          state: persisted,
+          definition: compiled.definition,
+          secrets: {},
+          plan: compiled.executionPlan,
+        };
+        const reservation = yield* ingress.acquire(input);
+        expect(reservation.assignments.api).toBeUndefined();
+        expect(reservation.assignments.database?.port).toEqual(expect.any(Number));
         yield* ingress.open(input, reservation, () =>
           Effect.fail(new GatewayActivationError({ message: "not reached" })),
         );

@@ -3,7 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, FileSystem, Exit, Option, Path, Redacted } from "effect";
 import { renderCliConfigTemplate } from "../../../shared/init/project-init.templates.ts";
 
-import { StackConfigError, loadStackConfig } from "./stack-config.ts";
+import { StackConfigError, loadStackConfig } from "../../../command-internal/stack-config.ts";
 import { createStackConfigProject } from "../../../../tests/helpers/stack-config.ts";
 
 const load = (projectRoot: string) =>
@@ -415,7 +415,7 @@ enabled = true
     });
   });
 
-  it.effect("keeps disabled functions capability free of settings", () => {
+  it.effect("keeps nested settings on a disabled functions capability", () => {
     return Effect.gen(function* () {
       const root = yield* project(`project_id = "stack-config-disabled-functions"
 [edge_runtime]

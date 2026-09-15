@@ -380,9 +380,10 @@ async function forceCleanup(
 function createRealEnvironment(): CleanupEnvironment {
   return {
     stopStack: async (projectDir, homeDir) => {
-      const result = await runSupabase(["stop", "--no-backup"], {
+      const result = await runSupabase(["stack", "destroy", "--yes"], {
         cwd: projectDir,
         home: homeDir,
+        env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
         exitTimeoutMs: 15_000,
       });
       return { exitCode: result.exitCode };

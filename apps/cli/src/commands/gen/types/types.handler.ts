@@ -27,6 +27,7 @@ import { DbConfigResolver } from "../../../command-internal/db-config.service.ts
 import type { DbConfigFlags } from "../../../command-internal/db-config.types.ts";
 import { poolerConfigFromConnectionString } from "../../../command-internal/db-config.parse.ts";
 import { applyProjectEnv, readDbToml } from "../../../command-internal/db-config.toml-read.ts";
+import { getHostname } from "../../../command-internal/hostname.ts";
 import type { PgConnInput } from "../../../command-internal/db-connection.service.ts";
 import { toPostgresURL } from "../../../command-internal/postgres-url.ts";
 import { tempPaths } from "../../../command-internal/temp-paths.ts";
@@ -51,7 +52,12 @@ import {
   GenTypesUnexpectedStatusError,
   GenTypesWorkdirError,
 } from "./types.errors.ts";
-import { getHostname } from "../../../command-internal/hostname.ts";
+import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
+import {
+  rewriteDumpHostForToolContainer,
+  toolContainerUsesHostNetwork,
+} from "../../../command-internal/postgres-client.run.ts";
+import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
 import {
   defaultSchemas,
@@ -232,6 +238,8 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
   const linkedProjectCache = yield* LinkedProjectCache;
   const dbConfig = yield* DbConfigResolver;
   const sslProbe = yield* PgDeltaSslProbe;
+  const runtimeInfo = yield* RuntimeInfo;
+  const backend = yield* currentStackBackend;
 
   // "Set" means the flag appeared in argv at all (pflag's `Changed` semantics), not its parsed
   // value — `--linked=false` still counts. Argv is scanned directly since a token like
@@ -413,6 +421,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
     readonly includedSchemas: string;
     readonly postgrestV9Compat: boolean;
     readonly pgmetaVersionOverride?: string;
+    readonly projectEnv?: Readonly<Record<string, string>>;
     readonly poolerFallback?: {
       readonly directHost: string;
       readonly eligible: boolean;
@@ -424,7 +433,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
         // Cached so the pooler retry reuses one resolve; the resolver's candidate rewrite is
         // idempotent on this already-rewritten reference.
         const resolvedImage = yield* Effect.cached(
-          resolveImage(resolvePgmetaImage(input.pgmetaVersionOverride)),
+          resolveImage(resolvePgmetaImage(input.pgmetaVersionOverride, input.projectEnv)),
         );
         const buildRun = (target: {
           readonly url: string;
@@ -467,11 +476,17 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
 
             // `--network-id` overrides any base network mode, including "host" for --db-url.
             const networkMode = Option.isSome(networkId) ? networkId.value : input.networkMode;
+            // Linux needs an explicit gateway mapping; Docker Desktop platforms already provide it.
+            const extraHosts =
+              runtimeInfo.platform === "linux"
+                ? (["--add-host", "host.docker.internal:host-gateway"] as const)
+                : [];
             const args = [
               "run",
               "--rm",
               "--network",
               networkMode,
+              ...extraHosts,
               ...env.flatMap((entry) => ["--env", entry]),
               pgmetaImage,
               "node",
@@ -637,8 +652,39 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       const includedSchemas = (
         schemas.length > 0 ? schemas : defaultSchemas(config.apiSchemas)
       ).join(",");
-      yield* assertLocalDbRunning(projectId);
+      if (backend.kind === "stack") {
+        const resolved = yield* dbConfig.resolve({
+          dbUrl: Option.none(),
+          connType: "local",
+          dnsResolver,
+        });
+        const usesHostNetwork = toolContainerUsesHostNetwork(Option.getOrUndefined(networkId));
+        const toolHost = rewriteDumpHostForToolContainer(resolved.conn.host, {
+          platform: runtimeInfo.platform,
+          usesHostNetwork,
+        });
+        yield* runPgMeta({
+          url: buildPostgresUrl({
+            host: toolHost,
+            port: resolved.conn.port,
+            user: resolved.conn.user,
+            password: resolved.conn.password,
+            database: resolved.conn.database,
+          }),
+          host: toolHost,
+          port: resolved.conn.port,
+          probeHost: resolved.conn.host,
+          probePort: resolved.conn.port,
+          networkMode: "host",
+          includedSchemas,
+          postgrestV9Compat: flags.postgrestV9Compat || forcedV9,
+          pgmetaVersionOverride,
+          projectEnv: config.projectEnv,
+        });
+        return;
+      }
 
+      yield* assertLocalDbRunning(projectId);
       yield* runPgMeta({
         url: buildPostgresUrl({
           host: "db",
@@ -655,6 +701,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
         includedSchemas,
         postgrestV9Compat: flags.postgrestV9Compat || forcedV9,
         pgmetaVersionOverride,
+        projectEnv: config.projectEnv,
       });
       return;
     }

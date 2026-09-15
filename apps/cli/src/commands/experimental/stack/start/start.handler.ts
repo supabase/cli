@@ -1,13 +1,24 @@
-import { Effect, Match, Option } from "effect";
+import { Effect, FileSystem, Match, Option, Path } from "effect";
 import {
   excludeStackCapabilities,
   isStackError,
+  type StackConfig,
   type StackRuntimePreference,
+  type StackStatus,
 } from "@supabase/stack/effect";
 import { Output } from "../../../../shared/output/output.service.ts";
-import { OutputFlag } from "../../../../command-internal/global-flags.ts";
+import {
+  OutputFlag,
+  resolveExperimentalWithProjectEnv,
+} from "../../../../command-internal/global-flags.ts";
 import { CommandSettings } from "../../../../config/command-settings.service.ts";
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
+import { readDbToml } from "../../../../command-internal/db-config.toml-read.ts";
+import { StackCatalogSetup } from "../../../../command-internal/stack-catalog-setup.ts";
+import {
+  applyStackMigrateAndSeed,
+  applyStackWebhooksOnly,
+} from "../../../../command-internal/stack-local-database.ts";
 import {
   StackApi,
   StackTargetError,
@@ -17,7 +28,7 @@ import {
   stackStatusPayload,
   validateStackTarget,
 } from "../stack.shared.ts";
-import { loadStackConfig } from "../stack-config.ts";
+import { loadStackConfig } from "../../../../command-internal/stack-config.ts";
 import type { StackStartFlags } from "./start.command.ts";
 import { StackCommandStartError } from "./start.errors.ts";
 import { STACK_START_EXCLUDABLE_CAPABILITIES } from "./start.options.ts";
@@ -27,6 +38,20 @@ const eagerlyActivate = <
 >(
   value: T,
 ): T => (value.enabled === false ? value : Object.assign({}, value, { activation: "eager" }));
+
+const isPostgresOnlyStatus = (status: StackStatus): boolean => {
+  const database = status.capabilities.find((capability) => capability.name === "database");
+  if (status.lifecycle !== "running" || database?.state !== "ready") return false;
+  return STACK_START_EXCLUDABLE_CAPABILITIES.every(
+    (name) =>
+      status.capabilities.find((capability) => capability.name === name)?.state === "disabled",
+  );
+};
+
+const isPostgresOnlyConfig = (config: StackConfig): boolean =>
+  STACK_START_EXCLUDABLE_CAPABILITIES.every(
+    (name) => config.capabilities?.[name]?.enabled === false,
+  );
 
 const validateExclusions = (exclusions: ReadonlyArray<string>) => {
   const unknown = exclusions.filter(
@@ -148,12 +173,83 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
               ...(runtime === undefined ? {} : { runtime }),
             })
             .pipe(Effect.mapError(stackStartError));
+    if (stack.dockerFallbackNotice !== undefined)
+      yield* output.raw(`${stack.dockerFallbackNotice}\n`, "stderr");
+    // `--stack-id` addresses this identity, not findStack(projectRoot, name).
+    const addressed = yield* stack.status.pipe(Effect.mapError(stackStartError));
+    const firstCreate = addressed.desiredLifecycle === "unconfigured";
     const starting = yield* output.task("Starting local Supabase stack...");
+    if (isPostgresOnlyStatus(addressed) && !isPostgresOnlyConfig(startConfig)) {
+      yield* stack.stop.pipe(
+        Effect.tapError((error) => starting.fail(error.message)),
+        Effect.mapError(stackStartError),
+      );
+    }
     const status = yield* stack.start({ config: startConfig }).pipe(
       Effect.tapError((error) => starting.fail(error.message)),
-      Effect.tap(() => starting.succeed("Stack is ready.")),
       Effect.mapError(stackStartError),
     );
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const toml = yield* readDbToml(fs, path, target.projectRoot).pipe(
+      Effect.mapError(
+        (error) =>
+          new StackCommandStartError({
+            reason: "invalid-config",
+            message: error.message,
+            cause: error,
+          }),
+      ),
+    );
+    const setupFailed = (error: { readonly message: string; readonly cause?: unknown }) =>
+      isStackError(error.cause)
+        ? stackStartError(error.cause)
+        : new StackCommandStartError({
+            reason: "unknown",
+            message: error.message,
+            suggestion: "The stack is running. Recover with db reset.",
+            cause: error,
+          });
+    if (firstCreate) {
+      const catalog = yield* Effect.serviceOption(StackCatalogSetup);
+      if (Option.isNone(catalog))
+        return yield* new StackCommandStartError({
+          reason: "unknown",
+          message: "stack catalog setup is unavailable",
+        });
+      yield* catalog.value
+        .apply({
+          target: {
+            kind: "live",
+            stack,
+            projectRoot: target.projectRoot,
+            config,
+          },
+          optionalConfig: startConfig,
+          overlay: {
+            webhooks: "config",
+            webhooksEnabled: toml.webhooksEnabled,
+            apiAutoExposeNewTables: toml.baseline.apiAutoExposeNewTables,
+            vault: toml.vault,
+            workdir: target.projectRoot,
+          },
+        })
+        .pipe(
+          Effect.tapError((error) => starting.fail(error.message)),
+          Effect.mapError(setupFailed),
+        );
+      const experimental = yield* resolveExperimentalWithProjectEnv({ ...toml.projectEnv });
+      yield* applyStackMigrateAndSeed(stack, target.projectRoot, toml, experimental).pipe(
+        Effect.tapError((error) => starting.fail(error.message)),
+        Effect.mapError(setupFailed),
+      );
+    } else {
+      yield* applyStackWebhooksOnly(stack, toml.webhooksEnabled).pipe(
+        Effect.tapError((error) => starting.fail(error.message)),
+        Effect.mapError(setupFailed),
+      );
+    }
+    yield* starting.succeed("Stack is ready.");
     if (output.format === "text") {
       yield* output.raw(renderStackStatus(status));
     } else {

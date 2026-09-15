@@ -145,4 +145,58 @@ describe("operation settlement", () => {
       }
     }),
   );
+
+  it.effect("keeps a start-from-running failure on the stop fence when cleanup is unproven", () =>
+    Effect.gen(function* () {
+      const completion = yield* Deferred.make<Exit.Exit<void, StackError>, never>();
+      const cause = Cause.fail(new StackRuntimeError({ message: "stop failed" }));
+      const snapshot = {
+        ...snapshotFor(ready(Symbol("session"), 0, false)),
+        stack: {
+          _tag: "starting" as const,
+          attempt: Symbol("reset"),
+          completion,
+          prior: { _tag: "running" as const },
+        },
+      };
+      const settled = settleLifecycleOwner(snapshot, {
+        _tag: "lifecycle",
+        completion,
+        result: {
+          _tag: "failed",
+          cause,
+          cleanup: { _tag: "unproven", cause },
+          durable: "unsafe",
+        },
+      });
+      expect(settled.snapshot.stack._tag).toBe("stop-required");
+    }),
+  );
+
+  it.effect("restores running when a start-from-running failure did not mutate runtime", () =>
+    Effect.gen(function* () {
+      const completion = yield* Deferred.make<Exit.Exit<void, StackError>, never>();
+      const cause = Cause.fail(new StackRuntimeError({ message: "state missing" }));
+      const snapshot = {
+        ...snapshotFor(ready(Symbol("session"), 0, false)),
+        stack: {
+          _tag: "starting" as const,
+          attempt: Symbol("reset"),
+          completion,
+          prior: { _tag: "running" as const },
+        },
+      };
+      const settled = settleLifecycleOwner(snapshot, {
+        _tag: "lifecycle",
+        completion,
+        result: {
+          _tag: "failed",
+          cause,
+          cleanup: { _tag: "proven" },
+          durable: "unsafe",
+        },
+      });
+      expect(settled.snapshot.stack).toEqual({ _tag: "running" });
+    }),
+  );
 });

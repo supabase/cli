@@ -92,6 +92,7 @@ describe("session launcher", () => {
         stop: (key) => Effect.sync(() => calls.push(`stop:${key.workloadId}`)),
         remove: (key) => Effect.sync(() => calls.push(`remove:${key.workloadId}`)),
         cleanup: () => Effect.void,
+        wipePersistentData: () => Effect.void,
       };
       const launcher = yield* makeSessionLauncher({ stackId, driver });
       const launching = yield* Effect.forkChild(launcher.launch(plan([database, mail, rest])), {
@@ -134,6 +135,7 @@ describe("session launcher", () => {
         stop: () => Effect.void,
         remove: () => Effect.void,
         cleanup: () => Effect.void,
+        wipePersistentData: () => Effect.void,
       };
       const launcher = yield* makeSessionLauncher({ stackId, driver });
       const launching = yield* Effect.forkChild(launcher.launch(plan([database, mail, rest])), {
@@ -197,6 +199,7 @@ describe("session launcher", () => {
         stop: () => Effect.die("unreachable"),
         remove: () => Effect.die("unreachable"),
         cleanup: () => Effect.void,
+        wipePersistentData: () => Effect.void,
       };
       const launcher = yield* makeSessionLauncher({ stackId, driver });
       const result = yield* launcher.launch(
@@ -241,6 +244,7 @@ describe("session launcher", () => {
             owned.delete(key.workloadId);
           }),
         cleanup: () => Effect.void,
+        wipePersistentData: () => Effect.void,
       };
       const launcher = yield* makeSessionLauncher({ stackId, driver });
       const result = yield* launcher.launch(plan([database]));
@@ -270,6 +274,7 @@ describe("session launcher", () => {
         stop: () => Effect.void,
         remove: (key) => Effect.sync(() => void owned.delete(key.workloadId)),
         cleanup: () => Effect.void,
+        wipePersistentData: () => Effect.void,
       };
       const launcher = yield* makeSessionLauncher({ stackId, driver });
       const launching = yield* Effect.forkChild(launcher.launch(plan([database, rest])), {

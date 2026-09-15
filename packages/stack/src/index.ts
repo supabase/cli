@@ -5,6 +5,7 @@ export {
   listStacks,
   discoverStacks,
   inspectStack,
+  createEphemeralPostgres,
 } from "./public/PromiseStack.ts";
 export type {
   PromiseStack,
@@ -12,6 +13,8 @@ export type {
   PromiseInspectStackOptions,
   PromiseStartStackOptions,
   PromisePrepareStackOptions,
+  PromiseCreateEphemeralPostgresOptions,
+  PromiseEphemeralPostgres,
   CreateStackOptions,
   FindStackOptions,
   ListStacksOptions,

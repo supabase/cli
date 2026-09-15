@@ -1,6 +1,17 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, FileSystem, Fiber, Layer, Option, Path, Schema, Stream } from "effect";
+import {
+  Deferred,
+  Effect,
+  FileSystem,
+  Fiber,
+  Layer,
+  Option,
+  Path,
+  Redacted,
+  Schema,
+  Stream,
+} from "effect";
 import { CliOutput, Command } from "effect/unstable/cli";
 import {
   ContainerEngineError,
@@ -19,6 +30,7 @@ import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
   mockCommandSettings,
   mockTelemetryStateTracked,
+  withEnvVar,
 } from "../../../../../tests/helpers/command-mocks.ts";
 import { mockContextualAnalytics, mockProcessControl } from "../../../../../tests/helpers/mocks.ts";
 import {
@@ -34,11 +46,17 @@ import { StackCommandStartError } from "./start.errors.ts";
 import { stackStartCommand } from "./start.command.ts";
 import { textCliOutputFormatter } from "../../../../shared/output/text-formatter.ts";
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
-import { OutputFlag } from "../../../../command-internal/global-flags.ts";
+import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
+import { ExperimentalFlag, OutputFlag } from "../../../../command-internal/global-flags.ts";
+import { DbConnection } from "../../../../command-internal/db-connection.service.ts";
 import {
   actionability,
   ErrorActionabilityId,
 } from "../../../../shared/telemetry/error-actionability.ts";
+import {
+  noopStackCatalogSetupLayer,
+  recordingStackCatalogSetup,
+} from "../../../../command-internal/stack-catalog-setup.ts";
 
 const project = () =>
   Effect.gen(function* () {
@@ -62,6 +80,17 @@ const emptyProject = () =>
       prefix: "supabase-experimental-stack-start-empty-",
     });
   }).pipe(Effect.provide(BunServices.layer));
+
+const writeStartMigration = (root: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    yield* fs.makeDirectory(path.join(root, "supabase", "migrations"), { recursive: true });
+    yield* fs.writeFileString(
+      path.join(root, "supabase", "migrations", "20240101000000_dogfood.sql"),
+      "create table public.dogfood ();\n",
+    );
+  });
 
 const resolverLayer = stackTargetResolverLayer.pipe(
   Layer.provideMerge(stackApiLayer),
@@ -100,15 +129,26 @@ const status = (id: string, runtime: "native" | "container" = "native") =>
 function fakeStack(
   id: string,
   start: (config?: { readonly config?: unknown }) => Effect.Effect<StackStatus, ApiStackStartError>,
+  desiredLifecycle: "unconfigured" | "stopped" | "running" = "unconfigured",
 ) {
   return {
     id: StackIdSchema.make(id),
-    status: Effect.succeed(status(id)),
-    credentials: Effect.die("credentials not used in start test"),
+    status: Effect.succeed({
+      ...status(id),
+      lifecycle: desiredLifecycle === "unconfigured" ? "unconfigured" : desiredLifecycle,
+      desiredLifecycle,
+    }),
+    credentials: Effect.succeed({
+      database: {
+        url: Redacted.make("postgresql://postgres:secret@127.0.0.1:54329/postgres"),
+        password: Redacted.make("secret"),
+      },
+    }),
     prepare: () => Effect.die("prepare not used in start test"),
     start,
     stop: Effect.void,
     destroy: Effect.die("destroy not used in start test"),
+    resetDatabase: Effect.die("resetDatabase not used in start test"),
     logs: () => Effect.die("logs not used in start test"),
     followLogs: () => Stream.empty,
   } satisfies EffectStack;
@@ -170,13 +210,30 @@ function handlerLayer(opts: {
       targetLayer,
       apiLayer,
       BunServices.layer,
+      noopStackCatalogSetupLayer,
+      Layer.succeed(ExperimentalFlag, false),
+      Layer.succeed(CliArgs, { args: ["stack", "start"] }),
+      Layer.succeed(DbConnection, {
+        connect: () =>
+          Effect.succeed({
+            exec: () => Effect.void,
+            query: () => Effect.succeed([]),
+            execBatch: () => Effect.void,
+            extensionExists: () => Effect.succeed(false),
+            copyToCsv: () => Effect.succeed(new Uint8Array()),
+            queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
+          }),
+      }),
     ),
   };
 }
 
 describe("stack start targeting", () => {
-  for (const exclusion of ["rest", "analytics"] as const) {
-    it.live(`compiles ${exclusion} exclusion and dependent Studio`, () => {
+  for (const { exclusion, studioEnabled } of [
+    { exclusion: "rest" as const, studioEnabled: false },
+    { exclusion: "analytics" as const, studioEnabled: true },
+  ]) {
+    it.live(`compiles ${exclusion} exclusion with Studio ${studioEnabled ? "on" : "off"}`, () => {
       return project().pipe(
         Effect.flatMap((root) =>
           Effect.gen(function* () {
@@ -205,7 +262,7 @@ describe("stack start targeting", () => {
                   Effect.provide(BunServices.layer),
                 );
                 expect(compiled.definition.capabilities[exclusion].enabled).toBe(false);
-                expect(compiled.definition.capabilities.studio.enabled).toBe(false);
+                expect(compiled.definition.capabilities.studio.enabled).toBe(studioEnabled);
                 expect(compiled.definition.capabilities.auth.enabled).toBe(true);
                 return status("c".repeat(64));
               }),
@@ -252,8 +309,8 @@ describe("stack start targeting", () => {
             expect.objectContaining({
               config: expect.objectContaining({
                 capabilities: expect.objectContaining({
-                  studio: { enabled: false },
-                  analytics: { enabled: false },
+                  studio: expect.objectContaining({ enabled: false }),
+                  analytics: expect.objectContaining({ enabled: false }),
                 }),
               }),
             }),
@@ -265,6 +322,102 @@ describe("stack start targeting", () => {
       }),
       Effect.provide(BunServices.layer),
     );
+  });
+
+  it.live("applies catalog setup from pre-exclude config after start returns", () => {
+    return Effect.gen(function* () {
+      const root = yield* project();
+      yield* writeStartMigration(root);
+      const catalog = recordingStackCatalogSetup((input) => ({
+        kind: input.target.kind,
+        authEnabled: input.target.config.capabilities?.auth?.enabled,
+      }));
+      const stack = fakeStack("f".repeat(64), () => Effect.succeed(status("f".repeat(64))));
+      const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
+      yield* stackStart(flags({ exclude: ["auth"] })).pipe(
+        Effect.provide(Layer.mergeAll(setup.layer, catalog.layer)),
+      );
+      expect(catalog.applied).toEqual([{ kind: "live", authEnabled: undefined }]);
+      expect(setup.out.stderrText).toContain("Applying migration 20240101000000_dogfood.sql");
+    }).pipe(Effect.provide(BunServices.layer));
+  });
+
+  it.live("threads excluded analytics into optional catalog downloads", () => {
+    return Effect.gen(function* () {
+      const root = yield* project();
+      yield* writeStartMigration(root);
+      const catalog = recordingStackCatalogSetup((input) => ({
+        analytics: input.optionalConfig?.capabilities?.analytics?.enabled,
+      }));
+      const stack = fakeStack("a".repeat(64), () => Effect.succeed(status("a".repeat(64))));
+      const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
+      yield* stackStart(flags({ exclude: ["analytics"] })).pipe(
+        Effect.provide(Layer.mergeAll(setup.layer, catalog.layer)),
+      );
+      expect(catalog.applied).toEqual([{ analytics: false }]);
+    }).pipe(Effect.provide(BunServices.layer));
+  });
+
+  it.live("honors SUPABASE_EXPERIMENTAL from project .env on first-create migrate", () => {
+    return Effect.gen(function* () {
+      const root = yield* project();
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* writeStartMigration(root);
+      yield* fs.writeFileString(
+        path.join(root, "supabase", ".env"),
+        "SUPABASE_EXPERIMENTAL=true\n",
+      );
+      const catalog = recordingStackCatalogSetup((input) => input.target.kind);
+      const stack = fakeStack("e".repeat(64), () => Effect.succeed(status("e".repeat(64))));
+      const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
+      yield* withEnvVar(
+        "SUPABASE_EXPERIMENTAL",
+        undefined,
+        stackStart(flags()).pipe(Effect.provide(Layer.mergeAll(setup.layer, catalog.layer))),
+      );
+      expect(setup.out.stderrText).not.toContain("Applying migration 20240101000000_dogfood.sql");
+    }).pipe(Effect.provide(BunServices.layer));
+  });
+
+  it.live("skips catalog setup when an existing cluster is already present", () => {
+    return Effect.gen(function* () {
+      const root = yield* project();
+      yield* writeStartMigration(root);
+      const catalog = recordingStackCatalogSetup((input) => input.target.kind);
+      const stack = fakeStack(
+        "d".repeat(64),
+        () => Effect.succeed(status("d".repeat(64))),
+        "stopped",
+      );
+      const setup = handlerLayer({
+        root,
+        target: { projectRoot: root },
+        stack,
+      });
+      yield* stackStart(flags()).pipe(Effect.provide(Layer.mergeAll(setup.layer, catalog.layer)));
+      expect(catalog.applied).toEqual([]);
+      expect(setup.out.stderrText).not.toContain("Applying migration");
+    }).pipe(Effect.provide(BunServices.layer));
+  });
+
+  it.live("applies catalog and migrations when starting an unconfigured stack by id", () => {
+    return Effect.gen(function* () {
+      const root = yield* project();
+      yield* writeStartMigration(root);
+      const catalog = recordingStackCatalogSetup((input) => input.target.kind);
+      const stack = fakeStack("c".repeat(64), () => Effect.succeed(status("c".repeat(64))));
+      const setup = handlerLayer({
+        root,
+        target: { projectRoot: root, id: "c".repeat(64) },
+        stack,
+      });
+      yield* stackStart(flags({ stackId: Option.some("c".repeat(64)) })).pipe(
+        Effect.provide(Layer.mergeAll(setup.layer, catalog.layer)),
+      );
+      expect(catalog.applied).toEqual(["live"]);
+      expect(setup.out.stderrText).toContain("Applying migration 20240101000000_dogfood.sql");
+    }).pipe(Effect.provide(BunServices.layer));
   });
 
   it.live(
@@ -537,7 +690,7 @@ enabled = false
           config: expect.objectContaining({
             capabilities: expect.objectContaining({
               rest: expect.objectContaining({ activation: "eager" }),
-              studio: { enabled: false },
+              studio: expect.objectContaining({ enabled: false }),
             }),
           }),
         }),
@@ -582,10 +735,14 @@ enabled = false
       );
       let opened = false;
       let startConfig: unknown;
-      const stack = fakeStack("b".repeat(64), (config) => {
-        startConfig = config;
-        return Effect.succeed(status("b".repeat(64)));
-      });
+      const stack = fakeStack(
+        "b".repeat(64),
+        (config) => {
+          startConfig = config;
+          return Effect.succeed(status("b".repeat(64)));
+        },
+        "running",
+      );
       const setup = handlerLayer({
         root: settingsRoot,
         target: { projectRoot: targetRoot, id: "b".repeat(64) },
@@ -652,6 +809,39 @@ enabled = false
       yield* stackStart(flags()).pipe(Effect.provide(setup.layer));
       expect(stopped).toBe(false);
       expect(destroyed).toBe(false);
+    });
+  });
+
+  it.live("stops a running postgres-only stack before starting the full config", () => {
+    return Effect.gen(function* () {
+      const root = yield* project();
+      const events: Array<string> = [];
+      const id = "a".repeat(64);
+      const stack = {
+        ...fakeStack(
+          id,
+          () => {
+            events.push("start");
+            return Effect.succeed(status(id));
+          },
+          "running",
+        ),
+        status: Effect.succeed({
+          ...status(id),
+          lifecycle: "running" as const,
+          desiredLifecycle: "running" as const,
+          capabilities: status(id).capabilities.map((capability) => ({
+            ...capability,
+            state: capability.name === "database" ? ("ready" as const) : ("disabled" as const),
+          })),
+        }),
+        stop: Effect.sync(() => {
+          events.push("stop");
+        }),
+      } satisfies EffectStack;
+      const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
+      yield* stackStart(flags()).pipe(Effect.provide(setup.layer));
+      expect(events).toEqual(["stop", "start"]);
     });
   });
 
@@ -791,6 +981,19 @@ enabled = false
           discoverStacks: () => Effect.succeed({ stacks: [], errors: [] }),
         }),
         BunServices.layer,
+        Layer.succeed(ExperimentalFlag, false),
+        Layer.succeed(CliArgs, { args: ["stack", "start"] }),
+        Layer.succeed(DbConnection, {
+          connect: () =>
+            Effect.succeed({
+              exec: () => Effect.void,
+              query: () => Effect.succeed([]),
+              execBatch: () => Effect.void,
+              extensionExists: () => Effect.succeed(false),
+              copyToCsv: () => Effect.succeed(new Uint8Array()),
+              queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
+            }),
+        }),
       );
       const failure = yield* stackStart(
         flags({ stack: Option.some("feature"), stackId: Option.some("e".repeat(64)) }),

@@ -5,7 +5,7 @@ import { runCli } from "../shared/cli/run.ts";
 import { upgradeNoticeHook } from "../command-internal/upgrade-notice.ts";
 import { analyticsLayer } from "../telemetry/analytics.layer.ts";
 import { defaultCompleteDeps, tryComplete } from "./complete.ts";
-import { resolveStackBackend } from "../commands/experimental/stack/stack-backend.ts";
+import { resolveStackBackend } from "../command-internal/stack-backend.ts";
 import { resolveComputeEnabled } from "../commands/experimental/compute/compute-backend.ts";
 import { rootCommandForFeatures } from "./root.ts";
 
