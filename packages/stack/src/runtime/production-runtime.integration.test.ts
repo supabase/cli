@@ -1,7 +1,8 @@
-import { NodeServices } from "@effect/platform-node";
+import { NodeHttpServer, NodeHttpServerRequest, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
+  Context,
   Deferred,
   Duration,
   Effect,
@@ -13,12 +14,13 @@ import {
   Redacted,
   Schema,
   Option,
+  Predicate,
   Stream,
+  Layer,
 } from "effect";
 import * as TestClock from "effect/testing/TestClock";
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- fixture controls raw HTTP responses and connection failure timing.
-import { createServer, type ServerResponse } from "node:http";
 import { createServer as createNetServer } from "node:net";
+import { HttpServer, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import type { StackLogEntry } from "../public/Logs.ts";
 import type { CapabilityName } from "../public/Capability.ts";
 import { StackIdSchema } from "../public/StackId.ts";
@@ -235,9 +237,7 @@ fi
     return { migrate, realtime, server };
   });
 
-const listenForNativeReadiness = (
-  server: ReturnType<typeof createNetServer> | ReturnType<typeof createServer>,
-) =>
+const listenForNativeReadiness = (server: ReturnType<typeof createNetServer>) =>
   Effect.acquireRelease(
     Effect.callback<void, Error>((resume) => {
       server.once("error", (error: Error) => resume(Effect.fail(error)));
@@ -249,6 +249,24 @@ const listenForNativeReadiness = (
         server.close(() => resume(Effect.void));
       }),
   );
+
+const listenForHttpFixture = (
+  handler: (
+    request: HttpServerRequest.HttpServerRequest,
+  ) => Effect.Effect<HttpServerResponse.HttpServerResponse>,
+) =>
+  Effect.gen(function* () {
+    const scope = yield* Effect.scope;
+    const context = yield* Layer.buildWithScope(Layer.fresh(NodeHttpServer.layerTest), scope);
+    const server = Context.get(context, HttpServer.HttpServer);
+    yield* server.serve(Effect.flatMap(HttpServerRequest.HttpServerRequest, handler));
+    return server;
+  });
+
+const httpFixturePort = (server: HttpServer.HttpServer["Service"]): Effect.Effect<number> =>
+  Predicate.isTagged(server.address, "TcpAddress")
+    ? Effect.succeed(server.address.port)
+    : Effect.die("HTTP fixture did not expose TCP address");
 
 const envFiles: RuntimeEnvFileOwner = {
   write: () => Effect.die("unused"),
@@ -708,24 +726,26 @@ describe("production runtime", () => {
         const root = yield* fs.makeTempDirectoryScoped({
           prefix: "supabase-production-oidc-lazy-",
         });
-        const oidc = createServer((request, response) => {
-          if (request.url === "/.well-known/openid-configuration") {
-            response.writeHead(302, { Location: "/discovery" }).end();
-          } else if (request.url === "/discovery") {
-            response.setHeader("content-type", "application/json");
-            response.end(JSON.stringify({ jwks_uri: `${issuer}/keys` }));
-          } else if (request.url === "/keys") {
-            response.writeHead(302, { Location: "/keys-final" }).end();
-          } else {
-            response.setHeader("content-type", "application/json");
-            response.end(JSON.stringify({ keys: [{ kty: "RSA", n: "n", e: "AQAB" }] }));
-          }
+        let issuer = "";
+        const oidc = yield* listenForHttpFixture((request) => {
+          if (request.url === "/.well-known/openid-configuration")
+            return Effect.succeed(HttpServerResponse.redirect("/discovery"));
+          if (request.url === "/discovery")
+            return Effect.succeed(
+              HttpServerResponse.text(encodeJson({ jwks_uri: `${issuer}/keys` }), {
+                headers: { "content-type": "application/json" },
+              }),
+            );
+          if (request.url === "/keys")
+            return Effect.succeed(HttpServerResponse.redirect("/keys-final"));
+          return Effect.succeed(
+            HttpServerResponse.text(encodeJson({ keys: [{ kty: "RSA", n: "n", e: "AQAB" }] }), {
+              headers: { "content-type": "application/json" },
+            }),
+          );
         });
-        yield* listenForNativeReadiness(oidc);
-        const oidcAddress = oidc.address();
-        if (typeof oidcAddress !== "object" || oidcAddress === null)
-          return yield* Effect.die("OIDC server did not expose an address");
-        const issuer = `http://127.0.0.1:${oidcAddress.port}`;
+        const oidcPort = yield* httpFixturePort(oidc);
+        issuer = `http://127.0.0.1:${oidcPort}`;
         const readinessServer = createNetServer((socket) => socket.end());
         yield* listenForNativeReadiness(readinessServer);
         const address = readinessServer.address();
@@ -763,7 +783,7 @@ describe("production runtime", () => {
             definition: compiled.definition,
             privatePorts: [
               { workloadId: "database:database", binding: "primary", port: address.port },
-              { workloadId: "auth:auth", binding: "primary", port: oidcAddress.port },
+              { workloadId: "auth:auth", binding: "primary", port: oidcPort },
             ],
           },
         } satisfies { value: PersistedStackState };
@@ -1640,15 +1660,10 @@ describe("production runtime", () => {
         const eventsPath = path.join(root, "events");
         const artifactRoot = path.join(root, "artifact");
         yield* writeNativeRealtimeFixture(fs, path, artifactRoot, eventsPath);
-        const readinessServer = createServer((_request, response) => {
-          response.statusCode = 200;
-          response.setHeader("Connection", "close");
-          response.end("ok");
-        });
-        yield* listenForNativeReadiness(readinessServer);
-        const address = readinessServer.address();
-        if (typeof address !== "object" || address === null)
-          return yield* Effect.die("Realtime readiness server did not expose an address");
+        const readinessServer = yield* listenForHttpFixture(() =>
+          Effect.succeed(HttpServerResponse.text("ok", { headers: { Connection: "close" } })),
+        );
+        const port = yield* httpFixturePort(readinessServer);
         const compiled = yield* compileStack({
           projectRoot: root,
           runtime: { kind: "native" },
@@ -1679,9 +1694,7 @@ describe("production runtime", () => {
             },
             desiredLifecycle: "running" as const,
             definition: compiled.definition,
-            privatePorts: [
-              { workloadId: "realtime:realtime", binding: "primary", port: address.port },
-            ],
+            privatePorts: [{ workloadId: "realtime:realtime", binding: "primary", port }],
           },
         } satisfies { value: PersistedStackState };
         const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
@@ -1890,16 +1903,22 @@ describe("production runtime", () => {
         );
         const received = yield* Deferred.make<void>();
         const context = yield* Effect.context();
-        let response: ServerResponse | undefined;
-        const server = createServer((_request, nextResponse) => {
-          response = nextResponse;
+        let response: ReturnType<typeof NodeHttpServerRequest.toServerResponse> | undefined;
+        const server = yield* listenForHttpFixture((request) => {
+          const nativeResponse = NodeHttpServerRequest.toServerResponse(request);
+          response = nativeResponse;
           Effect.runSyncWith(context)(Deferred.succeed(received, undefined));
+          return Effect.callback<HttpServerResponse.HttpServerResponse>((resume) => {
+            const onDone = () => resume(Effect.succeed(HttpServerResponse.empty()));
+            nativeResponse.once("finish", onDone);
+            nativeResponse.once("close", onDone);
+            return Effect.sync(() => {
+              nativeResponse.off("finish", onDone);
+              nativeResponse.off("close", onDone);
+            });
+          }).pipe(Effect.interruptible);
         });
-        yield* listenForNativeReadiness(server);
-        const address = server.address();
-        if (typeof address !== "object" || address === null)
-          return yield* Effect.die("Native readiness server did not expose an address");
-        const port = address.port;
+        const port = yield* httpFixturePort(server);
         const fiber = yield* Effect.forkChild(
           probeReadiness({ mode: "http", host: "127.0.0.1", port }, { deadline }),
           { startImmediately: true },
@@ -1907,6 +1926,7 @@ describe("production runtime", () => {
         yield* Deferred.await(received);
         yield* TestClock.adjust(Duration.seconds(52));
         const pending = yield* Effect.sync(() => fiber.pollUnsafe() === undefined);
+        response?.setHeader("Connection", "close");
         response?.end("ok");
         const result = yield* Fiber.join(fiber).pipe(Effect.exit);
         expect(pending).toBe(true);
@@ -1933,18 +1953,21 @@ describe("production runtime", () => {
         const received = yield* Deferred.make<void>();
         const closed = yield* Deferred.make<void>();
         const context = yield* Effect.context();
-        const server = createServer((_request, response) => {
+        const server = yield* listenForHttpFixture((request) => {
+          const response = NodeHttpServerRequest.toServerResponse(request);
           response.once("close", () => {
             Effect.runSyncWith(context)(Deferred.succeed(closed, undefined));
           });
           Effect.runSyncWith(context)(Deferred.succeed(received, undefined));
+          return Effect.callback<HttpServerResponse.HttpServerResponse>((resume) => {
+            const onClose = () => resume(Effect.succeed(HttpServerResponse.empty()));
+            response.once("close", onClose);
+            return Effect.sync(() => response.off("close", onClose));
+          }).pipe(Effect.interruptible);
         });
-        yield* listenForNativeReadiness(server);
-        const address = server.address();
-        if (typeof address !== "object" || address === null)
-          return yield* Effect.die("Native readiness server did not expose an address");
+        const port = yield* httpFixturePort(server);
         const fiber = yield* Effect.forkChild(
-          probeReadiness({ mode: "http", host: "127.0.0.1", port: address.port }, { deadline }),
+          probeReadiness({ mode: "http", host: "127.0.0.1", port }, { deadline }),
           { startImmediately: true },
         );
         yield* Deferred.await(received);
@@ -2486,41 +2509,22 @@ describe("production runtime", () => {
           },
         },
       }).pipe(Effect.provide(NodeServices.layer));
-      const authServer = createServer((_request, response) => {
-        response.statusCode = 200;
-        response.setHeader("Connection", "close");
-        response.end("ok");
-      });
-      yield* listenForNativeReadiness(authServer);
-      const authAddress = authServer.address();
-      if (typeof authAddress !== "object" || authAddress === null)
-        return yield* Effect.die("Auth readiness server did not expose an address");
-      const functionsServer = createServer((_request, response) => {
-        response.statusCode = 200;
-        response.setHeader("Connection", "close");
-        response.end("ok");
-      });
-      yield* listenForNativeReadiness(functionsServer);
-      const functionsAddress = functionsServer.address();
-      if (typeof functionsAddress !== "object" || functionsAddress === null)
-        return yield* Effect.die("Functions readiness server did not expose an address");
-      const analyticsServer = createServer((_request, response) => {
-        response.statusCode = 200;
-        response.setHeader("Connection", "close");
-        response.end("ok");
-      });
-      yield* listenForNativeReadiness(analyticsServer);
-      const analyticsAddress = analyticsServer.address();
-      if (typeof analyticsAddress !== "object" || analyticsAddress === null)
-        return yield* Effect.die("Analytics readiness server did not expose an address");
-      const poolerServer = createServer((_request, response) => {
-        response.statusCode = 204;
-        response.end();
-      });
-      yield* listenForNativeReadiness(poolerServer);
-      const poolerAddress = poolerServer.address();
-      if (typeof poolerAddress !== "object" || poolerAddress === null)
-        return yield* Effect.die("Pooler readiness server did not expose an address");
+      const authServer = yield* listenForHttpFixture(() =>
+        Effect.succeed(HttpServerResponse.text("ok", { headers: { Connection: "close" } })),
+      );
+      const authPort = yield* httpFixturePort(authServer);
+      const functionsServer = yield* listenForHttpFixture(() =>
+        Effect.succeed(HttpServerResponse.text("ok", { headers: { Connection: "close" } })),
+      );
+      const functionsPort = yield* httpFixturePort(functionsServer);
+      const analyticsServer = yield* listenForHttpFixture(() =>
+        Effect.succeed(HttpServerResponse.text("ok", { headers: { Connection: "close" } })),
+      );
+      const analyticsPort = yield* httpFixturePort(analyticsServer);
+      const poolerServer = yield* listenForHttpFixture(() =>
+        Effect.succeed(HttpServerResponse.empty({ status: 204 })),
+      );
+      const poolerPort = yield* httpFixturePort(poolerServer);
       const current = {
         value: {
           ...stateFor(
@@ -2553,32 +2557,32 @@ describe("production runtime", () => {
             {
               workloadId: "auth:auth",
               binding: "primary",
-              port: authAddress.port,
+              port: authPort,
             },
             {
               workloadId: "pooler:pooler",
               binding: "primary",
-              port: poolerAddress.port + 1,
+              port: poolerPort + 1,
             },
             {
               workloadId: "pooler:pooler",
               binding: "admin",
-              port: poolerAddress.port,
+              port: poolerPort,
             },
             {
               workloadId: "functions:edge-runtime",
               binding: "primary",
-              port: functionsAddress.port,
+              port: functionsPort,
             },
             {
               workloadId: "functions:edge-runtime",
               binding: "inspector",
-              port: functionsAddress.port + 1,
+              port: functionsPort + 1,
             },
             {
               workloadId: "analytics:analytics",
               binding: "primary",
-              port: analyticsAddress.port,
+              port: analyticsPort,
             },
           ],
         },
@@ -2774,15 +2778,10 @@ describe("production runtime", () => {
             },
           },
         }).pipe(Effect.provide(NodeServices.layer));
-        const restServer = createServer((_request, response) => {
-          response.statusCode = 200;
-          response.setHeader("Connection", "close");
-          response.end("ok");
-        });
-        yield* listenForNativeReadiness(restServer);
-        const address = restServer.address();
-        if (typeof address !== "object" || address === null)
-          return yield* Effect.die("REST readiness server did not expose an address");
+        const restServer = yield* listenForHttpFixture(() =>
+          Effect.succeed(HttpServerResponse.text("ok", { headers: { Connection: "close" } })),
+        );
+        const port = yield* httpFixturePort(restServer);
         const current = {
           value: {
             ...stateFor(
@@ -2799,9 +2798,9 @@ describe("production runtime", () => {
             desiredLifecycle: "running" as const,
             definition: compiled.definition,
             privatePorts: [
-              { workloadId: "rest:rest", binding: "primary", port: address.port },
-              { workloadId: "rest:rest", binding: "admin", port: address.port + 1 },
-              { workloadId: "auth:auth", binding: "primary", port: address.port + 2 },
+              { workloadId: "rest:rest", binding: "primary", port },
+              { workloadId: "rest:rest", binding: "admin", port: port + 1 },
+              { workloadId: "auth:auth", binding: "primary", port: port + 2 },
             ],
           },
         } satisfies { value: PersistedStackState };

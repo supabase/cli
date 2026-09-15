@@ -1,5 +1,5 @@
 import { Clock, Crypto, Effect, FileSystem, Path, Redacted, Schema } from "effect";
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- Effect Crypto has no HMAC, private-key import, or asymmetric signing API.
+// Native crypto provides the HMAC and asymmetric signing APIs used here.
 import { createHmac, createPrivateKey, createSign } from "node:crypto";
 import {
   InvalidJwtSigningMaterialError,

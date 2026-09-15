@@ -20,7 +20,7 @@ function withEnvironment<A, E, R>(
   );
 }
 
-function project(
+const project = (
   config: string,
   options: {
     readonly rootEnv?: string;
@@ -28,16 +28,17 @@ function project(
     readonly sharedFunctionEnvironment?: string;
     readonly functionEnvironments?: Readonly<Record<string, string>>;
   } = {},
-): string {
-  const root = createStackConfigProject(config, {
+) =>
+  createStackConfigProject(config, {
     prefix: "supabase-stack-config-env-",
     ...options,
-  });
-  return root;
-}
+  }).pipe(Effect.provide(BunServices.layer));
 
-const load = (projectRoot: string) =>
-  loadStackConfig(projectRoot).pipe(Effect.provide(BunServices.layer));
+const load = (projectRoot: string | ReturnType<typeof project>) =>
+  (Effect.isEffect(projectRoot)
+    ? projectRoot.pipe(Effect.flatMap(loadStackConfig))
+    : loadStackConfig(projectRoot)
+  ).pipe(Effect.provide(BunServices.layer));
 
 const encrypted = (privateKey: string, plaintext: string): string =>
   `encrypted:${Buffer.from(
@@ -51,7 +52,7 @@ describe("loadStackConfig environment overrides", () => {
   it.effect(
     "uses shell > supabase dotenv > project-root dotenv, with empty and indirect values handled",
     () => {
-      const root = project(
+      return project(
         `project_id = "stack-config-env-precedence"
 [auth]
 site_url = "from-config"
@@ -60,33 +61,42 @@ site_url = "from-config"
           rootEnv: "SUPABASE_AUTH_SITE_URL=root\nAUTH_SITE_URL=root-indirect\n",
           supabaseEnv: "SUPABASE_AUTH_SITE_URL=supabase\nAUTH_SITE_URL=supabase-indirect\n",
         },
-      );
-      return withEnvVar(
-        "SUPABASE_AUTH_SITE_URL",
-        "shell",
-        Effect.gen(function* () {
-          const shell = yield* load(root);
-          if (shell.capabilities?.auth === undefined || !("settings" in shell.capabilities.auth))
-            throw new Error("auth settings missing");
-          expect(shell.capabilities.auth.settings?.site_url).toBe("shell");
-
-          const indirect = yield* withEnvVar(
+      ).pipe(
+        Effect.flatMap((root) =>
+          withEnvVar(
             "SUPABASE_AUTH_SITE_URL",
-            "env(AUTH_SITE_URL)",
-            load(root),
-          );
-          if (
-            indirect.capabilities?.auth === undefined ||
-            !("settings" in indirect.capabilities.auth)
-          )
-            throw new Error("auth settings missing");
-          expect(indirect.capabilities.auth.settings?.site_url).toBe("supabase-indirect");
+            "shell",
+            Effect.gen(function* () {
+              const shell = yield* load(root);
+              if (
+                shell.capabilities?.auth === undefined ||
+                !("settings" in shell.capabilities.auth)
+              )
+                throw new Error("auth settings missing");
+              expect(shell.capabilities.auth.settings?.site_url).toBe("shell");
 
-          const empty = yield* withEnvVar("SUPABASE_AUTH_SITE_URL", "", load(root));
-          if (empty.capabilities?.auth === undefined || !("settings" in empty.capabilities.auth))
-            throw new Error("auth settings missing");
-          expect(empty.capabilities.auth.settings?.site_url).toBe("from-config");
-        }),
+              const indirect = yield* withEnvVar(
+                "SUPABASE_AUTH_SITE_URL",
+                "env(AUTH_SITE_URL)",
+                load(root),
+              );
+              if (
+                indirect.capabilities?.auth === undefined ||
+                !("settings" in indirect.capabilities.auth)
+              )
+                throw new Error("auth settings missing");
+              expect(indirect.capabilities.auth.settings?.site_url).toBe("supabase-indirect");
+
+              const empty = yield* withEnvVar("SUPABASE_AUTH_SITE_URL", "", load(root));
+              if (
+                empty.capabilities?.auth === undefined ||
+                !("settings" in empty.capabilities.auth)
+              )
+                throw new Error("auth settings missing");
+              expect(empty.capabilities.auth.settings?.site_url).toBe("from-config");
+            }),
+          ),
+        ),
       );
     },
   );
@@ -94,7 +104,7 @@ site_url = "from-config"
   it.effect(
     "applies defaults-backed auth.email overrides but does not materialize absent SMTP, providers, or hooks",
     () => {
-      const root = project(
+      return project(
         `project_id = "stack-config-auth-presence"
 `,
         {
@@ -106,85 +116,98 @@ site_url = "from-config"
             "",
           ].join("\n"),
         },
+      ).pipe(
+        Effect.flatMap((root) =>
+          Effect.gen(function* () {
+            const config = yield* load(root);
+            if (
+              config.capabilities?.auth === undefined ||
+              !("settings" in config.capabilities.auth)
+            )
+              throw new Error("auth settings missing");
+            const auth = config.capabilities.auth.settings;
+            expect(auth?.email?.enable_signup).toBe(false);
+            expect(auth?.email?.smtp).toBeUndefined();
+            expect(auth?.external?.github).toBeUndefined();
+            expect(auth?.hook?.custom_access_token).toBeUndefined();
+          }),
+        ),
       );
-      return Effect.gen(function* () {
-        const config = yield* load(root);
-        if (config.capabilities?.auth === undefined || !("settings" in config.capabilities.auth))
-          throw new Error("auth settings missing");
-        const auth = config.capabilities.auth.settings;
-        expect(auth?.email?.enable_signup).toBe(false);
-        expect(auth?.email?.smtp).toBeUndefined();
-        expect(auth?.external?.github).toBeUndefined();
-        expect(auth?.hook?.custom_access_token).toBeUndefined();
-      });
     },
   );
 
   it.effect("disables and re-enables a service through the effective environment layer", () => {
-    const disabledRoot = project('project_id = "stack-config-env-disable-file"\n', {
-      supabaseEnv: "SUPABASE_AUTH_ENABLED=false\n",
-    });
-    const enabledRoot = project(
-      'project_id = "stack-config-env-enable-shell"\n[auth]\nenabled = false\n',
-    );
-    return withEnvVar(
-      "SUPABASE_AUTH_ENABLED",
-      undefined,
-      Effect.gen(function* () {
-        const disabled = yield* load(disabledRoot);
-        expect(disabled.capabilities?.auth).toEqual({ enabled: false });
+    return Effect.gen(function* () {
+      const disabledRoot = yield* project('project_id = "stack-config-env-disable-file"\n', {
+        supabaseEnv: "SUPABASE_AUTH_ENABLED=false\n",
+      });
+      const enabledRoot = yield* project(
+        'project_id = "stack-config-env-enable-shell"\n[auth]\nenabled = false\n',
+      );
+      return yield* withEnvVar(
+        "SUPABASE_AUTH_ENABLED",
+        undefined,
+        Effect.gen(function* () {
+          const disabled = yield* load(disabledRoot);
+          expect(disabled.capabilities?.auth).toEqual({ enabled: false });
 
-        const enabled = yield* withEnvVar("SUPABASE_AUTH_ENABLED", "true", load(enabledRoot));
-        if (enabled.capabilities?.auth === undefined || !("settings" in enabled.capabilities.auth))
-          throw new Error("auth settings missing");
-        expect(enabled.capabilities.auth.settings).toBeDefined();
-      }),
-    );
+          const enabled = yield* withEnvVar("SUPABASE_AUTH_ENABLED", "true", load(enabledRoot));
+          if (
+            enabled.capabilities?.auth === undefined ||
+            !("settings" in enabled.capabilities.auth)
+          )
+            throw new Error("auth settings missing");
+          expect(enabled.capabilities.auth.settings).toBeDefined();
+        }),
+      );
+    });
   });
 
   it.effect("applies JWT environment overrides while auth is disabled", () => {
-    const root = project(
-      `project_id = "stack-config-disabled-auth-jwt"
+    return Effect.gen(function* () {
+      const root = yield* project(
+        `project_id = "stack-config-disabled-auth-jwt"
 `,
-      {
-        supabaseEnv: [
-          "SUPABASE_AUTH_ENABLED=false",
-          "SUPABASE_AUTH_JWT_ISSUER=https://issuer.example.test",
-          "SUPABASE_AUTH_JWT_SECRET=01234567890123456789012345678901",
-          "",
-        ].join("\n"),
-      },
-    );
-    const signingPathRoot = project(
-      `project_id = "stack-config-disabled-auth-signing-path"
+        {
+          supabaseEnv: [
+            "SUPABASE_AUTH_ENABLED=false",
+            "SUPABASE_AUTH_JWT_ISSUER=https://issuer.example.test",
+            "SUPABASE_AUTH_JWT_SECRET=01234567890123456789012345678901",
+            "",
+          ].join("\n"),
+        },
+      );
+      const signingPathRoot = yield* project(
+        `project_id = "stack-config-disabled-auth-signing-path"
 [auth]
 enabled = false
 `,
-      { supabaseEnv: "SUPABASE_AUTH_SIGNING_KEYS_PATH=keys.json\n" },
-    );
-    return withEnvVar(
-      "SUPABASE_AUTH_ENABLED",
-      undefined,
-      Effect.gen(function* () {
-        const config = yield* load(root);
-        expect(config.capabilities?.auth).toEqual({ enabled: false });
-        expect(config.security?.jwt?.issuer).toBe("https://issuer.example.test");
-        const signing = config.security?.jwt?.signing;
-        expect(signing?.kind).toBe("symmetric");
-        if (signing?.kind !== "symmetric") throw new Error("symmetric signing missing");
-        expect(Redacted.value(signing.secret)).toBe("01234567890123456789012345678901");
-        const signingPath = yield* load(signingPathRoot);
-        expect(signingPath.capabilities?.auth).toEqual({ enabled: false });
-        expect(signingPath.security?.jwt?.signing).toEqual({
-          kind: "jwks-file",
-          path: "supabase/keys.json",
-        });
-      }),
-    );
+        { supabaseEnv: "SUPABASE_AUTH_SIGNING_KEYS_PATH=keys.json\n" },
+      );
+      return yield* withEnvVar(
+        "SUPABASE_AUTH_ENABLED",
+        undefined,
+        Effect.gen(function* () {
+          const config = yield* load(root);
+          expect(config.capabilities?.auth).toEqual({ enabled: false });
+          expect(config.security?.jwt?.issuer).toBe("https://issuer.example.test");
+          const signing = config.security?.jwt?.signing;
+          expect(signing?.kind).toBe("symmetric");
+          if (signing?.kind !== "symmetric") throw new Error("symmetric signing missing");
+          expect(Redacted.value(signing.secret)).toBe("01234567890123456789012345678901");
+          const signingPath = yield* load(signingPathRoot);
+          expect(signingPath.capabilities?.auth).toEqual({ enabled: false });
+          expect(signingPath.security?.jwt?.signing).toEqual({
+            kind: "jwks-file",
+            path: "supabase/keys.json",
+          });
+        }),
+      );
+    });
   });
 
   it.effect("rejects an env-enabled SMTP section without a port", () => {
-    const root = project(
+    return project(
       `project_id = "stack-config-smtp-env-enable-missing-port"
 [auth.email.smtp]
 enabled = false
@@ -194,16 +217,19 @@ pass = "smtp-pass"
 admin_email = "admin@example.test"
 `,
       { supabaseEnv: "SUPABASE_AUTH_EMAIL_SMTP_ENABLED=true\n" },
+    ).pipe(
+      Effect.flatMap((root) =>
+        Effect.gen(function* () {
+          const exit = yield* load(root).pipe(Effect.exit);
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("auth.email.smtp.port");
+        }),
+      ),
     );
-    return Effect.gen(function* () {
-      const exit = yield* load(root).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("auth.email.smtp.port");
-    });
   });
 
   it.effect("does not decrypt an unused provider secret when auth is disabled", () => {
-    const root = project(
+    return project(
       `project_id = "stack-config-disabled-auth-provider-secret"
 [auth]
 enabled = false
@@ -212,14 +238,17 @@ enabled = true
 client_id = "github-client"
 secret = "encrypted:not-a-real-ciphertext"
 `,
-    );
-    return withEnvVar(
-      "DOTENV_PRIVATE_KEY",
-      undefined,
-      Effect.gen(function* () {
-        const config = yield* load(root);
-        expect(config.capabilities?.auth).toEqual({ enabled: false });
-      }),
+    ).pipe(
+      Effect.flatMap((root) =>
+        withEnvVar(
+          "DOTENV_PRIVATE_KEY",
+          undefined,
+          Effect.gen(function* () {
+            const config = yield* load(root);
+            expect(config.capabilities?.auth).toEqual({ enabled: false });
+          }),
+        ),
+      ),
     );
   });
 
@@ -673,8 +702,8 @@ openai_api_key = "config-studio-key"
   });
 
   it.effect("compiles package defaults from the CLI adapter", () => {
-    const root = project('project_id = "stack-config-compiler-defaults"\n');
     return Effect.gen(function* () {
+      const root = yield* project('project_id = "stack-config-compiler-defaults"\n');
       const config = yield* load(root);
       const compiled = yield* compileStack({
         projectRoot: root,
@@ -697,10 +726,10 @@ openai_api_key = "config-studio-key"
   });
 
   it.effect("keeps pooler tuning while inheriting its enabled default", () => {
-    const root = project(
-      'project_id = "stack-config-compiler-pooler-tuning"\n[db.pooler]\ndefault_pool_size = 37\n',
-    );
     return Effect.gen(function* () {
+      const root = yield* project(
+        'project_id = "stack-config-compiler-pooler-tuning"\n[db.pooler]\ndefault_pool_size = 37\n',
+      );
       const config = yield* load(root);
       const compiled = yield* compileStack({
         projectRoot: root,
@@ -714,23 +743,23 @@ openai_api_key = "config-studio-key"
   });
 
   it.effect("honors explicit capability overrides through compilation", () => {
-    const enabled = project(
-      `project_id = "stack-config-compiler-overrides"
+    return Effect.gen(function* () {
+      const enabled = yield* project(
+        `project_id = "stack-config-compiler-overrides"
 [db.pooler]
 enabled = false
 [storage.image_transformation]
 enabled = false
 `,
-      {
+        {
+          supabaseEnv:
+            "SUPABASE_DB_POOLER_ENABLED=true\nSUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED=true\n",
+        },
+      );
+      const disabled = yield* project('project_id = "stack-config-compiler-disabled"\n', {
         supabaseEnv:
-          "SUPABASE_DB_POOLER_ENABLED=true\nSUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED=true\n",
-      },
-    );
-    const disabled = project('project_id = "stack-config-compiler-disabled"\n', {
-      supabaseEnv:
-        "SUPABASE_DB_POOLER_ENABLED=false\nSUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED=false\n",
-    });
-    return Effect.gen(function* () {
+          "SUPABASE_DB_POOLER_ENABLED=false\nSUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED=false\n",
+      });
       const enabledConfig = yield* load(enabled);
       const enabledCompiled = yield* compileStack({
         projectRoot: enabled,
