@@ -1,6 +1,6 @@
-import type { ApiKeyResponse } from "@supabase/api/effect";
+import type { ApiKeyResponse_Output } from "@supabase/api/effect";
 
-type ApiKey = typeof ApiKeyResponse.Type;
+type ApiKey = typeof ApiKeyResponse_Output.Type;
 
 /** Placeholder returned for a null or missing api key value. */
 const API_KEY_MASK = "******";

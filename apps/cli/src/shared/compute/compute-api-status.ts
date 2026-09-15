@@ -8,7 +8,7 @@ import { ComputeApiNetworkError, ComputeApiUnexpectedStatusError } from "./compu
  * Status handling shared by every Compute API seam: the compute routes and the analytics logs
  * endpoint fail the same three ways (the request never left, the server answered something
  * unexpected, or the body couldn't be read). Route-specific status meaning — like
- * `projectScoped404`, which disambiguates a `/v2/projects/{ref}/workers` 404 by body — stays with its own route.
+ * `projectScoped404`, which disambiguates a `/v2/projects/{ref}/compute` 404 by body — stays with its own route.
  */
 
 /**

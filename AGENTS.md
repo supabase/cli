@@ -34,7 +34,9 @@ Use a family-neutral name when a symbol deliberately spans both families. See th
 
 Effect V4 source is in `.repos/effect/`; use it instead of `node_modules`, with core APIs in
 `.repos/effect/packages/effect/`, test helpers in `.repos/effect/packages/vitest/`, and migration
-notes in `.repos/effect/MIGRATION.md`. Run `pnpm repos:install` if it is absent.
+notes in `.repos/effect/MIGRATION.md`. These are read-only source checkouts that may be ahead of
+installed dependencies; when APIs differ, use the matching release tag inside the reference
+repository. Run `pnpm repos:install` if it is absent.
 
 - Write new TypeScript runtime code in Effect. Internal helpers return Effects; Promise facades
   belong only at public edges. Wrap a foreign Promise once at its leaf with `Effect.tryPromise`,

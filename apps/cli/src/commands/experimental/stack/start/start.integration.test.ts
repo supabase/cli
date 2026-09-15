@@ -1,11 +1,17 @@
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- filesystem test fixture uses the host adapter at this boundary
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- filesystem test fixture uses the host adapter at this boundary
-import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, Fiber, Layer, Option, Redacted, Schema, Stream } from "effect";
+import {
+  Deferred,
+  Effect,
+  FileSystem,
+  Fiber,
+  Layer,
+  Option,
+  Path,
+  Redacted,
+  Schema,
+  Stream,
+} from "effect";
 import { CliOutput, Command } from "effect/unstable/cli";
 import {
   ContainerEngineError,
@@ -52,23 +58,39 @@ import {
   recordingStackCatalogSetup,
 } from "../../../../command-internal/stack-catalog-setup.ts";
 
-const project = (): string => {
-  const root = mkdtempSync(join(tmpdir(), "supabase-experimental-stack-start-"));
-  mkdirSync(join(root, "supabase"), { recursive: true });
-  writeFileSync(join(root, "supabase", "config.toml"), 'project_id = "start-test"\n');
-  return root;
-};
+const project = () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* fs.makeTempDirectoryScoped({
+      prefix: "supabase-experimental-stack-start-",
+    });
+    yield* fs.makeDirectory(path.join(root, "supabase"), { recursive: true });
+    yield* fs.writeFileString(
+      path.join(root, "supabase", "config.toml"),
+      'project_id = "start-test"\n',
+    );
+    return root;
+  }).pipe(Effect.provide(BunServices.layer));
 
-const writeStartMigration = (root: string) => {
-  mkdirSync(join(root, "supabase", "migrations"), { recursive: true });
-  writeFileSync(
-    join(root, "supabase", "migrations", "20240101000000_dogfood.sql"),
-    "create table public.dogfood ();\n",
-  );
-};
+const emptyProject = () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    return yield* fs.makeTempDirectoryScoped({
+      prefix: "supabase-experimental-stack-start-empty-",
+    });
+  }).pipe(Effect.provide(BunServices.layer));
 
-const emptyProject = (): string =>
-  mkdtempSync(join(tmpdir(), "supabase-experimental-stack-start-empty-"));
+const writeStartMigration = (root: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    yield* fs.makeDirectory(path.join(root, "supabase", "migrations"), { recursive: true });
+    yield* fs.writeFileString(
+      path.join(root, "supabase", "migrations", "20240101000000_dogfood.sql"),
+      "create table public.dogfood ();\n",
+    );
+  });
 
 const resolverLayer = stackTargetResolverLayer.pipe(
   Layer.provideMerge(stackApiLayer),
@@ -212,225 +234,254 @@ describe("stack start targeting", () => {
     { exclusion: "analytics" as const, studioEnabled: true },
   ]) {
     it.live(`compiles ${exclusion} exclusion with Studio ${studioEnabled ? "on" : "off"}`, () => {
-      const root = project();
-      const configBefore = readFileSync(join(root, "supabase", "config.toml"), "utf8");
-      const stack = fakeStack("c".repeat(64), (input) =>
-        Effect.gen(function* () {
-          const stackConfig = yield* Schema.decodeUnknownEffect(StackConfigSchema)(
-            input?.config,
-          ).pipe(
-            Effect.mapError((error) => new StackStateInvalidError({ message: error.message })),
-          );
-          const compiled = yield* compileStack({
-            projectRoot: root,
-            runtime: { kind: "native" },
-            config: stackConfig,
-          }).pipe(
-            Effect.mapError((error) => new StackStateInvalidError({ message: error.message })),
-            Effect.provide(BunServices.layer),
-          );
-          expect(compiled.definition.capabilities[exclusion].enabled).toBe(false);
-          expect(compiled.definition.capabilities.studio.enabled).toBe(studioEnabled);
-          expect(compiled.definition.capabilities.auth.enabled).toBe(true);
-          return status("c".repeat(64));
-        }),
-      );
-      const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
-      return Effect.gen(function* () {
-        for (const eager of [false, true])
-          yield* stackStart(flags({ exclude: [exclusion], eager }));
-        expect(readFileSync(join(root, "supabase", "config.toml"), "utf8")).toBe(configBefore);
-      }).pipe(
-        Effect.provide(setup.layer),
-        Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+      return project().pipe(
+        Effect.flatMap((root) =>
+          Effect.gen(function* () {
+            const fs = yield* FileSystem.FileSystem;
+            const path = yield* Path.Path;
+            const configBefore = yield* fs.readFileString(
+              path.join(root, "supabase", "config.toml"),
+            );
+            const stack = fakeStack("c".repeat(64), (input) =>
+              Effect.gen(function* () {
+                const stackConfig = yield* Schema.decodeUnknownEffect(StackConfigSchema)(
+                  input?.config,
+                ).pipe(
+                  Effect.mapError(
+                    (error) => new StackStateInvalidError({ message: error.message }),
+                  ),
+                );
+                const compiled = yield* compileStack({
+                  projectRoot: root,
+                  runtime: { kind: "native" },
+                  config: stackConfig,
+                }).pipe(
+                  Effect.mapError(
+                    (error) => new StackStateInvalidError({ message: error.message }),
+                  ),
+                  Effect.provide(BunServices.layer),
+                );
+                expect(compiled.definition.capabilities[exclusion].enabled).toBe(false);
+                expect(compiled.definition.capabilities.studio.enabled).toBe(studioEnabled);
+                expect(compiled.definition.capabilities.auth.enabled).toBe(true);
+                return status("c".repeat(64));
+              }),
+            );
+            const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
+            for (const eager of [false, true])
+              yield* stackStart(flags({ exclude: [exclusion], eager })).pipe(
+                Effect.provide(setup.layer),
+              );
+            expect(yield* fs.readFileString(path.join(root, "supabase", "config.toml"))).toBe(
+              configBefore,
+            );
+          }),
+        ),
+        Effect.provide(BunServices.layer),
       );
     });
   }
 
   it.live("applies exclusions to the effective config without changing the project file", () => {
-    const root = project();
-    const configBefore = readFileSync(join(root, "supabase", "config.toml"), "utf8");
-    let startedConfig: unknown;
-    const stack = fakeStack("e".repeat(64), (config) =>
-      Effect.gen(function* () {
-        startedConfig = config;
-        yield* Schema.decodeUnknownEffect(StackConfigSchema)(config?.config, {
-          onExcessProperty: "error",
-        }).pipe(Effect.mapError((error) => new StackStateInvalidError({ message: error.message })));
-        return status("e".repeat(64));
-      }),
-    );
-    const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
-    return Effect.gen(function* () {
-      yield* stackStart(flags({ exclude: ["studio", "analytics"] }));
-      expect(startedConfig).toEqual(
-        expect.objectContaining({
-          config: expect.objectContaining({
-            capabilities: expect.objectContaining({
-              studio: expect.objectContaining({ enabled: false }),
-              analytics: expect.objectContaining({ enabled: false }),
+    return project().pipe(
+      Effect.flatMap((root) => {
+        return Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const configBefore = yield* fs.readFileString(path.join(root, "supabase", "config.toml"));
+          let startedConfig: unknown;
+          const stack = fakeStack("e".repeat(64), (config) =>
+            Effect.gen(function* () {
+              startedConfig = config;
+              yield* Schema.decodeUnknownEffect(StackConfigSchema)(config?.config, {
+                onExcessProperty: "error",
+              }).pipe(
+                Effect.mapError((error) => new StackStateInvalidError({ message: error.message })),
+              );
+              return status("e".repeat(64));
             }),
-          }),
-        }),
-      );
-      expect(readFileSync(join(root, "supabase", "config.toml"), "utf8")).toBe(configBefore);
-    }).pipe(
-      Effect.provide(setup.layer),
-      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+          );
+          const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
+          yield* stackStart(flags({ exclude: ["studio", "analytics"] })).pipe(
+            Effect.provide(setup.layer),
+          );
+          expect(startedConfig).toEqual(
+            expect.objectContaining({
+              config: expect.objectContaining({
+                capabilities: expect.objectContaining({
+                  studio: expect.objectContaining({ enabled: false }),
+                  analytics: expect.objectContaining({ enabled: false }),
+                }),
+              }),
+            }),
+          );
+          expect(yield* fs.readFileString(path.join(root, "supabase", "config.toml"))).toBe(
+            configBefore,
+          );
+        });
+      }),
+      Effect.provide(BunServices.layer),
     );
   });
 
   it.live("applies catalog setup from pre-exclude config after start returns", () => {
-    const root = project();
-    writeStartMigration(root);
-    const catalog = recordingStackCatalogSetup((input) => ({
-      kind: input.target.kind,
-      authEnabled: input.target.config.capabilities?.auth?.enabled,
-    }));
-    const stack = fakeStack("f".repeat(64), () => Effect.succeed(status("f".repeat(64))));
-    const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
     return Effect.gen(function* () {
-      yield* stackStart(flags({ exclude: ["auth"] }));
+      const root = yield* project();
+      yield* writeStartMigration(root);
+      const catalog = recordingStackCatalogSetup((input) => ({
+        kind: input.target.kind,
+        authEnabled: input.target.config.capabilities?.auth?.enabled,
+      }));
+      const stack = fakeStack("f".repeat(64), () => Effect.succeed(status("f".repeat(64))));
+      const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
+      yield* stackStart(flags({ exclude: ["auth"] })).pipe(
+        Effect.provide(Layer.mergeAll(setup.layer, catalog.layer)),
+      );
       expect(catalog.applied).toEqual([{ kind: "live", authEnabled: undefined }]);
       expect(setup.out.stderrText).toContain("Applying migration 20240101000000_dogfood.sql");
-    }).pipe(
-      Effect.provide(Layer.mergeAll(setup.layer, catalog.layer)),
-      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.provide(BunServices.layer));
   });
 
   it.live("honors SUPABASE_EXPERIMENTAL from project .env on first-create migrate", () => {
-    const root = project();
-    writeStartMigration(root);
-    writeFileSync(join(root, "supabase", ".env"), "SUPABASE_EXPERIMENTAL=true\n");
-    const catalog = recordingStackCatalogSetup((input) => input.target.kind);
-    const stack = fakeStack("e".repeat(64), () => Effect.succeed(status("e".repeat(64))));
-    const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
-    return withEnvVar(
-      "SUPABASE_EXPERIMENTAL",
-      undefined,
-      Effect.gen(function* () {
-        yield* stackStart(flags());
-        expect(setup.out.stderrText).not.toContain("Applying migration 20240101000000_dogfood.sql");
-      }).pipe(
-        Effect.provide(Layer.mergeAll(setup.layer, catalog.layer)),
-        Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
-      ),
-    );
+    return Effect.gen(function* () {
+      const root = yield* project();
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* writeStartMigration(root);
+      yield* fs.writeFileString(
+        path.join(root, "supabase", ".env"),
+        "SUPABASE_EXPERIMENTAL=true\n",
+      );
+      const catalog = recordingStackCatalogSetup((input) => input.target.kind);
+      const stack = fakeStack("e".repeat(64), () => Effect.succeed(status("e".repeat(64))));
+      const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
+      yield* withEnvVar(
+        "SUPABASE_EXPERIMENTAL",
+        undefined,
+        stackStart(flags()).pipe(Effect.provide(Layer.mergeAll(setup.layer, catalog.layer))),
+      );
+      expect(setup.out.stderrText).not.toContain("Applying migration 20240101000000_dogfood.sql");
+    }).pipe(Effect.provide(BunServices.layer));
   });
 
   it.live("skips catalog setup when an existing cluster is already present", () => {
-    const root = project();
-    writeStartMigration(root);
-    const catalog = recordingStackCatalogSetup((input) => input.target.kind);
-    const stack = fakeStack(
-      "d".repeat(64),
-      () => Effect.succeed(status("d".repeat(64))),
-      "stopped",
-    );
-    const setup = handlerLayer({
-      root,
-      target: { projectRoot: root },
-      stack,
-    });
     return Effect.gen(function* () {
-      yield* stackStart(flags());
+      const root = yield* project();
+      yield* writeStartMigration(root);
+      const catalog = recordingStackCatalogSetup((input) => input.target.kind);
+      const stack = fakeStack(
+        "d".repeat(64),
+        () => Effect.succeed(status("d".repeat(64))),
+        "stopped",
+      );
+      const setup = handlerLayer({
+        root,
+        target: { projectRoot: root },
+        stack,
+      });
+      yield* stackStart(flags()).pipe(Effect.provide(Layer.mergeAll(setup.layer, catalog.layer)));
       expect(catalog.applied).toEqual([]);
       expect(setup.out.stderrText).not.toContain("Applying migration");
-    }).pipe(
-      Effect.provide(Layer.mergeAll(setup.layer, catalog.layer)),
-      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.provide(BunServices.layer));
   });
 
   it.live("applies catalog and migrations when starting an unconfigured stack by id", () => {
-    const root = project();
-    writeStartMigration(root);
-    const catalog = recordingStackCatalogSetup((input) => input.target.kind);
-    const stack = fakeStack("c".repeat(64), () => Effect.succeed(status("c".repeat(64))));
-    const setup = handlerLayer({
-      root,
-      target: { projectRoot: root, id: "c".repeat(64) },
-      stack,
-    });
     return Effect.gen(function* () {
-      yield* stackStart(flags({ stackId: Option.some("c".repeat(64)) }));
+      const root = yield* project();
+      yield* writeStartMigration(root);
+      const catalog = recordingStackCatalogSetup((input) => input.target.kind);
+      const stack = fakeStack("c".repeat(64), () => Effect.succeed(status("c".repeat(64))));
+      const setup = handlerLayer({
+        root,
+        target: { projectRoot: root, id: "c".repeat(64) },
+        stack,
+      });
+      yield* stackStart(flags({ stackId: Option.some("c".repeat(64)) })).pipe(
+        Effect.provide(Layer.mergeAll(setup.layer, catalog.layer)),
+      );
       expect(catalog.applied).toEqual(["live"]);
       expect(setup.out.stderrText).toContain("Applying migration 20240101000000_dogfood.sql");
-    }).pipe(
-      Effect.provide(Layer.mergeAll(setup.layer, catalog.layer)),
-      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.provide(BunServices.layer));
   });
 
   it.live(
     "leaves listener configuration to the compiled runtime when capabilities are excluded",
     () => {
-      const root = project();
-      writeFileSync(
-        join(root, "supabase", "config.toml"),
-        'project_id = "start-test"\n[api]\nport = 55421\n',
-      );
-      let startedConfig: unknown;
-      const stack = fakeStack("7".repeat(64), (config) =>
-        Effect.sync(() => {
-          startedConfig = config;
-          return status("7".repeat(64));
-        }),
-      );
-      const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
-      return Effect.gen(function* () {
-        yield* stackStart(
-          flags({ exclude: ["rest", "auth", "realtime", "storage", "functions", "analytics"] }),
-        );
-        expect(startedConfig).toEqual(
-          expect.objectContaining({
-            config: expect.objectContaining({
-              listeners: expect.objectContaining({ api: { port: 55421 } }),
-            }),
+      return project().pipe(
+        Effect.flatMap((root) =>
+          Effect.gen(function* () {
+            const fs = yield* FileSystem.FileSystem;
+            const path = yield* Path.Path;
+            yield* fs.writeFileString(
+              path.join(root, "supabase", "config.toml"),
+              'project_id = "start-test"\n[api]\nport = 55421\n',
+            );
+            let startedConfig: unknown;
+            const stack = fakeStack("7".repeat(64), (config) =>
+              Effect.sync(() => {
+                startedConfig = config;
+                return status("7".repeat(64));
+              }),
+            );
+            const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
+            yield* stackStart(
+              flags({ exclude: ["rest", "auth", "realtime", "storage", "functions", "analytics"] }),
+            ).pipe(Effect.provide(setup.layer));
+            expect(startedConfig).toEqual(
+              expect.objectContaining({
+                config: expect.objectContaining({
+                  listeners: expect.objectContaining({ api: { port: 55421 } }),
+                }),
+              }),
+            );
           }),
-        );
-      }).pipe(
-        Effect.provide(setup.layer),
-        Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+        ),
+        Effect.provide(BunServices.layer),
       );
     },
   );
 
   it.live("preserves the configured API listener on partial gateway exclusion", () => {
-    const root = project();
-    writeFileSync(
-      join(root, "supabase", "config.toml"),
-      'project_id = "start-test"\n[api]\nport = 55421\n',
-    );
-    let startedConfig: unknown;
-    const stack = fakeStack("8".repeat(64), (config) =>
-      Effect.sync(() => {
-        startedConfig = config;
-        return status("8".repeat(64));
-      }),
-    );
-    const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
-    return Effect.gen(function* () {
-      yield* stackStart(flags({ exclude: ["rest"] }));
-      expect(startedConfig).toEqual(
-        expect.objectContaining({
-          config: expect.objectContaining({
-            listeners: expect.objectContaining({ api: { port: 55421 } }),
-          }),
+    return project().pipe(
+      Effect.flatMap((root) =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          yield* fs.writeFileString(
+            path.join(root, "supabase", "config.toml"),
+            'project_id = "start-test"\n[api]\nport = 55421\n',
+          );
+          let startedConfig: unknown;
+          const stack = fakeStack("8".repeat(64), (config) =>
+            Effect.sync(() => {
+              startedConfig = config;
+              return status("8".repeat(64));
+            }),
+          );
+          const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
+          yield* stackStart(flags({ exclude: ["rest"] })).pipe(Effect.provide(setup.layer));
+          expect(startedConfig).toEqual(
+            expect.objectContaining({
+              config: expect.objectContaining({
+                listeners: expect.objectContaining({ api: { port: 55421 } }),
+              }),
+            }),
+          );
         }),
-      );
-    }).pipe(
-      Effect.provide(setup.layer),
-      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+      ),
+      Effect.provide(BunServices.layer),
     );
   });
 
   it.live("does not rewrite listeners for configured-disabled capabilities", () => {
-    const root = project();
-    writeFileSync(
-      join(root, "supabase", "config.toml"),
-      `project_id = "start-test"
+    return project().pipe(
+      Effect.flatMap((root) =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          yield* fs.writeFileString(
+            path.join(root, "supabase", "config.toml"),
+            `project_id = "start-test"
 [api]
 port = 55421
 [auth]
@@ -444,83 +495,78 @@ enabled = false
 [analytics]
 enabled = false
 `,
-    );
-    let startedConfig: unknown;
-    const stack = fakeStack("9".repeat(64), (config) =>
-      Effect.sync(() => {
-        startedConfig = config;
-        return status("9".repeat(64));
-      }),
-    );
-    const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
-    return Effect.gen(function* () {
-      yield* stackStart(flags({ exclude: ["rest"] }));
-      expect(startedConfig).toEqual(
-        expect.objectContaining({
-          config: expect.objectContaining({
-            listeners: expect.objectContaining({ api: { port: 55421 } }),
-          }),
+          );
+          let startedConfig: unknown;
+          const stack = fakeStack("9".repeat(64), (config) =>
+            Effect.sync(() => {
+              startedConfig = config;
+              return status("9".repeat(64));
+            }),
+          );
+          const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
+          yield* stackStart(flags({ exclude: ["rest"] })).pipe(Effect.provide(setup.layer));
+          expect(startedConfig).toEqual(
+            expect.objectContaining({
+              config: expect.objectContaining({
+                listeners: expect.objectContaining({ api: { port: 55421 } }),
+              }),
+            }),
+          );
         }),
-      );
-    }).pipe(
-      Effect.provide(setup.layer),
-      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+      ),
+      Effect.provide(BunServices.layer),
     );
   });
 
   it.live("leaves auto runtime selection to the package for a new stack", () => {
-    const root = project();
-    let createOptions: unknown;
-    const stack = fakeStack("f".repeat(64), () => Effect.succeed(status("f".repeat(64))));
-    const setup = handlerLayer({
-      root,
-      target: { projectRoot: root },
-      stack,
-      onCreate: (options) => {
-        createOptions = options;
-      },
-    });
     return Effect.gen(function* () {
-      yield* stackStart(flags({ runtime: "auto" }));
+      const root = yield* project();
+      let createOptions: unknown;
+      const stack = fakeStack("f".repeat(64), () => Effect.succeed(status("f".repeat(64))));
+      const setup = handlerLayer({
+        root,
+        target: { projectRoot: root },
+        stack,
+        onCreate: (options) => {
+          createOptions = options;
+        },
+      });
+      yield* stackStart(flags({ runtime: "auto" })).pipe(Effect.provide(setup.layer));
       expect(createOptions).toEqual({ projectRoot: root });
-    }).pipe(
-      Effect.provide(setup.layer),
-      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.provide(BunServices.layer));
   });
 
   it.live("forwards an explicit Docker runtime to the package", () => {
-    const root = project();
-    let createOptions: unknown;
-    const stack = fakeStack("d".repeat(64), () => Effect.succeed(status("d".repeat(64))));
-    const setup = handlerLayer({
-      root,
-      target: {
-        projectRoot: root,
-        name: "feature-docker",
-        runtime: { kind: "container", engine: "docker" },
-      },
-      stack,
-      onCreate: (options) => {
-        createOptions = options;
-      },
-    });
     return Effect.gen(function* () {
-      yield* stackStart(flags({ stack: Option.some("feature-docker"), runtime: "docker" }));
+      const root = yield* project();
+      let createOptions: unknown;
+      const stack = fakeStack("d".repeat(64), () => Effect.succeed(status("d".repeat(64))));
+      const setup = handlerLayer({
+        root,
+        target: {
+          projectRoot: root,
+          name: "feature-docker",
+          runtime: { kind: "container", engine: "docker" },
+        },
+        stack,
+        onCreate: (options) => {
+          createOptions = options;
+        },
+      });
+      yield* stackStart(flags({ stack: Option.some("feature-docker"), runtime: "docker" })).pipe(
+        Effect.provide(setup.layer),
+      );
       expect(createOptions).toEqual({
         projectRoot: root,
         name: "feature-docker",
         runtime: { kind: "container", engine: "docker" },
       });
-    }).pipe(
-      Effect.provide(setup.layer),
-      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.provide(BunServices.layer));
   });
 
   it.effect("resolves the current project target", () => {
-    const root = project();
     return Effect.gen(function* () {
+      const root = yield* project();
       const resolver = yield* StackTargetResolver;
       const target = yield* resolver.resolve({
         projectRoot: root,
@@ -530,15 +576,12 @@ enabled = false
       expect(target.id).toBeUndefined();
       expect(target.name).toBeUndefined();
       expect(target.runtime).toBeUndefined();
-    }).pipe(
-      Effect.provide(resolverLayer),
-      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.provide(resolverLayer));
   });
 
   it.effect("keeps a named native stack target distinct", () => {
-    const root = project();
     return Effect.gen(function* () {
+      const root = yield* project();
       const resolver = yield* StackTargetResolver;
       const target = yield* resolver.resolve({
         projectRoot: root,
@@ -547,10 +590,7 @@ enabled = false
       });
       expect(target.name).toBe("feature-a");
       expect(target.runtime).toEqual({ kind: "native" });
-    }).pipe(
-      Effect.provide(resolverLayer),
-      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.provide(resolverLayer));
   });
 
   it.effect("rejects a malformed stack id before loading project configuration", () =>
@@ -598,22 +638,22 @@ enabled = false
   });
 
   it.live("creates a named native stack with eager on-demand configuration", () => {
-    const root = project();
-    let createOptions: unknown;
-    let startConfig: unknown;
-    const stack = fakeStack("a".repeat(64), (config) => {
-      startConfig = config;
-      return Effect.succeed(status("a".repeat(64)));
-    });
-    const setup = handlerLayer({
-      root,
-      target: { projectRoot: root, name: "feature-a", runtime: { kind: "native" } },
-      stack,
-      onCreate: (options) => {
-        createOptions = options;
-      },
-    });
     return Effect.gen(function* () {
+      const root = yield* project();
+      let createOptions: unknown;
+      let startConfig: unknown;
+      const stack = fakeStack("a".repeat(64), (config) => {
+        startConfig = config;
+        return Effect.succeed(status("a".repeat(64)));
+      });
+      const setup = handlerLayer({
+        root,
+        target: { projectRoot: root, name: "feature-a", runtime: { kind: "native" } },
+        stack,
+        onCreate: (options) => {
+          createOptions = options;
+        },
+      });
       yield* stackStart(
         flags({
           stack: Option.some("feature-a"),
@@ -622,7 +662,7 @@ enabled = false
           eager: true,
           exclude: ["studio"],
         }),
-      );
+      ).pipe(Effect.provide(setup.layer));
       expect(createOptions).toEqual({
         projectRoot: root,
         name: "feature-a",
@@ -641,70 +681,63 @@ enabled = false
       );
       expect(setup.out.stdoutText).toContain("Stack");
       expect(setup.telemetry.flushed).toBe(true);
-    }).pipe(
-      Effect.provide(setup.layer),
-      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
-    );
+    });
   });
 
   it.live("opens an addressed existing stack using its own project root", () => {
-    const settingsRoot = project();
-    const targetRoot = project();
-    writeFileSync(
-      join(targetRoot, "supabase", "config.toml"),
-      'project_id = "target"\n[api]\nport = 55421\n',
-    );
-    let opened = false;
-    let startConfig: unknown;
-    const stack = fakeStack(
-      "b".repeat(64),
-      (config) => {
-        startConfig = config;
-        return Effect.succeed(status("b".repeat(64)));
-      },
-      "running",
-    );
-    const setup = handlerLayer({
-      root: settingsRoot,
-      target: { projectRoot: targetRoot, id: "b".repeat(64) },
-      stack,
-      onOpen: () => {
-        opened = true;
-      },
-    });
     return Effect.gen(function* () {
-      yield* stackStart(flags({ stackId: Option.some("b".repeat(64)) }));
+      const settingsRoot = yield* project();
+      const targetRoot = yield* project();
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.writeFileString(
+        path.join(targetRoot, "supabase", "config.toml"),
+        'project_id = "target"\n[api]\nport = 55421\n',
+      );
+      let opened = false;
+      let startConfig: unknown;
+      const stack = fakeStack(
+        "b".repeat(64),
+        (config) => {
+          startConfig = config;
+          return Effect.succeed(status("b".repeat(64)));
+        },
+        "running",
+      );
+      const setup = handlerLayer({
+        root: settingsRoot,
+        target: { projectRoot: targetRoot, id: "b".repeat(64) },
+        stack,
+        onOpen: () => {
+          opened = true;
+        },
+      });
+      yield* stackStart(flags({ stackId: Option.some("b".repeat(64)) })).pipe(
+        Effect.provide(setup.layer),
+      );
       expect(opened).toBe(true);
       expect(startConfig).toMatchObject({ config: { listeners: { api: { port: 55421 } } } });
-    }).pipe(
-      Effect.provide(setup.layer),
-      Effect.ensuring(
-        Effect.sync(() => {
-          rmSync(settingsRoot, { recursive: true, force: true });
-          rmSync(targetRoot, { recursive: true, force: true });
-        }),
-      ),
-    );
+    }).pipe(Effect.provide(BunServices.layer));
   });
 
   it.live("reports a typed runtime failure without success output or cleanup calls", () => {
-    const root = project();
-    let stopped = false;
-    let destroyed = false;
-    const stack = {
-      ...fakeStack("c".repeat(64), () =>
-        Effect.fail(new ContainerEngineError({ message: "Docker is unavailable" })),
-      ),
-      stop: Effect.sync(() => {
-        stopped = true;
-      }),
-      destroy: Effect.sync(() => {
-        destroyed = true;
-      }),
-    } satisfies EffectStack;
-    const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
     return Effect.gen(function* () {
-      const failure = yield* stackStart(flags()).pipe(Effect.flip);
+      const root = yield* project();
+      let stopped = false;
+      let destroyed = false;
+      const stack = {
+        ...fakeStack("c".repeat(64), () =>
+          Effect.fail(new ContainerEngineError({ message: "Docker is unavailable" })),
+        ),
+        stop: Effect.sync(() => {
+          stopped = true;
+        }),
+        destroy: Effect.sync(() => {
+          destroyed = true;
+        }),
+      } satisfies EffectStack;
+      const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
+      const failure = yield* stackStart(flags()).pipe(Effect.flip, Effect.provide(setup.layer));
       expect(failure).toBeInstanceOf(StackCommandStartError);
       if (failure instanceof StackCommandStartError) {
         expect(failure.reason).toBe("runtime");
@@ -716,125 +749,109 @@ enabled = false
       expect(destroyed).toBe(false);
       expect(setup.out.messages.filter((message) => message.type === "success")).toHaveLength(0);
       expect(setup.telemetry.flushed).toBe(true);
-    }).pipe(
-      Effect.provide(setup.layer),
-      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
-    );
+    });
   });
 
   it.live("does not clean up a stack after a successful start", () => {
-    const root = project();
-    let stopped = false;
-    let destroyed = false;
-    const stack = {
-      ...fakeStack("f".repeat(64), () => Effect.succeed(status("f".repeat(64)))),
-      stop: Effect.sync(() => {
-        stopped = true;
-      }),
-      destroy: Effect.sync(() => {
-        destroyed = true;
-      }),
-    } satisfies EffectStack;
-    const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
     return Effect.gen(function* () {
-      yield* stackStart(flags());
+      const root = yield* project();
+      let stopped = false;
+      let destroyed = false;
+      const stack = {
+        ...fakeStack("f".repeat(64), () => Effect.succeed(status("f".repeat(64)))),
+        stop: Effect.sync(() => {
+          stopped = true;
+        }),
+        destroy: Effect.sync(() => {
+          destroyed = true;
+        }),
+      } satisfies EffectStack;
+      const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
+      yield* stackStart(flags()).pipe(Effect.provide(setup.layer));
       expect(stopped).toBe(false);
       expect(destroyed).toBe(false);
-    }).pipe(
-      Effect.provide(setup.layer),
-      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
-    );
+    });
   });
 
   it.live("classifies registry pull failures separately from engine failures", () => {
-    const root = project();
-    const stack = fakeStack("8".repeat(64), () =>
-      Effect.fail(
-        new ContainerPullError({
-          message: "registry refused the workload image",
-          image: "example.test/workload:dev",
-        }),
-      ),
-    );
-    const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
     return Effect.gen(function* () {
-      const failure = yield* stackStart(flags()).pipe(Effect.flip);
+      const root = yield* project();
+      const stack = fakeStack("8".repeat(64), () =>
+        Effect.fail(
+          new ContainerPullError({
+            message: "registry refused the workload image",
+            image: "example.test/workload:dev",
+          }),
+        ),
+      );
+      const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
+      const failure = yield* stackStart(flags()).pipe(Effect.flip, Effect.provide(setup.layer));
       expect(failure).toBeInstanceOf(StackCommandStartError);
       if (failure instanceof StackCommandStartError) {
         expect(failure.reason).toBe("registry");
         expect(failure.suggestion).toContain("registry connectivity");
         expect(failure[ErrorActionabilityId]).toEqual(actionability.externalNetwork);
       }
-    }).pipe(
-      Effect.provide(setup.layer),
-      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
-    );
+    });
   });
 
   it.live("reports runtime start failures with operational guidance", () => {
-    const root = project();
-    const stack = fakeStack("b".repeat(64), () =>
-      Effect.fail(new StackRuntimeError({ message: "runtime crashed" })),
-    );
-    const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
     return Effect.gen(function* () {
-      const failure = yield* stackStart(flags()).pipe(Effect.flip);
+      const root = yield* project();
+      const stack = fakeStack("b".repeat(64), () =>
+        Effect.fail(new StackRuntimeError({ message: "runtime crashed" })),
+      );
+      const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
+      const failure = yield* stackStart(flags()).pipe(Effect.flip, Effect.provide(setup.layer));
       expect(failure).toBeInstanceOf(StackCommandStartError);
       if (failure instanceof StackCommandStartError) {
         expect(failure.reason).toBe("unknown");
         expect(failure.suggestion).toContain("runtime diagnostics");
         expect(failure[ErrorActionabilityId]).toEqual(actionability.unknown);
       }
-    }).pipe(
-      Effect.provide(setup.layer),
-      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
-    );
+    });
   });
 
   it.live("classifies persisted state failures with recovery guidance", () => {
-    const root = project();
-    const stack = fakeStack("c".repeat(64), () =>
-      Effect.fail(new StackStateInvalidError({ message: "persisted state is invalid" })),
-    );
-    const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
     return Effect.gen(function* () {
-      const failure = yield* stackStart(flags()).pipe(Effect.flip);
+      const root = yield* project();
+      const stack = fakeStack("c".repeat(64), () =>
+        Effect.fail(new StackStateInvalidError({ message: "persisted state is invalid" })),
+      );
+      const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
+      const failure = yield* stackStart(flags()).pipe(Effect.flip, Effect.provide(setup.layer));
       expect(failure).toBeInstanceOf(StackCommandStartError);
       if (failure instanceof StackCommandStartError) {
         expect(failure.reason).toBe("invalid-config");
         expect(failure.suggestion).toContain("restore a valid state record");
         expect(failure[ErrorActionabilityId]).toEqual(actionability.invalidConfig);
       }
-    }).pipe(
-      Effect.provide(setup.layer),
-      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
-    );
+    });
   });
 
   it.live("starts with default configuration when no project config exists", () => {
-    const root = emptyProject();
-    let started = false;
-    const stack = fakeStack("9".repeat(64), (config) => {
-      started = true;
-      expect(config).toMatchObject({
-        config: { capabilities: { database: { settings: { health_timeout: "2m" } } } },
-      });
-      return Effect.succeed(status("9".repeat(64)));
-    });
-    const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
     return Effect.gen(function* () {
-      yield* stackStart(flags());
+      const root = yield* emptyProject();
+      let started = false;
+      const stack = fakeStack("9".repeat(64), (config) => {
+        started = true;
+        expect(config).toMatchObject({
+          config: { capabilities: { database: { settings: { health_timeout: "2m" } } } },
+        });
+        return Effect.succeed(status("9".repeat(64)));
+      });
+      const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
+      yield* stackStart(flags()).pipe(Effect.provide(setup.layer));
       expect(started).toBe(true);
-      expect(existsSync(join(root, "supabase", "config.toml"))).toBe(false);
-    }).pipe(
-      Effect.provide(setup.layer),
-      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
-    );
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      expect(yield* fs.exists(path.join(root, "supabase", "config.toml"))).toBe(false);
+    }).pipe(Effect.provide(BunServices.layer));
   });
 
   it.live("keeps ownership with the package when the CLI caller is interrupted", () => {
-    const root = project();
     return Effect.gen(function* () {
+      const root = yield* project();
       const started = yield* Deferred.make<void>();
       let stopped = false;
       let destroyed = false;
@@ -858,86 +875,83 @@ enabled = false
       yield* Fiber.interrupt(fiber);
       expect(stopped).toBe(false);
       expect(destroyed).toBe(false);
-    }).pipe(Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))));
+    });
   });
 
   it.live("rejects invalid target flags before resolving or mutating a stack", () => {
-    const root = project();
-    let resolved = false;
-    let created = false;
-    const setup = handlerLayer({
-      root,
-      target: { projectRoot: root },
-      stack: fakeStack("d".repeat(64), () => Effect.succeed(status("d".repeat(64)))),
-    });
-    const layer = Layer.mergeAll(
-      setup.out.layer,
-      setup.telemetry.layer,
-      mockCommandSettings({ workdir: root }),
-      Layer.succeed(StackTargetResolver, {
-        resolve: () => {
-          resolved = true;
-          return Effect.die("resolver should not run");
-        },
-      }),
-      Layer.succeed(StackApi, {
-        findStack: () => Effect.succeed(Option.none()),
-        createStack: () => {
-          created = true;
-          return Effect.die("create should not run");
-        },
-        openStack: () => Effect.die("open should not run"),
-        inspectStack: () => Effect.die("inspect should not run"),
-        discoverStacks: () => Effect.succeed({ stacks: [], errors: [] }),
-      }),
-      BunServices.layer,
-      Layer.succeed(ExperimentalFlag, false),
-      Layer.succeed(CliArgs, { args: ["stack", "start"] }),
-      Layer.succeed(DbConnection, {
-        connect: () =>
-          Effect.succeed({
-            exec: () => Effect.void,
-            query: () => Effect.succeed([]),
-            execBatch: () => Effect.void,
-            extensionExists: () => Effect.succeed(false),
-            copyToCsv: () => Effect.succeed(new Uint8Array()),
-            queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
-          }),
-      }),
-    );
     return Effect.gen(function* () {
+      const root = yield* project();
+      let resolved = false;
+      let created = false;
+      const setup = handlerLayer({
+        root,
+        target: { projectRoot: root },
+        stack: fakeStack("d".repeat(64), () => Effect.succeed(status("d".repeat(64)))),
+      });
+      const layer = Layer.mergeAll(
+        setup.out.layer,
+        setup.telemetry.layer,
+        mockCommandSettings({ workdir: root }),
+        Layer.succeed(StackTargetResolver, {
+          resolve: () => {
+            resolved = true;
+            return Effect.die("resolver should not run");
+          },
+        }),
+        Layer.succeed(StackApi, {
+          findStack: () => Effect.succeed(Option.none()),
+          createStack: () => {
+            created = true;
+            return Effect.die("create should not run");
+          },
+          openStack: () => Effect.die("open should not run"),
+          inspectStack: () => Effect.die("inspect should not run"),
+          discoverStacks: () => Effect.succeed({ stacks: [], errors: [] }),
+        }),
+        BunServices.layer,
+        Layer.succeed(ExperimentalFlag, false),
+        Layer.succeed(CliArgs, { args: ["stack", "start"] }),
+        Layer.succeed(DbConnection, {
+          connect: () =>
+            Effect.succeed({
+              exec: () => Effect.void,
+              query: () => Effect.succeed([]),
+              execBatch: () => Effect.void,
+              extensionExists: () => Effect.succeed(false),
+              copyToCsv: () => Effect.succeed(new Uint8Array()),
+              queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
+            }),
+        }),
+      );
       const failure = yield* stackStart(
         flags({ stack: Option.some("feature"), stackId: Option.some("e".repeat(64)) }),
-      ).pipe(Effect.flip);
+      ).pipe(Effect.flip, Effect.provide(layer));
       expect(failure.message).toContain("cannot be used together");
       expect(resolved).toBe(false);
       expect(created).toBe(false);
       expect(setup.telemetry.flushed).toBe(true);
-    }).pipe(
-      Effect.provide(layer),
-      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
-    );
+    });
   });
 });
 
 describe("stack start parser", () => {
   it.live("records the wired command identity with a fresh run id per invocation", () => {
-    const root = project();
-    const analytics = mockContextualAnalytics();
-    const processControl = mockProcessControl();
-    const output = mockOutput();
-    const stack = fakeStack("e".repeat(64), () => Effect.succeed(status("e".repeat(64))));
-    const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
-    const command = stackStartCommand.pipe(
-      Command.provide(commandRuntimeLayer(["stack", "start"])),
-      Command.provide(
-        Layer.mergeAll(setup.layer, output.layer, analytics.layer, processControl.layer),
-      ),
-    );
-    const run = Command.runWith(command, { version: "0.0.0-test" })([]);
-    const runtime = Layer.mergeAll(BunServices.layer, CliOutput.layer(textCliOutputFormatter()));
-
     return Effect.gen(function* () {
+      const root = yield* project();
+      const analytics = mockContextualAnalytics();
+      const processControl = mockProcessControl();
+      const output = mockOutput();
+      const stack = fakeStack("e".repeat(64), () => Effect.succeed(status("e".repeat(64))));
+      const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
+      const command = stackStartCommand.pipe(
+        Command.provide(commandRuntimeLayer(["stack", "start"])),
+        Command.provide(
+          Layer.mergeAll(setup.layer, output.layer, analytics.layer, processControl.layer),
+        ),
+      );
+      const run = Command.runWith(command, { version: "0.0.0-test" })([]);
+      const runtime = Layer.mergeAll(BunServices.layer, CliOutput.layer(textCliOutputFormatter()));
+
       yield* run.pipe(Effect.provide(runtime));
       yield* run.pipe(Effect.provide(runtime));
       const events = analytics.captured.filter((event) => event.event === "cli_command_executed");
@@ -947,7 +961,7 @@ describe("stack start parser", () => {
       expect(events[0]?.properties.command_run_id).toBeDefined();
       expect(events[1]?.properties.command_run_id).toBeDefined();
       expect(events[0]?.properties.command_run_id).not.toBe(events[1]?.properties.command_run_id);
-    }).pipe(Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))));
+    });
   });
 
   it.live("parses --stack and --runtime through the command", () => {
@@ -992,22 +1006,27 @@ describe("stack start parser", () => {
   });
 
   it.live("rejects a root legacy output value before resolving the stack target", () => {
-    const root = project();
-    let resolved = false;
-    const setup = handlerLayer({
-      root,
-      target: { projectRoot: root },
-      stack: fakeStack("a".repeat(64), () => Effect.succeed(status("a".repeat(64)))),
-    });
-    const target = Layer.succeed(StackTargetResolver, {
-      resolve: () =>
-        Effect.sync(() => {
-          resolved = true;
-          return { projectRoot: root };
-        }),
-    });
     return Effect.gen(function* () {
-      const failure = yield* stackStart(flags({ exclude: ["bogus"] })).pipe(Effect.flip);
+      const root = yield* project();
+      let resolved = false;
+      const setup = handlerLayer({
+        root,
+        target: { projectRoot: root },
+        stack: fakeStack("a".repeat(64), () => Effect.succeed(status("a".repeat(64)))),
+      });
+      const target = Layer.succeed(StackTargetResolver, {
+        resolve: () =>
+          Effect.sync(() => {
+            resolved = true;
+            return { projectRoot: root };
+          }),
+      });
+      const failure = yield* stackStart(flags({ exclude: ["bogus"] })).pipe(
+        Effect.flip,
+        Effect.provide(
+          Layer.mergeAll(setup.layer, target, Layer.succeed(OutputFlag, Option.some("json"))),
+        ),
+      );
       expect(failure.message).toContain("--output");
       expect(failure.message).not.toContain("Unknown stack capabilities");
       expect(failure).toBeInstanceOf(StackCommandStartError);
@@ -1017,30 +1036,25 @@ describe("stack start parser", () => {
       }
       expect(resolved).toBe(false);
       expect(setup.telemetry.flushed).toBe(true);
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(setup.layer, target, Layer.succeed(OutputFlag, Option.some("json"))),
-      ),
-      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
-    );
+    });
   });
 
   it.live("rejects unknown and database exclusions before resolving the target", () => {
-    const root = project();
-    let resolved = false;
-    const setup = handlerLayer({
-      root,
-      target: { projectRoot: root },
-      stack: fakeStack("b".repeat(64), () => Effect.succeed(status("b".repeat(64)))),
-    });
-    const target = Layer.succeed(StackTargetResolver, {
-      resolve: () =>
-        Effect.sync(() => {
-          resolved = true;
-          return { projectRoot: root };
-        }),
-    });
     return Effect.gen(function* () {
+      const root = yield* project();
+      let resolved = false;
+      const setup = handlerLayer({
+        root,
+        target: { projectRoot: root },
+        stack: fakeStack("b".repeat(64), () => Effect.succeed(status("b".repeat(64)))),
+      });
+      const target = Layer.succeed(StackTargetResolver, {
+        resolve: () =>
+          Effect.sync(() => {
+            resolved = true;
+            return { projectRoot: root };
+          }),
+      });
       for (const { exclusion, message } of [
         { exclusion: "", message: 'Unknown stack capabilities in --exclude: ""' },
         {
@@ -1050,15 +1064,15 @@ describe("stack start parser", () => {
         { exclusion: "unknown", message: 'Unknown stack capabilities in --exclude: "unknown"' },
         { exclusion: "database", message: "database capability cannot be excluded" },
       ]) {
-        const failure = yield* stackStart(flags({ exclude: [exclusion] })).pipe(Effect.flip);
+        const failure = yield* stackStart(flags({ exclude: [exclusion] })).pipe(
+          Effect.flip,
+          Effect.provide(Layer.mergeAll(setup.layer, target)),
+        );
         expect(failure).toBeInstanceOf(StackCommandStartError);
         expect(failure.reason).toBe("flags");
         expect(failure.message).toContain(message);
       }
       expect(resolved).toBe(false);
-    }).pipe(
-      Effect.provide(Layer.mergeAll(setup.layer, target)),
-      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
-    );
+    });
   });
 });

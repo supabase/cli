@@ -65,6 +65,21 @@ describe("formatHostnameStatus", () => {
     );
   });
 
+  it("omits incomplete CNAME instructions when the origin is absent", () => {
+    const response = makeResponse({
+      status: "4_origin_setup_completed",
+      ssl: { status: "active", validation_records: [] },
+    });
+    const out = formatHostnameStatus({
+      ...response,
+      data: {
+        ...response.data,
+        result: { ...response.data.result, custom_origin_server: undefined },
+      },
+    });
+    expect(out).toBe("Custom hostname configuration complete, and ready for activation.");
+  });
+
   it("reports an initializing SSL state during verification", () => {
     const out = formatHostnameStatus(
       makeResponse({

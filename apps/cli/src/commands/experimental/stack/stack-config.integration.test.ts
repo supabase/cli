@@ -1,23 +1,15 @@
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- filesystem test fixture uses the host adapter at this boundary
-import { writeFileSync } from "node:fs";
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- filesystem test fixture uses the host adapter at this boundary
-import { join, win32 } from "node:path";
-
-import { BunServices } from "@effect/platform-bun";
+import { BunPath, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option, Path, Redacted } from "effect";
+import { Cause, Effect, FileSystem, Exit, Option, Path, Redacted } from "effect";
 import { renderCliConfigTemplate } from "../../../shared/init/project-init.templates.ts";
 
 import { StackConfigError, loadStackConfig } from "../../../command-internal/stack-config.ts";
-import {
-  createStackConfigProject,
-  stackConfigTempRoot,
-} from "../../../../tests/helpers/stack-config.ts";
+import { createStackConfigProject } from "../../../../tests/helpers/stack-config.ts";
 
 const load = (projectRoot: string) =>
   loadStackConfig(projectRoot).pipe(Effect.provide(BunServices.layer));
-function project(contents: string): string {
-  const root = createStackConfigProject(contents, {
+const project = (contents: string) =>
+  createStackConfigProject(contents, {
     sharedFunctionEnvironment: 'SHARED=shared\nOVERRIDE=shared\nQUOTED="hello # world" # comment\n',
     supabaseEnv: "CONFIG_FN=config-value\n",
     functionEnvironments: {
@@ -25,13 +17,12 @@ function project(contents: string): string {
       world: "WORLD=yes\n",
     },
     functionNames: ["hello", "world", "plain", "old.backup", "_shared"],
-  });
-  return root;
-}
+  }).pipe(Effect.provide(BunServices.layer));
 
 describe("loadStackConfig", () => {
   it.effect("maps service settings, secrets, function files, and explicit ports", () => {
-    const root = project(`
+    return Effect.gen(function* () {
+      const root = yield* project(`
 project_id = "stack-config-test"
 [api]
 port = 55421
@@ -69,7 +60,6 @@ import_map = "./functions/import_map.json"
 entrypoint = "./functions/hello/index.ts"
 env = { API_KEY = "env(CONFIG_FN)" }
 `);
-    return Effect.gen(function* () {
       const config = yield* load(root);
       expect(config.listeners).toMatchObject({
         api: { port: 55421 },
@@ -132,25 +122,26 @@ env = { API_KEY = "env(CONFIG_FN)" }
         max_client_conn: 222,
       });
       expect(config.security?.jwt?.signing?.kind).toBe("symmetric");
-    });
+    }).pipe(Effect.provide(BunServices.layer));
   });
 
   it.effect("rejects an enabled provider the stack cannot represent", () => {
-    const root = project(`project_id = "stack-config-figma"
+    return Effect.gen(function* () {
+      const root = yield* project(`project_id = "stack-config-figma"
 [auth.external.figma]
 enabled = true
 client_id = "figma-client"
 secret = "figma-secret"
 `);
-    return Effect.gen(function* () {
       const exit = yield* load(root).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("auth.external.figma");
-    });
+    }).pipe(Effect.provide(BunServices.layer));
   });
 
   it.effect("accepts hosted-only settings without forwarding them to the local stack", () => {
-    const root = project(`project_id = "stack-config-hosted-only"
+    return Effect.gen(function* () {
+      const root = yield* project(`project_id = "stack-config-hosted-only"
 [api]
 auto_expose_new_tables = true
 [api.tls]
@@ -163,7 +154,6 @@ max_namespaces = 9
 max_tables = 12
 max_catalogs = 4
 `);
-    return Effect.gen(function* () {
       const config = yield* load(root);
       if (config.capabilities?.rest === undefined || !("settings" in config.capabilities.rest))
         throw new Error("REST settings missing");
@@ -180,38 +170,43 @@ max_catalogs = 4
       )
         throw new Error("Storage settings missing");
       expect(config.capabilities.storage.settings).not.toHaveProperty("analytics");
-    });
+    }).pipe(Effect.provide(BunServices.layer));
   });
 
   it.effect("keeps disabled unsupported providers harmless", () => {
-    const root = project(`project_id = "stack-config-disabled-figma"
+    return Effect.gen(function* () {
+      const root = yield* project(`project_id = "stack-config-disabled-figma"
 [auth.external.figma]
 enabled = false
 `);
-    return Effect.gen(function* () {
       const config = yield* load(root);
       if (config.capabilities?.auth === undefined || !("settings" in config.capabilities.auth))
         throw new Error("auth settings missing");
       expect(Object.hasOwn(config.capabilities.auth.settings?.external ?? {}, "figma")).toBe(false);
-    });
+    }).pipe(Effect.provide(BunServices.layer));
   });
 
   it.effect("rejects an unset function env reference without dropping it", () => {
-    const root = project(`project_id = "stack-config-missing-env"
+    return Effect.gen(function* () {
+      const root = yield* project(`project_id = "stack-config-missing-env"
 [functions.hello]
 env = { TOKEN = "env(SUPABASE_STACK_TEST_MISSING_ENV)" }
 `);
-    return Effect.gen(function* () {
       const exit = yield* load(root).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("functions.hello.env");
-    });
+    }).pipe(Effect.provide(BunServices.layer));
   });
 
   it.effect("reports unsupported dotenv keys with the file and key only", () => {
-    const root = project('project_id = "stack-config-invalid-env-key"\n');
-    writeFileSync(join(root, "supabase", "functions", ".env"), "lowercase=value\nSECRET=value\n");
     return Effect.gen(function* () {
+      const root = yield* project('project_id = "stack-config-invalid-env-key"\n');
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.writeFileString(
+        path.join(root, "supabase", "functions", ".env"),
+        "lowercase=value\nSECRET=value\n",
+      );
       const exit = yield* load(root).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -223,13 +218,18 @@ env = { TOKEN = "env(SUPABASE_STACK_TEST_MISSING_ENV)" }
         expect(message).toContain("lowercase");
         expect(message).not.toContain("value");
       }
-    });
+    }).pipe(Effect.provide(BunServices.layer));
   });
 
   it.effect("sanitizes malformed dotenv parser errors", () => {
-    const root = project('project_id = "stack-config-malformed-env"\n');
-    writeFileSync(join(root, "supabase", "functions", ".env"), "BROKEN=value\n!=secret-value\n");
     return Effect.gen(function* () {
+      const root = yield* project('project_id = "stack-config-malformed-env"\n');
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.writeFileString(
+        path.join(root, "supabase", "functions", ".env"),
+        "BROKEN=value\n!=secret-value\n",
+      );
       const exit = yield* load(root).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -237,20 +237,21 @@ env = { TOKEN = "env(SUPABASE_STACK_TEST_MISSING_ENV)" }
         expect(String(exit.cause)).not.toContain("secret-value");
         expect(String(exit.cause)).not.toContain("StackConfigError: StackConfigError");
       }
-    });
+    }).pipe(Effect.provide(BunServices.layer));
   });
 
   it.effect("preserves platform-specific absolute signing paths", () => {
-    const root = project(
-      `project_id = "stack-config-windows-signing-path"
+    return Effect.gen(function* () {
+      const root = yield* project(
+        `project_id = "stack-config-windows-signing-path"
 [auth]
 signing_keys_path = 'C:\\keys\\signing.json'
 `,
-    );
-    return Effect.gen(function* () {
+      );
       const nativePath = yield* Path.Path;
+      const winPath = yield* Path.Path.pipe(Effect.provide(BunPath.layerWin32));
       const config = yield* loadStackConfig(root).pipe(
-        Effect.provideService(Path.Path, { ...nativePath, isAbsolute: win32.isAbsolute }),
+        Effect.provideService(Path.Path, { ...nativePath, isAbsolute: winPath.isAbsolute }),
       );
       expect(config.security?.jwt?.signing).toEqual({
         kind: "jwks-file",
@@ -260,13 +261,13 @@ signing_keys_path = 'C:\\keys\\signing.json'
   });
 
   it.effect("rejects encrypted secrets with a targeted diagnostic", () => {
-    const root = project(
-      `project_id = "stack-config-encrypted-secret"
+    return Effect.gen(function* () {
+      const root = yield* project(
+        `project_id = "stack-config-encrypted-secret"
 [auth]
 jwt_secret = "encrypted:not-a-real-ciphertext"
 `,
-    );
-    return Effect.gen(function* () {
+      );
       const exit = yield* load(root).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -278,9 +279,14 @@ jwt_secret = "encrypted:not-a-real-ciphertext"
   });
 
   it.effect("rejects encrypted function dotenv values", () => {
-    const root = project('project_id = "stack-config-encrypted-function-secret"\n');
-    writeFileSync(join(root, "supabase", "functions", ".env"), "DOTENV=encrypted:dotenv\n");
     return Effect.gen(function* () {
+      const root = yield* project('project_id = "stack-config-encrypted-function-secret"\n');
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.writeFileString(
+        path.join(root, "supabase", "functions", ".env"),
+        "DOTENV=encrypted:dotenv\n",
+      );
       const exit = yield* load(root).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -288,16 +294,16 @@ jwt_secret = "encrypted:not-a-real-ciphertext"
         expect(message).toContain("uses an encrypted secret");
         expect(message).not.toContain("encrypted:dotenv");
       }
-    });
+    }).pipe(Effect.provide(BunServices.layer));
   });
 
   it.effect("rejects function paths outside the function root", () => {
-    const root = project(`project_id = "stack-config-outside-function"
+    return Effect.gen(function* () {
+      const root = yield* project(`project_id = "stack-config-outside-function"
 
 [functions.hello]
 import_map = "./import_map.json"
 `);
-    return Effect.gen(function* () {
       const exit = yield* load(root).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("functions.hello.import_map");
@@ -307,12 +313,12 @@ import_map = "./import_map.json"
   it.effect(
     "rejects supabase-prefixed function paths that resolve outside the project root",
     () => {
-      const root = project(`project_id = "stack-config-nested-supabase"
+      return Effect.gen(function* () {
+        const root = yield* project(`project_id = "stack-config-nested-supabase"
 
 [functions.hello]
 entrypoint = "supabase/functions/hello/index.ts"
 `);
-      return Effect.gen(function* () {
         const exit = yield* load(root).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit))
@@ -322,13 +328,13 @@ entrypoint = "supabase/functions/hello/index.ts"
   );
 
   it.effect("resolves supabase-prefixed signing paths beneath the config directory", () => {
-    const root = project(
-      `project_id = "stack-config-signing-path"
+    return Effect.gen(function* () {
+      const root = yield* project(
+        `project_id = "stack-config-signing-path"
 [auth]
 signing_keys_path = "supabase/signing-keys.json"
 `,
-    );
-    return Effect.gen(function* () {
+      );
       const config = yield* load(root);
       expect(config.security?.jwt?.signing).toEqual({
         kind: "jwks-file",
@@ -338,8 +344,8 @@ signing_keys_path = "supabase/signing-keys.json"
   });
 
   it.effect("lets the stack runtime resolve the API port for Studio's default URL", () => {
-    const root = project('project_id = "stack-config-studio-default"\n');
     return Effect.gen(function* () {
+      const root = yield* project('project_id = "stack-config-studio-default"\n');
       const config = yield* load(root);
       if (config.capabilities?.studio === undefined || !("settings" in config.capabilities.studio))
         throw new Error("Studio settings missing");
@@ -351,12 +357,14 @@ signing_keys_path = "supabase/signing-keys.json"
   });
 
   it.effect("parses legacy dotenv expansion and colon assignments", () => {
-    const root = project('project_id = "stack-config-dotenv-compat"\n');
-    writeFileSync(
-      join(root, "supabase", "functions", ".env"),
-      "BASE=shared\nEXPANDED=$BASE\nCOLON: colon-value\n",
-    );
     return Effect.gen(function* () {
+      const root = yield* project('project_id = "stack-config-dotenv-compat"\n');
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.writeFileString(
+        path.join(root, "supabase", "functions", ".env"),
+        "BASE=shared\nEXPANDED=$BASE\nCOLON: colon-value\n",
+      );
       const config = yield* load(root);
       if (
         config.capabilities?.functions === undefined ||
@@ -368,25 +376,26 @@ signing_keys_path = "supabase/signing-keys.json"
       if (env === undefined) throw new Error("Function env missing");
       expect(Redacted.value(env.EXPANDED!)).toBe("shared");
       expect(Redacted.value(env.COLON!)).toBe("colon-value");
-    });
+    }).pipe(Effect.provide(BunServices.layer));
   });
 
   it.effect("keeps the gateway listener when API service is disabled for auth", () => {
-    const root = project(`project_id = "stack-config-gateway"
+    return Effect.gen(function* () {
+      const root = yield* project(`project_id = "stack-config-gateway"
 [api]
 enabled = false
 port = 55430
 [auth]
 enabled = true
 `);
-    return Effect.gen(function* () {
       const config = yield* load(root);
       expect(config.listeners?.api).toEqual({ port: 55430 });
     });
   });
 
   it.effect("keeps the gateway listener when analytics is enabled", () => {
-    const root = project(`project_id = "stack-config-analytics-gateway"
+    return Effect.gen(function* () {
+      const root = yield* project(`project_id = "stack-config-analytics-gateway"
 [api]
 enabled = false
 port = 55431
@@ -401,29 +410,30 @@ enabled = false
 [analytics]
 enabled = true
 `);
-    return Effect.gen(function* () {
       const config = yield* load(root);
       expect(config.listeners?.api).toEqual({ port: 55431 });
     });
   });
 
-  it.effect("keeps disabled functions capability free of settings", () => {
-    const root = project(`project_id = "stack-config-disabled-functions"
+  it.effect("keeps nested settings on a disabled functions capability", () => {
+    return Effect.gen(function* () {
+      const root = yield* project(`project_id = "stack-config-disabled-functions"
 [edge_runtime]
 enabled = false
 `);
-    return Effect.gen(function* () {
       const config = yield* load(root);
-      expect(config.capabilities?.functions).toEqual(expect.objectContaining({ enabled: false }));
+      expect(config.capabilities?.functions).toEqual(
+        expect.objectContaining({ enabled: false, settings: expect.any(Object) }),
+      );
     });
   });
 
   it.effect("leaves listeners absent when ports are omitted", () => {
-    const root = project(`project_id = "stack-config-defaults"
+    return Effect.gen(function* () {
+      const root = yield* project(`project_id = "stack-config-defaults"
 [edge_runtime]
 enabled = true
 `);
-    return Effect.gen(function* () {
       const config = yield* load(root);
       expect(config.listeners).toEqual({});
       expect(config.listeners?.functionsInspector).toBeUndefined();
@@ -433,8 +443,8 @@ enabled = true
   });
 
   it.effect("loads the actual initialized stack config template", () => {
-    const root = project(renderCliConfigTemplate("stack-config-init", false));
     return Effect.gen(function* () {
+      const root = yield* project(renderCliConfigTemplate("stack-config-init", false));
       const config = yield* load(root);
       expect(config.listeners?.api).toEqual({ port: 54321 });
       expect(config.listeners?.database).toEqual({ port: 54322 });
@@ -446,32 +456,42 @@ enabled = true
   });
 
   it.effect("ignores unresolved function env references when edge runtime is disabled", () => {
-    const root = project(`project_id = "stack-config-disabled-functions-env"
+    return Effect.gen(function* () {
+      const root = yield* project(`project_id = "stack-config-disabled-functions-env"
 [edge_runtime]
 enabled = false
 [functions.hello]
 env = { TOKEN = "env(SUPABASE_STACK_TEST_DISABLED_MISSING_ENV)" }
 `);
-    return Effect.gen(function* () {
       const config = yield* load(root);
-      expect(config.capabilities?.functions).toEqual(expect.objectContaining({ enabled: false }));
+      expect(config.capabilities?.functions).toEqual(
+        expect.objectContaining({ enabled: false, settings: expect.any(Object) }),
+      );
     });
   });
 
   it.effect("does not read disabled edge runtime dotenv files", () => {
-    const root = project(`project_id = "stack-config-disabled-dotenv"
+    return Effect.gen(function* () {
+      const root = yield* project(`project_id = "stack-config-disabled-dotenv"
 [edge_runtime]
 enabled = false
 `);
-    writeFileSync(join(root, "supabase", "functions", ".env"), "lowercase=value\n");
-    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.writeFileString(
+        path.join(root, "supabase", "functions", ".env"),
+        "lowercase=value\n",
+      );
       const config = yield* load(root);
-      expect(config.capabilities?.functions).toEqual(expect.objectContaining({ enabled: false }));
-    });
+      expect(config.capabilities?.functions).toEqual(
+        expect.objectContaining({ enabled: false, settings: expect.any(Object) }),
+      );
+    }).pipe(Effect.provide(BunServices.layer));
   });
 
   it.effect("accepts the initialized disabled service listeners with explicit ports", () => {
-    const root = project(`project_id = "stack-config-disabled-listeners"
+    return Effect.gen(function* () {
+      const root = yield* project(`project_id = "stack-config-disabled-listeners"
 [api]
 enabled = false
 port = 55431
@@ -500,7 +520,6 @@ inspector_port = 55438
 [analytics]
 enabled = false
 `);
-    return Effect.gen(function* () {
       const config = yield* load(root);
       expect(config.listeners).toEqual({
         api: { enabled: false },
@@ -516,8 +535,9 @@ enabled = false
   });
 
   it.effect("uses default stack settings when no project config exists", () => {
-    const root = stackConfigTempRoot.current;
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-config-" });
       const config = yield* loadStackConfig(root);
       expect(config.listeners).toEqual({});
       expect(config.capabilities?.database).toMatchObject({ settings: { health_timeout: "2m" } });

@@ -1,9 +1,9 @@
-import type { ApiKeyResponse } from "@supabase/api/effect";
+import type { ApiKeyResponse_Output } from "@supabase/api/effect";
 
 import { apiKeysToEnv } from "../../command-internal/api-keys.format.ts";
 import { type DbConfig, toPostgresUrl } from "./bootstrap.pgconfig.ts";
 
-type ApiKey = typeof ApiKeyResponse.Type;
+type ApiKey = typeof ApiKeyResponse_Output.Type;
 
 const SUPABASE_SERVICE_ROLE_KEY = "SUPABASE_SERVICE_ROLE_KEY";
 const SUPABASE_ANON_KEY = "SUPABASE_ANON_KEY";
