@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Deferred, Effect, Exit } from "effect";
+import { Cause, Deferred, Effect, Exit, Predicate } from "effect";
 import type { BackendEndpoint } from "../gateway/Gateway.ts";
 import { StackRuntimeError, type StackError } from "../public/Errors.ts";
 import { ready } from "./CapabilityState.ts";
@@ -26,8 +26,8 @@ describe("operation settlement", () => {
         result,
       });
       const next = settlement.snapshot.capabilities.get("rest");
-      expect(next?._tag).toBe("ready");
-      if (next?._tag === "ready") {
+      expect(Predicate.isTagged("ready")(next)).toBe(true);
+      if (Predicate.isTagged("ready")(next)) {
         expect(next.root).toBe(false);
         expect(next.traffic).toBe(3);
         expect(next.endpoint).toEqual({ _tag: "unresolved" });
@@ -51,7 +51,7 @@ describe("operation settlement", () => {
       });
       expect(settlement.snapshot).toBe(snapshot);
       expect(settlement.snapshot.capabilities.get("rest")).toBe(newer);
-      if (settlement.notification._tag === "endpoint") {
+      if (Predicate.isTagged("endpoint")(settlement.notification)) {
         expect(settlement.notification.completion).toBe(endpoint);
         expect(settlement.notification.result).toEqual(result);
       } else expect.fail("expected endpoint notification");
@@ -79,7 +79,7 @@ describe("operation settlement", () => {
         result: { _tag: "succeeded" },
       });
       expect(settlement.snapshot).toBe(snapshot);
-      if (settlement.notification._tag === "lifecycle") {
+      if (Predicate.isTagged("lifecycle")(settlement.notification)) {
         expect(settlement.notification.completion).toBe(oldCompletion);
         expect(settlement.notification.result).toEqual(Exit.void);
         expect(Exit.isSuccess(settlement.notification.result)).toBe(true);
@@ -108,7 +108,7 @@ describe("operation settlement", () => {
         result: { _tag: "succeeded" },
       });
       expect(settlement.snapshot.stack).toEqual({ _tag: "stop-required", cause });
-      if (settlement.notification._tag === "lifecycle")
+      if (Predicate.isTagged("lifecycle")(settlement.notification))
         expect(settlement.notification.result).toEqual(Exit.failCause(cause));
       else expect.fail("expected lifecycle notification");
     }),

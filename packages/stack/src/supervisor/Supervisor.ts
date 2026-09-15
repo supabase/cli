@@ -201,13 +201,13 @@ const mapCleanupError = (error: unknown): StackError => {
 };
 
 const combineCleanupOutcome = (left: CleanupOutcome, right: CleanupOutcome): CleanupOutcome =>
-  left._tag === "proven" && right._tag === "proven"
+  Predicate.isTagged(left, "proven") && Predicate.isTagged(right, "proven")
     ? { _tag: "proven" }
     : {
         _tag: "unproven",
         cause: Cause.combine(
-          left._tag === "unproven" ? left.cause : Cause.empty,
-          right._tag === "unproven" ? right.cause : Cause.empty,
+          Predicate.isTagged(left, "unproven") ? left.cause : Cause.empty,
+          Predicate.isTagged(right, "unproven") ? right.cause : Cause.empty,
         ),
       };
 
@@ -255,20 +255,24 @@ export const makeSupervisor = (
     type ActiveLifecycle = Readonly<{ kind: LifecycleKind; result: LifecycleResult }>;
     const activeCommand = (): Effect.Effect<ActiveLifecycle | undefined> =>
       Ref.get(machine).pipe(
-        Effect.map(({ stack }) => {
-          switch (stack._tag) {
-            case "starting":
-              return { kind: "start", result: stack.completion };
-            case "start-recovery":
-              return { kind: "start", result: stack.completion };
-            case "stopping":
-              return { kind: "stop", result: stack.completion };
-            case "destroying":
-              return { kind: "destroy", result: stack.completion };
-            default:
-              return undefined;
-          }
-        }),
+        Effect.map(({ stack }) =>
+          Match.value(stack).pipe(
+            Match.tag("starting", "start-recovery", (state) => ({
+              kind: "start" as const,
+              result: state.completion,
+            })),
+            Match.when({ _tag: "stopping" }, (state) => ({
+              kind: "stop" as const,
+              result: state.completion,
+            })),
+            Match.when({ _tag: "destroying" }, (state) => ({
+              kind: "destroy" as const,
+              result: state.completion,
+            })),
+            Match.tag("stopped", "running", "stop-required", "destroy-required", () => undefined),
+            Match.exhaustive,
+          ),
+        ),
       );
     type ActivationHandler = (
       capability: CapabilityName,
@@ -402,7 +406,7 @@ export const makeSupervisor = (
           (snapshot) =>
             new Set(
               [...snapshot.capabilities].flatMap(([name, state]) =>
-                state._tag === "ready" ? [name] : [],
+                Predicate.isTagged(state, "ready") ? [name] : [],
               ),
             ),
         ),
@@ -413,7 +417,9 @@ export const makeSupervisor = (
           (snapshot) =>
             new Set(
               [...snapshot.capabilities].flatMap(([name, state]) =>
-                state._tag === "ready" || state._tag === "starting" ? [name] : [],
+                Predicate.isTagged(state, "ready") || Predicate.isTagged(state, "starting")
+                  ? [name]
+                  : [],
               ),
             ),
         ),
@@ -437,11 +443,11 @@ export const makeSupervisor = (
         const capabilities = new Map(snapshot.capabilities);
         const completions: Array<Deferred.Deferred<Exit.Exit<void, StackError>, never>> = [];
         for (const [name, state] of capabilities) {
-          if (state._tag === "dormant" && names.has(name))
+          if (Predicate.isTagged(state, "dormant") && names.has(name))
             capabilities.set(name, ready(state.sessionId, state.traffic, state.root));
           else if (
-            state._tag === "starting" &&
-            state.completion._tag === "workload" &&
+            Predicate.isTagged(state, "starting") &&
+            Predicate.isTagged(state.completion, "workload") &&
             names.has(name)
           ) {
             completions.push(state.completion.deferred);
@@ -471,8 +477,8 @@ export const makeSupervisor = (
             const state = capabilities.get(name);
             if (
               name !== activationOwner &&
-              state?._tag === "starting" &&
-              state.completion._tag === "activation"
+              Predicate.isTagged(state, "starting") &&
+              Predicate.isTagged(state.completion, "activation")
             )
               capabilities.set(name, promoteStartingPrior(state));
           }
@@ -494,7 +500,7 @@ export const makeSupervisor = (
           const claimed: Array<ClaimedWorkload> = [];
           for (const name of names) {
             const current = capabilities.get(name);
-            if (current?._tag !== "dormant") continue;
+            if (!Predicate.isTagged(current, "dormant")) continue;
             const completion = yield* Deferred.make<Exit.Exit<void, StackError>, never>();
             claimed.push({ name, completion, prior: current });
             capabilities.set(
@@ -525,31 +531,35 @@ export const makeSupervisor = (
         for (const entry of claimed) {
           const current = capabilities.get(entry.name);
           if (
-            current?._tag === "starting" &&
-            current.completion._tag === "workload" &&
+            Predicate.isTagged(current, "starting") &&
+            Predicate.isTagged(current.completion, "workload") &&
             current.completion.deferred === entry.completion
           ) {
             capabilities.set(
               entry.name,
-              cleanup._tag === "proven"
-                ? dormant(entry.prior.sessionId, current.traffic, entry.prior.root)
-                : cleanupFailed(current, cleanup.cause),
+              Predicate.isTagged(cleanup, "unproven")
+                ? cleanupFailed(current, cleanup.cause)
+                : dormant(entry.prior.sessionId, current.traffic, entry.prior.root),
             );
             completions.push(entry.completion);
-          } else if (current?._tag === "ready") {
+          } else if (Predicate.isTagged(current, "ready")) {
             capabilities.set(
               entry.name,
-              cleanup._tag === "proven"
-                ? dormantFromReady(current)
-                : cleanupFailed(current, cleanup.cause),
+              Predicate.isTagged(cleanup, "unproven")
+                ? cleanupFailed(current, cleanup.cause)
+                : dormantFromReady(current),
             );
           }
         }
-        if (cleanup._tag === "unproven")
+        if (Predicate.isTagged(cleanup, "unproven"))
           for (const name of affected) {
             if (name === capability) continue;
             const current = capabilities.get(name);
-            if (current?._tag !== "starting" || current.completion._tag !== "activation") continue;
+            if (
+              !Predicate.isTagged(current, "starting") ||
+              !Predicate.isTagged(current.completion, "activation")
+            )
+              continue;
             capabilities.set(name, cleanupFailed(current, cleanup.cause));
             activationCompletions.push(
               Deferred.succeed(current.completion.deferred, Exit.failCause(cleanup.cause)),
@@ -557,22 +567,25 @@ export const makeSupervisor = (
           }
         const currentRoot = capabilities.get(capability);
         const savedActivationRoot =
-          currentRoot?._tag === "starting" && currentRoot.completion._tag === "activation"
+          Predicate.isTagged(currentRoot, "starting") &&
+          Predicate.isTagged(currentRoot.completion, "activation")
             ? currentRoot.prior.root
             : activationPriorRoot;
-        if (currentRoot?._tag === "starting" && currentRoot.completion._tag === "activation")
+        if (
+          Predicate.isTagged(currentRoot, "starting") &&
+          Predicate.isTagged(currentRoot.completion, "activation")
+        )
           capabilities.set(
             capability,
-            cleanup._tag === "proven"
-              ? restoreStarting(currentRoot)
-              : cleanupFailed(currentRoot, cleanup.cause),
+            Predicate.isTagged(cleanup, "unproven")
+              ? cleanupFailed(currentRoot, cleanup.cause)
+              : restoreStarting(currentRoot),
           );
-        if (currentRoot?._tag === "ready" && savedActivationRoot !== undefined)
+        if (Predicate.isTagged(currentRoot, "ready") && savedActivationRoot !== undefined)
           capabilities.set(capability, { ...currentRoot, root: savedActivationRoot });
-        const next =
-          cleanup._tag === "unproven"
-            ? stopRecoverySnapshot({ ...snapshot, capabilities }, cleanup.cause)
-            : { ...snapshot, capabilities };
+        const next = Predicate.isTagged(cleanup, "unproven")
+          ? stopRecoverySnapshot({ ...snapshot, capabilities }, cleanup.cause)
+          : { ...snapshot, capabilities };
         yield* Ref.set(machine, next);
         yield* Effect.forEach(completions, (completion) => Deferred.succeed(completion, result), {
           discard: true,
@@ -603,8 +616,17 @@ export const makeSupervisor = (
       Ref.update(machine, (snapshot) => {
         const capabilities = new Map(snapshot.capabilities);
         for (const [name, state] of capabilities) {
-          if (state._tag === "disabled" || state._tag === "stopped") continue;
-          capabilities.set(name, { ...state, root: names.has(name) });
+          capabilities.set(
+            name,
+            Match.value(state).pipe(
+              Match.tag("disabled", "stopped", (value) => value),
+              Match.tag("dormant", "starting", "ready", "stopping", "cleanup-failed", (value) => ({
+                ...value,
+                root: names.has(name),
+              })),
+              Match.exhaustive,
+            ),
+          );
         }
         return { ...snapshot, capabilities };
       });
@@ -629,7 +651,8 @@ export const makeSupervisor = (
         const snapshot = yield* Ref.get(machine);
         const capabilities = new Map(snapshot.capabilities);
         for (const [name, state] of capabilities) {
-          if (state._tag !== "ready" && state._tag !== "cleanup-failed") continue;
+          if (!Predicate.isTagged(state, "ready") && !Predicate.isTagged(state, "cleanup-failed"))
+            continue;
           const completion = yield* Deferred.make<Exit.Exit<void, StackError>, never>();
           capabilities.set(name, beginStopping(state, Symbol("cleanup"), completion));
         }
@@ -643,7 +666,7 @@ export const makeSupervisor = (
         const capabilities = new Map(snapshot.capabilities);
         const completions: Array<Deferred.Deferred<Exit.Exit<void, StackError>, never>> = [];
         for (const [name, state] of capabilities) {
-          if (state._tag !== "stopping") continue;
+          if (!Predicate.isTagged(state, "stopping")) continue;
           const next: CapabilityState = Exit.isSuccess(result)
             ? { _tag: "stopped" }
             : cleanupFailed(state, result.cause);
@@ -663,7 +686,7 @@ export const makeSupervisor = (
       Ref.update(machine, (snapshot) => {
         const capabilities = new Map(snapshot.capabilities);
         for (const [name, state] of capabilities)
-          if (state._tag === "dormant") capabilities.set(name, { _tag: "stopped" });
+          if (Predicate.isTagged(state, "dormant")) capabilities.set(name, { _tag: "stopped" });
         return { ...snapshot, capabilities };
       });
     const completeDormantCleanup = (): Effect.Effect<void> =>
@@ -679,11 +702,15 @@ export const makeSupervisor = (
           const capabilities = new Map(snapshot.capabilities);
           const completions: Array<Deferred.Deferred<Exit.Exit<void, StackError>, never>> = [];
           for (const [name, state] of capabilities) {
-            if (state._tag !== "starting" || state.completion._tag !== "workload") continue;
+            if (
+              !Predicate.isTagged(state, "starting") ||
+              !Predicate.isTagged(state.completion, "workload")
+            )
+              continue;
             completions.push(state.completion.deferred);
             capabilities.set(
               name,
-              cleanup._tag === "proven"
+              Predicate.isTagged(cleanup, "proven")
                 ? durable === "stopped"
                   ? { _tag: "stopped" }
                   : state.prior
@@ -755,14 +782,14 @@ export const makeSupervisor = (
                   plan !== undefined &&
                   publicPhase(snapshot.stack) === "running" &&
                   !isTransitioning(snapshot.stack) &&
-                  currentControl?._tag === "ready" &&
-                  currentControl.retirement._tag === "armed" &&
+                  Predicate.isTagged(currentControl, "ready") &&
+                  Predicate.isTagged(currentControl.retirement, "armed") &&
                   currentControl.retirement.epoch === epoch &&
                   canRetire(plan, roots, capability);
                 if (!eligible) {
                   if (
-                    currentControl?._tag === "ready" &&
-                    currentControl.retirement._tag === "armed" &&
+                    Predicate.isTagged(currentControl, "ready") &&
+                    Predicate.isTagged(currentControl.retirement, "armed") &&
                     currentControl.retirement.epoch === epoch
                   )
                     yield* Ref.set(machine, {
@@ -775,7 +802,7 @@ export const makeSupervisor = (
                   return false;
                 }
                 const current = snapshot.capabilities.get(capability);
-                if (current?._tag !== "ready") return false;
+                if (!Predicate.isTagged(current, "ready")) return false;
                 const stopping = beginStopping(current, operation, completion, false);
                 yield* Ref.set(machine, {
                   ...snapshot,
@@ -826,12 +853,12 @@ export const makeSupervisor = (
         const timeout = idleTimeout(yield* Ref.get(idleTimeouts), plan, capability);
         if (timeout === false) return;
         const snapshot = yield* Ref.get(machine);
-        if (snapshot.stack._tag !== "running") return;
+        if (!Predicate.isTagged(snapshot.stack, "running")) return;
         const current = snapshot.capabilities.get(capability);
         if (
-          current?._tag !== "ready" ||
+          !Predicate.isTagged(current, "ready") ||
           current.traffic !== 0 ||
-          current.retirement._tag === "armed" ||
+          Predicate.isTagged(current.retirement, "armed") ||
           !canRetire(plan, yield* rootSet(), capability)
         )
           return;
@@ -856,7 +883,7 @@ export const makeSupervisor = (
             );
             const latest = yield* Ref.get(machine);
             const current = latest.capabilities.get(capability);
-            if (current?._tag === "ready")
+            if (Predicate.isTagged(current, "ready"))
               yield* Ref.set(machine, {
                 ...latest,
                 capabilities: new Map(latest.capabilities).set(capability, {
@@ -891,7 +918,10 @@ export const makeSupervisor = (
           const timers: Array<Fiber.Fiber<void, unknown>> = [];
           const capabilities = new Map(snapshot.capabilities);
           for (const [name, state] of capabilities) {
-            if (state._tag === "ready" && state.retirement._tag === "armed") {
+            if (
+              Predicate.isTagged(state, "ready") &&
+              Predicate.isTagged(state.retirement, "armed")
+            ) {
               timers.push(state.retirement.fiber);
               capabilities.set(name, { ...state, retirement: { _tag: "disarmed" } });
             }
@@ -914,10 +944,14 @@ export const makeSupervisor = (
             const snapshot = yield* Ref.get(machine);
             const current = snapshot.capabilities.get(capability);
             const entry =
-              current?._tag === "ready" && current.retirement._tag === "armed"
+              Predicate.isTagged(current, "ready") &&
+              Predicate.isTagged(current.retirement, "armed")
                 ? current.retirement.fiber
                 : undefined;
-            if (current?._tag === "ready" && current.retirement._tag === "armed")
+            if (
+              Predicate.isTagged(current, "ready") &&
+              Predicate.isTagged(current.retirement, "armed")
+            )
               yield* Ref.set(machine, {
                 ...snapshot,
                 capabilities: new Map(snapshot.capabilities).set(capability, {
@@ -926,7 +960,7 @@ export const makeSupervisor = (
                   retirement: { _tag: "disarmed" },
                 }),
               });
-            else if (current?._tag === "ready")
+            else if (Predicate.isTagged(current, "ready"))
               yield* Ref.set(machine, {
                 ...snapshot,
                 capabilities: new Map(snapshot.capabilities).set(
@@ -935,22 +969,21 @@ export const makeSupervisor = (
                 ),
               });
             else if (
-              current?._tag === "dormant" ||
-              current?._tag === "starting" ||
-              current?._tag === "stopping" ||
-              current?._tag === "cleanup-failed"
+              Predicate.isTagged(current, "dormant") ||
+              Predicate.isTagged(current, "starting") ||
+              Predicate.isTagged(current, "stopping") ||
+              Predicate.isTagged(current, "cleanup-failed")
             )
               yield* updateCapability(capability, (state) => {
                 if (state === undefined) return state;
-                switch (state._tag) {
-                  case "dormant":
-                  case "starting":
-                  case "stopping":
-                  case "cleanup-failed":
-                    return { ...state, traffic: state.traffic + 1 };
-                  default:
-                    return state;
-                }
+                return Match.value(state).pipe(
+                  Match.tag("dormant", "starting", "stopping", "cleanup-failed", (value) => ({
+                    ...value,
+                    traffic: value.traffic + 1,
+                  })),
+                  Match.tag("disabled", "stopped", "ready", (value) => value),
+                  Match.exhaustive,
+                );
               });
             return { fiber: entry, lease: { sessionId: snapshot.sessionId } };
           }),
@@ -968,16 +1001,21 @@ export const makeSupervisor = (
             const count = current !== undefined && "traffic" in current ? current.traffic : 0;
             yield* updateCapability(capability, (state) => {
               if (state === undefined) return state;
-              switch (state._tag) {
-                case "dormant":
-                case "starting":
-                case "ready":
-                case "stopping":
-                case "cleanup-failed":
-                  return { ...state, traffic: Math.max(0, count - 1) };
-                default:
-                  return state;
-              }
+              return Match.value(state).pipe(
+                Match.tag(
+                  "dormant",
+                  "starting",
+                  "ready",
+                  "stopping",
+                  "cleanup-failed",
+                  (value) => ({
+                    ...value,
+                    traffic: Math.max(0, count - 1),
+                  }),
+                ),
+                Match.tag("disabled", "stopped", (value) => value),
+                Match.exhaustive,
+              );
             });
             return count <= 1;
           }),
@@ -1123,7 +1161,7 @@ export const makeSupervisor = (
               const deferred = yield* Deferred.make<Exit.Exit<void, StackError>, never>();
               const snapshot = yield* Ref.get(machine);
               const admitted = command(snapshot.stack, kind, deferred);
-              if (admitted._tag === "rejected")
+              if (Predicate.isTagged(admitted, "rejected"))
                 return yield* new StackLifecycleConflictError({
                   stackId: options.stackId,
                   message:
@@ -1146,13 +1184,16 @@ export const makeSupervisor = (
                           cleanup: { _tag: "unproven" as const, cause: result.cause },
                           durable: "unsafe" as const,
                         };
-                    if (kind === "start" && operation._tag === "failed")
+                    if (kind === "start" && Predicate.isTagged(operation, "failed"))
                       yield* settleStartupFailures(
                         operation.cause,
                         operation.cleanup,
                         operation.durable,
                       );
-                    if (operation._tag === "failed" && (kind === "stop" || kind === "destroy"))
+                    if (
+                      Predicate.isTagged(operation, "failed") &&
+                      (kind === "stop" || kind === "destroy")
+                    )
                       yield* settleCapabilityCleanup(Exit.failCause(operation.cause));
                     yield* settleOwner({
                       _tag: "lifecycle",
@@ -1212,13 +1253,13 @@ export const makeSupervisor = (
                 cause: value.cause,
                 cleanup: { _tag: "unproven", cause: value.cause },
               };
-        if (first._tag === "prepared") {
+        if (Predicate.isTagged(first, "prepared")) {
           prepared = preparedExit(first.value);
           if (Exit.isFailure(prepared)) yield* Deferred.succeed(launchCancellation, undefined);
           launch = launchOutcome(yield* Fiber.await(launchFiber));
         } else {
           launch = launchOutcome(first.value);
-          if (launch._tag === "failed") {
+          if (Predicate.isTagged(launch, "failed")) {
             yield* Fiber.interrupt(preparedFiber);
             prepared = preparedExit(yield* Fiber.await(preparedFiber));
           } else {
@@ -1226,9 +1267,14 @@ export const makeSupervisor = (
           }
         }
         const mapSessionCleanup = (cleanup: SessionCleanupOutcome): CleanupOutcome =>
-          cleanup._tag === "proven"
-            ? { _tag: "proven" }
-            : { _tag: "unproven", cause: Cause.map(cleanup.cause, mapRuntimeError) };
+          Match.value(cleanup).pipe(
+            Match.when({ _tag: "proven" }, () => ({ _tag: "proven" as const })),
+            Match.when({ _tag: "unproven" }, (value) => ({
+              _tag: "unproven" as const,
+              cause: Cause.map(value.cause, mapRuntimeError),
+            })),
+            Match.exhaustive,
+          );
         if (Exit.isFailure(prepared)) {
           const closed = reservation.fresh
             ? yield* runtime.ingress.close.pipe(Effect.mapError(mapRuntimeError), Effect.exit)
@@ -1236,7 +1282,7 @@ export const makeSupervisor = (
           let cause: Cause.Cause<StackError> = Cause.map(prepared.cause, mapRuntimeError);
           if (Exit.isFailure(closed)) cause = Cause.combine(cause, closed.cause);
           let workloadCleanup: CleanupOutcome = { _tag: "proven" };
-          if (launch._tag === "started") {
+          if (Predicate.isTagged(launch, "started")) {
             workloadCleanup = mapSessionCleanup(yield* launch.launch.rollback);
           } else {
             const launchCause = Cause.map(launch.cause, mapRuntimeError);
@@ -1246,14 +1292,14 @@ export const makeSupervisor = (
           const cleanup: CleanupOutcome = Exit.isFailure(closed)
             ? { _tag: "unproven", cause: closed.cause }
             : workloadCleanup;
-          if (cleanup._tag === "unproven") cause = Cause.combine(cause, cleanup.cause);
+          if (Predicate.isTagged(cleanup, "unproven")) cause = Cause.combine(cause, cleanup.cause);
           return {
             _tag: "failed",
             cause,
             cleanup,
           } satisfies LifecycleLaunchResult;
         }
-        if (launch._tag === "failed") {
+        if (Predicate.isTagged(launch, "failed")) {
           const closed = reservation.fresh
             ? yield* runtime.ingress.close.pipe(Effect.mapError(mapRuntimeError), Effect.exit)
             : Exit.succeed(undefined);
@@ -1286,10 +1332,9 @@ export const makeSupervisor = (
           .pipe(Effect.exit);
         if (Exit.isFailure(opened)) {
           const rolledBack = yield* rollback;
-          const cause =
-            rolledBack._tag === "unproven"
-              ? Cause.combine(opened.cause, rolledBack.cause)
-              : opened.cause;
+          const cause = Predicate.isTagged(rolledBack, "unproven")
+            ? Cause.combine(opened.cause, rolledBack.cause)
+            : opened.cause;
           return {
             _tag: "failed",
             cause,
@@ -1389,7 +1434,7 @@ export const makeSupervisor = (
                   cleanup: { _tag: "unproven", cause: launched.cause },
                 } satisfies ActivationAttempt;
               const launchResult = launched.value;
-              if (launchResult._tag === "failed")
+              if (Predicate.isTagged(launchResult, "failed"))
                 return {
                   _tag: "failed",
                   cause: launchResult.cause,
@@ -1399,10 +1444,9 @@ export const makeSupervisor = (
               const activated = yield* runtime.activate(capability, input).pipe(Effect.exit);
               if (Exit.isFailure(activated)) {
                 const rolledBack = yield* launchResult.rollback;
-                const cause =
-                  rolledBack._tag === "unproven"
-                    ? Cause.combine(activated.cause, rolledBack.cause)
-                    : activated.cause;
+                const cause = Predicate.isTagged(rolledBack, "unproven")
+                  ? Cause.combine(activated.cause, rolledBack.cause)
+                  : activated.cause;
                 return {
                   _tag: "failed",
                   cause,
@@ -1427,7 +1471,7 @@ export const makeSupervisor = (
                   cause: result.cause,
                   cleanup: { _tag: "unproven", cause: result.cause },
                 };
-            return outcome._tag === "failed"
+            return Predicate.isTagged(outcome, "failed")
               ? restoreActivationFailure(
                   capability,
                   claimed,
@@ -1439,7 +1483,7 @@ export const makeSupervisor = (
               : Effect.void;
           },
         );
-        if (attempt._tag === "failed") return yield* Effect.failCause(attempt.cause);
+        if (Predicate.isTagged(attempt, "failed")) return yield* Effect.failCause(attempt.cause);
         return attempt.value;
       });
 
@@ -1492,7 +1536,7 @@ export const makeSupervisor = (
       Effect.gen(function* () {
         const operation = activateOperation(
           owner.capability,
-          owner._tag === "endpoint" ? owner.priorRoot : undefined,
+          Predicate.isTagged(owner, "endpoint") ? owner.priorRoot : undefined,
         );
         const fiber = execution
           .withPermit(
@@ -1509,10 +1553,9 @@ export const makeSupervisor = (
                     : Effect.fail(
                         new StackLifecycleConflictError({
                           stackId: options.stackId,
-                          message:
-                            owner._tag === "endpoint"
-                              ? "Endpoint activation was superseded by a lifecycle transition"
-                              : "Lazy activation was superseded by a lifecycle transition",
+                          message: Predicate.isTagged(owner, "endpoint")
+                            ? "Endpoint activation was superseded by a lifecycle transition"
+                            : "Lazy activation was superseded by a lifecycle transition",
                         }),
                       ),
                 ),
@@ -1521,7 +1564,7 @@ export const makeSupervisor = (
           .pipe(
             Effect.onExit((result) =>
               settleOwner(
-                owner._tag === "endpoint"
+                Predicate.isTagged(owner, "endpoint")
                   ? { ...owner, result: Exit.map(result, (value) => value.endpoint) }
                   : { ...owner, result },
               ),
@@ -1665,18 +1708,26 @@ export const makeSupervisor = (
             }),
           ),
         );
-        if (token._tag === "deferred")
-          return yield* Deferred.await(token.result).pipe(Effect.flatMap(joinExit));
-        if (token._tag === "await") {
-          const completed = yield* Deferred.await(token.result);
-          if (Exit.isFailure(completed)) return yield* Effect.failCause(completed.cause);
-          return yield* activate(capability);
-        }
-        if (token._tag === "endpoint") {
-          const endpoint = yield* Deferred.await(token.result).pipe(Effect.flatMap(joinExit));
-          return { capability: token.capability, endpoint };
-        }
-        return yield* joinExit(token.result);
+        return yield* Match.value(token).pipe(
+          Match.when({ _tag: "deferred" }, (event) =>
+            Deferred.await(event.result).pipe(Effect.flatMap(joinExit)),
+          ),
+          Match.when({ _tag: "await" }, (event) =>
+            Effect.gen(function* () {
+              const completed = yield* Deferred.await(event.result);
+              if (Exit.isFailure(completed)) return yield* Effect.failCause(completed.cause);
+              return yield* activate(capability);
+            }),
+          ),
+          Match.when({ _tag: "endpoint" }, (event) =>
+            Deferred.await(event.result).pipe(
+              Effect.flatMap(joinExit),
+              Effect.map((endpoint) => ({ capability: event.capability, endpoint })),
+            ),
+          ),
+          Match.when({ _tag: "exit" }, (event) => joinExit(event.result)),
+          Match.exhaustive,
+        );
       });
     yield* Deferred.succeed(activationHandler, activate);
 
@@ -1685,7 +1736,7 @@ export const makeSupervisor = (
     }): Effect.Effect<CommandResult, StackError> =>
       Effect.gen(function* () {
         const admitted = (yield* Ref.get(machine)).stack;
-        if (admitted._tag === "start-recovery")
+        if (Predicate.isTagged(admitted, "start-recovery"))
           return {
             _tag: "failed",
             cause: admitted.cause,
@@ -1693,8 +1744,8 @@ export const makeSupervisor = (
             durable: "unsafe",
           } satisfies CommandResult;
         const freshSession =
-          admitted._tag === "starting" &&
-          admitted.prior._tag === "stopped" &&
+          Predicate.isTagged(admitted, "starting") &&
+          Predicate.isTagged(admitted.prior, "stopped") &&
           admitted.prior.session === "uninitialized";
         if (freshSession) {
           const cleaned = yield* backend.cleanup.pipe(Effect.exit);
@@ -1716,7 +1767,7 @@ export const makeSupervisor = (
             durable: "unsafe",
           } satisfies CommandResult;
         }
-        if (started.value._tag === "failed") {
+        if (Predicate.isTagged(started.value, "failed")) {
           yield* settleStartupFailures(
             started.value.cause,
             started.value.cleanup,
@@ -1770,7 +1821,7 @@ export const makeSupervisor = (
             if (Exit.isFailure(state)) return;
             const machineState = (yield* Ref.get(machine)).stack;
             if (
-              machineState._tag === "stopped" &&
+              Predicate.isTagged(machineState, "stopped") &&
               (state.value === undefined ||
                 state.value.desiredLifecycle === "stopped" ||
                 state.value.desiredLifecycle === "unconfigured")

@@ -1,4 +1,4 @@
-import { Cause, Data, Deferred, Effect, Exit, Ref, Semaphore } from "effect";
+import { Cause, Data, Deferred, Effect, Exit, Match, Ref, Semaphore } from "effect";
 import type { ExecutionPlan, PlannedWorkload } from "../model/ExecutionPlan.ts";
 import type { StackId } from "../public/StackId.ts";
 import {
@@ -134,10 +134,13 @@ export const makeSessionLauncher = (options: {
               const cleaned = yield* cleanup(attempted);
               return {
                 _tag: "failed",
-                cause:
-                  cleaned._tag === "unproven"
-                    ? combine(Cause.fail(failure), cleaned.cause)
-                    : Cause.fail(failure),
+                cause: Match.value(cleaned).pipe(
+                  Match.when({ _tag: "unproven" }, (value) =>
+                    combine(Cause.fail(failure), value.cause),
+                  ),
+                  Match.when({ _tag: "proven" }, () => Cause.fail(failure)),
+                  Match.exhaustive,
+                ),
                 cleanup: cleaned,
               } satisfies SessionLaunchOutcome;
             }
@@ -219,8 +222,11 @@ export const makeSessionLauncher = (options: {
           const cleaned = yield* cleanup(attempted);
           return {
             _tag: "failed",
-            cause:
-              cleaned._tag === "unproven" ? combine(outcome.cause, cleaned.cause) : outcome.cause,
+            cause: Match.value(cleaned).pipe(
+              Match.when({ _tag: "unproven" }, (value) => combine(outcome.cause, value.cause)),
+              Match.when({ _tag: "proven" }, () => outcome.cause),
+              Match.exhaustive,
+            ),
             cleanup: cleaned,
           } satisfies SessionLaunchOutcome;
         }),
@@ -228,9 +234,13 @@ export const makeSessionLauncher = (options: {
     const cleanupOrFail = (entries: ReadonlyArray<SessionWorkload>) =>
       cleanup(entries).pipe(
         Effect.flatMap((outcome) =>
-          outcome._tag === "proven"
-            ? Effect.void
-            : Effect.fail(new SessionCleanupError({ cause: outcome.cause })),
+          Match.value(outcome).pipe(
+            Match.when({ _tag: "proven" }, () => Effect.void),
+            Match.when({ _tag: "unproven" }, (value) =>
+              Effect.fail(new SessionCleanupError({ cause: value.cause })),
+            ),
+            Match.exhaustive,
+          ),
         ),
       );
     const stop = Effect.suspend(() => Ref.get(session).pipe(Effect.flatMap(cleanupOrFail)));

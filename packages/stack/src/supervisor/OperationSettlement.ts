@@ -1,4 +1,4 @@
-import { Cause, Deferred, Exit, Match } from "effect";
+import { Cause, Deferred, Exit, Match, Predicate } from "effect";
 import type { ActivationResult } from "../gateway/Gateway.ts";
 import type { GatewayActivationError, StackError } from "../public/Errors.ts";
 import type { CapabilityName } from "../public/Capability.ts";
@@ -91,18 +91,18 @@ export const matchesActivationOwner = (
 ): boolean => {
   const current = snapshot.capabilities.get(owner.capability);
   return Match.value(owner).pipe(
-    Match.when(
-      { _tag: "endpoint" },
+    Match.tag(
+      "endpoint",
       (event) =>
-        current?._tag === "ready" &&
-        current.endpoint._tag === "resolving" &&
+        Predicate.isTagged(current, "ready") &&
+        Predicate.isTagged(current.endpoint, "resolving") &&
         current.endpoint.deferred === event.endpoint,
     ),
-    Match.when(
-      { _tag: "activation" },
+    Match.tag(
+      "activation",
       (event) =>
-        current?._tag === "starting" &&
-        current.completion._tag === "activation" &&
+        Predicate.isTagged(current, "starting") &&
+        Predicate.isTagged(current.completion, "activation") &&
         current.completion.deferred === event.completion,
     ),
     Match.exhaustive,
@@ -113,81 +113,92 @@ export const stopRecoverySnapshot = (
   snapshot: SupervisorSnapshot,
   cause: Cause.Cause<StackError>,
 ): SupervisorSnapshot =>
-  snapshot.stack._tag === "running" ||
-  (snapshot.stack._tag === "starting" && snapshot.stack.prior._tag === "running")
-    ? {
-        ...snapshot,
-        stack:
-          snapshot.stack._tag === "starting"
-            ? {
-                _tag: "start-recovery",
-                cause,
-                attempt: snapshot.stack.attempt,
-                completion: snapshot.stack.completion,
-              }
-            : { _tag: "stop-required", cause },
-      }
-    : snapshot;
+  Match.value(snapshot.stack).pipe(
+    Match.tag("running", () => ({
+      ...snapshot,
+      stack: { _tag: "stop-required" as const, cause },
+    })),
+    Match.when({ _tag: "starting", prior: { _tag: "running" } }, (state) => ({
+      ...snapshot,
+      stack: {
+        _tag: "start-recovery" as const,
+        cause,
+        attempt: state.attempt,
+        completion: state.completion,
+      },
+    })),
+    Match.tag(
+      "stopped",
+      "stop-required",
+      "destroy-required",
+      "start-recovery",
+      "starting",
+      "stopping",
+      "destroying",
+      () => snapshot,
+    ),
+    Match.exhaustive,
+  );
 
 export const settleActivationOwner = (
   snapshot: SupervisorSnapshot,
   owner: ActivationSettlement,
 ): Settlement => {
-  const current = snapshot.capabilities.get(owner.capability);
-  if (
-    owner._tag === "endpoint" &&
-    current?._tag === "ready" &&
-    current.endpoint._tag === "resolving" &&
-    matchesActivationOwner(snapshot, owner)
-  ) {
-    const next: CapabilityState = Exit.isSuccess(owner.result)
-      ? { ...current, endpoint: { _tag: "resolved", endpoint: owner.result.value } }
-      : { ...current, root: owner.priorRoot, endpoint: { _tag: "unresolved" } };
-    return {
-      snapshot: {
+  const nextSnapshot = Match.value(owner).pipe(
+    Match.tag("endpoint", (event) => {
+      const current = snapshot.capabilities.get(event.capability);
+      if (
+        !Predicate.isTagged(current, "ready") ||
+        !Predicate.isTagged(current.endpoint, "resolving") ||
+        !matchesActivationOwner(snapshot, event)
+      ) {
+        return snapshot;
+      }
+      const next: CapabilityState = Exit.isSuccess(event.result)
+        ? { ...current, endpoint: { _tag: "resolved", endpoint: event.result.value } }
+        : { ...current, root: event.priorRoot, endpoint: { _tag: "unresolved" } };
+      return {
         ...snapshot,
-        capabilities: new Map(snapshot.capabilities).set(owner.capability, next),
-      },
-      notification: { _tag: "endpoint", completion: owner.endpoint, result: owner.result },
-      reconcile: "all-ready",
-    };
-  }
-  if (
-    owner._tag === "activation" &&
-    current?._tag === "starting" &&
-    current.completion._tag === "activation" &&
-    matchesActivationOwner(snapshot, owner)
-  ) {
-    const next = Exit.isSuccess(owner.result)
-      ? completeStarting(current, { _tag: "resolved", endpoint: owner.result.value.endpoint }, true)
-      : restoreStarting(current);
-    return {
-      snapshot: {
+        capabilities: new Map(snapshot.capabilities).set(event.capability, next),
+      };
+    }),
+    Match.tag("activation", (event) => {
+      const current = snapshot.capabilities.get(event.capability);
+      if (
+        !Predicate.isTagged(current, "starting") ||
+        !Predicate.isTagged(current.completion, "activation") ||
+        !matchesActivationOwner(snapshot, event)
+      ) {
+        return snapshot;
+      }
+      const next = Exit.isSuccess(event.result)
+        ? completeStarting(
+            current,
+            { _tag: "resolved", endpoint: event.result.value.endpoint },
+            true,
+          )
+        : restoreStarting(current);
+      return {
         ...snapshot,
-        capabilities: new Map(snapshot.capabilities).set(owner.capability, next),
-      },
-      notification: { _tag: "activation", completion: owner.completion, result: owner.result },
-      reconcile: "all-ready",
-    };
-  }
+        capabilities: new Map(snapshot.capabilities).set(event.capability, next),
+      };
+    }),
+    Match.exhaustive,
+  );
   const notification = Match.value(owner).pipe(
-    Match.when({ _tag: "endpoint" }, (event) => ({
+    Match.tag("endpoint", (event) => ({
       _tag: "endpoint" as const,
       completion: event.endpoint,
       result: event.result,
     })),
-    Match.when({ _tag: "activation" }, (event) => ({
+    Match.tag("activation", (event) => ({
       _tag: "activation" as const,
       completion: event.completion,
       result: event.result,
     })),
     Match.exhaustive,
   );
-  return {
-    snapshot,
-    notification,
-    reconcile: "all-ready",
-  };
+  return { snapshot: nextSnapshot, notification, reconcile: "all-ready" as const };
 };
 
 export const settleRetirementOwner = (
@@ -196,7 +207,7 @@ export const settleRetirementOwner = (
 ): Settlement => {
   const current = snapshot.capabilities.get(owner.capability);
   if (
-    current?._tag === "stopping" &&
+    Predicate.isTagged(current, "stopping") &&
     current.operation === owner.operation &&
     current.completion === owner.completion
   ) {
@@ -254,6 +265,35 @@ export const settleRetirementOwner = (
   };
 };
 
+const commandResultExit = (operation: CommandResult): Exit.Exit<void, StackError> =>
+  Predicate.isTagged(operation, "failed") ? Exit.failCause(operation.cause) : Exit.void;
+
+const settleStartingFailure = (
+  state: Extract<StackControlState, { readonly _tag: "starting" }>,
+  operation: Extract<CommandResult, { readonly _tag: "failed" }>,
+): StackControlState =>
+  Match.value(state.prior).pipe(
+    Match.tag("running", (prior) =>
+      Match.value(operation.cleanup).pipe(
+        Match.tag("unproven", () => ({ _tag: "stop-required" as const, cause: operation.cause })),
+        Match.tag("proven", () => prior),
+        Match.exhaustive,
+      ),
+    ),
+    Match.tag("stopped", () =>
+      Match.value(operation.cleanup).pipe(
+        Match.tag("proven", () =>
+          operation.durable === "stopped"
+            ? { _tag: "stopped" as const, session: "initialized" as const }
+            : { _tag: "stop-required" as const, cause: operation.cause },
+        ),
+        Match.tag("unproven", () => ({ _tag: "stop-required" as const, cause: operation.cause })),
+        Match.exhaustive,
+      ),
+    ),
+    Match.exhaustive,
+  );
+
 export const settleLifecycleOwner = (
   snapshot: SupervisorSnapshot,
   owner: LifecycleOwner,
@@ -267,49 +307,66 @@ export const settleLifecycleOwner = (
       notification: {
         _tag: "lifecycle",
         completion: owner.completion,
-        result: operation._tag === "succeeded" ? Exit.void : Exit.failCause(operation.cause),
+        result: commandResultExit(operation),
       },
       reconcile: "all-ready",
     };
-  const completion =
-    current._tag === "start-recovery"
-      ? Exit.failCause(
-          operation._tag === "succeeded"
-            ? current.cause
-            : Cause.combine(current.cause, operation.cause),
-        )
-      : operation._tag === "succeeded"
-        ? Exit.void
-        : Exit.failCause(operation.cause);
+  const completionCause = Match.value(current).pipe(
+    Match.tag("start-recovery", (state) =>
+      Match.value(operation).pipe(
+        Match.tag("succeeded", () => state.cause),
+        Match.tag("failed", (failure) => Cause.combine(state.cause, failure.cause)),
+        Match.exhaustive,
+      ),
+    ),
+    Match.tag("starting", () => undefined),
+    Match.tag("stopping", () => undefined),
+    Match.tag("destroying", () => undefined),
+    Match.exhaustive,
+  );
+  const completion: Exit.Exit<void, StackError> =
+    completionCause === undefined ? commandResultExit(operation) : Exit.failCause(completionCause);
   const next: StackControlState = Match.value(current).pipe(
-    Match.when({ _tag: "start-recovery" }, (state) => ({
+    Match.tag("start-recovery", (state) => ({
       _tag: "stop-required" as const,
-      cause:
-        operation._tag === "succeeded" ? state.cause : Cause.combine(state.cause, operation.cause),
+      cause: Match.value(operation).pipe(
+        Match.tag("succeeded", () => state.cause),
+        Match.tag("failed", (failure) => Cause.combine(state.cause, failure.cause)),
+        Match.exhaustive,
+      ),
     })),
-    Match.when({ _tag: "starting" }, (state) =>
-      operation._tag === "succeeded"
-        ? { _tag: "running" as const }
-        : state.prior._tag === "running"
-          ? operation.cleanup._tag === "unproven"
-            ? { _tag: "stop-required" as const, cause: operation.cause }
-            : state.prior
-          : operation.cleanup._tag === "proven" && operation.durable === "stopped"
-            ? { _tag: "stopped" as const, session: "initialized" as const }
-            : { _tag: "stop-required" as const, cause: operation.cause },
+    Match.tag("starting", (state) =>
+      Match.value(operation).pipe(
+        Match.tag("succeeded", () => ({ _tag: "running" as const })),
+        Match.tag("failed", (failure) => settleStartingFailure(state, failure)),
+        Match.exhaustive,
+      ),
     ),
-    Match.when({ _tag: "stopping" }, () =>
-      operation._tag === "succeeded"
-        ? { _tag: "stopped" as const, session: "initialized" as const }
-        : { _tag: "stop-required" as const, cause: operation.cause },
+    Match.tag("stopping", () =>
+      Match.value(operation).pipe(
+        Match.tag("succeeded", () => ({
+          _tag: "stopped" as const,
+          session: "initialized" as const,
+        })),
+        Match.tag("failed", (failure) => ({
+          _tag: "stop-required" as const,
+          cause: failure.cause,
+        })),
+        Match.exhaustive,
+      ),
     ),
-    Match.when({ _tag: "destroying" }, () =>
-      operation._tag === "succeeded"
-        ? { _tag: "stopped" as const, session: "initialized" as const }
-        : {
-            _tag: "destroy-required" as const,
-            evidence: { _tag: "failed" as const, cause: operation.cause },
-          },
+    Match.tag("destroying", () =>
+      Match.value(operation).pipe(
+        Match.tag("succeeded", () => ({
+          _tag: "stopped" as const,
+          session: "initialized" as const,
+        })),
+        Match.tag("failed", (failure) => ({
+          _tag: "destroy-required" as const,
+          evidence: { _tag: "failed" as const, cause: failure.cause },
+        })),
+        Match.exhaustive,
+      ),
     ),
     Match.exhaustive,
   );

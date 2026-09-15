@@ -1,4 +1,4 @@
-import { Match, type Cause, type Deferred, type Exit } from "effect";
+import { Match, Predicate, type Cause, type Deferred, type Exit } from "effect";
 import type { ExecutionPlan } from "../model/ExecutionPlan.ts";
 import type { StackError } from "../public/Errors.ts";
 import type { CapabilityName } from "../public/Capability.ts";
@@ -80,10 +80,10 @@ export type SupervisorSnapshot = Readonly<{
 export const isTransitioning = (
   state: StackControlState,
 ): state is Extract<StackControlState, { readonly attempt: symbol }> =>
-  state._tag === "starting" ||
-  state._tag === "stopping" ||
-  state._tag === "destroying" ||
-  state._tag === "start-recovery";
+  Predicate.isTagged("starting")(state) ||
+  Predicate.isTagged("stopping")(state) ||
+  Predicate.isTagged("destroying")(state) ||
+  Predicate.isTagged("start-recovery")(state);
 
 export const publicPhase = (
   state: StackControlState,

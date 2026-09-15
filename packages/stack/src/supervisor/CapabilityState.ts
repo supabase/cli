@@ -129,16 +129,23 @@ export const completeStarting = (
 ): ReadyState => ready(state.sessionId, state.traffic, root, endpoint);
 
 export const restoreStarting = (state: StartingState): DormantState | ReadyState =>
-  state.prior._tag === "dormant"
-    ? dormant(state.prior.sessionId, state.traffic, state.prior.root)
-    : ready(state.prior.sessionId, state.traffic, state.prior.root, state.prior.endpoint);
+  Match.value(state.prior).pipe(
+    Match.tag("dormant", (prior) => dormant(prior.sessionId, state.traffic, prior.root)),
+    Match.tag("ready", (prior) =>
+      ready(prior.sessionId, state.traffic, prior.root, prior.endpoint),
+    ),
+    Match.exhaustive,
+  );
 
 export const promoteStartingPrior = (state: StartingState): StartingState => ({
   ...state,
-  prior:
-    state.prior._tag === "ready"
-      ? ready(state.prior.sessionId, state.traffic, state.prior.root, state.prior.endpoint)
-      : ready(state.prior.sessionId, state.traffic, state.prior.root),
+  prior: Match.value(state.prior).pipe(
+    Match.tag("dormant", (prior) => ready(prior.sessionId, state.traffic, prior.root)),
+    Match.tag("ready", (prior) =>
+      ready(prior.sessionId, state.traffic, prior.root, prior.endpoint),
+    ),
+    Match.exhaustive,
+  ),
 });
 
 export const dormantFromReady = (state: ReadyState): DormantState =>

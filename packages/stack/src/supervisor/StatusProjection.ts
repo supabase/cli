@@ -1,4 +1,4 @@
-import { Cause, Effect } from "effect";
+import { Cause, Effect, Match, Predicate } from "effect";
 import { CAPABILITY_NAMES, type CapabilityName } from "../public/Capability.ts";
 import type { StackId } from "../public/StackId.ts";
 import {
@@ -33,9 +33,13 @@ export const statusForSnapshot = (
 ): Effect.Effect<StackStatus> =>
   Effect.sync(() => {
     const definition = state.definition;
-    const observed: ReadonlyArray<ObservedWorkload> =
-      observedStatus._tag === "available" ? observedStatus.workloads : [];
-    const observationAvailable = observedStatus._tag === "available";
+    const observed: ReadonlyArray<ObservedWorkload> = Predicate.isTagged(
+      observedStatus,
+      "available",
+    )
+      ? observedStatus.workloads
+      : [];
+    const observationAvailable = Predicate.isTagged(observedStatus, "available");
     const capabilities = CAPABILITY_NAMES.map((name) => {
       const control = snapshot.capabilities.get(name);
       const configured = definition?.capabilities[name];
@@ -62,8 +66,9 @@ export const statusForSnapshot = (
               : projected === "ready" && observedEntries.length > 0 && observedUnready
                 ? "stopped"
                 : projected;
-      const cleanupError =
-        control?._tag === "cleanup-failed" ? Cause.pretty(control.cause) : undefined;
+      const cleanupError = Predicate.isTagged(control, "cleanup-failed")
+        ? Cause.pretty(control.cause)
+        : undefined;
       return {
         name,
         activation:
@@ -106,19 +111,15 @@ const publicPhase = (
   control: SupervisorSnapshot["stack"],
   state: PersistedStackState,
 ): StackStatus["lifecycle"] => {
-  switch (control._tag) {
-    case "stopped":
-      return state.desiredLifecycle === "unconfigured" ? "unconfigured" : "stopped";
-    case "running":
-      return "running";
-    case "starting":
-      return control.prior._tag === "running" ? "running" : "starting";
-    case "stopping":
-    case "start-recovery":
-    case "stop-required":
-      return "stopping";
-    case "destroying":
-    case "destroy-required":
-      return "destroying";
-  }
+  return Match.value(control).pipe(
+    Match.when({ _tag: "stopped" }, () =>
+      state.desiredLifecycle === "unconfigured" ? ("unconfigured" as const) : ("stopped" as const),
+    ),
+    Match.when({ _tag: "running" }, () => "running" as const),
+    Match.when({ _tag: "starting", prior: { _tag: "running" } }, () => "running" as const),
+    Match.when({ _tag: "starting" }, () => "starting" as const),
+    Match.tag("stopping", "start-recovery", "stop-required", () => "stopping" as const),
+    Match.tag("destroying", "destroy-required", () => "destroying" as const),
+    Match.exhaustive,
+  );
 };

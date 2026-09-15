@@ -1,4 +1,4 @@
-import { Cause, Crypto, Effect, Exit, FileSystem, Path, Redacted } from "effect";
+import { Cause, Crypto, Effect, Exit, FileSystem, Path, Predicate, Redacted } from "effect";
 import type { StackDefinition, CompiledStack, SecretSlotInput } from "../model/Compiler.ts";
 import { compileStack, rebuildExecutionPlan, sameDefinition } from "../model/Compiler.ts";
 import type { ExecutionPlan } from "../model/ExecutionPlan.ts";
@@ -320,7 +320,7 @@ export const makeLifecycleController = (
           if (Exit.isFailure(launched) && freshSession)
             return yield* persistStoppedAfterFailure(launched.cause, true);
           if (Exit.isFailure(launched)) return failed(launched.cause, "unsafe");
-          if (launched.value._tag === "failed") {
+          if (Predicate.isTagged(launched.value, "failed")) {
             if (freshSession) return yield* persistStoppedAfterFailure(launched.value.cause, true);
             return {
               _tag: "failed",
@@ -345,7 +345,7 @@ export const makeLifecycleController = (
           .launch(lifecycleInput(options.stackId, next, candidate), "fresh")
           .pipe(Effect.exit);
         if (Exit.isSuccess(started)) {
-          if (started.value._tag === "failed")
+          if (Predicate.isTagged(started.value, "failed"))
             return yield* persistStoppedAfterFailure(started.value.cause, true);
           return { _tag: "started", state: next };
         }
