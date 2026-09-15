@@ -31,7 +31,7 @@ import {
  * or recursive flows need one route per expected call unless `persist` is set.
  * `when` narrows a match by the parsed request body.
  */
-export interface StorageRoute {
+interface StorageRoute {
   readonly method: string;
   /** Substring matched against the request URL. */
   readonly match: string;
@@ -49,7 +49,7 @@ export interface StorageRoute {
   readonly persist?: boolean;
 }
 
-export interface RecordedStorageRequest {
+interface RecordedStorageRequest {
   readonly method: string;
   readonly url: string;
   readonly headers: Record<string, string | undefined>;
