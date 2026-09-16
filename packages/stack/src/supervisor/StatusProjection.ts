@@ -1,4 +1,4 @@
-import { Cause, Effect, Match, Predicate } from "effect";
+import { Cause, Effect, Predicate } from "effect";
 import { CAPABILITY_NAMES, type CapabilityName } from "../public/Capability.ts";
 import type { StackId } from "../public/StackId.ts";
 import {
@@ -10,6 +10,7 @@ import type { ObservedWorkload } from "../runtime/RuntimeDriver.ts";
 import type { PersistedStackState } from "../state/StackState.ts";
 import { recoveryForState, type SupervisorSnapshot } from "./SupervisorState.ts";
 import { publicCapabilityState } from "./CapabilityState.ts";
+import { publicPhase } from "./SupervisorTransitions.ts";
 
 export type ActualPhase = "stopped" | "starting" | "running" | "stopping" | "destroying";
 
@@ -105,9 +106,11 @@ export const statusForSnapshot = (
       };
     }, {});
     const recovery = recoveryForState(snapshot.stack);
+    const phase = publicPhase(snapshot.stack);
     return {
       id,
-      lifecycle: publicPhase(snapshot.stack, state),
+      lifecycle:
+        phase === "stopped" && state.desiredLifecycle === "unconfigured" ? "unconfigured" : phase,
       desiredLifecycle: state.desiredLifecycle,
       runtime: state.runtime,
       endpoints,
@@ -117,20 +120,3 @@ export const statusForSnapshot = (
       ...(recovery === undefined ? {} : { recovery }),
     } satisfies StackStatus;
   });
-
-const publicPhase = (
-  control: SupervisorSnapshot["stack"],
-  state: PersistedStackState,
-): StackStatus["lifecycle"] => {
-  return Match.value(control).pipe(
-    Match.when({ _tag: "stopped" }, () =>
-      state.desiredLifecycle === "unconfigured" ? ("unconfigured" as const) : ("stopped" as const),
-    ),
-    Match.when({ _tag: "running" }, () => "running" as const),
-    Match.when({ _tag: "starting", prior: { _tag: "running" } }, () => "running" as const),
-    Match.when({ _tag: "starting" }, () => "starting" as const),
-    Match.tag("stopping", "start-recovery", "stop-required", () => "stopping" as const),
-    Match.tag("destroying", "destroy-required", () => "destroying" as const),
-    Match.exhaustive,
-  );
-};
