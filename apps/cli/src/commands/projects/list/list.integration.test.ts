@@ -1,9 +1,6 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-
 import type { V1ListAllProjectsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, FileSystem, Option, Path } from "effect";
 
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -59,29 +56,27 @@ const tempRoot = useTempWorkdir("supabase-projects-list-int-");
 const BRANCH_OWN_REF = "branchownrefyyyyyyyy";
 const OTHER_CACHE_REF = "othercacherefzzzzzzz";
 
-function tempFile(workdir: string, name: string): string {
-  return join(workdir, "supabase", ".temp", name);
+const writeTempContent = Effect.fnUntraced(function* (
+  workdir: string,
+  name: string,
+  content: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const tempDir = path.join(workdir, "supabase", ".temp");
+  yield* fs.makeDirectory(tempDir, { recursive: true });
+  yield* fs.writeFileString(path.join(tempDir, name), content);
+});
+
+function writeProjectRefFile(workdir: string, ref: string) {
+  return writeTempContent(workdir, "project-ref", ref);
 }
 
-function writeTempContent(workdir: string, name: string, content: string): void {
-  mkdirSync(join(workdir, "supabase", ".temp"), { recursive: true });
-  writeFileSync(tempFile(workdir, name), content);
-}
-
-function writeProjectRefFile(workdir: string, ref: string): void {
-  writeTempContent(workdir, "project-ref", ref);
-}
-
-function writeLinkedProjectCacheFile(workdir: string, ref: string): void {
-  writeTempContent(
+function writeLinkedProjectCacheFile(workdir: string, ref: string) {
+  return writeTempContent(
     workdir,
     "linked-project.json",
-    JSON.stringify({
-      ref,
-      name: "Parent Project",
-      organization_id: "org_1",
-      organization_slug: "acme",
-    }),
+    `{"ref":"${ref}","name":"Parent Project","organization_id":"org_1","organization_slug":"acme"}`,
   );
 }
 
@@ -196,9 +191,9 @@ describe("projects list integration", () => {
           projectId: Option.none(),
           response: [SAMPLE_PROJECT, PARENT_PROJECT],
         });
-        writeProjectRefFile(workdir, BRANCH_OWN_REF);
-        writeLinkedProjectCacheFile(workdir, PARENT_PROJECT.id);
         return Effect.gen(function* () {
+          yield* writeProjectRefFile(workdir, BRANCH_OWN_REF);
+          yield* writeLinkedProjectCacheFile(workdir, PARENT_PROJECT.id);
           yield* projectsList({});
           expect(out.stdoutText).toContain("●");
           expect(out.stdoutText).toContain("parent");
@@ -212,9 +207,9 @@ describe("projects list integration", () => {
         projectId: Option.none(),
         response: [SAMPLE_PROJECT, PARENT_PROJECT],
       });
-      writeProjectRefFile(workdir, BRANCH_OWN_REF);
-      writeLinkedProjectCacheFile(workdir, PARENT_PROJECT.id);
       return Effect.gen(function* () {
+        yield* writeProjectRefFile(workdir, BRANCH_OWN_REF);
+        yield* writeLinkedProjectCacheFile(workdir, PARENT_PROJECT.id);
         yield* projectsList({});
         const success = out.messages.find((m) => m.type === "success");
         const projects = success?.data?.projects as ReadonlyArray<{
@@ -233,10 +228,10 @@ describe("projects list integration", () => {
           projectId: Option.none(),
           response: [SAMPLE_PROJECT, PARENT_PROJECT],
         });
-        // Cache points elsewhere; the exact match on SAMPLE_PROJECT must still win outright.
-        writeProjectRefFile(workdir, SAMPLE_PROJECT.id);
-        writeLinkedProjectCacheFile(workdir, OTHER_CACHE_REF);
         return Effect.gen(function* () {
+          // Cache points elsewhere; the exact match on SAMPLE_PROJECT must still win outright.
+          yield* writeProjectRefFile(workdir, SAMPLE_PROJECT.id);
+          yield* writeLinkedProjectCacheFile(workdir, OTHER_CACHE_REF);
           yield* projectsList({});
           expect(out.stdoutText).toContain("●");
         }).pipe(Effect.provide(layer));
@@ -315,9 +310,9 @@ describe("projects list integration", () => {
       const exit = yield* Effect.exit(projectsList({}));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("ProjectsEnvNotSupportedError");
-        expect(json).toContain("--output env flag is not supported");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("ProjectsEnvNotSupportedError");
+        expect(causeText).toContain("--output env flag is not supported");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -328,9 +323,9 @@ describe("projects list integration", () => {
       const exit = yield* Effect.exit(projectsList({}));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("ProjectsListNetworkError");
-        expect(json).toContain("failed to list projects");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("ProjectsListNetworkError");
+        expect(causeText).toContain("failed to list projects");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -341,7 +336,7 @@ describe("projects list integration", () => {
       const exit = yield* Effect.exit(projectsList({}));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("ProjectsListUnexpectedStatusError");
+        expect(Cause.pretty(exit.cause)).toContain("ProjectsListUnexpectedStatusError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -352,7 +347,7 @@ describe("projects list integration", () => {
       const exit = yield* Effect.exit(projectsList({}));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("ProjectsListUnexpectedStatusError");
+        expect(Cause.pretty(exit.cause)).toContain("ProjectsListUnexpectedStatusError");
       }
     }).pipe(Effect.provide(layer));
   });
