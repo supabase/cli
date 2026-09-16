@@ -56,7 +56,7 @@ const localConnection = Effect.fnUntraced(function* (local: LocalConn) {
   };
 });
 
-export const localEndpoint = Effect.fnUntraced(function* (
+const localEndpoint = Effect.fnUntraced(function* (
   local: LocalConn,
   dnsResolver: "native" | "https",
 ) {
