@@ -37,14 +37,15 @@ const firstExplicitLongFlagValue = (
 const UnknownFromJsonString = Schema.fromJsonString(Schema.Unknown);
 
 /**
- * The one boolean a gate needs, from either shape an experimental flag takes: `stack` is a
- * bare `stack = true`, while `compute` is a `[experimental.compute]` table carrying
- * `enabled`, the same shape as `[experimental.pgdelta]` and `[experimental.webhooks]`.
+ * Flattens both gate shapes to one boolean:
  *
- * Shape-checked rather than typed per feature because the decoded type of a computed-key
- * struct is an index signature over every feature's schema, so neither branch narrows. The
- * schema has already validated whichever shape arrived; this only has to pick the boolean
- * out of it.
+ * ```toml
+ * [experimental]
+ * stack = true
+ *
+ * [experimental.compute]
+ * enabled = true
+ * ```
  */
 const featureEnabled = (configured: unknown): boolean | undefined => {
   if (typeof configured === "boolean") return configured;
