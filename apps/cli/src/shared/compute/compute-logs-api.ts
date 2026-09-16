@@ -1,6 +1,11 @@
 import { operationDefinitions, type ApiClient } from "@supabase/api/effect";
 import { Effect, Option, Predicate, Schema } from "effect";
-import { decodeBody, mapRequestError, unexpectedStatus } from "./compute-api-status.ts";
+import {
+  decodeBody,
+  decodeJsonBody,
+  mapRequestError,
+  unexpectedStatus,
+} from "./compute-api-status.ts";
 import {
   ComputeLogsQueryFailedError,
   ComputeLogsRateLimitedError,
@@ -161,15 +166,10 @@ export const fetchComputeLogs = Effect.fnUntraced(function* (
   if (response.status !== 200) {
     // A rejected query or the server's 30-second timeout lands here rather than
     // in the 200-with-`error` branch below, so both paths have to exist.
-    return yield* unexpectedStatus({
-      operation,
-      status: response.status,
-      body: yield* response.text.pipe(Effect.orElseSucceed(() => "")),
-    });
+    return yield* unexpectedStatus(operation, response);
   }
 
-  const body = yield* response.json.pipe(Effect.mapError(mapRequestError(operation)));
-  const decoded = yield* decodeBody(LogsResponse, operation, body, response.status);
+  const decoded = yield* decodeJsonBody(LogsResponse, operation, response);
 
   // Checked before `result`: this endpoint reports a failed query with a 200 and
   // a populated `error`, so reading `result` first reports success on a failure.
