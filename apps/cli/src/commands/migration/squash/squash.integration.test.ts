@@ -26,8 +26,8 @@ import {
   mockTty,
 } from "../../../../tests/helpers/mocks.ts";
 import { dockerfileServiceImage } from "../../../shared/services/dockerfile-images.ts";
-import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { getRegistryImageUrl } from "../../../command-internal/docker-registry.ts";
+import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import {
   DebugFlag,
   DnsResolverFlag,
@@ -702,9 +702,9 @@ describe("migration squash", () => {
             expect(call.env["PGDATABASE"]).toBe("postgres");
             expect(call.network).toEqual({ _tag: "host" });
             expect(call.cmd).toEqual(["bash", "-c", dumpSchemaScript, "--"]);
-            // streamPgDump applies the registry mirror itself; the default registry
-            // rewrites to the ECR mirror, not the bare Dockerfile-manifest tag.
-            expect(call.image).toBe(getRegistryImageUrl(dockerfileServiceImage("pg")));
+            expect(call.image).toBe(
+              Effect.runSync(getRegistryImageUrl(dockerfileServiceImage("pg"))),
+            );
           }
           // Every dump dials the same shadow host, whatever this machine's Docker context
           // resolves (getHostname); checked for self-consistency rather than a hardcoded
@@ -760,8 +760,7 @@ describe("migration squash", () => {
     it.effect(
       "resolves the pg_dump image via SUPABASE_INTERNAL_IMAGE_REGISTRY from supabase/.env",
       () => {
-        // applyProjectEnv applies the project .env before any pg_dump container starts,
-        // so a registry mirror set only there reaches all three.
+        // The project env is passed explicitly to each pg_dump invocation.
         const prev = process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
         delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
         const s = setupHappyPath();

@@ -1,5 +1,7 @@
+import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit } from "effect";
+import { ConfigProvider, Effect, Exit, Layer } from "effect";
+import { runtimeInfoLayer } from "../../../shared/runtime/runtime-info.layer.ts";
 import { dockerfileServiceImageRaw } from "../../../shared/services/dockerfile-images.ts";
 import { toSlimImage } from "../../../shared/services/slim-images.ts";
 import { getHostname } from "../../../command-internal/hostname.ts";
@@ -18,6 +20,28 @@ import {
 
 const currentPgmeta = dockerfileServiceImageRaw("pgmeta");
 const currentPgmetaTag = currentPgmeta.split(":")[1] ?? "";
+const resolvePgmeta = (
+  version?: string,
+  env?: Readonly<Record<string, string>>,
+  ambient: Readonly<Record<string, string | undefined>> = { ...process.env },
+) =>
+  Effect.runSync(
+    resolvePgmetaImage(version, env).pipe(
+      Effect.provideService(
+        ConfigProvider.ConfigProvider,
+        ConfigProvider.fromEnvRecord(ambient, { preserveEmptyStrings: true }),
+      ),
+    ),
+  );
+const resolvePassword = () =>
+  Effect.runSync(
+    localDbPassword().pipe(
+      Effect.provideService(
+        ConfigProvider.ConfigProvider,
+        ConfigProvider.fromEnvRecord({ ...process.env }, { preserveEmptyStrings: true }),
+      ),
+    ),
+  );
 
 function withEnv<T>(key: string, value: string | undefined, run: () => T): T {
   const previous = process.env[key];
@@ -133,31 +157,31 @@ describe("parseDatabaseUrl", () => {
 describe("resolvePgmetaImage", () => {
   it("uses the default pgmeta version when no override is given", () => {
     const image = withEnv("SUPABASE_USE_SLIM_IMAGES", undefined, () =>
-      withEnv("SUPABASE_INTERNAL_IMAGE_REGISTRY", undefined, () => resolvePgmetaImage()),
+      withEnv("SUPABASE_INTERNAL_IMAGE_REGISTRY", undefined, () => resolvePgmeta()),
     );
     expect(image).toContain("postgres-meta");
   });
 
   it("strips a leading v from a version override", () => {
     const image = withEnv("SUPABASE_INTERNAL_IMAGE_REGISTRY", "docker.io", () =>
-      resolvePgmetaImage("v1.2.3"),
+      resolvePgmeta("v1.2.3"),
     );
     expect(image).toBe("supabase/postgres-meta:v1.2.3");
   });
 
   it("falls back to the default when the override is blank", () => {
     const withOverride = withEnv("SUPABASE_INTERNAL_IMAGE_REGISTRY", "docker.io", () =>
-      resolvePgmetaImage("   "),
+      resolvePgmeta("   "),
     );
     const withoutOverride = withEnv("SUPABASE_INTERNAL_IMAGE_REGISTRY", "docker.io", () =>
-      resolvePgmetaImage(),
+      resolvePgmeta(),
     );
     expect(withOverride).toBe(withoutOverride);
   });
 
   it("uses the supabase registry for any non docker.io registry", () => {
     const image = withEnv("SUPABASE_INTERNAL_IMAGE_REGISTRY", undefined, () =>
-      resolvePgmetaImage("1.2.3"),
+      resolvePgmeta("1.2.3"),
     );
     expect(image).not.toBe("supabase/postgres-meta:v1.2.3");
     expect(image).toContain("postgres-meta:v1.2.3");
@@ -165,37 +189,80 @@ describe("resolvePgmetaImage", () => {
 
   it("defaults to the ECR mirror when no registry override is set", () => {
     const image = withEnv("SUPABASE_INTERNAL_IMAGE_REGISTRY", undefined, () =>
-      resolvePgmetaImage("1.2.3"),
+      resolvePgmeta("1.2.3"),
     );
     expect(image).toBe("public.ecr.aws/supabase/postgres-meta:v1.2.3");
   });
 
   it("honors SUPABASE_INTERNAL_IMAGE_REGISTRY for a non docker.io registry (e.g. ghcr.io)", () => {
     const image = withEnv("SUPABASE_INTERNAL_IMAGE_REGISTRY", "ghcr.io", () =>
-      resolvePgmetaImage("1.2.3"),
+      resolvePgmeta("1.2.3"),
     );
     expect(image).toBe("ghcr.io/supabase/postgres-meta:v1.2.3");
   });
 
   it("rewrites to an arbitrary configured mirror registry", () => {
     const image = withEnv("SUPABASE_INTERNAL_IMAGE_REGISTRY", "my.registry.example", () =>
-      resolvePgmetaImage("1.2.3"),
+      resolvePgmeta("1.2.3"),
     );
     expect(image).toBe("my.registry.example/supabase/postgres-meta:v1.2.3");
   });
 
   it("slim-translates the current pin and skips registry rewrite", () => {
     const image = withEnv("SUPABASE_USE_SLIM_IMAGES", "1", () =>
-      withEnv("SUPABASE_INTERNAL_IMAGE_REGISTRY", undefined, () =>
-        resolvePgmetaImage(currentPgmetaTag),
-      ),
+      withEnv("SUPABASE_INTERNAL_IMAGE_REGISTRY", undefined, () => resolvePgmeta(currentPgmetaTag)),
     );
     expect(image).toBe(toSlimImage("pgmeta", currentPgmeta));
   });
 
+  it("uses a project-only slim flag without mutating ambient configuration", () => {
+    const image = resolvePgmeta(
+      currentPgmetaTag,
+      {
+        SUPABASE_USE_SLIM_IMAGES: "1",
+        SUPABASE_INTERNAL_IMAGE_REGISTRY: "docker.io",
+      },
+      {},
+    );
+    expect(image).toBe(toSlimImage("pgmeta", currentPgmeta));
+  });
+
+  it.each(["", "false"])("treats a project %j slim flag as disabled", (value) => {
+    const image = resolvePgmeta(
+      currentPgmetaTag,
+      {
+        SUPABASE_USE_SLIM_IMAGES: value,
+        SUPABASE_INTERNAL_IMAGE_REGISTRY: "docker.io",
+      },
+      { SUPABASE_USE_SLIM_IMAGES: "1" },
+    );
+    expect(image).toBe(currentPgmeta);
+  });
+
+  it("uses the ambient slim flag when the project has no override", () => {
+    const image = resolvePgmeta(
+      currentPgmetaTag,
+      { SUPABASE_INTERNAL_IMAGE_REGISTRY: "docker.io" },
+      { SUPABASE_USE_SLIM_IMAGES: "1" },
+    );
+    expect(image).toBe(toSlimImage("pgmeta", currentPgmeta));
+  });
+
+  it("keeps a historical project pin on the source image under the project slim flag", () => {
+    const image = resolvePgmeta(
+      "1.2.3",
+      {
+        SUPABASE_USE_SLIM_IMAGES: "1",
+        SUPABASE_INTERNAL_IMAGE_REGISTRY: "docker.io",
+      },
+      {},
+    );
+    expect(image).toBe("supabase/postgres-meta:v1.2.3");
+  });
+
   it("keeps a historical pg-meta pin on docker.io under the slim flag", () => {
     const image = withEnv("SUPABASE_USE_SLIM_IMAGES", "1", () =>
-      withEnv("SUPABASE_INTERNAL_IMAGE_REGISTRY", "docker.io", () => resolvePgmetaImage("1.2.3")),
+      withEnv("SUPABASE_INTERNAL_IMAGE_REGISTRY", "docker.io", () => resolvePgmeta("1.2.3")),
     );
     expect(image).toBe("supabase/postgres-meta:v1.2.3");
   });
@@ -226,18 +293,22 @@ describe("schema and id helpers", () => {
     expect(localDbContainerId(longId)).toBe(`supabase_db_${"a".repeat(40)}`);
   });
 
-  it("reads the services hostname and db password from the environment", () => {
-    expect(
-      withEnv("DOCKER_HOST", undefined, () =>
-        withEnv("SUPABASE_SERVICES_HOSTNAME", undefined, () => getHostname()),
+  it.effect("reads the services hostname and db password from the environment", () =>
+    Effect.gen(function* () {
+      expect(yield* getHostname({ SUPABASE_SERVICES_HOSTNAME: "" })).toBe("127.0.0.1");
+      expect(yield* getHostname({ SUPABASE_SERVICES_HOSTNAME: "db.internal" })).toBe("db.internal");
+      expect(withEnv("SUPABASE_DB_PASSWORD", undefined, resolvePassword)).toBe("postgres");
+      expect(withEnv("SUPABASE_DB_PASSWORD", "secret", resolvePassword)).toBe("secret");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          BunServices.layer,
+          runtimeInfoLayer,
+          ConfigProvider.layer(ConfigProvider.fromEnvRecord({ DOCKER_HOST: undefined })),
+        ),
       ),
-    ).toBe("127.0.0.1");
-    expect(withEnv("SUPABASE_SERVICES_HOSTNAME", "db.internal", () => getHostname())).toBe(
-      "db.internal",
-    );
-    expect(withEnv("SUPABASE_DB_PASSWORD", undefined, () => localDbPassword())).toBe("postgres");
-    expect(withEnv("SUPABASE_DB_PASSWORD", "secret", () => localDbPassword())).toBe("secret");
-  });
+    ),
+  );
 
   it("brackets ipv6 hosts in the generated postgres url", () => {
     const url = buildPostgresUrl({

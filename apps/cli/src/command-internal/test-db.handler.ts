@@ -8,7 +8,6 @@ import { DbConfigResolver } from "./db-config.service.ts";
 import { readDbToml } from "./db-config.toml-read.ts";
 import { DbConnection } from "./db-connection.service.ts";
 import { DockerRun } from "./docker-run.service.ts";
-import { getRegistryImageUrl } from "./docker-registry.ts";
 import { resolveDbTargetFlags } from "./db-target-flags.ts";
 import { DebugFlag, DnsResolverFlag, NetworkIdFlag } from "./global-flags.ts";
 import { Output } from "../shared/output/output.service.ts";
@@ -21,6 +20,7 @@ import {
   TestDbRunError,
 } from "./test-db.errors.ts";
 import { buildPgProveArgs } from "./test-db.pg-prove-args.ts";
+import { isBitbucketPipeline } from "./bitbucket-pipeline.ts";
 
 const ENABLE_PGTAP = "create extension if not exists pgtap with schema extensions";
 const DISABLE_PGTAP = "drop extension if exists pgtap";
@@ -174,7 +174,7 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
 
         // Bitbucket Pipelines rejects `--security-opt`, so it's omitted when
         // `BITBUCKET_CLONE_DIR` is set, where it would abort container creation.
-        const inBitbucket = (process.env["BITBUCKET_CLONE_DIR"] ?? "") !== "";
+        const inBitbucket = yield* isBitbucketPipeline();
         // `host.docker.internal:host-gateway` is added on Linux; macOS/Windows
         // Docker Desktop provide the mapping natively.
         const extraHosts =
@@ -184,7 +184,7 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
         // teed live, as inheriting it did.
         return yield* docker.runStream(
           {
-            image: getRegistryImageUrl(PG_PROVE_IMAGE),
+            image: PG_PROVE_IMAGE,
             cmd: args.cmd,
             env: runEnv,
             binds: args.binds,

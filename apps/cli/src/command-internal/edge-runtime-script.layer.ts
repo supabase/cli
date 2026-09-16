@@ -81,8 +81,16 @@ export const edgeRuntimeScriptLayer = Layer.effect(
             (yield* readDbToml(fs, path, workdir).pipe(
               Effect.mapError((error) => new EdgeRuntimeScriptError({ message: error.message })),
             )).denoVersion;
-          const registryImage = getRegistryImageUrl(
+          const registryImage = yield* getRegistryImageUrl(
             yield* resolveEdgeRuntimeImage(fs, path, workdir, denoVersion),
+            opts.projectEnvValues,
+          ).pipe(
+            Effect.mapError(
+              (error) =>
+                new EdgeRuntimeScriptError({
+                  message: `failed to resolve edge-runtime image registry: ${error.message}`,
+                }),
+            ),
           );
           const port = yield* allocateFreeHostPort;
           const startCmd = buildEdgeRuntimeStartCmd({ port, debug }).join(" ");
@@ -96,6 +104,7 @@ export const edgeRuntimeScriptLayer = Layer.effect(
               entrypoint: Option.some("sh"),
               cmd: ["-c", entrypointBody],
               env,
+              projectEnvValues: opts.projectEnvValues,
               binds: opts.binds,
               workingDir: Option.none(),
               // SELinux-enforcing hosts (e.g. Fedora + rootless Podman) block the container from

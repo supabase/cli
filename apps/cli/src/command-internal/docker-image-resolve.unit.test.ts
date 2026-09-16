@@ -22,6 +22,7 @@ function mockSpawner(
 ) {
   const pulls: Array<string> = [];
   const imageInspectOptions: Array<ChildProcess.CommandOptions> = [];
+  const pullOptions: Array<ChildProcess.CommandOptions> = [];
 
   const spawner = ChildProcessSpawner.make((command) =>
     Effect.gen(function* () {
@@ -53,6 +54,7 @@ function mockSpawner(
       }
 
       const result = pulls.length < pullResults.length ? pullResults[pulls.length] : undefined;
+      if (command._tag === "StandardCommand") pullOptions.push(command.options);
       pulls.push(args[1] ?? "");
       const exitDeferred = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
       yield* Deferred.succeed(exitDeferred, ChildProcessSpawner.ExitCode(result?.exitCode ?? 1));
@@ -82,6 +84,9 @@ function mockSpawner(
     },
     get imageInspectOptions() {
       return imageInspectOptions;
+    },
+    get pullOptions() {
+      return pullOptions;
     },
   };
 }
@@ -120,7 +125,7 @@ describe("makeDockerImageResolver", () => {
             { exitCode: 1, stderr: "no space left on device" },
             { exitCode: 1, stderr: "no space left on device" },
           ]);
-          const resolve = makeDockerImageResolver(mock.spawner);
+          const resolve = makeDockerImageResolver(mock.spawner, { [REGISTRY_ENV]: "docker.io" });
           const fiber = yield* resolve("supabase/postgres:17.6.1.138").pipe(
             Effect.forkChild({ startImmediately: true }),
           );
@@ -175,7 +180,7 @@ describe("makeDockerImageResolver", () => {
             { exitCode: 1, stderr: "no space left on device" },
             { exitCode: 0 },
           ]);
-          const resolve = makeDockerImageResolver(mock.spawner);
+          const resolve = makeDockerImageResolver(mock.spawner, { [REGISTRY_ENV]: "docker.io" });
           const fiber = yield* resolve("supabase/postgres:17.6.1.138").pipe(
             Effect.forkChild({ startImmediately: true }),
           );
@@ -216,7 +221,7 @@ describe("makeDockerImageResolver", () => {
             { exitCode: 1, stderr: "no space left on device\n" },
             { exitCode: 0 },
           ]);
-          const resolve = makeDockerImageResolver(mock.spawner);
+          const resolve = makeDockerImageResolver(mock.spawner, { [REGISTRY_ENV]: "docker.io" });
           const fiber = yield* resolve("supabase/postgres:17.6.1.138").pipe(
             Effect.forkChild({ startImmediately: true }),
           );
@@ -246,7 +251,9 @@ describe("makeDockerImageResolver", () => {
       { exitCode: 1, stderr: "denied" },
       { exitCode: 1, stderr: "denied" },
     ]);
-    const resolve = makeDockerImageResolver(mock.spawner);
+    const resolve = makeDockerImageResolver(mock.spawner, {
+      SUPABASE_INTERNAL_IMAGE_REGISTRY: "",
+    });
     return resolve("supabase/postgres:15", Date.now() + 500).pipe(
       Effect.flip,
       Effect.map((error) => {
@@ -282,7 +289,7 @@ describe("makeDockerImageResolver", () => {
 
       try {
         const mock = mockSpawner([{ exitCode: 0 }]);
-        const resolve = makeDockerImageResolver(mock.spawner);
+        const resolve = makeDockerImageResolver(mock.spawner, { [REGISTRY_ENV]: "docker.io" });
 
         const image = yield* resolve("supabase/postgres:17.6.1.138");
 
@@ -310,7 +317,7 @@ describe("makeDockerImageResolver", () => {
         const daemonUnreachableStderr =
           "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?";
         const mock = mockSpawner([], { exitCode: 1, stderr: daemonUnreachableStderr });
-        const resolve = makeDockerImageResolver(mock.spawner);
+        const resolve = makeDockerImageResolver(mock.spawner, { [REGISTRY_ENV]: "docker.io" });
 
         const error = yield* resolve("supabase/postgres:17.6.1.138").pipe(Effect.flip);
 
@@ -336,7 +343,7 @@ describe("makeDockerImageResolver", () => {
           const authPluginDenialStderr =
             "Error response from daemon: authorization denied by plugin AuthZPlugin: no policy matched";
           const mock = mockSpawner([], { exitCode: 1, stderr: authPluginDenialStderr });
-          const resolve = makeDockerImageResolver(mock.spawner);
+          const resolve = makeDockerImageResolver(mock.spawner, { [REGISTRY_ENV]: "docker.io" });
 
           const error = yield* resolve("supabase/postgres:17.6.1.138").pipe(Effect.flip);
 
@@ -363,7 +370,7 @@ describe("makeDockerImageResolver", () => {
             exitCode: 1,
             stderr: "supabase/postgres:17.6.1.138: image not known",
           });
-          const resolve = makeDockerImageResolver(mock.spawner);
+          const resolve = makeDockerImageResolver(mock.spawner, { [REGISTRY_ENV]: "docker.io" });
 
           const image = yield* resolve("supabase/postgres:17.6.1.138");
 
@@ -394,6 +401,23 @@ describe("makeDockerImageResolver", () => {
 
       expect(error).toBeInstanceOf(DockerRunError);
       expect(error.message).toContain(containerRuntimeNotFoundMessage);
+    }),
+  );
+
+  it.effect("keeps project registry selection separate from child Docker environment", () =>
+    Effect.gen(function* () {
+      const projectEnv = { [REGISTRY_ENV]: "docker.io", DOCKER_HOST: "project-daemon" };
+      const ordinary = mockSpawner([{ exitCode: 0 }]);
+      yield* makeDockerImageResolver(ordinary.spawner, projectEnv)("supabase/postgres:15");
+      expect(ordinary.imageInspectOptions[0]?.env).toBeUndefined();
+      expect(ordinary.pullOptions[0]?.env).toBeUndefined();
+
+      const local = mockSpawner([{ exitCode: 0 }]);
+      yield* makeDockerImageResolver(local.spawner, projectEnv, {
+        DOCKER_HOST: projectEnv.DOCKER_HOST,
+      })("supabase/postgres:15");
+      expect(local.imageInspectOptions[0]?.env).toEqual({ DOCKER_HOST: "project-daemon" });
+      expect(local.pullOptions[0]?.env).toEqual({ DOCKER_HOST: "project-daemon" });
     }),
   );
 });

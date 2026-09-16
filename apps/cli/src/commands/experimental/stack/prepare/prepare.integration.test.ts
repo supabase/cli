@@ -17,6 +17,7 @@ import {
   Stdio,
   Stream,
 } from "effect";
+import { runtimeInfoLayer } from "../../../../shared/runtime/runtime-info.layer.ts";
 import {
   InvalidStackConfigError,
   StackIdSchema,
@@ -98,6 +99,7 @@ const handlerLayer = (opts: {
     telemetry,
     layer: Layer.mergeAll(
       BunServices.layer,
+      runtimeInfoLayer,
       output.layer,
       telemetry.layer,
       mockCommandSettings({ workdir: opts.root }),
@@ -315,6 +317,7 @@ describe("stack prepare", () => {
           );
           const layer = Layer.mergeAll(
             BunServices.layer,
+            runtimeInfoLayer,
             CliOutput.layer(textCliOutputFormatter()),
             machineOutput,
             telemetry.layer,

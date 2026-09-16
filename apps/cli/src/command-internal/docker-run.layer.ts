@@ -36,14 +36,23 @@ export const dockerRunLayer: Layer.Layer<DockerRun, never, ProcessControl | Chil
         return bytes;
       };
 
-      const resolveImage = makeDockerImageResolver(spawner);
-
-      const withResolvedImage = (
-        opts: DockerRunOpts,
-      ): Effect.Effect<DockerRunOpts, DockerRunError> =>
-        opts.skipImageResolve === true
-          ? Effect.succeed(opts)
-          : resolveImage(opts.image).pipe(Effect.map((image) => ({ ...opts, image })));
+      const withResolvedOptions = Effect.fnUntraced(function* (opts: DockerRunOpts) {
+        const image =
+          opts.skipImageResolve === true
+            ? opts.image
+            : yield* makeDockerImageResolver(spawner, opts.projectEnvValues)(opts.image);
+        const inBitbucket = yield* isBitbucketPipeline(opts.projectEnvValues).pipe(
+          Effect.mapError(
+            (error) =>
+              new DockerRunError({
+                message: `failed to resolve Docker environment: ${error.message}`,
+                reason: "config",
+                daemonDown: false,
+              }),
+          ),
+        );
+        return applyBitbucketDockerFilter({ ...opts, image }, inBitbucket);
+      });
 
       return DockerRun.of({
         runCapture: (opts, captureOpts) =>
@@ -51,10 +60,8 @@ export const dockerRunLayer: Layer.Layer<DockerRun, never, ProcessControl | Chil
             Effect.gen(function* () {
               const teeStderr = captureOpts?.teeStderr ?? false;
               yield* processControl.holdSignals(["SIGINT", "SIGTERM", "SIGHUP"]);
-              const resolvedOpts = yield* withResolvedImage(opts);
-              const args = buildDockerArgs(
-                applyBitbucketDockerFilter(resolvedOpts, isBitbucketPipeline()),
-              );
+              const resolvedOpts = yield* withResolvedOptions(opts);
+              const args = buildDockerArgs(resolvedOpts);
               // Pipe stdout/stderr (rather than inherit) so the output can be captured and
               // redirected to `--file`/post-processing.
               const handle = yield* spawnContainerCli(spawner, args, {
@@ -103,10 +110,8 @@ export const dockerRunLayer: Layer.Layer<DockerRun, never, ProcessControl | Chil
               const teeStderr = streamOpts.teeStderr ?? false;
               const captureStderr = streamOpts.captureStderr ?? true;
               yield* processControl.holdSignals(["SIGINT", "SIGTERM", "SIGHUP"]);
-              const resolvedOpts = yield* withResolvedImage(opts);
-              const args = buildDockerArgs(
-                applyBitbucketDockerFilter(resolvedOpts, isBitbucketPipeline()),
-              );
+              const resolvedOpts = yield* withResolvedOptions(opts);
+              const args = buildDockerArgs(resolvedOpts);
               const handle = yield* spawnContainerCli(spawner, args, {
                 stdin: "inherit",
                 stdout: "pipe",
@@ -148,10 +153,8 @@ export const dockerRunLayer: Layer.Layer<DockerRun, never, ProcessControl | Chil
           Effect.scoped(
             Effect.gen(function* () {
               yield* processControl.holdSignals(["SIGINT", "SIGTERM", "SIGHUP"]);
-              const resolvedOpts = yield* withResolvedImage(opts);
-              const args = buildDockerArgs(
-                applyBitbucketDockerFilter(resolvedOpts, isBitbucketPipeline()),
-              );
+              const resolvedOpts = yield* withResolvedOptions(opts);
+              const args = buildDockerArgs(resolvedOpts);
               // Pass run env (incl. PGPASSWORD) through the docker child's own environment, not
               // the argv — `buildDockerArgs` emits the key-only `-e KEY` form, so docker inherits
               // each value from here. `extendEnv: true` keeps the rest of process.env (PATH,

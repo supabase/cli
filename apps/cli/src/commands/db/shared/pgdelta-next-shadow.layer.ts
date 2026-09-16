@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Layer, Option, Path } from "effect";
+import { Crypto, Effect, FileSystem, Layer, Option, Path } from "effect";
 import * as Net from "node:net";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import {
@@ -126,6 +126,7 @@ export const pgDeltaNextShadowLayer = Layer.effect(
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const crypto = yield* Crypto.Crypto;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const runtimeInfo = yield* RuntimeInfo;
     const networkIdFlag = yield* NetworkIdFlag;
@@ -141,6 +142,7 @@ export const pgDeltaNextShadowLayer = Layer.effect(
       Layer.mergeAll(
         Layer.succeed(FileSystem.FileSystem, fs),
         Layer.succeed(Path.Path, path),
+        Layer.succeed(Crypto.Crypto, crypto),
         Layer.succeed(DebugFlag, debugFlag),
         Layer.succeed(ExperimentalFlag, experimentalFlag),
         Layer.succeed(NetworkIdFlag, networkIdFlag),

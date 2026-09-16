@@ -78,6 +78,7 @@ export class DbSetupError extends Data.TaggedError("DbSetupError")<{
     | "filesystem"
     | "invalid_config"
     | "docker_daemon"
+    | "config"
     | "registry_pull"
     | "image_inspect";
 }> {
@@ -91,6 +92,8 @@ export class DbSetupError extends Data.TaggedError("DbSetupError")<{
         return { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" };
       case "registry_pull":
         return { ...actionability.externalNetwork, fingerprint_suffix: "registry_pull" };
+      case "config":
+        return { ...actionability.invalidConfig, fingerprint_suffix: "invalid_config" };
       case "image_inspect":
         return { ...actionability.invalidConfig, fingerprint_suffix: "image_inspect" };
       default:
@@ -100,11 +103,12 @@ export class DbSetupError extends Data.TaggedError("DbSetupError")<{
 }
 
 function dbSetupDockerReason(
-  reason: "spawn" | "inspect" | "pull",
+  reason: "spawn" | "config" | "inspect" | "pull",
   daemonDown: boolean,
 ): DbSetupError["reason"] {
   if (reason === "spawn" || daemonDown) return "docker_daemon";
   if (reason === "pull") return "registry_pull";
+  if (reason === "config") return "config";
   return "image_inspect";
 }
 
@@ -404,6 +408,7 @@ const runStartMigrateJob = Effect.fnUntraced(function* (
     image: resolvedImage,
     cmd: opts.cmd,
     env: opts.env,
+    projectEnvValues: opts.projectEnvValues,
     binds: [],
     workingDir: Option.none(),
     securityOpt: [],

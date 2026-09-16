@@ -1,8 +1,19 @@
 import { type CliConfig, validateCliConfig } from "@supabase/config/effect";
-import { Effect, Data, FileSystem, Option, Path, Redacted, Schema, SchemaIssue } from "effect";
+import {
+  Crypto,
+  Effect,
+  Data,
+  FileSystem,
+  Option,
+  Path,
+  Redacted,
+  Schema,
+  SchemaIssue,
+} from "effect";
 import { StackConfigSchema, type StackConfig } from "@supabase/stack/effect";
 
 import { loadLocalProjectContext } from "../../../command-internal/local-project-context.ts";
+import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { parseDotEnv } from "../../../command-internal/dotenv.ts";
 import {
   envOverride,
@@ -57,7 +68,7 @@ export class StackConfigError extends Data.TaggedError("StackConfigError")<{
 type StackConfigEffect = Effect.Effect<
   StackConfig,
   StackConfigError,
-  FileSystem.FileSystem | Path.Path
+  FileSystem.FileSystem | Path.Path | RuntimeInfo | Crypto.Crypto
 >;
 
 type JwtSigning =
