@@ -2565,13 +2565,12 @@ content_path = "./supabase/templates/custom_notice.html"
           route: freshVolumeRoute(defaultRoute()),
           httpClientLayer: http.layer,
         });
-        // A truthy ambient `SUPABASE_YES` would auto-confirm the prune and void this pin.
+        // A truthy ambient `SUPABASE_YES` would auto-confirm the prune.
         return withEnvVar(
           "SUPABASE_YES",
           undefined,
           Effect.gen(function* () {
             yield* start(flags({ exclude: ["edge-runtime"] }));
-            // Proves the vector-seed block ran, so the zero-deletions assertion isn't vacuous.
             expect(http.vectorListCalls).toBe(1);
             expect(http.deletedVectorBuckets).toHaveLength(0);
           }).pipe(Effect.provide(layer)),
