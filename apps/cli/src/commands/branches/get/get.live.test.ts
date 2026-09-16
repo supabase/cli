@@ -3,31 +3,20 @@ import { expect } from "vitest";
 
 import {
   awaitLiveBranch,
+  createLiveBranch,
   removeLiveBranch,
-  requireLiveSuccess,
   test,
   throwWithCleanup,
 } from "../../../../tests/helpers/live.ts";
 
-test("gets a preview branch by name", async ({ cli, project }) => {
+test("gets a preview branch by name", async ({ cli, cliEffect, project }) => {
   const name = `cli-e2e-get-${randomUUID().slice(0, 8)}`;
   let branchRef: string | undefined;
   let targetError: unknown;
   let cleanupError: unknown;
   try {
-    const created = await cli([
-      "branches",
-      "create",
-      name,
-      "--project-ref",
-      project.ref,
-      "--output-format",
-      "json",
-    ]);
-    requireLiveSuccess(created, "branches create");
-    branchRef = (JSON.parse(created.stdout) as { project_ref: string }).project_ref;
-    expect(branchRef, created.stdout).toBeTruthy();
-    await awaitLiveBranch(cli, project, name);
+    branchRef = await createLiveBranch(cliEffect, project, name);
+    await awaitLiveBranch(cliEffect, project, name);
 
     const result = await cli(["branches", "get", name, "--project-ref", project.ref]);
     expect(result.exitCode, result.stderr).toBe(0);
@@ -45,7 +34,7 @@ test("gets a preview branch by name", async ({ cli, project }) => {
     targetError = error;
   } finally {
     try {
-      await removeLiveBranch(cli, project, branchRef ?? name);
+      if (branchRef !== undefined) await removeLiveBranch(cliEffect, project, branchRef);
     } catch (error) {
       cleanupError = error;
     }

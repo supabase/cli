@@ -2,21 +2,21 @@ import { randomUUID } from "node:crypto";
 import { expect } from "vitest";
 
 import {
-  awaitLiveBranch,
+  awaitLiveBranchListed,
+  createLiveBranch,
   removeLiveBranch,
-  requireLiveSuccess,
   test,
   throwWithCleanup,
 } from "../../../../tests/helpers/live.ts";
 
-test("lists a preview branch for the project", async ({ cli, project }) => {
+test("lists a preview branch for the project", async ({ cli, cliEffect, project }) => {
   const name = `cli-e2e-list-${randomUUID().slice(0, 8)}`;
+  let branchRef: string | undefined;
   let targetError: unknown;
   let cleanupError: unknown;
   try {
-    const created = await cli(["branches", "create", name, "--project-ref", project.ref]);
-    requireLiveSuccess(created, "branches create setup");
-    await awaitLiveBranch(cli, project, name);
+    branchRef = await createLiveBranch(cliEffect, project, name);
+    await awaitLiveBranchListed(cliEffect, project, name);
 
     const result = await cli([
       "branches",
@@ -33,7 +33,7 @@ test("lists a preview branch for the project", async ({ cli, project }) => {
     targetError = error;
   } finally {
     try {
-      await removeLiveBranch(cli, project, name);
+      if (branchRef !== undefined) await removeLiveBranch(cliEffect, project, branchRef);
     } catch (error) {
       cleanupError = error;
     }
