@@ -34,3 +34,6 @@ apps/docs/public/cli/project-config.schema.json linguist-generated=true
 # click away in review, which is the same treatment GitHub gives package-lock.json.
 pnpm-lock.yaml linguist-generated=true
 apps/cli-go/go.sum linguist-generated=true
+
+# Not a language marker -- this is the service image manifest, not a container build.
+apps/cli/src/shared/services/Dockerfile linguist-detectable=false

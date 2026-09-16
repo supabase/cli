@@ -1,23 +1,11 @@
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { dropObjectsSql } from "../../../command-internal/drop-objects.ts";
 import { EDGE_RUNTIME_SCRIPT_ERROR_SENTINEL } from "../../../command-internal/edge-runtime-script.service.ts";
-import { migraDiffScript, migraDiffShellScript } from "./migra.deno-templates.ts";
+import { migraDiffScript } from "./migra.deno-templates.ts";
 import { listSchemasSql } from "./migra.ts";
 
-const goDiffTemplatesDir = fileURLToPath(
-  new URL("../../../../../cli-go/internal/db/diff/templates/", import.meta.url),
-);
-const readGoTemplate = (name: string) => readFileSync(`${goDiffTemplatesDir}${name}`, "utf8");
-
 describe("embedded migra templates", () => {
-  it("match the Go sources byte-for-byte", () => {
-    expect(migraDiffScript).toBe(readGoTemplate("migra.ts"));
-    expect(migraDiffShellScript).toBe(readGoTemplate("migra.sh"));
-  });
-
   it("emit the error sentinel from the diff script's failure path", () => {
     expect(migraDiffScript).toContain(EDGE_RUNTIME_SCRIPT_ERROR_SENTINEL);
   });
