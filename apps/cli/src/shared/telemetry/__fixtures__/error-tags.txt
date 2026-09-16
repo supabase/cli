@@ -60,6 +60,7 @@ ComputeLogsUsageExceededError
 ComputeNewWorkdirError
 ComputeNotDeployedError
 ComputeProjectNotFoundError
+ComputeRouteNotFoundError
 ComputeSourceEscapingLinkError
 ComputeSourceMissingError
 ComputeStacksValidationError
