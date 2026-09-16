@@ -11,8 +11,9 @@ afterEach(async () => {
 });
 
 type Scenario = {
-  lists: Array<unknown>;
+  lists: Array<unknown> | ((deletes: ReadonlyArray<string>) => unknown);
   deletes: Record<string, { status: number; body?: unknown }>;
+  deleteStatuses?: Record<string, Array<number>>;
 };
 
 async function runSweep(scenario: Scenario) {
@@ -30,14 +31,29 @@ async function runSweep(scenario: Scenario) {
       const url = new URL(request.url);
       const ref = url.pathname.split("/").pop() ?? "";
       if (request.method === "GET" && url.pathname === "/v1/projects") {
-        const value = scenario.lists[Math.min(listIndex++, scenario.lists.length - 1)];
+        const value =
+          typeof scenario.lists === "function"
+            ? scenario.lists(deletes)
+            : scenario.lists[Math.min(listIndex++, scenario.lists.length - 1)];
         return typeof value === "number"
           ? new Response("temporary failure", { status: value })
           : Response.json(value);
       }
       if (request.method === "DELETE" && url.pathname.startsWith("/v1/projects/")) {
         deletes.push(ref);
-        const result = scenario.deletes[ref] ?? { status: 404 };
+        const statuses = scenario.deleteStatuses?.[ref];
+        const result: { status: number; body?: unknown } =
+          statuses === undefined
+            ? (scenario.deletes[ref] ?? { status: 404 })
+            : {
+                status:
+                  statuses[
+                    Math.min(
+                      deletes.filter((value) => value === ref).length - 1,
+                      statuses.length - 1,
+                    )
+                  ] ?? 500,
+              };
         return new Response(result.body === undefined ? null : JSON.stringify(result.body), {
           status: result.status,
           headers: { "x-request-id": `delete-${ref}` },
@@ -72,7 +88,7 @@ async function runSweep(scenario: Scenario) {
 
 const active = (ref: string, name = `e2e-${ref}`) => ({ ref, name, status: "ACTIVE" });
 
-describe("sweep-live-projects.sh", () => {
+describe.skipIf(process.platform === "win32")("sweep-live-projects.sh", { timeout: 40_000 }, () => {
   test("accepts refused deletion when a fresh authenticated list shows absence", async () => {
     const result = await runSweep({
       lists: [[active("gone")], []],
@@ -129,5 +145,18 @@ describe("sweep-live-projects.sh", () => {
     });
     expect(result.exitCode).not.toBe(0);
     expect(result.deletes).toEqual(["stuck", "other"]);
+  });
+
+  test("retries a transient deletion after fresh evidence still shows the project", async () => {
+    const result = await runSweep({
+      lists: (deletes) => (deletes.length >= 2 ? [] : [active("flaky")]),
+      deletes: {},
+      deleteStatuses: { flaky: [503, 204] },
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.deletes).toEqual(["flaky", "flaky"]);
+    expect(result.stderr).toContain(
+      "delete retry completed for project flaky (HTTP 204 request delete-flaky)",
+    );
   });
 });

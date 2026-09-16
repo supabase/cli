@@ -20,7 +20,6 @@ import {
   awaitLiveBranchesRemovedEffect,
   createLiveBranchEffect,
   removeLiveBranchByNameEffect,
-  removeLiveBranchEffect,
 } from "./branches-live.ts";
 import { LIVE_EXIT_TIMEOUT_MS } from "./live-env.ts";
 import type { LiveCliProjectEnvironment } from "./live-project.ts";
@@ -184,15 +183,6 @@ export async function removeStorageLiveObject(
   }
 }
 
-/** Exact cleanup for one owned branch ref, including delete acknowledgement and LIST absence. */
-export async function removeLiveBranch(
-  cli: LiveFixtures["cliEffect"],
-  project: LiveProject,
-  branch: string,
-): Promise<void> {
-  await Effect.runPromise(removeLiveBranchEffect(cli, project, branch));
-}
-
 /** Waits for deletion acknowledgement when needed, then for exact-ref LIST absence. */
 export async function awaitLiveBranchRemoved(
   cli: LiveFixtures["cliEffect"],
@@ -214,7 +204,7 @@ export async function createLiveBranch(
   return Effect.runPromise(createLiveBranchEffect(cli, project, name));
 }
 
-/** Exact-name fallback cleanup for a successful create with an unreadable payload. */
+/** Exact-name fallback cleanup for a create that did not yield an immutable ref. */
 export async function removeLiveBranchByName(
   cli: LiveFixtures["cliEffect"],
   project: LiveProject,

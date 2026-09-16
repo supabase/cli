@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Fiber } from "effect";
+import { Cause, Effect, Exit, Fiber } from "effect";
 import * as TestClock from "effect/testing/TestClock";
 
 import {
@@ -7,7 +7,6 @@ import {
   awaitLiveBranchListedEffect,
   awaitLiveBranchRemovedEffect,
   createLiveBranchEffect,
-  removeLiveBranchEffect,
   type BranchCli,
 } from "./branches-live.ts";
 import type { LiveProject } from "./live.ts";
@@ -86,7 +85,7 @@ describe("live branch lifecycle helpers", () => {
       const cli = statefulCli(state);
       const ref = yield* createLiveBranchEffect(cli, project, branch.name);
       expect(ref).toBe(branchRef);
-      const cleanup = yield* removeLiveBranchEffect(cli, project, ref).pipe(
+      const cleanup = yield* awaitLiveBranchRemovedEffect(cli, project, ref).pipe(
         Effect.forkChild({ startImmediately: true }),
       );
       yield* TestClock.adjust("2 seconds");
@@ -105,7 +104,7 @@ describe("live branch lifecycle helpers", () => {
     }),
   );
 
-  it.effect("waits for LIST absence after a primary name deletion succeeds", () =>
+  it.effect("waits for LIST absence after deletion was acknowledged", () =>
     Effect.gen(function* () {
       const state: State = { calls: [], listed: true, getReady: true, deleteAttempts: 0 };
       const cli: BranchCli = (args) =>
@@ -136,7 +135,7 @@ describe("live branch lifecycle helpers", () => {
           attempts += 1;
           return result("", "Request failed with status 403: not found", 1);
         });
-      const exit = yield* Effect.exit(removeLiveBranchEffect(cli, project, branchRef));
+      const exit = yield* Effect.exit(awaitLiveBranchRemovedEffect(cli, project, branchRef));
       if (!Exit.isFailure(exit)) throw new Error("expected cleanup authorization failure");
       expect(String(exit.cause)).toContain("status 403");
       expect(attempts).toBe(1);
@@ -194,6 +193,87 @@ describe("live branch lifecycle helpers", () => {
         true,
       );
       expect(state.listed).toBe(false);
+    }),
+  );
+
+  it.effect("cleans up an owned name when create exits after starting", () =>
+    Effect.gen(function* () {
+      const state: State = { calls: [], listed: true, getReady: false, deleteAttempts: 0 };
+      const cli: BranchCli = (args) =>
+        Effect.sync(() => {
+          state.calls.push(args.join(" "));
+          if (args[1] === "create") return result("", "create failed", 1);
+          if (args[1] === "delete") {
+            state.listed = false;
+            return result();
+          }
+          if (args[1] === "list")
+            return result(JSON.stringify(state.listed ? [defaultBranch, branch] : [defaultBranch]));
+          return result();
+        });
+      const exit = yield* Effect.exit(createLiveBranchEffect(cli, project, branch.name));
+      if (!Exit.isFailure(exit)) throw new Error("expected create failure");
+      expect(String(exit.cause)).toContain("create failed");
+      expect(state.calls).toContain(
+        `branches delete ${branch.name} --project-ref ${project.ref} --yes`,
+      );
+      expect(state.listed).toBe(false);
+    }),
+  );
+
+  it.effect("cleans up an owned name when create invocation fails", () =>
+    Effect.gen(function* () {
+      const calls: string[] = [];
+      const cli: BranchCli = (args) => {
+        calls.push(args.join(" "));
+        if (args[1] === "create") return Effect.fail(new Error("invocation failed"));
+        if (args[1] === "delete") return Effect.succeed(result());
+        if (args[1] === "list") return Effect.succeed(result(JSON.stringify([defaultBranch])));
+        return Effect.succeed(result());
+      };
+      const exit = yield* Effect.exit(createLiveBranchEffect(cli, project, branch.name));
+      if (!Exit.isFailure(exit)) throw new Error("expected invocation failure");
+      expect(String(exit.cause)).toContain("invocation failed");
+      expect(calls.some((call) => call.startsWith(`branches delete ${branch.name}`))).toBe(true);
+    }),
+  );
+
+  it.effect("preserves create and cleanup failures", () =>
+    Effect.gen(function* () {
+      const cli: BranchCli = (args) =>
+        args[1] === "create"
+          ? Effect.fail(new Error("create invocation failed"))
+          : Effect.succeed(result("", "cleanup forbidden", 1));
+      const exit = yield* Effect.exit(createLiveBranchEffect(cli, project, branch.name));
+      if (!Exit.isFailure(exit)) throw new Error("expected aggregate failure");
+      const failure = Cause.squash(exit.cause);
+      if (!(failure instanceof AggregateError)) throw new Error("expected aggregate failure cause");
+      expect(failure.message).toBe("Branch create and cleanup failed");
+      const causes = failure.errors.map(String).join("\n");
+      expect(causes).toContain("create invocation failed");
+      expect(causes).toContain("cleanup forbidden");
+    }),
+  );
+
+  it.effect("keeps conservative by-name cleanup bounded when create never appears", () =>
+    Effect.gen(function* () {
+      const cli: BranchCli = (args) =>
+        args[1] === "create"
+          ? Effect.fail(new Error("create invocation failed"))
+          : args[1] === "delete"
+            ? Effect.succeed(result("", "Request failed with status 404", 1))
+            : Effect.succeed(result(JSON.stringify([defaultBranch])));
+      const cleanup = yield* createLiveBranchEffect(cli, project, branch.name).pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* TestClock.adjust("120 seconds");
+      const exit = yield* Fiber.await(cleanup);
+      if (!Exit.isFailure(exit)) throw new Error("expected bounded cleanup failure");
+      const failure = Cause.squash(exit.cause);
+      if (!(failure instanceof AggregateError)) throw new Error("expected aggregate failure cause");
+      const causes = failure.errors.map(String).join("\n");
+      expect(causes).toContain("create invocation failed");
+      expect(causes).toContain("branch removal feature-x timed out");
     }),
   );
 

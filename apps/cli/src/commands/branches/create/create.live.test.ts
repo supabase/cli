@@ -3,8 +3,8 @@ import { expect } from "vitest";
 
 import {
   awaitLiveBranch,
+  awaitLiveBranchRemoved,
   requireLiveJson,
-  removeLiveBranch,
   removeLiveBranchByName,
   test,
   throwWithCleanup,
@@ -13,7 +13,6 @@ import {
 test("creates a preview branch", async ({ cli, cliEffect, project }) => {
   const name = `cli-e2e-create-${randomUUID().slice(0, 8)}`;
   let branchRef: string | undefined;
-  let createdSuccessfully = false;
   let targetError: unknown;
   let cleanupError: unknown;
   try {
@@ -26,7 +25,6 @@ test("creates a preview branch", async ({ cli, cliEffect, project }) => {
       "--output-format",
       "json",
     ]);
-    createdSuccessfully = created.exitCode === 0;
     expect(created.exitCode, created.stderr).toBe(0);
     const body = requireLiveJson(created, "branches create");
     if (typeof body === "object" && body !== null && "project_ref" in body) {
@@ -43,8 +41,8 @@ test("creates a preview branch", async ({ cli, cliEffect, project }) => {
     targetError = error;
   } finally {
     try {
-      if (branchRef !== undefined) await removeLiveBranch(cliEffect, project, branchRef);
-      else if (createdSuccessfully) await removeLiveBranchByName(cliEffect, project, name);
+      if (branchRef !== undefined) await awaitLiveBranchRemoved(cliEffect, project, branchRef);
+      else await removeLiveBranchByName(cliEffect, project, name);
     } catch (error) {
       cleanupError = error;
     }

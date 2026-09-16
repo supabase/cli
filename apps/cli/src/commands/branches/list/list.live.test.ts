@@ -3,8 +3,8 @@ import { expect } from "vitest";
 
 import {
   awaitLiveBranchListed,
+  awaitLiveBranchRemoved,
   createLiveBranch,
-  removeLiveBranch,
   test,
   throwWithCleanup,
 } from "../../../../tests/helpers/live.ts";
@@ -33,7 +33,7 @@ test("lists a preview branch for the project", async ({ cli, cliEffect, project 
     targetError = error;
   } finally {
     try {
-      if (branchRef !== undefined) await removeLiveBranch(cliEffect, project, branchRef);
+      if (branchRef !== undefined) await awaitLiveBranchRemoved(cliEffect, project, branchRef);
     } catch (error) {
       cleanupError = error;
     }

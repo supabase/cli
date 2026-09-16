@@ -61,6 +61,18 @@ reconcile() {
     if fetch_listing_once; then
       if jq -e --arg ref "$ref" 'any(.[]; ((.ref // .id) == $ref) and ((.status // "") != "GOING_DOWN") and ((.status // "") != "REMOVED"))' "$listing" >/dev/null; then
         echo "project $ref still active (list HTTP $API_CODE${API_REQUEST_ID:+ request $API_REQUEST_ID})" >&2
+        if [ "$delete_attempt" -lt 3 ]; then
+          case "$delete_code" in
+            000|408|425|429|5??)
+              delete_attempt=$((delete_attempt + 1))
+              echo "retrying transient delete for project $ref (attempt $delete_attempt)" >&2
+              sleep 5
+              api_request DELETE "${SUPABASE_LIVE_API_URL}/v1/projects/${ref}" "$response"
+              delete_code=$API_CODE
+              echo "delete retry completed for project $ref (HTTP $delete_code${API_REQUEST_ID:+ request $API_REQUEST_ID})" >&2
+              ;;
+          esac
+        fi
       else
         echo "project $ref reconciled as absent or terminal (list HTTP $API_CODE${API_REQUEST_ID:+ request $API_REQUEST_ID})"
         return 0
@@ -85,8 +97,10 @@ while read -r ref status; do
       continue
       ;;
   esac
-  echo "deleting leftover project $ref"
+  delete_attempt=1
+  echo "deleting leftover project $ref (attempt $delete_attempt)"
   api_request DELETE "${SUPABASE_LIVE_API_URL}/v1/projects/${ref}" "$response"
+  delete_code=$API_CODE
   case "$API_CODE" in
     2??) echo "delete accepted for project $ref (HTTP $API_CODE${API_REQUEST_ID:+ request $API_REQUEST_ID})" ;;
     *) echo "delete failed for project $ref (HTTP $API_CODE${API_REQUEST_ID:+ request $API_REQUEST_ID})" >&2 ;;

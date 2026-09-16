@@ -133,19 +133,14 @@ export function createLiveBranchEffect(
     undefined,
   );
   return created.pipe(
-    Effect.flatMap((result) =>
-      branchRefFromCreate(result).pipe(
-        Effect.catchTag("BranchPayloadInvalid", (primary) =>
-          removeLiveBranchByNameEffect(cli, project, name).pipe(
-            Effect.matchEffect({
-              onSuccess: () => Effect.fail(primary),
-              onFailure: (cleanup) =>
-                Effect.fail(
-                  new AggregateError([primary, cleanup], "Branch create and cleanup failed"),
-                ),
-            }),
-          ),
-        ),
+    Effect.flatMap((result) => branchRefFromCreate(result)),
+    Effect.catch((primary) =>
+      removeLiveBranchByNameEffect(cli, project, name).pipe(
+        Effect.matchEffect({
+          onSuccess: () => Effect.fail(primary),
+          onFailure: (cleanup) =>
+            Effect.fail(new AggregateError([primary, cleanup], "Branch create and cleanup failed")),
+        }),
       ),
     ),
   );
@@ -344,15 +339,6 @@ export function awaitLiveBranchRemovedEffect(
   deletionAcknowledged = false,
 ): Effect.Effect<true, unknown, never> {
   return removeBranchEffect(cli, project, branchRef, "project_ref", deletionAcknowledged);
-}
-
-/** Deletes and confirms removal of one owned branch by immutable ref. */
-export function removeLiveBranchEffect(
-  cli: BranchCli,
-  project: LiveProject,
-  branchRef: string,
-): Effect.Effect<true, unknown, never> {
-  return awaitLiveBranchRemovedEffect(cli, project, branchRef);
 }
 
 /** Waits for LIST to contain only the default project. */

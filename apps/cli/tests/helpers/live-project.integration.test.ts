@@ -40,12 +40,32 @@ const project = {
   },
 };
 
+type ApiKeyScenario = {
+  name: string;
+  status: number;
+  body: unknown;
+  headers: Record<string, string>;
+};
+
 describe("live project provisioning", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
   });
 
-  it("reports a terminal API key rejection with safe context and cleans up the project", async () => {
+  it.each<ApiKeyScenario>([
+    {
+      name: "terminal API key rejection",
+      status: 403,
+      body: { message: "authorization denied", access_token: "secret-value" },
+      headers: { "x-request-id": "req-live-403" },
+    },
+    {
+      name: "malformed HTTP 200 API key response",
+      status: 200,
+      body: "sentinel-secret",
+      headers: {},
+    },
+  ])("redacts $name while cleaning up", async ({ status, body, headers }) => {
     vi.stubEnv("SUPABASE_LIVE_API_URL", "https://api.supabase.green");
     vi.stubEnv("SUPABASE_ACCESS_TOKEN", "test-token");
     vi.stubEnv("SUPABASE_LIVE_ORG_ID", "org-slug");
@@ -77,14 +97,7 @@ describe("live project provisioning", () => {
                 return Effect.succeed(jsonResponse(request, 200, project));
               }
               if (request.method === "GET" && url.pathname === `/v1/projects/${ref}/api-keys`) {
-                return Effect.succeed(
-                  jsonResponse(
-                    request,
-                    403,
-                    { message: "authorization denied", access_token: "secret-value" },
-                    { "x-request-id": "req-live-403" },
-                  ),
-                );
+                return Effect.succeed(jsonResponse(request, status, body, headers));
               }
               if (request.method === "DELETE" && url.pathname === `/v1/projects/${ref}`) {
                 ownedProjects.delete(ref);
@@ -105,9 +118,15 @@ describe("live project provisioning", () => {
     } catch (error) {
       failure = error;
     }
-    expect(String(failure)).toMatch(
-      /project API keys failed: GET \/v1\/projects\/abcdefghijklmnopqrst\/api-keys returned HTTP 403.*x-request-id=req-live-403.*response body omitted/,
-    );
+    if (status === 403) {
+      expect(String(failure)).toMatch(
+        /project API keys failed: GET \/v1\/projects\/abcdefghijklmnopqrst\/api-keys returned HTTP 403.*x-request-id=req-live-403.*response body omitted/,
+      );
+    } else {
+      expect(String(failure)).toContain(
+        "project API keys failed: management API response schema validation failed",
+      );
+    }
     expect(requests.filter((request) => request.includes("/api-keys"))).toHaveLength(1);
     expect(requests).toContain("DELETE /v1/projects/abcdefghijklmnopqrst");
     expect(ownedProjects).toEqual(new Set());
@@ -115,5 +134,6 @@ describe("live project provisioning", () => {
     expect(message).not.toContain("test-token");
     expect(message).not.toContain("secret-value");
     expect(message).not.toContain("authorization denied");
+    expect(message).not.toContain("sentinel-secret");
   });
 });

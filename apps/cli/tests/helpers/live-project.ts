@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { makeApiClient, type OperationOutput } from "@supabase/api/effect";
-import { Cause, Data, Effect, Exit, Schedule } from "effect";
+import { Cause, Data, Effect, Exit, Schedule, Schema } from "effect";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import { getDomain } from "tldts";
 
@@ -112,8 +112,14 @@ function boundedHeaderValue(value: string | undefined): string | undefined {
 
 /** Formats management API failures without exposing credentials or response bodies. */
 function liveApiErrorMessage(phase: string, cause: unknown): string {
-  if (!HttpClientError.isHttpClientError(cause) || cause.reason._tag !== "StatusCodeError") {
-    return `${phase} failed: ${apiError(cause).message}`;
+  if (Schema.isSchemaError(cause)) {
+    return `${phase} failed: management API response schema validation failed`;
+  }
+  if (!HttpClientError.isHttpClientError(cause)) {
+    return `${phase} failed: management API request failed`;
+  }
+  if (cause.reason._tag !== "StatusCodeError") {
+    return `${phase} failed: management API request failed (${cause.reason._tag})`;
   }
 
   const { request, response } = cause.reason;
