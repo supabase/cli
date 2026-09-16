@@ -15,7 +15,10 @@ import {
   resolveStorageCredentials,
   storageGatewayFetch,
   validateLocalStorageConfig,
+  type StorageCredentials,
 } from "./storage-credentials.ts";
+import { currentStackBackend } from "./stack-backend.ts";
+import { withStackStorageGuidance } from "./stack-storage.ts";
 import { parseFileSizeLimit, resolveBucketProps } from "./storage-bucket-config.ts";
 import {
   type StorageGateway,
@@ -110,10 +113,9 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
    */
   readonly yes?: boolean;
   /**
-   * Skips this function's own `loadCliConfig` reload in favor of a config the caller
-   * already resolved (see `start.handler.ts`'s `effectiveLocalStorageConfig`). Only `start`
-   * passes this: it resolves config/env once up front, and a fresh reload here would
-   * silently drop any override that exists only in the shell/dotenv, not in `config.toml`.
+   * Skips this function's own `loadCliConfig` reload in favor of a config the caller already
+   * resolved through its own nested-env walk, so a fresh reload here can't drop an override
+   * that exists only in the shell/dotenv, not in `config.toml`.
    */
   readonly resolvedConfig?: {
     readonly config: CliConfig;
@@ -126,13 +128,20 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
    * credentials `SUPABASE_API_*` fold.
    */
   readonly projectEnvValues?: Readonly<Record<string, string>>;
+  /**
+   * Pre-resolved Storage credentials from an already-open stack handle, bypassing
+   * {@link resolveStorageCredentials}.
+   */
+  readonly credentials?: StorageCredentials;
+  /** Explicit project root for config/env loading and `objects_path` resolution. */
+  readonly workdir?: string;
 }) {
   const output = yield* Output;
   const cliSettings = yield* CommandSettings;
+  const workdir = opts.workdir ?? cliSettings.workdir;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const projectEnvValues =
-    opts.projectEnvValues ?? (yield* loadProjectEnv(fs, path, cliSettings.workdir));
+  const projectEnvValues = opts.projectEnvValues ?? (yield* loadProjectEnv(fs, path, workdir));
   // `--yes` OR `SUPABASE_YES`.
   const yes = opts.yes ?? (yield* resolveYesWithProjectEnv(projectEnvValues));
   const { projectRef, emitSummary } = opts;
@@ -140,14 +149,17 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
 
   // Loads config.toml, merging `[remotes.*]` overrides for `--linked`; skipped when the
   // caller already supplied `resolvedConfig`.
+  // An explicit `opts.workdir` is the exact project root; only the caller's own workdir
+  // (`cliSettings.workdir`) may still search ancestors for `config.toml`.
+  const search = opts.workdir === undefined && shouldSearchAncestors(cliSettings);
   const loadOptions: InternalLoadCliConfigOptions =
     projectRef !== ""
-      ? { projectRef, goViperCompat: true, search: shouldSearchAncestors(cliSettings) }
-      : { goViperCompat: true, search: shouldSearchAncestors(cliSettings) };
+      ? { projectRef, goViperCompat: true, search }
+      : { goViperCompat: true, search };
   const loaded =
     opts.resolvedConfig !== undefined
       ? null
-      : yield* loadCliConfig(cliSettings.workdir, loadOptions).pipe(
+      : yield* loadCliConfig(workdir, loadOptions).pipe(
           Effect.catchTag(
             "CliConfigParseError",
             (cause) =>
@@ -195,8 +207,12 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
   if (projectRef === "" && bucketNames.length === 0 && !hasVectorBuckets) {
     // Config validation (SUPABASE_API_*/SUPABASE_AUTH_* overrides, TLS cert/key pairing)
     // still runs here even with nothing to seed; it's validate-only — the seeding path
-    // re-resolves these values through `resolveStorageCredentials`.
-    yield* validateLocalStorageConfig(config, projectEnvValues);
+    // re-resolves these values through `resolveStorageCredentials`. The stack backend never
+    // consults these legacy-only inputs, so it skips this validation entirely.
+    const backend = yield* currentStackBackend;
+    if (backend.kind !== "stack") {
+      yield* validateLocalStorageConfig(config, projectEnvValues);
+    }
     if (emitSummary && output.format !== "text") {
       yield* output.success("", { ...emptySummary() });
     }
@@ -204,11 +220,13 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
   }
 
   // Build the Storage service-gateway client (local or remote).
-  const credentials = yield* resolveStorageCredentials({
-    projectRef,
-    config,
-    projectEnvValues,
-  });
+  const credentials =
+    opts.credentials ??
+    (yield* resolveStorageCredentials({
+      projectRef,
+      config,
+      projectEnvValues,
+    }));
 
   // Gateway operations use an explicit non-DoH fetch (CA-trusting for local + https, plain
   // `globalThis.fetch` otherwise); the api-keys lookup in `resolveStorageCredentials` runs
@@ -251,7 +269,7 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
     }
 
     // Upload objects for each bucket with a configured objects_path.
-    yield* uploadObjects(fs, path, output, gateway, cliSettings.workdir, bucketsConfig, summary);
+    yield* uploadObjects(fs, path, output, gateway, workdir, bucketsConfig, summary);
 
     // Machine-readable summary; text mode emits nothing extra.
     if (emitSummary && output.format !== "text") {
@@ -259,7 +277,7 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
     }
   });
 
-  yield* gatewayOps.pipe(
+  yield* withStackStorageGuidance({ local: projectRef === "" }, gatewayOps).pipe(
     Effect.provideService(FetchHttpClient.Fetch, storageGatewayFetch(credentials.localKongCa)),
   );
 });

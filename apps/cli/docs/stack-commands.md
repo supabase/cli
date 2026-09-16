@@ -95,7 +95,13 @@ A `--db-url` that matches `config.toml` host and port is still rewritten like a 
 stack target for dump's tool container. Compose names (`supabase_db_*`, `supabase_network_*`,
 `db:5432`) are not used. The stack backend requires the in-process pg-delta engine;
 `--use-migra`, `--use-pgadmin`, `--use-pg-schema`, and `db pull --diff-engine migra` are
-rejected. The flag does not switch functions or storage command families.
+rejected. The flag does not switch the `functions` command family.
+
+`storage ls`/`cp`/`mv`/`rm` and `seed buckets` (including bucket seeding inside `db reset
+--local`) also consult `experimental.stack`, with the same `SUPABASE_EXPERIMENTAL_STACK`
+env-precedence rule as `start`/`stop`/`status`. See
+[Storage and bucket seeding](#storage-and-bucket-seeding) below. Explicit `--linked`/
+`--project-ref` remote targeting for these commands is unaffected by the flag either way.
 
 `db start` brings up a postgres-only project stack on first create. An existing stack resumes
 its persisted services (webhooks setup only; no second overlay or migrate-and-seed).
@@ -232,3 +238,73 @@ enumeration errors remain fatal.
 
 `supabase stack destroy --stack feature-a` permanently removes exactly that stack and its data after
 confirmation. Use `--yes` for unattended execution. There is no bulk destroy option.
+
+## Storage and bucket seeding
+
+The `experimental.stack` flag (with the usual `SUPABASE_EXPERIMENTAL_STACK=1|0` env
+precedence) routes several command families at once: the top-level `start`/`stop`/`status`
+aliases, the `stack` namespace itself, `db`/`migration`/`test`'s `--local` targets (above), and
+now `storage ls`/`cp`/`mv`/`rm` and `seed buckets` (including the bucket seeding step inside `db
+reset --local`). An explicit `--linked`/`--project-ref` remote target for `storage`/`seed` is
+unaffected by the flag either way.
+
+Under the stack backend, `--local` Storage operations resolve their endpoint and credential from
+the selected stack rather than `[api]`/`[api.tls]`: the endpoint is the stack's API gateway URL
+(`status.endpoints.api.url`) plus `/storage/v1/...`, and the credential is the stack's own
+service-role JWT read from its credentials. The stack is located by the project root (workdir
+realpath) through the `@supabase/stack` API, which reads stack state under `SUPABASE_HOME`.
+None of `storage`, `seed buckets`, or `db reset --local` ever creates a stack; the legacy `[api]`
+port/external-URL/TLS fields, their `SUPABASE_API_*` overrides, `SUPABASE_AUTH_JWT_SECRET`/
+`SUPABASE_AUTH_SERVICE_ROLE_KEY`, `SUPABASE_SERVICES_HOSTNAME`, the Docker daemon hostname, and
+the embedded Kong CA are all legacy-backend only and are not consulted on this path. The
+service-role JWT is never printed or logged.
+
+Storage's capability state gates these operations:
+
+| Storage capability state                      | Effect                                                                                                                                                                          |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `disabled` (e.g. `stack start -x storage`)    | Fails with `StackStorageCapabilityError` ("Storage is disabled for this stack."), guiding the user to enable Storage and run `supabase stack restart`.                          |
+| `failed` / `stopped`                          | Fails with the same `StackStorageCapabilityError` ("Storage failed to start for this stack"/"Storage is stopped for this stack"), guiding the user to `supabase stack restart`. |
+| `dormant` / `starting` / `ready` / `stopping` | Proceeds immediately; no client-side wait, everywhere `starting` is checked. A `stopping` capability is woken by the gateway once its cleanup completes.                        |
+
+A stack that is not registered, not running, missing its API endpoint or credentials, or whose
+stack API is unavailable fails instead with `StackStorageUnavailableError`, guiding the user to
+run `supabase stack status`/`supabase stack restart`, or `supabase start` when the stack has never
+been configured. A stack-gateway 502/503 encountered while Storage activates is reported as
+`StackStorageCapabilityError` guiding the user to `supabase stack logs` then `supabase stack
+restart`, not as a raw status body — but only for a `--local` target; a `--linked` failure passes
+through unchanged. All of these failures exit `1` for `storage`/`seed buckets`, and no HTTP
+request is sent when Storage is disabled or the stack is not running.
+
+**Lazy activation.** A `dormant` or `starting` Storage capability is not yet listening; the stack
+gateway activates a lazily-configured Storage on the first request that reaches it and holds that
+request until it is ready, rather than the CLI polling capability state itself. A request that
+arrives while Storage is `stopping` waits for cleanup and then wakes it the same way. `starting`
+and `stopping` proceed without waiting everywhere Storage capability is checked, including
+`stack start` and `db reset --local`.
+
+**`stack start` seeds on first configured start.** When a `stack start` (or the top-level `start`
+under the flag) invocation runs the stack's first configured start (`desiredLifecycle` was
+`unconfigured`, including after `stack prepare`) — never when it resumes an existing one — and
+Storage is not `disabled`, it seeds `[storage.buckets]` against the stack before printing status,
+reusing the `seed buckets` core. Auto-confirm is safe here since a first-start stack has no
+pre-existing buckets. Any other unusable Storage state, a missing capability/credentials, or a
+gateway activation failure prints a stderr warning and skips seeding; any other seeding failure
+(e.g. an invalid bucket entry) fails the `start` command (exit `1`) but leaves the stack running.
+`start` fails only on a genuine seeding error, never on Storage being unavailable. See
+[`stack/start/SIDE_EFFECTS.md`](../src/commands/experimental/stack/start/SIDE_EFFECTS.md).
+
+**`db reset --local` never fails for buckets.** Each reset seeds buckets again after the database
+reset, when Storage is `ready`, `dormant`, `starting`, or `stopping`. Any other Storage problem —
+an unusable capability state, a missing capability/credentials, a gateway activation failure, or
+an invalid bucket config — prints `WARNING: skipped seeding storage buckets: <reason> <next step>`
+to stderr and the reset still exits `0`. The warning is omitted when the project configures no
+buckets, and
+disabled Storage gets configuration-specific next steps (enable `[storage]`, `supabase stack
+restart`, then `supabase seed buckets --local`). This is the
+deliberate policy split from `stack start`: the database is already rebuilt by the time buckets
+are seeded, so `db reset` never fails the command for a Storage problem, while `start` still fails
+on a genuine seeding error. Bucket SQL/schema preparation is the stack runtime's own storage
+workload/catalog-setup responsibility; bucket creation and `objects_path` upload from
+`[storage.buckets]` remain the CLI's seeding-step responsibility, since the runtime itself never
+creates buckets. See [`db/reset/SIDE_EFFECTS.md`](../src/commands/db/reset/SIDE_EFFECTS.md).

@@ -46,6 +46,7 @@
     "!apps/cli/src/command-internal/stack-catalog-setup.ts",
     "!apps/cli/src/command-internal/stack-config.ts",
     "!apps/cli/src/command-internal/stack-local-database.ts",
-    "!apps/cli/src/command-internal/stack-shadow.ts"
+    "!apps/cli/src/command-internal/stack-shadow.ts",
+    "!apps/cli/src/command-internal/stack-storage.ts"
   ]
 }
