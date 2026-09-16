@@ -707,13 +707,12 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
 
     // 6. JWKS resolution runs unconditionally, before any image pull, regardless of which
     // services end up enabled.
-    const jwks = yield* Effect.tryPromise({
-      try: () => resolveLocalJwks(config, cliSettings.workdir, values.jwtSecret, projectEnvValues),
-      catch: (cause) =>
-        new StartInvalidConfigError({
-          message: cause instanceof Error ? cause.message : String(cause),
-        }),
-    });
+    const jwks = yield* resolveLocalJwks(
+      config,
+      cliSettings.workdir,
+      values.jwtSecret,
+      projectEnvValues,
+    ).pipe(Effect.mapError((cause) => new StartInvalidConfigError({ message: cause.message })));
 
     // The `edge_runtime.deno_version` -> image switch is start-only (no `db start` equivalent),
     // so it's resolved here rather than inside the shared bootstrap-config derivation below.
