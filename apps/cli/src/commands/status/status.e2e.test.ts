@@ -13,6 +13,8 @@ const STACK_START_TIMEOUT_MS = 280_000;
 const STATUS_COMMAND_TIMEOUT_MS = 60_000;
 const CLEANUP_TIMEOUT_MS = 120_000;
 const LIFECYCLE_MARGIN_MS = 30_000;
+// The stack project's teardown is released inside the test's own scope, so its budget is part
+// of this timeout rather than a separate hook timeout.
 const STATUS_TEST_TIMEOUT_MS =
   CLI_COMMAND_TIMEOUT_MS +
   STACK_START_TIMEOUT_MS +
@@ -37,6 +39,10 @@ class StackPortOverrideError extends Data.TaggedError("StackPortOverrideError")<
 
 const jsonValue = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
+/**
+ * Owns one temp stack project for `use`. Teardown failures are swallowed so a cleanup problem
+ * cannot fail a test whose assertions already passed.
+ */
 const withTempStackProject = <A, E, R>(
   use: (project: Awaited<ReturnType<typeof makeTempCliStackProject>>) => Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E | StackProjectSetupError, R> =>

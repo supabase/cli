@@ -669,19 +669,23 @@ project_id = "short"
 
   it.live("fails when auth.jwt_secret is configured but shorter than 16 characters", () => {
     const { layer, child } = setup();
-    return Effect.gen(function* () {
-      yield* writeConfig('project_id = "demo"\n[auth]\njwt_secret = "too-short"\n');
-      const exit = yield* Effect.exit(status(flags()));
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const causeText = Cause.pretty(exit.cause);
-        expect(causeText).toContain("StatusInvalidConfigError");
-        expect(causeText).toContain(
-          "Invalid config for auth.jwt_secret. Must be at least 16 characters",
-        );
-      }
-      expect(child.spawned).toEqual([]);
-    }).pipe(Effect.provide(layer));
+    return withEnvVar(
+      "SUPABASE_AUTH_JWT_SECRET",
+      undefined,
+      Effect.gen(function* () {
+        yield* writeConfig('project_id = "demo"\n[auth]\njwt_secret = "too-short"\n');
+        const exit = yield* Effect.exit(status(flags()));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("StatusInvalidConfigError");
+          expect(causeText).toContain(
+            "Invalid config for auth.jwt_secret. Must be at least 16 characters",
+          );
+        }
+        expect(child.spawned).toEqual([]);
+      }).pipe(Effect.provide(layer)),
+    );
   });
 
   it.live("resolves auth email content_path keys from the same project-root base", () => {
@@ -758,15 +762,23 @@ content_path = "./supabase/templates/password_changed_notification.html"
     const { layer, child } = setup({
       route: defaultRoute({ runningNames: serviceContainerIds("env-file-project") }),
     });
-    return Effect.gen(function* () {
-      yield* writeConfig('project_id = "toml-project"\n');
-      yield* writeSupabaseFile(tempRoot.current, ".env", "SUPABASE_PROJECT_ID=env-file-project\n");
-      yield* status(flags());
-      const inspectCall = child.spawned.find(
-        (s) => s.args[0] === "container" && s.args[1] === "inspect",
-      );
-      expect(inspectCall?.args).toContain(localDbContainerId("env-file-project"));
-    }).pipe(Effect.provide(layer));
+    return withEnvVar(
+      "SUPABASE_PROJECT_ID",
+      undefined,
+      Effect.gen(function* () {
+        yield* writeConfig('project_id = "toml-project"\n');
+        yield* writeSupabaseFile(
+          tempRoot.current,
+          ".env",
+          "SUPABASE_PROJECT_ID=env-file-project\n",
+        );
+        yield* status(flags());
+        const inspectCall = child.spawned.find(
+          (s) => s.args[0] === "container" && s.args[1] === "inspect",
+        );
+        expect(inspectCall?.args).toContain(localDbContainerId("env-file-project"));
+      }).pipe(Effect.provide(layer)),
+    );
   });
 
   it.live("prefers ambient SUPABASE_PROJECT_ID over supabase/.env", () => {
@@ -796,15 +808,19 @@ content_path = "./supabase/templates/password_changed_notification.html"
     const { layer, child } = setup({
       route: defaultRoute({ runningNames: serviceContainerIds("root-env-project") }),
     });
-    return Effect.gen(function* () {
-      yield* writeConfig('project_id = "toml-project"\n');
-      yield* writeFileIn(tempRoot.current, ".env", "SUPABASE_PROJECT_ID=root-env-project\n");
-      yield* status(flags());
-      const inspectCall = child.spawned.find(
-        (s) => s.args[0] === "container" && s.args[1] === "inspect",
-      );
-      expect(inspectCall?.args).toContain(localDbContainerId("root-env-project"));
-    }).pipe(Effect.provide(layer));
+    return withEnvVar(
+      "SUPABASE_PROJECT_ID",
+      undefined,
+      Effect.gen(function* () {
+        yield* writeConfig('project_id = "toml-project"\n');
+        yield* writeFileIn(tempRoot.current, ".env", "SUPABASE_PROJECT_ID=root-env-project\n");
+        yield* status(flags());
+        const inspectCall = child.spawned.find(
+          (s) => s.args[0] === "container" && s.args[1] === "inspect",
+        );
+        expect(inspectCall?.args).toContain(localDbContainerId("root-env-project"));
+      }).pipe(Effect.provide(layer)),
+    );
   });
 
   it.live(
@@ -834,29 +850,41 @@ content_path = "./supabase/templates/password_changed_notification.html"
     const { layer, child } = setup({
       route: defaultRoute({ runningNames: serviceContainerIds("no-config-project") }),
     });
-    return Effect.gen(function* () {
-      yield* writeSupabaseFile(tempRoot.current, ".env", "SUPABASE_PROJECT_ID=no-config-project\n");
-      yield* status(flags());
-      const inspectCall = child.spawned.find(
-        (s) => s.args[0] === "container" && s.args[1] === "inspect",
-      );
-      expect(inspectCall?.args).toContain(localDbContainerId("no-config-project"));
-    }).pipe(Effect.provide(layer));
+    return withEnvVar(
+      "SUPABASE_PROJECT_ID",
+      undefined,
+      Effect.gen(function* () {
+        yield* writeSupabaseFile(
+          tempRoot.current,
+          ".env",
+          "SUPABASE_PROJECT_ID=no-config-project\n",
+        );
+        yield* status(flags());
+        const inspectCall = child.spawned.find(
+          (s) => s.args[0] === "container" && s.args[1] === "inspect",
+        );
+        expect(inspectCall?.args).toContain(localDbContainerId("no-config-project"));
+      }).pipe(Effect.provide(layer)),
+    );
   });
 
   it.live("honors SUPABASE_AUTH_JWT_SECRET from supabase/.env, not just the ambient shell", () => {
     const { layer, out } = setup({ goOutput: Option.some("env") });
-    return Effect.gen(function* () {
-      yield* writeConfig(`project_id = "demo"\n[auth]\njwt_secret = "${"a".repeat(32)}"\n`);
-      yield* writeSupabaseFile(
-        tempRoot.current,
-        ".env",
-        `SUPABASE_AUTH_JWT_SECRET=${"c".repeat(32)}\n`,
-      );
-      yield* status(flags());
-      expect(out.stdoutText).toContain(`JWT_SECRET="${"c".repeat(32)}"`);
-      expect(out.stdoutText).not.toContain("a".repeat(32));
-    }).pipe(Effect.provide(layer));
+    return withEnvVar(
+      "SUPABASE_AUTH_JWT_SECRET",
+      undefined,
+      Effect.gen(function* () {
+        yield* writeConfig(`project_id = "demo"\n[auth]\njwt_secret = "${"a".repeat(32)}"\n`);
+        yield* writeSupabaseFile(
+          tempRoot.current,
+          ".env",
+          `SUPABASE_AUTH_JWT_SECRET=${"c".repeat(32)}\n`,
+        );
+        yield* status(flags());
+        expect(out.stdoutText).toContain(`JWT_SECRET="${"c".repeat(32)}"`);
+        expect(out.stdoutText).not.toContain("a".repeat(32));
+      }).pipe(Effect.provide(layer)),
+    );
   });
 
   it.live("fails when both docker and podman are missing", () => {
