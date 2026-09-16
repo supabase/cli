@@ -688,15 +688,17 @@ const acquirePgPoolConnection = (cfg: PgConnInput, { isLocal, dnsResolver }: DbC
     const rootcertPath = cfg.sslrootcert;
     const anyTcpTarget = dialTargets.some(({ dialHost }) => !isUnixSocketHost(dialHost));
     const caCert =
-      rootcertPath !== undefined && rootcertPath.length > 0 && !isLocal && anyTcpTarget
-        ? yield* Effect.try({
-            try: () => readFileSync(rootcertPath, "utf8"),
-            catch: (error) =>
-              new DbConnectError({
-                message: `failed to read sslrootcert ${rootcertPath}: ${error}`,
-              }),
-          })
-        : undefined;
+      cfg.sslrootcertInline !== undefined && cfg.sslrootcertInline.length > 0 && !isLocal
+        ? cfg.sslrootcertInline
+        : rootcertPath !== undefined && rootcertPath.length > 0 && !isLocal && anyTcpTarget
+          ? yield* Effect.try({
+              try: () => readFileSync(rootcertPath, "utf8"),
+              catch: (error) =>
+                new DbConnectError({
+                  message: `failed to read sslrootcert ${rootcertPath}: ${error}`,
+                }),
+            })
+          : undefined;
 
     // Loads the client `sslcert`/`sslkey` for cert auth, using the same non-local/TCP gate as
     // the CA bundle; `sslpassword` decrypts an encrypted key. Bound to locals so the narrowing

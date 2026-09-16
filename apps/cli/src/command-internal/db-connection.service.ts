@@ -43,6 +43,8 @@ export interface PgConnInput {
    * `verify-ca`. Absent → system roots / no CA pinning.
    */
   readonly sslrootcert?: string;
+  /** Inline PEM CA bundle; takes precedence over {@link sslrootcert} when both are set. */
+  readonly sslrootcertInline?: string;
   /**
    * libpq client-certificate auth, from the DSN or `PGSSLCERT`/`PGSSLKEY`/`PGSSLPASSWORD`.
    * `sslcert`/`sslkey` are file paths loaded into the client cert; `sslpassword` decrypts an

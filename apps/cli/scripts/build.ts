@@ -5,6 +5,7 @@ import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
 import { bundleServeMainTemplate } from "../src/shared/functions/serve-main-bundler.ts";
+import { OXFMT_OPTIONAL_PLUGIN_EXTERNALS } from "./bundle-externals.ts";
 import { darwinBinaries, MACOS_IDENTIFIERS } from "./macos-signing.ts";
 
 const MUSL_TARGETS = [
@@ -113,7 +114,10 @@ function libcForBunTarget(target: string): "glibc" | "musl" | "" {
 }
 
 async function runBunBuild(config: Bun.BuildConfig) {
-  const result = await Bun.build(config);
+  const result = await Bun.build({
+    ...config,
+    external: [...(config.external ?? []), ...OXFMT_OPTIONAL_PLUGIN_EXTERNALS],
+  });
   for (const log of result.logs) {
     console.warn(log);
   }

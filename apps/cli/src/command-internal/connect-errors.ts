@@ -369,6 +369,11 @@ export function connectSuggestion(
   ) {
     return SUGGEST_ENV_VAR;
   }
+  // An unset `sslmode` negotiates TLS and fails rather than downgrading, so a server without
+  // TLS needs the caller to opt into plaintext explicitly.
+  if (text.includes(SERVER_REFUSED_SSL) || text.includes("server refused TLS connection")) {
+    return "This server does not accept TLS. Append `?sslmode=disable` to the connection string to connect in plaintext.";
+  }
   // Node system errors carry the dialed address as a structured field instead of libpq's
   // parenthesized literal, so also consult the errno + `address` classifier.
   if (isIPv6ConnectivityError(text) || hasIPv6DialCause(error)) {

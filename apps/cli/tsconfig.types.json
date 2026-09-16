@@ -1,0 +1,16 @@
+{
+  // Type-check-only overlay. `@supabase/postgrest-typegen`'s `bun` exports condition points at
+  // its unbuilt `src/*.ts`, which does not satisfy this workspace's stricter compiler options;
+  // its published `dist/*.d.ts` describes the same API and does. The pin cannot live in
+  // `tsconfig.json` because Bun honours `paths` at runtime too, and would then load a
+  // declaration file instead of the implementation. `types.generator.integration.test.ts`
+  // exercises the Bun-resolved runtime API so the two views cannot drift unnoticed.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // `paths` replaces the base map wholesale, so the inherited pin is repeated here.
+    "paths": {
+      "@supabase/pg-topo": ["./node_modules/@supabase/pg-topo/dist/index.d.ts"],
+      "@supabase/postgrest-typegen": ["./node_modules/@supabase/postgrest-typegen/dist/index.d.ts"]
+    }
+  }
+}
