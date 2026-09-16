@@ -9,6 +9,7 @@
     "!packages/stack/**",
     "!apps/cli/src/commands/backups/**",
     "!apps/cli/src/commands/bootstrap/**",
+    "!apps/cli/src/commands/branches/**",
     "!apps/cli/src/commands/completion/**",
     "!apps/cli/src/commands/domains/**",
     "!apps/cli/src/commands/encryption/**",
