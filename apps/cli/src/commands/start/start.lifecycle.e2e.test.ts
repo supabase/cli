@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, test } from "vitest";
+import { Effect } from "effect";
 
 import { overrideStackPorts, requireCliSuccess, runSupabase } from "../../../tests/helpers/cli.ts";
 import {
@@ -260,7 +261,7 @@ describe("supabase start (e2e)", () => {
       const mailpitContainer = serviceContainerName("inbucket", projectId);
       // The exact tag `start` resolves for Mailpit, so its already-cached check finds this
       // broken build without reaching a registry.
-      const mailpitImage = getRegistryImageUrl(dockerfileServiceImage("mailpit"));
+      const mailpitImage = Effect.runSync(getRegistryImageUrl(dockerfileServiceImage("mailpit")));
 
       const init = await runSupabase(["init"], {
         cwd: projectDir,

@@ -33,7 +33,6 @@ import {
 } from "../../../command-internal/db-bootstrap/shadow-database.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import {
-  applyProjectEnv,
   loadProjectEnv,
   readDbToml,
   type DbTomlValues,
@@ -459,10 +458,6 @@ const runSquash = Effect.fnUntraced(function* (
     // .env read; a SUPABASE_YES set only in supabase/.env still auto-confirms the
     // remote-baseline prompt.
     const projectEnv = yield* loadProjectEnv(fs, path, cliSettings.workdir);
-    // Makes an allowlisted supabase/.env registry override visible to the synchronous
-    // process.env reader in getRegistryImageUrl, reverted when the scope closes, so all
-    // three pg_dump containers below see the same registry-mirror override.
-    yield* applyProjectEnv(projectEnv);
     const yes = yield* resolveYesWithProjectEnv(projectEnv);
 
     // Runs after DB-config resolution, so an invalid target surfaces first.
@@ -552,9 +547,6 @@ const runSquash = Effect.fnUntraced(function* (
         linkedRefForCache !== undefined ? linkedProjectCache.cache(linkedRefForCache) : Effect.void,
       ),
     ),
-    // Scope the `SUPABASE_INTERNAL_IMAGE_REGISTRY`-from-`.env` apply above to this
-    // command run: `applyProjectEnv` registers a finalizer that reverts it.
-    Effect.scoped,
   );
 });
 

@@ -6,6 +6,8 @@
  * source image. Slim images ({@link isSlimImageRef}) skip every rewrite — there's no mirror to
  * redirect them to.
  */
+import { Config, ConfigProvider, Effect, Option } from "effect";
+
 import { isSlimImageRef } from "../shared/services/slim-images.ts";
 
 const INTERNAL_IMAGE_REGISTRY_ENV = "SUPABASE_INTERNAL_IMAGE_REGISTRY";
@@ -29,51 +31,69 @@ function getLastImageSegment(imageName: string): string {
  * `SUPABASE_INTERNAL_IMAGE_REGISTRY` set only in `supabase/.env` (not the ambient shell) take
  * effect; omitting it keeps ambient-only behavior.
  */
-function getRegistryOverride(
+const registryOverride = Effect.fnUntraced(function* (
   projectEnvValues?: Readonly<Record<string, string>>,
-): string | undefined {
-  const registry = (
-    projectEnvValues?.[INTERNAL_IMAGE_REGISTRY_ENV] ?? process.env[INTERNAL_IMAGE_REGISTRY_ENV]
-  )?.trim();
-  return registry === undefined || registry.length === 0 ? undefined : registry.toLowerCase();
-}
-
-function getRegistry(projectEnvValues?: Readonly<Record<string, string>>): string {
-  return getRegistryOverride(projectEnvValues) ?? DEFAULT_REGISTRY;
-}
+) {
+  const ambient = yield* ConfigProvider.ConfigProvider;
+  const provider =
+    projectEnvValues === undefined
+      ? ambient
+      : ConfigProvider.orElse(
+          ConfigProvider.fromEnvRecord(Object.fromEntries(Object.entries(projectEnvValues)), {
+            preserveEmptyStrings: true,
+          }),
+          ambient,
+        );
+  return yield* Config.option(Config.string(INTERNAL_IMAGE_REGISTRY_ENV)).pipe(
+    Effect.provideService(ConfigProvider.ConfigProvider, provider),
+    Effect.map(Option.map((value) => value.trim().toLowerCase())),
+  );
+});
 
 export function getRegistryImageUrl(
   imageName: string,
   projectEnvValues?: Readonly<Record<string, string>>,
-): string {
+): Effect.Effect<string, Config.ConfigError> {
   if (isSlimImageRef(imageName)) {
-    return imageName;
+    return Effect.succeed(imageName);
   }
-  const registry = getRegistry(projectEnvValues);
-  if (registry === DOCKER_HUB_REGISTRY) {
-    return imageName;
-  }
-  return `${registry}/supabase/${getLastImageSegment(imageName)}`;
+  return registryOverride(projectEnvValues).pipe(
+    Effect.map((override) => rewriteRegistryImage(imageName, override)),
+  );
 }
 
 export function getRegistryImageUrlCandidates(
   imageName: string,
   projectEnvValues?: Readonly<Record<string, string>>,
-): ReadonlyArray<string> {
+): Effect.Effect<ReadonlyArray<string>, Config.ConfigError> {
   if (isSlimImageRef(imageName)) {
-    return [imageName];
+    return Effect.succeed([imageName]);
   }
 
-  if (getRegistryOverride(projectEnvValues) !== undefined) {
-    return [getRegistryImageUrl(imageName, projectEnvValues)];
-  }
+  return registryOverride(projectEnvValues).pipe(
+    Effect.map((override) => {
+      const lastPart = getLastImageSegment(imageName);
+      const image = rewriteRegistryImage(imageName, override);
+      if (Option.isSome(override) && override.value.length > 0) {
+        return [image];
+      }
+      return dedupe([
+        image,
+        `${GHCR_SUPABASE_REGISTRY}/${lastPart}`,
+        dockerHubFallbackImage(imageName, lastPart),
+      ]);
+    }),
+  );
+}
 
-  const lastPart = getLastImageSegment(imageName);
-  return dedupe([
-    getRegistryImageUrl(imageName, projectEnvValues),
-    `${GHCR_SUPABASE_REGISTRY}/${lastPart}`,
-    dockerHubFallbackImage(imageName, lastPart),
-  ]);
+function rewriteRegistryImage(imageName: string, override: Option.Option<string>): string {
+  const registry = Option.getOrElse(
+    override.pipe(Option.filter((value) => value.length > 0)),
+    () => DEFAULT_REGISTRY,
+  );
+  return registry === DOCKER_HUB_REGISTRY
+    ? imageName
+    : `${registry}/supabase/${getLastImageSegment(imageName)}`;
 }
 
 function dockerHubFallbackImage(imageName: string, lastPart: string): string {

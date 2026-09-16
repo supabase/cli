@@ -3,8 +3,9 @@ import { Effect, Option } from "effect";
 import { NetworkIdFlag } from "./global-flags.ts";
 import { viperEnvStringWithProjectFallback } from "./viper-env.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
-import { getRegistryImageUrl } from "./docker-registry.ts";
 import { DockerRun } from "./docker-run.service.ts";
+import { DockerRunError } from "./docker-run.errors.ts";
+import { getRegistryImageUrl } from "./docker-registry.ts";
 
 /**
  * Runs a pg_dump/pg_dumpall bash script in a one-shot container, streaming stdout
@@ -52,9 +53,20 @@ export const streamPgDump = Effect.fnUntraced(function* <E>(params: {
         : { _tag: "host" as const };
   const extraHosts = runtimeInfo.platform === "linux" ? ["host.docker.internal:host-gateway"] : [];
 
+  const image = yield* getRegistryImageUrl(params.image, params.projectEnvValues).pipe(
+    Effect.mapError(
+      (cause) =>
+        new DockerRunError({
+          message: `failed to resolve Docker image registry configuration: ${cause.message}`,
+          reason: "config",
+          daemonDown: false,
+        }),
+    ),
+  );
+
   return yield* docker.runStream<E>(
     {
-      image: getRegistryImageUrl(params.image),
+      image,
       cmd: ["bash", "-c", params.script, "--"],
       env: params.env,
       binds: [],
@@ -62,6 +74,7 @@ export const streamPgDump = Effect.fnUntraced(function* <E>(params: {
       securityOpt: [],
       extraHosts,
       network,
+      projectEnvValues: params.projectEnvValues,
     },
     { onStdout: params.onStdout, teeStderr: true },
   );
