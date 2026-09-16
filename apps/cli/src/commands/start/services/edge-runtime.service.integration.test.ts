@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "@effect/vitest";
 import { edgeRuntimeNofileUlimit } from "../../../shared/stack-constants.ts";
-import { Deferred, Effect, Exit, Sink, Stream } from "effect";
+import { ConfigProvider, Deferred, Effect, Exit, Sink, Stream } from "effect";
 import { type ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { afterEach, beforeEach, vi } from "vitest";
 
@@ -75,6 +75,7 @@ function baseInput(workdir: string): EdgeRuntimeBringUpInput {
   return {
     projectId: "proj",
     networkId: "supabase_network_proj",
+    projectEnvValues: {},
     image: "registry.example.com/supabase/edge-runtime:v1.74.2",
     workdir,
     // Matches every other service's `dbUrl` input shape (`LocalConfigValues.dbUrl`).
@@ -123,6 +124,25 @@ describe("startStackEdgeRuntimeContainer", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
   });
+
+  it.effect("omits the Deno cache for project-only Bitbucket configuration", () =>
+    Effect.gen(function* () {
+      const mock = mockDockerSpawner();
+      const out = mockOutput();
+      const input = {
+        ...baseInput(tempWorkdir.current),
+        projectEnvValues: { BITBUCKET_CLONE_DIR: tempWorkdir.current },
+      };
+      yield* startStackEdgeRuntimeContainer(input).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
+        Effect.provide(out.layer),
+        Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromEnvRecord({})),
+      );
+      expect(mock.runCall).toBeDefined();
+      expect(mock.runCall!.args.join(" ")).not.toContain(":/root/.cache/deno");
+      expect(mock.calls.some((call) => call.args[0] === "volume")).toBe(false);
+    }),
+  );
 
   it.effect(
     "sends the real internal db url (db container name, port 5432, config.db.password) — NOT functions serve's `db`-alias default",

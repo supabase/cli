@@ -28,7 +28,9 @@ const config = {
     Flag.withDefault("background" as const),
   ),
   eager: Flag.boolean("eager").pipe(
-    Flag.withDescription("Activate all enabled capabilities before returning."),
+    Flag.withDescription(
+      "Activate all enabled capabilities before returning and disable automatic idle stops.",
+    ),
     Flag.withDefault(false),
   ),
 } as const;

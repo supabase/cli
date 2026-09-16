@@ -118,7 +118,10 @@ const validateStartedStatus = (
         disabledCapabilities.has(capability.name) ||
         capability.state === "disabled" ||
         capability.state === "ready" ||
-        capability.state === "dormant",
+        capability.state === "dormant" ||
+        (status.lifecycle === "running" &&
+          capability.state === "stopping" &&
+          capability.activation === "lazy"),
     ) &&
     configuredListeners.every((name) =>
       Object.entries(status.endpoints).some(

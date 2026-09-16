@@ -27,6 +27,7 @@ export type {
   NetworkPort,
   StackEndpoint,
   StackStatus,
+  StackRecovery,
   ArtifactPreparationState,
   ArtifactPreparationStatus,
   StackDescriptor,
@@ -38,6 +39,7 @@ export { StackRuntimeSchema, RuntimeEngineSchema } from "./public/Runtime.ts";
 export type { StackRuntime, RuntimeEngine, StackRuntimePreference } from "./public/Runtime.ts";
 export {
   StackEndpointsSchema,
+  StackRecoverySchema,
   CapabilityVersionsSchema,
   ArtifactPreparationStateSchema,
   ArtifactPreparationStatusSchema,

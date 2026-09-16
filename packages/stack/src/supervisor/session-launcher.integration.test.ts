@@ -1,6 +1,6 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Deferred, Effect, Exit, Fiber, Option } from "effect";
+import { Cause, Deferred, Effect, Fiber, Option } from "effect";
 import type { CapabilityName } from "../public/Capability.ts";
 import { CAPABILITY_NAMES } from "../public/Capability.ts";
 import { StackIdSchema } from "../public/StackId.ts";
@@ -180,9 +180,9 @@ describe("session launcher", () => {
           startImmediately: true,
         });
         yield* Deferred.await(databaseEntered);
-        const result = yield* Fiber.join(launching).pipe(Effect.exit);
+        const result = yield* Fiber.join(launching);
 
-        expect(Exit.isFailure(result)).toBe(true);
+        expect(result._tag).toBe("failed");
         yield* Deferred.await(databaseInterrupted);
         expect(yield* driver.observe(stackId)).toEqual([]);
       }),
@@ -199,13 +199,85 @@ describe("session launcher", () => {
         cleanup: () => Effect.void,
       };
       const launcher = yield* makeSessionLauncher({ stackId, driver });
-      const result = yield* launcher
-        .launch(plan([workload("cycle:a", ["cycle:b"]), workload("cycle:b", ["cycle:a"])]))
-        .pipe(Effect.exit);
-      const error = Exit.isFailure(result)
-        ? Option.getOrUndefined(Cause.findErrorOption(result.cause))
-        : undefined;
+      const result = yield* launcher.launch(
+        plan([workload("cycle:a", ["cycle:b"]), workload("cycle:b", ["cycle:a"])]),
+      );
+      expect(result._tag).toBe("failed");
+      const error =
+        result._tag === "failed"
+          ? Option.getOrUndefined(Cause.findErrorOption(result.cause))
+          : undefined;
       expect(error).toBeInstanceOf(RuntimeDriverError);
+    }),
+  );
+
+  it.live("retains a partially started workload when rollback removal fails", () =>
+    Effect.gen(function* () {
+      const owned = new Set<string>();
+      let failRemove = true;
+      const database = workload("database:database");
+      const driver: RuntimeDriver = {
+        observe: () => Effect.succeed([]),
+        start: (_key, current) =>
+          Effect.gen(function* () {
+            owned.add(current.id);
+            return yield* new RuntimeDriverError({
+              message: "database start failed after acquiring resource",
+              stackId,
+              workloadId: current.id,
+            });
+          }),
+        stop: () => Effect.void,
+        remove: (key) =>
+          Effect.gen(function* () {
+            if (key.workloadId === database.id && failRemove) {
+              failRemove = false;
+              return yield* new RuntimeDriverError({
+                message: "database remove failed",
+                stackId,
+                workloadId: key.workloadId,
+              });
+            }
+            owned.delete(key.workloadId);
+          }),
+        cleanup: () => Effect.void,
+      };
+      const launcher = yield* makeSessionLauncher({ stackId, driver });
+      const result = yield* launcher.launch(plan([database]));
+      expect(result._tag).toBe("failed");
+      if (result._tag === "failed") expect(result.cleanup._tag).toBe("unproven");
+      expect(owned).toEqual(new Set([database.id]));
+      yield* launcher.stop;
+      expect(owned).toEqual(new Set());
+    }),
+  );
+
+  it.live("interrupts an owner without stranding dependent completion or cleanup ownership", () =>
+    Effect.gen(function* () {
+      const databaseEntered = yield* Deferred.make<void>();
+      const owned = new Set<string>();
+      const database = workload("database:database");
+      const rest = workload("rest:rest", [database.id]);
+      const driver: RuntimeDriver = {
+        observe: () => Effect.succeed([]),
+        start: (_key, current) =>
+          current.id === database.id
+            ? Deferred.succeed(databaseEntered, undefined).pipe(
+                Effect.andThen(Effect.sync(() => owned.add(current.id))),
+                Effect.andThen(Effect.never),
+              )
+            : Effect.die("dependent must await database"),
+        stop: () => Effect.void,
+        remove: (key) => Effect.sync(() => void owned.delete(key.workloadId)),
+        cleanup: () => Effect.void,
+      };
+      const launcher = yield* makeSessionLauncher({ stackId, driver });
+      const launching = yield* Effect.forkChild(launcher.launch(plan([database, rest])), {
+        startImmediately: true,
+      });
+      yield* Deferred.await(databaseEntered);
+      yield* Fiber.interrupt(launching).pipe(Effect.timeout("5 seconds"));
+      expect(owned).toEqual(new Set());
     }),
   );
 });

@@ -337,6 +337,76 @@ describe("stack status", () => {
     );
   });
 
+  it.effect("reports a retiring capability as stopping in text and JSON", () => {
+    const base = makeStatus(id);
+    const status = {
+      ...base,
+      capabilities: base.capabilities.map((capability) =>
+        capability.name === "rest" ? { ...capability, state: "stopping" as const } : capability,
+      ),
+    };
+    return Effect.all([runStatus({ status }), runStatus({ status, outputFormat: "json" })]).pipe(
+      Effect.flatMap(([text, json]) =>
+        Effect.all([text.effect, json.effect]).pipe(
+          Effect.tap(() =>
+            Effect.sync(() => {
+              expect(text.out.stdoutText).toContain("Readiness: stopping");
+              const success = json.out.messages.find((message) => message.type === "success");
+              expect(success?.data).toMatchObject({ readiness: "stopping" });
+            }),
+          ),
+        ),
+      ),
+    );
+  });
+
+  it.effect("reports failed capability diagnostics and targeted recovery in text and JSON", () => {
+    const base = makeStatus(id);
+    const status: StackStatus = {
+      ...base,
+      capabilities: base.capabilities.map((capability) =>
+        capability.name === "rest"
+          ? {
+              ...capability,
+              state: "failed" as const,
+              error: "Unable to remove REST workload",
+            }
+          : capability,
+      ),
+      recovery: {
+        operation: "stop",
+        message: "Cleanup is incomplete; stop and start the stack to retry it.",
+      },
+    };
+    return Effect.all([runStatus({ status }), runStatus({ status, outputFormat: "json" })]).pipe(
+      Effect.flatMap(([text, json]) =>
+        Effect.all([text.effect, json.effect]).pipe(
+          Effect.tap(() =>
+            Effect.sync(() => {
+              expect(text.out.stdoutText).toContain(
+                "rest: failed — Unable to remove REST workload",
+              );
+              expect(text.out.stdoutText).toContain(
+                `supabase stack stop --stack-id ${id} && supabase stack start --stack-id ${id}`,
+              );
+              const success = json.out.messages.find((message) => message.type === "success");
+              expect(success?.data).toMatchObject({ recovery: status.recovery });
+              expect(success?.data).toMatchObject({
+                capabilities: expect.arrayContaining([
+                  expect.objectContaining({
+                    name: "rest",
+                    state: "failed",
+                    error: "Unable to remove REST workload",
+                  }),
+                ]),
+              });
+            }),
+          ),
+        ),
+      ),
+    );
+  });
+
   it.effect("emits the structured unavailable inspection for invalid config", () => {
     return withRunStatus(
       {

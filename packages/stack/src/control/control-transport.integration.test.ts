@@ -557,6 +557,10 @@ describe("control transport", () => {
           expect(observed.artifacts).toEqual([
             { workloadId: "rest:rest", capability: "rest", state: "downloading" },
           ]);
+          expect(observed.recovery).toEqual({
+            operation: "stop",
+            message: "injected cleanup diagnostic",
+          });
         }),
       ({ status }) => ({
         rpcHandlers: {
@@ -569,6 +573,7 @@ describe("control transport", () => {
                 capability.name === "rest" ? { ...capability, state: "dormant" } : capability,
               ),
               artifacts: [{ workloadId: "rest:rest", capability: "rest", state: "downloading" }],
+              recovery: { operation: "stop", message: "injected cleanup diagnostic" },
             }),
         },
       }),

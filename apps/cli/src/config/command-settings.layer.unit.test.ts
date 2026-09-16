@@ -4,12 +4,12 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
-import { Cause, Effect, Exit, Layer, Option, Redacted } from "effect";
+import { Cause, ConfigProvider, Effect, Exit, Layer, Option, Redacted } from "effect";
 import { afterEach, beforeEach, vi } from "vitest";
 
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
 import { DebugFlag, ProfileFlag, WorkdirFlag } from "../command-internal/global-flags.ts";
-import { mockRuntimeInfo, processEnvLayer } from "../../tests/helpers/mocks.ts";
+import { mockRuntimeInfo } from "../../tests/helpers/mocks.ts";
 import { debugLoggerLayer } from "../command-internal/debug-logger.layer.ts";
 import { ProfileLoadError } from "../command-internal/profile-load.ts";
 import { commandSettingsLayer } from "./command-settings.layer.ts";
@@ -42,7 +42,11 @@ function makeLayer(opts: {
       }),
     ),
     Layer.provide(BunServices.layer),
-    Layer.provide(processEnvLayer(opts.env ?? {})),
+    Layer.provide(
+      ConfigProvider.layer(
+        ConfigProvider.fromEnvRecord(opts.env ?? {}, { preserveEmptyStrings: true }),
+      ),
+    ),
   );
 }
 
@@ -77,11 +81,49 @@ afterEach(() => {
 });
 
 describe("commandSettingsLayer", () => {
+  it.effect("reads updated values from a live provider through CommandSettings", () => {
+    const env: Record<string, string | undefined> = {
+      SUPABASE_PROJECT_ID: "first-project",
+    };
+    const layer = makeLayer({ cwd: tempRoot, env });
+    const readSettings = () =>
+      Effect.gen(function* () {
+        return yield* CommandSettings;
+      }).pipe(Effect.provide(layer));
+
+    return Effect.gen(function* () {
+      const first = yield* readSettings();
+      env.SUPABASE_PROJECT_ID = "second-project";
+      const second = yield* readSettings();
+
+      expect(first.projectId).toEqual(Option.some("first-project"));
+      expect(second.projectId).toEqual(Option.some("second-project"));
+    });
+  });
+
+  it.effect("reads case-insensitive environment keys through CommandSettings", () => {
+    const target: Record<string, string | undefined> = {
+      supabase_project_id: "windows-project",
+    };
+    const env = new Proxy(target, {
+      getOwnPropertyDescriptor: (_target, property) => {
+        const key = String(property).toLowerCase();
+        if (!Object.hasOwn(target, key)) return undefined;
+        return { configurable: true, enumerable: true, writable: true, value: target[key] };
+      },
+      get: (_target, property) => target[String(property).toLowerCase()],
+    });
+    return Effect.gen(function* () {
+      const config = yield* CommandSettings;
+      expect(config.projectId).toEqual(Option.some("windows-project"));
+    }).pipe(Effect.provide(makeLayer({ cwd: tempRoot, env })));
+  });
+
   it.effect("defaults to supabase profile and api.supabase.com when no flags or env", () =>
     Effect.gen(function* () {
       const config = yield* CommandSettings;
       expect(config.profile).toBe("supabase");
-      expect(config.profileEnvValue).toBeUndefined();
+      expect(config.profileEnvValue).toEqual(Option.none());
       expect(config.apiUrl).toBe("https://api.supabase.com");
       expect(config.projectHost).toBe("supabase.co");
       expect(config.poolerHost).toBe("supabase.com");
@@ -93,7 +135,7 @@ describe("commandSettingsLayer", () => {
     Effect.gen(function* () {
       const config = yield* CommandSettings;
       expect(config.profile).toBe("supabase-staging");
-      expect(config.profileEnvValue).toBe("supabase-staging");
+      expect(config.profileEnvValue).toEqual(Option.some("supabase-staging"));
       expect(config.apiUrl).toBe("https://api.supabase.green");
       expect(config.projectHost).toBe("supabase.red");
       expect(config.poolerHost).toBe("supabase.green");
@@ -102,11 +144,11 @@ describe("commandSettingsLayer", () => {
     ),
   );
 
-  it.effect("captures an empty SUPABASE_PROFILE as undefined", () =>
+  it.effect("preserves an empty SUPABASE_PROFILE without selecting a profile", () =>
     Effect.gen(function* () {
       const config = yield* CommandSettings;
       expect(config.profile).toBe("supabase");
-      expect(config.profileEnvValue).toBeUndefined();
+      expect(config.profileEnvValue).toEqual(Option.some(""));
     }).pipe(Effect.provide(makeLayer({ env: { SUPABASE_PROFILE: "" }, cwd: tempRoot }))),
   );
 
@@ -280,7 +322,7 @@ describe("commandSettingsLayer", () => {
     return Effect.gen(function* () {
       const config = yield* CommandSettings;
       expect(config.profile).toBe("cli-e2e");
-      expect(config.profileEnvValue).toBe(profilePath);
+      expect(config.profileEnvValue).toEqual(Option.some(profilePath));
       expect(config.apiUrl).toBe("http://127.0.0.1:9999");
       expect(config.projectHost).toBe("localhost");
       expect(config.poolerHost).toBe("staging.example.com");
@@ -387,6 +429,31 @@ describe("commandSettingsLayer", () => {
         makeLayer({ env: { SUPABASE_PROJECT_ID: "myrefabcdefghijklmno" }, cwd: tempRoot }),
       ),
     ),
+  );
+
+  it.effect(
+    "preserves an empty profile value while treating empty credentials and workdir as absent",
+    () =>
+      Effect.gen(function* () {
+        const config = yield* CommandSettings;
+        expect(config.profileEnvValue).toEqual(Option.some(""));
+        expect(Option.isNone(config.accessToken)).toBe(true);
+        expect(Option.isNone(config.projectId)).toBe(true);
+        expect(config.workdir).toBe(tempRoot);
+        expect(config.explicitWorkdir).toBe(false);
+      }).pipe(
+        Effect.provide(
+          makeLayer({
+            env: {
+              SUPABASE_PROFILE: "",
+              SUPABASE_ACCESS_TOKEN: "",
+              SUPABASE_PROJECT_ID: "",
+              SUPABASE_WORKDIR: "",
+            },
+            cwd: tempRoot,
+          }),
+        ),
+      ),
   );
 
   it.effect("prefers --workdir flag over env and walk-up", () =>

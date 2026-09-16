@@ -11,6 +11,13 @@ import {
 } from "./Capability.ts";
 import { StackRuntimeSchema, type StackRuntime } from "./Runtime.ts";
 
+/** Recovery guidance exposed when a failed cleanup blocks new workload activation. */
+export const StackRecoverySchema = Schema.Struct({
+  operation: Schema.Literals(["stop", "destroy"] as const),
+  message: Schema.String,
+});
+export type StackRecovery = Schema.Schema.Type<typeof StackRecoverySchema>;
+
 export const StackLifecycleSchema = Schema.Literals([
   "unconfigured",
   "stopped",
@@ -135,6 +142,7 @@ export const StackStatusSchema = Schema.Struct({
   versions: CapabilityVersionsSchema,
   capabilities: CompleteCapabilityStatusesSchema,
   artifacts: Schema.Array(ArtifactPreparationStatusSchema),
+  recovery: Schema.optionalKey(StackRecoverySchema),
 });
 
 export interface StackStatus {
@@ -146,6 +154,7 @@ export interface StackStatus {
   readonly versions: Readonly<Partial<Record<CapabilityName, string>>>;
   readonly capabilities: ReadonlyArray<CapabilityStatus>;
   readonly artifacts: ReadonlyArray<ArtifactPreparationStatus>;
+  readonly recovery?: StackRecovery;
 }
 
 export const StackDescriptorSchema = Schema.Struct({

@@ -18,8 +18,7 @@ import { CliConfigStore } from "./cli-config.service.ts";
  * A rejection from `loadCliConfig`, `loadCliConfigFile`, or `saveCliConfig` carries one of
  * `CliConfigParseError`, `DuplicateRemoteProjectIdError`, `InvalidRemoteProjectIdError`,
  * `CliProjectEnvParseError`, or a `PlatformError` for a host/OS failure — check with
- * `instanceof`. Exception: a `saveCliConfig` rename failure after a successful write
- * rejects with the raw, unmapped error instead of one of these.
+ * `instanceof`.
  */
 export interface CliConfigIo {
   readonly loadCliConfig: (

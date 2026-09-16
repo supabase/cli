@@ -1,8 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Option, Redacted } from "effect";
+import { Effect, Option, PlatformError, Redacted, Layer } from "effect";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
+import { CommandCredentials } from "../auth/command-credentials.service.ts";
 import { mockAnalytics, mockOutput } from "../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
@@ -153,6 +154,33 @@ describe("suggestUpgrade", () => {
       expect(analytics.captured).toHaveLength(0);
       expect(out.stderrText).toBe("");
     }).pipe(Effect.provide(layer));
+  });
+
+  it.live("keeps upgrade suggestions best effort when stored credentials cannot be read", () => {
+    const { layer, analytics, out } = setup();
+    const credentials = Layer.succeed(CommandCredentials, {
+      getAccessToken: Effect.fail(
+        PlatformError.systemError({
+          _tag: "PermissionDenied",
+          module: "FileSystem",
+          method: "readFileString",
+          description: "permission denied",
+        }),
+      ),
+      saveAccessToken: () => Effect.void,
+      deleteAccessToken: Effect.void,
+      deleteAllProjectCredentials: Effect.void,
+      deleteProjectCredential: () => Effect.succeed(false),
+    });
+    return Effect.gen(function* () {
+      yield* suggestUpgrade({
+        projectRef: VALID_REF,
+        featureKey: "branching_limit",
+        statusCode: 402,
+      });
+      expect(analytics.captured).toHaveLength(1);
+      expect(out.stderrText).toContain("Upgrade your plan:");
+    }).pipe(Effect.provide(Layer.mergeAll(layer, credentials)));
   });
 
   it.live("skips when entitlement feature key does not match", () => {

@@ -19,6 +19,7 @@ import {
   PropOutputFormat,
 } from "../shared/telemetry/event-catalog.ts";
 import { standaloneAnalyticsConfigLayer } from "../shared/telemetry/standalone-analytics-config.layer.ts";
+import { cliConfigProviderLayer } from "../shared/config/cli-config-provider.layer.ts";
 import { analyticsLayer } from "../telemetry/analytics.layer.ts";
 import { formatCliError, normalizeCliError } from "../shared/output/normalize-error.ts";
 
@@ -1116,6 +1117,7 @@ const COMPLETE_TELEMETRY_TIMEOUT = "2 seconds";
 // CLI runtime tree.
 const completeAnalyticsLayer = analyticsLayer.pipe(
   Layer.provide(standaloneAnalyticsConfigLayer),
+  Layer.provide(cliConfigProviderLayer),
   Layer.provide(BunServices.layer),
 );
 

@@ -16,6 +16,7 @@ import { Duration, Effect, Option, Schema } from "effect";
 import * as HttpBody from "effect/unstable/http/HttpBody";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import { promptYesNo } from "../../command-internal/prompt-yes-no.ts";
+import { bitbucketCloneDir } from "../../command-internal/bitbucket-pipeline.ts";
 import { CONTEXT_CANCELED_MESSAGE } from "../output/errors.ts";
 import { Output } from "../output/output.service.ts";
 import { bold } from "../../command-internal/colors.ts";
@@ -1215,6 +1216,8 @@ export async function buildDockerBinds(
     readonly additionalModuleRoots?: ReadonlyArray<string>;
     readonly onWarning?: (message: string) => Promise<void>;
     readonly skipMissingImportMapTargets?: boolean;
+    /** Resolved marker presence, including an explicitly empty project value. */
+    readonly bitbucketCloneDirDefined?: boolean;
   } = {},
 ): Promise<ReadonlyArray<DockerBind>> {
   const hostFunctionsDir = resolve(functionsDir);
@@ -1245,7 +1248,7 @@ export async function buildDockerBinds(
       externalScope: false,
     },
   ];
-  if (process.env["BITBUCKET_CLONE_DIR"] === undefined) {
+  if (options.bitbucketCloneDirDefined !== true) {
     const cacheVolume = edgeRuntimeCacheVolume(projectId);
     binds.unshift({
       hostPath: cacheVolume.name,
@@ -1418,6 +1421,7 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
     styleEmphasis = (text: string) => text,
     projectEnvValues,
   } = options;
+  const bitbucketCloneDirDefined = Option.isSome(yield* bitbucketCloneDir(projectEnvValues));
   const output = yield* Output;
   yield* output.raw(`Bundling Function: ${styleEmphasis(config.slug)}\n`, "stderr");
 
@@ -1441,6 +1445,7 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
     const rawImage = edgeRuntimeImage(edgeRuntimeVersion);
     const binds = yield* Effect.promise(() =>
       buildDockerBinds(projectId, functionsDir, outputDir, config, {
+        bitbucketCloneDirDefined,
         onWarning: (message) => Effect.runPromise(output.raw(message, "stderr")),
       }),
     );
@@ -1449,7 +1454,11 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
     // cost is one cached `docker image inspect` per function.
     const image = yield* resolveFunctionsDockerImage(rawImage, projectEnvValues);
     yield* ensureDockerNetwork(networkMode, projectId);
-    yield* ensureDockerNamedVolume(edgeRuntimeCacheVolume(projectId).name, projectId);
+    yield* ensureDockerNamedVolume(
+      edgeRuntimeCacheVolume(projectId).name,
+      projectId,
+      projectEnvValues,
+    );
 
     const env: Array<string> = [];
     if (

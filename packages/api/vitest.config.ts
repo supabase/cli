@@ -14,6 +14,14 @@ export default defineConfig({
     projects: [
       {
         test: {
+          name: "integration",
+          include: ["**/*.integration.test.ts"],
+          exclude: ["**/bun-lifecycle.integration.test.ts"],
+        },
+      },
+      { test: { name: "bun-integration", include: ["**/bun-lifecycle.integration.test.ts"] } },
+      {
+        test: {
           name: "unit",
           include: ["**/*.unit.test.ts"],
         },

@@ -1,3 +1,4 @@
+import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Redacted } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
@@ -50,11 +51,10 @@ interface SetupOpts {
   readonly saveFails?: boolean;
   readonly promptTextFail?: boolean;
   readonly profileFlag?: string;
+  readonly profileEnvValue?: Option.Option<string>;
   readonly homeDir?: string;
   /** Raw argv for explicit `--profile` detection. */
   readonly argv?: ReadonlyArray<string>;
-  /** Raw `SUPABASE_PROFILE` value the settings layer captured. */
-  readonly profileEnvValue?: string;
 }
 
 function flags(overrides: Partial<LoginFlags> = {}): LoginFlags {
@@ -351,7 +351,7 @@ describe("login integration", () => {
     const { layer } = setupLogin({
       argv: ["login", "--token", VALID_TOKEN],
       homeDir: tempRoot.current,
-      profileEnvValue: "supabase-staging",
+      profileEnvValue: Option.some("supabase-staging"),
     });
     return withEnvVar(
       "SUPABASE_HOME",
@@ -372,7 +372,7 @@ describe("login integration", () => {
     const { layer } = setupLogin({
       argv: ["login", "--profile", "supabase", "--token", VALID_TOKEN],
       homeDir: tempRoot.current,
-      profileEnvValue: "rogue-profile",
+      profileEnvValue: Option.some("rogue-profile"),
     });
     return withEnvVar(
       "SUPABASE_HOME",
@@ -387,6 +387,22 @@ describe("login integration", () => {
       }).pipe(Effect.provide(layer)),
     );
   });
+
+  it.live("persists the raw YAML path selected by SUPABASE_PROFILE", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const fs = yield* FileSystem.FileSystem;
+      const profilePath = path.join(tempRoot.current, "profile.yaml");
+      const { layer } = setupLogin({
+        homeDir: tempRoot.current,
+        profileEnvValue: Option.some(profilePath),
+      });
+      yield* login(flags({ token: Option.some(VALID_TOKEN) })).pipe(Effect.provide(layer));
+      expect(yield* fs.readFileString(path.join(tempRoot.current, ".supabase", "profile"))).toBe(
+        profilePath,
+      );
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
   it.live("explicit --profile supabase heals a stale persisted profile file", () => {
     const { layer } = setupLogin({

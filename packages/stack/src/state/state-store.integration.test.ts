@@ -161,6 +161,25 @@ describe("atomic stack state", () => {
     ),
   );
 
+  it.live("normalizes legacy definitions without idle timeout fields", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const { fs, path, store, root, stackId, encoded } = yield* completeStateFixture;
+        const legacy = structuredClone(encoded) as unknown as {
+          definition: { capabilities: Record<string, { idleTimeoutSeconds?: unknown }> };
+        };
+        for (const capability of Object.values(legacy.definition.capabilities))
+          delete capability.idleTimeoutSeconds;
+        yield* fs.writeFileString(path.join(root, stackId, "state.json"), jsonTextSync(legacy));
+
+        const result = yield* store.read(stackId);
+        if (result?.definition === undefined) return yield* Effect.die("definition missing");
+        for (const capability of Object.values(result.definition.capabilities))
+          expect(capability.idleTimeoutSeconds).toBe(false);
+      }),
+    ),
+  );
+
   it.live("rejects malformed nested state documents", () =>
     withPlatform(
       Effect.gen(function* () {

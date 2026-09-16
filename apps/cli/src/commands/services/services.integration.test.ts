@@ -10,6 +10,7 @@ import {
   Layer,
   Option,
   Path,
+  PlatformError,
   Predicate,
   Redacted,
   Schema,
@@ -62,6 +63,7 @@ function setup(
     goOutput?: Option.Option<"env" | "pretty" | "json" | "toml" | "yaml">;
     workdir?: string;
     accessToken?: string;
+    accessTokenFailure?: PlatformError.PlatformError;
     apiUrl?: string;
   } = {},
 ) {
@@ -85,8 +87,9 @@ function setup(
       Layer.succeed(
         CommandSettings,
         CommandSettings.of({
-          profileEnvValue: undefined,
           profile: "supabase",
+          profileEnvValue: Option.none(),
+          supabaseHome: "/tmp/.supabase",
           apiUrl: opts.apiUrl ?? "https://api.supabase.com",
           projectHost: "supabase.co",
           poolerHost: "supabase.com",
@@ -100,7 +103,7 @@ function setup(
       ),
       Layer.succeed(
         CommandCredentials,
-        CommandCredentials.of(commandCredentialsMock(opts.accessToken)),
+        CommandCredentials.of(commandCredentialsMock(opts.accessToken, opts.accessTokenFailure)),
       ),
       Layer.succeed(
         LinkedProjectCache,
@@ -115,13 +118,19 @@ function setup(
   };
 }
 
-function commandCredentialsMock(accessToken?: string) {
+function commandCredentialsMock(
+  accessToken?: string,
+  accessTokenFailure?: PlatformError.PlatformError,
+) {
   return {
-    getAccessToken: Effect.succeed(
-      accessToken === undefined
-        ? Option.none()
-        : Option.some(Redacted.make(accessToken, { label: "SUPABASE_ACCESS_TOKEN" })),
-    ),
+    getAccessToken:
+      accessTokenFailure !== undefined
+        ? Effect.fail(accessTokenFailure)
+        : Effect.succeed(
+            accessToken === undefined
+              ? Option.none()
+              : Option.some(Redacted.make(accessToken, { label: "SUPABASE_ACCESS_TOKEN" })),
+          ),
     saveAccessToken: () => Effect.die("unexpected saveAccessToken"),
     deleteAccessToken: Effect.die("unexpected deleteAccessToken"),
     deleteAllProjectCredentials: Effect.void,
@@ -198,6 +207,22 @@ function expectFailureTag(exit: Exit.Exit<unknown, unknown>, tag: string) {
 }
 
 describe("services", () => {
+  it.live("surfaces credential storage permission failures", () => {
+    const { layer } = setup({
+      accessTokenFailure: PlatformError.systemError({
+        _tag: "PermissionDenied",
+        module: "FileSystem",
+        method: "readFileString",
+        description: "permission denied",
+      }),
+    });
+
+    return Effect.gen(function* () {
+      const exit = yield* services({}).pipe(Effect.provide(layer), Effect.exit);
+      expectFailureTag(exit, "PlatformError");
+    });
+  });
+
   // `it.live`: the command wiring drives real timeouts, so it needs the live clock.
   it.live("runs tokenless local service listing through command wiring", () =>
     Effect.gen(function* () {

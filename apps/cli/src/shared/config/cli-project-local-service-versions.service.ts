@@ -1,5 +1,6 @@
 import type { Effect, Option } from "effect";
 import { Data, Schema, Context } from "effect";
+import type { PlatformError } from "effect/PlatformError";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -42,7 +43,7 @@ export class InvalidLocalServiceVersionsStateError extends Data.TaggedError(
 interface CliProjectLocalServiceVersionsShape {
   readonly load: Effect.Effect<
     Option.Option<LocalServiceVersionsState>,
-    InvalidLocalServiceVersionsStateError
+    InvalidLocalServiceVersionsStateError | PlatformError
   >;
 }
 
