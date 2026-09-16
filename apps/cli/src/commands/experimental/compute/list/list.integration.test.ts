@@ -354,7 +354,39 @@ describe("compute list", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("blames the CLI, not the project, when the API has no such route", () =>
+  it.live("blames the CLI, not the project, when the API codes the route as unserved", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer } = setupCompute({
+        workdir: repo.dir,
+        routes: {
+          [listRoute]: {
+            status: 404,
+            body: {
+              error: {
+                code: "not_found.route",
+                message: `Cannot GET /v2/projects/${COMPUTE_PROJECT_REF}/compute`,
+              },
+            },
+          },
+        },
+      });
+
+      return yield* Effect.gen(function* () {
+        const error = yield* computeList({ projectRef: Option.none() }).pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(ComputeRouteNotFoundError);
+        expect(error).not.toBeInstanceOf(ComputeProjectNotFoundError);
+        expect((error as ComputeRouteNotFoundError).detail).toContain(
+          `GET /v2/projects/${COMPUTE_PROJECT_REF}/compute`,
+        );
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  // A deployment predating `not_found.route` still answers a bare `not_found`, so the router's
+  // own text remains the only thing separating it from a missing project.
+  it.live("blames the CLI, not the project, when only the router message says so", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({

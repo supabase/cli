@@ -89,14 +89,12 @@ const computeSuggestion =
   "Compute is in private alpha. Ask in the Supabase dashboard to have this project enrolled.";
 
 /**
- * The `error.code` a 404 carries, and the `message` needed where the code alone is ambiguous.
- * Three unrelated failures answer 404 on these routes:
+ * The `error.code` a 404 carries, and the `message` needed until every deployment sets a code
+ * that stands on its own. Three unrelated failures answer 404 on these routes:
  *
  * - not enrolled -> `{"error":{"code":"generic_not_found","message":"Compute is not available for this project"}}`
  * - no such project -> `{"error":{"code":"not_found","message":"Not Found"}}`
- * - no such route -> `{"error":{"code":"not_found","message":"Cannot GET /v2/projects/{ref}/compute"}}`
- *
- * The last two share a code, so the message is the only thing separating them.
+ * - no such route -> `{"error":{"code":"not_found.route","message":"Cannot GET /v2/projects/{ref}/compute"}}`
  */
 const NotFoundBody = Schema.Struct({
   error: Schema.Struct({
@@ -107,10 +105,16 @@ const NotFoundBody = Schema.Struct({
   }),
 });
 
+/** The code the Management API gives a 404 raised before any route matched. */
+const ROUTE_NOT_FOUND_CODE = "not_found.route";
+
 /**
  * The router's own 404 text rather than the project handler's: the API answers an unrouted path
  * with Express's default `Cannot <METHOD> <path>`. Anchored so a detail merely containing the
  * phrase cannot match.
+ *
+ * @deprecated Reads deployments predating {@link ROUTE_NOT_FOUND_CODE}; drop once every region
+ * serves the code, since the text is a framework default no schema documents.
  */
 const ROUTE_NOT_FOUND_MESSAGE = /^Cannot [A-Z]+ \//;
 
@@ -120,16 +124,24 @@ const outdatedClientSuggestion = `This CLI build is out of step with the Managem
 const parse404 = (body: string) =>
   Schema.decodeEffect(Schema.fromJsonString(NotFoundBody))(body).pipe(Effect.option);
 
-/** The route the router's own text names, when the body is that rather than a handler's. */
+/**
+ * The route a 404 blames on the router, when that is what it is. `not_found.route` says so
+ * outright; a bare `not_found` carrying the router's text is the same answer from a deployment
+ * that predates the code.
+ */
 const unroutedPath = (
   parsed: Option.Option<Schema.Schema.Type<typeof NotFoundBody>>,
 ): Option.Option<string> => {
-  if (Option.isNone(parsed) || parsed.value.error.code !== "not_found") return Option.none();
-  const { message } = parsed.value.error;
+  if (Option.isNone(parsed)) return Option.none();
+  const { code, message } = parsed.value.error;
+  const text = typeof message === "string" ? message : "";
   // `Cannot GET /v2/projects/{ref}/compute` -> `GET /v2/projects/{ref}/compute`
-  return typeof message === "string" && ROUTE_NOT_FOUND_MESSAGE.test(message)
-    ? Option.some(message.slice("Cannot ".length))
-    : Option.none();
+  const route = ROUTE_NOT_FOUND_MESSAGE.test(text)
+    ? Option.some(text.slice("Cannot ".length))
+    : Option.none<string>();
+
+  if (code === ROUTE_NOT_FOUND_CODE) return Option.orElse(route, () => Option.some("this route"));
+  return code === "not_found" ? route : Option.none();
 };
 
 const routeNotFound = (projectRef: string, route: string) =>

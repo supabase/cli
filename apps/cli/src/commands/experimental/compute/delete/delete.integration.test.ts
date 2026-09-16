@@ -425,7 +425,7 @@ describe("compute delete", () => {
     status: 404,
     body: {
       error: {
-        code: "not_found",
+        code: "not_found.route",
         message: `Cannot ${method} ${computeRoute("/api")}`,
       },
     },
