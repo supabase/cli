@@ -39,7 +39,11 @@ import { buildLocalDbContainerInputs } from "./local-container-inputs.ts";
 import { isLocalDbRunning } from "./local-db-running.ts";
 import { recreateLocalDatabase } from "./recreate-local-database.ts";
 import { currentStackBackend } from "../stack-backend.ts";
-import { stackLocalDatabaseConn, stackOpenReadyProject } from "../stack-local-database.ts";
+import {
+  optionalCatalogConfigFromStatus,
+  stackLocalDatabaseConn,
+  stackOpenReadyProject,
+} from "../stack-local-database.ts";
 import { loadStackConfig } from "../stack-config.ts";
 import { StackCatalogSetup } from "../stack-catalog-setup.ts";
 
@@ -116,6 +120,10 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
       Effect.mapError((cause) => resetFailed(cause.message)),
     );
     const toml = yield* readDbToml(fs, path, workdir);
+    const runningStatus = yield* opened.value.stack.status.pipe(
+      Effect.mapError((cause) => resetFailed(`failed to inspect stack: ${cause.message}`)),
+    );
+    const optionalConfig = optionalCatalogConfigFromStatus(stackConfig, runningStatus);
     yield* output.raw(`Resetting local database${toLogMessage(input.version)}\n`, "stderr");
     yield* opened.value.stack.resetDatabase.pipe(
       Effect.catchTag("StackNotRunningError", () =>
@@ -133,6 +141,7 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
           projectRoot: workdir,
           config: stackConfig,
         },
+        optionalConfig,
         overlay: {
           webhooks: "config",
           webhooksEnabled: toml.webhooksEnabled,

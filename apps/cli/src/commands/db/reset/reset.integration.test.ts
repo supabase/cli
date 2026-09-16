@@ -45,7 +45,12 @@ import { dockerRunLayer } from "../../../command-internal/docker-run.layer.ts";
 import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
 import { StackApi } from "../../../command-internal/stack-api.ts";
 import { recordingStackCatalogSetup } from "../../../command-internal/stack-catalog-setup.ts";
-import { CAPABILITY_NAMES, StackIdSchema, type EffectStack } from "@supabase/stack/effect";
+import {
+  CAPABILITY_NAMES,
+  StackIdSchema,
+  type CapabilityState,
+  type EffectStack,
+} from "@supabase/stack/effect";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
 import { DbConfigConnectTempRoleError } from "../../../command-internal/db-config.errors.ts";
@@ -401,6 +406,7 @@ function mockResetStackApi(opts: {
   readonly storageReady?: boolean;
   readonly apiEndpoint?: { readonly url: string; readonly port: number };
   readonly serviceRoleJwt?: string;
+  readonly capabilityStates?: Partial<Record<(typeof CAPABILITY_NAMES)[number], CapabilityState>>;
 }) {
   let resetCalls = 0;
   const unused = Effect.die("unused");
@@ -428,11 +434,12 @@ function mockResetStackApi(opts: {
         name,
         activation: name === "database" ? "eager" : "lazy",
         state:
-          name === "database" && opts.ready
+          opts.capabilityStates?.[name] ??
+          (name === "database" && opts.ready
             ? "ready"
             : name === "storage" && opts.storageReady === true
               ? "ready"
-              : "stopped",
+              : "stopped"),
       })),
       artifacts: [],
     }),
@@ -529,6 +536,7 @@ function setup(
     stackStorageReady?: boolean;
     stackApiEndpoint?: { readonly url: string; readonly port: number };
     stackServiceRoleJwt?: string;
+    stackCapabilityStates?: Partial<Record<(typeof CAPABILITY_NAMES)[number], CapabilityState>>;
     httpClient?: Layer.Layer<HttpClient.HttpClient>;
   },
 ) {
@@ -563,10 +571,14 @@ function setup(
     storageReady: opts.stackStorageReady,
     apiEndpoint: opts.stackApiEndpoint,
     serviceRoleJwt: opts.stackServiceRoleJwt,
+    capabilityStates: opts.stackCapabilityStates,
   });
   const catalog =
     opts.stackBackend === true
-      ? recordingStackCatalogSetup((input) => input.target.kind)
+      ? recordingStackCatalogSetup((input) => ({
+          kind: input.target.kind,
+          analytics: input.optionalConfig?.capabilities?.analytics?.enabled,
+        }))
       : undefined;
   const layer = Layer.mergeAll(
     out.layer,
@@ -805,10 +817,38 @@ describe("db reset", () => {
       return Effect.gen(function* () {
         yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         expect(stackApi.resetCalls).toBe(1);
-        expect(catalogApplied).toEqual(["live"]);
+        expect(catalogApplied).toEqual([{ kind: "live", analytics: undefined }]);
         expect(child.spawned.some((s) => s.args[0] === "container" && s.args[1] === "rm")).toBe(
           false,
         );
+      });
+    });
+
+    it.live("skips optional analytics catalog when the running stack has it disabled", () => {
+      const { layer, catalogApplied } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        stackBackend: true,
+        stackCapabilityStates: { analytics: "disabled" },
+      });
+      return Effect.gen(function* () {
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(catalogApplied).toEqual([{ kind: "live", analytics: false }]);
+      });
+    });
+
+    it.live("re-inits optional analytics catalog when the running stack has it ready", () => {
+      const { layer, catalogApplied } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        stackBackend: true,
+        stackCapabilityStates: { analytics: "ready" },
+      });
+      return Effect.gen(function* () {
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(catalogApplied).toEqual([{ kind: "live", analytics: undefined }]);
       });
     });
 

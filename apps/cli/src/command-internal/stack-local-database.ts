@@ -11,6 +11,7 @@ import {
   type EffectStack,
   type StackConfig,
   type StackRuntime,
+  type StackStatus,
 } from "@supabase/stack/effect";
 import { parseConnectionString } from "./db-config.parse.ts";
 import { DbConnection, type DbSession, type PgConnInput } from "./db-connection.service.ts";
@@ -126,6 +127,19 @@ export const STACK_START_EXCLUDABLE_CAPABILITIES = CAPABILITY_NAMES.filter(
 
 const postgresOnlyStackStartConfig = (config: StackConfig): StackConfig =>
   excludeStackCapabilities(config, STACK_START_EXCLUDABLE_CAPABILITIES);
+
+/** Optional catalog jobs follow the running definition, not full TOML. */
+export const optionalCatalogConfigFromStatus = (
+  config: StackConfig,
+  status: Pick<StackStatus, "capabilities">,
+): StackConfig =>
+  excludeStackCapabilities(
+    config,
+    STACK_START_EXCLUDABLE_CAPABILITIES.filter(
+      (name) =>
+        status.capabilities.find((capability) => capability.name === name)?.state === "disabled",
+    ),
+  );
 
 const databaseReady = (stack: EffectStack) =>
   Effect.gen(function* () {
