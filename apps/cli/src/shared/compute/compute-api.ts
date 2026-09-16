@@ -6,12 +6,14 @@ import {
   V2ListAllComputeInstancesOutput,
   type ApiClient,
 } from "@supabase/api/effect";
-import { Effect, Option, Schedule, Schema } from "effect";
+import { Effect, Option, Redacted, Schedule, Schema } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import { requestWithAuth } from "../../command-internal/raw-http.ts";
 import { decodeBody, mapRequestError, unexpectedStatus } from "./compute-api-status.ts";
 import {
   ComputeBuildTimeoutError,
+  ComputeDownloadFailedError,
   ComputeProjectNotFoundError,
   ComputeUnavailableError,
   ComputeUploadFailedError,
@@ -412,4 +414,126 @@ export const awaitComputeBuild = Effect.fnUntraced(function* (
   }
 
   return settled;
+});
+
+/**
+ * A presigned slot for reading a deployed compute's build context — the mirror of
+ * {@link ComputeUploadSlot}, minted by `POST /v2/projects/{ref}/compute/{name}/downloads`.
+ */
+export interface ComputeDownloadSlot {
+  readonly url: string;
+  readonly method: string;
+  readonly expiresAt: string;
+}
+
+const ComputeDownloadBody = Schema.Struct({
+  data: Schema.Struct({
+    attributes: Schema.Struct({
+      url: Schema.String,
+      method: Schema.optionalKey(Schema.String),
+      expires_at: Schema.optionalKey(Schema.String),
+    }),
+  }),
+});
+
+/**
+ * Mints a read slot for `name`'s deployed build context.
+ *
+ * Issued as a raw authenticated request (`requestWithAuth`, the same escape hatch
+ * `postgres-config` and `config push`'s cost-matrix fetch use) rather than through the typed
+ * client: this route is not in the Management API's published OpenAPI document yet, and adding
+ * it to `@supabase/api`'s generated surface would mean asserting a platform capability to every
+ * consumer of that published package. Replace this with
+ * `api.executeRaw(operationDefinitions.v2CreateComputeInstanceDownload, ...)` once the spec
+ * carries the operation.
+ *
+ * `None` means "no source to read", never a hard failure — the route being absent (the platform
+ * has not shipped it) and the deployed revision having no retained context are indistinguishable
+ * at the transport level, and both leave a pull with nothing to unpack. Reporting them as a
+ * failure would break every `supabase pull` that reconciles compute config perfectly well.
+ */
+export const createComputeDownload = Effect.fnUntraced(function* (options: {
+  readonly apiUrl: string;
+  readonly accessToken: Option.Option<Redacted.Redacted<string>>;
+  readonly userAgent: string;
+  readonly projectRef: string;
+  readonly name: string;
+}) {
+  const operation = `read the build context for "${options.name}"`;
+  const client = yield* HttpClient.HttpClient;
+
+  const request = requestWithAuth(
+    HttpClientRequest.post(
+      `${options.apiUrl.replace(/\/+$/, "")}/v2/projects/${options.projectRef}/compute/${options.name}/downloads`,
+    ),
+    options.accessToken,
+    options.userAgent,
+  );
+
+  const response = yield* client.execute(request).pipe(Effect.mapError(mapRequestError(operation)));
+
+  // 501 is the honest answer from a deployment that knows the route but cannot serve it.
+  if (response.status === 404 || response.status === 501) {
+    return Option.none<ComputeDownloadSlot>();
+  }
+  if (response.status !== 200 && response.status !== 201) {
+    return yield* unexpectedStatus({
+      operation,
+      status: response.status,
+      body: yield* response.text.pipe(Effect.orElseSucceed(() => "")),
+    });
+  }
+
+  const body = yield* response.json.pipe(Effect.mapError(mapRequestError(operation)));
+  const decoded = yield* decodeBody(ComputeDownloadBody, operation, body, response.status);
+  return Option.some({
+    url: decoded.data.attributes.url,
+    method: decoded.data.attributes.method ?? "GET",
+    expiresAt: decoded.data.attributes.expires_at ?? "",
+  } satisfies ComputeDownloadSlot);
+});
+
+/**
+ * GETs the archive straight from the presigned slot, with no Supabase credentials attached —
+ * the signature in the URL is the authorization, exactly as in {@link uploadBuildContext}.
+ */
+export const fetchBuildContext = Effect.fnUntraced(function* (slot: ComputeDownloadSlot) {
+  const client = yield* HttpClient.HttpClient;
+
+  const request =
+    slot.method.toUpperCase() === "POST"
+      ? HttpClientRequest.post(slot.url)
+      : HttpClientRequest.get(slot.url);
+
+  const response = yield* client.execute(request).pipe(
+    Effect.mapError(
+      (error) =>
+        // Deliberately not `error.message`: it appends the URL, which here is a
+        // read-capable signature.
+        new ComputeDownloadFailedError({
+          detail: `Downloading the build context failed: ${
+            error.reason.description ?? "the download request did not complete"
+          }.`,
+          suggestion: "Check your network connection, then re-run the same command.",
+        }),
+    ),
+  );
+
+  if (response.status < 200 || response.status >= 300) {
+    return yield* new ComputeDownloadFailedError({
+      detail: `Downloading the build context failed with status ${response.status}.`,
+      suggestion: "Re-run the same command; the download slot is minted fresh each time.",
+    });
+  }
+
+  return yield* response.arrayBuffer.pipe(
+    Effect.map((buffer) => new Uint8Array(buffer)),
+    Effect.mapError(
+      () =>
+        new ComputeDownloadFailedError({
+          detail: "The downloaded build context could not be read.",
+          suggestion: "Re-run the same command.",
+        }),
+    ),
+  );
 });

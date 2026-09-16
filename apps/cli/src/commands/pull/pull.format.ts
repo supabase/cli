@@ -1,3 +1,4 @@
+import type { ComputePullPlan } from "../../shared/compute/compute-pull.ts";
 import { pullCounts } from "./pull.aggregate.ts";
 import { PULL_STEP_ORDER, type PullAggregate, type PullStepResult } from "./pull.types.ts";
 
@@ -147,6 +148,27 @@ export function renderPullSummary(aggregate: PullAggregate): string {
   return `${lines.join("\n")}\n`;
 }
 
+/**
+ * The post-run advisory for deployed computes that still have no code here once the run is
+ * over: their spec was recorded, but the platform served no build context to unpack, so the
+ * `[compute.<name>]` entry is something `supabase compute push` cannot act on. Without this the
+ * run reads as a clean success. `undefined` when nothing is left missing.
+ */
+export function pullComputeMissingSourceWarning(
+  stillMissing: ReadonlyArray<string>,
+): string | undefined {
+  if (stillMissing.length === 0) {
+    return undefined;
+  }
+  const names = stillMissing.map((name) => pullSanitizeRowText(name));
+  const subject = names.length === 1 ? `${names[0]} is` : `${names.join(", ")} are`;
+  return (
+    `${subject} deployed with no source in this project.\n` +
+    "The spec was recorded, but this project served no build context to restore the code from.\n" +
+    `Restore the code (or set [compute.<name>] source) before running supabase compute push.\n`
+  );
+}
+
 export interface PullConfirmMessageInput {
   /** The resolved target project ref — named in the header line so the confirmation body says
    *  which project/branch is about to be written to. */
@@ -166,6 +188,17 @@ export interface PullConfirmMessageInput {
    *  that currently have uncommitted or untracked changes in git — the orchestrator's own,
    *  per-path git guard. Empty when nothing is dirty (or `--force` skipped the check entirely). */
   readonly dirtyPaths: ReadonlyArray<string>;
+  /** The compute step's own plan, when the experimental compute feature is on; `undefined`
+   *  leaves compute out of the body entirely, the way a project without it should read. */
+  readonly compute: PullComputeConfirmInput | undefined;
+}
+
+export interface PullComputeConfirmInput {
+  readonly plan: ComputePullPlan;
+  readonly missingSource: ReadonlyArray<string>;
+  /** Where the entries land — `supabase/config.toml`, or `[remotes.<label>]` inside it. */
+  readonly destinationLabel: string | undefined;
+  readonly configPath: string;
 }
 
 /** Joins `paths` into an English list — `"a"`, `"a and b"`, or `"a, b, and c"` — for the shared
@@ -189,10 +222,69 @@ export function pullDirtyWarningMessage(dirtyPaths: ReadonlyArray<string>): stri
   return `${joinPathList(dirtyPaths)} ${verb} uncommitted or untracked changes. Commit or stash them (-u for untracked), or rerun with --force.`;
 }
 
+/** How one planned compute key reads in the confirmation body: `api.size 2gb -> 4gb`, or
+ *  `api.size (unset) -> 2gb` when the config doesn't mention it yet. */
+function pullComputeChangeLine(change: ComputePullPlan["changes"][number]): string {
+  const local = change.local === undefined ? "(unset)" : JSON.stringify(change.local);
+  return `  ${pullSanitizeRowText(change.name)}.${change.key}  ${local} -> ${JSON.stringify(change.remote)}`;
+}
+
+/**
+ * The compute section of the confirmation body. Unlike db/functions this one shows a real diff,
+ * since the plan is already computed by the time the prompt renders — and it says plainly that
+ * only metadata travels, because the platform exposes no way to download a compute's code.
+ */
+function pullComputeConfirmLines(input: PullComputeConfirmInput): ReadonlyArray<string> {
+  const destination =
+    input.destinationLabel === undefined
+      ? input.configPath
+      : `[remotes.${pullSanitizeRowText(input.destinationLabel)}] in ${input.configPath}`;
+
+  if (input.plan.deployed.length === 0) {
+    return ["This project has no deployed compute, so nothing will be recorded."];
+  }
+
+  const lines: Array<string> = [];
+  if (input.plan.changes.length === 0) {
+    lines.push(`Compute already matches ${destination}; nothing will be recorded.`);
+  } else {
+    lines.push(`Record the deployed compute spec into ${destination}:`);
+    for (const change of input.plan.changes) {
+      lines.push(pullComputeChangeLine(change));
+    }
+  }
+
+  // Said every time compute takes part: this step overwrites source directories, which is the
+  // most destructive thing `pull` does to a compute, so it is disclosed whether or not the
+  // config half has any work.
+  lines.push(
+    `Restore each deployed compute's source, overwriting files the archive names in ${input.plan.deployed
+      .map((name) => pullSanitizeRowText(name))
+      .join(", ")}'s source directory.`,
+  );
+
+  if (input.missingSource.length > 0) {
+    lines.push(
+      `No source in this project yet (restored if this project can serve it): ${input.missingSource
+        .map((name) => pullSanitizeRowText(name))
+        .join(", ")}.`,
+    );
+  }
+  if (input.plan.localOnly.length > 0) {
+    lines.push(
+      `Configured here but not deployed (left untouched): ${input.plan.localOnly
+        .map((name) => pullSanitizeRowText(name))
+        .join(", ")}.`,
+    );
+  }
+  return lines;
+}
+
 /**
  * The single aggregated confirmation prompt's disclosure body, printed before the yes/no
  * question. `db pull` and `functions download` get one qualitative line each (no preview
- * machinery); migration history only gets a line when it will actually run (see ADR 0024).
+ * machinery); migration history only gets a line when it will actually run, and compute only
+ * when the experimental feature is on (see ADR 0024).
  */
 export function pullConfirmMessage(input: PullConfirmMessageInput): string {
   // Sanitized before interpolation (CWE-117): a branch name containing CR/LF could otherwise
@@ -226,6 +318,9 @@ export function pullConfirmMessage(input: PullConfirmMessageInput): string {
     "Pull the remote database schema into supabase/migrations (also updates the remote migration history table; requires Docker).",
   );
   lines.push("Download every Edge Function's source into supabase/functions.");
+  if (input.compute !== undefined) {
+    lines.push("", ...pullComputeConfirmLines(input.compute));
+  }
   if (input.dirtyPaths.length > 0) {
     lines.push("", pullDirtyWarningMessage(input.dirtyPaths));
   }

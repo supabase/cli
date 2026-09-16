@@ -321,3 +321,53 @@ export class ComputeLogsRateLimitedError extends Data.TaggedError("ComputeLogsRa
     return { ...actionability.apiStatus, fingerprint_suffix: "api_status" };
   }
 }
+
+/**
+ * The surgical config editor refused to record a compute — the file has a structure it cannot
+ * safely rewrite (a duplicate table header, an array of tables or an inline table on the path,
+ * an existing `env(...)` literal at the destination).
+ */
+export class ComputeConfigPullUnsupportedLayoutError extends Data.TaggedError(
+  "ComputeConfigPullUnsupportedLayoutError",
+)<{
+  readonly detail: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
+  }
+}
+
+/** Reading or atomically rewriting the config file failed while recording compute. */
+export class ComputeConfigPullWriteError extends Data.TaggedError("ComputeConfigPullWriteError")<{
+  readonly detail: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return { ...actionability.permission, fingerprint_suffix: "filesystem" };
+  }
+}
+
+/** GETting the build context from the presigned slot failed. */
+export class ComputeDownloadFailedError extends Data.TaggedError("ComputeDownloadFailedError")<{
+  readonly detail: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.externalNetwork;
+  }
+}
+
+/**
+ * The downloaded build context could not be unpacked: a malformed archive, or an entry whose
+ * path or symlink target resolves outside the compute's own source directory. Remote-supplied
+ * bytes, so a refusal rather than a defect — nothing is written.
+ */
+export class ComputeSourceUnpackError extends Data.TaggedError("ComputeSourceUnpackError")<{
+  readonly detail: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return { ...actionability.invalidInput, fingerprint_suffix: "api_response" };
+  }
+}

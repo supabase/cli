@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { DbPullMigrationConflictError } from "../../command-internal/db-pull-run.errors.ts";
 import { MigrationFetchWriteError } from "../migration/fetch/fetch.errors.ts";
+import type { ComputePullPlan } from "../../shared/compute/compute-pull.ts";
 import {
   pullAggregate,
   pullConfigStepResult,
@@ -11,6 +12,7 @@ import {
   pullFailedStepResult,
   pullFunctionsStepResult,
   pullMigrationHistoryStepResult,
+  pullComputeStepResult,
   pullRetryHint,
   pullWithMigrationHistoryCommand,
   type PullConfigStepOutcome,
@@ -488,6 +490,98 @@ describe("pullRetryHint", () => {
     );
     expect(pullRetryHint("db", ref, "staging-remote")).not.toContain("--remote-label");
     expect(pullRetryHint("functions", ref, "staging-remote")).not.toContain("--remote-label");
+  });
+
+  it("offers no hint for the compute step, which has no standalone command", () => {
+    expect(pullRetryHint("compute", ref, undefined)).toBeUndefined();
+  });
+});
+
+describe("pullComputeStepResult", () => {
+  const plan: ComputePullPlan = {
+    deployed: ["api"],
+    changes: [],
+    skipped: [],
+    localOnly: [],
+    hasWork: false,
+  };
+
+  it("reports the feature being off as skipped, with nothing else claimed about compute", () => {
+    expect(pullComputeStepResult({ kind: "skipped", reason: "not_enabled" })).toEqual({
+      step: "compute",
+      status: "skipped",
+      written: [],
+      detail: { enabled: false },
+      reason: "not_enabled",
+    });
+  });
+
+  it("reports a converged reconciliation as unchanged, with nothing written", () => {
+    const result = pullComputeStepResult({
+      kind: "recorded",
+      plan,
+      missingSource: [],
+      configFilePath: "supabase/config.toml",
+      restored: [],
+      sourceUnavailable: [],
+    });
+
+    expect(result.status).toBe("unchanged");
+    expect(result.written).toEqual([]);
+  });
+
+  it("reports a written reconciliation as changed, naming the config file", () => {
+    const result = pullComputeStepResult({
+      kind: "recorded",
+      plan: {
+        ...plan,
+        changes: [{ name: "api", key: "size", local: "2gb", remote: "4gb" }],
+        hasWork: true,
+      },
+      missingSource: [],
+      configFilePath: "supabase/config.toml",
+      restored: [],
+      sourceUnavailable: [],
+    });
+
+    expect(result.status).toBe("changed");
+    expect(result.written).toEqual(["supabase/config.toml"]);
+    expect(result.detail["changes"]).toEqual([
+      { name: "api", key: "size", local: "2gb", remote: "4gb" },
+    ]);
+  });
+
+  it("carries the reconciliation it would have applied on a planned disposition", () => {
+    const result = pullComputeStepResult({
+      kind: "planned",
+      plan: { ...plan, localOnly: ["retired"] },
+      missingSource: ["api"],
+    });
+
+    expect(result.status).toBe("planned");
+    expect(result.written).toEqual([]);
+    expect(result.detail).toMatchObject({
+      enabled: true,
+      deployed: ["api"],
+      local_only: ["retired"],
+      missing_source: ["api"],
+    });
+  });
+
+  it("renders an absent local value as null, so a machine consumer never sees a missing key", () => {
+    const result = pullComputeStepResult({
+      kind: "planned",
+      plan: {
+        ...plan,
+        changes: [{ name: "api", key: "instances", local: undefined, remote: 3 }],
+        hasWork: true,
+      },
+      missingSource: [],
+    });
+
+    expect(result.detail["changes"]).toEqual([
+      { name: "api", key: "instances", local: null, remote: 3 },
+    ]);
   });
 });
 

@@ -29,7 +29,7 @@ const config = {
   ),
   force: Flag.boolean("force").pipe(
     Flag.withDescription(
-      "Write even when supabase/config.toml (or config.json), supabase/migrations, or supabase/functions has uncommitted or untracked changes in git.",
+      "Write even when supabase/config.toml (or config.json), supabase/migrations, supabase/functions, or a compute source directory has uncommitted or untracked changes in git.",
     ),
     Flag.withDefault(false),
   ),
@@ -65,7 +65,7 @@ export const pullHandler = (flags: PullFlags) =>
 
 export const pullCommand = Command.make("pull", config).pipe(
   Command.withDescription(
-    "Refreshes local project state from a linked Supabase project or branch in one step: pulls config into supabase/config.toml, optionally fetches the remote migration history table, pulls the database schema into supabase/migrations (also updating that database's migration history), and downloads every Edge Function's source. Prompts for confirmation before writing on an interactive TTY, unless --yes is set; --output-format json|stream-json skips the prompt entirely and takes its default answer, while a non-interactive text run still prints the prompt to stderr and reads one line from piped stdin (y/n honored, default otherwise) — use --dry-run to preview first.",
+    "Refreshes local project state from a linked Supabase project or branch in one step: pulls config into supabase/config.toml, optionally fetches the remote migration history table, pulls the database schema into supabase/migrations (also updating that database's migration history), and downloads every Edge Function's source. When the experimental compute feature is enabled, it also records each deployed compute's spec as a [compute.*] entry and restores its source into supabase/compute/<name> (or the directory [compute.<name>] source names), overwriting files the downloaded build context contains. Prompts for confirmation before writing on an interactive TTY, unless --yes is set; --output-format json|stream-json skips the prompt entirely and takes its default answer, while a non-interactive text run still prints the prompt to stderr and reads one line from piped stdin (y/n honored, default otherwise) — use --dry-run to preview first.",
   ),
   Command.withShortDescription("Pull remote project state into the local checkout"),
   Command.withExamples([

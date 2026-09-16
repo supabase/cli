@@ -1,5 +1,6 @@
 import { join } from "node:path";
-import { Effect, Option, Stdio } from "effect";
+import type { ConfigFormat } from "@supabase/config";
+import { Effect, Option, Path, Stdio } from "effect";
 
 import { CommandPlatformApi } from "../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../config/command-settings.service.ts";
@@ -20,7 +21,24 @@ import {
   runMigrationFetch,
   type MigrationFetchFlags,
 } from "../../command-internal/migration-fetch-run.ts";
+import { resolveExperimentalFeature } from "../../command-internal/experimental-feature.ts";
+import {
+  createComputeDownload,
+  fetchBuildContext,
+  listCompute,
+} from "../../shared/compute/compute-api.ts";
+import { readComputeSection } from "../../shared/compute/compute-config.ts";
+import {
+  applyComputePull,
+  computePullMissingSource,
+  planComputePull,
+  restoreComputeSource,
+  type ComputePullPlan,
+} from "../../shared/compute/compute-pull.ts";
+import { computeDir, computeSourceDir } from "../../shared/compute/compute-paths.ts";
+import { CommandCredentials } from "../../auth/command-credentials.service.ts";
 import type {
+  PullComputeStepOutcome,
   PullConfigStepOutcome,
   PullDbStepOutcome,
   PullFunctionsStepOutcome,
@@ -161,3 +179,184 @@ export const pullFunctionsStep = Effect.fnUntraced(function* (context: PullStepC
   );
   return { kind: "downloaded", result } satisfies PullFunctionsStepOutcome;
 });
+
+/** What the `compute` step will do this invocation, known before the confirmation renders. */
+export interface PullComputePlan {
+  readonly plan: ComputePullPlan;
+  readonly missingSource: ReadonlyArray<string>;
+  /** `["remotes", label]` when the config step's destination is a remote block, `[]` otherwise. */
+  readonly destinationPath: ReadonlyArray<string>;
+  /**
+   * Where each deployed compute's code belongs — `[compute.<name>] source` when recorded,
+   * `supabase/compute/<name>/` otherwise. Resolved during planning so the confirmation can name
+   * the directories a restore will write into, and so an unusable `source` is refused before
+   * anything is downloaded.
+   */
+  readonly sourceDirs: Readonly<Record<string, string>>;
+}
+
+/** A plain object — a `[compute]` table rather than a scalar or a list. */
+function isDocumentRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Plans the `compute` step: resolves the experimental gate, lists what the project has deployed,
+ * and diffs it against what the config declares. `undefined` when compute is off for this
+ * project — the gate is checked before the API call, so a project without the feature never
+ * reaches `/v2/projects/{ref}/compute`.
+ *
+ * Unlike `db`/`migration_history`/`functions`, this step can preview for the price of one GET,
+ * so it is planned ahead of the aggregated confirmation and shows a real per-compute diff there.
+ */
+export const planComputePullStep = Effect.fnUntraced(function* (input: {
+  readonly ref: string;
+  readonly source: ConfigPullSource;
+  readonly destination: ConfigPullRunPlan["context"]["destination"];
+}) {
+  const api = yield* CommandPlatformApi;
+  const cliSettings = yield* CommandSettings;
+
+  const enabled = yield* resolveExperimentalFeature({
+    feature: "compute",
+    configValue: Effect.succeed(input.source.loaded.config.experimental?.compute),
+    env: process.env,
+  });
+  if (!enabled) {
+    return undefined;
+  }
+
+  const deployed = yield* listCompute(api, input.ref);
+
+  const rawDocument = input.source.loaded.rawDocument;
+  const remotes = isDocumentRecord(rawDocument) ? rawDocument["remotes"] : undefined;
+  const destinationPath =
+    input.destination.kind === "remote" ? ["remotes", input.destination.label] : [];
+  const blockDocument =
+    input.destination.kind === "remote" && isDocumentRecord(remotes)
+      ? remotes[input.destination.label]
+      : undefined;
+
+  const plan = planComputePull({ deployed, rootDocument: rawDocument, blockDocument });
+
+  // Read off the decoded, `env()`-resolved config rather than the raw document: this asks where
+  // the code actually lives, which is the interpolated answer, not the literal spelling.
+  const configured = readComputeSection(input.source.loaded.config.compute).compute;
+  const missingSource = yield* computePullMissingSource({
+    projectRoot: cliSettings.workdir,
+    names: plan.deployed,
+    configuredSource: (name) => configured[name]?.source,
+  });
+
+  // Confined here, before any download: `computeSourceDir` refuses a recorded `source` that
+  // escapes the project, so a hostile `config.toml` cannot redirect a restore outside the tree.
+  const path = yield* Path.Path;
+  const sourceDirs: Record<string, string> = {};
+  for (const name of plan.deployed) {
+    sourceDirs[name] = yield* computeSourceDir({
+      projectRoot: cliSettings.workdir,
+      defaultDir: computeDir(path, cliSettings.workdir, name),
+      name,
+      configuredSource: configured[name]?.source,
+    });
+  }
+
+  return { plan, missingSource, destinationPath, sourceDirs } satisfies PullComputePlan;
+});
+
+/**
+ * Restores every deployed compute's source, one archive per compute.
+ *
+ * A compute with no readable build context is reported, not failed: the download route is a
+ * newer addition than the compute API itself, and a deployment that cannot serve a context
+ * leaves a pull with nothing to unpack while its config reconciliation is perfectly valid.
+ * An archive that *is* served but cannot be safely unpacked is a different matter and fails —
+ * see `restoreComputeSource`.
+ */
+const pullComputeSourceStep = Effect.fnUntraced(function* (input: {
+  readonly ref: string;
+  readonly names: ReadonlyArray<string>;
+  readonly sourceDirs: Readonly<Record<string, string>>;
+}) {
+  const cliSettings = yield* CommandSettings;
+  const credentials = yield* CommandCredentials;
+  const accessToken = yield* credentials.getAccessToken;
+
+  const restored: Array<string> = [];
+  const unavailable: Array<string> = [];
+
+  for (const name of input.names) {
+    const destination = input.sourceDirs[name];
+    if (destination === undefined) {
+      continue;
+    }
+    const slot = yield* createComputeDownload({
+      apiUrl: cliSettings.apiUrl,
+      accessToken,
+      userAgent: cliSettings.userAgent,
+      projectRef: input.ref,
+      name,
+    });
+    if (Option.isNone(slot)) {
+      unavailable.push(name);
+      continue;
+    }
+    const archive = yield* fetchBuildContext(slot.value);
+    yield* restoreComputeSource({ name, destination, archive });
+    restored.push(name);
+  }
+
+  return { restored, unavailable };
+});
+
+/**
+ * `compute` step: records the deployed compute specs the plan already computed into
+ * `[compute.<name>]`. Runs last, after the config step has finished rewriting the same file —
+ * `applyComputePull` re-reads it so this write lands on top of that one rather than over it.
+ * A converged plan writes nothing and still reports the reconciliation it checked.
+ */
+export const pullComputeStep = Effect.fnUntraced(function* (input: {
+  readonly ref: string;
+  readonly plan: ComputePullPlan;
+  readonly missingSource: ReadonlyArray<string>;
+  readonly sourceDirs: Readonly<Record<string, string>>;
+  readonly configFilePath: string;
+  readonly configPath: string;
+  readonly format: ConfigFormat;
+  readonly destinationPath: ReadonlyArray<string>;
+  readonly workdir: string;
+}) {
+  if (input.plan.hasWork) {
+    yield* applyComputePull({
+      plan: input.plan,
+      configFilePath: input.configFilePath,
+      configPath: input.configPath,
+      format: input.format,
+      destinationPath: input.destinationPath,
+    });
+  }
+
+  // Source last: the config entry is what records the compute's `source`, so writing the code
+  // after it means a restore always lands where the just-written config says it belongs.
+  const source = yield* pullComputeSourceStep({
+    ref: input.ref,
+    names: input.plan.deployed,
+    sourceDirs: input.sourceDirs,
+  });
+
+  return {
+    kind: "recorded",
+    plan: input.plan,
+    missingSource: input.missingSource,
+    configFilePath: input.configPath,
+    restored: source.restored.map((name) =>
+      relativeToWorkdir(input.workdir, input.sourceDirs[name] ?? name),
+    ),
+    sourceUnavailable: source.unavailable,
+  } satisfies PullComputeStepOutcome;
+});
+
+/** Workdir-relative display path, matching how every other step reports what it wrote. */
+function relativeToWorkdir(workdir: string, target: string): string {
+  return target.startsWith(workdir) ? target.slice(workdir.length).replace(/^[/\\]/, "") : target;
+}

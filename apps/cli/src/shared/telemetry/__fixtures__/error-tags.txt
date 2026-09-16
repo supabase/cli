@@ -47,10 +47,13 @@ ComputeApiUnexpectedStatusError
 ComputeArchiveCompressionError
 ComputeBuildFailedError
 ComputeBuildTimeoutError
+ComputeConfigPullUnsupportedLayoutError
+ComputeConfigPullWriteError
 ComputeConfigWriteUnsafeError
 ComputeDeleteConfirmationRequiredError
 ComputeDeleteNotConfirmedError
 ComputeDirectoryExistsError
+ComputeDownloadFailedError
 ComputeEnvNotSupportedError
 ComputeFollowNotSupportedError
 ComputeJsonConfigUnsupportedError
@@ -62,6 +65,7 @@ ComputeNotDeployedError
 ComputeProjectNotFoundError
 ComputeSourceEscapingLinkError
 ComputeSourceMissingError
+ComputeSourceUnpackError
 ComputeStacksValidationError
 ComputeUnavailableError
 ComputeUploadFailedError
@@ -539,6 +543,7 @@ StorageUnsupportedOperationError
 StorageUrlParseError
 StorageWorkdirError
 TarFieldOutOfRangeError
+TarMalformedError
 TarPathTooLongError
 TestDbEnablePgtapError
 TestDbMutuallyExclusiveFlagsError

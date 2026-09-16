@@ -261,6 +261,52 @@ review, extend section 4 and 5 above:
   step-specific remedy (e.g. the `db` step's migration-conflict hint), surfaced in both the JSON
   payload and the text-mode summary. See `pull.aggregate.ts`'s `pullRetryHint`.
 
+## Addendum (2026-09-16, the `compute` step)
+
+FUNC-900 adds the fifth step this design's Consequences section anticipated — a new descriptor in
+`pull.steps.ts`, a new mapper in `pull.aggregate.ts`, a new `steps.compute` payload key — and
+resolves three questions the original design did not have to answer.
+
+- **What a compute pull can actually recover.** `/v2/projects/{ref}/compute` offers list, get,
+  deploy, delete, and a build-context _upload_ slot. There is no download route, so a compute's
+  source code cannot be pulled at all. The step reconciles metadata only — `[compute.<name>]`'s
+  `runtime`, `size`, `exposure`, and `instances` — and reports which deployed computes have no
+  local source rather than pretending to fetch them. The confirmation body says so on every run
+  compute takes part in, changes or not. `source` is never written, being a local path the
+  platform knows nothing about, and a `[compute.<name>]` entry with no deployed counterpart is
+  never removed or amended: deleting a user's config on the strength of one list call is not a
+  trade worth making, least of all while compute is in private alpha.
+- **This step previews for real, refining Decision 4's asymmetry.** Decision 4 gave db, migration
+  fetch, and functions download one qualitative line each because none has preview machinery.
+  Compute does, for the price of one `GET`: the step is planned during the preview phase, so the
+  single confirmation shows a real per-key diff the way the config step's does. That also lets the
+  config-file git guard — which Decision 4's addendum scoped to "the config step's own plan has
+  work" — know whether a compute-only write is coming, which it otherwise could not.
+- **The git guard gains a fourth location.** A restore overwrites a compute's source directory,
+  so each distinct resolved directory is checked for uncommitted changes alongside the config
+  file, `supabase/migrations`, and `supabase/functions`. Checked per resolved directory rather
+  than as a single `supabase/compute`, since `[compute.<name>] source` can point anywhere in the
+  project and that directory is just as overwritable. `--force` bypasses all four.
+- **Two steps now write the same file, and ordering is what keeps that safe.** The compute step
+  runs last and re-reads the config file rather than editing a baseline captured at plan time, so
+  its edits land on top of the config step's write instead of over it. The plan computed before
+  that write stays valid because `config pull` can never touch `[compute]`: the section is a
+  `HOSTED_SECTION_KEYS` member with no API↔config mapping rows (the registry models static paths;
+  `[compute]` is keyed by an arbitrary compute name), so compute never appears in a config change
+  set. Writing goes through the same `applyConfigEdits` editor, which also gets JSON project
+  configs for free — `compute new`'s own append-only TOML writer refuses `config.json` outright.
+  When the config step was going to create the `[remotes.<label>]` block the entries belong in and
+  failed, the compute step reports `skipped (destination_missing)` instead of writing into a block
+  that does not exist.
+
+Two smaller consequences: the step is gated on the experimental compute feature (resolved from
+`[experimental] compute` or `SUPABASE_EXPERIMENTAL_COMPUTE`, checked before the API call, reported
+as `skipped (not_enabled)` otherwise), and it carries no "retry just this step" hint, since no
+standalone `supabase compute pull` exists — `pullRetryHint` is now partial over `PullStepId` rather
+than total. Teaching `config pull`/`config diff` about compute remains out of scope: it needs
+mapping rows for a dynamically-keyed section in `packages/config`, which ships on its own release
+train.
+
 ## Related Decisions
 
 - [ADR 0004](0004-cli-design-goals-and-workflows.md): CLI Design Goals & Development Workflows —
@@ -273,9 +319,10 @@ review, extend section 4 and 5 above:
 ## See Also
 
 - [CLI-1272](https://linear.app/supabase/issue/CLI-1272) — this ticket
+- [FUNC-900](https://linear.app/supabase/issue/FUNC-900) — the `compute` step addendum
 - `apps/cli/src/commands/pull/pull.handler.ts` — Phase 0-4 sequencing (target resolution, preview,
   confirmation, execution, aggregation)
-- `apps/cli/src/commands/pull/pull.steps.ts` — the four step adapters over each sub-step's own run
-  core
+- `apps/cli/src/commands/pull/pull.steps.ts` — the step adapters over each sub-step's own run core
+- `apps/cli/src/shared/compute/compute-pull.ts` — the compute step's own plan/apply core
 - `apps/cli/src/commands/pull/SIDE_EFFECTS.md` — the full side-effect inventory, including the
   database-write and Docker call-outs this ADR summarizes

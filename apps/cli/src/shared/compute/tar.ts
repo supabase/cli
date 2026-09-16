@@ -209,3 +209,155 @@ export const createTar = Effect.fnUntraced(function* (entries: ReadonlyArray<Tar
   }
   return archive;
 });
+
+/**
+ * The archive could not be parsed as USTAR — a truncated block, a header whose checksum does
+ * not match, an unreadable numeric field, or an entry type this reader does not accept.
+ * Remote-supplied bytes, so this is a refusal rather than a defect.
+ */
+class TarMalformedError extends Data.TaggedError("TarMalformedError")<{
+  readonly detail: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return { ...actionability.invalidInput, fingerprint_suffix: "api_response" };
+  }
+}
+
+const decoder = new TextDecoder();
+
+/** A NUL/space-terminated ASCII field, trimmed the way every tar writes them. */
+function readString(block: Uint8Array, offset: number, length: number): string {
+  const field = block.subarray(offset, offset + length);
+  const end = field.indexOf(0);
+  return decoder
+    .decode(end === -1 ? field : field.subarray(0, end))
+    .replace(/\0+$/, "")
+    .trim();
+}
+
+/**
+ * A zero-padded octal numeric field. An empty field reads as `0` (which is how tars spell an
+ * absent mode or mtime); anything non-octal is a refusal, since a misread size would desync
+ * every following header.
+ */
+const readOctal = Effect.fnUntraced(function* (
+  block: Uint8Array,
+  offset: number,
+  length: number,
+  field: string,
+) {
+  const text = readString(block, offset, length);
+  if (text === "") {
+    return 0;
+  }
+  if (!/^[0-7]+$/.test(text)) {
+    return yield* new TarMalformedError({ detail: `${field} is not an octal number` });
+  }
+  const value = Number.parseInt(text, 8);
+  if (!Number.isSafeInteger(value) || value < 0) {
+    return yield* new TarMalformedError({ detail: `${field} is out of range` });
+  }
+  return value;
+});
+
+function isZeroBlock(block: Uint8Array): boolean {
+  return block.every((byte) => byte === 0);
+}
+
+/**
+ * The header's own checksum, computed with the checksum field itself read as spaces. Both the
+ * unsigned and the signed sum are accepted: historical tars disagree on whether the bytes are
+ * signed, and readers are expected to take either.
+ */
+function checksumMatches(block: Uint8Array, expected: number): boolean {
+  let unsigned = 0;
+  let signed = 0;
+  for (let index = 0; index < BLOCK_SIZE; index++) {
+    const byte = index >= 148 && index < 156 ? 0x20 : block[index]!;
+    unsigned += byte;
+    signed += byte > 127 ? byte - 256 : byte;
+  }
+  return unsigned === expected || signed === expected;
+}
+
+/**
+ * Parses a USTAR archive into the same {@link TarEntry} shape {@link createTar} writes, so the
+ * two are inverses over the entry types `compute push` produces: regular files (`0`),
+ * symbolic links (`2`), and directories (`5`, reported with a trailing `/`).
+ *
+ * Every other typeflag is refused by name rather than skipped. A hard link (`1`) can name any
+ * file already on disk and a pax/GNU extension header (`x`/`g`/`L`/`K`) rewrites the *next*
+ * entry's path — silently ignoring either would mean unpacking something other than what the
+ * archive says, which is precisely the case a confinement check must not be handed.
+ */
+export const readTar = Effect.fnUntraced(function* (archive: Uint8Array) {
+  const entries: Array<TarEntry> = [];
+  let offset = 0;
+
+  while (offset + BLOCK_SIZE <= archive.length) {
+    const block = archive.subarray(offset, offset + BLOCK_SIZE);
+    offset += BLOCK_SIZE;
+
+    // The archive ends at the first zero block; trailing garbage after it is not read.
+    if (isZeroBlock(block)) {
+      break;
+    }
+
+    const expectedChecksum = yield* readOctal(block, 148, 8, "checksum");
+    if (!checksumMatches(block, expectedChecksum)) {
+      return yield* new TarMalformedError({ detail: "a header checksum does not match" });
+    }
+
+    const name = readString(block, 0, 100);
+    const prefix = readString(block, 345, 155);
+    const path = prefix === "" ? name : `${prefix}/${name}`;
+    const mode = yield* readOctal(block, 100, 8, "mode");
+    const size = yield* readOctal(block, 124, 12, "size");
+    const mtime = yield* readOctal(block, 136, 12, "mtime");
+    const typeflag = String.fromCharCode(block[156]!);
+    const linkTarget = readString(block, 157, 100);
+
+    if (path === "") {
+      return yield* new TarMalformedError({ detail: "an entry has an empty path" });
+    }
+
+    if (typeflag === "2") {
+      if (linkTarget === "") {
+        return yield* new TarMalformedError({ detail: `symlink "${path}" has no target` });
+      }
+      entries.push({ path, contents: new Uint8Array(0), mode, mtime, linkTarget });
+      continue;
+    }
+
+    if (typeflag === "5") {
+      entries.push({
+        path: path.endsWith("/") ? path : `${path}/`,
+        contents: new Uint8Array(0),
+        mode,
+        mtime,
+      });
+      continue;
+    }
+
+    if (typeflag !== "0" && typeflag !== "\0") {
+      return yield* new TarMalformedError({
+        detail: `entry "${path}" has unsupported type "${typeflag === "\0" ? "\\0" : typeflag}"`,
+      });
+    }
+
+    if (offset + size > archive.length) {
+      return yield* new TarMalformedError({ detail: `entry "${path}" is truncated` });
+    }
+    // Copied out of `archive` rather than sub-arrayed, so an entry does not retain the whole
+    // downloaded archive's buffer once the caller holds onto it.
+    entries.push({
+      path,
+      contents: Uint8Array.from(archive.subarray(offset, offset + size)),
+      mode,
+      mtime,
+    });
+    offset += size + padding(size);
+  }
+
+  return entries;
+});

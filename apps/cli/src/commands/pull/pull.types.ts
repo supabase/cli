@@ -1,4 +1,10 @@
-export const PULL_STEP_ORDER = ["config", "migration_history", "db", "functions"] as const;
+export const PULL_STEP_ORDER = [
+  "config",
+  "migration_history",
+  "db",
+  "functions",
+  "compute",
+] as const;
 
 export type PullStepId = (typeof PULL_STEP_ORDER)[number];
 

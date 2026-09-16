@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 
+import type { ComputePullPlan } from "../../shared/compute/compute-pull.ts";
 import {
   PULL_PAYLOAD_VERSION,
+  pullComputeMissingSourceWarning,
   pullConfirmMessage,
   pullDirtyWarningMessage,
   pullPayload,
   pullSummaryMessage,
   renderPullSummary,
+  type PullComputeConfirmInput,
   type PullConfirmMessageInput,
 } from "./pull.format.ts";
 import { PULL_STEP_ORDER, type PullAggregate, type PullStepResult } from "./pull.types.ts";
@@ -25,6 +28,13 @@ describe("pullPayload", () => {
       { step: "migration_history", status: "planned", written: [], detail: { files: [] } },
       { step: "db", status: "planned", written: [], detail: {} },
       { step: "functions", status: "planned", written: [], detail: {} },
+      {
+        step: "compute",
+        status: "skipped",
+        written: [],
+        detail: { enabled: false },
+        reason: "not_enabled",
+      },
     ];
     const aggregate: PullAggregate = {
       ref: PROJECT_REF,
@@ -42,14 +52,20 @@ describe("pullPayload", () => {
       confirmed: false,
       dirty_paths: [],
       wrote: false,
-      step_order: ["config", "migration_history", "db", "functions"],
+      step_order: ["config", "migration_history", "db", "functions", "compute"],
       steps: {
         config: { status: "planned", written: [], detail: { schema_version: 1, wrote: false } },
         migration_history: { status: "planned", written: [], detail: { files: [] } },
         db: { status: "planned", written: [], detail: {} },
         functions: { status: "planned", written: [], detail: {} },
+        compute: {
+          status: "skipped",
+          written: [],
+          detail: { enabled: false },
+          reason: "not_enabled",
+        },
       },
-      counts: { changed: 0, unchanged: 0, skipped: 0, planned: 4, failed: 0 },
+      counts: { changed: 0, unchanged: 0, skipped: 1, planned: 4, failed: 0 },
     });
   });
 
@@ -79,6 +95,12 @@ describe("pullPayload", () => {
         written: ["supabase/functions/hello"],
         detail: { project_ref: PROJECT_REF, function_slugs: ["hello"] },
       },
+      {
+        step: "compute",
+        status: "changed",
+        written: ["supabase/config.toml"],
+        detail: { enabled: true },
+      },
     ];
     const aggregate: PullAggregate = {
       ref: PROJECT_REF,
@@ -96,7 +118,7 @@ describe("pullPayload", () => {
       confirmed: true,
       dirty_paths: [],
       wrote: true,
-      step_order: ["config", "migration_history", "db", "functions"],
+      step_order: ["config", "migration_history", "db", "functions", "compute"],
       steps: {
         config: {
           status: "changed",
@@ -118,8 +140,13 @@ describe("pullPayload", () => {
           written: ["supabase/functions/hello"],
           detail: { project_ref: PROJECT_REF, function_slugs: ["hello"] },
         },
+        compute: {
+          status: "changed",
+          written: ["supabase/config.toml"],
+          detail: { enabled: true },
+        },
       },
-      counts: { changed: 4, unchanged: 0, skipped: 0, planned: 0, failed: 0 },
+      counts: { changed: 5, unchanged: 0, skipped: 0, planned: 0, failed: 0 },
     });
   });
 
@@ -400,6 +427,7 @@ describe("renderPullSummary", () => {
         written: ["supabase/functions/a", "supabase/functions/b"],
         detail: {},
       },
+      { step: "compute", status: "unchanged", written: [], detail: { enabled: true } },
     ];
     const aggregate: PullAggregate = {
       ref: PROJECT_REF,
@@ -575,6 +603,7 @@ describe("pullConfirmMessage", () => {
     willFetchMigrationHistory: false,
     migrationHistoryReason: undefined,
     dirtyPaths: [],
+    compute: undefined,
   };
 
   it("names the target project in the header line", () => {
@@ -747,6 +776,157 @@ describe("pullConfirmMessage", () => {
         "\n" +
         "supabase/config.toml has uncommitted or untracked changes. Commit or stash them (-u for untracked), or rerun with --force.\n",
     );
+  });
+});
+
+describe("pullConfirmMessage compute section", () => {
+  const BASE: PullConfirmMessageInput = {
+    ref: PROJECT_REF,
+    branch: undefined,
+    configDiffText: undefined,
+    willFetchMigrationHistory: false,
+    migrationHistoryReason: undefined,
+    dirtyPaths: [],
+    compute: undefined,
+  };
+
+  function computeInput(
+    plan: Partial<ComputePullPlan>,
+    overrides: Partial<PullComputeConfirmInput> = {},
+  ): PullComputeConfirmInput {
+    return {
+      plan: {
+        deployed: ["api"],
+        changes: [],
+        skipped: [],
+        localOnly: [],
+        hasWork: false,
+        ...plan,
+      },
+      missingSource: [],
+      destinationLabel: undefined,
+      configPath: "supabase/config.toml",
+      ...overrides,
+    };
+  }
+
+  it("says nothing about compute when the feature is off", () => {
+    expect(pullConfirmMessage(BASE)).not.toContain("compute");
+  });
+
+  it("lists each drifted key with the value it replaces", () => {
+    const message = pullConfirmMessage({
+      ...BASE,
+      compute: computeInput({
+        changes: [
+          { name: "api", key: "size", local: "2gb", remote: "4gb" },
+          { name: "api", key: "instances", local: undefined, remote: 3 },
+        ],
+        hasWork: true,
+      }),
+    });
+
+    expect(message).toContain("Record the deployed compute spec into supabase/config.toml:");
+    expect(message).toContain('api.size  "2gb" -> "4gb"');
+    expect(message).toContain("api.instances  (unset) -> 3");
+  });
+
+  it("names the remote block when the writes target one", () => {
+    const message = pullConfirmMessage({
+      ...BASE,
+      compute: computeInput(
+        { changes: [{ name: "api", key: "size", local: undefined, remote: "2gb" }], hasWork: true },
+        { destinationLabel: "staging" },
+      ),
+    });
+
+    expect(message).toContain(
+      "Record the deployed compute spec into [remotes.staging] in supabase/config.toml:",
+    );
+  });
+
+  it("says the config already matches when nothing drifted", () => {
+    const message = pullConfirmMessage({ ...BASE, compute: computeInput({}) });
+    expect(message).toContain("Compute already matches supabase/config.toml");
+  });
+
+  it("discloses that source directories get overwritten, changes or not", () => {
+    const unchanged = pullConfirmMessage({ ...BASE, compute: computeInput({}) });
+    const changed = pullConfirmMessage({
+      ...BASE,
+      compute: computeInput({
+        changes: [{ name: "api", key: "size", local: undefined, remote: "2gb" }],
+        hasWork: true,
+      }),
+    });
+
+    for (const message of [unchanged, changed]) {
+      expect(message).toContain("Restore each deployed compute's source, overwriting files");
+    }
+  });
+
+  it("skips the disclosure entirely when the project has no deployed compute", () => {
+    const message = pullConfirmMessage({
+      ...BASE,
+      compute: computeInput({ deployed: [] }),
+    });
+
+    expect(message).toContain("This project has no deployed compute");
+    expect(message).not.toContain("Restore each deployed compute's source");
+  });
+
+  it("names deployed compute with no local source and configured compute left untouched", () => {
+    const message = pullConfirmMessage({
+      ...BASE,
+      compute: computeInput(
+        { deployed: ["api", "worker"], localOnly: ["retired"] },
+        {
+          missingSource: ["worker"],
+        },
+      ),
+    });
+
+    expect(message).toContain("No source in this project yet");
+    expect(message).toContain("worker.");
+    expect(message).toContain("Configured here but not deployed (left untouched): retired.");
+  });
+
+  it("sanitizes control characters out of a compute name before inlining it (CWE-117)", () => {
+    const message = pullConfirmMessage({
+      ...BASE,
+      compute: computeInput({
+        changes: [{ name: "api\r\nFAKE", key: "size", local: undefined, remote: "2gb" }],
+        hasWork: true,
+      }),
+    });
+
+    expect(message).toContain("api FAKE.size");
+    expect(message).not.toContain("\r");
+  });
+});
+
+describe("pullComputeMissingSourceWarning", () => {
+  it("says nothing when every recorded compute has local source", () => {
+    expect(pullComputeMissingSourceWarning([])).toBeUndefined();
+  });
+
+  it("names one compute with singular 'is' and says the code cannot be downloaded", () => {
+    const warning = pullComputeMissingSourceWarning(["my-app"]);
+    expect(warning).toContain("my-app is deployed with no source in this project.");
+    expect(warning).toContain("served no build context to restore the code from");
+    expect(warning).toContain("supabase compute push");
+  });
+
+  it("joins several computes and uses plural 'are'", () => {
+    expect(pullComputeMissingSourceWarning(["api", "worker"])).toContain(
+      "api, worker are deployed with no source in this project.",
+    );
+  });
+
+  it("sanitizes control characters out of a compute name before inlining it (CWE-117)", () => {
+    const warning = pullComputeMissingSourceWarning(["my-app\r\nFAKE"]);
+    expect(warning).toContain("my-app FAKE is");
+    expect(warning).not.toContain("\r");
   });
 });
 

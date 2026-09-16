@@ -5,7 +5,9 @@ import { Cause, Effect, Exit, Layer, Option, PlatformError, Sink, Stdio, Stream 
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
+import { gzipSync } from "node:zlib";
 import { v2ProjectConfigResponse } from "../../../tests/helpers/config-fixtures.ts";
+import { createTar } from "../../shared/compute/tar.ts";
 import {
   mockContextualAnalytics,
   mockOutput,
@@ -151,6 +153,8 @@ function composeSpawner(
     readonly gitDirtyMigrations?: boolean;
     /** Reports `supabase/functions` dirty. */
     readonly gitDirtyFunctions?: boolean;
+    /** Reports a compute source directory (`my-app`) dirty. */
+    readonly gitDirtyComputeSource?: boolean;
     readonly gitSpawnFails?: boolean;
   } = {},
 ): {
@@ -191,7 +195,9 @@ function composeSpawner(
               ? opts.gitDirtyMigrations === true
               : pathspec === "functions"
                 ? opts.gitDirtyFunctions === true
-                : opts.gitDirty === true;
+                : pathspec === "my-app"
+                  ? opts.gitDirtyComputeSource === true
+                  : opts.gitDirty === true;
           const stdout = dirty ? ` M ${pathspec}\n` : "";
           return Effect.succeed(
             ChildProcessSpawner.makeHandle({
@@ -424,12 +430,82 @@ interface ApiOpts {
   /** Fails only this slug's `/body` download with a 500; every other slug still downloads
    *  normally, proving a partial functions-step download reports earlier slugs as written. */
   readonly functionBodyFailsForSlug?: string;
+  /** What `GET /v2/projects/<ref>/compute` reports as deployed. */
+  readonly computeInstances?: ReadonlyArray<unknown>;
+  /** Status for the compute list endpoint, when it should not answer 200. */
+  readonly computeListStatus?: number;
+  /**
+   * Gzipped build contexts the download route will serve, keyed by compute name. A name absent
+   * here answers 404 on `/downloads` — which is what every deployment does today, since the
+   * route is not in the published OpenAPI document yet.
+   */
+  readonly computeArchives?: Readonly<Record<string, Uint8Array>>;
+  /** Status for the `/downloads` route, when it should answer neither 201 nor 404. */
+  readonly computeDownloadStatus?: number;
 }
 
-function makeApiMock(opts: ApiOpts) {
+/** Where the fake presigned slot points; the handler serves the archive back from this host. */
+const PRESIGNED_HOST = "https://storage.example/compute-context";
+
+function makeApiMock(
+  opts: ApiOpts,
+  computeListCalls: Array<string>,
+  downloadSlotCalls: Array<string>,
+  contextDownloads: Array<string>,
+) {
   return mockCommandPlatformApi({
     handler: (request) => {
       const url = request.url;
+      if (url.startsWith(PRESIGNED_HOST)) {
+        const name = url.slice(PRESIGNED_HOST.length + 1);
+        const archive = opts.computeArchives?.[name];
+        if (archive === undefined) {
+          return Effect.succeed(jsonResponse(request, 404, "no such context"));
+        }
+        contextDownloads.push(name);
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response(archive, {
+              status: 200,
+              headers: { "content-type": "application/gzip" },
+            }),
+          ),
+        );
+      }
+      if (url.includes("/compute/") && url.endsWith("/downloads")) {
+        const name = url.slice(url.indexOf("/compute/") + "/compute/".length, -"/downloads".length);
+        downloadSlotCalls.push(name);
+        if (opts.computeDownloadStatus !== undefined) {
+          return Effect.succeed(jsonResponse(request, opts.computeDownloadStatus, "boom"));
+        }
+        if (opts.computeArchives?.[name] === undefined) {
+          // What the platform answers today: the route does not exist.
+          return Effect.succeed(jsonResponse(request, 404, { error: { code: "not_found" } }));
+        }
+        return Effect.succeed(
+          jsonResponse(request, 201, {
+            data: {
+              type: "project_compute_instance_download",
+              id: `dl-${name}`,
+              attributes: {
+                url: `${PRESIGNED_HOST}/${name}`,
+                method: "GET",
+                expires_at: "2026-09-16T00:00:00Z",
+              },
+            },
+          }),
+        );
+      }
+      if (url.includes("/v2/projects/") && url.endsWith("/compute")) {
+        computeListCalls.push(url);
+        if (opts.computeListStatus !== undefined && opts.computeListStatus !== 200) {
+          return Effect.succeed(
+            jsonResponse(request, opts.computeListStatus, { error: { code: "internal" } }),
+          );
+        }
+        return Effect.succeed(jsonResponse(request, 200, { data: opts.computeInstances ?? [] }));
+      }
       if (url.includes("/v2/projects/") && url.endsWith("/config")) {
         return Effect.succeed(
           jsonResponse(request, 200, opts.configResponse ?? v2ProjectConfigResponse()),
@@ -534,6 +610,7 @@ interface SetupOpts {
   readonly gitDirty?: boolean;
   readonly gitDirtyMigrations?: boolean;
   readonly gitDirtyFunctions?: boolean;
+  readonly gitDirtyComputeSource?: boolean;
   readonly gitSpawnFails?: boolean;
   readonly api?: ApiOpts;
   readonly remoteMigrations?: ReadonlyArray<RemoteMigrationRow>;
@@ -574,11 +651,15 @@ function setup(opts: SetupOpts = {}) {
   const processControl = mockProcessControl();
   const analytics = mockContextualAnalytics();
 
-  const api = makeApiMock(opts.api ?? {});
+  const computeListCalls: Array<string> = [];
+  const downloadSlotCalls: Array<string> = [];
+  const contextDownloads: Array<string> = [];
+  const api = makeApiMock(opts.api ?? {}, computeListCalls, downloadSlotCalls, contextDownloads);
   const spawner = composeSpawner({
     gitDirty: opts.gitDirty,
     gitDirtyMigrations: opts.gitDirtyMigrations,
     gitDirtyFunctions: opts.gitDirtyFunctions,
+    gitDirtyComputeSource: opts.gitDirtyComputeSource,
     gitSpawnFails: opts.gitSpawnFails,
   });
   const callOrder: Array<string> = [];
@@ -652,6 +733,9 @@ function setup(opts: SetupOpts = {}) {
     dbConfig,
     pgDelta,
     callOrder,
+    computeListCalls,
+    downloadSlotCalls,
+    contextDownloads,
   };
 }
 
@@ -694,7 +778,7 @@ describe("pull integration", () => {
   );
 
   it.live(
-    "bootstraps a fresh checkout with --output-format json: exactly one JSON object with all four step keys",
+    "bootstraps a fresh checkout with --output-format json: exactly one JSON object with every step key",
     () => {
       writeConfig("[api]\nmax_rows = 500\n");
       const { layer, capturingStdio, dbConfig, linkedProjectCache } = setup({
@@ -716,6 +800,7 @@ describe("pull integration", () => {
         const payload = JSON.parse(capturingStdio!.stdout[0]!) as Record<string, unknown>;
         const steps = payload["steps"] as Record<string, unknown>;
         expect(Object.keys(steps).sort()).toEqual([
+          "compute",
           "config",
           "db",
           "functions",
@@ -725,6 +810,13 @@ describe("pull integration", () => {
         expect((steps["migration_history"] as Record<string, unknown>)["status"]).toBe("changed");
         expect((steps["db"] as Record<string, unknown>)["status"]).toBe("changed");
         expect((steps["functions"] as Record<string, unknown>)["status"]).toBe("changed");
+        // Compute is opt-in, and this project never enabled it.
+        expect(steps["compute"]).toEqual({
+          status: "skipped",
+          written: [],
+          detail: { enabled: false },
+          reason: "not_enabled",
+        });
         expect(payload["wrote"]).toBe(true);
 
         expect(dbConfig.historyUpserts.length).toBeGreaterThan(0);
@@ -2018,4 +2110,419 @@ describe("pull stream-json output", () => {
       }).pipe(Effect.provide(layer));
     },
   );
+});
+
+describe("compute step", () => {
+  /** A deployed compute, as the Management API's JSON:API envelope wraps it. */
+  function computeResource(options: {
+    readonly name: string;
+    readonly runtime?: string;
+    readonly size?: string;
+    readonly exposure?: string;
+    readonly instances?: number;
+  }) {
+    return {
+      type: "project_compute_instance",
+      id: options.name,
+      attributes: {
+        spec: {
+          ...(options.runtime === undefined ? {} : { runtime: options.runtime }),
+          size: options.size ?? "2gb-1vcpu",
+          exposure: options.exposure ?? "public",
+          instances: options.instances ?? 1,
+        },
+        build_state: "active",
+        secret_generation: "gen-1",
+      },
+    };
+  }
+
+  /** `writeConfig`, with the experimental compute feature turned on. */
+  function writeComputeConfig(extraToml = ""): string {
+    return writeConfig(`[experimental]\ncompute = true\n${extraToml}`);
+  }
+
+  it.live("records every deployed compute the config had never heard of", () => {
+    writeComputeConfig();
+    const { layer, out, computeListCalls } = setup({
+      yes: true,
+      api: {
+        computeInstances: [
+          computeResource({ name: "api", runtime: "node" }),
+          computeResource({ name: "worker", size: "4gb-2vcpu", exposure: "private", instances: 3 }),
+        ],
+      },
+      diffOutcome: () => ({ changes: false }),
+    });
+    return Effect.gen(function* () {
+      yield* runPull(pullFlags());
+
+      expect(computeListCalls).toHaveLength(1);
+      const text = readFileSync(configPath(), "utf8");
+      expect(text).toContain("[compute.api]");
+      expect(text).toContain('runtime = "node"');
+      expect(text).toContain("[compute.worker]");
+      // An omitted `spec.runtime` is a Dockerfile build, not an unknown runtime.
+      expect(text).toContain('runtime = "dockerfile"');
+      expect(text).toContain('size = "4gb"');
+      expect(text).toContain('exposure = "private"');
+      expect(text).toContain("instances = 3");
+
+      expect(stepLine(out!.stdoutText, "compute")).toContain("changed");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("updates a drifted key in place and leaves the config's comments alone", () => {
+    writeComputeConfig(
+      [
+        "# the API compute",
+        "[compute.api]",
+        'runtime = "node"',
+        'size = "2gb"',
+        'exposure = "public"',
+        "instances = 1",
+        "",
+      ].join("\n"),
+    );
+    const { layer, out } = setup({
+      yes: true,
+      api: {
+        computeInstances: [computeResource({ name: "api", runtime: "node", size: "4gb-2vcpu" })],
+      },
+      diffOutcome: () => ({ changes: false }),
+    });
+    return Effect.gen(function* () {
+      yield* runPull(pullFlags());
+
+      const text = readFileSync(configPath(), "utf8");
+      expect(text).toContain("# the API compute");
+      expect(text).toContain('size = "4gb"');
+      expect(text).not.toContain('size = "2gb"');
+      expect(stepLine(out!.stdoutText, "compute")).toContain("changed");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("reports a config that already matches the deployed spec as unchanged", () => {
+    writeComputeConfig(
+      [
+        "[compute.api]",
+        'runtime = "node"',
+        'size = "2gb"',
+        'exposure = "public"',
+        "instances = 1",
+        "",
+      ].join("\n"),
+    );
+    const { layer, out } = setup({
+      yes: true,
+      api: { computeInstances: [computeResource({ name: "api", runtime: "node" })] },
+      diffOutcome: () => ({ changes: false }),
+    });
+    return Effect.gen(function* () {
+      yield* runPull(pullFlags());
+      expect(stepLine(out!.stdoutText, "compute")).toContain("unchanged");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("never touches a configured compute the project has not deployed", () => {
+    writeComputeConfig(["[compute.retired]", 'runtime = "deno"', ""].join("\n"));
+    const { layer, capturingStdio } = setup({
+      format: "json",
+      yes: true,
+      api: { computeInstances: [] },
+      diffOutcome: () => ({ changes: false }),
+    });
+    return Effect.gen(function* () {
+      yield* runPull(pullFlags());
+
+      expect(readFileSync(configPath(), "utf8")).toContain('runtime = "deno"');
+      const payload = JSON.parse(capturingStdio!.stdout[0]!) as Record<string, unknown>;
+      const compute = (payload["steps"] as Record<string, Record<string, unknown>>)["compute"]!;
+      expect(compute["status"]).toBe("unchanged");
+      expect((compute["detail"] as Record<string, unknown>)["local_only"]).toEqual(["retired"]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live(
+    "names a deployed compute with no source in this checkout without writing its code",
+    () => {
+      writeComputeConfig();
+      const { layer, capturingStdio } = setup({
+        format: "json",
+        yes: true,
+        api: { computeInstances: [computeResource({ name: "api", runtime: "node" })] },
+        diffOutcome: () => ({ changes: false }),
+      });
+      return Effect.gen(function* () {
+        yield* runPull(pullFlags());
+
+        const payload = JSON.parse(capturingStdio!.stdout[0]!) as Record<string, unknown>;
+        const compute = (payload["steps"] as Record<string, Record<string, unknown>>)["compute"]!;
+        expect((compute["detail"] as Record<string, unknown>)["missing_source"]).toEqual(["api"]);
+        expect(existsSync(join(tempRoot.current, "supabase", "compute", "api"))).toBe(false);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live("warns after the run that a recorded compute has no code here", () => {
+    writeComputeConfig();
+    const { layer, out } = setup({
+      yes: true,
+      api: { computeInstances: [computeResource({ name: "my-app", runtime: "node" })] },
+      diffOutcome: () => ({ changes: false }),
+    });
+    return Effect.gen(function* () {
+      yield* runPull(pullFlags());
+
+      // The entry is recorded, so the run reads as a success; the warning is the only thing
+      // telling the user `compute push` has nothing to send.
+      expect(readFileSync(configPath(), "utf8")).toContain("[compute.my-app]");
+      expect(out!.stderrText).toContain("my-app is deployed with no source in this project.");
+      expect(out!.stderrText).toContain(
+        "this project served no build context to restore the code from",
+      );
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("stays quiet about source when the compute's code is already in the checkout", () => {
+    writeComputeConfig();
+    mkdirSync(join(tempRoot.current, "supabase", "compute", "my-app"), { recursive: true });
+    const { layer, out } = setup({
+      yes: true,
+      api: { computeInstances: [computeResource({ name: "my-app", runtime: "node" })] },
+      diffOutcome: () => ({ changes: false }),
+    });
+    return Effect.gen(function* () {
+      yield* runPull(pullFlags());
+      expect(out!.stderrText).not.toContain("deployed with no source");
+    }).pipe(Effect.provide(layer));
+  });
+
+  /** A gzipped USTAR archive of `files`, as the download route would serve it. */
+  function buildContext(files: Readonly<Record<string, string>>): Uint8Array {
+    const entries = Object.entries(files).map(([path, text]) => ({
+      path,
+      contents: new TextEncoder().encode(text),
+    }));
+    return gzipSync(Effect.runSync(createTar(entries)));
+  }
+
+  it.live("restores a deployed compute's source into supabase/compute/<name>", () => {
+    writeComputeConfig();
+    const { layer, out, downloadSlotCalls, contextDownloads } = setup({
+      yes: true,
+      api: {
+        computeInstances: [computeResource({ name: "my-app", runtime: "node" })],
+        computeArchives: {
+          "my-app": buildContext({
+            "index.ts": "export default () => new Response('hi');\n",
+            "deno.json": '{"imports":{}}\n',
+          }),
+        },
+      },
+      diffOutcome: () => ({ changes: false }),
+    });
+    return Effect.gen(function* () {
+      yield* runPull(pullFlags());
+
+      const dir = join(tempRoot.current, "supabase", "compute", "my-app");
+      expect(readFileSync(join(dir, "index.ts"), "utf8")).toContain("new Response('hi')");
+      expect(readFileSync(join(dir, "deno.json"), "utf8")).toContain("imports");
+      expect(downloadSlotCalls).toEqual(["my-app"]);
+      expect(contextDownloads).toEqual(["my-app"]);
+
+      // Both halves land: the config entry and the code.
+      expect(readFileSync(configPath(), "utf8")).toContain("[compute.my-app]");
+      expect(stepLine(out!.stdoutText, "compute")).toContain("changed");
+      // Source arrived, so the missing-source advisory must not fire.
+      expect(out!.stderrText).not.toContain("deployed with no source");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("restores into [compute.<name>] source when the config points elsewhere", () => {
+    writeComputeConfig(["[compute.my-app]", 'source = "packages/app"', ""].join("\n"));
+    const { layer } = setup({
+      yes: true,
+      api: {
+        computeInstances: [computeResource({ name: "my-app", runtime: "node" })],
+        computeArchives: { "my-app": buildContext({ "index.ts": "ok\n" }) },
+      },
+      diffOutcome: () => ({ changes: false }),
+    });
+    return Effect.gen(function* () {
+      yield* runPull(pullFlags());
+
+      expect(readFileSync(join(tempRoot.current, "packages", "app", "index.ts"), "utf8")).toBe(
+        "ok\n",
+      );
+      expect(existsSync(join(tempRoot.current, "supabase", "compute", "my-app"))).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("reports source as unavailable when the platform cannot serve a context", () => {
+    writeComputeConfig();
+    const { layer, capturingStdio, contextDownloads } = setup({
+      format: "json",
+      yes: true,
+      // No `computeArchives` entry: `/downloads` answers 404, which is what every deployment
+      // does today because the route is not published yet.
+      api: { computeInstances: [computeResource({ name: "my-app", runtime: "node" })] },
+      diffOutcome: () => ({ changes: false }),
+    });
+    return Effect.gen(function* () {
+      yield* runPull(pullFlags());
+
+      const payload = JSON.parse(capturingStdio!.stdout[0]!) as Record<string, unknown>;
+      const compute = (payload["steps"] as Record<string, Record<string, unknown>>)["compute"]!;
+      const detail = compute["detail"] as Record<string, unknown>;
+      expect(detail["source_unavailable"]).toEqual(["my-app"]);
+      expect(detail["restored_source"]).toEqual([]);
+      // The config half still succeeded, so the step is not a failure.
+      expect(compute["status"]).toBe("changed");
+      expect(contextDownloads).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("reports the restored directory in the payload", () => {
+    writeComputeConfig();
+    const { layer, capturingStdio } = setup({
+      format: "json",
+      yes: true,
+      api: {
+        computeInstances: [computeResource({ name: "my-app", runtime: "node" })],
+        computeArchives: { "my-app": buildContext({ "index.ts": "ok\n" }) },
+      },
+      diffOutcome: () => ({ changes: false }),
+    });
+    return Effect.gen(function* () {
+      yield* runPull(pullFlags());
+
+      const payload = JSON.parse(capturingStdio!.stdout[0]!) as Record<string, unknown>;
+      const compute = (payload["steps"] as Record<string, Record<string, unknown>>)["compute"]!;
+      expect((compute["detail"] as Record<string, unknown>)["restored_source"]).toEqual([
+        "supabase/compute/my-app",
+      ]);
+      expect(compute["written"]).toContain("supabase/compute/my-app");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("fails the compute step when a served archive is not safe to unpack", () => {
+    writeComputeConfig();
+    const escaping = gzipSync(
+      Effect.runSync(
+        createTar([{ path: "../escaped.ts", contents: new TextEncoder().encode("pwned\n") }]),
+      ),
+    );
+    const { layer, out } = setup({
+      yes: true,
+      api: {
+        computeInstances: [computeResource({ name: "my-app", runtime: "node" })],
+        computeArchives: { "my-app": escaping },
+      },
+      diffOutcome: () => ({ changes: false }),
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(runPull(pullFlags()));
+      expect(Exit.isFailure(exit)).toBe(true);
+
+      expect(stepLine(out!.stdoutText, "compute")).toContain("failed");
+      expect(existsSync(join(tempRoot.current, "supabase", "compute", "escaped.ts"))).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("trips the git guard for a dirty compute source directory", () => {
+    writeComputeConfig();
+    const { layer } = setup({
+      yes: true,
+      gitDirtyComputeSource: true,
+      api: {
+        computeInstances: [computeResource({ name: "my-app", runtime: "node" })],
+        computeArchives: { "my-app": buildContext({ "index.ts": "ok\n" }) },
+      },
+      diffOutcome: () => ({ changes: false }),
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(runPull(pullFlags()));
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain("PullUncommittedChangesError");
+      expect(existsSync(join(tempRoot.current, "supabase", "compute", "my-app", "index.ts"))).toBe(
+        false,
+      );
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("previews the reconciliation on --dry-run and writes nothing", () => {
+    writeComputeConfig();
+    const { layer, out } = setup({
+      yes: true,
+      api: { computeInstances: [computeResource({ name: "api", runtime: "node" })] },
+    });
+    return Effect.gen(function* () {
+      yield* runPull(pullFlags({ dryRun: true }));
+
+      expect(out!.stdoutText).toContain("Record the deployed compute spec into");
+      expect(out!.stdoutText).toContain("Restore each deployed compute's source");
+      expect(readFileSync(configPath(), "utf8")).not.toContain("[compute.api]");
+      expect(stepLine(out!.stdoutText, "compute")).toContain("planned");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("never reaches the compute endpoint when the feature is off", () => {
+    writeConfig();
+    const { layer, out, computeListCalls } = setup({
+      yes: true,
+      api: { computeInstances: [computeResource({ name: "api", runtime: "node" })] },
+      diffOutcome: () => ({ changes: false }),
+    });
+    return Effect.gen(function* () {
+      yield* runPull(pullFlags());
+
+      expect(computeListCalls).toHaveLength(0);
+      expect(stepLine(out!.stdoutText, "compute")).toContain("skipped");
+      expect(stepLine(out!.stdoutText, "compute")).toContain("(not_enabled)");
+      expect(readFileSync(configPath(), "utf8")).not.toContain("[compute.api]");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("isolates a compute list failure: every other step still runs and reports", () => {
+    writeComputeConfig("[api]\nmax_rows = 500\n");
+    const { layer, out } = setup({
+      yes: true,
+      api: { computeListStatus: 500, functionSlugs: ["hello"] },
+      remoteMigrations: [
+        { version: "20260101000000", name: "init", statements: ["create table foo ();"] },
+      ],
+      diffOutcome: () => ({ changes: false }),
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(runPull(pullFlags()));
+      expect(Exit.isFailure(exit)).toBe(true);
+
+      expect(readFileSync(configPath(), "utf8")).toContain("max_rows = 1000");
+      expect(stepLine(out!.stdoutText, "config")).toContain("changed");
+      expect(stepLine(out!.stdoutText, "functions")).toContain("changed");
+      expect(stepLine(out!.stdoutText, "compute")).toContain("failed");
+      // No standalone `supabase compute pull` exists, so no retry hint is offered.
+      expect(out!.stdoutText).not.toContain("To retry just this step, run: supabase compute");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("trips the config-file git guard for a compute-only write", () => {
+    // The config step has no work here, so only the compute step would touch config.toml.
+    writeComputeConfig();
+    const { layer, out, spawner } = setup({
+      yes: true,
+      gitDirty: true,
+      api: { computeInstances: [computeResource({ name: "api", runtime: "node" })] },
+      diffOutcome: () => ({ changes: false }),
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(runPull(pullFlags()));
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain("PullUncommittedChangesError");
+      expect(spawner.gitCalls.some((args) => args.at(-1) === "config.toml")).toBe(true);
+      expect(readFileSync(configPath(), "utf8")).not.toContain("[compute.api]");
+      expect(out!.stdoutText).not.toContain("Pull summary");
+    }).pipe(Effect.provide(layer));
+  });
 });

@@ -1,6 +1,7 @@
 import type { DownloadFunctionsResult } from "../../shared/functions/download.ts";
 import type { MigrationFetchOutcome } from "../../command-internal/migration-fetch-run.ts";
 import type { DbPullOutcome } from "../../command-internal/db-pull-run.ts";
+import type { ComputePullPlan } from "../../shared/compute/compute-pull.ts";
 import type {
   PullAggregate,
   PullStepFailure,
@@ -12,7 +13,7 @@ import type {
 /**
  * Pure result-shaping helpers for `supabase pull`. Each `pull<Step>StepResult` maps one
  * sub-step's outcome into the shared `PullStepResult` shape that `pull.handler.ts` aggregates
- * across all four steps.
+ * across every step.
  */
 
 // Duplicated from `workdir-project.ts`'s `relativeConfigPath` so this module stays
@@ -161,6 +162,106 @@ export function pullFunctionsStepResult(outcome: PullFunctionsStepOutcome): Pull
   };
 }
 
+export type PullComputeStepOutcome =
+  | {
+      /**
+       * Never attempted: `"not_enabled"` when the experimental compute feature is off for this
+       * project, `"destination_missing"` when the config step was going to create the
+       * `[remotes.*]` block these entries belong in and failed — writing them into a block that
+       * does not exist would produce config that silently applies to no project.
+       */
+      readonly kind: "skipped";
+      readonly reason: "not_enabled" | "destination_missing";
+    }
+  | {
+      /** Planned but not applied — `--dry-run` or a declined confirmation. */
+      readonly kind: "planned";
+      readonly plan: ComputePullPlan;
+      readonly missingSource: ReadonlyArray<string>;
+    }
+  | {
+      readonly kind: "recorded";
+      readonly plan: ComputePullPlan;
+      readonly missingSource: ReadonlyArray<string>;
+      /** Workdir-relative config file path (e.g. `supabase/config.toml`). */
+      readonly configFilePath: string;
+      /** Workdir-relative source directories this run unpacked a build context into. */
+      readonly restored: ReadonlyArray<string>;
+      /** Deployed computes whose build context the platform could not serve. */
+      readonly sourceUnavailable: ReadonlyArray<string>;
+    };
+
+/** The compute plan as the machine payload spells it — shared by every disposition so a dry run
+ *  and a real run describe the same reconciliation identically. */
+function pullComputeDetail(
+  plan: ComputePullPlan,
+  missingSource: ReadonlyArray<string>,
+  source: {
+    readonly restored: ReadonlyArray<string>;
+    readonly unavailable: ReadonlyArray<string>;
+  } = { restored: [], unavailable: [] },
+): Record<string, unknown> {
+  return {
+    enabled: true,
+    deployed: plan.deployed,
+    changes: plan.changes.map((change) => ({
+      name: change.name,
+      key: change.key,
+      local: change.local ?? null,
+      remote: change.remote,
+    })),
+    skipped: plan.skipped.map((skip) => ({
+      name: skip.name,
+      key: skip.key,
+      reason: skip.reason,
+    })),
+    local_only: plan.localOnly,
+    // Deployed computes with no code in this checkout when the run started.
+    missing_source: missingSource,
+    // Source directories this run unpacked a build context into.
+    restored_source: source.restored,
+    // Deployed computes whose build context the platform could not serve, so their code was
+    // left as-is. Reported rather than failed.
+    source_unavailable: source.unavailable,
+  };
+}
+
+/**
+ * `compute` step: `skipped` when the feature is off, `planned` when a plan exists but was not
+ * applied (dry run or declined), `unchanged` when the config already matches every deployed
+ * spec, and `changed` once entries were written.
+ */
+export function pullComputeStepResult(outcome: PullComputeStepOutcome): PullStepResult {
+  if (outcome.kind === "skipped") {
+    return {
+      step: "compute",
+      status: "skipped",
+      written: [],
+      detail: { enabled: false },
+      reason: outcome.reason,
+    };
+  }
+  if (outcome.kind === "planned") {
+    return {
+      step: "compute",
+      status: "planned",
+      written: [],
+      detail: pullComputeDetail(outcome.plan, outcome.missingSource),
+    };
+  }
+  const detail = pullComputeDetail(outcome.plan, outcome.missingSource, {
+    restored: outcome.restored,
+    unavailable: outcome.sourceUnavailable,
+  });
+  const written = [...(outcome.plan.hasWork ? [outcome.configFilePath] : []), ...outcome.restored];
+  return {
+    step: "compute",
+    status: written.length > 0 ? "changed" : "unchanged",
+    written,
+    detail,
+  };
+}
+
 function hasStringMessage(value: unknown): value is { readonly message: string } {
   return (
     typeof value === "object" &&
@@ -256,15 +357,17 @@ function pullRemoteLabelFlag(remoteLabel: string | undefined): string {
 /**
  * The standalone command to retry one failed step on its own, appended to that step's own
  * `failure.suggestion`. Always uses the already-resolved `ref`, never a branch name, since not
- * every sub-command resolves branch names the same way `pull` does.
+ * every sub-command resolves branch names the same way `pull` does. `undefined` for a step with
+ * no standalone equivalent — there is no `supabase compute pull`, and naming a command that
+ * performs a different operation would be worse than saying nothing.
  */
 export function pullRetryHint(
   step: PullStepId,
   ref: string,
   remoteLabel: string | undefined,
-): string {
+): string | undefined {
   const remoteLabelFlag = pullRemoteLabelFlag(remoteLabel);
-  const commandByStep: Record<PullStepId, string> = {
+  const commandByStep: Record<PullStepId, string | undefined> = {
     config: `supabase config pull --project-ref ${ref}${remoteLabelFlag}`,
     migration_history: `supabase migration fetch --project-ref ${ref}`,
     // `pullDbStep` runs with `forceMigrationMode: true`, overriding any ambient `--experimental`
@@ -272,8 +375,10 @@ export function pullRetryHint(
     // the same operation the failed step did.
     db: `supabase db pull --project-ref ${ref} --experimental=false`,
     functions: `supabase functions download --project-ref ${ref}`,
+    compute: undefined,
   };
-  return `To retry just this step, run: ${commandByStep[step]}`;
+  const command = commandByStep[step];
+  return command === undefined ? undefined : `To retry just this step, run: ${command}`;
 }
 
 /**
