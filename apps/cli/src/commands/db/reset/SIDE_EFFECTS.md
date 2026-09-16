@@ -28,6 +28,13 @@ instead of shelling out to a second `supabase-go` child through the previously
 removed `DeclarativeSeam.execInherit` seam — see those commands' own
 `SIDE_EFFECTS.md`.
 
+When `[experimental].stack` is on, the local path calls `resetDatabase` on the project stack
+and seeds storage buckets only if storage is ready (waiting up to 30s while it is starting).
+The Storage gateway URL comes from the stack API listener, not `[api].port`. Durable stack
+state lives under `$SUPABASE_HOME/managed/stacks/<stackId>/`. A missing stack reports
+"The local stack is not running." Config, including `functions/.env`, is validated before
+the wipe.
+
 ## Files Read
 
 | Path                                                                                         | Format     | When                                                                                                                                           |
@@ -133,12 +140,12 @@ the whole reset** (not just "skip buckets").
 | `DOCKER_HOST` / `DOCKER_CONTEXT` / `DOCKER_TLS_VERIFY` / `DOCKER_CERT_PATH` / `DOCKER_API_VERSION` / `DOCKER_CONFIG` | local path: ambient shell environment only (project dotenv files deliberately never override Docker client keys) — resolves the daemon endpoint for the running probe (in-process) and steers the spawned `docker`/`podman` CLI itself                                                 | no                                                      |
 | `SUPABASE_ACCESS_TOKEN`                                                                                              | auth token for the `--linked` resolver path                                                                                                                                                                                                                                            | no (falls back to keyring → `~/.supabase/access-token`) |
 | `SUPABASE_DB_PASSWORD`                                                                                               | password for the linked/remote connection                                                                                                                                                                                                                                              | no                                                      |
-| `SUPABASE_YES`                                                                                                       | auto-confirm the reset prompt                                                                                                                                                                                                                                                          | no (also `--yes`)                                       |
+| `SUPABASE_YES`                                                                                                       | auto-confirm the reset prompt and the local path's bucket-seed overwrite/prune prompts (shell or project dotenv, same as `seed buckets`)                                                                                                                                               | no (also `--yes`)                                       |
 | `SUPABASE_EXPERIMENTAL`                                                                                              | selects the schema-files apply branch on either target                                                                                                                                                                                                                                 | no (also `--experimental`)                              |
 | `SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED`                                                                              | overrides `[experimental.pgdelta].enabled`; a truthy value flips the reset gate (`experimental && resolvedVersion === "" && !toml.pgDelta.enabled`) back to timestamped migrations even with `--experimental` set — switches between two different destructive code paths              | no                                                      |
 | `SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS`                                                                                | overrides `[db.migrations].schema_paths` (viper `AutomaticEnv`, beats the config-file value) for the schema-files apply branch — genuinely effective on both targets now                                                                                                               | no (no dedicated flag — config-file-only otherwise)     |
 | `SUPABASE_PROJECT_ID`                                                                                                | overrides the local container id; ALSO the linked-ref resolution fallback `--project-ref` supersedes — see Notes for the narrower scope of the flag                                                                                                                                    | no                                                      |
-| `SUPABASE_INTERNAL_IMAGE_REGISTRY`                                                                                   | overrides the image registry used to resolve the local path's container images (scoped for the whole run via `applyProjectEnv`)                                                                                                                                                        | no (project `.env` or shell)                            |
+| `SUPABASE_INTERNAL_IMAGE_REGISTRY`                                                                                   | overrides the image registry used to resolve the local path's container images (project `.env` or shell)                                                                                                                                                                               | no (project `.env` or shell)                            |
 | `SUPABASE_USE_SLIM_IMAGES`                                                                                           | resolves the local-reset Postgres image and the realtime/storage/auth migrate-job images from slim `ghcr.io/supabase/cli` builds (`true`/`1` enable); majors 13/15 use `15.14.1.167` when the flag is on; historical pins, PG14, OrioleDB, and flag-off `15.8.1.085` stay on docker.io | no (ambient shell only)                                 |
 | `SUPABASE_DB_PORT` / `SUPABASE_DB_MAJOR_VERSION` / `SUPABASE_DB_HEALTH_TIMEOUT` / `SUPABASE_DB_SETTINGS_*`           | local-path container-recreate config overrides, same as `db start`                                                                                                                                                                                                                     | no                                                      |
 | `SUPABASE_API_PORT` / `SUPABASE_API_EXTERNAL_URL` / `SUPABASE_API_TLS_*` / `SUPABASE_API_ENABLED`                    | local-path bucket-seed step: override the matching `[api]` fields for the Storage gateway URL/TLS, same as `seed buckets` (shell or project dotenv; #6452)                                                                                                                             | no                                                      |
@@ -202,7 +209,13 @@ stdout is payload-only; a `result` object is emitted:
 
 In machine modes the remote confirmation prompt is non-interactive and takes its
 default (`false`), so a remote reset is declined unless `--yes` is set. The local
-path has no confirmation prompt.
+path has no reset confirmation, but its bucket-seed step carries the seed-buckets
+overwrite/prune confirmations: in machine modes they take their defaults silently
+(overwrite → yes, prune → no) unless `--yes`/`SUPABASE_YES` auto-confirms; in text
+mode each prints its label and reads one stdin line, bounded to 100 ms and performed
+even when stdin is a TTY — a parsed `y`/`n` answer wins (so `yes | supabase db reset`
+confirms a vector prune), while an empty, unparseable, or timed-out read falls back
+to those defaults (the usual outcome for an interactive terminal).
 
 ## Notes
 

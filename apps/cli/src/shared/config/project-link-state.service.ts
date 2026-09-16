@@ -15,8 +15,6 @@ const LinkedServiceVersionsSchema = Schema.Struct({
   storage: Schema.optionalKey(Schema.String),
 });
 
-export type LinkedServiceVersions = Schema.Schema.Type<typeof LinkedServiceVersionsSchema>;
-
 const ActiveBranchSchema = Schema.Struct({
   ref: Schema.String,
   name: Schema.String,

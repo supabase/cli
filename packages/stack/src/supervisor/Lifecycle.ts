@@ -146,7 +146,7 @@ const materializeCandidate = (
       const plan = yield* rebuildExecutionPlan(runtime, state.definition);
       const resolved = yield* resolveSecrets(
         declarationsFromPersisted(state.secrets),
-        state.desiredLifecycle === "unconfigured" ? undefined : state.secrets,
+        state.secrets,
         state.desiredLifecycle,
       );
       return {
@@ -165,7 +165,7 @@ const materializeCandidate = (
     );
     const resolved = yield* resolveSecrets(
       declarationsFromCompiled(compiled),
-      state.desiredLifecycle === "unconfigured" ? undefined : state.secrets,
+      state.secrets,
       state.desiredLifecycle,
     );
     return {
@@ -213,9 +213,12 @@ export const makeLifecycleController = (
               : Effect.succeed(state),
           ),
         );
-    const persistStoppedAfterFailure = (
+    const persistNonRunningAfterFailure = (
       primary: Cause.Cause<StackError>,
-      cleanup: boolean,
+      restore: {
+        readonly cleanup: boolean;
+        readonly restoreLifecycle: "stopped" | "unconfigured";
+      },
     ): Effect.Effect<LifecycleStartOutcome, StackError, LifecycleRequirements> =>
       Effect.gen(function* () {
         const current = yield* options.stateStore.read(options.stackId).pipe(Effect.exit);
@@ -229,14 +232,14 @@ export const makeLifecycleController = (
           const persisted = yield* options.stateStore
             .replace(options.stackId, {
               ...current.value,
-              desiredLifecycle: "stopped" as const,
+              desiredLifecycle: restore.restoreLifecycle,
             })
             .pipe(Effect.exit);
           if (Exit.isFailure(persisted)) cause = Cause.combine(cause, persisted.cause);
           else durable = "stopped";
         }
         let cleanupOutcome: CleanupOutcome = { _tag: "proven" };
-        if (cleanup) {
+        if (restore.cleanup) {
           const cleaned = yield* options.backend.cleanup.pipe(Effect.exit);
           if (Exit.isFailure(cleaned)) {
             cleanupOutcome = { _tag: "unproven", cause: cleaned.cause };
@@ -274,7 +277,11 @@ export const makeLifecycleController = (
           Effect.exit,
         );
         if (Exit.isFailure(materialized)) {
-          if (freshSession) return yield* persistStoppedAfterFailure(materialized.cause, false);
+          if (freshSession)
+            return yield* persistNonRunningAfterFailure(materialized.cause, {
+              cleanup: false,
+              restoreLifecycle: "stopped",
+            });
           return failed(
             materialized.cause,
             initial.desiredLifecycle === "running" ? "unsafe" : "stopped",
@@ -292,7 +299,11 @@ export const makeLifecycleController = (
               message: "Running stack input changed; stop the stack before applying it",
               guidance: "Use stop() followed by start() to apply stopped-time changes",
             });
-            if (freshSession) return yield* persistStoppedAfterFailure(Cause.fail(error), false);
+            if (freshSession)
+              return yield* persistNonRunningAfterFailure(Cause.fail(error), {
+                cleanup: false,
+                restoreLifecycle: "stopped",
+              });
             return failed(Cause.fail(error), "unsafe");
           }
           if (supplied !== undefined && !sameSecrets(candidate.secrets, initial.secrets)) {
@@ -301,7 +312,11 @@ export const makeLifecycleController = (
               message: "Running stack secrets changed; stop the stack before applying them",
               guidance: "Use stop() followed by start() to apply stopped-time changes",
             });
-            if (freshSession) return yield* persistStoppedAfterFailure(Cause.fail(error), false);
+            if (freshSession)
+              return yield* persistNonRunningAfterFailure(Cause.fail(error), {
+                cleanup: false,
+                restoreLifecycle: "stopped",
+              });
             return failed(Cause.fail(error), "unsafe");
           }
           if (freshSession) {
@@ -309,7 +324,10 @@ export const makeLifecycleController = (
               .preflight(lifecycleInput(options.stackId, initial, candidate))
               .pipe(Effect.exit);
             if (Exit.isFailure(preflighted))
-              return yield* persistStoppedAfterFailure(preflighted.cause, false);
+              return yield* persistNonRunningAfterFailure(preflighted.cause, {
+                cleanup: false,
+                restoreLifecycle: "stopped",
+              });
           }
           const launched = yield* options.backend
             .launch(
@@ -318,10 +336,17 @@ export const makeLifecycleController = (
             )
             .pipe(Effect.exit);
           if (Exit.isFailure(launched) && freshSession)
-            return yield* persistStoppedAfterFailure(launched.cause, true);
+            return yield* persistNonRunningAfterFailure(launched.cause, {
+              cleanup: true,
+              restoreLifecycle: "stopped",
+            });
           if (Exit.isFailure(launched)) return failed(launched.cause, "unsafe");
           if (Predicate.isTagged(launched.value, "failed")) {
-            if (freshSession) return yield* persistStoppedAfterFailure(launched.value.cause, true);
+            if (freshSession)
+              return yield* persistNonRunningAfterFailure(launched.value.cause, {
+                cleanup: true,
+                restoreLifecycle: "stopped",
+              });
             return {
               _tag: "failed",
               cause: launched.value.cause,
@@ -346,11 +371,19 @@ export const makeLifecycleController = (
           .pipe(Effect.exit);
         if (Exit.isSuccess(started)) {
           if (Predicate.isTagged(started.value, "failed"))
-            return yield* persistStoppedAfterFailure(started.value.cause, true);
+            return yield* persistNonRunningAfterFailure(started.value.cause, {
+              cleanup: true,
+              restoreLifecycle:
+                initial.desiredLifecycle === "unconfigured" ? "unconfigured" : "stopped",
+            });
           return { _tag: "started", state: next };
         }
 
-        return yield* persistStoppedAfterFailure(started.cause, true);
+        return yield* persistNonRunningAfterFailure(started.cause, {
+          cleanup: true,
+          restoreLifecycle:
+            initial.desiredLifecycle === "unconfigured" ? "unconfigured" : "stopped",
+        });
       });
     };
 

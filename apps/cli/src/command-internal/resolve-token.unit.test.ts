@@ -9,15 +9,19 @@ import { resolveAccessToken } from "./resolve-token.ts";
 const settings = (accessToken: Option.Option<Redacted.Redacted<string>>) =>
   Layer.succeed(CommandSettings, {
     profile: "supabase",
+    profileEnvValue: Option.none(),
+    supabaseHome: "/tmp/supabase-cli-resolve-token/.supabase",
     apiUrl: "https://api.supabase.com",
     projectHost: "supabase.co",
     poolerHost: "supabase.com",
     dashboardUrl: "https://supabase.com/dashboard",
-    profileEnvValue: undefined,
     accessToken,
     projectId: Option.none(),
     workdir: "/tmp/supabase-cli-resolve-token",
     explicitWorkdir: false,
+    workdirEnvValue: Option.none(),
+    dbPassword: Option.none(),
+    githubToken: Option.none(),
     userAgent: "SupabaseCLI/test",
   });
 

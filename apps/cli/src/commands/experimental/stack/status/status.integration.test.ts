@@ -13,6 +13,7 @@ import {
   Schema,
   Stream,
 } from "effect";
+import { runtimeInfoLayer } from "../../../../shared/runtime/runtime-info.layer.ts";
 import { CliOutput, Command } from "effect/unstable/cli";
 import {
   InvalidStackConfigError,
@@ -170,6 +171,7 @@ const runStatus = (options: {
           start: () => Effect.die("unused"),
           stop: Effect.die("unused"),
           destroy: Effect.die("unused"),
+          resetDatabase: Effect.die("unused"),
           logs: () => Effect.die("unused"),
           followLogs: () => Stream.empty,
         } satisfies EffectStack),
@@ -195,6 +197,7 @@ const runStatus = (options: {
         ? []
         : [Layer.succeed(OutputFlag, Option.some(options.legacyOutput))]),
       BunServices.layer,
+      runtimeInfoLayer,
     );
     const effect = stackStatus(options.flags ?? flags()).pipe(Effect.provide(layer));
     return { effect, out, findInputs, inspectInputs, projectRoot, root };
@@ -619,6 +622,7 @@ describe("stack status", () => {
             discovery,
             mockCommandSettings({ workdir: run.projectRoot }),
             BunServices.layer,
+            runtimeInfoLayer,
           ),
         ),
         Effect.exit,

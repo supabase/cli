@@ -1,7 +1,7 @@
 import type { LoadedCliConfig } from "@supabase/config/effect";
 import { loadCliConfig } from "@supabase/config/internal";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { Effect, FileSystem, Option, Path, Predicate, Stdio, Stream } from "effect";
+import { Config, Effect, FileSystem, Option, Path, Predicate, Stdio, Stream } from "effect";
 import { DnsResolverFlag, NetworkIdFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import {
@@ -26,7 +26,8 @@ import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import type { DbConfigFlags } from "../../../command-internal/db-config.types.ts";
 import { poolerConfigFromConnectionString } from "../../../command-internal/db-config.parse.ts";
-import { applyProjectEnv, readDbToml } from "../../../command-internal/db-config.toml-read.ts";
+import { readDbToml } from "../../../command-internal/db-config.toml-read.ts";
+import { getHostname } from "../../../command-internal/hostname.ts";
 import type { PgConnInput } from "../../../command-internal/db-connection.service.ts";
 import { toPostgresURL } from "../../../command-internal/postgres-url.ts";
 import { tempPaths } from "../../../command-internal/temp-paths.ts";
@@ -51,7 +52,12 @@ import {
   GenTypesUnexpectedStatusError,
   GenTypesWorkdirError,
 } from "./types.errors.ts";
-import { getHostname } from "../../../command-internal/hostname.ts";
+import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
+import {
+  rewriteDumpHostForToolContainer,
+  toolContainerUsesHostNetwork,
+} from "../../../command-internal/postgres-client.run.ts";
+import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
 import {
   defaultSchemas,
@@ -225,13 +231,14 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
   const networkId = yield* NetworkIdFlag;
   const dnsResolver = yield* DnsResolverFlag;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const resolveImage = makeDockerImageResolver(spawner);
   const rawArgs = yield* stdio.args;
   const platformApi = yield* CommandPlatformApiFactory;
   const projectRef = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const dbConfig = yield* DbConfigResolver;
   const sslProbe = yield* PgDeltaSslProbe;
+  const runtimeInfo = yield* RuntimeInfo;
+  const backend = yield* currentStackBackend;
 
   // "Set" means the flag appeared in argv at all (pflag's `Changed` semantics), not its parsed
   // value — `--linked=false` still counts. Argv is scanned directly since a token like
@@ -413,6 +420,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
     readonly includedSchemas: string;
     readonly postgrestV9Compat: boolean;
     readonly pgmetaVersionOverride?: string;
+    readonly projectEnvValues?: Readonly<Record<string, string>>;
     readonly poolerFallback?: {
       readonly directHost: string;
       readonly eligible: boolean;
@@ -424,7 +432,11 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
         // Cached so the pooler retry reuses one resolve; the resolver's candidate rewrite is
         // idempotent on this already-rewritten reference.
         const resolvedImage = yield* Effect.cached(
-          resolveImage(resolvePgmetaImage(input.pgmetaVersionOverride)),
+          makeDockerImageResolver(
+            spawner,
+            input.projectEnvValues,
+            input.projectEnvValues,
+          )(yield* resolvePgmetaImage(input.pgmetaVersionOverride, input.projectEnvValues)),
         );
         const buildRun = (target: {
           readonly url: string;
@@ -451,7 +463,13 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
 
             // The SSL probe never verifies certificates on its own, so honor the same env var
             // here too when warning about disabled verification.
-            if (process.env["SUPABASE_CA_SKIP_VERIFY"] === "true") {
+            const caSkipProjectValue = Option.fromNullishOr(
+              input.projectEnvValues?.["SUPABASE_CA_SKIP_VERIFY"],
+            );
+            const caSkipVerify = Option.isSome(caSkipProjectValue)
+              ? caSkipProjectValue.value
+              : yield* Config.string("SUPABASE_CA_SKIP_VERIFY").pipe(Config.withDefault(""));
+            if (caSkipVerify === "true") {
               yield* output.raw(
                 "WARNING: TLS certificate verification disabled for SSL probe (SUPABASE_CA_SKIP_VERIFY=true)\n",
                 "stderr",
@@ -467,11 +485,17 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
 
             // `--network-id` overrides any base network mode, including "host" for --db-url.
             const networkMode = Option.isSome(networkId) ? networkId.value : input.networkMode;
+            // Linux needs an explicit gateway mapping; Docker Desktop platforms already provide it.
+            const extraHosts =
+              runtimeInfo.platform === "linux"
+                ? (["--add-host", "host.docker.internal:host-gateway"] as const)
+                : [];
             const args = [
               "run",
               "--rm",
               "--network",
               networkMode,
+              ...extraHosts,
               ...env.flatMap((entry) => ["--env", entry]),
               pgmetaImage,
               "node",
@@ -481,6 +505,8 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
               stdin: "ignore",
               stdout: "pipe",
               stderr: "pipe",
+              env: input.projectEnvValues === undefined ? undefined : { ...input.projectEnvValues },
+              extendEnv: true,
             });
 
             let stderrText = "";
@@ -531,7 +557,10 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       }),
     );
 
-  const assertLocalDbRunning = (projectId: string) =>
+  const assertLocalDbRunning = (
+    projectId: string,
+    projectEnvValues?: Readonly<Record<string, string>>,
+  ) =>
     Effect.scoped(
       Effect.gen(function* () {
         // Only the exit code and stderr matter; discard stdout so the inspect JSON can't
@@ -543,6 +572,8 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
             stdin: "ignore",
             stdout: "ignore",
             stderr: "pipe",
+            env: projectEnvValues === undefined ? undefined : { ...projectEnvValues },
+            extendEnv: true,
           },
         );
         const [exitCode, stderr] = yield* Effect.all([
@@ -612,9 +643,8 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
 
     if (flags.local) {
       const config = yield* readDbToml(fs, path, cliSettings.workdir);
-      yield* applyProjectEnv(
-        config.projectEnv,
-        Object.keys(config.projectEnv).filter((key) => key !== "SUPABASE_DB_PASSWORD"),
+      const projectEnvValues = Object.fromEntries(
+        Object.entries(config.projectEnv).filter(([key]) => key !== "SUPABASE_DB_PASSWORD"),
       );
       const projectId = Option.getOrElse(config.projectId, () =>
         path.basename(cliSettings.workdir),
@@ -637,24 +667,56 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       const includedSchemas = (
         schemas.length > 0 ? schemas : defaultSchemas(config.apiSchemas)
       ).join(",");
-      yield* assertLocalDbRunning(projectId);
+      if (backend.kind === "stack") {
+        const resolved = yield* dbConfig.resolve({
+          dbUrl: Option.none(),
+          connType: "local",
+          dnsResolver,
+        });
+        const usesHostNetwork = toolContainerUsesHostNetwork(Option.getOrUndefined(networkId));
+        const toolHost = rewriteDumpHostForToolContainer(resolved.conn.host, {
+          platform: runtimeInfo.platform,
+          usesHostNetwork,
+        });
+        yield* runPgMeta({
+          url: buildPostgresUrl({
+            host: toolHost,
+            port: resolved.conn.port,
+            user: resolved.conn.user,
+            password: resolved.conn.password,
+            database: resolved.conn.database,
+          }),
+          host: toolHost,
+          port: resolved.conn.port,
+          probeHost: resolved.conn.host,
+          probePort: resolved.conn.port,
+          networkMode: "host",
+          includedSchemas,
+          postgrestV9Compat: flags.postgrestV9Compat || forcedV9,
+          pgmetaVersionOverride,
+          projectEnvValues,
+        });
+        return;
+      }
 
+      yield* assertLocalDbRunning(projectId, projectEnvValues);
       yield* runPgMeta({
         url: buildPostgresUrl({
           host: "db",
           port: 5432,
           user: "postgres",
-          password: localDbPassword(),
+          password: yield* localDbPassword(),
           database: "postgres",
         }),
         host: "db",
         port: 5432,
-        probeHost: getHostname(),
+        probeHost: yield* getHostname(projectEnvValues),
         probePort: config.port,
         networkMode: localNetworkId(projectId),
         includedSchemas,
         postgrestV9Compat: flags.postgrestV9Compat || forcedV9,
         pgmetaVersionOverride,
+        projectEnvValues,
       });
       return;
     }

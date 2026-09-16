@@ -1,8 +1,27 @@
+import { ConfigProvider, Effect } from "effect";
 import { describe, expect, it } from "vitest";
 
 import { getRegistryImageUrl, getRegistryImageUrlCandidates } from "./docker-registry.ts";
 
 describe("getRegistryImageUrl", () => {
+  const resolveImage = (image: string, env?: Readonly<Record<string, string>>) =>
+    Effect.runSync(
+      getRegistryImageUrl(image, env).pipe(
+        Effect.provideService(
+          ConfigProvider.ConfigProvider,
+          ConfigProvider.fromEnvRecord({ ...process.env }, { preserveEmptyStrings: true }),
+        ),
+      ),
+    );
+  const resolveCandidates = (image: string, env?: Readonly<Record<string, string>>) =>
+    Effect.runSync(
+      getRegistryImageUrlCandidates(image, env).pipe(
+        Effect.provideService(
+          ConfigProvider.ConfigProvider,
+          ConfigProvider.fromEnvRecord({ ...process.env }, { preserveEmptyStrings: true }),
+        ),
+      ),
+    );
   const withRegistry = <T>(value: string | undefined, fn: () => T): T => {
     const prev = process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
     if (value === undefined) delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
@@ -16,35 +35,35 @@ describe("getRegistryImageUrl", () => {
   };
 
   it("defaults to the ECR mirror when the registry is unset", () => {
-    expect(withRegistry(undefined, () => getRegistryImageUrl("supabase/pg_prove:3.36"))).toBe(
+    expect(withRegistry(undefined, () => resolveImage("supabase/pg_prove:3.36"))).toBe(
       "public.ecr.aws/supabase/pg_prove:3.36",
     );
   });
 
   it("treats a blank registry override as unset", () => {
-    expect(withRegistry("  ", () => getRegistryImageUrl("supabase/pg_prove:3.36"))).toBe(
+    expect(withRegistry("  ", () => resolveImage("supabase/pg_prove:3.36"))).toBe(
       "public.ecr.aws/supabase/pg_prove:3.36",
     );
   });
 
   it("returns the image unchanged for docker.io (case-insensitive)", () => {
-    expect(withRegistry("docker.io", () => getRegistryImageUrl("supabase/pg_prove:3.36"))).toBe(
+    expect(withRegistry("docker.io", () => resolveImage("supabase/pg_prove:3.36"))).toBe(
       "supabase/pg_prove:3.36",
     );
-    expect(withRegistry("DOCKER.IO", () => getRegistryImageUrl("supabase/pg_prove:3.36"))).toBe(
+    expect(withRegistry("DOCKER.IO", () => resolveImage("supabase/pg_prove:3.36"))).toBe(
       "supabase/pg_prove:3.36",
     );
   });
 
   it("rewrites to <registry>/supabase/<image> for a custom mirror", () => {
-    expect(
-      withRegistry("my.mirror.example", () => getRegistryImageUrl("supabase/pg_prove:3.36")),
-    ).toBe("my.mirror.example/supabase/pg_prove:3.36");
+    expect(withRegistry("my.mirror.example", () => resolveImage("supabase/pg_prove:3.36"))).toBe(
+      "my.mirror.example/supabase/pg_prove:3.36",
+    );
   });
 
   it("returns fallback candidates when the registry is unset", () => {
     expect(
-      withRegistry(undefined, () => getRegistryImageUrlCandidates("supabase/postgres:17.6.1.138")),
+      withRegistry(undefined, () => resolveCandidates("supabase/postgres:17.6.1.138")),
     ).toEqual([
       "public.ecr.aws/supabase/postgres:17.6.1.138",
       "ghcr.io/supabase/postgres:17.6.1.138",
@@ -55,7 +74,7 @@ describe("getRegistryImageUrl", () => {
   it("dedupes an already-defaulted image in the fallback candidates", () => {
     expect(
       withRegistry(undefined, () =>
-        getRegistryImageUrlCandidates("public.ecr.aws/supabase/postgres:17.6.1.138"),
+        resolveCandidates("public.ecr.aws/supabase/postgres:17.6.1.138"),
       ),
     ).toEqual([
       "public.ecr.aws/supabase/postgres:17.6.1.138",
@@ -66,33 +85,27 @@ describe("getRegistryImageUrl", () => {
 
   it("uses a single candidate when the registry is explicitly configured", () => {
     expect(
-      withRegistry("public.ecr.aws", () =>
-        getRegistryImageUrlCandidates("supabase/postgres:17.6.1.138"),
-      ),
+      withRegistry("public.ecr.aws", () => resolveCandidates("supabase/postgres:17.6.1.138")),
     ).toEqual(["public.ecr.aws/supabase/postgres:17.6.1.138"]);
     expect(
-      withRegistry("docker.io", () =>
-        getRegistryImageUrlCandidates("supabase/postgres:17.6.1.138"),
-      ),
+      withRegistry("docker.io", () => resolveCandidates("supabase/postgres:17.6.1.138")),
     ).toEqual(["supabase/postgres:17.6.1.138"]);
     expect(
-      withRegistry("my.mirror.example", () =>
-        getRegistryImageUrlCandidates("supabase/postgres:17.6.1.138"),
-      ),
+      withRegistry("my.mirror.example", () => resolveCandidates("supabase/postgres:17.6.1.138")),
     ).toEqual(["my.mirror.example/supabase/postgres:17.6.1.138"]);
   });
 
   it("honors a projectEnvValues (dotenv)-only registry override, matching Go's post-Load os.Getenv", () => {
     expect(
       withRegistry(undefined, () =>
-        getRegistryImageUrl("supabase/pg_prove:3.36", {
+        resolveImage("supabase/pg_prove:3.36", {
           SUPABASE_INTERNAL_IMAGE_REGISTRY: "my.mirror.example",
         }),
       ),
     ).toBe("my.mirror.example/supabase/pg_prove:3.36");
     expect(
       withRegistry(undefined, () =>
-        getRegistryImageUrlCandidates("supabase/postgres:17.6.1.138", {
+        resolveCandidates("supabase/postgres:17.6.1.138", {
           SUPABASE_INTERNAL_IMAGE_REGISTRY: "my.mirror.example",
         }),
       ),
@@ -102,7 +115,7 @@ describe("getRegistryImageUrl", () => {
   it("prefers projectEnvValues over a bare process.env read when both are set", () => {
     expect(
       withRegistry("ambient.example", () =>
-        getRegistryImageUrl("supabase/pg_prove:3.36", {
+        resolveImage("supabase/pg_prove:3.36", {
           SUPABASE_INTERNAL_IMAGE_REGISTRY: "merged.example",
         }),
       ),
@@ -114,11 +127,11 @@ describe("getRegistryImageUrl", () => {
 
   it("leaves a slim image unrewritten, whatever the registry override says", () => {
     for (const registry of [undefined, "public.ecr.aws", "docker.io", "my.mirror.example"]) {
-      expect(withRegistry(registry, () => getRegistryImageUrl(SLIM_IMAGE))).toBe(SLIM_IMAGE);
+      expect(withRegistry(registry, () => resolveImage(SLIM_IMAGE))).toBe(SLIM_IMAGE);
     }
     expect(
       withRegistry(undefined, () =>
-        getRegistryImageUrl(SLIM_IMAGE, {
+        resolveImage(SLIM_IMAGE, {
           SUPABASE_INTERNAL_IMAGE_REGISTRY: "my.mirror.example",
         }),
       ),
@@ -127,13 +140,11 @@ describe("getRegistryImageUrl", () => {
 
   it("plans a single pull candidate for a slim image", () => {
     for (const registry of [undefined, "public.ecr.aws", "docker.io", "my.mirror.example"]) {
-      expect(withRegistry(registry, () => getRegistryImageUrlCandidates(SLIM_IMAGE))).toEqual([
-        SLIM_IMAGE,
-      ]);
+      expect(withRegistry(registry, () => resolveCandidates(SLIM_IMAGE))).toEqual([SLIM_IMAGE]);
     }
     expect(
       withRegistry(undefined, () =>
-        getRegistryImageUrlCandidates(SLIM_IMAGE, {
+        resolveCandidates(SLIM_IMAGE, {
           SUPABASE_INTERNAL_IMAGE_REGISTRY: "my.mirror.example",
         }),
       ),
@@ -141,13 +152,11 @@ describe("getRegistryImageUrl", () => {
   });
 
   it("still rewrites the non-slim ghcr.io/supabase namespace", () => {
+    expect(withRegistry("docker.io", () => resolveImage("ghcr.io/supabase/postgres:17.6"))).toBe(
+      "ghcr.io/supabase/postgres:17.6",
+    );
     expect(
-      withRegistry("docker.io", () => getRegistryImageUrl("ghcr.io/supabase/postgres:17.6")),
-    ).toBe("ghcr.io/supabase/postgres:17.6");
-    expect(
-      withRegistry(undefined, () =>
-        getRegistryImageUrlCandidates("ghcr.io/supabase/postgres:17.6"),
-      ),
+      withRegistry(undefined, () => resolveCandidates("ghcr.io/supabase/postgres:17.6")),
     ).toEqual([
       "public.ecr.aws/supabase/postgres:17.6",
       "ghcr.io/supabase/postgres:17.6",

@@ -17,7 +17,7 @@ import {
   validateStackId,
   validateStackTarget,
 } from "../stack.shared.ts";
-import { loadStackConfig } from "../stack-config.ts";
+import { loadStackConfig } from "../../../../command-internal/stack-config.ts";
 import type { StackStatusFlags } from "./status.command.ts";
 import { StackCommandStatusError } from "./status.errors.ts";
 import { encodeStackEnv, stackEnvOverrides, stackEnvValues } from "./status.env.ts";

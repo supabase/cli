@@ -87,8 +87,12 @@ function setup(
       Layer.succeed(
         CommandSettings,
         CommandSettings.of({
-          profileEnvValue: undefined,
+          dbPassword: Option.none(),
+          githubToken: Option.none(),
+          workdirEnvValue: Option.none(),
           profile: "supabase",
+          profileEnvValue: Option.none(),
+          supabaseHome: "/tmp/.supabase",
           apiUrl: opts.apiUrl ?? "https://api.supabase.com",
           projectHost: "supabase.co",
           poolerHost: "supabase.com",

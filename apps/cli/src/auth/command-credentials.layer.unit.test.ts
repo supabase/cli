@@ -110,6 +110,7 @@ function makeLayer(
 ) {
   const home = opts.home ?? tempHome;
   const env = { HOME: home, ...opts.env };
+  const envLayer = processEnvLayer(env);
   const runtimeInfoLayer = mockRuntimeInfo({
     homeDir: home,
     cwd: home,
@@ -122,7 +123,7 @@ function makeLayer(
     Layer.provide(Layer.succeed(WorkdirFlag, Option.none<string>())),
     Layer.provide(runtimeInfoLayer),
     Layer.provide(BunServices.layer),
-    Layer.provide(processEnvLayer(env)),
+    Layer.provide(envLayer),
   );
   return commandCredentialsLayer.pipe(
     Layer.provide(cliSettingsLayer),
@@ -131,7 +132,7 @@ function makeLayer(
     Layer.provide(runtimeInfoLayer),
     Layer.provide(opts.fs ?? BunServices.layer),
     Layer.provide(BunServices.layer),
-    Layer.provide(processEnvLayer(env)),
+    Layer.provide(envLayer),
   );
 }
 

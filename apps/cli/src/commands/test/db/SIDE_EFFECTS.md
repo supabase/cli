@@ -32,7 +32,7 @@ One-shot `docker run --rm <pg_prove image>`, where the image is `supabase/pg_pro
 
 - `-v <hostpath>:<dockerpath>:ro` for each test path. A path that is a **file** is mounted via its **containing directory** (not the lone file) so that psql `\ir`/`\i` includes — which resolve relative to the test file's own directory — find their sibling files inside the container (CLI-1139). Directory paths are mounted as-is. Mounts are deduped by container target, so multiple files in the same directory produce a single `-v`. The full file path is still passed to `pg_prove`, so only the requested file runs.
 - `--security-opt label:disable`
-- `--network supabase_network_<project_id>` (local) with env `PGHOST=db PGPORT=5432`, or `--network host` (db-url / linked) with the resolved host/port. `<project_id>` is sanitized (`sanitizeProjectId`), so an invalid configured value (e.g. `"my project"`) joins the same network the local stack created
+- `--network supabase_network_<project_id>` (Compose `--local`) with env `PGHOST=db PGPORT=5432`, or `--network host` (db-url / linked, and every stack-backend prove) with the published host/port. Stack `--local` never uses `PGHOST=db`. On the stack backend, container `pg_prove` rewrites the host whenever PATH `pg_prove` is not used (native `--local` except Windows); that rewrite is not gated on `isLocal`, unlike `db dump`. `<project_id>` is sanitized (`sanitizeProjectId`), so an invalid configured value (e.g. `"my project"`) joins the same network the local stack created
 - `-e PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE`
 - cmd `pg_prove --ext .pg --ext .sql -r <paths> [--verbose]` (`--verbose` when `--debug`)
 
@@ -57,14 +57,14 @@ One-shot `docker run --rm <pg_prove image>`, where the image is `supabase/pg_pro
 
 ## Exit Codes
 
-| Code | Condition                                                                                            |
-| ---- | ---------------------------------------------------------------------------------------------------- |
-| `0`  | all pgTAP tests pass                                                                                 |
-| `1`  | `pg_prove` exits non-zero (test failures) — `error running container: exit N`                        |
-| `1`  | `pg_prove` ran no tests (`Result: NOTESTS`) — `no pgTAP tests found in <paths>`; Go exits `0` here   |
-| `1`  | `--db-url` / `--linked` / `--local` set together (mutually exclusive)                                |
-| `1`  | database connection failure / pgTAP enable failure / docker failure / `--linked` auth or IPv6 errors |
-| `1`  | `--project-ref` set with a resolved target other than linked (see Notes)                             |
+| Code | Condition                                                                                                                            |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `0`  | all pgTAP tests pass                                                                                                                 |
+| `1`  | `pg_prove` exits non-zero (test failures) — `error running container: exit N`, or `error running pg_prove: exit N` on a native stack |
+| `1`  | `pg_prove` ran no tests (`Result: NOTESTS`) — `no pgTAP tests found in <paths>`; Go exits `0` here                                   |
+| `1`  | `--db-url` / `--linked` / `--local` set together (mutually exclusive)                                                                |
+| `1`  | database connection failure / pgTAP enable failure / docker failure / `--linked` auth or IPv6 errors                                 |
+| `1`  | `--project-ref` set with a resolved target other than linked (see Notes)                                                             |
 
 ## Telemetry Events Fired
 
@@ -102,6 +102,9 @@ command (exit 1).
 ## Notes
 
 - Native TypeScript port (Phase 1+); no Go proxy. Hidden command.
+- Native stacks prefer artifact `psql` on PATH when present so `pg_prove`'s client
+  matches; `pg_prove` itself stays a PATH requirement. If the extra is absent, the
+  existing PATH `pg_dump`/`psql` major check still applies.
 - **`--project-ref`** (TS-only, no Go equivalent on any user-facing command;
   shared verbatim by `db test` via `testDbConfig`) overrides ONLY the
   linked-ref resolution used for the connection (flag > `SUPABASE_PROJECT_ID` >

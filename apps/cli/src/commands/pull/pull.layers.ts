@@ -64,5 +64,9 @@ type PullServices =
   | Stdin
   | MachineErrorContext;
 
-const _serviceCoverageCheck: Layer.Layer<PullServices, unknown, unknown> = pullRuntimeLayer;
+const _serviceCoverageCheck: Layer.Layer<
+  PullServices,
+  Layer.Error<typeof pullRuntimeLayer>,
+  Layer.Services<typeof pullRuntimeLayer>
+> = pullRuntimeLayer;
 void _serviceCoverageCheck;

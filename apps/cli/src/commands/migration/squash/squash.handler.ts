@@ -1,6 +1,7 @@
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Effect, FileSystem, Option, Path, Predicate } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type { ChildProcessSpawner as ChildProcessSpawnerType } from "effect/unstable/process/ChildProcessSpawner";
+import { resolveEphemeralPostgresRelease } from "@supabase/stack/effect";
 
 import { cobraMutuallyExclusiveErrorMessage } from "../../../shared/cli/cobra-flag-groups.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
@@ -33,7 +34,6 @@ import {
 } from "../../../command-internal/db-bootstrap/shadow-database.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import {
-  applyProjectEnv,
   loadProjectEnv,
   readDbToml,
   type DbTomlValues,
@@ -42,7 +42,17 @@ import type { ResolvedDbConfig } from "../../../command-internal/db-config.types
 import { DbConnection, type PgConnInput } from "../../../command-internal/db-connection.service.ts";
 import { resolveDbTargetFlags } from "../../../command-internal/db-target-flags.ts";
 import { DebugLogger } from "../../../command-internal/debug-logger.service.ts";
+import { DockerRunError } from "../../../command-internal/docker-run.errors.ts";
 import { errorMessage, relativizeErrorMessage } from "../../../command-internal/error-message.ts";
+import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
+import { stackWithShadowDatabase } from "../../../command-internal/stack-shadow.ts";
+import { parsePostgresServerMajor } from "../../../command-internal/stack-local-database.ts";
+import {
+  dumpConnForHostClient,
+  nativeHostClientPathPrepend,
+  rewriteDumpHostForToolContainer,
+  toolContainerUsesHostNetwork,
+} from "../../../command-internal/postgres-client.run.ts";
 import { applyMigrations, MigrationApplyError } from "../../../command-internal/migration-apply.ts";
 import {
   INSERT_MIGRATION_VERSION,
@@ -68,6 +78,7 @@ import { SQUASH_SEPARATOR_COMMENT, squashLineByLineDiff } from "./squash.diff.ts
 import { squashDumpSchema, squashDumpSchemaToString } from "./squash.dump.ts";
 import {
   MigrationSquashBaselineError,
+  MigrationSquashDumpError,
   MigrationSquashMissingVersionError,
   MigrationSquashWriteError,
 } from "./squash.errors.ts";
@@ -89,7 +100,10 @@ const squashMigrations = Effect.fnUntraced(function* (
   localInputs: LocalDbContainerInputs,
   toml: DbTomlValues,
 ) {
-  const resolvedShadowImage = yield* localInputs.resolvePostgresImage;
+  const stackBackend = (yield* currentStackBackend).kind === "stack";
+  const resolvedShadowImage = stackBackend
+    ? "stack-ephemeral"
+    : yield* localInputs.resolvePostgresImage;
   const shadowInput = shadowRunInputFromLocalContainerInputs(
     localInputs,
     resolvedShadowImage,
@@ -107,6 +121,131 @@ const squashMigrations = Effect.fnUntraced(function* (
   // The pin-resolved (not yet registry-mapped) image every
   // `pg_dump` container below uses; `squashDumpSchema` applies the registry mirror itself.
   const image = localInputs.bootstrapConfig.postgresImage;
+
+  if (stackBackend) {
+    const runtimeInfo = yield* RuntimeInfo;
+    return yield* stackWithShadowDatabase(shadowInput, (handle) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const stackConn: PgConnInput = {
+            host: handle.host,
+            port: handle.port,
+            user: "postgres",
+            password: toml.password,
+            database: "postgres",
+          };
+          const networkIdFlag = yield* NetworkIdFlag;
+          const networkId = Option.getOrUndefined(networkIdFlag);
+          const dumpUsesHostNetwork = toolContainerUsesHostNetwork(networkId);
+          const nativeShadow = handle.runtime.kind === "native" && runtimeInfo.platform !== "win32";
+          const expectedMajor =
+            parsePostgresServerMajor(handle.ephemeral.version) ?? toml.majorVersion;
+          const pathPrepend = nativeShadow
+            ? yield* nativeHostClientPathPrepend("pg_dump", {
+                artifactRoot: handle.ephemeral.nativeArtifactRoot,
+              })
+            : undefined;
+          const dumpClient = nativeShadow
+            ? {
+                kind: "host" as const,
+                command: "pg_dump" as const,
+                expectedMajor,
+                ...(pathPrepend === undefined ? {} : { pathPrepend }),
+              }
+            : { kind: "container" as const };
+          const release = yield* resolveEphemeralPostgresRelease(handle.ephemeral.version).pipe(
+            Effect.orElseSucceed(() => undefined),
+          );
+          const image = release?.image ?? localInputs.bootstrapConfig.postgresImage;
+          const dumpConn: PgConnInput = nativeShadow
+            ? dumpConnForHostClient(stackConn)
+            : {
+                ...stackConn,
+                host: rewriteDumpHostForToolContainer(handle.host, {
+                  platform: runtimeInfo.platform,
+                  usesHostNetwork: dumpUsesHostNetwork,
+                }),
+              };
+          const session = yield* connectShadowDatabase(stackConn);
+          const before = yield* squashDumpSchemaToString({
+            image,
+            conn: dumpConn,
+            schema: ["auth", "storage"],
+            projectEnvValues: localInputs.context.projectEnvValues,
+            client: dumpClient,
+          });
+          yield* applyMigrations(
+            session,
+            fs,
+            path,
+            migrations,
+            (message) => new MigrationApplyError({ message }),
+          );
+          const after = yield* squashDumpSchemaToString({
+            image,
+            conn: dumpConn,
+            schema: ["auth", "storage"],
+            projectEnvValues: localInputs.context.projectEnvValues,
+            client: dumpClient,
+          });
+          const targetPath = migrations[migrations.length - 1]!;
+          const targetRel = path.relative(workdir, targetPath);
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              const file = yield* fs.open(targetPath, { flag: "w", mode: 0o644 }).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new MigrationSquashWriteError({
+                      message: `failed to open migration file: ${relativizeErrorMessage(errorMessage(cause), targetPath, targetRel)}`,
+                    }),
+                ),
+              );
+              yield* squashDumpSchema({
+                image,
+                conn: dumpConn,
+                schema: [],
+                projectEnvValues: localInputs.context.projectEnvValues,
+                client: dumpClient,
+                onStdout: (chunk) =>
+                  file.writeAll(chunk).pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new MigrationSquashWriteError({
+                          message: `failed to copy docker logs: ${errorMessage(cause)}`,
+                        }),
+                    ),
+                  ),
+              });
+              const tail = SQUASH_SEPARATOR_COMMENT + squashLineByLineDiff(before, after);
+              yield* file.writeAll(new TextEncoder().encode(tail)).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new MigrationSquashWriteError({
+                      message: `failed to write line: ${relativizeErrorMessage(errorMessage(cause), targetPath, targetRel)}`,
+                    }),
+                ),
+              );
+            }),
+          );
+        }),
+      ).pipe(
+        Effect.catchIf(
+          (error): error is DockerRunError =>
+            Predicate.isTagged(error, "DockerRunError") &&
+            handle.runtime.kind === "native" &&
+            runtimeInfo.platform === "win32",
+          (error) =>
+            Effect.fail(
+              new MigrationSquashDumpError({
+                message: error.message,
+                suggestion:
+                  "Install Docker Desktop (or Git Bash) to squash a native stack on Windows.",
+              }),
+            ),
+        ),
+      ),
+    );
+  }
 
   yield* Effect.acquireUseRelease(
     createShadowDatabase(spawner, shadowInput),
@@ -459,10 +598,6 @@ const runSquash = Effect.fnUntraced(function* (
     // .env read; a SUPABASE_YES set only in supabase/.env still auto-confirms the
     // remote-baseline prompt.
     const projectEnv = yield* loadProjectEnv(fs, path, cliSettings.workdir);
-    // Makes an allowlisted supabase/.env registry override visible to the synchronous
-    // process.env reader in getRegistryImageUrl, reverted when the scope closes, so all
-    // three pg_dump containers below see the same registry-mirror override.
-    yield* applyProjectEnv(projectEnv);
     const yes = yield* resolveYesWithProjectEnv(projectEnv);
 
     // Runs after DB-config resolution, so an invalid target surfaces first.
@@ -552,9 +687,6 @@ const runSquash = Effect.fnUntraced(function* (
         linkedRefForCache !== undefined ? linkedProjectCache.cache(linkedRefForCache) : Effect.void,
       ),
     ),
-    // Scope the `SUPABASE_INTERNAL_IMAGE_REGISTRY`-from-`.env` apply above to this
-    // command run: `applyProjectEnv` registers a finalizer that reverts it.
-    Effect.scoped,
   );
 });
 

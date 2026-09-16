@@ -1,4 +1,4 @@
-import { Context, type Effect, type Option } from "effect";
+import { Context, Config, type Effect, type Option } from "effect";
 import type { SupabaseApiInputError } from "@supabase/api/effect";
 import type * as HttpBody from "effect/unstable/http/HttpBody";
 import type { CommandPlatformApiFactoryError } from "../auth/command-platform-api-factory.service.ts";
@@ -10,6 +10,7 @@ import type {
 import type { ProfileLoadError } from "./profile-load.ts";
 import type { ProjectRefReadError } from "./temp-paths.ts";
 import type { DbConnectError } from "./db-connection.errors.ts";
+import type { LocalDbRunningError } from "./db-bootstrap/local-db-running.ts";
 import type {
   DbConfigConnectTempRoleError,
   DbConfigIpv6Error,
@@ -27,8 +28,10 @@ import type { DbConfigFlags, ResolvedDbConfig } from "./db-config.types.ts";
 
 /** Every error the resolver can raise across the direct / local / linked paths. */
 export type DbConfigError =
+  | Config.ConfigError
   | DbConfigParseUrlError
   | DbConfigLoadError
+  | LocalDbRunningError
   | ProjectRefNotLinkedError
   | InvalidProjectRefError
   // A hard linked-ref load surfaces a real `.temp/project-ref` read error instead of masking it

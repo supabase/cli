@@ -1,11 +1,21 @@
-import { Effect, FileSystem, Layer, Option, Path, Predicate, Redacted, Result } from "effect";
+import {
+  Config,
+  ConfigProvider,
+  Effect,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Predicate,
+  Redacted,
+  Result,
+} from "effect";
 import type { PlatformError } from "effect/PlatformError";
 
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { normalizeKeyringToken } from "../shared/auth/keyring-token.ts";
 import { DebugLogger, type DebugLoggerShape } from "../command-internal/debug-logger.service.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
-import { supabaseHome } from "../config/profile-file.ts";
 import { ACCESS_TOKEN_PATTERN, validateAccessToken } from "./access-token.ts";
 import { CommandCredentials } from "./command-credentials.service.ts";
 import { CredentialDeleteError, DeleteTokenError, NotLoggedInError } from "./errors.ts";
@@ -319,11 +329,11 @@ const deleteAllKeyringEntries = (
 // access blocks on a Keychain authorization prompt in non-interactive/CI contexts.
 const loadKeyringModule = (
   fs: FileSystem.FileSystem,
+  noKeyring: Option.Option<string>,
 ): Effect.Effect<Option.Option<KeyringModule>> =>
   Effect.gen(function* () {
-    const noKeyring = process.env["SUPABASE_NO_KEYRING"] === "1";
     const wsl = yield* detectWsl(fs);
-    return wsl || noKeyring
+    return wsl || (Option.isSome(noKeyring) && noKeyring.value === "1")
       ? Option.none<KeyringModule>()
       : yield* Effect.tryPromise(() => import("@napi-rs/keyring")).pipe(Effect.option);
   });
@@ -378,6 +388,7 @@ export const accessTokenForProfile = Effect.fnUntraced(function* (profileAccount
   const path = yield* Path.Path;
   const runtimeInfo = yield* RuntimeInfo;
   const cliSettings = yield* CommandSettings;
+  const configProvider = yield* ConfigProvider.ConfigProvider;
   // Keeps the logger optional — a no-op outside the real CLI tree.
   const debugLogger: DebugLoggerShape = Option.getOrElse(
     yield* Effect.serviceOption(DebugLogger),
@@ -390,7 +401,10 @@ export const accessTokenForProfile = Effect.fnUntraced(function* (profileAccount
     return Option.some(cliSettings.accessToken.value);
   }
 
-  const keyringModule = yield* loadKeyringModule(fs);
+  const noKeyring = yield* Config.option(Config.string("SUPABASE_NO_KEYRING")).parse(
+    configProvider,
+  );
+  const keyringModule = yield* loadKeyringModule(fs, noKeyring);
   const keyringValue = yield* readKeyringForAccount(
     keyringModule,
     profileAccount,
@@ -402,7 +416,7 @@ export const accessTokenForProfile = Effect.fnUntraced(function* (profileAccount
     return Option.some(Redacted.make(keyringValue.value));
   }
 
-  const fallbackPath = path.join(supabaseHome(runtimeInfo.homeDir), "access-token");
+  const fallbackPath = path.join(cliSettings.supabaseHome, "access-token");
   const fileValue = yield* readFallbackFile(fs, fallbackPath);
   if (Option.isSome(fileValue)) {
     yield* debugLogger.debug(`Using access token from file: ${fallbackPath}`);
@@ -418,14 +432,18 @@ const makeCommandCredentials = Effect.gen(function* () {
   const path = yield* Path.Path;
   const runtimeInfo = yield* RuntimeInfo;
   const cliSettings = yield* CommandSettings;
+  const configProvider = yield* ConfigProvider.ConfigProvider;
+  const noKeyring = yield* Config.option(Config.string("SUPABASE_NO_KEYRING")).parse(
+    configProvider,
+  );
   const debugLogger = yield* DebugLogger;
   const profileAccount = cliSettings.profile;
 
   // <SUPABASE_HOME or ~/.supabase>/access-token — fallback file path
-  const fallbackDir = supabaseHome(runtimeInfo.homeDir);
+  const fallbackDir = cliSettings.supabaseHome;
   const fallbackPath = path.join(fallbackDir, "access-token");
 
-  const keyringModule = yield* loadKeyringModule(fs);
+  const keyringModule = yield* loadKeyringModule(fs, noKeyring);
 
   const readKeyring = readKeyringForAccount(
     keyringModule,

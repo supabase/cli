@@ -473,6 +473,7 @@ export const resolveSecrets = (
   Effect.gen(function* () {
     const crypto = yield* Crypto.Crypto;
     const isUnconfigured = persisted === undefined;
+    const canMutatePassthrough = lifecycle === "stopped" || lifecycle === "unconfigured";
     const previous = persisted ?? {};
     const declarations = new Map<string, SecretDeclaration>();
     for (const declaration of candidate.declarations) {
@@ -513,7 +514,7 @@ export const resolveSecrets = (
           return yield* secretMismatch(slot, "Pass-through secret declarations require a value");
         const value = readSecret(declaration.value);
         if (
-          lifecycle !== "stopped" &&
+          !canMutatePassthrough &&
           ((old === undefined && !isUnconfigured) || (old !== undefined && old.value !== value))
         )
           return yield* lifecycleChange(slot);
@@ -530,7 +531,7 @@ export const resolveSecrets = (
       if (old.policy === "managed") {
         resolved[slot] ??= old;
       } else if (!declarations.has(slot)) {
-        if (lifecycle !== "stopped") return yield* lifecycleChange(slot);
+        if (!canMutatePassthrough) return yield* lifecycleChange(slot);
       }
     }
 

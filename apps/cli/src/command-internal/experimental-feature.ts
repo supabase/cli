@@ -49,7 +49,7 @@ export const readExperimentalFeatureConfig = (input: {
     const explicitWorkdir = firstExplicitLongFlagValue(input.args, "workdir");
     const resolvedWorkdir = yield* resolveWorkdir(
       explicitWorkdir === undefined ? Option.none() : Option.some(explicitWorkdir),
-      input.env["SUPABASE_WORKDIR"],
+      Option.fromNullishOr(input.env["SUPABASE_WORKDIR"]),
       input.cwd,
       (filePath) => fs.exists(filePath).pipe(Effect.orElseSucceed(() => false)),
       path,

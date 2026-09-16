@@ -481,17 +481,23 @@ describe("managed and pass-through secrets", () => {
     }).pipe(Effect.provide(layer)),
   );
 
-  it.live("allows pass-through add, replacement, and removal while stopped", () =>
+  it.live("allows pass-through add, replacement, and removal while stopped or unconfigured", () =>
     Effect.gen(function* () {
       const first = yield* resolveSecrets(passthrough("pass:smtp", "old"), undefined, "stopped");
-      const replacement = yield* resolveSecrets(
-        passthrough("pass:smtp", "new"),
-        first.persisted,
-        "stopped",
-      );
-      expect(replacement.persisted["pass:smtp"]?.value).toBe("new");
-      const removed = yield* resolveSecrets({ declarations: [] }, replacement.persisted, "stopped");
-      expect(removed.persisted["pass:smtp"]).toBeUndefined();
+      for (const lifecycle of ["stopped", "unconfigured"] as const) {
+        const replacement = yield* resolveSecrets(
+          passthrough("pass:smtp", "new"),
+          first.persisted,
+          lifecycle,
+        );
+        expect(replacement.persisted["pass:smtp"]?.value).toBe("new");
+        const removed = yield* resolveSecrets(
+          { declarations: [] },
+          replacement.persisted,
+          lifecycle,
+        );
+        expect(removed.persisted["pass:smtp"]).toBeUndefined();
+      }
     }).pipe(Effect.provide(layer)),
   );
 

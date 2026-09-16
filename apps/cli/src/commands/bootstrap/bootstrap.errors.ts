@@ -17,6 +17,15 @@ export class BootstrapInvalidTemplateError extends Data.TaggedError(
   }
 }
 
+/** `.env.example` failed to parse — rendered as `Failed to create .env file: ${detail}`. */
+export class BootstrapDotEnvParseError extends Data.TaggedError("BootstrapDotEnvParseError")<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
+  }
+}
+
 /** GitHub samples listing failure — `failed to list samples`. */
 export class BootstrapTemplateListError extends Data.TaggedError("BootstrapTemplateListError")<{
   readonly message: string;

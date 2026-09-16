@@ -7,7 +7,6 @@ import {
   type DbConnectOptions,
 } from "../../../command-internal/db-connection.service.ts";
 import { parseConnectionString } from "../../../command-internal/db-config.parse.ts";
-import { getRegistryImageUrl } from "../../../command-internal/docker-registry.ts";
 import { DockerRun } from "../../../command-internal/docker-run.service.ts";
 import { EdgeRuntimeScript } from "../../../command-internal/edge-runtime-script.service.ts";
 import { PG_DELTA_CA_BUNDLE } from "../../../command-internal/pgdelta-ssl.ts";
@@ -174,6 +173,7 @@ const diffMigraBash = Effect.fnUntraced(function* (params: {
   readonly target: string;
   readonly schema: ReadonlyArray<string>;
   readonly connectOptions: DbConnectOptions;
+  readonly projectEnvValues?: Readonly<Record<string, string>>;
 }) {
   const docker = yield* DockerRun;
   const runtimeInfo = yield* RuntimeInfo;
@@ -197,7 +197,7 @@ const diffMigraBash = Effect.fnUntraced(function* (params: {
   const extraHosts = runtimeInfo.platform === "linux" ? ["host.docker.internal:host-gateway"] : [];
   const result = yield* docker
     .runCapture({
-      image: getRegistryImageUrl(MIGRA_IMAGE),
+      image: MIGRA_IMAGE,
       cmd: ["/bin/sh", "-c", args + migraDiffShellScript],
       env,
       binds: [],
@@ -205,6 +205,7 @@ const diffMigraBash = Effect.fnUntraced(function* (params: {
       securityOpt: [],
       extraHosts,
       network,
+      projectEnvValues: params.projectEnvValues,
     })
     .pipe(
       Effect.mapError(
@@ -249,13 +250,14 @@ export const diffMigra = Effect.fnUntraced(function* (
       env,
       binds: [`${edgeRuntimeId(ctx.projectId)}:/root/.cache/deno:rw`],
       errPrefix: "error diffing schema",
+      projectEnvValues: ctx.projectEnv,
       denoVersion: ctx.denoVersion,
       workdir: ctx.cwd,
     })
     .pipe(
       Effect.catch((cause) =>
         shouldFallbackToBashMigra(cause.message)
-          ? diffMigraBash(params)
+          ? diffMigraBash({ ...params, projectEnvValues: ctx.projectEnv })
           : Effect.fail(new MigraDiffError({ message: cause.message })),
       ),
     );

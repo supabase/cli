@@ -499,6 +499,39 @@ describe("supervisor transitions", () => {
     }),
   );
 
+  it.effect(
+    "restores the prior running capability when cleanup is proven but durability is unsafe",
+    () =>
+      Effect.gen(function* () {
+        const cause = Cause.fail(new StackRuntimeError({ message: "state missing" }));
+        const lifecycleCompletion = yield* Deferred.make<Exit.Exit<void, StackError>, never>();
+        const workloadCompletion = yield* Deferred.make<Exit.Exit<void, StackError>, never>();
+        const prior = ready(Symbol("running"), 0, false);
+        const current = beginStarting(prior, Symbol("start"), {
+          _tag: "workload",
+          deferred: workloadCompletion,
+        });
+        const snapshot = {
+          ...snapshotFor(current),
+          stack: {
+            _tag: "starting" as const,
+            attempt: Symbol("start"),
+            completion: lifecycleCompletion,
+            prior: { _tag: "running" as const },
+          },
+        };
+
+        const settlement = settleLifecycleOwner(snapshot, {
+          _tag: "lifecycle",
+          completion: lifecycleCompletion,
+          result: { _tag: "failed", cause, cleanup: { _tag: "proven" }, durable: "unsafe" },
+        });
+
+        expect(settlement.snapshot.stack).toEqual({ _tag: "running" });
+        expect(settlement.snapshot.capabilities.get("rest")).toBe(prior);
+      }),
+  );
+
   it.effect("ignores traffic release from an older session", () =>
     Effect.sync(() => {
       const snapshot = snapshotFor(ready(Symbol("current"), 1, false));

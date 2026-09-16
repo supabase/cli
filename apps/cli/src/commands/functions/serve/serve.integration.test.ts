@@ -1,3 +1,4 @@
+import { FetchHttpClient } from "effect/unstable/http";
 import { existsSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -129,7 +130,7 @@ vi.mock("../../../shared/functions/functions-docker.ts", async () => {
     resolveFunctionsDockerImage: (
       image: string,
       projectEnvValues?: Readonly<Record<string, string>>,
-    ) => Effect.sync(() => getRegistryImageUrl(image, projectEnvValues)),
+    ) => getRegistryImageUrl(image, projectEnvValues),
     runChildProcess: (command: string, args: ReadonlyArray<string>, options?: unknown) =>
       Effect.suspend(() => {
         const envFile = args.flatMap((value, index) =>
@@ -377,6 +378,7 @@ function mockDockerLogSpawner(behaviors: ReadonlyArray<LogProcessBehavior>) {
 }
 
 interface SetupOptions {
+  readonly fetch?: typeof globalThis.fetch;
   readonly debug?: boolean;
   readonly workdir?: string;
   readonly networkId?: Option.Option<string>;
@@ -404,7 +406,16 @@ function setupServe(options: SetupOptions = {}) {
   const layer = Layer.mergeAll(
     buildTestRuntime({
       out,
-      api,
+      api: {
+        ...api,
+        ...(options.fetch === undefined
+          ? {}
+          : {
+              httpClientLayer: FetchHttpClient.layer.pipe(
+                Layer.provide(Layer.succeed(FetchHttpClient.Fetch, options.fetch)),
+              ),
+            }),
+      },
       cliSettings,
       telemetry: telemetry.layer,
       runtimeInfo: mockRuntimeInfo({
@@ -919,7 +930,9 @@ describe("functions serve integration", () => {
         throw new Error("expected docker create call");
       }
 
-      expect(dockerRun.args).toContain(getRegistryImageUrl(dockerfileServiceImage("edgeruntime")));
+      expect(dockerRun.args).toContain(
+        Effect.runSync(getRegistryImageUrl(dockerfileServiceImage("edgeruntime"))),
+      );
       expect(dockerRun.args.join(" ")).not.toContain(multilineValue);
       expect(dockerRun.args.join(" ")).not.toContain("EOF_ENV_0");
 
@@ -2815,7 +2828,7 @@ describe("functions serve integration", () => {
       );
       yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
 
-      const { layer } = setupServe({ childSpawner });
+      const { layer } = setupServe({ childSpawner, fetch: fetchMock });
       const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
       expect(error).toBeInstanceOf(Error);
@@ -2902,7 +2915,7 @@ describe("functions serve integration", () => {
         );
         yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
 
-        const { layer } = setupServe({ childSpawner });
+        const { layer } = setupServe({ childSpawner, fetch: fetchMock });
         const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
         expect(error).toBeInstanceOf(Error);
