@@ -10,7 +10,7 @@ import {
   localDbContainerId,
   localDbPassword,
   localNetworkId,
-  parseQueryTimeoutSeconds,
+  parseQueryTimeoutMillis,
 } from "./types.shared.ts";
 
 const resolvePassword = () =>
@@ -41,54 +41,54 @@ function withEnv<T>(key: string, value: string | undefined, run: () => T): T {
   }
 }
 
-describe("parseQueryTimeoutSeconds", () => {
+describe("parseQueryTimeoutMillis", () => {
   it.effect("parses compound Go durations", () =>
     Effect.gen(function* () {
-      expect(yield* parseQueryTimeoutSeconds("15s")).toBe(15);
-      expect(yield* parseQueryTimeoutSeconds("1h")).toBe(3600);
-      expect(yield* parseQueryTimeoutSeconds("1m30s")).toBe(90);
-      expect(yield* parseQueryTimeoutSeconds("2h30m")).toBe(9000);
+      expect(yield* parseQueryTimeoutMillis("15s")).toBe(15000);
+      expect(yield* parseQueryTimeoutMillis("1h")).toBe(3600000);
+      expect(yield* parseQueryTimeoutMillis("1m30s")).toBe(90000);
+      expect(yield* parseQueryTimeoutMillis("2h30m")).toBe(9000000);
     }),
   );
 
-  it.effect("rounds sub-second durations to whole seconds", () =>
+  it.effect("preserves sub-second precision", () =>
     Effect.gen(function* () {
-      expect(yield* parseQueryTimeoutSeconds("500ms")).toBe(1);
-      expect(yield* parseQueryTimeoutSeconds("400ms")).toBe(0);
+      expect(yield* parseQueryTimeoutMillis("500ms")).toBe(500);
+      expect(yield* parseQueryTimeoutMillis("400ms")).toBe(400);
     }),
   );
 
   it.effect("rejects an empty duration", () =>
     Effect.gen(function* () {
-      const exit = yield* parseQueryTimeoutSeconds("  ").pipe(Effect.exit);
+      const exit = yield* parseQueryTimeoutMillis("  ").pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
     }),
   );
 
   it.effect("rejects a duration with a leading non-duration prefix", () =>
     Effect.gen(function* () {
-      const exit = yield* parseQueryTimeoutSeconds("x15s").pipe(Effect.exit);
+      const exit = yield* parseQueryTimeoutMillis("x15s").pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
     }),
   );
 
   it.effect("rejects a duration with trailing junk", () =>
     Effect.gen(function* () {
-      const exit = yield* parseQueryTimeoutSeconds("15s30").pipe(Effect.exit);
+      const exit = yield* parseQueryTimeoutMillis("15s30").pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
     }),
   );
 
   it.effect("rejects a string with no recognizable units", () =>
     Effect.gen(function* () {
-      const exit = yield* parseQueryTimeoutSeconds("abc").pipe(Effect.exit);
+      const exit = yield* parseQueryTimeoutMillis("abc").pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
     }),
   );
 
   it.effect("rejects a negative duration", () =>
     Effect.gen(function* () {
-      const exit = yield* parseQueryTimeoutSeconds("-5s").pipe(Effect.exit);
+      const exit = yield* parseQueryTimeoutMillis("-5s").pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
     }),
   );

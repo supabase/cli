@@ -42,11 +42,15 @@ export const genTypesGeneratorLayer = Layer.effect(
           // context (rather than a bare detached `Effect.runPromise`) keeps the Promise bridge
           // anchored to this generator effect instead of a disconnected top-level runtime.
           const runQuery = Effect.runPromiseWith(yield* Effect.context<never>());
-          const queryable: Queryable = {
-            query: (sql) => runQuery(session.query(sql)).then((rows) => ({ rows: [...rows] })),
-          };
           return yield* Effect.tryPromise({
-            try: async () => {
+            try: async (signal) => {
+              // `signal` aborts when this generate call is interrupted, so forwarding it to
+              // every `runQuery` stops an in-flight introspection query instead of leaving it
+              // detached from the fiber that started it.
+              const queryable: Queryable = {
+                query: (sql) =>
+                  runQuery(session.query(sql), { signal }).then((rows) => ({ rows: [...rows] })),
+              };
               const metadata = sortGeneratorMetadata(
                 await introspect(queryable, { includedSchemas: [...input.includedSchemas] }),
               );

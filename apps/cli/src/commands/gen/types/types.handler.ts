@@ -55,7 +55,7 @@ import {
   defaultSchemas,
   localDbContainerId,
   localDbPassword,
-  parseQueryTimeoutSeconds,
+  parseQueryTimeoutMillis,
   rootCaBundle,
 } from "./types.shared.ts";
 
@@ -236,7 +236,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
 
   // Parsed before the telemetry context is installed, so an invalid `--query-timeout` wins
   // over every guard below and, unlike them, is never followed by a telemetry flush.
-  const queryTimeoutSeconds = yield* parseQueryTimeoutSeconds(flags.queryTimeout);
+  const queryTimeoutMillis = yield* parseQueryTimeoutMillis(flags.queryTimeout);
 
   const schemas = flags.schema;
   const lang = flags.lang;
@@ -292,8 +292,14 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
    */
   const withQueryTimeout = (conn: PgConnInput): PgConnInput => ({
     ...conn,
-    runtimeParams: { ...conn.runtimeParams, statement_timeout: String(queryTimeoutSeconds * 1000) },
-    connectTimeoutSeconds: queryTimeoutSeconds,
+    runtimeParams: {
+      ...conn.runtimeParams,
+      statement_timeout:
+        queryTimeoutMillis === 0 ? "0" : String(Math.max(1, Math.round(queryTimeoutMillis))),
+    },
+    ...(queryTimeoutMillis === 0
+      ? {}
+      : { connectTimeoutSeconds: Math.max(1, Math.ceil(queryTimeoutMillis / 1000)) }),
   });
 
   const runGenerate = (input: {

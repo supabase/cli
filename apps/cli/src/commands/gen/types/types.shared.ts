@@ -28,7 +28,7 @@ export function defaultSchemas(extraSchemas: ReadonlyArray<string> = []) {
   return [...new Set(["public", ...extraSchemas])];
 }
 
-export function parseQueryTimeoutSeconds(
+export function parseQueryTimeoutMillis(
   raw: string,
 ): Effect.Effect<number, InvalidGenTypesDurationError> {
   return Effect.gen(function* () {
@@ -75,7 +75,7 @@ export function parseQueryTimeoutSeconds(
       );
     }
 
-    return Math.round(totalMillis / 1_000);
+    return totalMillis;
   });
 }
 

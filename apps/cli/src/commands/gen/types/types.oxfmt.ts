@@ -50,6 +50,23 @@ function loadOxfmtBinding(loadCompiled: () => OxfmtBinding, specifier: string): 
   }
 }
 
+/**
+ * `process.report` omits `glibcVersionRuntime` on musl libc; the dev binary build
+ * (`scripts/build-binary.ts`) and source runs never set the `SUPABASE_LIBC` build define, so
+ * this is the only signal available to them.
+ */
+function isRunningOnMusl(): boolean {
+  try {
+    const report: unknown = process.report?.getReport();
+    if (typeof report !== "object" || report === null || !("header" in report)) return false;
+    const header = report.header;
+    if (typeof header !== "object" || header === null) return false;
+    return !("glibcVersionRuntime" in header) || header.glibcVersionRuntime === undefined;
+  } catch {
+    return false;
+  }
+}
+
 function requireOxfmtBinding(): OxfmtBinding {
   if (process.platform === "darwin") {
     if (process.arch === "arm64") {
@@ -67,8 +84,10 @@ function requireOxfmtBinding(): OxfmtBinding {
   }
 
   if (process.platform === "linux") {
+    const useMusl =
+      typeof SUPABASE_LIBC !== "undefined" ? SUPABASE_LIBC === "musl" : isRunningOnMusl();
     if (process.arch === "arm64") {
-      if (typeof SUPABASE_LIBC !== "undefined" && SUPABASE_LIBC === "musl") {
+      if (useMusl) {
         return loadOxfmtBinding(
           () => require("@oxfmt/binding-linux-arm64-musl"),
           "@oxfmt/binding-linux-arm64-musl",
@@ -80,7 +99,7 @@ function requireOxfmtBinding(): OxfmtBinding {
       );
     }
     if (process.arch === "x64") {
-      if (typeof SUPABASE_LIBC !== "undefined" && SUPABASE_LIBC === "musl") {
+      if (useMusl) {
         return loadOxfmtBinding(
           () => require("@oxfmt/binding-linux-x64-musl"),
           "@oxfmt/binding-linux-x64-musl",
