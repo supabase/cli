@@ -1751,7 +1751,6 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
                   projectRef: "",
                   emitSummary: false,
                   interactive: false,
-                  yes: true,
                   resolvedConfig: {
                     config: effectiveLocalStorageConfig,
                     document: context.loaded?.document,
@@ -1787,7 +1786,6 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
             projectRef: "",
             emitSummary: false,
             interactive: false,
-            yes: true,
             resolvedConfig: {
               config: effectiveLocalStorageConfig,
               document: context.loaded?.document,

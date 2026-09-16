@@ -23,6 +23,7 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
   sequentialExecBatch,
+  withEnvVar,
 } from "../../../tests/helpers/command-mocks.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { classifyCliCauseActionability } from "../../shared/telemetry/error-actionability.ts";
@@ -289,6 +290,61 @@ function freshVolumeRoute(
       return { exitCode: 1, stderr: [`Error: No such volume: ${args[2] ?? ""}`] };
     }
     return base(args);
+  };
+}
+
+/**
+ * Vector-capable variant: empty bucket list, a fixed set of existing vector buckets, and a
+ * raw-body recorder for `DeleteVectorBucket` calls; every other request answers a bare 200.
+ */
+function mockStorageVectorHttpClient(existingVectorBuckets: ReadonlyArray<string>) {
+  const deletedVectorBuckets: Array<string> = [];
+  let vectorListCalls = 0;
+  const layer = Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) => {
+      const json = (body: unknown) =>
+        Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response(JSON.stringify(body), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            }),
+          ),
+        );
+      if (request.method === "GET" && request.url.includes("/storage/v1/bucket")) {
+        return json([]);
+      }
+      if (
+        request.method === "POST" &&
+        request.url.includes("/storage/v1/vector/ListVectorBuckets")
+      ) {
+        vectorListCalls += 1;
+        return json({
+          vectorBuckets: existingVectorBuckets.map((name) => ({ vectorBucketName: name })),
+        });
+      }
+      if (
+        request.method === "POST" &&
+        request.url.includes("/storage/v1/vector/DeleteVectorBucket")
+      ) {
+        deletedVectorBuckets.push(
+          request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : "",
+        );
+        return json({});
+      }
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(request, new Response(null, { status: 200 })),
+      );
+    }),
+  );
+  return {
+    layer,
+    deletedVectorBuckets,
+    get vectorListCalls() {
+      return vectorListCalls;
+    },
   };
 }
 
@@ -2498,6 +2554,52 @@ content_path = "./supabase/templates/custom_notice.html"
         expect(http.requests.some((entry) => entry.url.includes("/storage/v1/status"))).toBe(false);
       }).pipe(Effect.provide(layer));
     });
+
+    it.live(
+      "keeps a vector bucket missing from config.toml (prune declines without consent)",
+      () => {
+        const http = mockStorageVectorHttpClient(["embeddings", "stale-vec"]);
+        const { layer } = setup({
+          configContents:
+            'project_id = "demo"\n[storage.vector]\nenabled = true\n[storage.vector.buckets.embeddings]\n',
+          route: freshVolumeRoute(defaultRoute()),
+          httpClientLayer: http.layer,
+        });
+        // A truthy ambient `SUPABASE_YES` would auto-confirm the prune and void this pin.
+        return withEnvVar(
+          "SUPABASE_YES",
+          undefined,
+          Effect.gen(function* () {
+            yield* start(flags({ exclude: ["edge-runtime"] }));
+            // Proves the vector-seed block ran, so the zero-deletions assertion isn't vacuous.
+            expect(http.vectorListCalls).toBe(1);
+            expect(http.deletedVectorBuckets).toHaveLength(0);
+          }).pipe(Effect.provide(layer)),
+        );
+      },
+    );
+
+    it.live(
+      "prunes a stale vector bucket on a fresh-volume start when SUPABASE_YES consents",
+      () => {
+        const http = mockStorageVectorHttpClient(["embeddings", "stale-vec"]);
+        const { layer } = setup({
+          configContents:
+            'project_id = "demo"\n[storage.vector]\nenabled = true\n[storage.vector.buckets.embeddings]\n',
+          route: freshVolumeRoute(defaultRoute()),
+          httpClientLayer: http.layer,
+        });
+        return withEnvVar(
+          "SUPABASE_YES",
+          "1",
+          Effect.gen(function* () {
+            yield* start(flags({ exclude: ["edge-runtime"] }));
+            expect(http.deletedVectorBuckets).toHaveLength(1);
+            expect(http.deletedVectorBuckets[0]).toContain("stale-vec");
+          }).pipe(Effect.provide(layer)),
+        );
+      },
+    );
 
     it.live(
       "does not seed a configured bucket on a non-fresh volume, even with storage enabled",
