@@ -135,7 +135,8 @@ const dockerLogDiagnosticTailLength = 4_096;
 // signal and a child spawn/stream failure can land microseconds apart — this is their tie-break.
 const shutdownSignalGracePeriod = Duration.millis(50);
 // Exit codes a supervisor uses to tear a container down (`supabase stop`, CI cancellation),
-// not a self-raised crash signal; 137 is excluded because it gets its own OOM-kill retry.
+// not a self-raised crash signal; 137 is excluded because it needs `OOMKilled` to tell a
+// memory-limit kill from a kill the CLI cannot attribute.
 const externalTerminationExitCodes = new Set([
   129, // SIGHUP
   130, // SIGINT
@@ -1427,15 +1428,12 @@ const streamContainerLogs = Effect.fnUntraced(function* (
       if (state.exitCode === 0) {
         return { _tag: "containerExited" } satisfies ContainerLogsEndReason;
       }
-      if (state.exitCode === 137) {
-        yield* reattach;
-        continue;
-      }
       return yield* Effect.fail(
         new EdgeRuntimeContainerCrashedError({
           message: `error running container ${containerId}: exit ${state.exitCode}`,
           containerId,
           exitCode: state.exitCode,
+          oomKilled: state.oomKilled,
         }),
       );
     }

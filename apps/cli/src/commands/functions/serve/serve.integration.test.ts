@@ -36,6 +36,7 @@ import {
 } from "../../../../tests/helpers/mocks.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { functionsGoConfigCompat } from "../../../command-internal/functions-go-config.ts";
+import { SUGGEST_CONTAINER_MEMORY_LIMIT } from "../../../command-internal/docker-suggest.ts";
 import { DebugFlag, NetworkIdFlag } from "../../../command-internal/global-flags.ts";
 import { FileWatcher, type FileWatchEvent } from "../../../shared/runtime/file-watcher.service.ts";
 import {
@@ -2130,13 +2131,18 @@ describe("functions serve integration", () => {
     }
 
     // Models `inspectContainerState`'s `docker container inspect --format {{json .State}}` reply.
-    function inspectStateBehavior(running: boolean, exitCode = 0): LogProcessBehavior {
+    function inspectStateBehavior(
+      running: boolean,
+      exitCode = 0,
+      oomKilled = false,
+    ): LogProcessBehavior {
       return {
         exitCode: 0,
         stdout: JSON.stringify({
           Status: running ? "running" : "exited",
           Running: running,
           ExitCode: exitCode,
+          OOMKilled: oomKilled,
         }),
         stderr: "",
       };
@@ -2351,6 +2357,79 @@ describe("functions serve integration", () => {
             expect(error.exitCode).toBe(139);
             expect(error[ErrorActionabilityId]).toEqual(actionability.runtimeCrash);
           }
+        });
+      },
+    );
+
+    it.live(
+      "fails as an out-of-memory kill, without retrying, when the container is OOM-killed (exit 137)",
+      () => {
+        deployMockState.runHandler = baseDockerRunHandler();
+        const childSpawner = mockDockerLogSpawner([
+          { exitCode: 0 },
+          inspectStateBehavior(false, 137, true),
+        ]);
+
+        return Effect.gen(function* () {
+          yield* Effect.promise(writeHelloFunction);
+
+          const { layer } = setupServe({ childSpawner });
+          // A container killed for exceeding its memory limit never comes back, so a
+          // regression to re-attaching burns the whole cap before failing; bound the
+          // wait so that shows up as a timeout rather than a slow pass.
+          const error = yield* functionsServe(baseFlags()).pipe(
+            Effect.provide(layer),
+            Effect.timeout(Duration.seconds(5)),
+            Effect.flip,
+          );
+
+          expect(error).toBeInstanceOf(EdgeRuntimeContainerCrashedError);
+          if (error instanceof EdgeRuntimeContainerCrashedError) {
+            expect(error.exitCode).toBe(137);
+            expect(error.oomKilled).toBe(true);
+            expect(error.suggestion).toBe(SUGGEST_CONTAINER_MEMORY_LIMIT);
+            expect(error[ErrorActionabilityId]).toEqual({
+              ...actionability.resourceLimit,
+              fingerprint_suffix: "out_of_memory",
+            });
+          }
+          expect(containerInspectCalls(childSpawner)).toHaveLength(1);
+        });
+      },
+    );
+
+    it.live(
+      "fails as unattributable, without retrying, when the container is killed from outside the CLI (exit 137)",
+      () => {
+        deployMockState.runHandler = baseDockerRunHandler();
+        const childSpawner = mockDockerLogSpawner([
+          { exitCode: 0 },
+          inspectStateBehavior(false, 137, false),
+        ]);
+
+        return Effect.gen(function* () {
+          yield* Effect.promise(writeHelloFunction);
+
+          const { layer } = setupServe({ childSpawner });
+          const error = yield* functionsServe(baseFlags()).pipe(
+            Effect.provide(layer),
+            Effect.timeout(Duration.seconds(5)),
+            Effect.flip,
+          );
+
+          expect(error).toBeInstanceOf(EdgeRuntimeContainerCrashedError);
+          if (error instanceof EdgeRuntimeContainerCrashedError) {
+            expect(error.exitCode).toBe(137);
+            expect(error.oomKilled).toBe(false);
+            expect(error.suggestion).toBeUndefined();
+            const declaration = error[ErrorActionabilityId];
+            expect(declaration).toEqual({
+              ...actionability.unknown,
+              fingerprint_suffix: "container_killed",
+            });
+            expect(declaration.error_kind).not.toBe("internal_bug");
+          }
+          expect(containerInspectCalls(childSpawner)).toHaveLength(1);
         });
       },
     );
