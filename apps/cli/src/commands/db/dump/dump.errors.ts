@@ -9,9 +9,7 @@ import {
  * `--use-copy` / `--exclude` were passed without `--data-only`; message text
  * is an established output contract.
  */
-export class LegacyDbDumpRequiresDataOnlyError extends Data.TaggedError(
-  "LegacyDbDumpRequiresDataOnlyError",
-)<{
+export class DbDumpRequiresDataOnlyError extends Data.TaggedError("DbDumpRequiresDataOnlyError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -23,8 +21,8 @@ export class LegacyDbDumpRequiresDataOnlyError extends Data.TaggedError(
  * Two mutually exclusive flags were set together; message text is an
  * established output contract.
  */
-export class LegacyDbDumpMutuallyExclusiveFlagsError extends Data.TaggedError(
-  "LegacyDbDumpMutuallyExclusiveFlagsError",
+export class DbDumpMutuallyExclusiveFlagsError extends Data.TaggedError(
+  "DbDumpMutuallyExclusiveFlagsError",
 )<{
   readonly message: string;
 }> {
@@ -37,7 +35,7 @@ export class LegacyDbDumpMutuallyExclusiveFlagsError extends Data.TaggedError(
  * Failed to open the `--file` output path; message text
  * (`"failed to open dump file: " + err`) is an established output contract.
  */
-export class LegacyDbDumpOpenFileError extends Data.TaggedError("LegacyDbDumpOpenFileError")<{
+export class DbDumpOpenFileError extends Data.TaggedError("DbDumpOpenFileError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -49,7 +47,7 @@ export class LegacyDbDumpOpenFileError extends Data.TaggedError("LegacyDbDumpOpe
  * The pg_dump container exited non-zero; message text
  * (`"error running container: exit " + code`) is an established output contract.
  */
-export class LegacyDbDumpRunError extends Data.TaggedError("LegacyDbDumpRunError")<{
+export class DbDumpRunError extends Data.TaggedError("DbDumpRunError")<{
   readonly message: string;
   // An actionable hint attached to a failed dump — e.g. the IPv6
   // transaction-pooler guidance. `Output.fail` prints it bare on stderr after

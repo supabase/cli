@@ -11,7 +11,7 @@ import {
  * `stop`'s own flag validation or handler body, so a bad explicit workdir must
  * fail here first, before config load or any Docker access.
  */
-export class LegacyStopWorkdirError extends Data.TaggedError("LegacyStopWorkdirError")<{
+export class StopWorkdirError extends Data.TaggedError("StopWorkdirError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -19,14 +19,8 @@ export class LegacyStopWorkdirError extends Data.TaggedError("LegacyStopWorkdirE
   }
 }
 
-/**
- * `--project-id` and `--all` were both set. Matches the established
- * mutually-exclusive-flags message shape already
- * used for `gen types`'s mutually-exclusive flag groups (`types.handler.ts`).
- */
-export class LegacyStopMutuallyExclusiveError extends Data.TaggedError(
-  "LegacyStopMutuallyExclusiveError",
-)<{
+/** `--project-id` and `--all` were both set. */
+export class StopMutuallyExclusiveError extends Data.TaggedError("StopMutuallyExclusiveError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -35,7 +29,7 @@ export class LegacyStopMutuallyExclusiveError extends Data.TaggedError(
 }
 
 /** Loading `config.toml` failed for a reason other than the file being absent (malformed TOML). */
-export class LegacyStopConfigLoadError extends Data.TaggedError("LegacyStopConfigLoadError")<{
+export class StopConfigLoadError extends Data.TaggedError("StopConfigLoadError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -43,12 +37,8 @@ export class LegacyStopConfigLoadError extends Data.TaggedError("LegacyStopConfi
   }
 }
 
-/**
- * Listing containers to stop failed. `stop`-specific wrapper over
- * `LegacyDockerLifecycleListError` (see `legacy-docker-lifecycle.ts`) so this command's
- * errors are all in one file with a `LegacyStop*` tag, matching the plan's error list.
- */
-export class LegacyStopListError extends Data.TaggedError("LegacyStopListError")<{
+/** Listing containers to stop failed; wraps `DockerLifecycleListError` (see `docker-lifecycle.ts`). */
+export class StopListError extends Data.TaggedError("StopListError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -57,7 +47,7 @@ export class LegacyStopListError extends Data.TaggedError("LegacyStopListError")
 }
 
 /** Stopping one or more containers failed (`DockerRemoveAll`'s `WaitAll` step). */
-export class LegacyStopContainerError extends Data.TaggedError("LegacyStopContainerError")<{
+export class StopContainerError extends Data.TaggedError("StopContainerError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -66,9 +56,7 @@ export class LegacyStopContainerError extends Data.TaggedError("LegacyStopContai
 }
 
 /** `docker container prune` failed. */
-export class LegacyStopContainerPruneError extends Data.TaggedError(
-  "LegacyStopContainerPruneError",
-)<{
+export class StopContainerPruneError extends Data.TaggedError("StopContainerPruneError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -77,7 +65,7 @@ export class LegacyStopContainerPruneError extends Data.TaggedError(
 }
 
 /** `docker volume prune` failed (only run when `--no-backup`/`--backup=false`). */
-export class LegacyStopVolumePruneError extends Data.TaggedError("LegacyStopVolumePruneError")<{
+export class StopVolumePruneError extends Data.TaggedError("StopVolumePruneError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -86,7 +74,7 @@ export class LegacyStopVolumePruneError extends Data.TaggedError("LegacyStopVolu
 }
 
 /** `docker network prune` failed. */
-export class LegacyStopNetworkPruneError extends Data.TaggedError("LegacyStopNetworkPruneError")<{
+export class StopNetworkPruneError extends Data.TaggedError("StopNetworkPruneError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {

@@ -3,22 +3,8 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-// Enforces the three monorepo-wide import rules from `packages/config/AGENTS.md`
-// ("Monorepo import rule"): `@supabase/config/io` has zero internal
-// consumers by design (it exists only for external, non-Effect-native
-// Node/Bun code), this package's internals must never be deep-imported (only
-// the `.`/`./io`/`./effect`/`./internal` entrypoints are supported import
-// paths), and `@supabase/config/internal` — unlike `./io` — IS an expected
-// consumer, but only from `apps/cli`.
-//
-// A plain substring scan (no parsing) is enough for this — it's fast and the
-// forbidden specifiers can't appear by accident. The forbidden strings below
-// are built by concatenation so this file's own source can never self-match
-// (on top of the directory exclusion below, which already keeps this whole
-// package — where those specifier strings legitimately appear in doc
-// comments and the build script's own smoke-test source string — out of the
-// walk).
-//
+// Enforces the import rules in `packages/config/AGENTS.md`'s "Monorepo import rule". Forbidden
+// specifiers are built by concatenation so this file's own source can't self-match the scan.
 const srcDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(srcDir, "..", "..", "..");
 

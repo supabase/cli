@@ -1,9 +1,9 @@
 import { Effect, Option } from "effect";
-import { LegacyGoProxy } from "../../../shared/legacy/go-proxy.service.ts";
-import type { LegacyGenKeysFlags } from "./keys.command.ts";
+import { GoProxy } from "../../../command-internal/go-proxy.service.ts";
+import type { GenKeysFlags } from "./keys.command.ts";
 
-export const legacyGenKeys = Effect.fn("legacy.gen.keys")(function* (flags: LegacyGenKeysFlags) {
-  const proxy = yield* LegacyGoProxy;
+export const genKeys = Effect.fn("gen.keys")(function* (flags: GenKeysFlags) {
+  const proxy = yield* GoProxy;
   const args: string[] = ["gen", "keys"];
   if (Option.isSome(flags.projectRef)) args.push("--project-ref", flags.projectRef.value);
   for (const name of flags.overrideName) {

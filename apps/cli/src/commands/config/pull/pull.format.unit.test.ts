@@ -2,16 +2,16 @@ import type { ConfigChange, ConfigChangeSet } from "@supabase/config";
 import { describe, expect, test } from "vitest";
 
 import {
-  LEGACY_CONFIG_PULL_PAYLOAD_VERSION,
-  legacyConfigPullDestinationLine,
-  legacyConfigPullPayload,
-  legacyConfigPullSummaryMessage,
-  type LegacyConfigPullContext,
-  type LegacyConfigPullOutcome,
-  legacyRenderConfigPullText,
+  CONFIG_PULL_PAYLOAD_VERSION,
+  configPullDestinationLine,
+  configPullPayload,
+  configPullSummaryMessage,
+  type ConfigPullContext,
+  type ConfigPullOutcome,
+  renderConfigPullText,
 } from "./pull.format.ts";
-import type { LegacyConfigPullPlan } from "./pull.plan.ts";
-import type { LegacyConfigPullDestination } from "./pull.scope.ts";
+import type { ConfigPullPlan } from "./pull.plan.ts";
+import type { ConfigPullDestination } from "./pull.scope.ts";
 
 const PROJECT_REF = "abcdefghijklmnopqrst";
 const BRANCH_UUID = "11111111-1111-1111-1111-111111111111";
@@ -26,25 +26,22 @@ function emptyChangeSet(): ConfigChangeSet {
   };
 }
 
-function emptyPlan(): LegacyConfigPullPlan {
+function emptyPlan(): ConfigPullPlan {
   return { writes: [], skipped: [], warnings: [], createdTable: undefined };
 }
 
-const NOT_DECLINED: LegacyConfigPullOutcome = { dryRun: false, declined: false };
+const NOT_DECLINED: ConfigPullOutcome = { dryRun: false, declined: false };
 
-describe("legacyConfigPullDestinationLine", () => {
+describe("configPullDestinationLine", () => {
   test("a bare project ref target writing to the config root", () => {
     expect(
-      legacyConfigPullDestinationLine(
-        { projectRef: PROJECT_REF, branch: undefined },
-        { kind: "root" },
-      ),
+      configPullDestinationLine({ projectRef: PROJECT_REF, branch: undefined }, { kind: "root" }),
     ).toBe(`Pulling config from project ${PROJECT_REF} → config root\n`);
   });
 
   test("a named branch target writing to a remote block", () => {
     expect(
-      legacyConfigPullDestinationLine(
+      configPullDestinationLine(
         { projectRef: PROJECT_REF, branch: "staging" },
         { kind: "remote", label: "staging", created: true },
       ),
@@ -53,7 +50,7 @@ describe("legacyConfigPullDestinationLine", () => {
 
   test("a UUID branch target writing to a remote block", () => {
     expect(
-      legacyConfigPullDestinationLine(
+      configPullDestinationLine(
         { projectRef: PROJECT_REF, branch: BRANCH_UUID },
         { kind: "remote", label: PROJECT_REF, created: true },
       ),
@@ -63,7 +60,7 @@ describe("legacyConfigPullDestinationLine", () => {
   });
 
   test("a hostile branch/label name cannot forge additional output lines", () => {
-    const line = legacyConfigPullDestinationLine(
+    const line = configPullDestinationLine(
       { projectRef: PROJECT_REF, branch: "staging\nNo config differences found." },
       { kind: "remote", label: "staging\nFAKE", created: true },
     );
@@ -74,10 +71,10 @@ describe("legacyConfigPullDestinationLine", () => {
   });
 });
 
-describe("legacyConfigPullSummaryMessage", () => {
+describe("configPullSummaryMessage", () => {
   test("no differences at all", () => {
     expect(
-      legacyConfigPullSummaryMessage(
+      configPullSummaryMessage(
         emptyChangeSet(),
         { present: [], missing: [] },
         emptyPlan(),
@@ -101,15 +98,15 @@ describe("legacyConfigPullSummaryMessage", () => {
       absencePolicy: "absent-is-hands-off",
       counts: { update: 1, remote_only: 0, local_only: 0, total: 1 },
     };
-    const plan: LegacyConfigPullPlan = {
+    const plan: ConfigPullPlan = {
       writes: [],
       skipped: [{ change, reason: "env_reference" }],
       warnings: [],
       createdTable: undefined,
     };
-    expect(
-      legacyConfigPullSummaryMessage(cs, { present: [], missing: [] }, plan, NOT_DECLINED),
-    ).toBe("No changes written.");
+    expect(configPullSummaryMessage(cs, { present: [], missing: [] }, plan, NOT_DECLINED)).toBe(
+      "No changes written.",
+    );
   });
 
   test("wrote N distinguishes from would-write-N (dry run) and declined", () => {
@@ -127,7 +124,7 @@ describe("legacyConfigPullSummaryMessage", () => {
       absencePolicy: "absent-is-hands-off",
       counts: { update: 1, remote_only: 0, local_only: 0, total: 1 },
     };
-    const plan: LegacyConfigPullPlan = {
+    const plan: ConfigPullPlan = {
       writes: [{ change, documentPath: change.path, value: 1000 }],
       skipped: [],
       warnings: [],
@@ -135,36 +132,36 @@ describe("legacyConfigPullSummaryMessage", () => {
     };
     const scope = { present: [], missing: [] };
 
-    expect(
-      legacyConfigPullSummaryMessage(cs, scope, plan, { dryRun: false, declined: false }),
-    ).toBe("1 change written.");
-    expect(legacyConfigPullSummaryMessage(cs, scope, plan, { dryRun: true, declined: false })).toBe(
+    expect(configPullSummaryMessage(cs, scope, plan, { dryRun: false, declined: false })).toBe(
+      "1 change written.",
+    );
+    expect(configPullSummaryMessage(cs, scope, plan, { dryRun: true, declined: false })).toBe(
       "1 change would be written (dry run).",
     );
-    expect(legacyConfigPullSummaryMessage(cs, scope, plan, { dryRun: false, declined: true })).toBe(
+    expect(configPullSummaryMessage(cs, scope, plan, { dryRun: false, declined: true })).toBe(
       "1 change not written (declined).",
     );
   });
 
   test("a block-only plan (no value writes) gets its own wording, distinct from no-differences and from a value write", () => {
-    const blockOnlyPlan: LegacyConfigPullPlan = {
+    const blockOnlyPlan: ConfigPullPlan = {
       writes: [],
       skipped: [],
       warnings: [],
       createdTable: ["remotes", "staging"],
     };
     const scope = { present: [], missing: [] };
+    expect(configPullSummaryMessage(emptyChangeSet(), scope, blockOnlyPlan, NOT_DECLINED)).toBe(
+      "Created [remotes.staging]; no config differences to apply.",
+    );
     expect(
-      legacyConfigPullSummaryMessage(emptyChangeSet(), scope, blockOnlyPlan, NOT_DECLINED),
-    ).toBe("Created [remotes.staging]; no config differences to apply.");
-    expect(
-      legacyConfigPullSummaryMessage(emptyChangeSet(), scope, blockOnlyPlan, {
+      configPullSummaryMessage(emptyChangeSet(), scope, blockOnlyPlan, {
         dryRun: true,
         declined: false,
       }),
     ).toBe("[remotes.staging] would be created (dry run); no config differences to apply.");
     expect(
-      legacyConfigPullSummaryMessage(emptyChangeSet(), scope, blockOnlyPlan, {
+      configPullSummaryMessage(emptyChangeSet(), scope, blockOnlyPlan, {
         dryRun: false,
         declined: true,
       }),
@@ -187,18 +184,18 @@ describe("legacyConfigPullSummaryMessage", () => {
       absencePolicy: "absent-is-hands-off",
       counts: { update: 1, remote_only: 0, local_only: 0, total: 1 },
     };
-    const blockOnlyPlan: LegacyConfigPullPlan = {
+    const blockOnlyPlan: ConfigPullPlan = {
       writes: [],
       skipped: [{ change, reason: "env_reference" }],
       warnings: [],
       createdTable: ["remotes", "staging"],
     };
     const scope = { present: [], missing: [] };
-    expect(legacyConfigPullSummaryMessage(cs, scope, blockOnlyPlan, NOT_DECLINED)).toBe(
+    expect(configPullSummaryMessage(cs, scope, blockOnlyPlan, NOT_DECLINED)).toBe(
       "Created [remotes.staging]; 1 difference found but not written (skipped).",
     );
     expect(
-      legacyConfigPullSummaryMessage(cs, scope, blockOnlyPlan, { dryRun: true, declined: false }),
+      configPullSummaryMessage(cs, scope, blockOnlyPlan, { dryRun: true, declined: false }),
     ).toBe(
       "[remotes.staging] would be created (dry run); 1 difference found but not written (skipped).",
     );
@@ -226,7 +223,7 @@ describe("legacyConfigPullSummaryMessage", () => {
       absencePolicy: "absent-is-hands-off",
       counts: { update: 0, remote_only: 0, local_only: 2, total: 2 },
     };
-    const blockOnlyPlan: LegacyConfigPullPlan = {
+    const blockOnlyPlan: ConfigPullPlan = {
       writes: [],
       skipped: [
         { change: changeA, reason: "local_only" },
@@ -236,18 +233,18 @@ describe("legacyConfigPullSummaryMessage", () => {
       createdTable: ["remotes", "staging"],
     };
     expect(
-      legacyConfigPullSummaryMessage(cs, { present: [], missing: [] }, blockOnlyPlan, NOT_DECLINED),
+      configPullSummaryMessage(cs, { present: [], missing: [] }, blockOnlyPlan, NOT_DECLINED),
     ).toBe("Created [remotes.staging]; 2 differences found but not written (skipped).");
   });
 
   test("a hostile block label cannot forge additional output in the summary message", () => {
-    const blockOnlyPlan: LegacyConfigPullPlan = {
+    const blockOnlyPlan: ConfigPullPlan = {
       writes: [],
       skipped: [],
       warnings: [],
       createdTable: ["remotes", "staging\nFAKE"],
     };
-    const message = legacyConfigPullSummaryMessage(
+    const message = configPullSummaryMessage(
       emptyChangeSet(),
       { present: [], missing: [] },
       blockOnlyPlan,
@@ -262,7 +259,7 @@ describe("legacyConfigPullSummaryMessage", () => {
       masked: [["auth", "external", "github", "secret"]],
     };
     expect(
-      legacyConfigPullSummaryMessage(
+      configPullSummaryMessage(
         cs,
         { present: ["api"], missing: ["storage"] },
         emptyPlan(),
@@ -280,7 +277,7 @@ describe("legacyConfigPullSummaryMessage", () => {
       masked: [["auth", "external", "github", "secret"]],
     };
     expect(
-      legacyConfigPullSummaryMessage(
+      configPullSummaryMessage(
         cs,
         { present: ["api"], missing: ["storage"] },
         emptyPlan(),
@@ -291,7 +288,7 @@ describe("legacyConfigPullSummaryMessage", () => {
   });
 });
 
-describe("legacyConfigPullPayload", () => {
+describe("configPullPayload", () => {
   test("full payload shape", () => {
     const change: ConfigChange = {
       path: ["api", "max_rows"],
@@ -307,18 +304,18 @@ describe("legacyConfigPullPayload", () => {
       absencePolicy: "absent-is-hands-off",
       counts: { update: 1, remote_only: 0, local_only: 0, total: 1 },
     };
-    const plan: LegacyConfigPullPlan = {
+    const plan: ConfigPullPlan = {
       writes: [{ change, documentPath: ["remotes", "staging", "api", "max_rows"], value: 1000 }],
       skipped: [],
       warnings: [],
       createdTable: ["remotes", "staging"],
     };
-    const destination: LegacyConfigPullDestination = {
+    const destination: ConfigPullDestination = {
       kind: "remote",
       label: "staging",
       created: true,
     };
-    const context: LegacyConfigPullContext = {
+    const context: ConfigPullContext = {
       projectRef: PROJECT_REF,
       branch: "staging",
       configSchema: "https://example.com/schema.json",
@@ -329,15 +326,9 @@ describe("legacyConfigPullPayload", () => {
     };
 
     expect(
-      legacyConfigPullPayload(
-        changeSet,
-        { present: ["api"], missing: [] },
-        plan,
-        context,
-        NOT_DECLINED,
-      ),
+      configPullPayload(changeSet, { present: ["api"], missing: [] }, plan, context, NOT_DECLINED),
     ).toEqual({
-      schema_version: LEGACY_CONFIG_PULL_PAYLOAD_VERSION,
+      schema_version: CONFIG_PULL_PAYLOAD_VERSION,
       config_schema: "https://example.com/schema.json",
       config_path: "supabase/config.toml",
       format: "toml",
@@ -380,13 +371,13 @@ describe("legacyConfigPullPayload", () => {
       absencePolicy: "absent-is-hands-off",
       counts: { update: 1, remote_only: 0, local_only: 0, total: 1 },
     };
-    const plan: LegacyConfigPullPlan = {
+    const plan: ConfigPullPlan = {
       writes: [],
       skipped: [{ change, reason: "env_reference" }],
       warnings: [],
       createdTable: undefined,
     };
-    const context: LegacyConfigPullContext = {
+    const context: ConfigPullContext = {
       projectRef: PROJECT_REF,
       branch: undefined,
       configSchema: "https://example.com/schema.json",
@@ -396,7 +387,7 @@ describe("legacyConfigPullPayload", () => {
       destination: { kind: "root" },
     };
 
-    const payload = legacyConfigPullPayload(
+    const payload = configPullPayload(
       changeSet,
       { present: [], missing: [] },
       plan,
@@ -441,13 +432,13 @@ describe("legacyConfigPullPayload", () => {
       absencePolicy: "absent-is-hands-off",
       counts: { update: 1, remote_only: 0, local_only: 0, total: 1 },
     };
-    const plan: LegacyConfigPullPlan = {
+    const plan: ConfigPullPlan = {
       writes: [],
       skipped: [{ change, reason: "remote_env_reference" }],
       warnings: [],
       createdTable: undefined,
     };
-    const context: LegacyConfigPullContext = {
+    const context: ConfigPullContext = {
       projectRef: PROJECT_REF,
       branch: undefined,
       configSchema: "https://example.com/schema.json",
@@ -457,7 +448,7 @@ describe("legacyConfigPullPayload", () => {
       destination: { kind: "root" },
     };
 
-    const payload = legacyConfigPullPayload(
+    const payload = configPullPayload(
       changeSet,
       { present: [], missing: [] },
       plan,
@@ -501,13 +492,13 @@ describe("legacyConfigPullPayload", () => {
       absencePolicy: "absent-is-hands-off",
       counts: { update: 1, remote_only: 0, local_only: 0, total: 1 },
     };
-    const plan: LegacyConfigPullPlan = {
+    const plan: ConfigPullPlan = {
       writes: [{ change, documentPath: change.path, value: 1000 }],
       skipped: [],
       warnings: [],
       createdTable: undefined,
     };
-    const context: LegacyConfigPullContext = {
+    const context: ConfigPullContext = {
       projectRef: PROJECT_REF,
       branch: undefined,
       configSchema: "https://example.com/schema.json",
@@ -517,16 +508,10 @@ describe("legacyConfigPullPayload", () => {
       destination: { kind: "root" },
     };
 
-    const payload = legacyConfigPullPayload(
-      changeSet,
-      { present: [], missing: [] },
-      plan,
-      context,
-      {
-        dryRun: true,
-        declined: false,
-      },
-    );
+    const payload = configPullPayload(changeSet, { present: [], missing: [] }, plan, context, {
+      dryRun: true,
+      declined: false,
+    });
     expect(payload["dry_run"]).toBe(true);
     expect(payload["wrote"]).toBe(false);
     expect((payload["changes"] as Array<Record<string, unknown>>)[0]).toMatchObject({
@@ -556,13 +541,13 @@ describe("legacyConfigPullPayload", () => {
       absencePolicy: "absent-is-hands-off",
       counts: { update: 1, remote_only: 0, local_only: 0, total: 1 },
     };
-    const plan: LegacyConfigPullPlan = {
+    const plan: ConfigPullPlan = {
       writes: [{ change, documentPath: change.path, value: 1000 }],
       skipped: [],
       warnings: [],
       createdTable: undefined,
     };
-    const context: LegacyConfigPullContext = {
+    const context: ConfigPullContext = {
       projectRef: PROJECT_REF,
       branch: undefined,
       configSchema: "https://example.com/schema.json",
@@ -572,16 +557,10 @@ describe("legacyConfigPullPayload", () => {
       destination: { kind: "root" },
     };
 
-    const payload = legacyConfigPullPayload(
-      changeSet,
-      { present: [], missing: [] },
-      plan,
-      context,
-      {
-        dryRun: false,
-        declined: true,
-      },
-    );
+    const payload = configPullPayload(changeSet, { present: [], missing: [] }, plan, context, {
+      dryRun: false,
+      declined: true,
+    });
     expect(payload["wrote"]).toBe(false);
     expect((payload["changes"] as Array<Record<string, unknown>>)[0]).toMatchObject({
       written: false,
@@ -590,18 +569,18 @@ describe("legacyConfigPullPayload", () => {
   });
 
   test("a block-only plan reports wrote:true and counts.written:0 once actually created, but wrote:false for dry-run/declined", () => {
-    const plan: LegacyConfigPullPlan = {
+    const plan: ConfigPullPlan = {
       writes: [],
       skipped: [],
       warnings: [],
       createdTable: ["remotes", "staging"],
     };
-    const destination: LegacyConfigPullDestination = {
+    const destination: ConfigPullDestination = {
       kind: "remote",
       label: "staging",
       created: true,
     };
-    const context: LegacyConfigPullContext = {
+    const context: ConfigPullContext = {
       projectRef: PROJECT_REF,
       branch: "staging",
       configSchema: "https://example.com/schema.json",
@@ -611,7 +590,7 @@ describe("legacyConfigPullPayload", () => {
       destination,
     };
 
-    const created = legacyConfigPullPayload(
+    const created = configPullPayload(
       emptyChangeSet(),
       { present: [], missing: [] },
       plan,
@@ -626,7 +605,7 @@ describe("legacyConfigPullPayload", () => {
     });
     expect((created["counts"] as Record<string, unknown>)["written"]).toBe(0);
 
-    const dryRun = legacyConfigPullPayload(
+    const dryRun = configPullPayload(
       emptyChangeSet(),
       { present: [], missing: [] },
       plan,
@@ -635,7 +614,7 @@ describe("legacyConfigPullPayload", () => {
     );
     expect(dryRun["wrote"]).toBe(false);
 
-    const declined = legacyConfigPullPayload(
+    const declined = configPullPayload(
       emptyChangeSet(),
       { present: [], missing: [] },
       plan,
@@ -646,7 +625,7 @@ describe("legacyConfigPullPayload", () => {
   });
 
   test("warnings carry their path", () => {
-    const context: LegacyConfigPullContext = {
+    const context: ConfigPullContext = {
       projectRef: PROJECT_REF,
       branch: undefined,
       configSchema: "https://example.com/schema.json",
@@ -655,13 +634,13 @@ describe("legacyConfigPullPayload", () => {
       appliedRemote: "staging",
       destination: { kind: "remote", label: "staging", created: false },
     };
-    const plan: LegacyConfigPullPlan = {
+    const plan: ConfigPullPlan = {
       writes: [],
       skipped: [],
       warnings: [{ kind: "dual_scope", path: ["auth", "site_url"] }],
       createdTable: undefined,
     };
-    const payload = legacyConfigPullPayload(
+    const payload = configPullPayload(
       emptyChangeSet(),
       { present: [], missing: [] },
       plan,
@@ -673,7 +652,7 @@ describe("legacyConfigPullPayload", () => {
   });
 });
 
-describe("legacyRenderConfigPullText", () => {
+describe("renderConfigPullText", () => {
   test("renders local/remote lines, write/skip markers, and a summary", () => {
     const written: ConfigChange = {
       path: ["api", "max_rows"],
@@ -696,14 +675,14 @@ describe("legacyRenderConfigPullText", () => {
       absencePolicy: "absent-is-hands-off",
       counts: { update: 1, remote_only: 0, local_only: 1, total: 2 },
     };
-    const plan: LegacyConfigPullPlan = {
+    const plan: ConfigPullPlan = {
       writes: [{ change: written, documentPath: written.path, value: 1000 }],
       skipped: [{ change: skipped, reason: "local_only" }],
       warnings: [],
       createdTable: undefined,
     };
 
-    const text = legacyRenderConfigPullText(
+    const text = renderConfigPullText(
       changeSet,
       { present: ["api", "auth"], missing: [] },
       plan,
@@ -732,13 +711,13 @@ describe("legacyRenderConfigPullText", () => {
       absencePolicy: "absent-is-hands-off",
       counts: { update: 0, remote_only: 1, local_only: 0, total: 1 },
     };
-    const plan: LegacyConfigPullPlan = {
+    const plan: ConfigPullPlan = {
       writes: [{ change, documentPath: change.path, value: "000000" }],
       skipped: [],
       warnings: [],
       createdTable: undefined,
     };
-    const text = legacyRenderConfigPullText(
+    const text = renderConfigPullText(
       changeSet,
       { present: [], missing: [] },
       plan,
@@ -765,13 +744,13 @@ describe("legacyRenderConfigPullText", () => {
       absencePolicy: "absent-is-hands-off",
       counts: { update: 1, remote_only: 0, local_only: 0, total: 1 },
     };
-    const plan: LegacyConfigPullPlan = {
+    const plan: ConfigPullPlan = {
       writes: [{ change, documentPath: ["remotes", "staging", ...change.path], value: 1000 }],
       skipped: [],
       warnings: [],
       createdTable: ["remotes", "staging"],
     };
-    const text = legacyRenderConfigPullText(
+    const text = renderConfigPullText(
       changeSet,
       { present: [], missing: [] },
       plan,
@@ -784,13 +763,13 @@ describe("legacyRenderConfigPullText", () => {
   });
 
   test("a block-only plan (no value writes) ALSO carries the new-block note in the body, not just its own confirmation prompt", () => {
-    const plan: LegacyConfigPullPlan = {
+    const plan: ConfigPullPlan = {
       writes: [],
       skipped: [],
       warnings: [],
       createdTable: ["remotes", "staging"],
     };
-    const text = legacyRenderConfigPullText(
+    const text = renderConfigPullText(
       emptyChangeSet(),
       { present: [], missing: [] },
       plan,
@@ -817,13 +796,13 @@ describe("legacyRenderConfigPullText", () => {
       absencePolicy: "absent-is-hands-off",
       counts: { update: 1, remote_only: 0, local_only: 0, total: 1 },
     };
-    const plan: LegacyConfigPullPlan = {
+    const plan: ConfigPullPlan = {
       writes: [{ change, documentPath: ["remotes", "staging", ...change.path], value: 1000 }],
       skipped: [],
       warnings: [],
       createdTable: ["remotes", "staging\nNo config differences found."],
     };
-    const text = legacyRenderConfigPullText(
+    const text = renderConfigPullText(
       changeSet,
       { present: [], missing: [] },
       plan,
@@ -837,13 +816,13 @@ describe("legacyRenderConfigPullText", () => {
   });
 
   test("the uncommitted-changes warning names the REAL config path and offers the same remediation as the abort error", () => {
-    const plan: LegacyConfigPullPlan = {
+    const plan: ConfigPullPlan = {
       writes: [],
       skipped: [],
       warnings: [{ kind: "uncommitted_changes" }],
       createdTable: undefined,
     };
-    const text = legacyRenderConfigPullText(
+    const text = renderConfigPullText(
       emptyChangeSet(),
       { present: [], missing: [] },
       plan,
@@ -870,13 +849,13 @@ describe("legacyRenderConfigPullText", () => {
       absencePolicy: "absent-is-hands-off",
       counts: { update: 1, remote_only: 0, local_only: 0, total: 1 },
     };
-    const plan: LegacyConfigPullPlan = {
+    const plan: ConfigPullPlan = {
       writes: [],
       skipped: [{ change, reason: "would_invalidate" }],
       warnings: [],
       createdTable: undefined,
     };
-    const text = legacyRenderConfigPullText(
+    const text = renderConfigPullText(
       changeSet,
       { present: [], missing: [] },
       plan,
@@ -903,13 +882,13 @@ describe("legacyRenderConfigPullText", () => {
       absencePolicy: "absent-is-hands-off",
       counts: { update: 1, remote_only: 0, local_only: 0, total: 1 },
     };
-    const plan: LegacyConfigPullPlan = {
+    const plan: ConfigPullPlan = {
       writes: [],
       skipped: [{ change, reason: "remote_env_reference" }],
       warnings: [],
       createdTable: undefined,
     };
-    const text = legacyRenderConfigPullText(
+    const text = renderConfigPullText(
       changeSet,
       { present: [], missing: [] },
       plan,
@@ -922,7 +901,7 @@ describe("legacyRenderConfigPullText", () => {
   });
 
   test("a would_invalidate warning names the missing field(s), with no env var mention when none applies", () => {
-    const plan: LegacyConfigPullPlan = {
+    const plan: ConfigPullPlan = {
       ...emptyPlan(),
       warnings: [
         {
@@ -932,7 +911,7 @@ describe("legacyRenderConfigPullText", () => {
         },
       ],
     };
-    const text = legacyRenderConfigPullText(
+    const text = renderConfigPullText(
       emptyChangeSet(),
       { present: [], missing: [] },
       plan,
@@ -945,7 +924,7 @@ describe("legacyRenderConfigPullText", () => {
   });
 
   test("a would_invalidate warning names the exact env var to set when a missing field is env()-sourced", () => {
-    const plan: LegacyConfigPullPlan = {
+    const plan: ConfigPullPlan = {
       ...emptyPlan(),
       warnings: [
         {
@@ -960,7 +939,7 @@ describe("legacyRenderConfigPullText", () => {
         },
       ],
     };
-    const text = legacyRenderConfigPullText(
+    const text = renderConfigPullText(
       emptyChangeSet(),
       { present: [], missing: [] },
       plan,

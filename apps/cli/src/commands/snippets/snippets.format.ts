@@ -1,22 +1,13 @@
-import { renderGlamourTable } from "../../output/legacy-glamour-table.ts";
-import { formatLegacyTimestamp } from "../../command-internal/legacy-timestamp.format.ts";
+import { renderGlamourTable } from "../../output/glamour-table.ts";
+import { formatTimestamp } from "../../command-internal/timestamp.format.ts";
 
-// ---------------------------------------------------------------------------
-// Pure formatter — no Effect / no service dependencies, kept unit-testable.
+// `renderGlamourTable` lays out cells directly, bypassing glamour's markdown
+// escaping, so any `|` in `name`, `visibility`, or `owner.username` appears
+// literally in stdout (same rule as orgs.format.ts).
 //
-// A markdown-table + glamour pipeline wraps each cell in backticks with
-// `strings.ReplaceAll(value, "|", "\\|")` applied; glamour then decodes the
-// `\|` escape and strips the backticks, so the final ASCII bytes contain raw
-// `|` (not `\|`). `renderGlamourTable` lays out cells directly without the
-// markdown round-trip, so we pass raw values — any `|` in `name`,
-// `visibility`, or `owner.username` appears literally in stdout. (Same rule
-// documented in orgs.format.ts.)
-//
-// Note: API-supplied strings are NOT stripped of ANSI escape sequences or
-// other terminal control bytes before rendering. If a future security review
-// decides to sanitize, it should land at the renderer
-// (`legacy-glamour-table.ts`), not per-command.
-// ---------------------------------------------------------------------------
+// API-supplied strings are not stripped of ANSI/control bytes before
+// rendering; a future sanitization pass belongs in the renderer
+// (glamour-table.ts), not per-command.
 
 const HEADERS = [
   "ID",
@@ -42,8 +33,8 @@ export function renderSnippetsTable(items: ReadonlyArray<SnippetRow>): string {
     snippet.name,
     snippet.visibility,
     snippet.owner.username,
-    formatLegacyTimestamp(snippet.inserted_at),
-    formatLegacyTimestamp(snippet.updated_at),
+    formatTimestamp(snippet.inserted_at),
+    formatTimestamp(snippet.updated_at),
   ]);
   return renderGlamourTable(HEADERS, rows);
 }

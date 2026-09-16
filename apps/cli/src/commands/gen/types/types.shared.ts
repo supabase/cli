@@ -1,20 +1,17 @@
 import { Effect } from "effect";
 import { dockerfileServiceImageRaw } from "../../../shared/services/dockerfile-images.ts";
 import { slimImageForCurrentPin } from "../../../shared/services/slim-images.ts";
-import { legacyGetRegistryImageUrl } from "../../../command-internal/legacy-docker-registry.ts";
-import {
-  LegacyInvalidGenTypesDatabaseUrlError,
-  LegacyInvalidGenTypesDurationError,
-} from "./types.errors.ts";
+import { getRegistryImageUrl } from "../../../command-internal/docker-registry.ts";
+import { InvalidGenTypesDatabaseUrlError, InvalidGenTypesDurationError } from "./types.errors.ts";
 import caProd2021 from "./templates/prod-ca-2021.ts";
 import caProd2025 from "./templates/prod-ca-2025.ts";
 import caStaging2021 from "./templates/staging-ca-2021.ts";
 
 // Local Docker resource ids are hoisted to `command-internal` so the declarative seam
 // can derive the same `supabase_db_<id>` name when checking the local stack.
-export { localDbContainerId, localNetworkId } from "../../../command-internal/legacy-docker-ids.ts";
+export { localDbContainerId, localNetworkId } from "../../../command-internal/docker-ids.ts";
 
-const LEGACY_DEFAULT_CONNECT_TIMEOUT_SECONDS = 10;
+const DEFAULT_CONNECT_TIMEOUT_SECONDS = 10;
 
 const DURATION_UNITS_TO_MILLIS = {
   ns: 1 / 1_000_000,
@@ -32,7 +29,7 @@ const DURATION_PART_PATTERN = new RegExp(
   "g",
 );
 
-export interface LegacyGenTypesDbTarget {
+export interface GenTypesDbTarget {
   readonly url: string;
   readonly host: string;
   readonly port: number;
@@ -45,12 +42,12 @@ export function defaultSchemas(extraSchemas: ReadonlyArray<string> = []) {
 
 export function parseQueryTimeoutSeconds(
   raw: string,
-): Effect.Effect<number, LegacyInvalidGenTypesDurationError> {
+): Effect.Effect<number, InvalidGenTypesDurationError> {
   return Effect.gen(function* () {
     const input = raw.trim();
     if (input.length === 0) {
       return yield* Effect.fail(
-        new LegacyInvalidGenTypesDurationError({
+        new InvalidGenTypesDurationError({
           message: `invalid duration ${JSON.stringify(raw)}`,
         }),
       );
@@ -71,7 +68,7 @@ export function parseQueryTimeoutSeconds(
       }
       if (match.index !== consumed) {
         return yield* Effect.fail(
-          new LegacyInvalidGenTypesDurationError({
+          new InvalidGenTypesDurationError({
             message: `invalid duration ${JSON.stringify(raw)}`,
           }),
         );
@@ -84,7 +81,7 @@ export function parseQueryTimeoutSeconds(
 
     if (!Number.isFinite(totalMillis) || consumed !== input.length || totalMillis < 0) {
       return yield* Effect.fail(
-        new LegacyInvalidGenTypesDurationError({
+        new InvalidGenTypesDurationError({
           message: `invalid duration ${JSON.stringify(raw)}`,
         }),
       );
@@ -100,7 +97,7 @@ export function localDbPassword() {
 
 export function parseDatabaseUrl(
   url: string,
-): Effect.Effect<LegacyGenTypesDbTarget, LegacyInvalidGenTypesDatabaseUrlError> {
+): Effect.Effect<GenTypesDbTarget, InvalidGenTypesDatabaseUrlError> {
   return Effect.try({
     try: () => {
       const parsed = new URL(url);
@@ -115,10 +112,10 @@ export function parseDatabaseUrl(
         host: parsed.hostname,
         port: parsed.port.length > 0 ? Number.parseInt(parsed.port, 10) : 5432,
         networkMode: "host" as const,
-      } satisfies LegacyGenTypesDbTarget;
+      } satisfies GenTypesDbTarget;
     },
     catch: (cause) =>
-      new LegacyInvalidGenTypesDatabaseUrlError({
+      new InvalidGenTypesDatabaseUrlError({
         message: `failed to parse connection string: ${cause instanceof Error ? cause.message : String(cause)}`,
       }),
   });
@@ -136,7 +133,7 @@ export function buildPostgresUrl(input: {
   return (
     `postgresql://${encodeURIComponent(input.user)}:${encodeURIComponent(input.password)}` +
     `@${host}:${input.port}/${encodeURIComponent(input.database)}` +
-    `?connect_timeout=${LEGACY_DEFAULT_CONNECT_TIMEOUT_SECONDS}`
+    `?connect_timeout=${DEFAULT_CONNECT_TIMEOUT_SECONDS}`
   );
 }
 
@@ -144,9 +141,9 @@ export function resolvePgmetaImage(versionOverride?: string) {
   const raw = dockerfileServiceImageRaw("pgmeta");
   const trimmed = versionOverride?.trim() ?? "";
   const pin = trimmed.length > 0 ? `v${trimmed.replace(/^v/i, "")}` : undefined;
-  return legacyGetRegistryImageUrl(slimImageForCurrentPin("pgmeta", raw, pin));
+  return getRegistryImageUrl(slimImageForCurrentPin("pgmeta", raw, pin));
 }
 
-export function legacyRootCaBundle() {
+export function rootCaBundle() {
   return `${caStaging2021}${caProd2021}${caProd2025}`;
 }

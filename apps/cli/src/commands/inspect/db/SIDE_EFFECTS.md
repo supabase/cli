@@ -16,14 +16,14 @@ SQL run and the columns rendered (see the per-subcommand `<name>.query.ts`).
 | `$PGSSLROOTCERT` CA bundle       | PEM        | only if a `--db-url` sets `sslrootcert` / `PGSSLROOTCERT`                           |
 
 Connection resolution and all of the above are handled inside the already-ported
-`LegacyDbConfigResolver` (`command-internal/legacy-db-config.layer.ts`); this port adds
+`DbConfigResolver` (`command-internal/db-config.layer.ts`); this port adds
 no new config reads.
 
 ## Files Written
 
-| Path                         | Format | When                                            |
-| ---------------------------- | ------ | ----------------------------------------------- |
-| `~/.supabase/telemetry.json` | JSON   | always, post-run (`LegacyTelemetryState.flush`) |
+| Path                         | Format | When                                      |
+| ---------------------------- | ------ | ----------------------------------------- |
+| `~/.supabase/telemetry.json` | JSON   | always, post-run (`TelemetryState.flush`) |
 
 ## API Routes (MAY fire on `--linked`, inside the resolver)
 
@@ -122,10 +122,10 @@ Emit one extra stderr line before the table:
   keyed off explicitly-set flags.
 - All queries are read-only `SELECT`s; the command performs no writes to the database.
 - **`--project-ref`** (TS-only, no Go equivalent on any user-facing command)
-  overrides ONLY the linked-ref resolution `LegacyDbConfigResolver` performs
+  overrides ONLY the linked-ref resolution `DbConfigResolver` performs
   (flag > `SUPABASE_PROJECT_ID` > `.temp/project-ref`). It never implies
   `--linked`: passing it with a resolved `--local`/`--db-url` target is a hard
   error rather than a silently discarded flag (deliberately stricter than
   `SUPABASE_PROJECT_ID`, which Go's equivalent env var simply leaves unused on
   a non-linked target). Shared verbatim by every `inspect db` subcommand via
-  `LEGACY_INSPECT_DB_FLAGS`.
+  `INSPECT_DB_FLAGS`.

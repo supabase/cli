@@ -1,13 +1,6 @@
 /**
- * Layer-exposure test for `legacyGenTypesRuntimeLayer`.
- *
- * Verifies that `LegacyIdentityStitch` is exposed at the top level of the
- * runtime layer so that `withLegacyCommandInstrumentation` can read
- * `stitchedDistinctId()` via `Effect.serviceOption(LegacyIdentityStitch)` and
- * attribute the `cli_command_executed` event to the gotrue id.
- *
- * See `db/lint/lint.layers.unit.test.ts` for the canonical pattern and a
- * detailed explanation of the bug this guards against.
+ * Layer-exposure test for `genTypesRuntimeLayer`. See `db/lint/lint.layers.unit.test.ts` for
+ * the canonical pattern.
  */
 
 import { describe, expect, it } from "@effect/vitest";
@@ -22,34 +15,34 @@ import {
   mockTty,
 } from "../../../../tests/helpers/mocks.ts";
 import {
-  legacyIsolatedHomeLayer,
-  mockLegacyCliSettings,
-  mockLegacyCredentialsLayer,
-  mockLegacyLinkedProjectCacheLayer,
-  mockLegacyTelemetryStateLayer,
-  useLegacyTempWorkdir,
-} from "../../../../tests/helpers/legacy-mocks.ts";
+  isolatedHomeLayer,
+  mockCommandSettings,
+  mockCommandCredentialsLayer,
+  mockLinkedProjectCacheLayer,
+  mockTelemetryStateLayer,
+  useTempWorkdir,
+} from "../../../../tests/helpers/command-mocks.ts";
 
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import {
-  LegacyDebugFlag,
-  LegacyDnsResolverFlag,
-  LegacyOutputFlag,
-  LegacyWorkdirFlag,
-  LegacyProfileFlag,
-} from "../../../shared/legacy/global-flags.ts";
+  DebugFlag,
+  DnsResolverFlag,
+  OutputFlag,
+  WorkdirFlag,
+  ProfileFlag,
+} from "../../../command-internal/global-flags.ts";
 
-import { LegacyPlatformApiFactory } from "../../../auth/legacy-platform-api-factory.service.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { LegacyIdentityStitch } from "../../../command-internal/legacy-identity-stitch.ts";
+import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { IdentityStitch } from "../../../command-internal/identity-stitch.ts";
 
-import { legacyGenTypesRuntimeLayer } from "./types.layers.ts";
+import { genTypesRuntimeLayer } from "./types.layers.ts";
 
-const tempRoot = useLegacyTempWorkdir("supabase-gen-types-layers-");
+const tempRoot = useTempWorkdir("supabase-gen-types-layers-");
 
 /**
  * Stub layer satisfying every external service required by
- * `legacyGenTypesRuntimeLayer` from the root runtime. Services under test are
+ * `genTypesRuntimeLayer` from the root runtime. Services under test are
  * left as `Effect.die` no-ops — layer construction must not invoke them.
  */
 function ambientStubs() {
@@ -57,54 +50,54 @@ function ambientStubs() {
   const out = mockOutput();
 
   const flagLayers = Layer.mergeAll(
-    Layer.succeed(LegacyDebugFlag, false),
-    Layer.succeed(LegacyProfileFlag, "supabase"),
-    Layer.succeed(LegacyWorkdirFlag, Option.none()),
-    Layer.succeed(LegacyOutputFlag, Option.none()),
-    Layer.succeed(LegacyDnsResolverFlag, "native"),
+    Layer.succeed(DebugFlag, false),
+    Layer.succeed(ProfileFlag, "supabase"),
+    Layer.succeed(WorkdirFlag, Option.none()),
+    Layer.succeed(OutputFlag, Option.none()),
+    Layer.succeed(DnsResolverFlag, "native"),
     Layer.succeed(CliArgs, { args: [] }),
   );
 
   const heavyServiceStubs = Layer.mergeAll(
-    Layer.succeed(LegacyProjectRefResolver, {
+    Layer.succeed(ProjectRefResolver, {
       resolve: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
       resolveForLink: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
       resolveOptional: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
       loadProjectRef: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
       promptProjectRef: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
     }),
-    Layer.succeed(LegacyPlatformApiFactory, {
+    Layer.succeed(CommandPlatformApiFactory, {
       make: Effect.die("platform-api-factory not needed for layer-exposure test"),
     }),
   );
 
   return Layer.mergeAll(
     BunServices.layer,
-    // The runtime layer under test builds the REAL legacyCliSettingsLayer against
-    // the real filesystem — see legacyIsolatedHomeLayer's docs.
-    legacyIsolatedHomeLayer(tempRoot.current),
+    // Builds the real commandSettingsLayer against the real filesystem — see
+    // isolatedHomeLayer's docs.
+    isolatedHomeLayer(tempRoot.current),
     mockTty(),
     mockProcessControl().layer,
     analytics.layer,
     mockTelemetryRuntime(),
     out.layer,
     flagLayers,
-    mockLegacyCliSettings({ workdir: "/tmp/gen-types-layers-test" }),
-    mockLegacyCredentialsLayer,
-    mockLegacyLinkedProjectCacheLayer,
-    mockLegacyTelemetryStateLayer,
+    mockCommandSettings({ workdir: "/tmp/gen-types-layers-test" }),
+    mockCommandCredentialsLayer,
+    mockLinkedProjectCacheLayer,
+    mockTelemetryStateLayer,
     heavyServiceStubs,
   );
 }
 
-describe("legacyGenTypesRuntimeLayer — LegacyIdentityStitch exposure", () => {
+describe("genTypesRuntimeLayer — IdentityStitch exposure", () => {
   it.live(
-    "exposes LegacyIdentityStitch at top level so withLegacyCommandInstrumentation can read stitchedDistinctId()",
+    "exposes IdentityStitch at top level so withCommandTelemetry can read stitchedDistinctId()",
     () => {
       return Effect.gen(function* () {
-        const stitch = yield* Effect.serviceOption(LegacyIdentityStitch);
+        const stitch = yield* Effect.serviceOption(IdentityStitch);
         expect(Option.isSome(stitch)).toBe(true);
-      }).pipe(Effect.provide(legacyGenTypesRuntimeLayer), Effect.provide(ambientStubs()));
+      }).pipe(Effect.provide(genTypesRuntimeLayer), Effect.provide(ambientStubs()));
     },
   );
 });

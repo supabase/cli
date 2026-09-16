@@ -1,13 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Data, Effect, Exit, Layer, Option } from "effect";
 import { mockProcessControl } from "../../../tests/helpers/mocks.ts";
-import { LegacyGoChildExitError } from "../legacy/legacy-go-child-exit.error.ts";
+import { GoChildExitError } from "../../command-internal/go-child-exit.error.ts";
 import { Output } from "./output.service.ts";
 import { withJsonErrorHandling } from "./json-error-handling.ts";
-
-// ---------------------------------------------------------------------------
-// Test error types
-// ---------------------------------------------------------------------------
 
 class TaggedErrorWithDetail extends Data.TaggedError("TaggedErrorWithDetail")<{
   readonly message: string;
@@ -25,10 +21,6 @@ class PlainError {
     this.message = message;
   }
 }
-
-// ---------------------------------------------------------------------------
-// Mock output factory
-// ---------------------------------------------------------------------------
 
 type FailCall = {
   code: string;
@@ -58,6 +50,7 @@ function mockOutput(format: "text" | "json" | "stream-json" = "text") {
           cancel: (_nextMessage?: string) => Effect.void,
           clear: () => Effect.void,
         }),
+      result: (_data: unknown) => Effect.void,
       success: (_message: string, _data?: Record<string, unknown>) => Effect.void,
       fail: (err: FailCall) =>
         Effect.sync(() => {
@@ -84,10 +77,6 @@ function mockOutput(format: "text" | "json" | "stream-json" = "text") {
     },
   };
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 describe("withJsonErrorHandling", () => {
   describe("text format", () => {
@@ -183,21 +172,17 @@ describe("withJsonErrorHandling", () => {
       }).pipe(Effect.provide(out.layer), Effect.provide(processControl.layer));
     });
 
-    // CLI-1879: a delegated Go child's exact exit code must reach the user under
-    // json/stream-json too, not just a generic 1 — matching the exit code
-    // `runCli`'s text-mode path already propagates via the same
-    // `[Runtime.errorExitCode]` marker.
-    it.live("sets the exact exit code for a LegacyGoChildExitError, not a generic 1", () => {
+    it.live("sets the exact exit code for a GoChildExitError, not a generic 1", () => {
       const out = mockOutput("json");
       const processControl = mockProcessControl();
       return Effect.gen(function* () {
-        const error = new LegacyGoChildExitError({
+        const error = new GoChildExitError({
           exitCode: 130,
           message: "supabase-go exited with code 130 (see stderr for details)",
         });
         yield* withJsonErrorHandling(Effect.fail(error)).pipe(Effect.provide(out.layer));
         expect(out.failCalls).toHaveLength(1);
-        expect(out.failCalls[0]?.code).toBe("LegacyGoChildExitError");
+        expect(out.failCalls[0]?.code).toBe("GoChildExitError");
         expect(processControl.exitCode).toBe(130);
       }).pipe(Effect.provide(out.layer), Effect.provide(processControl.layer));
     });

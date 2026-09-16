@@ -4,22 +4,20 @@ import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
-  buildLegacyTestRuntime,
-  LEGACY_VALID_REF,
-  mockLegacyCliSettings,
-  mockLegacyLinkedProjectCacheTracked,
-  mockLegacyPlatformApi,
-  mockLegacyTelemetryStateTracked,
-  useLegacyTempWorkdir,
-} from "../../../../tests/helpers/legacy-mocks.ts";
+  buildTestRuntime,
+  VALID_REF,
+  mockCommandSettings,
+  mockLinkedProjectCacheTracked,
+  mockCommandPlatformApi,
+  mockTelemetryStateTracked,
+  useTempWorkdir,
+} from "../../../../tests/helpers/command-mocks.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { EventUpgradeSuggested } from "../../../shared/telemetry/event-catalog.ts";
 import { classifyCliCauseActionability } from "../../../shared/telemetry/error-actionability.ts";
-import { legacySsoList } from "./list.handler.ts";
+import { ssoList } from "./list.handler.ts";
 
-// Mirrors what the Management API returns: neither `saml.id` nor
-// `domains[].id` is part of the provider response (nor of Go's
-// `api.ListProvidersResponse`).
+// Neither `saml.id` nor `domains[].id` is part of the actual provider response.
 const PROVIDER_ITEM = {
   id: "0b0d48f6-878b-4190-88d7-2ca33ed800bc",
   saml: {
@@ -39,7 +37,7 @@ const PROVIDER_ITEM = {
   updated_at: "2023-03-28T13:50:14.464Z",
 };
 
-const tempRoot = useLegacyTempWorkdir("supabase-sso-list-int-");
+const tempRoot = useTempWorkdir("supabase-sso-list-int-");
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
@@ -71,28 +69,28 @@ function jsonResponse(
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
   const analytics = mockAnalytics();
-  const telemetry = mockLegacyTelemetryStateTracked();
-  const cache = mockLegacyLinkedProjectCacheTracked();
+  const telemetry = mockTelemetryStateTracked();
+  const cache = mockLinkedProjectCacheTracked();
 
   const status = opts.status ?? 200;
   const body = opts.body ?? { items: [PROVIDER_ITEM] };
   const gate = opts.upgradeGate;
 
-  const api = mockLegacyPlatformApi({
+  const api = mockCommandPlatformApi({
     network: opts.network,
     handler: (request) => {
       const url = request.url;
       if (url.includes("/config/auth/sso/providers")) {
         return Effect.succeed(jsonResponse(request, status, body));
       }
-      if (url.endsWith(`/v1/projects/${LEGACY_VALID_REF}`)) {
+      if (url.endsWith(`/v1/projects/${VALID_REF}`)) {
         if (gate === undefined) {
           return Effect.succeed(jsonResponse(request, 404, {}));
         }
         return Effect.succeed(
           jsonResponse(request, 200, {
-            id: LEGACY_VALID_REF,
-            ref: LEGACY_VALID_REF,
+            id: VALID_REF,
+            ref: VALID_REF,
             organization_id: "org-id",
             organization_slug: "acme",
             name: "Test",
@@ -126,8 +124,8 @@ function setup(opts: SetupOpts = {}) {
     },
   });
 
-  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
-  const layer = buildLegacyTestRuntime({
+  const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
+  const layer = buildTestRuntime({
     out,
     api,
     cliSettings,
@@ -140,11 +138,11 @@ function setup(opts: SetupOpts = {}) {
   return { layer, out, api, analytics, telemetry, cache };
 }
 
-describe("legacy sso list integration", () => {
+describe("sso list integration", () => {
   it.live("renders an ASCII table in text mode", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
-      yield* legacySsoList({ projectRef: Option.none() });
+      yield* ssoList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("TYPE");
       expect(out.stdoutText).toContain("IDENTITY PROVIDER ID");
       expect(out.stdoutText).toContain("0b0d48f6-878b-4190-88d7-2ca33ed800bc");
@@ -153,8 +151,8 @@ describe("legacy sso list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // Some projects still echo the nested IDs the spec dropped. Go ignores them
-  // (no struct field), so they must neither break decoding nor reach `-o json`.
+  // Some projects still echo nested IDs the schema dropped; these must not
+  // break decoding or reach `-o json`.
   it.live("ignores nested saml.id / domains[].id when the API still sends them", () => {
     const item = {
       ...PROVIDER_ITEM,
@@ -170,7 +168,7 @@ describe("legacy sso list integration", () => {
     };
     const { layer, out } = setup({ goOutput: "json", body: { items: [item] } });
     return Effect.gen(function* () {
-      yield* legacySsoList({ projectRef: Option.none() });
+      yield* ssoList({ projectRef: Option.none() });
       const emitted = JSON.parse(out.stdoutText) as {
         providers: Array<{ domains: Array<{ created_at: string; updated_at: string }> }>;
       };
@@ -188,7 +186,7 @@ describe("legacy sso list integration", () => {
   it.live("emits a success payload via --output-format=json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
-      yield* legacySsoList({ projectRef: Option.none() });
+      yield* ssoList({ projectRef: Option.none() });
       const success = out.messages.find((m) => m.type === "success");
       expect(success).toBeDefined();
       expect((success?.data as { providers: ReadonlyArray<unknown> })?.providers).toHaveLength(1);
@@ -198,7 +196,7 @@ describe("legacy sso list integration", () => {
   it.live("emits a result event via --output-format=stream-json", () => {
     const { layer, out } = setup({ format: "stream-json" });
     return Effect.gen(function* () {
-      yield* legacySsoList({ projectRef: Option.none() });
+      yield* ssoList({ projectRef: Option.none() });
       expect(out.messages.some((m) => m.type === "success")).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -206,7 +204,7 @@ describe("legacy sso list integration", () => {
   it.live("Go --output=json wraps response in `{providers: …}`", () => {
     const { layer, out } = setup({ goOutput: "json" });
     return Effect.gen(function* () {
-      yield* legacySsoList({ projectRef: Option.none() });
+      yield* ssoList({ projectRef: Option.none() });
       expect(out.stdoutText.startsWith("{")).toBe(true);
       expect(out.stdoutText).toContain('"providers"');
       expect(out.stdoutText).toContain("0b0d48f6-878b-4190-88d7-2ca33ed800bc");
@@ -216,7 +214,7 @@ describe("legacy sso list integration", () => {
   it.live("Go --output=yaml emits providers key", () => {
     const { layer, out } = setup({ goOutput: "yaml" });
     return Effect.gen(function* () {
-      yield* legacySsoList({ projectRef: Option.none() });
+      yield* ssoList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("providers:");
     }).pipe(Effect.provide(layer));
   });
@@ -224,7 +222,7 @@ describe("legacy sso list integration", () => {
   it.live("Go --output=toml emits provider data", () => {
     const { layer, out } = setup({ goOutput: "toml" });
     return Effect.gen(function* () {
-      yield* legacySsoList({ projectRef: Option.none() });
+      yield* ssoList({ projectRef: Option.none() });
       expect(out.stdoutText.length).toBeGreaterThan(0);
     }).pipe(Effect.provide(layer));
   });
@@ -239,11 +237,11 @@ describe("legacy sso list integration", () => {
     };
     const { layer, out } = setup({ goOutput: "toml", body: { items: [item] } });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacySsoList({ projectRef: Option.none() }));
+      const exit = yield* Effect.exit(ssoList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const dump = JSON.stringify(exit.cause);
-        expect(dump).toContain("LegacySsoTomlEncodeError");
+        expect(dump).toContain("SsoTomlEncodeError");
         expect(dump).toContain("failed to output toml: toml: cannot encode array with nil element");
       }
       expect(out.stdoutText).toBe("");
@@ -253,7 +251,7 @@ describe("legacy sso list integration", () => {
   it.live("Go --output=env emits a flat PROVIDERS= entry", () => {
     const { layer, out } = setup({ goOutput: "env" });
     return Effect.gen(function* () {
-      yield* legacySsoList({ projectRef: Option.none() });
+      yield* ssoList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("PROVIDERS=");
     }).pipe(Effect.provide(layer));
   });
@@ -261,7 +259,7 @@ describe("legacy sso list integration", () => {
   it.live("Go --output=pretty falls through to text rendering", () => {
     const { layer, out } = setup({ goOutput: "pretty" });
     return Effect.gen(function* () {
-      yield* legacySsoList({ projectRef: Option.none() });
+      yield* ssoList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("IDENTITY PROVIDER ID");
     }).pipe(Effect.provide(layer));
   });
@@ -269,15 +267,15 @@ describe("legacy sso list integration", () => {
   it.live("rejects a 200 response containing a null provider item", () => {
     const { layer } = setup({ body: { items: [null] } });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacySsoList({ projectRef: Option.none() }));
+      const exit = yield* Effect.exit(ssoList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const dump = JSON.stringify(exit.cause);
-        expect(dump).toContain("LegacySsoListNetworkError");
+        expect(dump).toContain("SsoListNetworkError");
         expect(classifyCliCauseActionability(exit.cause)).toMatchObject({
           error_kind: "external_service",
           error_category: "api_status",
-          error_fingerprint: "tag:LegacySsoListNetworkError:api_response",
+          error_fingerprint: "tag:SsoListNetworkError:api_response",
         });
       }
     }).pipe(Effect.provide(layer));
@@ -286,7 +284,7 @@ describe("legacy sso list integration", () => {
   it.live("Go --output wins over TS --output-format when both set", () => {
     const { layer, out } = setup({ format: "json", goOutput: "yaml" });
     return Effect.gen(function* () {
-      yield* legacySsoList({ projectRef: Option.none() });
+      yield* ssoList({ projectRef: Option.none() });
       expect(out.stdoutText.startsWith("{")).toBe(false);
       expect(out.stdoutText).toContain("providers:");
     }).pipe(Effect.provide(layer));
@@ -295,11 +293,11 @@ describe("legacy sso list integration", () => {
   it.live("reports SAML-disabled error on 404", () => {
     const { layer } = setup({ status: 404, body: {} });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacySsoList({ projectRef: Option.none() }));
+      const exit = yield* Effect.exit(ssoList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const dump = JSON.stringify(exit.cause);
-        expect(dump).toContain("LegacySsoListSamlDisabledError");
+        expect(dump).toContain("SsoListSamlDisabledError");
         expect(dump).toContain("Looks like SAML 2.0 support is not enabled");
       }
     }).pipe(Effect.provide(layer));
@@ -308,7 +306,7 @@ describe("legacy sso list integration", () => {
   it.live("fires cli_upgrade_suggested on 404 when entitlement is gated", () => {
     const { layer, analytics } = setup({ status: 404, body: {}, upgradeGate: "gated" });
     return Effect.gen(function* () {
-      yield* Effect.exit(legacySsoList({ projectRef: Option.none() }));
+      yield* Effect.exit(ssoList({ projectRef: Option.none() }));
       expect(analytics.captured.some((c) => c.event === EventUpgradeSuggested)).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -316,7 +314,7 @@ describe("legacy sso list integration", () => {
   it.live("does NOT fire cli_upgrade_suggested when entitlement is not gated", () => {
     const { layer, analytics } = setup({ status: 404, body: {}, upgradeGate: "notGated" });
     return Effect.gen(function* () {
-      yield* Effect.exit(legacySsoList({ projectRef: Option.none() }));
+      yield* Effect.exit(ssoList({ projectRef: Option.none() }));
       expect(analytics.captured.some((c) => c.event === EventUpgradeSuggested)).toBe(false);
     }).pipe(Effect.provide(layer));
   });
@@ -324,11 +322,11 @@ describe("legacy sso list integration", () => {
   it.live("reports unexpected-status error on 500", () => {
     const { layer } = setup({ status: 500, body: { error: "boom" } });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacySsoList({ projectRef: Option.none() }));
+      const exit = yield* Effect.exit(ssoList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const dump = JSON.stringify(exit.cause);
-        expect(dump).toContain("LegacySsoListUnexpectedStatusError");
+        expect(dump).toContain("SsoListUnexpectedStatusError");
         expect(dump).toContain("unexpected error listing identity providers");
       }
     }).pipe(Effect.provide(layer));
@@ -337,11 +335,11 @@ describe("legacy sso list integration", () => {
   it.live("reports network error on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacySsoList({ projectRef: Option.none() }));
+      const exit = yield* Effect.exit(ssoList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const dump = JSON.stringify(exit.cause);
-        expect(dump).toContain("LegacySsoListNetworkError");
+        expect(dump).toContain("SsoListNetworkError");
         expect(dump).toContain("failed to list sso providers");
       }
     }).pipe(Effect.provide(layer));
@@ -351,7 +349,7 @@ describe("legacy sso list integration", () => {
     const flagRef = "zzzzzzzzzzzzzzzzzzzz";
     const { layer, api } = setup();
     return Effect.gen(function* () {
-      yield* legacySsoList({ projectRef: Option.some(flagRef) });
+      yield* ssoList({ projectRef: Option.some(flagRef) });
       const ssoRequest = api.requests.find((r) =>
         r.url.includes(`/v1/projects/${flagRef}/config/auth/sso/providers`),
       );
@@ -362,7 +360,7 @@ describe("legacy sso list integration", () => {
   it.live("hits GET /v1/projects/{ref}/config/auth/sso/providers", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
-      yield* legacySsoList({ projectRef: Option.none() });
+      yield* ssoList({ projectRef: Option.none() });
       const ssoRequest = api.requests.find((r) => r.url.endsWith(`/config/auth/sso/providers`));
       expect(ssoRequest?.method).toBe("GET");
     }).pipe(Effect.provide(layer));
@@ -371,7 +369,7 @@ describe("legacy sso list integration", () => {
   it.live("flushes telemetry + linked-project cache on success", () => {
     const { layer, telemetry, cache } = setup();
     return Effect.gen(function* () {
-      yield* legacySsoList({ projectRef: Option.none() });
+      yield* ssoList({ projectRef: Option.none() });
       expect(telemetry.flushed).toBe(true);
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -380,7 +378,7 @@ describe("legacy sso list integration", () => {
   it.live("flushes telemetry even on API failure", () => {
     const { layer, telemetry } = setup({ status: 500, body: {} });
     return Effect.gen(function* () {
-      yield* Effect.exit(legacySsoList({ projectRef: Option.none() }));
+      yield* Effect.exit(ssoList({ projectRef: Option.none() }));
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -388,7 +386,7 @@ describe("legacy sso list integration", () => {
   it.live("emits a fail event when withJsonErrorHandling wraps a JSON-mode error", () => {
     const { layer, out } = setup({ format: "json", status: 500, body: {} });
     return Effect.gen(function* () {
-      yield* legacySsoList({ projectRef: Option.none() }).pipe(withJsonErrorHandling);
+      yield* ssoList({ projectRef: Option.none() }).pipe(withJsonErrorHandling);
       expect(out.messages.some((m) => m.type === "fail")).toBe(true);
     }).pipe(Effect.provide(layer));
   });

@@ -2,10 +2,10 @@ import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
-import { withLegacyCommandInstrumentation } from "../../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyParseSchemaFlags } from "../../../../command-internal/legacy-schema-flags.ts";
-import { legacyDbSchemaPullRuntimeLayer } from "../../pull/pull.layers.ts";
-import { legacyDbRemoteCommit } from "./commit.handler.ts";
+import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
+import { parseSchemaFlags } from "../../../../command-internal/schema-flags.ts";
+import { dbSchemaPullRuntimeLayer } from "../../pull/pull.layers.ts";
+import { dbRemoteCommit } from "./commit.handler.ts";
 
 const config = {
   schema: Flag.string("schema").pipe(
@@ -13,7 +13,7 @@ const config = {
     Flag.withDescription("Comma separated list of schema to include."),
     Flag.atLeast(0),
     Flag.mapTryCatch(
-      (rawValues) => legacyParseSchemaFlags(rawValues),
+      (rawValues) => parseSchemaFlags(rawValues),
       (err) => (err instanceof Error ? err.message : String(err)),
     ),
   ),
@@ -32,16 +32,16 @@ const config = {
   ),
 } as const;
 
-export type LegacyDbRemoteCommitFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type DbRemoteCommitFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyDbRemoteCommitCommand = Command.make("commit", config).pipe(
+export const dbRemoteCommitCommand = Command.make("commit", config).pipe(
   Command.withDescription(
     "Deprecated: use db pull instead. Commit remote changes as a new migration.",
   ),
   Command.withShortDescription("Commit remote changes as a new migration"),
   Command.withHandler((flags) =>
-    legacyDbRemoteCommit(flags).pipe(
-      withLegacyCommandInstrumentation({
+    dbRemoteCommit(flags).pipe(
+      withCommandTelemetry({
         flags: {
           schema: flags.schema,
           "db-url": flags.dbUrl,
@@ -54,5 +54,5 @@ export const legacyDbRemoteCommitCommand = Command.make("commit", config).pipe(
       withJsonErrorHandling,
     ),
   ),
-  Command.provide(legacyDbSchemaPullRuntimeLayer(["db", "remote", "commit"])),
+  Command.provide(dbSchemaPullRuntimeLayer(["db", "remote", "commit"])),
 );

@@ -4,11 +4,11 @@ import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
-import { legacyCliSettingsLayer } from "../../../config/legacy-cli-settings.layer.ts";
-import { legacyDebugLoggerLayer } from "../../../command-internal/legacy-debug-logger.layer.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-state.layer.ts";
-import { legacyGenSigningKey } from "./signing-key.handler.ts";
+import { commandSettingsLayer } from "../../../config/command-settings.layer.ts";
+import { debugLoggerLayer } from "../../../command-internal/debug-logger.layer.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts";
+import { genSigningKey } from "./signing-key.handler.ts";
 
 const ALGORITHM_VALUES = ["ES256", "RS256"] as const;
 
@@ -23,21 +23,21 @@ const config = {
   ),
 } as const;
 
-export type LegacyGenSigningKeyFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type GenSigningKeyFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-const cliSettings = legacyCliSettingsLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
-const legacyGenSigningKeyRuntimeLayer = Layer.mergeAll(
-  legacyDebugLoggerLayer,
+const cliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
+const genSigningKeyRuntimeLayer = Layer.mergeAll(
+  debugLoggerLayer,
   cliSettings,
-  legacyTelemetryStateLayer,
+  telemetryStateLayer,
   commandRuntimeLayer(["gen", "signing-key"]),
-  // The overwrite-confirmation prompt reads piped stdin via `legacyPromptYesNo`
+  // The overwrite-confirmation prompt reads piped stdin via `promptYesNo`
   // (`stdin.readLine`), same as `config push`, `seed buckets`, `storage rm`, `db pull`,
   // and `logout` — all of which merge `stdinLayer` alongside their runtime layer.
   stdinLayer,
 );
 
-export const legacyGenSigningKeyCommand = Command.make("signing-key", config).pipe(
+export const genSigningKeyCommand = Command.make("signing-key", config).pipe(
   Command.withDescription(
     "Securely generate a private JWT signing key for use in the CLI or to import in the dashboard.\n\n" +
       "Supported algorithms:\n" +
@@ -60,10 +60,7 @@ export const legacyGenSigningKeyCommand = Command.make("signing-key", config).pi
     },
   ]),
   Command.withHandler((flags) =>
-    legacyGenSigningKey(flags).pipe(
-      withLegacyCommandInstrumentation({ flags, config }),
-      withJsonErrorHandling,
-    ),
+    genSigningKey(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),
   ),
-  Command.provide(legacyGenSigningKeyRuntimeLayer),
+  Command.provide(genSigningKeyRuntimeLayer),
 );

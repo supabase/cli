@@ -4,8 +4,8 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as TestClock from "effect/testing/TestClock";
 
-import { LegacyHealthCheckTimeoutError } from "./health-check.ts";
-import { legacyAwaitStorageReady } from "./await-storage-ready.ts";
+import { HealthCheckTimeoutError } from "./health-check.ts";
+import { awaitStorageReady } from "./await-storage-ready.ts";
 
 const unusedHttpClientLayer = Layer.succeed(
   HttpClient.HttpClient,
@@ -58,14 +58,13 @@ function mockSpawner(
 const HEALTHY_STATE = '{"Running":true,"Status":"running","Health":{"Status":"healthy"}}';
 const STARTING_STATE = '{"Running":true,"Status":"running","Health":{"Status":"starting"}}';
 
-describe("legacyAwaitStorageReady", () => {
+describe("awaitStorageReady", () => {
   it.live("resolves true immediately when storage already reports healthy", () => {
     const mock = mockSpawner(() => ({ exitCode: 0, stdout: HEALTHY_STATE }));
-    return legacyAwaitStorageReady(mock.spawner, "proj").pipe(
+    return awaitStorageReady(mock.spawner, "proj").pipe(
       Effect.provide(unusedHttpClientLayer),
       Effect.map((ready) => {
         expect(ready).toBe(true);
-        // No `docker logs`/extra polling round needed — just the one inspect.
         expect(mock.spawned).toHaveLength(1);
       }),
     );
@@ -76,7 +75,7 @@ describe("legacyAwaitStorageReady", () => {
       exitCode: 1,
       stderr: "Cannot connect to the Docker daemon\n",
     }));
-    return legacyAwaitStorageReady(mock.spawner, "proj").pipe(
+    return awaitStorageReady(mock.spawner, "proj").pipe(
       Effect.provide(unusedHttpClientLayer),
       Effect.map((ready) => {
         expect(ready).toBe(false);
@@ -89,7 +88,7 @@ describe("legacyAwaitStorageReady", () => {
       exitCode: 1,
       stderr: "Error: No such container: supabase_storage_proj\n",
     }));
-    return legacyAwaitStorageReady(mock.spawner, "proj").pipe(
+    return awaitStorageReady(mock.spawner, "proj").pipe(
       Effect.provide(unusedHttpClientLayer),
       Effect.map((ready) => {
         expect(ready).toBe(false);
@@ -110,7 +109,7 @@ describe("legacyAwaitStorageReady", () => {
           return { exitCode: 0 };
         });
 
-        const fiber = yield* legacyAwaitStorageReady(mock.spawner, "proj").pipe(
+        const fiber = yield* awaitStorageReady(mock.spawner, "proj").pipe(
           Effect.provide(unusedHttpClientLayer),
           Effect.forkChild({ startImmediately: true }),
         );
@@ -133,12 +132,10 @@ describe("legacyAwaitStorageReady", () => {
           return { exitCode: 0 };
         });
 
-        const fiber = yield* legacyAwaitStorageReady(mock.spawner, "proj").pipe(
+        const fiber = yield* awaitStorageReady(mock.spawner, "proj").pipe(
           Effect.provide(unusedHttpClientLayer),
           Effect.forkChild({ startImmediately: true }),
         );
-        // Go's hardcoded 30-second wait (`start.WaitForHealthyService(ctx, 30*time.Second,
-        // utils.StorageId)`, reset.go:121) — 30 retries after the initial attempt.
         for (let i = 0; i < 30; i++) {
           yield* TestClock.adjust("1 seconds");
         }
@@ -146,7 +143,7 @@ describe("legacyAwaitStorageReady", () => {
 
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(Cause.squash(exit.cause)).toBeInstanceOf(LegacyHealthCheckTimeoutError);
+          expect(Cause.squash(exit.cause)).toBeInstanceOf(HealthCheckTimeoutError);
         }
       }),
   );
@@ -162,7 +159,7 @@ describe("legacyAwaitStorageReady", () => {
           return { exitCode: 0 };
         });
 
-        const fiber = yield* legacyAwaitStorageReady(mock.spawner, "proj").pipe(
+        const fiber = yield* awaitStorageReady(mock.spawner, "proj").pipe(
           Effect.provide(unusedHttpClientLayer),
           Effect.forkChild({ startImmediately: true }),
         );
@@ -170,12 +167,8 @@ describe("legacyAwaitStorageReady", () => {
         for (let i = 0; i < 29; i++) {
           yield* TestClock.adjust("1 seconds");
         }
-        // Not yet exhausted — 29 retries is one short of the hardcoded 30-second cap. If this
-        // constant were ever accidentally shortened (e.g. to 3s), the fiber would already be
-        // done here, failing this assertion instead of silently passing.
         expect(fiber.pollUnsafe()).toBeUndefined();
 
-        // The 30th second crosses the boundary.
         yield* TestClock.adjust("1 seconds");
         const exit = yield* Fiber.await(fiber);
         expect(Exit.isFailure(exit)).toBe(true);

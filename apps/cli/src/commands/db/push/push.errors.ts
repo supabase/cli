@@ -9,7 +9,7 @@ import {
  * Conflicting database-target flags (`db-url`/`linked`/`local`); message text
  * is an established output contract.
  */
-export class LegacyDbPushTargetFlagsError extends Data.TaggedError("LegacyDbPushTargetFlagsError")<{
+export class DbPushTargetFlagsError extends Data.TaggedError("DbPushTargetFlagsError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -22,9 +22,7 @@ export class LegacyDbPushTargetFlagsError extends Data.TaggedError("LegacyDbPush
  * text is an established output contract. The `migration repair` / `db pull`
  * suggestion is attached.
  */
-export class LegacyDbPushMissingLocalError extends Data.TaggedError(
-  "LegacyDbPushMissingLocalError",
-)<{
+export class DbPushMissingLocalError extends Data.TaggedError("DbPushMissingLocalError")<{
   readonly message: string;
   readonly suggestion: string;
 }> {
@@ -38,9 +36,7 @@ export class LegacyDbPushMissingLocalError extends Data.TaggedError(
  * was not passed; message text is an established output contract. The
  * `--include-all` suggestion is attached.
  */
-export class LegacyDbPushMissingRemoteError extends Data.TaggedError(
-  "LegacyDbPushMissingRemoteError",
-)<{
+export class DbPushMissingRemoteError extends Data.TaggedError("DbPushMissingRemoteError")<{
   readonly message: string;
   readonly suggestion: string;
 }> {
@@ -53,7 +49,7 @@ export class LegacyDbPushMissingRemoteError extends Data.TaggedError(
  * The user declined a confirmation prompt; message text (`context canceled`)
  * is an established output contract.
  */
-export class LegacyDbPushCancelledError extends Data.TaggedError("LegacyDbPushCancelledError")<{
+export class DbPushCancelledError extends Data.TaggedError("DbPushCancelledError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -62,7 +58,7 @@ export class LegacyDbPushCancelledError extends Data.TaggedError("LegacyDbPushCa
 }
 
 /** Locating `supabase/roles.sql` failed; message text (`failed to find custom roles: %w`) is an established output contract. */
-export class LegacyDbPushRolesError extends Data.TaggedError("LegacyDbPushRolesError")<{
+export class DbPushRolesError extends Data.TaggedError("DbPushRolesError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -75,7 +71,7 @@ export class LegacyDbPushRolesError extends Data.TaggedError("LegacyDbPushRolesE
  * Carries the underlying Postgres error (with an `At statement: <n>` context
  * for migrations); message text is an established output contract.
  */
-export class LegacyDbPushApplyError extends Data.TaggedError("LegacyDbPushApplyError")<{
+export class DbPushApplyError extends Data.TaggedError("DbPushApplyError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {

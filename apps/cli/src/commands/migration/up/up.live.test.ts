@@ -19,9 +19,8 @@ test("applies a test-written migration to the remote database", async ({
   const migrations = join(workspace.path, "supabase", "migrations");
   await mkdir(migrations, { recursive: true });
 
-  // The serial suite shares one remote project, so seed a local stub for every
-  // version already in remote history — otherwise `migration up` rejects them
-  // as missing locally. The history table may not exist yet on a fresh project.
+  // The serial suite shares one project; seed a stub for every version already in remote
+  // history, or `migration up` rejects it as missing locally.
   let remoteVersions: Array<{ version: string }> = [];
   try {
     remoteVersions = await queryLiveDb(
@@ -29,9 +28,7 @@ test("applies a test-written migration to the remote database", async ({
       "select version from supabase_migrations.schema_migrations order by version",
     );
   } catch (error) {
-    // 42P01 (undefined relation) covers the fresh-project case where the
-    // history table or its schema does not exist yet; anything else is a real
-    // failure the test must surface.
+    // 42P01 = undefined relation, i.e. a fresh project without the migrations table yet.
     if ((error as { code?: string }).code !== "42P01") throw error;
     remoteVersions = [];
   }

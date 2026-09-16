@@ -1,96 +1,76 @@
 import { Layer } from "effect";
 
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
-import { legacyCredentialsLayer } from "../../../auth/legacy-credentials.layer.ts";
-import { legacyHttpClientLayer } from "../../../auth/legacy-http-debug.layer.ts";
-import { legacyPlatformApiFactoryLayer } from "../../../auth/legacy-platform-api-factory.layer.ts";
-import { legacyCliSettingsLayer } from "../../../config/legacy-cli-settings.layer.ts";
-import { legacyProjectRefLayer } from "../../../config/legacy-project-ref.layer.ts";
-import { legacyDbConfigLayer } from "../../../command-internal/legacy-db-config.layer.ts";
-import { legacyDbConnectionLayer } from "../../../command-internal/legacy-db-connection.layer.ts";
-import { legacyDebugLoggerLayer } from "../../../command-internal/legacy-debug-logger.layer.ts";
-import { legacyIdentityStitchLayer } from "../../../command-internal/legacy-identity-stitch.ts";
-import { legacyLinkedProjectCacheLayer } from "../../../telemetry/legacy-linked-project-cache.layer.ts";
-import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-state.layer.ts";
+import { commandCredentialsLayer } from "../../../auth/command-credentials.layer.ts";
+import { httpClientLayer } from "../../../auth/http-debug.layer.ts";
+import { commandPlatformApiFactoryLayer } from "../../../auth/command-platform-api-factory.layer.ts";
+import { commandSettingsLayer } from "../../../config/command-settings.layer.ts";
+import { projectRefLayer } from "../../../config/project-ref.layer.ts";
+import { dbConfigLayer } from "../../../command-internal/db-config.layer.ts";
+import { dbConnectionLayer } from "../../../command-internal/db-connection.layer.ts";
+import { debugLoggerLayer } from "../../../command-internal/debug-logger.layer.ts";
+import { identityStitchLayer } from "../../../command-internal/identity-stitch.ts";
+import { linkedProjectCacheLayer } from "../../../telemetry/linked-project-cache.layer.ts";
+import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts";
 
 /**
- * Runtime layer for `supabase db lint`, which spans local and linked DB access:
+ * Runtime layer for `supabase db lint`, spanning local and linked DB access:
+ * `--local`/`--db-url` use the Postgres connection and db-config resolver directly;
+ * `--linked` additionally resolves the project ref and refreshes the linked-project
+ * cache for telemetry grouping.
  *
- *   - **`--local` / `--db-url`** — the Postgres connection + db-config resolver.
- *   - **`--linked`** — direct DB connection via the db-config resolver's linked
- *     branch, plus project-ref resolution and the linked-project cache so the
- *     `--linked` run writes supabase/.temp/linked-project.json for telemetry
- *     grouping.
+ * Mirrors `advisors.layers.ts`. Does not use `managementApiRuntimeLayer`, whose eager
+ * `CommandPlatformApi` would resolve an access token at layer construction and fail
+ * the auth-free `--local` path before the handler runs (CLAUDE.md invariant 5/7) — the
+ * project-ref resolver instead gets the lazy `commandPlatformApiFactoryLayer`.
  *
- * Mirrors `advisors.layers.ts`. Deliberately does NOT use
- * `legacyManagementApiRuntimeLayer`: that layer exposes an *eagerly* built
- * `LegacyPlatformApi`, which resolves an access token at layer construction, so
- * merging it would make the auth-free `--local` path fail before the handler
- * runs (legacy CLAUDE.md item 5 / 7). The project-ref resolver is instead given
- * the **lazy** `legacyPlatformApiFactoryLayer`; the linked lint path resolves the
- * ref via the non-prompting `loadProjectRef`, which never forces the factory.
- *
- * `legacyCliSettingsLayer` is provided to each consumer that needs it (item 5:
- * `Layer.provide` does not share to merge siblings); layers are memoised by
- * reference so the config / credentials / HTTP instances are reused.
- *
- * `legacyIdentityStitchLayer` (the one per-command identity stitcher) is provided
- * by the SAME reference to the platform-API factory, the linked-project cache, and
- * the db-config resolver, so memoisation gives all three a single
- * `stitchAttempted` guard. The db-config resolver snapshots that instance
- * into its lazy linked stack's ambient layer.
+ * Layers are memoised by reference, so `identityStitchLayer` is provided by the same
+ * reference to the platform-API factory, linked-project cache, and db-config resolver,
+ * giving all three a single shared `stitchAttempted` guard.
  */
-const cliSettings = legacyCliSettingsLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
-const httpClient = legacyHttpClientLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
-const credentials = legacyCredentialsLayer.pipe(
+const cliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
+const httpClient = httpClientLayer.pipe(Layer.provide(debugLoggerLayer));
+const credentials = commandCredentialsLayer.pipe(
   Layer.provide(cliSettings),
-  Layer.provide(legacyDebugLoggerLayer),
+  Layer.provide(debugLoggerLayer),
 );
 
-const platformApiFactory = legacyPlatformApiFactoryLayer.pipe(
+const platformApiFactory = commandPlatformApiFactoryLayer.pipe(
   Layer.provide(credentials),
   Layer.provide(cliSettings),
-  Layer.provide(legacyDebugLoggerLayer),
-  Layer.provide(legacyIdentityStitchLayer),
+  Layer.provide(debugLoggerLayer),
+  Layer.provide(identityStitchLayer),
 );
 
-const projectRef = legacyProjectRefLayer.pipe(
+const projectRef = projectRefLayer.pipe(
   Layer.provide(platformApiFactory),
   Layer.provide(cliSettings),
 );
 
-const linkedProjectCache = legacyLinkedProjectCacheLayer.pipe(
+const linkedProjectCache = linkedProjectCacheLayer.pipe(
   Layer.provide(credentials),
   Layer.provide(cliSettings),
   Layer.provide(httpClient),
-  Layer.provide(legacyIdentityStitchLayer),
+  Layer.provide(identityStitchLayer),
 );
 
-const dbConfig = legacyDbConfigLayer.pipe(
+const dbConfig = dbConfigLayer.pipe(
   Layer.provide(cliSettings),
-  Layer.provide(legacyDbConnectionLayer),
-  Layer.provide(legacyDebugLoggerLayer),
-  Layer.provide(legacyIdentityStitchLayer),
+  Layer.provide(dbConnectionLayer),
+  Layer.provide(debugLoggerLayer),
+  Layer.provide(identityStitchLayer),
 );
 
-export const legacyDbLintRuntimeLayer = Layer.mergeAll(
+export const dbLintRuntimeLayer = Layer.mergeAll(
   dbConfig,
-  legacyDbConnectionLayer,
+  dbConnectionLayer,
   cliSettings,
   httpClient,
   credentials,
   projectRef,
   linkedProjectCache,
-  // The one per-command identity stitcher, exposed at top level so
-  // `withLegacyCommandInstrumentation` can read
-  // `stitchedDistinctId()` and attribute the cli_command_executed event to the
-  // gotrue id. The SAME reference is provided to platformApiFactory /
-  // linkedProjectCache / dbConfig above, so memoisation makes the linked
-  // path, the cache GET, and the db-config stack all share one
-  // `stitchAttempted` guard — aliasing/persisting at most once. Its
-  // Analytics / TelemetryRuntime / FileSystem / Path deps are ambient (root
-  // runtime). Mirrors advisors.layers.ts exactly.
-  legacyIdentityStitchLayer,
-  legacyTelemetryStateLayer,
+  // Exposed at top level so `withCommandTelemetry` can read `stitchedDistinctId()`.
+  identityStitchLayer,
+  telemetryStateLayer,
   commandRuntimeLayer(["db", "lint"]),
 );

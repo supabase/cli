@@ -4,9 +4,9 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
 import {
-  LegacySsoMetadataUrlInvalidError,
-  LegacySsoMetadataUrlNetworkError,
-  LegacySsoMetadataUrlNonUtf8Error,
+  SsoMetadataUrlInvalidError,
+  SsoMetadataUrlNetworkError,
+  SsoMetadataUrlNonUtf8Error,
 } from "./sso.errors.ts";
 import { validateMetadataXmlBytes } from "./sso.saml.ts";
 
@@ -38,16 +38,14 @@ export const validateMetadataUrl = (
   metadataUrl: string,
 ): Effect.Effect<
   void,
-  | LegacySsoMetadataUrlInvalidError
-  | LegacySsoMetadataUrlNetworkError
-  | LegacySsoMetadataUrlNonUtf8Error,
+  SsoMetadataUrlInvalidError | SsoMetadataUrlNetworkError | SsoMetadataUrlNonUtf8Error,
   HttpClient.HttpClient
 > =>
   Effect.gen(function* () {
     const parsed = yield* Effect.try({
       try: () => new URL(metadataUrl),
       catch: (cause) =>
-        new LegacySsoMetadataUrlInvalidError({
+        new SsoMetadataUrlInvalidError({
           message: `failed to parse metadata uri ${JSON.stringify(metadataUrl)}: ${String(cause)}`,
         }),
     });
@@ -56,7 +54,7 @@ export const validateMetadataUrl = (
     // "https:" is safe.
     if (parsed.protocol !== "https:") {
       return yield* Effect.fail(
-        new LegacySsoMetadataUrlInvalidError({
+        new SsoMetadataUrlInvalidError({
           message: "only HTTPS Metadata URLs are supported",
         }),
       );
@@ -73,14 +71,14 @@ export const validateMetadataUrl = (
       Effect.timeout(METADATA_URL_TIMEOUT),
       Effect.catchTag("TimeoutError", () =>
         Effect.fail(
-          new LegacySsoMetadataUrlNetworkError({
+          new SsoMetadataUrlNetworkError({
             message: "failed to fetch metadata url: timeout",
           }),
         ),
       ),
       Effect.catchTag("HttpClientError", (cause) =>
         Effect.fail(
-          new LegacySsoMetadataUrlNetworkError({
+          new SsoMetadataUrlNetworkError({
             message: `failed to fetch metadata url: ${String(cause)}`,
           }),
         ),
@@ -89,7 +87,7 @@ export const validateMetadataUrl = (
 
     if (response.status !== 200) {
       return yield* Effect.fail(
-        new LegacySsoMetadataUrlNetworkError({
+        new SsoMetadataUrlNetworkError({
           message: `unexpected metadata url status: ${response.status}`,
         }),
       );
@@ -98,7 +96,7 @@ export const validateMetadataUrl = (
     const arrayBuffer = yield* response.arrayBuffer.pipe(
       Effect.mapError(
         (cause) =>
-          new LegacySsoMetadataUrlNetworkError({
+          new SsoMetadataUrlNetworkError({
             message: `failed to read http response: ${String(cause)}`,
           }),
       ),
@@ -106,7 +104,7 @@ export const validateMetadataUrl = (
 
     if (arrayBuffer.byteLength > METADATA_URL_MAX_BYTES) {
       return yield* Effect.fail(
-        new LegacySsoMetadataUrlNetworkError({
+        new SsoMetadataUrlNetworkError({
           message: `metadata url response exceeds maximum allowed size (${METADATA_URL_MAX_BYTES} bytes)`,
         }),
       );
@@ -115,6 +113,6 @@ export const validateMetadataUrl = (
     yield* validateMetadataXmlBytes(
       new Uint8Array(arrayBuffer),
       metadataUrl,
-      (args) => new LegacySsoMetadataUrlNonUtf8Error({ message: args.message }),
+      (args) => new SsoMetadataUrlNonUtf8Error({ message: args.message }),
     );
   });

@@ -1,36 +1,36 @@
 import { Effect } from "effect";
 
-import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
+import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
+import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { mapLegacyHttpError } from "../../../command-internal/legacy-http-errors.ts";
-import { legacyResolveParentScopedProjectRef } from "../../../command-internal/legacy-parent-project-ref.ts";
+import { mapHttpError } from "../../../command-internal/http-errors.ts";
+import { resolveParentScopedProjectRef } from "../../../command-internal/parent-project-ref.ts";
 import {
-  LegacyBranchesDisableNetworkError,
-  LegacyBranchesDisableUnexpectedStatusError,
+  BranchesDisableNetworkError,
+  BranchesDisableUnexpectedStatusError,
 } from "../branches.errors.ts";
-import type { LegacyBranchesDisableFlags } from "./disable.command.ts";
+import type { BranchesDisableFlags } from "./disable.command.ts";
 
-const mapDisableError = mapLegacyHttpError({
-  networkError: LegacyBranchesDisableNetworkError,
-  statusError: LegacyBranchesDisableUnexpectedStatusError,
+const mapDisableError = mapHttpError({
+  networkError: BranchesDisableNetworkError,
+  statusError: BranchesDisableUnexpectedStatusError,
   networkMessage: (cause) => `failed to disable preview branching: ${cause}`,
   statusMessage: (status, body) => `unexpected disable branching status ${status}: ${body}`,
 });
 
-export const legacyBranchesDisable = Effect.fn("legacy.branches.disable")(function* (
-  flags: LegacyBranchesDisableFlags,
+export const branchesDisable = Effect.fn("branches.disable")(function* (
+  flags: BranchesDisableFlags,
 ) {
   const output = yield* Output;
-  const api = yield* LegacyPlatformApi;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
+  const api = yield* CommandPlatformApi;
+  const linkedProjectCache = yield* LinkedProjectCache;
+  const telemetryState = yield* TelemetryState;
 
   // `branches` is PARENT-scoped: after `supabase link <branch>`,
   // `supabase/.temp/project-ref` holds the branch's own ref, and the platform
-  // 403s on that ref for every branches-management endpoint (CLI-2167 follow-up).
-  const ref = yield* legacyResolveParentScopedProjectRef(flags.projectRef);
+  // 403s on that ref for every branches-management endpoint.
+  const ref = yield* resolveParentScopedProjectRef(flags.projectRef);
 
   yield* Effect.gen(function* () {
     const disabling =

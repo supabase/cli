@@ -1,102 +1,98 @@
 import { Effect, FileSystem, Option, Path, Schedule } from "effect";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 
-import { LegacyPlatformApi } from "../../auth/legacy-platform-api.service.ts";
-import { LegacyCliSettings } from "../../config/legacy-cli-settings.service.ts";
-import { LegacyLinkedProjectCache } from "../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../telemetry/legacy-telemetry-state.service.ts";
+import { CommandPlatformApi } from "../../auth/command-platform-api.service.ts";
+import { CommandSettings } from "../../config/command-settings.service.ts";
+import { LinkedProjectCache } from "../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../telemetry/telemetry-state.service.ts";
 import {
-  LegacyDnsResolverFlag,
-  LegacyWorkdirFlag,
-  legacyResolveYes,
-  legacyResolveYesWithProjectEnv,
-} from "../../shared/legacy/global-flags.ts";
+  DnsResolverFlag,
+  WorkdirFlag,
+  resolveYes,
+  resolveYesWithProjectEnv,
+} from "../../command-internal/global-flags.ts";
 import {
   emitSuccessTrailer,
   setSuccessWorkingDirectory,
 } from "../../shared/cli/success-trailer.ts";
-import { legacyPromptYesNo } from "../../shared/legacy/legacy-prompt-yes-no.ts";
+import { promptYesNo } from "../../command-internal/prompt-yes-no.ts";
 import { CONTEXT_CANCELED_MESSAGE } from "../../shared/output/errors.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import { Tty } from "../../shared/runtime/tty.service.ts";
-import { legacyAqua, legacyBold } from "../../command-internal/legacy-colors.ts";
-import { legacyEnsureLogin } from "../../command-internal/legacy-ensure-login.ts";
-import { legacyGetProjectApiKeys } from "../../command-internal/legacy-get-api-keys.ts";
-import { sanitizeLegacyErrorBody } from "../../command-internal/legacy-http-errors.ts";
-import type { LegacyConnectSuggestionContext } from "../../command-internal/legacy-connect-errors.ts";
-import { legacyResolveLinkedConn } from "../../command-internal/legacy-db-config.layer.ts";
+import { aqua, bold } from "../../command-internal/colors.ts";
+import { ensureLogin } from "../../command-internal/ensure-login.ts";
+import { getProjectApiKeys } from "../../command-internal/get-api-keys.ts";
+import { sanitizeErrorBody } from "../../command-internal/http-errors.ts";
+import type { ConnectSuggestionContext } from "../../command-internal/connect-errors.ts";
+import { resolveLinkedConn } from "../../command-internal/db-config.layer.ts";
 import {
-  legacyApplyProjectEnv,
-  legacyCheckDbToml,
-  legacyLoadProjectEnv,
-} from "../../command-internal/legacy-db-config.toml-read.ts";
-import { legacyDbPushCore } from "../../command-internal/legacy-db-push-core.ts";
-import { legacyLinkServicesCore } from "../../command-internal/legacy-link-services-core.ts";
-import { legacyProjectCreateCore } from "../../command-internal/legacy-project-create-core.ts";
-import { legacyTempPaths } from "../../command-internal/legacy-temp-paths.ts";
-import { legacyExtractServiceKeys } from "../../command-internal/legacy-tenant-keys.ts";
-import { parseDotEnv } from "../../command-internal/legacy-dotenv.ts";
+  applyProjectEnv,
+  checkDbToml,
+  loadProjectEnv,
+} from "../../command-internal/db-config.toml-read.ts";
+import { dbPushCore } from "../../command-internal/db-push-core.ts";
+import { linkServicesCore } from "../../command-internal/link-services-core.ts";
+import { projectCreateCore } from "../../command-internal/project-create-core.ts";
+import { tempPaths } from "../../command-internal/temp-paths.ts";
+import { extractServiceKeys } from "../../command-internal/tenant-keys.ts";
+import { parseDotEnv } from "../../command-internal/dotenv.ts";
 import { initProject } from "../../shared/init/project-init.ts";
 import { buildDotEnv, marshalDotEnv } from "./bootstrap.dotenv.ts";
 import {
-  LegacyBootstrapHealthError,
-  LegacyBootstrapInvalidTemplateError,
-  LegacyBootstrapOverwriteDeclinedError,
-  LegacyBootstrapWorkdirReadError,
+  BootstrapHealthError,
+  BootstrapInvalidTemplateError,
+  BootstrapOverwriteDeclinedError,
+  BootstrapWorkdirReadError,
 } from "./bootstrap.errors.ts";
 import { deriveDbConfig } from "./bootstrap.pgconfig.ts";
 import { suggestAppStart } from "./bootstrap.suggest.ts";
 import {
-  LEGACY_BOOTSTRAP_MAX_RETRIES,
-  legacyBootstrapBackoff,
-  legacyBootstrapRetryNotify,
+  BOOTSTRAP_MAX_RETRIES,
+  bootstrapBackoff,
+  bootstrapRetryNotify,
 } from "./bootstrap.retry.ts";
-import { type LegacyStarterTemplate, LegacyTemplateService } from "./bootstrap.templates.ts";
-import type { LegacyBootstrapFlags } from "./bootstrap.command.ts";
+import { type StarterTemplate, TemplateService } from "./bootstrap.templates.ts";
+import type { BootstrapFlags } from "./bootstrap.command.ts";
 
-// Built-in starter.
-const SCRATCH_TEMPLATE: LegacyStarterTemplate = {
+const SCRATCH_TEMPLATE: StarterTemplate = {
   name: "scratch",
   description: "An empty project from scratch.",
   url: "",
   start: "supabase start",
 };
 
-export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
-  flags: LegacyBootstrapFlags,
-  retrySchedule: Schedule.Schedule<unknown> = legacyBootstrapBackoff,
+export const bootstrap = Effect.fn("bootstrap")(function* (
+  flags: BootstrapFlags,
+  retrySchedule: Schedule.Schedule<unknown> = bootstrapBackoff,
 ) {
   const output = yield* Output;
   const tty = yield* Tty;
   const runtimeInfo = yield* RuntimeInfo;
-  const cliSettings = yield* LegacyCliSettings;
+  const cliSettings = yield* CommandSettings;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const templateService = yield* LegacyTemplateService;
-  const api = yield* LegacyPlatformApi;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
-  const workdirFlag = yield* LegacyWorkdirFlag;
-  const dnsResolver = yield* LegacyDnsResolverFlag;
-  // `--yes` OR `SUPABASE_YES`.
-  const yesFlag = yield* legacyResolveYes;
+  const templateService = yield* TemplateService;
+  const api = yield* CommandPlatformApi;
+  const linkedProjectCache = yield* LinkedProjectCache;
+  const telemetryState = yield* TelemetryState;
+  const workdirFlag = yield* WorkdirFlag;
+  const dnsResolver = yield* DnsResolverFlag;
+  const yesFlag = yield* resolveYes;
 
   const isText = output.format === "text";
-  const retry = { schedule: retrySchedule, times: LEGACY_BOOTSTRAP_MAX_RETRIES } as const;
+  const retry = { schedule: retrySchedule, times: BOOTSTRAP_MAX_RETRIES } as const;
 
-  // `process.chdir` changes into the resolved workdir; restore the original cwd in a
-  // finalizer so the surrounding process is left untouched once this command
-  // returns (every step below reads its own explicit `workdir` var, never
-  // `process.cwd()`, so nothing else depends on the chdir staying in effect).
+  // Restores the original cwd once bootstrap returns, since `process.chdir` below is a global
+  // process mutation; every step reads its own `workdir` var, never `process.cwd()`, so nothing
+  // else depends on the chdir staying in effect.
   const originalCwd = process.cwd();
   let createdRef: string | undefined;
-  // Resolved bootstrap workdir, hoisted so the linked-project-cache finalizer writes
-  // beside the other `supabase/.temp/` files instead of `cliSettings.workdir`.
+  // Hoisted so the linked-project-cache finalizer writes beside the other `supabase/.temp/`
+  // files instead of `cliSettings.workdir`.
   let resolvedWorkdir: string | undefined;
 
   yield* Effect.gen(function* () {
-    // A. Resolve workdir (flag -> env -> prompt -> cwd).
     // Reads the prefixed `SUPABASE_WORKDIR` only (never plain `WORKDIR`).
     const workdirRaw = Option.isSome(workdirFlag)
       ? workdirFlag.value
@@ -104,7 +100,7 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
     const workdirInput =
       workdirRaw ??
       (yield* output.promptText(
-        `Enter a directory to bootstrap your project (or leave blank to use ${legacyBold(
+        `Enter a directory to bootstrap your project (or leave blank to use ${bold(
           runtimeInfo.cwd,
         )}): `,
       ));
@@ -113,15 +109,14 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
       : path.join(runtimeInfo.cwd, workdirInput);
     resolvedWorkdir = workdir;
 
-    // B. List templates + resolve the starter.
     const samples = yield* templateService.listSamples;
     const allTemplates = [...samples, SCRATCH_TEMPLATE];
-    let starter: LegacyStarterTemplate;
+    let starter: StarterTemplate;
     if (Option.isSome(flags.template)) {
       const name = flags.template.value;
       const match = allTemplates.find((t) => t.name.toLowerCase() === name.toLowerCase());
       if (match === undefined) {
-        return yield* new LegacyBootstrapInvalidTemplateError({
+        return yield* new BootstrapInvalidTemplateError({
           message: `Invalid template: ${name}`,
         });
       }
@@ -134,43 +129,35 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
       starter = allTemplates.find((t) => t.name === choice) ?? SCRATCH_TEMPLATE;
     }
 
-    // C. mkdir + overwrite prompt.
     yield* fs.makeDirectory(workdir, { recursive: true });
     const entries = yield* fs
       .readDirectory(workdir)
       .pipe(
         Effect.mapError(
-          (cause) =>
-            new LegacyBootstrapWorkdirReadError({ message: `failed to read workdir: ${cause}` }),
+          (cause) => new BootstrapWorkdirReadError({ message: `failed to read workdir: ${cause}` }),
         ),
       );
     if (entries.length > 0) {
-      // Established prompt behavior: `--yes`/`SUPABASE_YES` auto-confirms with
-      // the `<title> [Y/n] y` stderr echo instead of silently skipping the
-      // prompt, and a non-TTY stdin scans one piped line (100ms) before
-      // falling back to the Yes default.
-      const overwrite = yield* legacyPromptYesNo(
+      // `--yes`/`SUPABASE_YES` auto-confirms with a `<title> [Y/n] y` stderr echo; non-TTY
+      // stdin scans one piped line (100ms) before falling back to Yes.
+      const overwrite = yield* promptYesNo(
         output,
         yesFlag,
-        `Do you want to overwrite existing files in ${legacyBold(workdir)} directory?`,
+        `Do you want to overwrite existing files in ${bold(workdir)} directory?`,
         true,
       );
       if (!overwrite) {
-        return yield* new LegacyBootstrapOverwriteDeclinedError({
+        return yield* new BootstrapOverwriteDeclinedError({
           message: CONTEXT_CANCELED_MESSAGE,
         });
       }
     }
 
-    // D. chdir + "Using workdir" to stderr.
-    // Only prints the line when the resolved workdir differs from the
-    // original cwd.
     yield* Effect.sync(() => process.chdir(workdir));
     if (workdir !== runtimeInfo.cwd) {
-      yield* output.raw(`Using workdir ${legacyBold(workdir)}\n`, "stderr");
+      yield* output.raw(`Using workdir ${bold(workdir)}\n`, "stderr");
     }
 
-    // E. Download template OR scaffold a blank project.
     if (starter.url.length > 0) {
       if (isText) yield* output.raw(`Downloading: ${starter.url}\n`, "stdout");
       yield* templateService.download(starter.url, workdir);
@@ -186,16 +173,12 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
       });
     }
 
-    // F. Ensure login (browser flow when no token).
-    yield* legacyEnsureLogin({ openBrowser: tty.stdinIsTty });
+    yield* ensureLogin({ openBrowser: tty.stdinIsTty });
 
-    // G. Create project (echoes via the shared create core).
-    // `-p` binds to `DB_PASSWORD`; with the `SUPABASE` env prefix the env
-    // fallback is `SUPABASE_DB_PASSWORD` (consumed by `flags.PromptPassword`).
     const seededPassword = Option.isSome(flags.password)
       ? flags.password.value
       : (process.env["SUPABASE_DB_PASSWORD"] ?? "");
-    const created = yield* legacyProjectCreateCore({
+    const created = yield* projectCreateCore({
       name: path.basename(workdir),
       orgId: "",
       dbPassword: seededPassword,
@@ -210,45 +193,37 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
     const projectRef = created.ref;
     createdRef = projectRef.length > 0 ? projectRef : undefined;
 
-    // H. Fetch api keys with backoff; each attempt prints "Linking project...".
-    // The notify wrapper reproduces the established retry-callback shape
-    // (`<err>\nRetry (n/8):` after each failed attempt); a fresh counter per block.
-    const apiKeysNotify = legacyBootstrapRetryNotify();
+    // A fresh notifier per retry block keeps this step's "Retry (n/8)" counter independent of
+    // the health-poll and push retries below.
+    const apiKeysNotify = bootstrapRetryNotify();
     const keys = yield* Effect.gen(function* () {
       if (isText) yield* output.raw("Linking project...\n", "stderr");
-      return yield* legacyGetProjectApiKeys(projectRef);
+      return yield* getProjectApiKeys(projectRef);
     }).pipe(apiKeysNotify, Effect.retry(retry));
-    const { anon } = legacyExtractServiceKeys(keys);
+    const { anon } = extractServiceKeys(keys);
 
-    // I. Load config.toml + link services (best-effort, anon key) + mandatory
-    // project-ref write. Established ordering: the config load runs FIRST —
-    // right before `link.LinkServices` — and a malformed config.toml aborts
-    // bootstrap here (a hard `return err`), before `link.LinkServices`, the
-    // health poll, or the `.env` write ever run. This also fixes the "Loading
-    // config override: [remotes.x]" print's position to match. `legacyApplyProjectEnv`'s
-    // scope (mirroring the established process-lifetime `os.Setenv`) is opened
-    // here and stays open for the rest of the handler — see the `Effect.scoped`
-    // on this function's own outer pipe below.
-    const projectEnv = yield* legacyLoadProjectEnv(fs, path, workdir);
-    yield* legacyApplyProjectEnv(projectEnv);
-    const pushYes = yield* legacyResolveYesWithProjectEnv(projectEnv);
-    const toml = yield* legacyCheckDbToml(fs, path, workdir, projectRef);
+    // Config load must run before link/health/`.env` steps: a malformed config.toml aborts here
+    // rather than after side effects start. `applyProjectEnv`'s scope stays open for the rest of
+    // this handler (closed by the outer `Effect.scoped` below).
+    const projectEnv = yield* loadProjectEnv(fs, path, workdir);
+    yield* applyProjectEnv(projectEnv);
+    const pushYes = yield* resolveYesWithProjectEnv(projectEnv);
+    const toml = yield* checkDbToml(fs, path, workdir, projectRef);
     if (toml.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${toml.appliedRemote}]\n`, "stderr");
     }
 
-    yield* legacyLinkServicesCore({
+    yield* linkServicesCore({
       ref: projectRef,
       serviceKey: anon,
       skipPooler: false,
       workdir,
     });
-    const paths = legacyTempPaths(path, workdir);
+    const paths = tempPaths(path, workdir);
     yield* fs.makeDirectory(path.dirname(paths.projectRef), { recursive: true });
     yield* fs.writeFileString(paths.projectRef, projectRef);
 
-    // J. Poll health until db is healthy.
-    const healthNotify = legacyBootstrapRetryNotify();
+    const healthNotify = bootstrapRetryNotify();
     yield* Effect.gen(function* () {
       if (isText) yield* output.raw("Checking project health...\n", "stderr");
       const services = yield* api.v1
@@ -256,18 +231,15 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
         .pipe(Effect.catch(mapHealthError));
       for (const service of services) {
         if (!service.healthy) {
-          return yield* new LegacyBootstrapHealthError({
+          return yield* new BootstrapHealthError({
             message: `Service not healthy: ${service.name} (${service.status})`,
           });
         }
       }
     }).pipe(healthNotify, Effect.retry(retry));
 
-    // K. Derive db config + write .env (non-fatal). Kept as the naive
-    // direct-host connection (matching the established `NewDbConfigWithPassword`
-    // shape, minus its own IPv6/pooler-fallback — a pre-existing, out-of-scope
-    // `.env` divergence: unlike step L below, `.env` is never used to actually
-    // connect, so it doesn't need the real probe+fallback resolution).
+    // Uses a naive direct-host db config with no IPv6/pooler fallback, since `.env` is written
+    // for reference only and, unlike the push connection below, is never used to actually connect.
     const dbConfig = deriveDbConfig(projectRef, created.dbPassword, cliSettings.projectHost);
     const supabaseUrl = `https://${projectRef}.${cliSettings.projectHost}`;
     const envFilePath = path.join(workdir, ".env");
@@ -297,61 +269,15 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
       ),
     );
 
-    // L. Push migrations — native call to `legacyDbPushCore` (CLI-1953):
-    // `includeAll: false, includeRoles: true, includeSeed: true, dryRun: false`.
-    //
-    // The connection itself is resolved via `legacyResolveLinkedConn` — the
-    // same dial-direct-host / fall-back-to-IPv4-pooler logic used elsewhere,
-    // not the naive `deriveDbConfig` used for `.env` above. New Supabase
-    // projects commonly have an IPv6-only direct DB host, so without this
-    // fallback the push would burn all 9 retries and fail on IPv4-only
-    // networks — the exact regression this fix closes. `created.dbPassword`
-    // is always non-empty by this point (the create step already prompted
-    // for/generated one), so the temp-login-role branches are never actually
-    // reached; only the TCP probe and a read of the
-    // `<workdir>/supabase/.temp/pooler-url` file `link.LinkServices` already
-    // wrote in step I. Given a non-empty password, the only reachable
-    // failure is the direct host being unreachable with no saved pooler URL
-    // yet (`LegacyDbConfigIpv6Error`) — the established resolver still
-    // returns its best-effort direct-host config alongside that error,
-    // logging it to stderr and pressing on rather than aborting. The push
-    // dials fresh on every call and bootstrap retries the push itself, so
-    // this leniency buys real reconnect attempts across the backoff window —
-    // e.g. while a freshly created project's link/pooler metadata is still
-    // propagating — not a guaranteed repeat failure. Reproduced below: catch
-    // that one error tag, log it, and fall back to the same direct-host
-    // shape already computed for `.env` above (step K's `dbConfig`) instead
-    // of failing bootstrap outright.
-    //
-    // The project ref or config.toml is never re-resolved for push (reuses
-    // what step I already loaded above) — so this passes
-    // `workdir`/`projectRef`/`toml` straight through as plain values instead
-    // of calling `legacyDbPush` (the full flags-based command), which would
-    // re-resolve them via `LegacyProjectRefResolver`/`LegacyDbConfigResolver`
-    // — both keyed off `LegacyCliSettings.workdir`, stale after this handler's
-    // own `process.chdir` above (step D) since that layer is built once,
-    // before the handler runs.
-    //
-    // `legacyBootstrapRetryNotify`/`Effect.retry(retry)` reproduce the
-    // established retry-reset-and-notify wrap around the push call, matching
-    // the api-keys/health-poll retries above — only the push itself is
-    // retried, not the connection resolution (which runs once, outside the
-    // loop). No instrumentation wrap: `legacyDbPushCore` is the bare handler
-    // function, not `push.command.ts`'s wrapped command, so it never fires
-    // its own `cli_command_executed` — no double-count risk.
-    //
-    // `legacyResolveLinkedConn` (unlike `LegacyDbConfigResolver.resolve`) returns a
-    // bare connection with no `suggestionContext` attached — that context is normally
-    // stapled on by the resolver layer bootstrap deliberately bypasses (see this
-    // call's own doc comment above). Attach it here too, so a connect failure inside
-    // the native push (refused/auth/IPv6/wrong-profile) still renders the
-    // established connect-suggestion hint instead of silently falling back
-    // to the generic "--debug" suggestion.
-    const suggestionContext: LegacyConnectSuggestionContext = {
+    // `resolveLinkedConn` doesn't attach a suggestionContext like the full resolver does; build
+    // one manually so a connect failure inside the push below still gets the established hint.
+    const suggestionContext: ConnectSuggestionContext = {
       dashboardUrl: cliSettings.dashboardUrl,
       profileName: cliSettings.profile,
     };
-    const resolvedConn = yield* legacyResolveLinkedConn(
+    // Falls back to the naive `dbConfig` on `DbConfigIpv6Error` instead of aborting, since a
+    // freshly created project's pooler metadata may still be propagating.
+    const resolvedConn = yield* resolveLinkedConn(
       projectRef,
       workdir,
       cliSettings.projectHost,
@@ -359,13 +285,16 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
       dnsResolver,
       Option.some(created.dbPassword),
     ).pipe(
-      Effect.catchTag("LegacyDbConfigIpv6Error", (error) =>
+      Effect.catchTag("DbConfigIpv6Error", (error) =>
         output.raw(`${error.message}\n`, "stderr").pipe(Effect.as(dbConfig)),
       ),
     );
     const conn = { ...resolvedConn, suggestionContext };
-    const pushNotify = legacyBootstrapRetryNotify();
-    yield* legacyDbPushCore({
+    // Passes workdir/projectRef/toml through directly rather than calling the full `dbPush`
+    // command, since its CommandSettings-based resolvers would be stale after this handler's
+    // own chdir above.
+    const pushNotify = bootstrapRetryNotify();
+    yield* dbPushCore({
       workdir,
       projectRef,
       conn,
@@ -382,9 +311,8 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
       emitStructuredResult: false,
     }).pipe(pushNotify, Effect.retry(retry));
 
-    // M. Start suggestion.
     if (isText) {
-      const suggestion = suggestAppStart(runtimeInfo.cwd, workdir, starter.start, legacyAqua);
+      const suggestion = suggestAppStart(runtimeInfo.cwd, workdir, starter.start, aqua);
       yield* emitSuccessTrailer(`${suggestion}\n`);
     } else {
       yield* output.success("", {
@@ -414,20 +342,15 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
       ),
     ),
     Effect.ensuring(telemetryState.flush),
-    // Load-bearing: `legacyApplyProjectEnv` (step I) uses `Effect.acquireRelease`
-    // to revert `SUPABASE_INTERNAL_IMAGE_REGISTRY` when its scope closes. Its
-    // lifetime must span the rest of this handler (link services, health poll,
-    // `.env` write, and the push step's own edge-runtime/pg-delta cache use of
-    // that env var) — matching the established process-lifetime `os.Setenv`
-    // behavior — so the scope is closed here, at the outermost pipe, not
-    // narrowly around a single step.
+    // `applyProjectEnv` above uses `Effect.acquireRelease` to revert
+    // `SUPABASE_INTERNAL_IMAGE_REGISTRY` when its scope closes; that scope must span the rest of
+    // this handler (link services, health poll, `.env` write, and the push step's own use of
+    // that var), so it's closed here rather than narrowly around a single step.
     Effect.scoped,
   );
 });
 
-// Whether `cause` is the generated client's `SchemaError` — a 200 response the
-// client could not decode, as opposed to a transport failure (DNS, TLS,
-// timeout).
+// True when `cause` is the generated client's undecodable `SchemaError`, not a transport failure.
 function isDecodeFailureCause(cause: unknown): boolean {
   if (typeof cause !== "object" || cause === null || !("_tag" in cause)) {
     return false;
@@ -435,23 +358,23 @@ function isDecodeFailureCause(cause: unknown): boolean {
   return cause._tag === "SchemaError";
 }
 
-// Non-200 branch: `Error status %d: %s`.
-const mapHealthError = (cause: unknown): Effect.Effect<never, LegacyBootstrapHealthError> => {
+// Non-200 branch: `Error status <status>: <body>`.
+const mapHealthError = (cause: unknown): Effect.Effect<never, BootstrapHealthError> => {
   if (HttpClientError.isHttpClientError(cause) && cause.response !== undefined) {
     const status = cause.response.status;
     return cause.response.text.pipe(
       Effect.orElseSucceed(() => ""),
-      Effect.map(sanitizeLegacyErrorBody),
+      Effect.map(sanitizeErrorBody),
       Effect.flatMap((body) =>
         Effect.fail(
-          new LegacyBootstrapHealthError({ message: `Error status ${status}: ${body}`, status }),
+          new BootstrapHealthError({ message: `Error status ${status}: ${body}`, status }),
         ),
       ),
     );
   }
   return Effect.fail(
     isDecodeFailureCause(cause)
-      ? new LegacyBootstrapHealthError({ message: `Error status 0: ${cause}`, decode: true })
-      : new LegacyBootstrapHealthError({ message: `Error status 0: ${cause}`, transport: true }),
+      ? new BootstrapHealthError({ message: `Error status 0: ${cause}`, decode: true })
+      : new BootstrapHealthError({ message: `Error status 0: ${cause}`, transport: true }),
   );
 };

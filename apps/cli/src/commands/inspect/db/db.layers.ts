@@ -1,25 +1,18 @@
 import { Layer } from "effect";
 
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
-import { legacyInspectBaseLayer } from "../inspect.layers.ts";
+import { inspectBaseLayer } from "../inspect.layers.ts";
 
 /**
- * The command-runtime path for a single `inspect db <leaf>` subcommand.
- *
- * The `leaf` is the invoked command's own name (e.g. `"locks"`, or a
- * deprecated alias like `"cache-hit"`) and is appended to `["inspect", "db"]`. This
- * path is what `withLegacyCommandInstrumentation` records as the PostHog
- * `cli_command_executed` `command` property: the inspect tree is a real 3-level
- * hierarchy, so each of the 25 leaves emits a distinct command name. A shared
- * `["inspect", "db"]` path would collapse them all into one event, so each leaf must
- * pass its own name — and a deprecated alias records the alias the user typed, not
- * the backend command it delegates to.
+ * The command-runtime path for a single `inspect db <leaf>` subcommand, appended to
+ * `["inspect", "db"]` so each of the 25 leaves — and each deprecated alias — records its own
+ * name in `cli_command_executed`, not a shared "inspect db" event.
  */
-export const legacyInspectDbCommandPath = (leaf: string): ReadonlyArray<string> => [
+export const inspectDbCommandPath = (leaf: string): ReadonlyArray<string> => [
   "inspect",
   "db",
   leaf,
 ];
 
-export const legacyInspectDbRuntimeLayer = (leaf: string) =>
-  Layer.merge(legacyInspectBaseLayer, commandRuntimeLayer(legacyInspectDbCommandPath(leaf)));
+export const inspectDbRuntimeLayer = (leaf: string) =>
+  Layer.merge(inspectBaseLayer, commandRuntimeLayer(inspectDbCommandPath(leaf)));

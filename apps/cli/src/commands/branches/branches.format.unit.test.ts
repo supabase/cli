@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { apiKeysToEnv } from "../../command-internal/legacy-api-keys.format.ts";
+import { apiKeysToEnv } from "../../command-internal/api-keys.format.ts";
 import {
   parsePoolerConnectionString,
   renderBranchGetTable,

@@ -1,32 +1,29 @@
 import type { SupabaseApiError } from "@supabase/api/effect";
 import { Effect, Option, Result } from "effect";
 
-import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { LegacyOutputFlag } from "../../../shared/legacy/global-flags.ts";
+import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { encodeGoJson } from "../../../command-internal/legacy-go-output.encoders.ts";
+import { encodeGoJson } from "../../../command-internal/go-output.encoders.ts";
+import { encodeGoToml, encodeGoYaml } from "../../../command-internal/go-struct-output.encoders.ts";
+import { GO_SSO_PROVIDER_RESPONSE } from "../sso.go-payload.ts";
+import { mapHttpError } from "../../../command-internal/http-errors.ts";
+import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import {
-  encodeLegacyGoToml,
-  encodeLegacyGoYaml,
-} from "../../../command-internal/legacy-go-struct-output.encoders.ts";
-import { LEGACY_GO_SSO_PROVIDER_RESPONSE } from "../sso.go-payload.ts";
-import { mapLegacyHttpError } from "../../../command-internal/legacy-http-errors.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import {
-  LegacySsoShowEnvNotSupportedError,
-  LegacySsoShowNetworkError,
-  LegacySsoShowNotFoundError,
-  LegacySsoShowUnexpectedStatusError,
-  LegacySsoTomlEncodeError,
+  SsoShowEnvNotSupportedError,
+  SsoShowNetworkError,
+  SsoShowNotFoundError,
+  SsoShowUnexpectedStatusError,
+  SsoTomlEncodeError,
 } from "../sso.errors.ts";
 import { renderSingleProvider, validateUuid } from "../sso.format.ts";
-import type { LegacySsoShowFlags } from "./show.command.ts";
+import type { SsoShowFlags } from "./show.command.ts";
 
-const mapStatusOrNetwork = mapLegacyHttpError({
-  networkError: LegacySsoShowNetworkError,
-  statusError: LegacySsoShowUnexpectedStatusError,
+const mapStatusOrNetwork = mapHttpError({
+  networkError: SsoShowNetworkError,
+  statusError: SsoShowUnexpectedStatusError,
   networkMessage: (cause) => `failed to get sso provider: ${cause}`,
   statusMessage: (_status, body) => `Unexpected error fetching identity provider: ${body}`,
 });
@@ -34,11 +31,10 @@ const mapStatusOrNetwork = mapLegacyHttpError({
 const handleShowError = (providerId: string, cause: SupabaseApiError) =>
   Effect.gen(function* () {
     const mapped = yield* Effect.flip(mapStatusOrNetwork(cause));
-    // `show` is intentionally omitted from the upgrade-suggestion paths
-    // (see plan §"Telemetry parity").
-    if (mapped._tag === "LegacySsoShowUnexpectedStatusError" && mapped.status === 404) {
+    // `show` does not fire upgrade-suggestion telemetry, unlike add/update/list.
+    if (mapped._tag === "SsoShowUnexpectedStatusError" && mapped.status === 404) {
       return yield* Effect.fail(
-        new LegacySsoShowNotFoundError({
+        new SsoShowNotFoundError({
           message: `An identity provider with ID ${JSON.stringify(providerId)} could not be found.`,
         }),
       );
@@ -46,13 +42,13 @@ const handleShowError = (providerId: string, cause: SupabaseApiError) =>
     return yield* Effect.fail(mapped);
   });
 
-export const legacySsoShow = Effect.fn("legacy.sso.show")(function* (flags: LegacySsoShowFlags) {
+export const ssoShow = Effect.fn("sso.show")(function* (flags: SsoShowFlags) {
   const output = yield* Output;
-  const goOutputFlag = yield* LegacyOutputFlag;
-  const api = yield* LegacyPlatformApi;
-  const resolver = yield* LegacyProjectRefResolver;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
+  const goOutputFlag = yield* OutputFlag;
+  const api = yield* CommandPlatformApi;
+  const resolver = yield* ProjectRefResolver;
+  const linkedProjectCache = yield* LinkedProjectCache;
+  const telemetryState = yield* TelemetryState;
 
   yield* Effect.gen(function* () {
     const providerId = yield* validateUuid(flags.providerId).pipe(
@@ -79,9 +75,8 @@ export const legacySsoShow = Effect.fn("legacy.sso.show")(function* (flags: Lega
       const goFmt = Option.getOrUndefined(goOutputFlag);
 
       if (goFmt === "env") {
-        // Established `--output env` unsupported error message.
         return yield* Effect.fail(
-          new LegacySsoShowEnvNotSupportedError({
+          new SsoShowEnvNotSupportedError({
             message: "--output env flag is not supported",
           }),
         );
@@ -91,16 +86,15 @@ export const legacySsoShow = Effect.fn("legacy.sso.show")(function* (flags: Lega
         return;
       }
       if (goFmt === "yaml") {
-        yield* output.raw(encodeLegacyGoYaml(response, LEGACY_GO_SSO_PROVIDER_RESPONSE));
+        yield* output.raw(encodeGoYaml(response, GO_SSO_PROVIDER_RESPONSE));
         return;
       }
       if (goFmt === "toml") {
-        // TOML encode failure wrapping (e.g. a nil element in an
-        // attribute-mapping `default` array).
+        // TOML encoding can fail on a nil element in an attribute-mapping `default` array.
         const toml = yield* Effect.try({
-          try: () => encodeLegacyGoToml(response, LEGACY_GO_SSO_PROVIDER_RESPONSE),
+          try: () => encodeGoToml(response, GO_SSO_PROVIDER_RESPONSE),
           catch: (cause) =>
-            new LegacySsoTomlEncodeError({
+            new SsoTomlEncodeError({
               message: `failed to output toml: ${cause instanceof Error ? cause.message : String(cause)}`,
             }),
         });

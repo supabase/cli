@@ -6,15 +6,9 @@ import {
   statusCodeActionability,
 } from "../../shared/telemetry/error-actionability.ts";
 
-// ---------------------------------------------------------------------------
-// Bootstrap-specific tagged errors, one per established failure site.
-// Login / create / api-keys / link failures are surfaced by the extracted
-// shared cores (`command-internal/legacy-*`), so they are NOT redefined here.
-// ---------------------------------------------------------------------------
-
 /** Positional template arg with no case-insensitive match — `"Invalid template: " + name`. */
-export class LegacyBootstrapInvalidTemplateError extends Data.TaggedError(
-  "LegacyBootstrapInvalidTemplateError",
+export class BootstrapInvalidTemplateError extends Data.TaggedError(
+  "BootstrapInvalidTemplateError",
 )<{
   readonly message: string;
 }> {
@@ -24,9 +18,7 @@ export class LegacyBootstrapInvalidTemplateError extends Data.TaggedError(
 }
 
 /** GitHub samples listing failure — `failed to list samples`. */
-export class LegacyBootstrapTemplateListError extends Data.TaggedError(
-  "LegacyBootstrapTemplateListError",
-)<{
+export class BootstrapTemplateListError extends Data.TaggedError("BootstrapTemplateListError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -34,10 +26,8 @@ export class LegacyBootstrapTemplateListError extends Data.TaggedError(
   }
 }
 
-/** Reading the target workdir failed — `failed to read workdir: %w`. */
-export class LegacyBootstrapWorkdirReadError extends Data.TaggedError(
-  "LegacyBootstrapWorkdirReadError",
-)<{
+/** Reading the target workdir failed — `failed to read workdir: ${cause}`. */
+export class BootstrapWorkdirReadError extends Data.TaggedError("BootstrapWorkdirReadError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -46,11 +36,11 @@ export class LegacyBootstrapWorkdirReadError extends Data.TaggedError(
 }
 
 /**
- * User declined the overwrite prompt — returns `errors.New(context.Canceled)`.
- * Carries no suggestion frame (cancellation, not a fault).
+ * User declined the overwrite prompt. Carries no suggestion frame since this is a
+ * cancellation, not a fault.
  */
-export class LegacyBootstrapOverwriteDeclinedError extends Data.TaggedError(
-  "LegacyBootstrapOverwriteDeclinedError",
+export class BootstrapOverwriteDeclinedError extends Data.TaggedError(
+  "BootstrapOverwriteDeclinedError",
 )<{
   readonly message: string;
 }> {
@@ -59,9 +49,9 @@ export class LegacyBootstrapOverwriteDeclinedError extends Data.TaggedError(
   }
 }
 
-/** Template download failure — `failed to download template: %w`. */
-export class LegacyBootstrapTemplateDownloadError extends Data.TaggedError(
-  "LegacyBootstrapTemplateDownloadError",
+/** Template download failure (network, non-200 status, or an unsafe archive entry). */
+export class BootstrapTemplateDownloadError extends Data.TaggedError(
+  "BootstrapTemplateDownloadError",
 )<{
   readonly message: string;
 }> {
@@ -71,10 +61,10 @@ export class LegacyBootstrapTemplateDownloadError extends Data.TaggedError(
 }
 
 /**
- * Project health probe failed — `Error status %d: %s` (non-200) or
- * `Service not healthy: %s (%s)`.
+ * Project health probe failed — `Error status <status>: <body>` (non-200) or
+ * `Service not healthy: <name> (<status>)`.
  */
-export class LegacyBootstrapHealthError extends Data.TaggedError("LegacyBootstrapHealthError")<{
+export class BootstrapHealthError extends Data.TaggedError("BootstrapHealthError")<{
   readonly message: string;
   /** Set when the health poll itself failed with a non-200; absent when the
    * service reported unhealthy. */

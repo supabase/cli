@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Layer, Option, Path, Redacted } from "effect";
+import { Effect, FileSystem, Layer, Option, Path, Predicate, Redacted } from "effect";
 
 import { normalizeKeyringToken } from "./keyring-token.ts";
 import { CliSettings } from "../config/cli-settings.service.ts";
@@ -7,6 +7,38 @@ import { Credentials } from "./credentials.service.ts";
 const SERVICE = "Supabase CLI";
 const ACCOUNT = "access-token";
 const LEGACY_ACCOUNT = "supabase";
+type KeyringModule = typeof import("@napi-rs/keyring");
+
+const tryKeyringRead = (
+  module: KeyringModule,
+  account: string,
+): Effect.Effect<Option.Option<string>> =>
+  Effect.try(() => new module.Entry(SERVICE, account).getPassword()).pipe(
+    Effect.option,
+    Effect.map(
+      Option.flatMap((value) =>
+        value === null || value.length === 0 ? Option.none() : Option.some(value),
+      ),
+    ),
+  );
+
+const tryKeyringWrite = (
+  module: KeyringModule,
+  account: string,
+  token: string,
+): Effect.Effect<boolean> =>
+  Effect.try(() => {
+    new module.Entry(SERVICE, account).setPassword(token);
+    return true;
+  }).pipe(Effect.orElseSucceed(() => false));
+
+const tryKeyringDelete = (module: KeyringModule, account: string): Effect.Effect<boolean> =>
+  Effect.try(() => {
+    const entry = new module.Entry(SERVICE, account);
+    if (!entry.getPassword()) return false;
+    entry.deleteCredential();
+    return true;
+  }).pipe(Effect.orElseSucceed(() => false));
 
 /**
  * credentialsLayer - Token persistence policy for the CLI.
@@ -23,27 +55,19 @@ const makeCredentials = Effect.gen(function* () {
 
   const keyringModule =
     Option.isSome(cliSettings.noKeyring) && cliSettings.noKeyring.value === "1"
-      ? Option.none<typeof import("@napi-rs/keyring")>()
+      ? Option.none<KeyringModule>()
       : yield* Effect.tryPromise(() => import("@napi-rs/keyring")).pipe(Effect.option);
 
   return Credentials.of({
-    // Read current storage first, then fall back to legacy account and finally the filesystem.
     getAccessToken: Effect.gen(function* () {
       if (Option.isSome(keyringModule)) {
-        try {
-          const entry = new keyringModule.value.Entry(SERVICE, ACCOUNT);
-          const token = entry.getPassword();
-          if (token) return Option.some(Redacted.make(normalizeKeyringToken(token)));
-        } catch {
-          /* fall through */
+        const token = yield* tryKeyringRead(keyringModule.value, ACCOUNT);
+        if (Option.isSome(token)) {
+          return Option.some(Redacted.make(normalizeKeyringToken(token.value)));
         }
-
-        try {
-          const entry = new keyringModule.value.Entry(SERVICE, LEGACY_ACCOUNT);
-          const token = entry.getPassword();
-          if (token) return Option.some(Redacted.make(normalizeKeyringToken(token)));
-        } catch {
-          /* fall through */
+        const legacyToken = yield* tryKeyringRead(keyringModule.value, LEGACY_ACCOUNT);
+        if (Option.isSome(legacyToken)) {
+          return Option.some(Redacted.make(normalizeKeyringToken(legacyToken.value)));
         }
       }
 
@@ -55,52 +79,44 @@ const makeCredentials = Effect.gen(function* () {
       }
 
       return Option.none();
-    }).pipe(Effect.orElseSucceed(() => Option.none())),
+    }),
 
-    // Writes follow the same policy: keyring when possible, filesystem when necessary.
     saveAccessToken: (token: string | Redacted.Redacted<string>) =>
       Effect.gen(function* () {
         const plainToken = typeof token === "string" ? token : Redacted.value(token);
         if (Option.isSome(keyringModule)) {
-          try {
-            const entry = new keyringModule.value.Entry(SERVICE, ACCOUNT);
-            entry.setPassword(plainToken);
-            return;
-          } catch {
-            /* fall through */
-          }
+          if (yield* tryKeyringWrite(keyringModule.value, ACCOUNT, plainToken)) return;
         }
 
         yield* fs.makeDirectory(fallbackDir, { recursive: true, mode: 0o700 });
         yield* fs.writeFileString(fallbackPath, plainToken, { mode: 0o600 });
-      }).pipe(Effect.orDie),
+      }),
 
-    // Deletes the token from all storage locations. Returns true if anything was deleted.
     deleteAccessToken: Effect.gen(function* () {
       let anyDeleted = false;
 
       if (Option.isSome(keyringModule)) {
         for (const account of [ACCOUNT, LEGACY_ACCOUNT]) {
-          try {
-            const entry = new keyringModule.value.Entry(SERVICE, account);
-            if (entry.getPassword()) {
-              entry.deleteCredential();
-              anyDeleted = true;
-            }
-          } catch {
-            /* not stored here — fall through */
-          }
+          const deleted = yield* tryKeyringDelete(keyringModule.value, account);
+          anyDeleted ||= deleted;
         }
       }
 
       const exists = yield* fs.exists(fallbackPath);
       if (exists) {
-        yield* fs.remove(fallbackPath);
-        anyDeleted = true;
+        const removed = yield* fs.remove(fallbackPath).pipe(
+          Effect.as(true),
+          Effect.catchTag("PlatformError", (error) =>
+            Predicate.isTagged(error.reason, "NotFound")
+              ? Effect.succeed(false)
+              : Effect.fail(error),
+          ),
+        );
+        anyDeleted ||= removed;
       }
 
       return anyDeleted;
-    }).pipe(Effect.orDie),
+    }),
   });
 });
 

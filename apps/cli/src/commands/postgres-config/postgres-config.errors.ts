@@ -6,8 +6,8 @@ import {
   statusCodeActionability,
 } from "../../shared/telemetry/error-actionability.ts";
 
-export class LegacyPostgresConfigGetNetworkError extends Data.TaggedError(
-  "LegacyPostgresConfigGetNetworkError",
+export class PostgresConfigGetNetworkError extends Data.TaggedError(
+  "PostgresConfigGetNetworkError",
 )<{
   readonly message: string;
 }> {
@@ -16,8 +16,8 @@ export class LegacyPostgresConfigGetNetworkError extends Data.TaggedError(
   }
 }
 
-export class LegacyPostgresConfigGetUnexpectedStatusError extends Data.TaggedError(
-  "LegacyPostgresConfigGetUnexpectedStatusError",
+export class PostgresConfigGetUnexpectedStatusError extends Data.TaggedError(
+  "PostgresConfigGetUnexpectedStatusError",
 )<{
   readonly status: number;
   readonly body: string;
@@ -28,8 +28,8 @@ export class LegacyPostgresConfigGetUnexpectedStatusError extends Data.TaggedErr
   }
 }
 
-export class LegacyPostgresConfigGetUnmarshalError extends Data.TaggedError(
-  "LegacyPostgresConfigGetUnmarshalError",
+export class PostgresConfigGetUnmarshalError extends Data.TaggedError(
+  "PostgresConfigGetUnmarshalError",
 )<{
   readonly message: string;
 }> {
@@ -40,8 +40,8 @@ export class LegacyPostgresConfigGetUnmarshalError extends Data.TaggedError(
   }
 }
 
-export class LegacyPostgresConfigUpdateNetworkError extends Data.TaggedError(
-  "LegacyPostgresConfigUpdateNetworkError",
+export class PostgresConfigUpdateNetworkError extends Data.TaggedError(
+  "PostgresConfigUpdateNetworkError",
 )<{
   readonly message: string;
 }> {
@@ -50,8 +50,8 @@ export class LegacyPostgresConfigUpdateNetworkError extends Data.TaggedError(
   }
 }
 
-export class LegacyPostgresConfigUpdateUnexpectedStatusError extends Data.TaggedError(
-  "LegacyPostgresConfigUpdateUnexpectedStatusError",
+export class PostgresConfigUpdateUnexpectedStatusError extends Data.TaggedError(
+  "PostgresConfigUpdateUnexpectedStatusError",
 )<{
   readonly status: number;
   readonly body: string;
@@ -62,8 +62,8 @@ export class LegacyPostgresConfigUpdateUnexpectedStatusError extends Data.Tagged
   }
 }
 
-export class LegacyPostgresConfigUpdateUnmarshalError extends Data.TaggedError(
-  "LegacyPostgresConfigUpdateUnmarshalError",
+export class PostgresConfigUpdateUnmarshalError extends Data.TaggedError(
+  "PostgresConfigUpdateUnmarshalError",
 )<{
   readonly message: string;
 }> {
@@ -74,8 +74,8 @@ export class LegacyPostgresConfigUpdateUnmarshalError extends Data.TaggedError(
   }
 }
 
-export class LegacyPostgresConfigUpdateSerializeError extends Data.TaggedError(
-  "LegacyPostgresConfigUpdateSerializeError",
+export class PostgresConfigUpdateSerializeError extends Data.TaggedError(
+  "PostgresConfigUpdateSerializeError",
 )<{
   readonly message: string;
 }> {
@@ -84,8 +84,8 @@ export class LegacyPostgresConfigUpdateSerializeError extends Data.TaggedError(
   }
 }
 
-export class LegacyPostgresConfigDeleteNetworkError extends Data.TaggedError(
-  "LegacyPostgresConfigDeleteNetworkError",
+export class PostgresConfigDeleteNetworkError extends Data.TaggedError(
+  "PostgresConfigDeleteNetworkError",
 )<{
   readonly message: string;
 }> {
@@ -94,8 +94,8 @@ export class LegacyPostgresConfigDeleteNetworkError extends Data.TaggedError(
   }
 }
 
-export class LegacyPostgresConfigDeleteUnexpectedStatusError extends Data.TaggedError(
-  "LegacyPostgresConfigDeleteUnexpectedStatusError",
+export class PostgresConfigDeleteUnexpectedStatusError extends Data.TaggedError(
+  "PostgresConfigDeleteUnexpectedStatusError",
 )<{
   readonly status: number;
   readonly body: string;
@@ -106,8 +106,8 @@ export class LegacyPostgresConfigDeleteUnexpectedStatusError extends Data.Tagged
   }
 }
 
-export class LegacyPostgresConfigDeleteUnmarshalError extends Data.TaggedError(
-  "LegacyPostgresConfigDeleteUnmarshalError",
+export class PostgresConfigDeleteUnmarshalError extends Data.TaggedError(
+  "PostgresConfigDeleteUnmarshalError",
 )<{
   readonly message: string;
 }> {
@@ -118,8 +118,8 @@ export class LegacyPostgresConfigDeleteUnmarshalError extends Data.TaggedError(
   }
 }
 
-export class LegacyPostgresConfigDeleteSerializeError extends Data.TaggedError(
-  "LegacyPostgresConfigDeleteSerializeError",
+export class PostgresConfigDeleteSerializeError extends Data.TaggedError(
+  "PostgresConfigDeleteSerializeError",
 )<{
   readonly message: string;
 }> {
@@ -128,8 +128,8 @@ export class LegacyPostgresConfigDeleteSerializeError extends Data.TaggedError(
   }
 }
 
-export class LegacyPostgresConfigInvalidConfigValueError extends Data.TaggedError(
-  "LegacyPostgresConfigInvalidConfigValueError",
+export class PostgresConfigInvalidConfigValueError extends Data.TaggedError(
+  "PostgresConfigInvalidConfigValueError",
 )<{
   readonly input: string;
   readonly message: string;

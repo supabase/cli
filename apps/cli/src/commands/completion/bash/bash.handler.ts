@@ -1,13 +1,9 @@
 import { Effect } from "effect";
 import { Output } from "../../../shared/output/output.service.ts";
-import { legacyGenerateCompletionScript } from "../legacy-completion-scripts.ts";
-import type { LegacyCompletionBashFlags } from "./bash.command.ts";
+import { generateCompletionScript } from "../completion-scripts.ts";
+import type { CompletionBashFlags } from "./bash.command.ts";
 
-export const legacyCompletionBash = Effect.fn("legacy.completion.bash")(function* (
-  flags: LegacyCompletionBashFlags,
-) {
+export const completionBash = Effect.fn("completion.bash")(function* (flags: CompletionBashFlags) {
   const output = yield* Output;
-  yield* output.raw(
-    legacyGenerateCompletionScript("bash", { noDescriptions: flags.noDescriptions }),
-  );
+  yield* output.raw(generateCompletionScript("bash", { noDescriptions: flags.noDescriptions }));
 });

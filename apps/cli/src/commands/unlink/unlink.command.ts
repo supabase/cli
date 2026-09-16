@@ -1,39 +1,35 @@
 import { Layer } from "effect";
 import { Command } from "effect/unstable/cli";
 
-import { legacyCredentialsLayer } from "../../auth/legacy-credentials.layer.ts";
-import { legacyCliSettingsLayer } from "../../config/legacy-cli-settings.layer.ts";
-import { legacyDebugLoggerLayer } from "../../command-internal/legacy-debug-logger.layer.ts";
-import { legacyTelemetryStateLayer } from "../../telemetry/legacy-telemetry-state.layer.ts";
+import { commandCredentialsLayer } from "../../auth/command-credentials.layer.ts";
+import { commandSettingsLayer } from "../../config/command-settings.layer.ts";
+import { debugLoggerLayer } from "../../command-internal/debug-logger.layer.ts";
+import { telemetryStateLayer } from "../../telemetry/telemetry-state.layer.ts";
 import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
-import { withLegacyCommandInstrumentation } from "../../telemetry/legacy-command-instrumentation.ts";
-import { legacyUnlink } from "./unlink.handler.ts";
+import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
+import { unlink } from "./unlink.handler.ts";
 
-// `unlink` makes no Management API calls (no access token is needed), so it
-// deliberately avoids `legacyManagementApiRuntimeLayer` — that layer eagerly resolves
-// an access token and would fail with "Access token not provided" for a token-less
-// `unlink`. It provides only the services the handler + instrumentation consume.
-// `legacyCliSettingsLayer` is provided to credentials AND exposed at the top level
-// (Layer.provide does not share to siblings inside a merge — legacy CLAUDE.md item 5).
-const cliSettings = legacyCliSettingsLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
-const credentials = legacyCredentialsLayer.pipe(
+// `unlink` makes no Management API calls, so it avoids `managementApiRuntimeLayer`,
+// which eagerly resolves an access token and would fail for a token-less `unlink`.
+// `commandSettingsLayer` is exposed at the top level too, since `Layer.provide`
+// doesn't share to merge siblings.
+const cliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
+const credentials = commandCredentialsLayer.pipe(
   Layer.provide(cliSettings),
-  Layer.provide(legacyDebugLoggerLayer),
+  Layer.provide(debugLoggerLayer),
 );
 
-const legacyUnlinkRuntimeLayer = Layer.mergeAll(
+const unlinkRuntimeLayer = Layer.mergeAll(
   credentials,
   cliSettings,
-  legacyTelemetryStateLayer,
+  telemetryStateLayer,
   commandRuntimeLayer(["unlink"]),
 );
 
-export const legacyUnlinkCommand = Command.make("unlink").pipe(
+export const unlinkCommand = Command.make("unlink").pipe(
   Command.withDescription("Unlink a Supabase project."),
   Command.withShortDescription("Unlink a Supabase project"),
-  Command.withHandler(() =>
-    legacyUnlink().pipe(withLegacyCommandInstrumentation(), withJsonErrorHandling),
-  ),
-  Command.provide(legacyUnlinkRuntimeLayer),
+  Command.withHandler(() => unlink().pipe(withCommandTelemetry(), withJsonErrorHandling)),
+  Command.provide(unlinkRuntimeLayer),
 );

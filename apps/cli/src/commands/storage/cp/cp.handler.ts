@@ -4,45 +4,49 @@ import type { CliConfig } from "@supabase/config";
 import { Effect, FileSystem, Option, Path, Stream } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 
-import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
+import { CommandSettings } from "../../../config/command-settings.service.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import {
-  legacyContentTypeForUpload,
-  legacyReadSniffBytes,
-  legacyRefineUploadContentType,
-} from "../../../command-internal/legacy-storage-content-type.ts";
+  contentTypeForUpload,
+  readSniffBytes,
+  refineUploadContentType,
+} from "../../../command-internal/storage-content-type.ts";
 import {
-  legacyParseFileSizeLimit,
-  legacyResolveBucketProps,
-} from "../../../command-internal/legacy-storage-bucket-config.ts";
-import type { LegacyStorageGateway } from "../../../command-internal/legacy-storage-gateway.ts";
+  parseFileSizeLimit,
+  resolveBucketProps,
+} from "../../../command-internal/storage-bucket-config.ts";
+import type { StorageGateway } from "../../../command-internal/storage-gateway.ts";
 import {
-  type LegacyStorageGatewayError,
-  LegacyStorageGatewayStatusError,
-} from "../../../command-internal/legacy-storage-gateway.errors.ts";
+  type StorageGatewayError,
+  StorageGatewayStatusError,
+} from "../../../command-internal/storage-gateway.errors.ts";
 import {
-  LegacyGoUrlParseError,
-  LEGACY_STORAGE_SCHEME,
-  legacyGoUrlParse,
-  legacySplitBucketPrefix,
-} from "../../../command-internal/legacy-storage-url.ts";
-import { legacyConnectStorageGateway, legacyLoadStorageConfig } from "../storage.frame.ts";
-import { LegacyStorageConfigError } from "../../../command-internal/legacy-storage-credentials.errors.ts";
+  GoUrlParseError,
+  STORAGE_SCHEME,
+  goUrlParse,
+  splitBucketPrefix,
+} from "../../../command-internal/storage-url.ts";
 import {
-  LegacyStorageCopyBetweenBucketsError,
-  LegacyStorageFileError,
-  LegacyStorageMutuallyExclusiveFlagsError,
-  LegacyStorageObjectNotFoundError,
-  LegacyStorageUnsupportedOperationError,
-  LegacyStorageUrlParseError,
+  assertStorageWorkdir,
+  connectStorageGateway,
+  loadStorageConfig,
+} from "../storage.frame.ts";
+import { StorageConfigError } from "../../../command-internal/storage-credentials.errors.ts";
+import {
+  StorageCopyBetweenBucketsError,
+  StorageFileError,
+  StorageMutuallyExclusiveFlagsError,
+  StorageObjectNotFoundError,
+  StorageUnsupportedOperationError,
+  StorageUrlParseError,
 } from "../storage.errors.ts";
-import { legacyIterateStoragePaths, legacyIterateStoragePathsAll } from "../storage.iterate.ts";
-import { legacyResolveUploadDstPath } from "./cp.upload.ts";
-import type { LegacyStorageCpFlags } from "./cp.command.ts";
+import { iterateStoragePaths, iterateStoragePathsAll } from "../storage.iterate.ts";
+import { resolveUploadDstPath } from "./cp.upload.ts";
+import type { StorageCpFlags } from "./cp.command.ts";
 
 interface CpSummary {
   readonly uploaded: Array<{ from: string; to: string }>;
@@ -55,24 +59,19 @@ interface CpSummary {
  * `ss://`→local download, local→`ss://` upload, both `ss://` → error, both
  * local → unsupported.
  */
-export const legacyStorageCp = Effect.fn("legacy.storage.cp")(function* (
-  flags: LegacyStorageCpFlags,
-) {
+export const storageCp = Effect.fn("storage.cp")(function* (flags: StorageCpFlags) {
   const output = yield* Output;
-  const cliSettings = yield* LegacyCliSettings;
-  const telemetryState = yield* LegacyTelemetryState;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const resolver = yield* LegacyProjectRefResolver;
+  const cliSettings = yield* CommandSettings;
+  const telemetryState = yield* TelemetryState;
+  const linkedProjectCache = yield* LinkedProjectCache;
+  const resolver = yield* ProjectRefResolver;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const runtimeInfo = yield* RuntimeInfo;
 
   const jobsFlag = Option.getOrElse(flags.jobs, () => 1);
-  // A non-uint `--jobs` is already rejected in `cp.command.ts` with pflag's
-  // uint parse error. The remaining clamp handles `--jobs 0` specifically: a
-  // zero-sized job queue with an unbuffered channel and a zero-run priming
-  // loop deadlocks the first Put. We clamp `0 → 1` to avoid that hang — do
-  // not remove it.
+  // `--jobs 0` clamps to 1 to avoid a job-queue deadlock on the first item; a non-uint `--jobs`
+  // is already rejected in `cp.command.ts`.
   const jobs = jobsFlag < 1 ? 1 : jobsFlag;
   const contentTypeFlag = Option.getOrElse(flags.contentType, () => "");
   const cacheControlRaw = Option.getOrElse(flags.cacheControl, () => "max-age=3600");
@@ -82,12 +81,12 @@ export const legacyStorageCp = Effect.fn("legacy.storage.cp")(function* (
   let linkedRef = "";
 
   yield* Effect.gen(function* () {
-    // `--project-ref` never implies `--linked` and must not be silently
-    // discarded on the local target — see push.handler.ts's identical guard
-    // (db push) for the full TS-only rationale.
+    yield* assertStorageWorkdir(cliSettings.workdir);
+
+    // `--project-ref` only applies to the linked project; it never implies `--linked`.
     if (Option.isSome(flags.projectRef) && flags.local) {
       return yield* Effect.fail(
-        new LegacyStorageMutuallyExclusiveFlagsError({
+        new StorageMutuallyExclusiveFlagsError({
           message:
             "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
         }),
@@ -96,21 +95,21 @@ export const legacyStorageCp = Effect.fn("legacy.storage.cp")(function* (
 
     const projectRef = flags.local ? "" : yield* resolver.loadProjectRef(flags.projectRef);
     linkedRef = projectRef;
-    const loaded = yield* legacyLoadStorageConfig(cliSettings.workdir, projectRef);
+    const loaded = yield* loadStorageConfig(cliSettings, projectRef);
     if (loaded.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${loaded.appliedRemote}]\n`, "stderr");
     }
 
-    // Parse both URLs leniently (NOT the strict storage-URL parser), BEFORE
-    // building the client — an invalid url fails without an api-keys lookup.
+    // Parses both URLs leniently (not the strict storage-URL parser) before building the
+    // client, so an invalid URL fails without an api-keys lookup.
     const srcUrl = yield* parseCpUrl(flags.src, "src");
     const dstUrl = yield* parseCpUrl(flags.dst, "dst");
-    const srcIsStorage = srcUrl.scheme === LEGACY_STORAGE_SCHEME;
-    const dstIsStorage = dstUrl.scheme === LEGACY_STORAGE_SCHEME;
+    const srcIsStorage = srcUrl.scheme === STORAGE_SCHEME;
+    const dstIsStorage = dstUrl.scheme === STORAGE_SCHEME;
 
     const summary: CpSummary = { uploaded: [], downloaded: [] };
 
-    yield* legacyConnectStorageGateway(
+    yield* connectStorageGateway(
       { projectRef, config: loaded.config, userAgent: cliSettings.userAgent },
       (gateway) =>
         Effect.gen(function* () {
@@ -140,9 +139,9 @@ export const legacyStorageCp = Effect.fn("legacy.storage.cp")(function* (
               yield* uploadSingle(uploadCtx, dstUrl.path, localPath);
             }
           } else if (srcIsStorage && dstIsStorage) {
-            return yield* new LegacyStorageCopyBetweenBucketsError();
+            return yield* new StorageCopyBetweenBucketsError();
           } else {
-            return yield* new LegacyStorageUnsupportedOperationError();
+            return yield* new StorageUnsupportedOperationError();
           }
 
           if (output.format !== "text") {
@@ -163,11 +162,11 @@ export const legacyStorageCp = Effect.fn("legacy.storage.cp")(function* (
 
 const parseCpUrl = (raw: string, which: "src" | "dst") =>
   Effect.try({
-    try: () => legacyGoUrlParse(raw),
+    try: () => goUrlParse(raw),
     catch: (cause) =>
-      new LegacyStorageUrlParseError({
+      new StorageUrlParseError({
         message: `failed to parse ${which} url: ${
-          cause instanceof LegacyGoUrlParseError ? cause.message : String(cause)
+          cause instanceof GoUrlParseError ? cause.message : String(cause)
         }`,
       }),
   });
@@ -182,9 +181,9 @@ const writeChunk = (handle: FileSystem.File, chunk: Uint8Array) => handle.writeA
 
 // Download (remote → local)
 
-/** Go `api.DownloadObject` (`objects.go:135-142`): O_EXCL create, then stream. */
+/** Downloads a single object: creates the file exclusively (fails if it exists), then streams into it. */
 const downloadSingle = (
-  gateway: LegacyStorageGateway,
+  gateway: StorageGateway,
   fs: FileSystem.FileSystem,
   remotePath: string,
   localPath: string,
@@ -195,7 +194,7 @@ const downloadSingle = (
       const handle = yield* fs.open(localPath, { flag: "wx" }).pipe(
         Effect.mapError(
           (cause) =>
-            new LegacyStorageFileError({
+            new StorageFileError({
               message: `failed to create file: ${String(cause.cause ?? cause)}`,
             }),
         ),
@@ -207,9 +206,9 @@ const downloadSingle = (
     }),
   );
 
-/** Go `DownloadStorageObjectAll` (`cp.go:63-97`): BFS, O_TRUNC, mkdir parents. */
+/** Recursively downloads a remote prefix: BFS walk, truncating existing files, creating parent dirs. */
 const downloadAll = (
-  gateway: LegacyStorageGateway,
+  gateway: StorageGateway,
   output: typeof Output.Service,
   fs: FileSystem.FileSystem,
   path: Path.Path,
@@ -229,33 +228,25 @@ const downloadAll = (
       : localPath0;
 
     const tasks: Array<{ objectPath: string; dstPath: string; isDir: boolean }> = [];
-    // Capture the walk error as a value rather than failing on it immediately:
-    // Go returns `errors.Join(walkErr, jq.Collect())` (`cp.go:96`), so two
-    // ordering rules hold. (1) The `count == 0 → "Object not found"` check
-    // precedes the join (`cp.go:93-95`), masking a walk error when nothing was
-    // visited. (2) A walk that errors partway still runs the already-queued
-    // downloads before the walk error surfaces — so the check is sequenced after
-    // the download pass below, not before it.
-    const iterError = yield* legacyIterateStoragePathsAll(
-      gateway,
-      output,
-      remotePath,
-      (objectPath) =>
-        Effect.gen(function* () {
-          const relPath = objectPath.startsWith(remotePath)
-            ? objectPath.slice(remotePath.length)
-            : objectPath;
-          const dstPath = path.join(localPath, relPath);
-          yield* output.raw(`Downloading: ${objectPath} => ${dstPath}\n`, "stderr");
-          tasks.push({ objectPath, dstPath, isDir: objectPath.endsWith("/") });
-        }),
+    // Captured as a value, not failed immediately: an "Object not found" (nothing visited) must
+    // mask a walk error, and a walk that errors partway must still run the already-queued
+    // downloads before the walk error surfaces — so this is checked after the download pass below.
+    const iterError = yield* iterateStoragePathsAll(gateway, output, remotePath, (objectPath) =>
+      Effect.gen(function* () {
+        const relPath = objectPath.startsWith(remotePath)
+          ? objectPath.slice(remotePath.length)
+          : objectPath;
+        const dstPath = path.join(localPath, relPath);
+        yield* output.raw(`Downloading: ${objectPath} => ${dstPath}\n`, "stderr");
+        tasks.push({ objectPath, dstPath, isDir: objectPath.endsWith("/") });
+      }),
     ).pipe(
-      Effect.as<LegacyStorageGatewayError | undefined>(undefined),
+      Effect.as<StorageGatewayError | undefined>(undefined),
       Effect.catch((error) => Effect.succeed(error)),
     );
 
     if (tasks.length === 0) {
-      return yield* new LegacyStorageObjectNotFoundError(remotePath);
+      return yield* new StorageObjectNotFoundError(remotePath);
     }
 
     yield* Effect.forEach(
@@ -270,7 +261,7 @@ const downloadAll = (
                   const handle = yield* fs.open(task.dstPath, { flag: "w" }).pipe(
                     Effect.mapError(
                       (cause) =>
-                        new LegacyStorageFileError({
+                        new StorageFileError({
                           message: `failed to create file: ${String(cause.cause ?? cause)}`,
                         }),
                     ),
@@ -285,10 +276,8 @@ const downloadAll = (
       { concurrency: jobs },
     );
 
-    // Surface the walk error only after the queued downloads have run, matching
-    // `errors.Join(walkErr, jq.Collect())`. A download failure propagates from
-    // the pass above (the job queue's first error); the rare walk-error +
-    // download-error pair is collapsed to whichever fails first.
+    // Surfaced only after the queued downloads have run; a download failure propagates from the
+    // pass above first, so a rare walk-error + download-error pair collapses to whichever fails first.
     if (iterError !== undefined) {
       return yield* Effect.fail(iterError);
     }
@@ -298,7 +287,7 @@ const makeDirIfNotExist = (fs: FileSystem.FileSystem, dir: string) =>
   fs.makeDirectory(dir, { recursive: true }).pipe(
     Effect.mapError(
       (cause) =>
-        new LegacyStorageFileError({
+        new StorageFileError({
           message: `failed to mkdir: ${String(cause.cause ?? cause)}`,
         }),
     ),
@@ -307,7 +296,7 @@ const makeDirIfNotExist = (fs: FileSystem.FileSystem, dir: string) =>
 // Upload (local → remote)
 
 interface UploadCtx {
-  readonly gateway: LegacyStorageGateway;
+  readonly gateway: StorageGateway;
   readonly output: typeof Output.Service;
   readonly fs: FileSystem.FileSystem;
   readonly path: Path.Path;
@@ -321,13 +310,13 @@ interface UploadCtx {
 const resolveContentType = (ctx: UploadCtx, filePath: string) =>
   Effect.gen(function* () {
     if (ctx.contentTypeFlag.length > 0) {
-      return legacyRefineUploadContentType(ctx.contentTypeFlag, filePath);
+      return refineUploadContentType(ctx.contentTypeFlag, filePath);
     }
-    const sniff = yield* legacyReadSniffBytes(ctx.fs, filePath);
-    return legacyContentTypeForUpload(sniff, filePath);
+    const sniff = yield* readSniffBytes(ctx.fs, filePath);
+    return contentTypeForUpload(sniff, filePath);
   });
 
-/** Go `api.UploadObject` single (`cp.go:55`): no x-upsert, no "Uploading:" line. */
+/** Uploads a single file without overwrite and without an "Uploading:" progress line. */
 const uploadSingle = (ctx: UploadCtx, remoteDstPath: string, localPath: string) =>
   Effect.gen(function* () {
     const contentType = yield* resolveContentType(ctx, localPath);
@@ -339,7 +328,7 @@ const uploadSingle = (ctx: UploadCtx, remoteDstPath: string, localPath: string) 
     ctx.summary.uploaded.push({ from: localPath, to: remoteDstPath });
   });
 
-/** Go `UploadStorageObjectAll` (`cp.go:99-172`): walk + dst-key + auto-create. */
+/** Recursively uploads a local directory: walks files, resolves each destination key, auto-creating the bucket if needed. */
 const uploadAll = (ctx: UploadCtx, remotePath: string, localPath: string, jobs: number) =>
   Effect.gen(function* () {
     const noSlash = remotePath.endsWith("/") ? remotePath.slice(0, -1) : remotePath;
@@ -349,7 +338,7 @@ const uploadAll = (ctx: UploadCtx, remotePath: string, localPath: string, jobs: 
     let fileExists = false;
     if (noSlash.length > 0) {
       const base = nodePath.posix.basename(noSlash);
-      yield* legacyIterateStoragePaths(ctx.gateway, ctx.output, noSlash, (objectName) =>
+      yield* iterateStoragePaths(ctx.gateway, ctx.output, noSlash, (objectName) =>
         Effect.sync(() => {
           if (objectName === base) fileExists = true;
           if (objectName === `${base}/`) dirExists = true;
@@ -362,7 +351,7 @@ const uploadAll = (ctx: UploadCtx, remotePath: string, localPath: string, jobs: 
 
     const tasks: Array<{ filePath: string; dstPath: string }> = [];
     for (const file of files) {
-      const dstPath = legacyResolveUploadDstPath({
+      const dstPath = resolveUploadDstPath({
         remotePath,
         relPath: file.relPath,
         fileName: ctx.path.basename(file.filePath),
@@ -395,7 +384,7 @@ const uploadOneWithAutoCreate = (ctx: UploadCtx, dstPath: string, filePath: stri
     });
     yield* upload.pipe(
       Effect.catch((error) =>
-        error instanceof LegacyStorageGatewayStatusError &&
+        error instanceof StorageGatewayStatusError &&
         error.body.includes('"error":"Bucket not found"')
           ? autoCreateAndRetry(ctx, dstPath, upload, error)
           : Effect.fail(error),
@@ -407,12 +396,12 @@ const uploadOneWithAutoCreate = (ctx: UploadCtx, dstPath: string, filePath: stri
 const autoCreateAndRetry = (
   ctx: UploadCtx,
   dstPath: string,
-  retry: Effect.Effect<void, LegacyStorageGatewayError>,
-  original: LegacyStorageGatewayStatusError,
+  retry: Effect.Effect<void, StorageGatewayError>,
+  original: StorageGatewayStatusError,
 ) =>
   Effect.gen(function* () {
-    const [bucket, prefix] = legacySplitBucketPrefix(dstPath);
-    // Go only auto-creates when a prefix follows the bucket (`cp.go:154`).
+    const [bucket, prefix] = splitBucketPrefix(dstPath);
+    // Only auto-creates the bucket when a prefix follows it; a bare bucket destination fails instead.
     if (prefix.length === 0) {
       return yield* Effect.fail(original);
     }
@@ -430,14 +419,14 @@ const bucketAutoCreateProps = (ctx: UploadCtx, bucket: string) =>
     }
     return yield* Effect.try({
       try: () =>
-        legacyResolveBucketProps({
+        resolveBucketProps({
           document: ctx.document,
           name: bucket,
           bucket: bucketConfig,
-          storageFileSizeLimitBytes: legacyParseFileSizeLimit(ctx.config.storage.file_size_limit),
+          storageFileSizeLimitBytes: parseFileSizeLimit(ctx.config.storage.file_size_limit),
         }),
       catch: (cause) =>
-        new LegacyStorageConfigError({
+        new StorageConfigError({
           message: cause instanceof Error ? cause.message : String(cause),
         }),
     });
@@ -482,7 +471,7 @@ const walkUploadDir = (
     const names = [...(yield* fs.readDirectory(dir))].sort();
     for (const name of names) {
       const abs = path.join(dir, name);
-      // afero.Walk uses Lstat (no-follow); a symlink is not regular → skipped.
+      // Symlinks are detected via `readLink` and skipped without following them.
       const isSymlink = yield* fs.readLink(abs).pipe(
         Effect.as(true),
         Effect.catch(() => Effect.succeed(false)),

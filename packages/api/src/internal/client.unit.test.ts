@@ -468,9 +468,8 @@ describe("makeSupabaseApiClient", () => {
     ]);
   });
 
-  // Both payloads are the shapes reported against 2.112.0, where the spec's
-  // Z-anchored pattern rejected them and broke `link` and `branches list`
-  // outright (supabase/cli#6115).
+  // Regression payloads: the spec's Z-anchored pattern used to reject these and
+  // break `link` and `branches list` outright.
   test("decodes timestamps with a numeric UTC offset", async () => {
     const apiKeys = await Effect.runPromise(
       makeSupabaseApiClient(config).pipe(
@@ -573,7 +572,7 @@ describe("makeSupabaseApiClient", () => {
       ),
     );
 
-    expect(result.data.result.ssl.validation_records).toBeUndefined();
+    expect(result.data.result.ssl?.validation_records).toBeUndefined();
   });
 
   test("accepts missing custom-hostname ownership verification", async () => {
@@ -612,7 +611,7 @@ describe("makeSupabaseApiClient", () => {
     );
 
     expect(result.data.result.ownership_verification).toBeUndefined();
-    expect(result.data.result.ssl.validation_records).toBeUndefined();
+    expect(result.data.result.ssl?.validation_records).toBeUndefined();
   });
 
   test("accepts processing custom-hostname responses without top-level status or hostname", async () => {
@@ -655,7 +654,7 @@ describe("makeSupabaseApiClient", () => {
 
     expect(result.status).toBeUndefined();
     expect(result.custom_hostname).toBeUndefined();
-    expect(result.data.result.ssl.validation_records).toBeUndefined();
+    expect(result.data.result.ssl?.validation_records).toBeUndefined();
   });
 
   test("does not retry 5xx responses for POST requests", async () => {
@@ -723,10 +722,8 @@ describe("makeSupabaseApiClient", () => {
       makeSupabaseApiClient(config).pipe(
         Effect.flatMap((client) =>
           client.execute<"v1DiffABranch">(operationDefinitions.v1DiffABranch, {
-            // 20-letter project ref. Used to be "branch-ref" but the UUID
-            // branch of the oneOf union now has an actual pattern check, so
-            // free-form strings like "branch-ref" no longer match either
-            // branch.
+            // Must satisfy the oneOf union's project-ref/uuid pattern; a free-form
+            // string like "branch-ref" doesn't match either branch.
             branch_id_or_ref: "abcdefghijklmnopqrst",
           }),
         ),
@@ -1126,10 +1123,13 @@ describe("makeSupabaseApiClient", () => {
                         },
                         vector_buckets: { enabled: false, max_buckets: 0, max_indexes: 0 },
                       },
-                      capabilities: { list_v2: true, iceberg_catalog: true },
+                      capabilities: {
+                        list_v2: true,
+                        iceberg_catalog: true,
+                        object_versioning: true,
+                      },
                       upstream_target: "main",
                       migration_version: "1",
-                      database_pool_mode: "transaction",
                     },
                   },
                 },

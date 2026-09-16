@@ -1,9 +1,9 @@
-import type { ApiKeyResponse, V1CreateAProjectOutput } from "@supabase/api/effect";
+import type { ApiKeyResponse_Output, V1CreateAProjectOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "vitest";
 
-import { apiKeyValue, apiKeysToEnv } from "../../command-internal/legacy-api-keys.format.ts";
+import { apiKeyValue, apiKeysToEnv } from "../../command-internal/api-keys.format.ts";
 import {
-  type LegacyLinkedProject,
+  type LinkedProject,
   dashboardUrlForProfile,
   formatRegion,
   renderProjectApiKeysTable,
@@ -12,10 +12,10 @@ import {
 } from "./projects.format.ts";
 import { generateDbPassword } from "./projects.prompt.ts";
 
-type ApiKey = typeof ApiKeyResponse.Type;
+type ApiKey = typeof ApiKeyResponse_Output.Type;
 type CreatedProject = typeof V1CreateAProjectOutput.Type;
 
-const PROJECT: LegacyLinkedProject = {
+const PROJECT: LinkedProject = {
   id: "abcdefghijklmnopqrst",
   ref: "abcdefghijklmnopqrst",
   organization_id: "org-id",

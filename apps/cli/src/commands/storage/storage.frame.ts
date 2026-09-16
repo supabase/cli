@@ -1,100 +1,112 @@
 import { CliConfigSchema, type CliConfig } from "@supabase/config/effect";
 import { loadCliConfig, type InternalLoadCliConfigOptions } from "@supabase/config/internal";
-import { Effect, Schema } from "effect";
+import { Effect, FileSystem, Schema } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 
 import {
-  legacyResolveStorageCredentials,
-  legacyStorageGatewayFetch,
-} from "../../command-internal/legacy-storage-credentials.ts";
+  resolveStorageCredentials,
+  storageGatewayFetch,
+} from "../../command-internal/storage-credentials.ts";
+import { makeStorageGateway, type StorageGateway } from "../../command-internal/storage-gateway.ts";
 import {
-  legacyMakeStorageGateway,
-  type LegacyStorageGateway,
-} from "../../command-internal/legacy-storage-gateway.ts";
+  GoUrlParseError,
+  StorageUrlPatternError,
+  parseStorageUrl,
+} from "../../command-internal/storage-url.ts";
+import { StorageConfigError } from "../../command-internal/storage-credentials.errors.ts";
+import { missingProjectConfigMessageEffect } from "../../command-internal/workdir-project.ts";
+import { shouldSearchAncestors } from "../../command-internal/workdir-search.ts";
+import { validateWorkdirIsDirectory } from "../../command-internal/workdir-validation.ts";
 import {
-  LegacyGoUrlParseError,
-  LegacyStorageUrlPatternError,
-  legacyParseStorageUrl,
-} from "../../command-internal/legacy-storage-url.ts";
-import { LegacyStorageConfigError } from "../../command-internal/legacy-storage-credentials.errors.ts";
-import { LegacyStorageInvalidUrlError, LegacyStorageUrlParseError } from "./storage.errors.ts";
+  StorageInvalidUrlError,
+  StorageMissingProjectConfigError,
+  StorageUrlParseError,
+  StorageWorkdirError,
+} from "./storage.errors.ts";
 
 /**
- * Shared plumbing for the four `storage` subcommands. Each handler resolves the
- * project ref (the value of `--local` decides local vs linked, mirroring Go's
- * `storage.go:21-32`), then uses these helpers for the parts Go shares via
- * `utils.Config` + `client.NewStorageAPI`.
+ * Shared plumbing for the four `storage` subcommands: resolving the project ref
+ * (`--local`'s value decides local vs linked) and building the gateway client.
  */
 
 const decodeDefaultCliConfig = Schema.decodeUnknownSync(CliConfigSchema);
 
-interface LegacyLoadedStorageConfig {
+interface LoadedStorageConfig {
   readonly config: CliConfig;
   readonly document: Record<string, unknown> | undefined;
   readonly appliedRemote: string | undefined;
 }
 
 /**
- * Load `supabase/config.toml`: a parse failure aborts
- * (`LegacyStorageConfigError`); a missing file falls back to the embedded
- * defaults. When a `[remotes.<name>]` block matches the linked ref,
- * `appliedRemote` carries its name so the caller can print the
- * `Loading config override:` line.
+ * Loads `supabase/config.toml`, falling back to the embedded defaults when it's
+ * missing — except for a local target with an explicit `--workdir`, which raises
+ * `StorageMissingProjectConfigError` instead (see that error's doc for why). A
+ * remote target never hard-fails this way, since credential resolution doesn't
+ * read `config` at all. `appliedRemote` is set when a `[remotes.<name>]` block
+ * matches the linked ref.
  */
-export const legacyLoadStorageConfig = Effect.fnUntraced(function* (
-  workdir: string,
+export const loadStorageConfig = Effect.fnUntraced(function* (
+  cliSettings: { readonly workdir: string; readonly explicitWorkdir: boolean },
   projectRef: string,
 ) {
   const loadOptions: InternalLoadCliConfigOptions =
-    projectRef !== "" ? { projectRef, goViperCompat: true } : { goViperCompat: true };
-  const loaded = yield* loadCliConfig(workdir, loadOptions).pipe(
+    projectRef !== ""
+      ? { projectRef, goViperCompat: true, search: shouldSearchAncestors(cliSettings) }
+      : { goViperCompat: true, search: shouldSearchAncestors(cliSettings) };
+  const loaded = yield* loadCliConfig(cliSettings.workdir, loadOptions).pipe(
     Effect.catchTag(
       "CliConfigParseError",
       (cause) =>
-        new LegacyStorageConfigError({
+        new StorageConfigError({
           message: `failed to parse supabase/config.toml: ${String(cause.cause)}`,
         }),
     ),
   );
   if (loaded === null) {
+    if (cliSettings.explicitWorkdir && projectRef === "") {
+      return yield* new StorageMissingProjectConfigError({
+        message: yield* missingProjectConfigMessageEffect(cliSettings),
+      });
+    }
     return {
       config: decodeDefaultCliConfig({}),
       document: undefined,
       appliedRemote: undefined,
-    } satisfies LegacyLoadedStorageConfig;
+    } satisfies LoadedStorageConfig;
   }
   return {
     config: loaded.config,
     document: loaded.document,
     appliedRemote: loaded.appliedRemote,
-  } satisfies LegacyLoadedStorageConfig;
+  } satisfies LoadedStorageConfig;
+});
+
+/** Validates the resolved `--workdir`/`SUPABASE_WORKDIR` exists and is a directory. */
+export const assertStorageWorkdir = Effect.fnUntraced(function* (workdir: string) {
+  const fs = yield* FileSystem.FileSystem;
+  yield* validateWorkdirIsDirectory(workdir, fs).pipe(
+    Effect.mapError((error) => new StorageWorkdirError({ message: error.message })),
+  );
 });
 
 /**
- * Resolve Storage credentials and run `body` against a freshly-built gateway,
- * with the `FetchHttpClient.Fetch` override applied to the gateway calls only
- * (CA-trusting for a local https gateway, plain `globalThis.fetch` otherwise).
- *
- * The credential lookup (the `--linked` api-keys call) runs BEFORE the override
- * scope, so it still honors `--dns-resolver https` through the Management API
- * client — mirroring Go, where Storage uses `status.NewKongClient` /
- * `http.DefaultClient` while `tenant.GetApiKeys` uses the DoH-wrapped client.
- *
- * `legacyMakeStorageGateway` only constructs the client object (no network), so
- * building it inside the override scope is fine; the override is read per request
- * from the fiber context when a gateway call executes.
+ * Resolves Storage credentials and runs `body` against a freshly-built gateway, with
+ * `FetchHttpClient.Fetch` overridden for gateway calls only (CA-trusting for a local
+ * https gateway, otherwise plain `fetch`). Credential lookup runs before that
+ * override scope, so it still honors `--dns-resolver https` through the Management
+ * API client.
  */
-export const legacyConnectStorageGateway = <E, R>(
+export const connectStorageGateway = <E, R>(
   opts: { readonly projectRef: string; readonly config: CliConfig; readonly userAgent: string },
-  body: (gateway: LegacyStorageGateway) => Effect.Effect<void, E, R>,
+  body: (gateway: StorageGateway) => Effect.Effect<void, E, R>,
 ) =>
   Effect.gen(function* () {
-    const credentials = yield* legacyResolveStorageCredentials({
+    const credentials = yield* resolveStorageCredentials({
       projectRef: opts.projectRef,
       config: opts.config,
     });
     const gatewayOps = Effect.gen(function* () {
-      const gateway = yield* legacyMakeStorageGateway({
+      const gateway = yield* makeStorageGateway({
         baseUrl: credentials.baseUrl,
         apiKey: credentials.apiKey,
         userAgent: opts.userAgent,
@@ -102,29 +114,23 @@ export const legacyConnectStorageGateway = <E, R>(
       return yield* body(gateway);
     });
     return yield* gatewayOps.pipe(
-      Effect.provideService(
-        FetchHttpClient.Fetch,
-        legacyStorageGatewayFetch(credentials.localKongCa),
-      ),
+      Effect.provideService(FetchHttpClient.Fetch, storageGatewayFetch(credentials.localKongCa)),
     );
   });
 
 /**
- * Go `client.ParseStorageURL` as an Effect: returns the object path or fails
- * with the tagged `LegacyStorageInvalidUrlError` (pattern mismatch) /
- * `LegacyStorageUrlParseError` (url-parse failure, wrapped like Go's
- * `failed to parse storage url: %w`). Used by `ls`, `mv`, and `rm`; `cp` parses
- * `src`/`dst` with `legacyGoUrlParse` directly (it branches on the scheme and
- * wraps as `failed to parse src url` / `failed to parse dst url`).
+ * Parses a storage URL into its object path, failing with `StorageInvalidUrlError`
+ * on a pattern mismatch or `StorageUrlParseError` on a URL-parse failure. Used by
+ * `ls`, `mv`, and `rm`; `cp` parses `src`/`dst` directly.
  */
-export const legacyParseStorageUrlEffect = (objectUrl: string) =>
+export const parseStorageUrlEffect = (objectUrl: string) =>
   Effect.try({
-    try: () => legacyParseStorageUrl(objectUrl),
+    try: () => parseStorageUrl(objectUrl),
     catch: (cause) => {
-      if (cause instanceof LegacyStorageUrlPatternError) {
-        return new LegacyStorageInvalidUrlError();
+      if (cause instanceof StorageUrlPatternError) {
+        return new StorageInvalidUrlError();
       }
-      const message = cause instanceof LegacyGoUrlParseError ? cause.message : String(cause);
-      return new LegacyStorageUrlParseError({ message: `failed to parse storage url: ${message}` });
+      const message = cause instanceof GoUrlParseError ? cause.message : String(cause);
+      return new StorageUrlParseError({ message: `failed to parse storage url: ${message}` });
     },
   });

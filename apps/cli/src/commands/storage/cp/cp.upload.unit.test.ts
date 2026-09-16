@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { legacyResolveUploadDstPath } from "./cp.upload.ts";
+import { resolveUploadDstPath } from "./cp.upload.ts";
 
-describe("legacyResolveUploadDstPath", () => {
+describe("resolveUploadDstPath", () => {
   describe("single file (relPath === '.')", () => {
     it("appends the file name when the dst prefix is a bucket root", () => {
       // remote "private" → prefix "" is a directory → keep the file name.
       expect(
-        legacyResolveUploadDstPath({
+        resolveUploadDstPath({
           remotePath: "private",
           relPath: ".",
           fileName: "readme.md",
@@ -22,7 +22,7 @@ describe("legacyResolveUploadDstPath", () => {
     it("keeps the destination key when it targets an existing object", () => {
       // remote "private/file" → prefix "file" is not a dir, and the object exists.
       expect(
-        legacyResolveUploadDstPath({
+        resolveUploadDstPath({
           remotePath: "private/file",
           relPath: ".",
           fileName: "readme.md",
@@ -36,7 +36,7 @@ describe("legacyResolveUploadDstPath", () => {
 
     it("appends the file name when the dst dir exists and no same-named file does", () => {
       expect(
-        legacyResolveUploadDstPath({
+        resolveUploadDstPath({
           remotePath: "private/docs",
           relPath: ".",
           fileName: "readme.md",
@@ -52,7 +52,7 @@ describe("legacyResolveUploadDstPath", () => {
   describe("directory walk", () => {
     it("nests under baseName for a new bucket (noSlash empty)", () => {
       expect(
-        legacyResolveUploadDstPath({
+        resolveUploadDstPath({
           remotePath: "",
           relPath: "readme.md",
           fileName: "readme.md",
@@ -66,7 +66,7 @@ describe("legacyResolveUploadDstPath", () => {
 
     it("nests under baseName when the destination dir exists", () => {
       expect(
-        legacyResolveUploadDstPath({
+        resolveUploadDstPath({
           remotePath: "/private/dir/",
           relPath: "readme.md",
           fileName: "readme.md",
@@ -80,7 +80,7 @@ describe("legacyResolveUploadDstPath", () => {
 
     it("preserves a nested relative path under baseName", () => {
       expect(
-        legacyResolveUploadDstPath({
+        resolveUploadDstPath({
           remotePath: "/private/dir/",
           relPath: "docs/api.md",
           fileName: "api.md",
@@ -94,7 +94,7 @@ describe("legacyResolveUploadDstPath", () => {
 
     it("does not nest under baseName when it is '.' (cwd source)", () => {
       expect(
-        legacyResolveUploadDstPath({
+        resolveUploadDstPath({
           remotePath: "/private",
           relPath: "readme.md",
           fileName: "readme.md",

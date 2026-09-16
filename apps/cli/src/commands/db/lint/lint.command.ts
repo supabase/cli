@@ -1,10 +1,10 @@
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyParseSchemaFlags } from "../../../command-internal/legacy-schema-flags.ts";
-import { legacyDbLint } from "./lint.handler.ts";
-import { legacyDbLintRuntimeLayer } from "./lint.layers.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { parseSchemaFlags } from "../../../command-internal/schema-flags.ts";
+import { dbLint } from "./lint.handler.ts";
+import { dbLintRuntimeLayer } from "./lint.layers.ts";
 
 const config = {
   dbUrl: Flag.string("db-url").pipe(
@@ -31,7 +31,7 @@ const config = {
     Flag.withDescription("Comma separated list of schema to include."),
     Flag.atLeast(0),
     Flag.mapTryCatch(
-      (rawValues) => legacyParseSchemaFlags(rawValues),
+      (rawValues) => parseSchemaFlags(rawValues),
       (err) => (err instanceof Error ? err.message : String(err)),
     ),
   ),
@@ -45,14 +45,14 @@ const config = {
   ),
 } as const;
 
-export type LegacyDbLintFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type DbLintFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyDbLintCommand = Command.make("lint", config).pipe(
+export const dbLintCommand = Command.make("lint", config).pipe(
   Command.withDescription("Checks local database for typing error."),
   Command.withShortDescription("Checks local database for typing error"),
   Command.withHandler((flags) =>
-    legacyDbLint(flags).pipe(
-      withLegacyCommandInstrumentation({
+    dbLint(flags).pipe(
+      withCommandTelemetry({
         flags: {
           "db-url": flags.dbUrl,
           linked: flags.linked,
@@ -62,18 +62,13 @@ export const legacyDbLintCommand = Command.make("lint", config).pipe(
           level: flags.level,
           "fail-on": flags.failOn,
         },
-        // level/fail-on are Flag.choice and are auto-detected as safe via
-        // `config` below. --schema stays redacted: it's a string-slice flag,
-        // not a choice. --project-ref has no established telemetry-safety
-        // baseline either, so it stays redacted too.
+        // level/fail-on are auto-detected as safe (Flag.choice); --schema and
+        // --project-ref stay redacted (no established safelist).
         config,
-        // Telemetry reports flags under their canonical name even for the
-        // `-s` shorthand; map it so `db lint -s public` records the schema
-        // flag in telemetry.
         aliases: { s: "schema" },
       }),
       withJsonErrorHandling,
     ),
   ),
-  Command.provide(legacyDbLintRuntimeLayer),
+  Command.provide(dbLintRuntimeLayer),
 );

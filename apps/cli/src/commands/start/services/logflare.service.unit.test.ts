@@ -2,16 +2,13 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, test, vi } from "vitest";
 
-import {
-  legacyBuildLogflareContainerSpec,
-  type LegacyLogflareContainerSpecInput,
-} from "./logflare.service.ts";
+import { buildLogflareContainerSpec, type LogflareContainerSpecInput } from "./logflare.service.ts";
 
 afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-const base: LegacyLogflareContainerSpecInput = {
+const base: LogflareContainerSpecInput = {
   image: "supabase/logflare:1.0.0",
   projectId: "proj",
   networkId: "supabase_network_proj",
@@ -27,9 +24,9 @@ const base: LegacyLogflareContainerSpecInput = {
   dbPassword: "secret",
 };
 
-describe("legacyBuildLogflareContainerSpec", () => {
+describe("buildLogflareContainerSpec", () => {
   test("builds the shared shape: identity, hostname, entrypoint/cmd, ports, healthcheck, aliases (start.go:350-394)", () => {
-    const spec = legacyBuildLogflareContainerSpec(base);
+    const spec = buildLogflareContainerSpec(base);
     expect(spec.image).toBe("supabase/logflare:1.0.0");
     expect(spec.containerName).toBe("supabase_analytics_proj");
     expect(spec.hostname).toBe("127.0.0.1");
@@ -62,7 +59,7 @@ describe("legacyBuildLogflareContainerSpec", () => {
   });
 
   test("emits the common DB_*/LOGFLARE_* env vars regardless of backend (start.go:315-330)", () => {
-    const spec = legacyBuildLogflareContainerSpec(base);
+    const spec = buildLogflareContainerSpec(base);
     expect(spec.env).toMatchObject({
       DB_DATABASE: "_supabase",
       DB_HOSTNAME: "supabase_db_proj",
@@ -82,7 +79,7 @@ describe("legacyBuildLogflareContainerSpec", () => {
   });
 
   test("postgres backend: sets POSTGRES_BACKEND_URL/SCHEMA, no GCP env or bind, no bind mounts (start.go:343-347)", () => {
-    const spec = legacyBuildLogflareContainerSpec({ ...base, backend: "postgres" });
+    const spec = buildLogflareContainerSpec({ ...base, backend: "postgres" });
     expect(spec.env.POSTGRES_BACKEND_URL).toBe(
       "postgresql://postgres:secret@supabase_db_proj:5432/_supabase",
     );
@@ -94,7 +91,7 @@ describe("legacyBuildLogflareContainerSpec", () => {
   });
 
   test("bigquery backend: sets GOOGLE_* env and binds the host JWT path, no postgres env (start.go:334-342)", () => {
-    const spec = legacyBuildLogflareContainerSpec({
+    const spec = buildLogflareContainerSpec({
       ...base,
       backend: "bigquery",
       gcpProjectId: "my-project",
@@ -113,7 +110,7 @@ describe("legacyBuildLogflareContainerSpec", () => {
   });
 
   test("bigquery backend still binds workdir itself when gcpJwtPath is empty, matching Go's unconditional filepath.Join", () => {
-    const spec = legacyBuildLogflareContainerSpec({
+    const spec = buildLogflareContainerSpec({
       ...base,
       backend: "bigquery",
       gcpJwtPath: "",
@@ -124,7 +121,7 @@ describe("legacyBuildLogflareContainerSpec", () => {
 
   test("bigquery on a slim analytics image uses the same gcloud.json bind as docker.io", () => {
     vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
-    const spec = legacyBuildLogflareContainerSpec({
+    const spec = buildLogflareContainerSpec({
       ...base,
       image: "ghcr.io/supabase/cli/analytics:v1.50.6",
       backend: "bigquery",
@@ -140,11 +137,11 @@ describe("legacyBuildLogflareContainerSpec", () => {
 
   test("overrides the entrypoint and uses wget on a slim analytics image", () => {
     vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
-    const slim = legacyBuildLogflareContainerSpec({
+    const slim = buildLogflareContainerSpec({
       ...base,
       image: "ghcr.io/supabase/cli/analytics:v1.50.6",
     });
-    const dockerIo = legacyBuildLogflareContainerSpec(base);
+    const dockerIo = buildLogflareContainerSpec(base);
     expect(slim.entrypoint).toBe(dockerIo.entrypoint);
     expect(slim.cmd).toEqual(dockerIo.cmd);
     expect(slim.healthcheck?.test).toEqual([

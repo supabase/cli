@@ -1,56 +1,37 @@
 import { Effect, FileSystem, Option, Path } from "effect";
-import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
-import { legacyLoadProjectEnv } from "../../../command-internal/legacy-db-config.toml-read.ts";
-import { legacySignJwtWithJwk } from "../../../command-internal/legacy-go-jwt.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
+import { CommandSettings } from "../../../config/command-settings.service.ts";
+import { loadProjectEnv } from "../../../command-internal/db-config.toml-read.ts";
+import { signJwtWithJwk } from "../../../command-internal/go-jwt.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import type { LegacyGenBearerJwtFlags } from "./bearer-jwt.command.ts";
+import type { GenBearerJwtFlags } from "./bearer-jwt.command.ts";
 import {
-  legacyBuildBearerJwtClaims,
-  legacyEncodeBearerJwtClaims,
-  legacyMergeBearerJwtPayload,
+  buildBearerJwtClaims,
+  encodeBearerJwtClaims,
+  mergeBearerJwtPayload,
 } from "./bearer-jwt.claims.ts";
 import {
-  legacyBearerJwtErrorMessage,
-  LegacyGenBearerJwtPayloadError,
-  LegacyGenBearerJwtRoleRequiredError,
-  LegacyGenBearerJwtSignError,
+  bearerJwtErrorMessage,
+  GenBearerJwtPayloadError,
+  GenBearerJwtRoleRequiredError,
+  GenBearerJwtSignError,
 } from "./bearer-jwt.errors.ts";
-import { legacyResolveBearerJwtSigningKey } from "./bearer-jwt.signing-key.ts";
+import { resolveBearerJwtSigningKey } from "./bearer-jwt.signing-key.ts";
 
 /**
- * `gen bearer-jwt`: fully local, no Docker, no network. Established order:
+ * `gen bearer-jwt` is fully local (no Docker, no network).
  *
- *   0. Required-flag validation (ported as the `flags.role` check just
- *      below) — runs after the telemetry context is installed but before
- *      claims parsing, so a missing `--role` still flushes `telemetry.json`
- *      (see {@link LegacyGenBearerJwtRoleRequiredError}).
- *   1. Claims parsing (ported as {@link legacyBuildBearerJwtClaims} +
- *      {@link legacyMergeBearerJwtPayload}) — runs entirely BEFORE the rest of
- *      the command runs, so a malformed `--payload` fails before any config
- *      load or signing-key prompt ever happens.
- *   2. Project config load — loads the project `.env` cascade (see
- *      SIDE_EFFECTS.md); ported via `legacyLoadProjectEnv` for the same
- *      failure mode, even though this command has no `.env`-sourced prompt
- *      of its own to gate.
- *   3. Signing-key resolution (ported as
- *      {@link legacyResolveBearerJwtSigningKey} in `bearer-jwt.signing-key.ts`)
- *      — resolves a JWK, prompting interactively when needed.
- *   4. Signing (ported as `legacySignJwtWithJwk` in `legacy-go-jwt.ts`) —
- *      signs the claims.
- *   5. The token, then exactly one trailing newline, on stdout. Nothing
- *      else ever reaches stdout; every prompt and error goes to stderr.
+ * Required-flag validation and claims-payload parsing both run before the
+ * project config load and signing-key resolution, so a missing `--role` or a
+ * malformed `--payload` fails before any config load or signing-key prompt.
  *
- * Unconditional on `--output-format`, matching `gen signing-key`'s own established
- * precedent (`signing-key.handler.ts`): the raw token IS the payload — there is no
- * separate human/machine shape to choose between, and this command has no
- * `-o`/`--output-format` concept at all.
+ * Output is unconditional on `--output-format`: the raw token is the only
+ * payload, written to stdout with one trailing newline; every prompt and
+ * error goes to stderr.
  */
-export const legacyGenBearerJwt = Effect.fn("legacy.gen.bearer-jwt")(function* (
-  flags: LegacyGenBearerJwtFlags,
-) {
-  const cliSettings = yield* LegacyCliSettings;
-  const telemetryState = yield* LegacyTelemetryState;
+export const genBearerJwt = Effect.fn("gen.bearer-jwt")(function* (flags: GenBearerJwtFlags) {
+  const cliSettings = yield* CommandSettings;
+  const telemetryState = yield* TelemetryState;
   const output = yield* Output;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -58,22 +39,21 @@ export const legacyGenBearerJwt = Effect.fn("legacy.gen.bearer-jwt")(function* (
   return yield* Effect.gen(function* () {
     if (Option.isNone(flags.role)) {
       return yield* Effect.fail(
-        new LegacyGenBearerJwtRoleRequiredError({
+        new GenBearerJwtRoleRequiredError({
           message: `required flag(s) "role" not set`,
         }),
       );
     }
     const role = flags.role.value;
 
-    // Built directly from `Date.now()`'s integer milliseconds, NOT floored to whole
-    // seconds — see `LegacyBearerJwtClaimsInput.nowInstant`'s own doc comment for why
-    // pre-flooring here would shorten a sub-second `--valid-for`'s effective lifetime.
+    // Not floored to whole seconds — see `BearerJwtClaimsInput.nowInstant`
+    // for why pre-flooring would shorten a sub-second `--valid-for`.
     const nowMs = Date.now();
     const nowInstant = {
       wholeSeconds: Math.floor(nowMs / 1000),
       nanos: (nowMs % 1000) * 1_000_000,
     };
-    const baseClaims = legacyBuildBearerJwtClaims({
+    const baseClaims = buildBearerJwtClaims({
       role,
       sub: flags.sub,
       expiresAt: flags.exp,
@@ -81,21 +61,20 @@ export const legacyGenBearerJwt = Effect.fn("legacy.gen.bearer-jwt")(function* (
       nowInstant,
     });
     const claims = yield* Effect.try({
-      try: () => legacyMergeBearerJwtPayload(baseClaims, flags.payload),
+      try: () => mergeBearerJwtPayload(baseClaims, flags.payload),
       catch: (cause) =>
-        new LegacyGenBearerJwtPayloadError({
-          message: `failed to parse payload: ${legacyBearerJwtErrorMessage(cause)}`,
+        new GenBearerJwtPayloadError({
+          message: `failed to parse payload: ${bearerJwtErrorMessage(cause)}`,
         }),
     });
 
-    yield* legacyLoadProjectEnv(fs, path, cliSettings.workdir);
-    const jwk = yield* legacyResolveBearerJwtSigningKey(cliSettings.workdir);
+    yield* loadProjectEnv(fs, path, cliSettings.workdir);
+    const jwk = yield* resolveBearerJwtSigningKey(cliSettings.workdir);
 
-    const payloadJson = legacyEncodeBearerJwtClaims(claims);
+    const payloadJson = encodeBearerJwtClaims(claims);
     const token = yield* Effect.try({
-      try: () => legacySignJwtWithJwk(jwk, payloadJson),
-      catch: (cause) =>
-        new LegacyGenBearerJwtSignError({ message: legacyBearerJwtErrorMessage(cause) }),
+      try: () => signJwtWithJwk(jwk, payloadJson),
+      catch: (cause) => new GenBearerJwtSignError({ message: bearerJwtErrorMessage(cause) }),
     });
 
     yield* output.raw(`${token}\n`, "stdout");

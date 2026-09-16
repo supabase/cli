@@ -1,5 +1,5 @@
-import { legacyInspectText, type LegacyInspectQuerySpec } from "../legacy-inspect-query.ts";
-import { LEGACY_INTERNAL_SCHEMAS, legacyLikeEscapeSchema } from "../legacy-inspect-schemas.ts";
+import { inspectText, type InspectQuerySpec } from "../inspect-query.ts";
+import { INTERNAL_SCHEMAS, likeEscapeSchema } from "../inspect-schemas.ts";
 
 const SQL = `WITH constants AS (
   SELECT current_setting('block_size')::numeric AS bs, 23 AS hdr, 4 AS ma
@@ -64,15 +64,15 @@ ORDER BY raw_waste DESC, bloat DESC`;
  * `inspect db bloat` — space allocated to relations full of dead tuples.
  * The header row is a clean 4-column array so the table renders correctly.
  */
-export const legacyBloatSpec: LegacyInspectQuerySpec = {
+export const bloatSpec: InspectQuerySpec = {
   name: "bloat",
   sql: SQL,
-  params: () => [legacyLikeEscapeSchema(LEGACY_INTERNAL_SCHEMAS)],
+  params: () => [likeEscapeSchema(INTERNAL_SCHEMAS)],
   headers: ["Type", "Name", "Bloat", "Waste"],
   project: (row) => [
-    legacyInspectText(row["type"]),
-    legacyInspectText(row["name"]),
-    legacyInspectText(row["bloat"]),
-    legacyInspectText(row["waste"]),
+    inspectText(row["type"]),
+    inspectText(row["name"]),
+    inspectText(row["bloat"]),
+    inspectText(row["waste"]),
   ],
 };

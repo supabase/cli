@@ -1,0 +1,112 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  findPendingMigrations,
+  includeAllPending,
+  suggestIgnoreFlag,
+} from "./migration-pending.ts";
+
+const local = (...versions: ReadonlyArray<string>) =>
+  versions.map((v) => `supabase/migrations/${v}_name.sql`);
+
+describe("findPendingMigrations", () => {
+  it("returns the local migrations beyond the remote history when in sync", () => {
+    const result = findPendingMigrations(local("0001", "0002", "0003"), ["0001"]);
+    expect(result).toEqual({
+      kind: "ok",
+      pending: ["supabase/migrations/0002_name.sql", "supabase/migrations/0003_name.sql"],
+    });
+  });
+
+  it("is up to date when local and remote match exactly", () => {
+    const result = findPendingMigrations(local("0001", "0002"), ["0001", "0002"]);
+    expect(result).toEqual({ kind: "ok", pending: [] });
+  });
+
+  it("is up to date when one version is a string prefix of another (#6036)", () => {
+    // Any prefix pair inverts this way: `10_name.sql` sorts before `1_name.sql` by name ('0' <
+    // '_'), while remote reads back "1" before "10".
+    const result = findPendingMigrations(local("10", "1"), ["1", "10"]);
+    expect(result).toEqual({ kind: "ok", pending: [] });
+  });
+
+  it("is up to date when an 8-digit and a 14-digit version share a prefix (#6036)", () => {
+    const result = findPendingMigrations(local("20260420010000", "20260420"), [
+      "20260420",
+      "20260420010000",
+    ]);
+    expect(result).toEqual({ kind: "ok", pending: [] });
+  });
+
+  it("returns mixed-width pending migrations in version order", () => {
+    const result = findPendingMigrations(local("20260420010000", "20260420"), []);
+    expect(result).toEqual({
+      kind: "ok",
+      pending: [
+        "supabase/migrations/20260420_name.sql",
+        "supabase/migrations/20260420010000_name.sql",
+      ],
+    });
+  });
+
+  it("reports missing-local when remote has a version with no local file", () => {
+    const result = findPendingMigrations(local("0001", "0003"), ["0001", "0002", "0003"]);
+    expect(result).toEqual({ kind: "missing-local", versions: ["0002"] });
+  });
+
+  it("reports missing-local for trailing remote versions absent locally", () => {
+    const result = findPendingMigrations(local("0001"), ["0001", "0002"]);
+    expect(result).toEqual({ kind: "missing-local", versions: ["0002"] });
+  });
+
+  it("reports missing-remote for an out-of-order local migration", () => {
+    const result = findPendingMigrations(local("0001", "0002"), ["0002"]);
+    expect(result).toEqual({
+      kind: "missing-remote",
+      paths: ["supabase/migrations/0001_name.sql"],
+    });
+  });
+
+  it("treats an empty remote history as all-local pending", () => {
+    const result = findPendingMigrations(local("0001", "0002"), []);
+    expect(result).toEqual({
+      kind: "ok",
+      pending: ["supabase/migrations/0001_name.sql", "supabase/migrations/0002_name.sql"],
+    });
+  });
+});
+
+describe("includeAllPending", () => {
+  it("slices the version-ordered list, not the name-ordered one (#6036)", () => {
+    // Name order is [20, 1, 2]; version order is [1, 2, 20]. With "2" applied, the diff is [1]
+    // and the slice must resume at "20" — indexing the name-ordered list would return "2"
+    // (already applied) and silently drop "20".
+    const locals = local("20", "1", "2");
+    const diff = ["supabase/migrations/1_name.sql"];
+    expect(includeAllPending(locals, 1, diff)).toEqual([
+      "supabase/migrations/1_name.sql",
+      "supabase/migrations/20_name.sql",
+    ]);
+  });
+
+  it("prepends the out-of-order diff then the migrations beyond remote+diff", () => {
+    const locals = local("0001", "0002", "0003");
+    const diff = ["supabase/migrations/0001_name.sql"];
+    // remoteCount 1, diff length 1 → slice from index 2.
+    expect(includeAllPending(locals, 1, diff)).toEqual([
+      "supabase/migrations/0001_name.sql",
+      "supabase/migrations/0003_name.sql",
+    ]);
+  });
+});
+
+describe("suggestion strings", () => {
+  it("builds the include-all suggestion listing each path on its own line", () => {
+    const suggestion = suggestIgnoreFlag([
+      "supabase/migrations/0001_a.sql",
+      "supabase/migrations/0002_b.sql",
+    ]);
+    expect(suggestion).toContain("--include-all");
+    expect(suggestion).toContain("supabase/migrations/0001_a.sql\nsupabase/migrations/0002_b.sql");
+  });
+});

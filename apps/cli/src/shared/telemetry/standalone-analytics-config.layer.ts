@@ -5,19 +5,12 @@ import { runtimeInfoLayer } from "../runtime/runtime-info.layer.ts";
 import { ttyLayer } from "../runtime/tty.layer.ts";
 
 /**
- * Resolves `CliSettings | RuntimeInfo | Tty` — the services `telemetryRuntimeLayer`
- * (and, transitively, `analyticsLayer`/`legacyAnalyticsLayer`) need beyond the
- * `FileSystem`/`Path` platform layer — for callers that build and run an
- * `Analytics`-capturing effect OUTSIDE `runCli`'s own composed layer tree
- * (`shared/cli/run.ts` already wires the equivalent of this inline for every
- * command run via its own `cliSettingsLayerFor`/`cliProjectContextLayerFor`
- * helpers). The one caller today is `cli/legacy-complete.ts`'s
- * `__complete`/`__completeNoDesc` telemetry capture, which fires before
- * `runCli` ever bootstraps.
+ * Resolves `CliSettings | RuntimeInfo | Tty` for callers that build and run an
+ * `Analytics`-capturing effect outside `runCli`'s own composed layer tree — today, only
+ * `cli/complete.ts`'s telemetry capture, which fires before `runCli` bootstraps.
  *
- * Still requires the platform layer (`FileSystem`/`Path`, e.g.
- * `@effect/platform-bun`'s `BunServices.layer`) to be provided separately by
- * the caller, matching `run.ts`'s own top-level `Effect.provide(BunServices.layer)`.
+ * Still requires the platform layer (`FileSystem`/`Path`) to be provided separately by the
+ * caller, matching `run.ts`'s own top-level `Effect.provide(BunServices.layer)`.
  */
 export const standaloneAnalyticsConfigLayer = Layer.mergeAll(
   cliSettingsLayer.pipe(Layer.provide(cliProjectContextLayer), Layer.provide(runtimeInfoLayer)),

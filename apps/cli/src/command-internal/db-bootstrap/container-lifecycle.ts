@@ -1,16 +1,11 @@
 /**
- * Port of Go's `DockerStart` (`apps/cli-go/internal/utils/docker.go:363-440`):
- * given a fully-resolved {@link LegacyStartContainerSpec} (image already
- * resolved by `image-prepull.ts` — see its doc comment), sets the two
- * project-identity labels, provisions this container's own named volumes,
- * builds the `docker create` argv (`docker-create-args.ts`), spawns `docker
- * create`, copies any `secretFiles` into the just-created container via
- * `docker cp` (see {@link legacyCopyStartSecretFilesIntoContainer}), then
- * spawns `docker start`.
+ * Given a fully-resolved {@link StartContainerSpec}, sets the two project-identity labels,
+ * provisions the container's own named volumes, builds the `docker create` argv, spawns `docker
+ * create`, copies any `secretFiles` in via `docker cp` (see
+ * {@link copyStartSecretFilesIntoContainer}), then spawns `docker start`.
  *
- * Network creation (`DockerNetworkCreateIfNotExists`) is deliberately NOT part
- * of this per-container function — see {@link legacyEnsureNetwork}'s doc
- * comment for why it is hoisted to run once instead of once per container.
+ * Network creation is not part of this per-container function; see {@link ensureNetwork} for why
+ * it runs once instead of once per container.
  */
 
 import { Data, Effect, Stream } from "effect";
@@ -22,61 +17,44 @@ import {
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
 import {
-  legacyCollectText,
+  collectText,
   containerCliExitCode,
-  legacyDescribeContainerCliFailure,
-  legacyRunContainerCliExpectSuccess,
+  describeContainerCliFailure,
+  runContainerCliExpectSuccess,
   spawnContainerCli,
-} from "../legacy-container-cli.ts";
-import {
-  legacyBindMountSpecSource,
-  legacyIsBindMountSource,
-} from "../legacy-docker-bind-classify.ts";
-import { LEGACY_CLI_PROJECT_LABEL, LEGACY_CLI_WORKDIR_LABEL } from "../legacy-docker-ids.ts";
-import { legacyIsDockerDaemonUnreachable } from "../legacy-docker-suggest.ts";
+} from "../container-cli.ts";
+import { bindMountSpecSource, isBindMountSource } from "../docker-bind-classify.ts";
+import { CLI_PROJECT_LABEL, CLI_WORKDIR_LABEL } from "../docker-ids.ts";
+import { isDockerDaemonUnreachable } from "../docker-suggest.ts";
 import {
   containerArchiveBytes,
   isUserDefinedDockerNetwork,
 } from "../../shared/functions/functions-docker.ts";
 import {
-  legacyBuildStartContainerCreateArgs,
-  legacyApplyBitbucketStartContainerFilter,
-  legacyIsDockerClientEnvKey,
-  type LegacyStartContainerSpec,
+  buildStartContainerCreateArgs,
+  applyBitbucketStartContainerFilter,
+  isDockerClientEnvKey,
+  type StartContainerSpec,
 } from "./docker-create-args.ts";
 
-/** Structural element type of {@link LegacyStartContainerSpec.secretFiles} — not exported from `docker-create-args.ts`, so referenced positionally here. */
-type LegacyStartSecretFileSpec = NonNullable<LegacyStartContainerSpec["secretFiles"]>[number];
+type StartSecretFileSpec = NonNullable<StartContainerSpec["secretFiles"]>[number];
 
-/** Structural element type of {@link LegacyStartContainerSpec.preStartArchives} — same reasoning as {@link LegacyStartSecretFileSpec}. */
-type LegacyStartPreStartArchiveSpec = NonNullable<
-  LegacyStartContainerSpec["preStartArchives"]
->[number];
+type StartPreStartArchiveSpec = NonNullable<StartContainerSpec["preStartArchives"]>[number];
 
 type Spawner = ChildProcessSpawner["Service"];
 
 /**
- * Go's `composeProjectLabel` (`apps/cli-go/internal/utils/docker.go:60`,
- * unexported there). This port does not integrate with docker-compose
- * anywhere (an intentional architecture decision), but the label is still set
- * unconditionally, matching Go's own unconditional assignment
- * (`docker.go:376`) regardless of whether compose is actually in use: external
- * tooling that groups/filters containers by this label (Docker Desktop's
- * Compose view, `docker compose ls`, the VS Code Docker extension) would
- * otherwise silently stop recognizing the local stack's containers.
- *
- * A same-value private constant already exists at
- * `shared/functions/functions-docker.ts` (`dockerComposeProjectLabel`, for the
- * unrelated `functions deploy`/`functions serve` Docker Desktop extension
- * gateway) but is neither exported nor in the same Docker-usage domain as
- * `start` — not hoisted from there.
+ * Set unconditionally on every container, even though this CLI doesn't integrate with
+ * docker-compose: external tooling that groups/filters containers by this label (Docker
+ * Desktop's Compose view, `docker compose ls`, the VS Code Docker extension) would otherwise
+ * stop recognizing the local stack's containers.
  */
-export const LEGACY_COMPOSE_PROJECT_LABEL = "com.docker.compose.project";
+export const COMPOSE_PROJECT_LABEL = "com.docker.compose.project";
 
-type LegacyContainerOperationReason = "runtime" | "configuration" | "internal" | "port_conflict";
+type ContainerOperationReason = "runtime" | "configuration" | "internal" | "port_conflict";
 
-function legacyContainerOperationActionability(
-  reason: LegacyContainerOperationReason | undefined,
+function containerOperationActionability(
+  reason: ContainerOperationReason | undefined,
 ): CliErrorActionabilityDeclaration {
   switch (reason) {
     case "runtime":
@@ -90,119 +68,88 @@ function legacyContainerOperationActionability(
   }
 }
 
-function legacyContainerCliReason(message: string): "runtime" | "configuration" {
-  return legacyIsDockerDaemonUnreachable(message) ? "runtime" : "configuration";
+function containerCliReason(message: string): "runtime" | "configuration" {
+  return isDockerDaemonUnreachable(message) ? "runtime" : "configuration";
 }
 
 /** `docker network create --label ...`/`docker volume create --label ...` failed. */
-export class LegacyNetworkCreateError extends Data.TaggedError("LegacyNetworkCreateError")<{
+export class NetworkCreateError extends Data.TaggedError("NetworkCreateError")<{
   readonly message: string;
   readonly reason: "runtime" | "configuration";
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return legacyContainerOperationActionability(this.reason);
+    return containerOperationActionability(this.reason);
   }
 }
 
-export class LegacyVolumeCreateError extends Data.TaggedError("LegacyVolumeCreateError")<{
+export class VolumeCreateError extends Data.TaggedError("VolumeCreateError")<{
   readonly message: string;
   readonly reason: "runtime" | "configuration";
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return legacyContainerOperationActionability(this.reason);
+    return containerOperationActionability(this.reason);
   }
 }
 
 /** `docker create` failed. */
-export class LegacyContainerCreateError extends Data.TaggedError("LegacyContainerCreateError")<{
+export class ContainerCreateError extends Data.TaggedError("ContainerCreateError")<{
   readonly message: string;
   readonly reason: "runtime" | "configuration" | "internal";
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return legacyContainerOperationActionability(this.reason);
+    return containerOperationActionability(this.reason);
   }
 }
 
-/** `docker start` failed — see {@link legacyPortConflictSuggestion} for the port-already-allocated case. */
-export class LegacyContainerStartError extends Data.TaggedError("LegacyContainerStartError")<{
+/** `docker start` failed — see {@link portConflictSuggestion} for the port-already-allocated case. */
+export class ContainerStartError extends Data.TaggedError("ContainerStartError")<{
   readonly message: string;
   readonly reason: "runtime" | "configuration" | "port_conflict";
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return legacyContainerOperationActionability(this.reason);
+    return containerOperationActionability(this.reason);
   }
 }
 
-/** Every failure {@link legacyCreateContainer} itself can produce (network creation is separate, see {@link legacyEnsureNetwork}). */
-export type LegacyContainerError =
-  | LegacyVolumeCreateError
-  | LegacyContainerCreateError
-  | LegacyContainerStartError;
+/** Every failure {@link createContainer} itself can produce (network creation is separate, see {@link ensureNetwork}). */
+export type ContainerError = VolumeCreateError | ContainerCreateError | ContainerStartError;
 
-export interface LegacyContainerOpts {
+export interface ContainerOpts {
   /**
-   * Go's `Config.ProjectId`, already sanitized (`legacySanitizeProjectId`) by
-   * the caller's config-load pipeline — `DockerStart` itself performs no
-   * sanitization, it just reads the already-sanitized singleton
-   * (`docker.go:375-376`). Merged onto both {@link LEGACY_CLI_PROJECT_LABEL}
-   * and {@link LEGACY_COMPOSE_PROJECT_LABEL}, overwriting any value the caller
-   * may have already set under those keys in `spec.labels` — exactly like
-   * Go's unconditional map assignment.
+   * Merged onto both {@link CLI_PROJECT_LABEL} and {@link COMPOSE_PROJECT_LABEL}, overwriting
+   * any value the caller already set for those keys in `spec.labels`.
    */
   readonly projectId: string;
-  /**
-   * `os.Getenv("BITBUCKET_CLONE_DIR") != ""` — see `legacyIsBitbucketPipeline`
-   * (`shared/legacy-bitbucket-pipeline.ts`). Passed in rather than read here so
-   * this module stays a pure effect orchestrator with no direct env access,
-   * matching `legacyApplyBitbucketStartContainerFilter`'s own boolean-flag
-   * shape (`docker-create-args.ts`).
-   */
+  /** Passed in (rather than read via env here) so this module stays a pure effect orchestrator. */
   readonly isBitbucketPipeline: boolean;
   /**
-   * `LegacyCliSettings.workdir` — the project's own working directory. Stamped onto every
-   * created container as {@link LEGACY_CLI_WORKDIR_LABEL} (see that constant's doc
-   * comment) so a later `stop`/{@link legacyRollbackStart} can find this exact directory
-   * again from the container's own label, without depending on being invoked from the
-   * same cwd/`--workdir` `start` was.
+   * Stamped onto every created container as {@link CLI_WORKDIR_LABEL} so a later `stop` or
+   * {@link rollbackStart} can find this directory from the container's own label alone, without
+   * depending on the invoking cwd/`--workdir` matching `start`'s.
    *
-   * NOT used to stage {@link LegacyStartContainerSpec.secretFiles} on host disk anymore —
-   * those are delivered straight into the created container via `docker cp` (see
-   * {@link legacyCopyStartSecretFilesIntoContainer}), so they never touch host disk at
-   * all. This label is still load-bearing for OTHER host-persisted staging under the same
-   * `<workdir>/supabase/.temp/start-secrets/<containerName>/` tree that this function
-   * itself never writes — e.g. Edge Runtime's own env-file/multiline-env-script
-   * staging (`shared/functions/serve.ts`'s `startEdgeRuntimeContainer`),
-   * which `legacyCleanupStartSecrets` (`legacy-start-secrets-cleanup.ts`) still reclaims
-   * by this same label once that container is torn down.
+   * `cleanupStartSecrets` also uses this label to reclaim other host-persisted staging under this
+   * project (e.g. Edge Runtime's env-file staging) once a container is torn down.
    */
   readonly workdir: string;
   /**
-   * `DockerStart`'s platform-specific `extraHosts` package var
-   * (`docker_linux.go`/`docker_darwin.go`/`docker_windows.go`), merged onto
-   * EVERY container's `HostConfig.ExtraHosts` (`docker.go:378`) — Linux-only
-   * (`["host.docker.internal:host-gateway"]`); empty on Docker Desktop
-   * platforms, which already resolve that hostname natively. Merged here
-   * (not per-spec) for the same reason the two project-identity labels are:
-   * Go applies it identically to every container this orchestrator creates.
+   * Merged onto every container's `HostConfig.ExtraHosts`. Linux-only
+   * (`["host.docker.internal:host-gateway"]`); empty on Docker Desktop platforms, which already
+   * resolve that hostname natively.
    */
   readonly extraHosts: ReadonlyArray<string>;
 }
 
 /**
- * Extracts every named-volume source from `binds` (Go's `loader.ParseVolume`
- * classification loop, `docker.go:388-399`): a bind is `source:target[:mode]`
- * (see `docker-create-args.ts`'s `LegacyStartContainerSpec.binds` doc comment
- * and its own worked examples in `docker-create-args.unit.test.ts`), and its
- * source segment is a named volume exactly when
- * {@link legacyIsBindMountSource} says it is NOT a bind-mount path. No dedupe
- * is applied — Go's own `sources` slice doesn't dedupe either, and
- * `Docker.VolumeCreate` is idempotent for a repeated name.
+ * Extracts every named-volume source from `binds` (`source:target[:mode]`; see
+ * `docker-create-args.ts`'s `StartContainerSpec.binds` doc comment). A source is a named volume
+ * exactly when {@link isBindMountSource} says it is not a bind-mount path. Not deduped —
+ * `docker volume create` is idempotent for a repeated name.
  */
-function legacyNamedVolumeSources(binds: ReadonlyArray<string>): ReadonlyArray<string> {
+function namedVolumeSources(binds: ReadonlyArray<string>): ReadonlyArray<string> {
   const sources: Array<string> = [];
   for (const bind of binds) {
-    const source = legacyBindMountSpecSource(bind);
-    if (source.length > 0 && !legacyIsBindMountSource(source)) {
+    const source = bindMountSpecSource(bind);
+    if (source.length > 0 && !isBindMountSource(source)) {
       sources.push(source);
     }
   }
@@ -210,42 +157,27 @@ function legacyNamedVolumeSources(binds: ReadonlyArray<string>): ReadonlyArray<s
 }
 
 /**
- * Whether `docker`/`podman network create`'s stderr reports the network
- * already existing — the CLI-subprocess equivalent of Go's
- * `errdefs.IsConflict(err)` (`docker.go:70`), which inspects a structured
- * Engine API error instead of stderr text. Docker's real message is `Error
- * response from daemon: network with name <id> already exists`; Podman's is
- * worded differently (`network name <id> already used`), hence the broader
- * pattern rather than matching Docker's exact sentence.
+ * Whether `docker`/`podman network create`'s stderr reports the network already existing.
+ * Docker's message is "network with name <id> already exists"; Podman's is "network name <id>
+ * already used" — hence the broader pattern instead of matching Docker's exact wording.
  */
-function legacyIsNetworkAlreadyExistsError(stderr: string): boolean {
+function isNetworkAlreadyExistsError(stderr: string): boolean {
   return /already exists|already used/iu.test(stderr);
 }
 
-/** Go's `portErrorPattern` (`apps/cli-go/internal/utils/docker.go:657`). */
-const LEGACY_PORT_BIND_ERROR_PATTERN = /Bind for (.*) failed: port is already allocated/;
+/** Matches Docker's "port is already allocated" bind error, capturing the port spec. */
+const PORT_BIND_ERROR_PATTERN = /Bind for (.*) failed: port is already allocated/;
 
-function legacyParsePortBindError(stderr: string): string | undefined {
-  return LEGACY_PORT_BIND_ERROR_PATTERN.exec(stderr)?.[1];
+function parsePortBindError(stderr: string): string | undefined {
+  return PORT_BIND_ERROR_PATTERN.exec(stderr)?.[1];
 }
 
 /**
- * A scoped-down port of Go's `suggestDockerStop`
- * (`apps/cli-go/internal/utils/docker.go:667-686`): Go lists every running
- * container, matches the failed host port against each container's own
- * published ports, and reports either `supabase stop --project-id <id>` (the
- * port owner carries the CLI project label) or a bare `docker stop <name>`
- * (it doesn't) — then `docker.go:425-436` appends a further "configure a
- * different port" suggestion on top of that.
- *
- * Reproducing the lookup would mean this pure CLI-orchestration function also
- * lists and inspects every other running container purely to word a hint —
- * disproportionate plumbing for a suggestion string. This reproduces only the
- * detection Go itself starts from (the same regex match) and folds both of
- * Go's suggestion branches into one still-actionable sentence that covers
- * either case without the extra lookup.
+ * Suggests fixes for a "port already allocated" failure without inspecting every running
+ * container to identify the specific owner — disproportionate plumbing for a hint — folding both
+ * possible causes into one still-actionable sentence.
  */
-function legacyPortConflictSuggestion(hostPort: string, serviceLabel: string): string {
+function portConflictSuggestion(hostPort: string, serviceLabel: string): string {
   return (
     `\nTry stopping the project or container already using ${hostPort} ` +
     "(`docker ps` lists what's bound to it, or `supabase stop` for another local Supabase project), " +
@@ -254,35 +186,19 @@ function legacyPortConflictSuggestion(hostPort: string, serviceLabel: string): s
 }
 
 /**
- * Go's `DockerNetworkCreateIfNotExists` (`docker.go:63-77`) via `docker
- * network create --label ... <networkId>`, treating "already exists" as
- * success.
+ * Creates the shared docker network for this project via `docker network create --label ...`,
+ * treating "already exists" as success.
  *
- * Called ONCE, up front, by the caller orchestrating a whole `start` run —
- * NOT per-container the way Go's `DockerStart` calls it on every single
- * invocation. Go's repeated call is a no-op after the first (the network
- * already exists), so this is a pure optimization, not a behavior change: a
- * `start` run's containers are exclusively created by this same code path in
- * one process, never interleaved with an external network deletion, so the
- * network is guaranteed to still exist for every later `legacyCreateContainer`
- * call in the same run.
- *
- * Mirrors Go's own `isUserDefined(mode)` guard (`docker.go:65`,
- * `docker_linux.go:10` and platform siblings) that runs first inside
- * `DockerNetworkCreateIfNotExists` itself: `--network-id default|bridge|host|
- * none` names a built-in Docker network that already exists and cannot be
- * created (`docker network create host` errors with "operation is not
- * permitted on predefined host network"), so this returns immediately without
- * spawning `docker network create` at all for those names, reusing the same
- * `isUserDefinedDockerNetwork` check `shared/functions/functions-docker.ts`
- * already applies for the unrelated `functions deploy`/`functions serve`
- * extension-gateway network.
+ * Called once per `start` run rather than once per container: the network can't be deleted
+ * externally mid-run, so it's guaranteed to still exist for every later {@link createContainer}
+ * call. Returns immediately for a built-in network name (`default`, `bridge`, `host`, `none`),
+ * which already exists and cannot be created.
  */
-export function legacyEnsureNetwork(
+export function ensureNetwork(
   spawner: Spawner,
   networkId: string,
   labels: Readonly<Record<string, string>>,
-): Effect.Effect<void, LegacyNetworkCreateError> {
+): Effect.Effect<void, NetworkCreateError> {
   if (!isUserDefinedDockerNetwork(networkId)) {
     return Effect.void;
   }
@@ -309,33 +225,33 @@ export function legacyEnsureNetwork(
       }).pipe(
         Effect.mapError(
           (cause) =>
-            new LegacyNetworkCreateError({
-              message: `failed to create docker network: ${legacyDescribeContainerCliFailure(cause)}`,
+            new NetworkCreateError({
+              message: `failed to create docker network: ${describeContainerCliFailure(cause)}`,
               reason: "runtime",
             }),
         ),
       );
       const [exitCode, stderr] = yield* Effect.all(
-        [child.exitCode.pipe(Effect.map(Number)), legacyCollectText(child.stderr)],
+        [child.exitCode.pipe(Effect.map(Number)), collectText(child.stderr)],
         { concurrency: "unbounded" },
       ).pipe(
         Effect.mapError(
           () =>
-            new LegacyNetworkCreateError({
+            new NetworkCreateError({
               message: "failed to create docker network",
               reason: "runtime",
             }),
         ),
       );
-      if (exitCode !== 0 && !legacyIsNetworkAlreadyExistsError(stderr)) {
+      if (exitCode !== 0 && !isNetworkAlreadyExistsError(stderr)) {
         const message = stderr.trim();
         return yield* Effect.fail(
-          new LegacyNetworkCreateError({
+          new NetworkCreateError({
             message:
               message.length > 0
                 ? `failed to create docker network: ${message}`
                 : "failed to create docker network",
-            reason: legacyContainerCliReason(message),
+            reason: containerCliReason(message),
           }),
         );
       }
@@ -344,31 +260,27 @@ export function legacyEnsureNetwork(
 }
 
 /**
- * Whether `volume create`'s stderr reports the volume already existing —
- * podman's "volume with name <name> already exists: volume already exists",
- * either half. A "...but was not created for the current specification"
- * conflict deliberately does not match, so a real spec conflict still fails.
+ * Whether `volume create`'s stderr reports the volume already existing (Podman's "volume with
+ * name <name> already exists: volume already exists", matching either half). A "...but was not
+ * created for the current specification" conflict does not match, so a real spec conflict still
+ * fails.
  */
-function legacyIsVolumeAlreadyExistsError(stderr: string): boolean {
+function isVolumeAlreadyExistsError(stderr: string): boolean {
   return /volume (?:with name \S+ )?already exists/iu.test(stderr);
 }
 
 /**
- * Go's per-source-name `Docker.VolumeCreate` call (`docker.go:407-415`) via
- * `docker volume create --label ...`, treating "already exists" as success the
- * same way {@link legacyEnsureNetwork} does; any other non-zero exit is a
- * real failure.
+ * Creates a named volume via `docker volume create --label ...`, treating "already exists" as
+ * success, the same way {@link ensureNetwork} does; any other non-zero exit is a real failure.
  *
- * Go's Engine API is idempotent for a repeated name, including against Podman's
- * Docker-compat endpoint; `podman volume create` goes through libpod instead
- * and rejects it, so every `stop`/`start` cycle aborted the bring-up on the
- * volumes `stop` preserves (supabase/cli#6020).
+ * Podman's `volume create` (unlike Docker's) is not idempotent for a repeated name and rejects it
+ * outright, which would otherwise abort a `start` on volumes an earlier `stop` preserved.
  */
-export function legacyEnsureVolume(
+export function ensureVolume(
   spawner: Spawner,
   name: string,
   labels: Readonly<Record<string, string>>,
-): Effect.Effect<void, LegacyVolumeCreateError> {
+): Effect.Effect<void, VolumeCreateError> {
   return Effect.scoped(
     Effect.gen(function* () {
       const args = [
@@ -384,33 +296,33 @@ export function legacyEnsureVolume(
       }).pipe(
         Effect.mapError(
           (cause) =>
-            new LegacyVolumeCreateError({
-              message: `failed to create volume: ${legacyDescribeContainerCliFailure(cause)}`,
+            new VolumeCreateError({
+              message: `failed to create volume: ${describeContainerCliFailure(cause)}`,
               reason: "runtime",
             }),
         ),
       );
       const [exitCode, stderr] = yield* Effect.all(
-        [child.exitCode.pipe(Effect.map(Number)), legacyCollectText(child.stderr)],
+        [child.exitCode.pipe(Effect.map(Number)), collectText(child.stderr)],
         { concurrency: "unbounded" },
       ).pipe(
         Effect.mapError(
           () =>
-            new LegacyVolumeCreateError({
+            new VolumeCreateError({
               message: "failed to create volume",
               reason: "runtime",
             }),
         ),
       );
-      if (exitCode !== 0 && !legacyIsVolumeAlreadyExistsError(stderr)) {
+      if (exitCode !== 0 && !isVolumeAlreadyExistsError(stderr)) {
         const message = stderr.trim();
         return yield* Effect.fail(
-          new LegacyVolumeCreateError({
+          new VolumeCreateError({
             message:
               message.length > 0
                 ? `failed to create volume: ${message}`
                 : "failed to create volume",
-            reason: legacyContainerCliReason(message),
+            reason: containerCliReason(message),
           }),
         );
       }
@@ -419,7 +331,7 @@ export function legacyEnsureVolume(
 }
 
 /** `docker volume inspect` failed to spawn at all (no docker/podman binary). */
-export class LegacyVolumeInspectError extends Data.TaggedError("LegacyVolumeInspectError")<{
+export class VolumeInspectError extends Data.TaggedError("VolumeInspectError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -433,34 +345,16 @@ function isVolumeNotFoundMessage(message: string): boolean {
 }
 
 /**
- * Go's pre-create existence check (`_, err := utils.Docker.VolumeInspect(ctx,
- * utils.DbId); utils.NoBackupVolume = errdefs.IsNotFound(err)`,
- * `apps/cli-go/internal/db/start/start.go:165-167`), run BEFORE the volume is
- * created — `docker volume create` is idempotent, so creating first would lose
- * whether the volume already existed. `docker volume inspect <name>` exits 0
- * when the volume exists; a confirmed "no such volume" resolves to `false`,
- * matching Go's `errdefs.IsNotFound`. Any OTHER inspect failure (permission
- * denied, daemon unreachable, …) resolves to `true` instead — Go's
- * `errdefs.IsNotFound(err)` is `false` for any error that isn't specifically a
- * not-found, so Go always defaults to treating the volume as pre-existing
- * (protected from rollback's `volume prune`) unless it can positively confirm
- * otherwise; collapsing every non-zero exit into "doesn't exist" would let an
- * ambiguous inspect failure on a stack with real prior data get pruned by
- * {@link legacyRollbackStart} after any later failure — a data-loss
- * regression Go's own gate doesn't have. Only a spawn failure (neither
- * `docker` nor `podman` on `PATH`) is a real error here.
- *
- * A separate, additional export — NOT called from {@link legacyEnsureVolume}
- * itself, whose existing idempotent-create behavior must not change. The caller
- * orchestrating a `start` run checks this BEFORE creating the volume, to gate the
- * `SetupLocalDatabase`-equivalent pipeline and bucket seeding on "was this a
- * fresh volume", matching Go's exact check-before-create ordering
- * (`internal/db/start/start.go:165-184`).
+ * Runs before the volume is created (creation is idempotent, so creating first would lose
+ * whether it already existed). A confirmed "no such volume" resolves to `false`; any other
+ * inspect failure resolves to `true` instead, so an ambiguous failure never lets
+ * {@link rollbackStart} prune a volume that may hold real prior data. Separate from
+ * {@link ensureVolume}, which must keep its own idempotent-create behavior unchanged.
  */
-export function legacyVolumeExists(
+export function volumeExists(
   spawner: Spawner,
   name: string,
-): Effect.Effect<boolean, LegacyVolumeInspectError> {
+): Effect.Effect<boolean, VolumeInspectError> {
   return Effect.scoped(
     Effect.gen(function* () {
       const child = yield* spawnContainerCli(spawner, ["volume", "inspect", name], {
@@ -470,18 +364,16 @@ export function legacyVolumeExists(
       }).pipe(
         Effect.mapError(
           (cause) =>
-            new LegacyVolumeInspectError({
-              message: `failed to inspect volume: ${legacyDescribeContainerCliFailure(cause)}`,
+            new VolumeInspectError({
+              message: `failed to inspect volume: ${describeContainerCliFailure(cause)}`,
             }),
         ),
       );
       const [exitCode, stderr] = yield* Effect.all(
-        [child.exitCode.pipe(Effect.map(Number)), legacyCollectText(child.stderr)],
+        [child.exitCode.pipe(Effect.map(Number)), collectText(child.stderr)],
         { concurrency: "unbounded" },
       ).pipe(
-        Effect.mapError(
-          () => new LegacyVolumeInspectError({ message: "failed to inspect volume" }),
-        ),
+        Effect.mapError(() => new VolumeInspectError({ message: "failed to inspect volume" })),
       );
       if (exitCode === 0) return true;
       return !isVolumeNotFoundMessage(stderr);
@@ -490,93 +382,74 @@ export function legacyVolumeExists(
 }
 
 /** `docker container rm -f <id>` (or `docker rm -f`) failed. */
-export class LegacyContainerRemoveError extends Data.TaggedError("LegacyContainerRemoveError")<{
+export class ContainerRemoveError extends Data.TaggedError("ContainerRemoveError")<{
   readonly message: string;
   readonly reason: "runtime" | "configuration";
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return legacyContainerOperationActionability(this.reason);
+    return containerOperationActionability(this.reason);
   }
 }
 
 /**
- * Port of Go's `db reset`-only `Docker.ContainerRemove(ctx, DbId,
- * container.RemoveOptions{Force: true})` (`apps/cli-go/internal/db/reset/reset.go:147-149`)
- * via `docker container rm -f <id>`. Unlike most other container lookups in this codebase,
- * Go does NOT tolerate a "not found" response here — a genuine remove failure is a hard
- * `failed to remove container: %w` — so this propagates ANY non-zero exit without the
- * usual "no such container" swallow. `-f` alone (no `-v`) matches Go's `RemoveOptions`,
- * which sets `Force` but not `RemoveVolumes` — the paired named volume is removed
- * separately by {@link legacyRemoveVolume}.
+ * Removes a container via `docker container rm -f <id>`. Any non-zero exit is a real failure —
+ * unlike other container lookups here, a missing container is not swallowed into success.
+ * `-f` alone (no `-v`); the paired named volume is removed separately by {@link removeVolume}.
  */
-export function legacyRemoveContainer(
+export function removeContainer(
   spawner: Spawner,
   containerId: string,
-): Effect.Effect<void, LegacyContainerRemoveError> {
-  return legacyRunContainerCliExpectSuccess(
+): Effect.Effect<void, ContainerRemoveError> {
+  return runContainerCliExpectSuccess(
     spawner,
     ["container", "rm", "-f", containerId],
     "remove container",
-    (message) =>
-      new LegacyContainerRemoveError({ message, reason: legacyContainerCliReason(message) }),
+    (message) => new ContainerRemoveError({ message, reason: containerCliReason(message) }),
   );
 }
 
 /** `docker volume rm -f <name>` failed. */
-export class LegacyVolumeRemoveError extends Data.TaggedError("LegacyVolumeRemoveError")<{
+export class VolumeRemoveError extends Data.TaggedError("VolumeRemoveError")<{
   readonly message: string;
   readonly reason: "runtime" | "configuration";
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return legacyContainerOperationActionability(this.reason);
+    return containerOperationActionability(this.reason);
   }
 }
 
 /**
- * Port of Go's `db reset`-only `Docker.VolumeRemove(ctx, DbId, true)`
- * (`apps/cli-go/internal/db/reset/reset.go:150-152`) via `docker volume rm -f <name>`.
- * The `force` argument makes a MISSING volume a no-op (Docker's `DELETE /volumes/{name}`
- * returns 204 even when the volume doesn't exist, once `force` is set — verified against
- * a real Docker daemon), so — unlike {@link legacyRemoveContainer} — no special-casing is
- * needed here: any non-zero exit is a genuine failure.
+ * Removes a volume via `docker volume rm -f <name>`. `force` makes removing an already-missing
+ * volume a no-op, so — unlike {@link removeContainer} — no special-casing is needed here: any
+ * non-zero exit is a genuine failure.
  */
-export function legacyRemoveVolume(
+export function removeVolume(
   spawner: Spawner,
   volumeName: string,
-): Effect.Effect<void, LegacyVolumeRemoveError> {
-  return legacyRunContainerCliExpectSuccess(
+): Effect.Effect<void, VolumeRemoveError> {
+  return runContainerCliExpectSuccess(
     spawner,
     ["volume", "rm", "-f", volumeName],
     "remove volume",
-    (message) =>
-      new LegacyVolumeRemoveError({ message, reason: legacyContainerCliReason(message) }),
+    (message) => new VolumeRemoveError({ message, reason: containerCliReason(message) }),
   );
 }
 
-function legacyDockerCreateContainer(
+function dockerCreateContainer(
   spawner: Spawner,
   args: ReadonlyArray<string>,
   env: Readonly<Record<string, string>>,
-): Effect.Effect<string, LegacyContainerCreateError> {
+): Effect.Effect<string, ContainerCreateError> {
   return Effect.scoped(
     Effect.gen(function* () {
       // `docker-create-args.ts` emits the key-only `-e KEY` form (never `-e KEY=value`) so
-      // secrets never appear in argv/`ps`/`/proc/<pid>/cmdline` (CWE-214/209) — Docker then
-      // resolves each key's value from THIS spawned process's own environment. `extendEnv:
-      // true` keeps the rest of the parent's env (PATH, the real DOCKER_HOST, …) so the docker
-      // CLI invocation itself still behaves correctly; `env` supplies the actual secret values.
-      // Matches the same pattern already used for `docker run` (`legacy-docker-run.layer.ts`)
-      // and image resolution (`legacy-docker-image-resolve.ts`).
+      // secrets never appear in argv/`ps`/`/proc/<pid>/cmdline`; Docker resolves each key's value
+      // from this spawned process's own environment instead. `extendEnv: true` keeps the rest of
+      // the parent's env (PATH, the real DOCKER_HOST, …) while `env` supplies the secret values.
       //
-      // Callers must have already stripped `legacyIsDockerClientEnvKey` keys (e.g. a
-      // container-facing `DOCKER_HOST`, set by Vector's spec for a tcp/npipe daemon host) from
-      // `env` before calling this function — those are emitted inline as `-e KEY=value` by
-      // `legacyBuildStartContainerCreateArgs` instead, since `extendEnv: true` merges `env` INTO
-      // this spawned process's own environment (per Effect's `ChildProcess` semantics,
-      // prioritizing `env`'s values), and that same environment is what the `docker`/`podman`
-      // CLI client itself reads `DOCKER_HOST` from to pick which daemon to talk to. Letting a
-      // container-facing `DOCKER_HOST` leak in here would hijack this `docker create` call's own
-      // daemon target before the container even exists.
+      // Callers must already have stripped `isDockerClientEnvKey` keys (e.g. a container-facing
+      // `DOCKER_HOST`) from `env` — those go inline as `-e KEY=value` instead, since merging one
+      // in here would hijack which daemon this `docker create` call itself talks to.
       const child = yield* spawnContainerCli(spawner, args, {
         stdin: "ignore",
         stdout: "pipe",
@@ -586,8 +459,8 @@ function legacyDockerCreateContainer(
       }).pipe(
         Effect.mapError(
           (cause) =>
-            new LegacyContainerCreateError({
-              message: `failed to create docker container: ${legacyDescribeContainerCliFailure(cause)}`,
+            new ContainerCreateError({
+              message: `failed to create docker container: ${describeContainerCliFailure(cause)}`,
               reason: "runtime",
             }),
         ),
@@ -595,14 +468,14 @@ function legacyDockerCreateContainer(
       const [exitCode, stdout, stderr] = yield* Effect.all(
         [
           child.exitCode.pipe(Effect.map(Number)),
-          legacyCollectText(child.stdout),
-          legacyCollectText(child.stderr),
+          collectText(child.stdout),
+          collectText(child.stderr),
         ],
         { concurrency: "unbounded" },
       ).pipe(
         Effect.mapError(
           () =>
-            new LegacyContainerCreateError({
+            new ContainerCreateError({
               message: "failed to create docker container",
               reason: "runtime",
             }),
@@ -611,12 +484,12 @@ function legacyDockerCreateContainer(
       if (exitCode !== 0) {
         const message = stderr.trim();
         return yield* Effect.fail(
-          new LegacyContainerCreateError({
+          new ContainerCreateError({
             message:
               message.length > 0
                 ? `failed to create docker container: ${message}`
                 : "failed to create docker container",
-            reason: legacyContainerCliReason(message),
+            reason: containerCliReason(message),
           }),
         );
       }
@@ -625,11 +498,11 @@ function legacyDockerCreateContainer(
   );
 }
 
-function legacyDockerStartContainer(
+function dockerStartContainer(
   spawner: Spawner,
   containerId: string,
-  spec: LegacyStartContainerSpec,
-): Effect.Effect<void, LegacyContainerStartError> {
+  spec: StartContainerSpec,
+): Effect.Effect<void, ContainerStartError> {
   return Effect.scoped(
     Effect.gen(function* () {
       const child = yield* spawnContainerCli(spawner, ["start", containerId], {
@@ -639,19 +512,19 @@ function legacyDockerStartContainer(
       }).pipe(
         Effect.mapError(
           (cause) =>
-            new LegacyContainerStartError({
-              message: `failed to start docker container "${spec.containerName}": ${legacyDescribeContainerCliFailure(cause)}`,
+            new ContainerStartError({
+              message: `failed to start docker container "${spec.containerName}": ${describeContainerCliFailure(cause)}`,
               reason: "runtime",
             }),
         ),
       );
       const [exitCode, stderr] = yield* Effect.all(
-        [child.exitCode.pipe(Effect.map(Number)), legacyCollectText(child.stderr)],
+        [child.exitCode.pipe(Effect.map(Number)), collectText(child.stderr)],
         { concurrency: "unbounded" },
       ).pipe(
         Effect.mapError(
           () =>
-            new LegacyContainerStartError({
+            new ContainerStartError({
               message: `failed to start docker container "${spec.containerName}"`,
               reason: "runtime",
             }),
@@ -662,19 +535,19 @@ function legacyDockerStartContainer(
         const base = `failed to start docker container "${spec.containerName}": ${
           trimmed.length > 0 ? trimmed : `exit ${exitCode}`
         }`;
-        const hostPort = legacyParsePortBindError(trimmed);
+        const hostPort = parsePortBindError(trimmed);
         if (hostPort === undefined) {
           return yield* Effect.fail(
-            new LegacyContainerStartError({
+            new ContainerStartError({
               message: base,
-              reason: legacyContainerCliReason(trimmed),
+              reason: containerCliReason(trimmed),
             }),
           );
         }
         const serviceLabel = spec.networkAliases?.[0] ?? spec.containerName;
         return yield* Effect.fail(
-          new LegacyContainerStartError({
-            message: `${base}${legacyPortConflictSuggestion(hostPort, serviceLabel)}`,
+          new ContainerStartError({
+            message: `${base}${portConflictSuggestion(hostPort, serviceLabel)}`,
             reason: "port_conflict",
           }),
         );
@@ -687,9 +560,9 @@ function legacyDockerStartContainer(
  * `docker cp - <dest>` with tar bytes on stdin. The stream form keeps member uid/gid;
  * a host-path copy would reset ownership to root.
  */
-export function legacyDockerCopyArchiveIntoContainer<E>(
+export function dockerCopyArchiveIntoContainer<E>(
   spawner: Spawner,
-  archive: Uint8Array | LegacyStartPreStartArchiveSpec["tar"],
+  archive: Uint8Array | StartPreStartArchiveSpec["tar"],
   containerDest: string,
   fail: (detail: string) => E,
 ): Effect.Effect<void, E> {
@@ -700,11 +573,11 @@ export function legacyDockerCopyArchiveIntoContainer<E>(
         stdin,
         stdout: "ignore",
         stderr: "pipe",
-      }).pipe(Effect.mapError((cause) => fail(legacyDescribeContainerCliFailure(cause))));
+      }).pipe(Effect.mapError((cause) => fail(describeContainerCliFailure(cause))));
       const [exitCode, stderr] = yield* Effect.all(
-        [child.exitCode.pipe(Effect.map(Number)), legacyCollectText(child.stderr)],
+        [child.exitCode.pipe(Effect.map(Number)), collectText(child.stderr)],
         { concurrency: "unbounded" },
-      ).pipe(Effect.mapError((cause) => fail(legacyDescribeContainerCliFailure(cause))));
+      ).pipe(Effect.mapError((cause) => fail(describeContainerCliFailure(cause))));
       if (exitCode !== 0) {
         const message = stderr.trim();
         return yield* Effect.fail(
@@ -715,28 +588,26 @@ export function legacyDockerCopyArchiveIntoContainer<E>(
   );
 }
 
-const legacySecretCopyFailure = (detail: string): LegacyContainerCreateError =>
-  new LegacyContainerCreateError({
+const secretCopyFailure = (detail: string): ContainerCreateError =>
+  new ContainerCreateError({
     message:
       detail.length > 0
         ? `failed to create docker container: failed to copy secret file into container: ${detail}`
         : "failed to create docker container: failed to copy secret file into container",
-    reason:
-      detail.length > 0 && !legacyIsDockerDaemonUnreachable(detail) ? "configuration" : "runtime",
+    reason: detail.length > 0 && !isDockerDaemonUnreachable(detail) ? "configuration" : "runtime",
   });
 
 /**
- * Streams all secret files as one archive after create and before start. `Bun.Archive` exposes no
- * per-entry mode option, so the unit test pins its `0644` default. That mode keeps the files
- * readable by non-root Kong/Postgres processes and matches Go's result. Once copied, the files
- * live in the container filesystem, so normal restarts need no host artifact. This mirrors Go's
- * path-independent Engine API delivery without exposing plaintext through host files or argv.
+ * Streams all secret files as one archive after create and before start. `Bun.Archive` exposes
+ * no per-entry mode option, so the unit test pins its `0644` default, which keeps the files
+ * readable by non-root Kong/Postgres processes. Once copied, the files live in the container
+ * filesystem, so normal restarts need no host artifact.
  */
-function legacyCopyStartSecretFilesIntoContainer(
+function copyStartSecretFilesIntoContainer(
   spawner: Spawner,
   containerId: string,
-  secretFiles: ReadonlyArray<LegacyStartSecretFileSpec>,
-): Effect.Effect<void, LegacyContainerCreateError> {
+  secretFiles: ReadonlyArray<StartSecretFileSpec>,
+): Effect.Effect<void, ContainerCreateError> {
   if (secretFiles.length === 0) return Effect.void;
 
   return Effect.tryPromise({
@@ -747,7 +618,7 @@ function legacyCopyStartSecretFilesIntoContainer(
         ),
       ),
     catch: (cause) =>
-      new LegacyContainerCreateError({
+      new ContainerCreateError({
         message: `failed to create docker container: failed to prepare container secret files: ${
           cause instanceof Error ? cause.message : String(cause)
         }`,
@@ -755,40 +626,31 @@ function legacyCopyStartSecretFilesIntoContainer(
       }),
   }).pipe(
     Effect.flatMap((archive) =>
-      legacyDockerCopyArchiveIntoContainer(
-        spawner,
-        archive,
-        `${containerId}:/`,
-        legacySecretCopyFailure,
-      ),
+      dockerCopyArchiveIntoContainer(spawner, archive, `${containerId}:/`, secretCopyFailure),
     ),
   );
 }
 
 /**
- * `docker cp - <containerId>:<containerPath>` with one
- * {@link LegacyStartContainerSpec.preStartArchives} entry's tar bytes on stdin — the ONE `docker
- * cp` form that preserves each archive member's uid/gid inside the container (the host-path form
- * rewrites ownership to root, which a restored Postgres data directory cannot survive; see that
- * field's own doc comment).
+ * `docker cp - <containerId>:<containerPath>` for one {@link StartContainerSpec.preStartArchives}
+ * entry — the form that preserves each archive member's uid/gid; the host-path form resets
+ * ownership to root, which a restored Postgres data directory cannot survive.
  *
- * Sequenced by {@link legacyCreateContainer} between `docker create` and `docker start`, for the
- * same two reasons the secret-file copies are: the container must exist for `docker cp` to have a
- * target, and must not be running yet so its entrypoint never races the copy — which for an
- * archive is not merely a race but the whole point, since the entrypoint's behavior depends on
- * what it finds already unpacked.
+ * Sequenced by {@link createContainer} between `docker create` and `docker start`: the container
+ * must exist for `docker cp` to have a target and must not be running yet, since the entrypoint's
+ * behavior depends on what it finds already unpacked.
  */
-function legacyExtractPreStartArchiveIntoContainer(
+function extractPreStartArchiveIntoContainer(
   spawner: Spawner,
   containerId: string,
-  archive: LegacyStartPreStartArchiveSpec,
-): Effect.Effect<void, LegacyContainerCreateError> {
-  return legacyDockerCopyArchiveIntoContainer(
+  archive: StartPreStartArchiveSpec,
+): Effect.Effect<void, ContainerCreateError> {
+  return dockerCopyArchiveIntoContainer(
     spawner,
     archive.tar,
     `${containerId}:${archive.containerPath}`,
     (detail) =>
-      new LegacyContainerCreateError({
+      new ContainerCreateError({
         message: `failed to create docker container: failed to restore archive into container: ${detail}`,
         reason: "runtime",
       }),
@@ -796,94 +658,61 @@ function legacyExtractPreStartArchiveIntoContainer(
 }
 
 /**
- * Port of Go's `DockerStart` (`apps/cli-go/internal/utils/docker.go:363-440`),
- * minus image resolution (already done by `image-prepull.ts`) and network
- * creation (hoisted, see {@link legacyEnsureNetwork}):
- *
- * 1. Merge the two project-identity labels onto `spec.labels`.
- * 2. Provision this container's own named volumes (skipped entirely under
- *    Bitbucket Pipelines, matching Go).
- * 3. Apply the Bitbucket named-volume-bind / security-opt filter
- *    (`legacyApplyBitbucketStartContainerFilter`, already ported).
- * 4. `docker create`.
- * 5. Copy any `secretFiles` into the just-created (not yet started) container
- *    as one stdin tar archive via `docker cp`
- *    (`legacyCopyStartSecretFilesIntoContainer`) — a TS-port-only step with no
- *    Go equivalent, see `docker-create-args.ts`'s `secretFiles` doc comment.
- *    Runs strictly between `docker create` and `docker start`: the container
- *    must already exist for `docker cp` to have a target, and must not be
- *    running yet so its entrypoint never races the copy.
- * 6. Unpack any `preStartArchives` into the same created-but-unstarted
- *    container via `docker cp -` (`legacyExtractPreStartArchiveIntoContainer`)
- *    — also TS-port-only, and for the shadow baseline cache's restored PGDATA
- *    the "not started yet" half of step 5's ordering is the entire point.
- * 7. `docker start`.
+ * Provisions this container's named volumes (skipped under Bitbucket Pipelines), creates it,
+ * copies any `secretFiles` and `preStartArchives` in via `docker cp` while it's created but not
+ * yet running (so its entrypoint never races the copy), then starts it.
  *
  * Resolves to the created container's id/name on success.
  */
-export function legacyCreateContainer(
+export function createContainer(
   spawner: Spawner,
-  spec: LegacyStartContainerSpec,
-  opts: LegacyContainerOpts,
-): Effect.Effect<string, LegacyContainerError> {
+  spec: StartContainerSpec,
+  opts: ContainerOpts,
+): Effect.Effect<string, ContainerError> {
   return Effect.gen(function* () {
     const labels: Record<string, string> = {
       ...spec.labels,
-      [LEGACY_CLI_PROJECT_LABEL]: opts.projectId,
-      [LEGACY_COMPOSE_PROJECT_LABEL]: opts.projectId,
+      [CLI_PROJECT_LABEL]: opts.projectId,
+      [COMPOSE_PROJECT_LABEL]: opts.projectId,
     };
-    // The workdir label is stamped on the CONTAINER only, not on its named volumes below
-    // (`legacyEnsureVolume` is passed `labels`, not `containerLabels`) — a volume's own
-    // name already carries the project id, and nothing ever reads a workdir label back off a
-    // volume the way `legacyListContainerIdsAndNames` does for containers.
+    // The workdir label goes on the container only, not its named volumes below: a volume's name
+    // already carries the project id, and nothing reads a workdir label back off a volume.
     const containerLabels: Record<string, string> = {
       ...labels,
-      [LEGACY_CLI_WORKDIR_LABEL]: opts.workdir,
+      [CLI_WORKDIR_LABEL]: opts.workdir,
     };
-    const labeledSpec: LegacyStartContainerSpec = {
+    const labeledSpec: StartContainerSpec = {
       ...spec,
       labels: containerLabels,
       extraHosts: [...(spec.extraHosts ?? []), ...opts.extraHosts],
     };
 
     if (!opts.isBitbucketPipeline) {
-      for (const name of legacyNamedVolumeSources(labeledSpec.binds)) {
-        yield* legacyEnsureVolume(spawner, name, labels);
+      for (const name of namedVolumeSources(labeledSpec.binds)) {
+        yield* ensureVolume(spawner, name, labels);
       }
     }
 
-    const finalSpec = legacyApplyBitbucketStartContainerFilter(
-      labeledSpec,
-      opts.isBitbucketPipeline,
-    );
+    const finalSpec = applyBitbucketStartContainerFilter(labeledSpec, opts.isBitbucketPipeline);
 
-    const createArgs = legacyBuildStartContainerCreateArgs(finalSpec);
-    // `legacyIsDockerClientEnvKey` keys (e.g. Vector's container-facing `DOCKER_HOST`) are
-    // already emitted inline as `-e KEY=value` by `legacyBuildStartContainerCreateArgs` above —
-    // see `legacyDockerCreateContainer`'s doc comment for why they must not also reach the
-    // spawned `docker create` process's own environment.
+    const createArgs = buildStartContainerCreateArgs(finalSpec);
+    // `isDockerClientEnvKey` keys are already emitted inline as `-e KEY=value` above; see
+    // `dockerCreateContainer` for why they must not also reach this process's own environment.
     const createProcessEnv = Object.fromEntries(
-      Object.entries(finalSpec.env).filter(([key]) => !legacyIsDockerClientEnvKey(key)),
+      Object.entries(finalSpec.env).filter(([key]) => !isDockerClientEnvKey(key)),
     );
-    const containerId = yield* legacyDockerCreateContainer(spawner, createArgs, createProcessEnv);
-    yield* legacyCopyStartSecretFilesIntoContainer(
-      spawner,
-      containerId,
-      finalSpec.secretFiles ?? [],
-    );
-    // Sequentially, not concurrently like the secret files: two archives could legitimately
-    // overlap in the container's filesystem, so the spec's own order has to be the applied order.
+    const containerId = yield* dockerCreateContainer(spawner, createArgs, createProcessEnv);
+    yield* copyStartSecretFilesIntoContainer(spawner, containerId, finalSpec.secretFiles ?? []);
+    // Sequential, not concurrent like the secret files: archives can legitimately overlap in the
+    // container's filesystem, so the spec's own order must be the applied order.
     //
-    // A failed extraction removes the just-created container (best-effort, `-v` so an anonymous
-    // volume goes with it) before failing. The secret-file/`docker start` steps deliberately do
-    // NOT do this — their established post-create failure window leaves cleanup to the caller's
-    // finalizer (see `legacyCreateShadowDatabase`'s doc comment, `shadow-database.ts`) — but
-    // `preStartArchives`' one producer (the shadow baseline cache's warm restore) recovers from
-    // this exact failure by provisioning a replacement, which must not accumulate an orphaned
-    // created container per recovery.
+    // A failed extraction removes the just-created container first (unlike a secret-file or
+    // `docker start` failure, which leave cleanup to the caller's finalizer): this step's one
+    // producer, the shadow baseline cache's warm restore, retries by provisioning a replacement
+    // container, and must not leak an orphaned one per retry.
     yield* Effect.forEach(
       finalSpec.preStartArchives ?? [],
-      (archive) => legacyExtractPreStartArchiveIntoContainer(spawner, containerId, archive),
+      (archive) => extractPreStartArchiveIntoContainer(spawner, containerId, archive),
       { discard: true },
     ).pipe(
       Effect.tapError(() =>
@@ -894,7 +723,7 @@ export function legacyCreateContainer(
         }).pipe(Effect.orElseSucceed(() => 0)),
       ),
     );
-    yield* legacyDockerStartContainer(spawner, containerId, finalSpec);
+    yield* dockerStartContainer(spawner, containerId, finalSpec);
     return containerId;
   });
 }

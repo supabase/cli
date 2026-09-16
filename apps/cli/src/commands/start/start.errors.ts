@@ -12,7 +12,7 @@ import {
  * `start`'s own flag validation or handler body run, so a bad explicit
  * workdir must fail here first, before config load or any Docker access.
  */
-export class LegacyStartWorkdirError extends Data.TaggedError("LegacyStartWorkdirError")<{
+export class StartWorkdirError extends Data.TaggedError("StartWorkdirError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -21,7 +21,7 @@ export class LegacyStartWorkdirError extends Data.TaggedError("LegacyStartWorkdi
 }
 
 /** Loading `config.toml` failed for a reason other than the file being absent (malformed TOML). */
-export class LegacyStartConfigLoadError extends Data.TaggedError("LegacyStartConfigLoadError")<{
+export class StartConfigLoadError extends Data.TaggedError("StartConfigLoadError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -34,9 +34,7 @@ export class LegacyStartConfigLoadError extends Data.TaggedError("LegacyStartCon
  * ever brings up a container — e.g. an `auth.jwt_secret` shorter than 16
  * characters.
  */
-export class LegacyStartInvalidConfigError extends Data.TaggedError(
-  "LegacyStartInvalidConfigError",
-)<{
+export class StartInvalidConfigError extends Data.TaggedError("StartInvalidConfigError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {

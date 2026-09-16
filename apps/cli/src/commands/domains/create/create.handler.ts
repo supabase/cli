@@ -1,30 +1,28 @@
 import { Effect } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 
-import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
+import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
+import { CommandSettings } from "../../../config/command-settings.service.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { verifyLegacyCname } from "../domains.cname.ts";
-import { emitLegacyHostnameResult } from "../domains.emit.ts";
-import { mapLegacyDomainsHttpError } from "../domains.errors.ts";
-import { legacyGateMapError } from "../../../command-internal/legacy-upgrade-suggest.ts";
-import type { LegacyDomainsCreateFlags } from "./create.command.ts";
+import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
+import { verifyCname } from "../domains.cname.ts";
+import { emitHostnameResult } from "../domains.emit.ts";
+import { mapDomainsHttpError } from "../domains.errors.ts";
+import { gateMapError } from "../../../command-internal/upgrade-suggest.ts";
+import type { DomainsCreateFlags } from "./create.command.ts";
 
-const mapCreateError = mapLegacyDomainsHttpError("create");
+const mapCreateError = mapDomainsHttpError("create");
 
-export const legacyDomainsCreate = Effect.fn("legacy.domains.create")(function* (
-  flags: LegacyDomainsCreateFlags,
-) {
+export const domainsCreate = Effect.fn("domains.create")(function* (flags: DomainsCreateFlags) {
   const output = yield* Output;
   const httpClient = yield* HttpClient.HttpClient;
-  const api = yield* LegacyPlatformApi;
-  const cliSettings = yield* LegacyCliSettings;
-  const resolver = yield* LegacyProjectRefResolver;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
+  const api = yield* CommandPlatformApi;
+  const cliSettings = yield* CommandSettings;
+  const resolver = yield* ProjectRefResolver;
+  const linkedProjectCache = yield* LinkedProjectCache;
+  const telemetryState = yield* TelemetryState;
 
   const ref = yield* resolver.resolve(flags.projectRef);
 
@@ -32,7 +30,7 @@ export const legacyDomainsCreate = Effect.fn("legacy.domains.create")(function* 
   // success and failure.
   yield* Effect.gen(function* () {
     // 1. Verify the CNAME first — short-circuits before any POST.
-    yield* verifyLegacyCname({
+    yield* verifyCname({
       httpClient,
       projectHost: cliSettings.projectHost,
       ref,
@@ -46,10 +44,10 @@ export const legacyDomainsCreate = Effect.fn("legacy.domains.create")(function* 
       .updateHostnameConfig({ ref, custom_hostname: flags.customHostname })
       .pipe(
         Effect.tapError(() => creating?.fail() ?? Effect.void),
-        Effect.catch(legacyGateMapError({ projectRef: ref }, mapCreateError)),
+        Effect.catch(gateMapError({ projectRef: ref }, mapCreateError)),
       );
     yield* creating?.clear() ?? Effect.void;
 
-    yield* emitLegacyHostnameResult(response, flags.includeRawOutput);
+    yield* emitHostnameResult(response, flags.includeRawOutput);
   }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));
 });

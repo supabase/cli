@@ -16,22 +16,15 @@ import { systemError, type PlatformError } from "effect/PlatformError";
 import { Tty } from "./tty.service.ts";
 import { Stdin } from "./stdin.service.ts";
 
-// A parent that put the descriptor it hands down as fd 0 in non-blocking mode hands that mode
-// down with it (`O_NONBLOCK` belongs to the shared open file, not to each process's descriptor),
-// and an empty read then fails with `EAGAIN` instead of waiting for data.
+// fd 0 can be non-blocking (inherited from the parent's open file description), so an empty
+// read fails EAGAIN instead of waiting for data.
 const isEagain = (cause: unknown) =>
   cause instanceof Error && "code" in cause && cause.code === "EAGAIN";
 
-// Bun's `process.stdin` cannot be throttled: one prompt is enough to start a read of the
-// pipe that `pause`, `destroy` and detaching the listener all fail to stop, so an unbounded
-// producer (`yes | supabase db push`) turns into an OOM kill. A file stream over fd 0 (the
-// path is ignored once `fd` is given) honours backpressure: it reads at most one chunk ahead
-// and leaves the rest in the pipe for a child inheriting fd 0, which `autoClose` keeps open
-// when the stream is destroyed. Destroying it is what a reader's scope does on the way out:
-// left alive, a stream whose listeners are gone would raise its next `EAGAIN` as an uncaught
-// error. Clearing `O_NONBLOCK` would clear it for the parent too, so fd 0 is taken as it comes
-// and `EAGAIN` is reported as `WouldBlock` for the reader to wait out.
-// Ref: https://github.com/supabase/cli/issues/6287
+// Bun's `process.stdin` can't be throttled (pause/destroy/detach don't stop an inherited pipe
+// read), so an unbounded producer OOMs. A file stream over fd 0 honors backpressure instead;
+// EAGAIN from the non-blocking fd is reported as WouldBlock for the reader to wait out.
+// See https://github.com/supabase/cli/issues/6287
 const processStdin: Stream.Stream<Uint8Array, PlatformError> = BunStream.fromReadable({
   evaluate: () => createReadStream("", { fd: 0, autoClose: false }),
   onError: (cause) =>
@@ -44,12 +37,9 @@ const processStdin: Stream.Stream<Uint8Array, PlatformError> = BunStream.fromRea
     }),
 });
 
-// `splitLines` holds a partial line until its terminator arrives, so a producer that never
-// sends one (`yes | tr -d '\n' | …`) would grow that buffer for as long as a prompt keeps
-// pulling. This bounds it: once more than this many bytes are pending since the last line
-// break, the next pull fails instead of reading further, and every prompt from then on takes
-// its default. The check runs once per pull, so the buffer runs at most one pull, a chunk or
-// two, past this bound before it trips.
+// Bounds the unterminated-line buffer `splitLines` holds: a producer that never sends a line
+// break (`yes | tr -d '\n' | …`) would otherwise grow it without limit. Once more bytes than
+// this are pending, the next pull fails and every later prompt takes its default.
 const MAX_PENDING_LINE_BYTES = 64 * 1024;
 
 const boundPendingLine = (bytes: Stream.Stream<Uint8Array, PlatformError>) =>
@@ -82,15 +72,9 @@ const makeStdin = Effect.fnUntraced(function* (stdin: Stream.Stream<Uint8Array, 
   const tty = yield* Tty;
   const textDecoder = new TextDecoder();
 
-  // `WouldBlock` is a non-blocking source with nothing to read yet, not a broken one: put a
-  // fresh reader over the still-open descriptor and ask again until data or EOF arrives, so the
-  // wait ends the way a blocking read's would, or with the prompt's timeout, which interrupts
-  // the retry. A poll, since the throttleable fd reader has no readiness signal to wait on;
-  // every 10 ms gives a piped prompt's 100 ms window ten looks, and stays fixed because the
-  // schedule keeps its state until data arrives, so a backoff reached while one prompt waited
-  // would still be slowing the next one down. Each look keeps a retry frame (a few KB) for the
-  // reader's lifetime, so a producer that never writes or closes costs a few hundred kilobytes
-  // a second of waiting, where a blocking read would hang for free.
+  // WouldBlock means the non-blocking fd has nothing to read yet, not that it's broken: retry
+  // until data, EOF, or the prompt's timeout interrupts it. Polls at a fixed 10ms rather than
+  // backing off, so a slow prompt's wait doesn't carry backoff state into the next one.
   const source = Stream.retry(stdin, ($) =>
     $(Schedule.spaced("10 millis")).pipe(
       Schedule.while(({ input }) => Predicate.isTagged(input.reason, "WouldBlock")),
@@ -114,17 +98,11 @@ const makeStdin = Effect.fnUntraced(function* (stdin: Stream.Stream<Uint8Array, 
     );
   });
 
-  // Persistent, lazily-opened line reader shared by every `readLine` call, so a
-  // command issuing several prompts (config push, seed buckets) reads the *next* piped
-  // line each time instead of restarting from the top of the pipe. Opening it is
-  // deferred behind `Effect.cached` and tied to this layer's scope: stdin is not
-  // touched until the first `readLine`, so a TTY command that only prompts via clack
-  // never grabs the keyboard (no contention with clack's own stdin capture), and the
-  // reader outlives individual prompts. `splitLines` preserves interior blank lines so
-  // answers stay aligned across prompts. A failed read stays failed for the rest of the
-  // process: what can go wrong with an open fd 0 (closed, hung up, not readable) does not
-  // mend on its own, so later prompts take their default instead of retrying a dead
-  // descriptor; the one transient failure, `WouldBlock`, is waited out upstream.
+  // Persistent, lazily-opened (via `Effect.cached`) line reader shared by every `readLine`
+  // call, so successive prompts read successive piped lines instead of restarting the pipe.
+  // Opening is deferred until the first call, so a TTY-only command never grabs stdin from
+  // clack. A failed read stays failed: fd 0 problems don't self-heal, so later prompts take
+  // their default instead of retrying a dead descriptor.
   const nextLine = yield* Effect.cached(lineReader);
 
   const readPipedBytes = Effect.gen(function* () {
@@ -149,11 +127,8 @@ const makeStdin = Effect.fnUntraced(function* (stdin: Stream.Stream<Uint8Array, 
     return Option.some(bytes);
   }).pipe(Effect.orElseSucceed(() => Option.none<Uint8Array>()));
 
-  // Read the next line (trimmed), bounded by `timeoutMillis`, from the persistent reader
-  // above: successive calls return successive lines, and a timeout, EOF, or read error all
-  // collapse to `None`, the prompt's default. The timeout bounds a pipe that stays open
-  // without sending a line, and a user who never answers, so the prompt takes its default
-  // instead of waiting for EOF.
+  // Bounds a pipe that never sends a line, or a user who never answers: a timeout, EOF, or
+  // read error all collapse to `None`, the prompt's default.
   const readLine = (timeoutMillis: number): Effect.Effect<Option.Option<string>> =>
     Effect.gen(function* () {
       const take = yield* nextLine;
@@ -163,10 +138,8 @@ const makeStdin = Effect.fnUntraced(function* (stdin: Stream.Stream<Uint8Array, 
       return Option.map(Option.flatten(line), (value) => value.trim());
     });
 
-  // Stream piped stdin without collecting it (constant memory). Read errors PROPAGATE on
-  // the error channel (unlike `readPipedBytes`'s `orElseSucceed(none)` swallow), once
-  // `WouldBlock` has been waited out above: a consumer writing the bytes to a file must fail
-  // rather than leave a truncated file behind.
+  // Streams piped stdin without collecting it. Unlike `readPipedBytes`, read errors PROPAGATE
+  // so a consumer writing to a file fails rather than leaving a truncated one.
   const pipedBytesStream = source;
 
   return Stdin.of({

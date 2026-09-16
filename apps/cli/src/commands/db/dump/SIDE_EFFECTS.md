@@ -27,7 +27,7 @@ script run inside the local Postgres image to stdout or `--file`.
 | POST   | `/v1/projects/{ref}/cli/login-role`          | Bearer | `--linked` with no `DB_PASSWORD` (mint a temp postgres role) |
 | GET    | `/v1/projects/{ref}/network-bans` (+ DELETE) | Bearer | `--linked` pooler temp-role retry (clear self ban)           |
 
-(All via the shared `LegacyDbConfigResolver` `--linked` path.)
+(All via the shared `DbConfigResolver` `--linked` path.)
 
 ## Environment Variables
 
@@ -92,7 +92,7 @@ shell inherits the suppressing variables and is missed.
   env var simply leaves unused on a non-linked target).
 - **Container-level pooler fallback.** When a linked dump reaches the direct host
   from the host process but the `pg_dump` container fails over IPv6, the captured
-  container stderr is classified (`legacyIsIPv6ConnectivityError`) and the dump is
+  container stderr is classified (`isIPv6ConnectivityError`) and the dump is
   retried once through the project's IPv4 transaction pooler
   (`resolver.resolvePoolerFallback`). This is in addition to the resolver's
   connect-time pooler fallback for an unreachable direct host.

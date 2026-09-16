@@ -1,13 +1,13 @@
 import { randomBytes } from "node:crypto";
 import { createHarness, exec } from "@supabase/cli-test-helpers";
-import { ACCESS_TOKEN, REGION, TARGET } from "../src/tests/env.ts";
+import { ACCESS_TOKEN, REGION } from "../src/tests/env.ts";
 
 // Shared staging-project helpers used by record setup (tests/setup.ts).
 // `apiUrl` is the replay server URL, which proxies calls to staging while
 // recording. The harness target + token come from env.
 
 function harness(apiUrl: string) {
-  return createHarness(TARGET, { apiUrl, accessToken: ACCESS_TOKEN });
+  return createHarness({ apiUrl, accessToken: ACCESS_TOKEN });
 }
 
 const PROJECT_REF_RE = /^[a-z]{20}$/;

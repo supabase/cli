@@ -7,7 +7,7 @@ import { runSupabase, stripAnsi } from "../../../../tests/helpers/cli.ts";
 
 const E2E_TIMEOUT_MS = 30_000;
 
-describe("supabase migration squash (legacy)", () => {
+describe("supabase migration squash", () => {
   let workdir: string;
   beforeEach(() => {
     workdir = mkdtempSync(join(tmpdir(), "sb-mig-squash-e2e-"));
@@ -18,15 +18,9 @@ describe("supabase migration squash (legacy)", () => {
     rmSync(workdir, { recursive: true, force: true });
   });
 
-  // Real-subprocess guard for the production layer graph: `--version 0_init` is
-  // not a valid integer, so the bare `invalid version number` message
-  // (no repair-style `failed to parse <v>:` prefix) must surface — proving the
-  // real `legacyMigrationSquashRuntimeLayer` builds end to end, without ever
-  // touching Docker/Postgres. This is the same class of missing-service bug the
-  // `migration fetch` e2e exists to catch. Unlike a declined confirmation prompt
-  // (a genuine cancellation), this is a genuine validation error, so the usual
-  // `--debug` troubleshooting hint still follows it (`output.layer.ts`'s
-  // `CONTEXT_CANCELED_MESSAGE` guard does not apply here).
+  // Exercises the real migrationSquashRuntimeLayer end to end without touching
+  // Docker/Postgres. This is a validation error, not a cancellation, so the usual
+  // --debug hint still follows it.
   test(
     "rejects a non-numeric --version with the bare Go message",
     { timeout: E2E_TIMEOUT_MS },
@@ -34,7 +28,6 @@ describe("supabase migration squash (legacy)", () => {
       const { exitCode, stderr } = await runSupabase(
         ["migration", "squash", "--version", "0_init"],
         {
-          entrypoint: "legacy",
           cwd: workdir,
         },
       );
@@ -47,9 +40,8 @@ describe("supabase migration squash (legacy)", () => {
     },
   );
 
-  // Golden path with no Docker required: a single local migration short-circuits
-  // `squashToVersion` before any shadow-database work, so this proves the whole
-  // local no-op + `--local` suggestion path end to end.
+  // A single local migration short-circuits squashToVersion before any
+  // shadow-database work, exercising the local no-op + suggestion path end to end.
   test(
     "no-ops on a single local migration and suggests migration repair",
     { timeout: E2E_TIMEOUT_MS },
@@ -60,7 +52,6 @@ describe("supabase migration squash (legacy)", () => {
       );
 
       const { exitCode, stdout, stderr } = await runSupabase(["migration", "squash", "--local"], {
-        entrypoint: "legacy",
         cwd: workdir,
       });
 

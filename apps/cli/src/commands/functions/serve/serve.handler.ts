@@ -1,30 +1,18 @@
 import { Effect } from "effect";
 import { join } from "node:path";
-import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
-import { legacyFunctionsGoConfigCompat } from "../../../command-internal/legacy-functions-go-config.ts";
-import { LegacyDebugFlag, LegacyNetworkIdFlag } from "../../../shared/legacy/global-flags.ts";
+import { CommandSettings } from "../../../config/command-settings.service.ts";
+import { functionsGoConfigCompat } from "../../../command-internal/functions-go-config.ts";
+import { DebugFlag, NetworkIdFlag } from "../../../command-internal/global-flags.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import {
-  buildFunctionsServeInspectArgs,
-  resolveFunctionsServeInspectMode,
-  serveFunctions,
-  type FunctionsServeFlags,
-} from "../../../shared/functions/serve.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
+import { serveFunctions, type FunctionsServeFlags } from "../../../shared/functions/serve.ts";
 
-export type LegacyFunctionsServeFlags = FunctionsServeFlags;
-
-export const legacyResolveFunctionsServeInspectMode = resolveFunctionsServeInspectMode;
-export const legacyBuildFunctionsServeInspectArgs = buildFunctionsServeInspectArgs;
-
-export const legacyFunctionsServe = Effect.fn("legacy.functions.serve")(function* (
-  flags: LegacyFunctionsServeFlags,
-) {
-  const cliSettings = yield* LegacyCliSettings;
+export const functionsServe = Effect.fn("functions.serve")(function* (flags: FunctionsServeFlags) {
+  const cliSettings = yield* CommandSettings;
   const runtimeInfo = yield* RuntimeInfo;
-  const telemetryState = yield* LegacyTelemetryState;
-  const debug = yield* LegacyDebugFlag;
-  const networkId = yield* LegacyNetworkIdFlag;
+  const telemetryState = yield* TelemetryState;
+  const debug = yield* DebugFlag;
+  const networkId = yield* NetworkIdFlag;
 
   yield* serveFunctions(flags, {
     projectRoot: cliSettings.workdir,
@@ -35,6 +23,6 @@ export const legacyFunctionsServe = Effect.fn("legacy.functions.serve")(function
     networkId,
     projectIdOverride: cliSettings.projectId,
     goViperCompat: true,
-    goConfigCompat: legacyFunctionsGoConfigCompat,
+    goConfigCompat: functionsGoConfigCompat,
   }).pipe(Effect.ensuring(telemetryState.flush));
 });

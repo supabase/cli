@@ -1,58 +1,58 @@
 import { Effect, FileSystem, Option, Path } from "effect";
 
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
-import { LegacyDnsResolverFlag } from "../../../shared/legacy/global-flags.ts";
-import { legacyResolveYesWithProjectEnv } from "../../../shared/legacy/global-flags.ts";
+import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
+import { resolveYesWithProjectEnv } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { LegacyDbConfigResolver } from "../../../command-internal/legacy-db-config.service.ts";
+import { CommandSettings } from "../../../config/command-settings.service.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import {
-  legacyApplyProjectEnv,
-  legacyCheckDbToml,
-  legacyLoadProjectEnv,
-} from "../../../command-internal/legacy-db-config.toml-read.ts";
-import { legacyDbPushCore } from "../../../command-internal/legacy-db-push-core.ts";
-import { resolveLegacyDbTargetFlags } from "../../../command-internal/legacy-db-target-flags.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import type { LegacyDbPushFlags } from "./push.command.ts";
-import { LegacyDbPushTargetFlagsError } from "./push.errors.ts";
+  applyProjectEnv,
+  checkDbToml,
+  loadProjectEnv,
+} from "../../../command-internal/db-config.toml-read.ts";
+import { dbPushCore } from "../../../command-internal/db-push-core.ts";
+import { resolveDbTargetFlags } from "../../../command-internal/db-target-flags.ts";
+import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
+import type { DbPushFlags } from "./push.command.ts";
+import { DbPushTargetFlagsError } from "./push.errors.ts";
 
 /**
  * `supabase db push` — apply pending local migrations (and optionally seed data
  * and custom roles) to the local or linked/remote database.
  *
  * Resolves the `--db-url`/`--linked`/`--local` target and `config.toml`, then
- * delegates the actual push to `legacyDbPushCore`, shared with `bootstrap`.
+ * delegates the actual push to `dbPushCore`, shared with `bootstrap`.
  */
-export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: LegacyDbPushFlags) {
+export const dbPush = Effect.fn("db.push")(function* (flags: DbPushFlags) {
   const output = yield* Output;
-  const resolver = yield* LegacyDbConfigResolver;
-  const cliSettings = yield* LegacyCliSettings;
-  const telemetryState = yield* LegacyTelemetryState;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
+  const resolver = yield* DbConfigResolver;
+  const cliSettings = yield* CommandSettings;
+  const telemetryState = yield* TelemetryState;
+  const linkedProjectCache = yield* LinkedProjectCache;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const cliArgs = yield* CliArgs;
-  const dnsResolver = yield* LegacyDnsResolverFlag;
+  const dnsResolver = yield* DnsResolverFlag;
 
   const workdir = cliSettings.workdir;
   // The project `.env` is applied before the history prompt, so a
   // `SUPABASE_YES` set only in `supabase/.env` auto-confirms. Resolve `yes`
   // with that project env, as `db pull` does.
-  const projectEnv = yield* legacyLoadProjectEnv(fs, path, workdir);
-  const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
+  const projectEnv = yield* loadProjectEnv(fs, path, workdir);
+  const yes = yield* resolveYesWithProjectEnv(projectEnv);
   let linkedRefForCache: string | undefined;
 
   const body = Effect.gen(function* () {
-    yield* legacyApplyProjectEnv(projectEnv);
-    const target = resolveLegacyDbTargetFlags(cliArgs.args);
+    yield* applyProjectEnv(projectEnv);
+    const target = resolveDbTargetFlags(cliArgs.args);
     // Mutually-exclusive db-url/linked/local group, keyed off the
     // explicitly-set flags, not the `--linked` default value.
     if (target.setFlags.length > 1) {
       return yield* Effect.fail(
-        new LegacyDbPushTargetFlagsError({
+        new DbPushTargetFlagsError({
           message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
         }),
       );
@@ -60,15 +60,13 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
     // push defaults `--linked` to true, so no target flag → linked.
     const connType = target.connType ?? "linked";
 
-    // TS-only guard: `--project-ref` never implies `--linked` and must not be
-    // silently discarded on a non-linked target. Deliberately STRICTER than the
-    // `SUPABASE_PROJECT_ID` env var, which is read unconditionally but simply
-    // goes unused (no error) on a `--local`/`--db-url` target — an explicitly
-    // typed `--project-ref` flag silently doing nothing on e.g. `db push
-    // --local` is a footgun the env var doesn't share, so this errors instead.
+    // `--project-ref` never implies `--linked` and must not be silently discarded on a
+    // non-linked target. This is stricter than `SUPABASE_PROJECT_ID`, which is read
+    // unconditionally but simply goes unused on `--local`/`--db-url` — an explicitly
+    // typed flag doing nothing silently would be a footgun the env var doesn't share.
     if (Option.isSome(flags.projectRef) && connType !== "linked") {
       return yield* Effect.fail(
-        new LegacyDbPushTargetFlagsError({
+        new DbPushTargetFlagsError({
           message:
             "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
         }),
@@ -80,28 +78,19 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
     // the ref stays empty.
     let projectRef = "";
     if (connType === "linked") {
-      const refResolver = yield* LegacyProjectRefResolver;
+      const refResolver = yield* ProjectRefResolver;
       projectRef = yield* refResolver.loadProjectRef(flags.projectRef);
       linkedRefForCache = projectRef;
     }
 
-    // Single config load, except that `--skip-vault` omits only `[db.vault]`
-    // secret resolution: decodes the whole config with env-expansion +
-    // weak-typed boolean parsing (so `enabled = "env(SEED_ENABLED)"` etc.
-    // load), applies `SUPABASE_*` env overrides, merges a matching
-    // `[remotes.<ref>]` block, and decrypts selected `encrypted:` secrets
-    // with the shell AND project-`.env` `DOTENV_PRIVATE_KEY*` keys — aborting
-    // here (before connecting or writing) on any undecryptable/invalid
-    // config. This must resolve BEFORE `resolver.resolve()`'s network
-    // activity (temp-role minting, pooler fallback) so a matching
-    // `[remotes.<ref>]` override prints before it.
-    const toml = yield* legacyCheckDbToml(
-      fs,
-      path,
-      workdir,
-      projectRef !== "" ? projectRef : undefined,
-      { resolveVaultSecrets: !flags.skipVault },
-    );
+    // Single config load (except `--skip-vault`, which omits `[db.vault]` secret
+    // resolution): decodes with env-expansion + weak-typed booleans, applies
+    // `SUPABASE_*` overrides, merges a matching `[remotes.<ref>]` block, and decrypts
+    // `encrypted:` secrets — aborting here on any invalid config, before
+    // `resolver.resolve()`'s network activity, so a remote override prints first.
+    const toml = yield* checkDbToml(fs, path, workdir, projectRef !== "" ? projectRef : undefined, {
+      resolveVaultSecrets: !flags.skipVault,
+    });
     if (toml.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${toml.appliedRemote}]\n`, "stderr");
     }
@@ -115,7 +104,7 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
       linkedProjectRef: flags.projectRef,
     });
 
-    yield* legacyDbPushCore({
+    yield* dbPushCore({
       workdir,
       projectRef,
       conn: cfg.conn,

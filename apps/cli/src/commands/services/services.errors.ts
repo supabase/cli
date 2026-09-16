@@ -5,9 +5,7 @@ import {
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
 
-export class LegacyServicesEnvNotSupportedError extends Data.TaggedError(
-  "LegacyServicesEnvNotSupportedError",
-)<{
+export class ServicesEnvNotSupportedError extends Data.TaggedError("ServicesEnvNotSupportedError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {

@@ -2,9 +2,9 @@ import type * as CliCommand from "effect/unstable/cli/Command";
 import { Command, Flag } from "effect/unstable/cli";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { legacyManagementApiRuntimeLayer } from "../../../command-internal/legacy-management-api-runtime.layer.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyBackupsList } from "./list.handler.ts";
+import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { backupsList } from "./list.handler.ts";
 
 const config = {
   projectRef: Flag.string("project-ref").pipe(
@@ -13,9 +13,9 @@ const config = {
   ),
 } as const;
 
-export type LegacyBackupsListFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type BackupsListFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyBackupsListCommand = Command.make("list", config).pipe(
+export const backupsListCommand = Command.make("list", config).pipe(
   Command.withDescription("Lists available physical backups"),
   Command.withShortDescription("Lists available physical backups"),
   Command.withExamples([
@@ -29,10 +29,7 @@ export const legacyBackupsListCommand = Command.make("list", config).pipe(
     },
   ]),
   Command.withHandler((flags) =>
-    legacyBackupsList(flags).pipe(
-      withLegacyCommandInstrumentation({ flags }),
-      withJsonErrorHandling,
-    ),
+    backupsList(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
-  Command.provide(legacyManagementApiRuntimeLayer(["backups", "list"])),
+  Command.provide(managementApiRuntimeLayer(["backups", "list"])),
 );

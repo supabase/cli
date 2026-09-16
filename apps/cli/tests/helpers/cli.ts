@@ -6,6 +6,7 @@ import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { Data, Effect, Exit } from "effect";
 import {
   noteStackCliProjectHome,
   registerTempHome,
@@ -16,9 +17,7 @@ export { stripAnsi } from "./ansi.ts";
 
 const BINARY_EXT = process.platform === "win32" ? ".exe" : "";
 const SHIM_PATH = fileURLToPath(new URL("../../dist/supabase.js", import.meta.url));
-const LEGACY_BINARY_PATH = fileURLToPath(
-  new URL(`../../dist/supabase-legacy${BINARY_EXT}`, import.meta.url),
-);
+const BINARY_PATH = fileURLToPath(new URL(`../../dist/supabase${BINARY_EXT}`, import.meta.url));
 
 // E2E subprocesses should only enter agent output mode when a test explicitly
 // opts in via `options.env`. Keep this list aligned with @vercel/detect-agent
@@ -59,14 +58,14 @@ function subprocessBaseEnv(): Record<string, string> {
 function assertBuildArtifactsExist(binaryPath: string): void {
   if (!existsSync(SHIM_PATH) || !existsSync(binaryPath)) {
     throw new Error(
-      `Missing legacy CLI build artifacts. Run \`pnpm --filter supabase build\` before invoking e2e tests.\n` +
+      `Missing CLI build artifacts. Run \`pnpm --filter supabase build\` before invoking e2e tests.\n` +
         `  expected shim:   ${SHIM_PATH}\n` +
         `  expected binary: ${binaryPath}`,
     );
   }
 }
 
-type RunResult = {
+export type RunResult = {
   stdout: string;
   stderr: string;
   exitCode: number;
@@ -74,8 +73,37 @@ type RunResult = {
   timedOutAfterMs?: number;
 };
 
+/** The CLI closed its stdin before the harness finished writing to it. */
+class CliStdinWriteError extends Data.TaggedError("CliStdinWriteError")<{
+  readonly cause: Error;
+}> {
+  override get message(): string {
+    return this.cause.message;
+  }
+}
+
+/** Spawning the CLI failed before the child was usable. */
+class CliSpawnError extends Data.TaggedError("CliSpawnError")<{
+  readonly cause: unknown;
+}> {
+  override get message(): string {
+    return this.cause instanceof Error ? this.cause.message : String(this.cause);
+  }
+}
+
+/** Disposing a run-owned or test-owned temp `SUPABASE_HOME` failed. */
+export class CliHomeDisposeError extends Data.TaggedError("CliHomeDisposeError")<{
+  readonly cause: unknown;
+}> {
+  override get message(): string {
+    return this.cause instanceof Error ? this.cause.message : String(this.cause);
+  }
+}
+
+export type CliRunError = CliSpawnError | CliStdinWriteError | CliHomeDisposeError;
+
 const DEFAULT_EXIT_TIMEOUT_MS = 60_000;
-const DEFAULT_LEGACY_STACK_CLEANUP_TIMEOUT_MS = 120_000;
+const DEFAULT_STACK_CLEANUP_TIMEOUT_MS = 120_000;
 const OUTPUT_TAIL_LENGTH = 4_000;
 
 interface SpawnedSupabase {
@@ -86,6 +114,15 @@ interface SpawnedSupabase {
   readonly kill: (signal?: NodeJS.Signals) => void;
   readonly waitForOutput: (pattern: RegExp, timeoutMs?: number, startAt?: number) => Promise<void>;
   readonly waitForExit: (timeoutMs?: number) => Promise<RunResult>;
+  /** Effect-native exit path; `waitForExit` is the Promise facade over this. */
+  readonly exitEffect: (timeoutMs?: number) => Effect.Effect<RunResult, CliHomeDisposeError>;
+  /** The deferred stdin write failure, if the CLI closed stdin early. */
+  readonly stdinFailure: (result: RunResult) => Error | undefined;
+  /**
+   * Effect-path scope release: kills the group once (unless the caller opted out on a
+   * successful run), then disposes the owned temp home. Idempotent across the close path.
+   */
+  readonly releaseOwned: (opts: { readonly successOptOut: boolean }) => void;
 }
 
 export function makeTempHome() {
@@ -108,6 +145,32 @@ export function makeTempHome() {
   registerTempHome(home);
   return home;
 }
+
+/** The run's owned temp `SUPABASE_HOME` could not be created. */
+export class TempHomeSetupError extends Data.TaggedError("TempHomeSetupError")<{
+  readonly message: string;
+  readonly cause: unknown;
+}> {}
+
+/**
+ * Runs `use` with an owned temp `SUPABASE_HOME`. Setup and disposal failures both stay in
+ * the typed channel (`rmSync` can throw), which a scoped release could not express.
+ */
+export const withTempHome = <A, E, R>(
+  use: (home: ReturnType<typeof makeTempHome>) => Effect.Effect<A, E, R>,
+): Effect.Effect<A, TempHomeSetupError | CliHomeDisposeError | E, R> =>
+  Effect.acquireUseRelease(
+    Effect.try({
+      try: () => makeTempHome(),
+      catch: (cause) => new TempHomeSetupError({ message: "temp home setup failed", cause }),
+    }),
+    use,
+    (owned) =>
+      Effect.try({
+        try: () => owned[Symbol.dispose](),
+        catch: (cause) => new CliHomeDisposeError({ cause }),
+      }),
+  );
 
 function pickFreePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -175,9 +238,9 @@ export async function makeTempCliProject(prefix = "supabase-cli-e2e-") {
   return project;
 }
 
-export async function makeTempLegacyStackProject(
-  prefix = "supabase-legacy-stack-e2e-",
-  cleanupTimeoutMs = DEFAULT_LEGACY_STACK_CLEANUP_TIMEOUT_MS,
+export async function makeTempCliStackProject(
+  prefix = "supabase-stack-e2e-",
+  cleanupTimeoutMs = DEFAULT_STACK_CLEANUP_TIMEOUT_MS,
 ) {
   const project = await makeTempProject(prefix);
   const cleanup = async () => {
@@ -191,14 +254,13 @@ export async function makeTempLegacyStackProject(
     }
 
     const stopped = await runSupabase(["stop", "--no-backup"], {
-      entrypoint: "legacy",
       cwd: project.dir,
       exitTimeoutMs: cleanupTimeoutMs,
     });
     if (stopped.exitCode !== 0) {
       throw new Error(
         [
-          `Failed to stop legacy stack in ${project.dir} (exit code ${stopped.exitCode}).`,
+          `Failed to stop stack in ${project.dir} (exit code ${stopped.exitCode}).`,
           `stdout:\n${stopped.stdout}`,
           `stderr:\n${stopped.stderr}`,
         ].join("\n"),
@@ -308,8 +370,6 @@ export function spawnSupabase(
     cleanupProcessGroupOnClose?: boolean;
     /** Maximum time to wait for the process to exit before force-killing it. */
     exitTimeoutMs?: number;
-    /** Which source entrypoint to execute. Only the legacy shell remains. */
-    entrypoint?: "legacy";
   },
 ): SpawnedSupabase {
   const ownHome = options?.home ? null : makeTempHome();
@@ -338,8 +398,8 @@ export function spawnSupabase(
   for (const [key, value] of Object.entries(mergedEnv)) {
     if (value !== undefined) env[key] = value;
   }
-  assertBuildArtifactsExist(LEGACY_BINARY_PATH);
-  env["SUPABASE_CLI_BINARY_OVERRIDE"] = LEGACY_BINARY_PATH;
+  assertBuildArtifactsExist(BINARY_PATH);
+  env["SUPABASE_CLI_BINARY_OVERRIDE"] = BINARY_PATH;
   execCmd = "node";
   execArgs = [SHIM_PATH, ...args];
   const proc = spawn(execCmd, execArgs, {
@@ -398,22 +458,49 @@ export function spawnSupabase(
     closeWaiters.clear();
   });
 
+  let stdinError: unknown;
   if (options?.stdin !== undefined && proc.stdin) {
+    proc.stdin.on("error", (error) => {
+      if (!("code" in error && error.code === "EPIPE")) {
+        stdinError = error;
+      }
+    });
     proc.stdin.write(options.stdin);
     proc.stdin.end();
   }
 
-  const waitForExit = async (
-    timeoutMs = options?.exitTimeoutMs ?? DEFAULT_EXIT_TIMEOUT_MS,
-  ): Promise<RunResult> => {
-    if (closeResult) {
-      cleanupProcessGroupOnClose();
-      disposeOwnHome();
-      return closeResult;
-    }
+  const stdinFailure = (result: RunResult) =>
+    new Error(
+      [
+        `stdin write to the CLI failed`,
+        `Command: supabase ${args.join(" ")}`,
+        `PID: ${proc.pid ?? "<unknown>"}`,
+        `exit code: ${result.exitCode}${
+          result.timedOutAfterMs === undefined
+            ? ""
+            : ` (no exit within ${result.timedOutAfterMs}ms, SIGKILLed by the harness)`
+        }`,
+        outputTail("stdout tail", result.stdout),
+        outputTail("stderr tail", result.stderr),
+      ].join("\n\n"),
+      { cause: stdinError },
+    );
 
-    let timedOut = false;
-    const result = await new Promise<RunResult>((resolve) => {
+  // The single exit path. `waitForExit` is the Promise facade over it, so both callers
+  // share one implementation of the exit bound, the process-group kill and home disposal.
+  const exitEffect = (
+    timeoutMs = options?.exitTimeoutMs ?? DEFAULT_EXIT_TIMEOUT_MS,
+  ): Effect.Effect<RunResult, CliHomeDisposeError> =>
+    Effect.callback<RunResult>((resume) => {
+      if (closeResult) {
+        cleanupProcessGroupOnClose();
+        resume(Effect.succeed(closeResult));
+        return Effect.void;
+      }
+
+      let settled = false;
+      let timedOut = false;
+
       const timeout = setTimeout(() => {
         timedOut = true;
         killProcessGroup(proc.pid!, "SIGKILL");
@@ -424,17 +511,46 @@ export function spawnSupabase(
       timeout.unref();
 
       const onClose = (result: RunResult) => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timeout);
         closeWaiters.delete(onClose);
         cleanupProcessGroupOnClose();
-        resolve(result);
+        resume(Effect.succeed(timedOut ? { ...result, timedOutAfterMs: timeoutMs } : result));
       };
 
       closeWaiters.add(onClose);
-    });
 
-    disposeOwnHome();
-    return timedOut ? { ...result, timedOutAfterMs: timeoutMs } : result;
+      return Effect.sync(() => {
+        settled = true;
+        clearTimeout(timeout);
+        closeWaiters.delete(onClose);
+        cleanupProcessGroupOnClose();
+        // The home may still be in use when the opt-out kept the child alive here; in
+        // that case `releaseOwned` disposes it after the outer release kills the group.
+        if (closeResult !== undefined || cleanedUpProcessGroup) {
+          disposeOwnHome();
+        }
+      });
+    }).pipe(
+      // Disposal can throw; run it here so it fails the caller instead of escaping the
+      // `close` listener and leaving this effect pending.
+      Effect.tap(() =>
+        Effect.try({
+          try: disposeOwnHome,
+          catch: (cause) => new CliHomeDisposeError({ cause }),
+        }),
+      ),
+    );
+
+  const waitForExit = async (
+    timeoutMs = options?.exitTimeoutMs ?? DEFAULT_EXIT_TIMEOUT_MS,
+  ): Promise<RunResult> => {
+    const result = await Effect.runPromise(exitEffect(timeoutMs));
+    if (stdinError !== undefined) {
+      throw stdinFailure(result);
+    }
+    return result;
   };
 
   return {
@@ -515,6 +631,23 @@ export function spawnSupabase(
       });
     },
     waitForExit,
+    exitEffect,
+    stdinFailure: (result) => (stdinError === undefined ? undefined : stdinFailure(result)),
+    releaseOwned: ({ successOptOut }) => {
+      // `closeResult === undefined` is the honest liveness test: the pid is still owned,
+      // so signaling is safe and necessary; once the child has closed, signaling again
+      // would only race pid reuse. The group flag alone cannot carry this — on Windows
+      // the group signal is a swallowed no-op, and the direct kill below is the only one
+      // that works there.
+      if (!successOptOut && closeResult === undefined) {
+        cleanedUpProcessGroup = true;
+        killProcessGroup(proc.pid!, "SIGKILL");
+        try {
+          proc.kill("SIGKILL");
+        } catch {}
+      }
+      disposeOwnHome();
+    },
   };
 }
 
@@ -534,8 +667,6 @@ export async function runSupabase(
     untilTimeoutMs?: number;
     /** Maximum time to wait for the command to exit before force-killing it. */
     exitTimeoutMs?: number;
-    /** Which source entrypoint to execute. Only the legacy shell remains. */
-    entrypoint?: "legacy";
   },
 ): Promise<RunResult> {
   const spawned = spawnSupabase(args, options);
@@ -555,6 +686,45 @@ export async function runSupabase(
   const result = await spawned.waitForExit();
   return { ...result, exitCode: killedByUntil ? 0 : result.exitCode };
 }
+
+/**
+ * Effect-native CLI run. The spawned process group is owned by the calling scope, so an
+ * interrupted test kills the child instead of orphaning it; `cleanupProcessGroupOnClose:
+ * false` is honoured only on successful completion. `runSupabase` is the Promise facade
+ * over the same exit path.
+ */
+export const runSupabaseEffect = (
+  args: string[],
+  options?: Parameters<typeof spawnSupabase>[1],
+): Effect.Effect<RunResult, CliRunError> =>
+  Effect.acquireRelease(
+    Effect.try({
+      try: () => spawnSupabase(args, options),
+      catch: (cause) => new CliSpawnError({ cause }),
+    }),
+    // Scope teardown owns the spawned group: an interrupted run always kills it so the
+    // child is never orphaned, without re-signaling a group the close path already
+    // cleaned. On successful completion the caller's `cleanupProcessGroupOnClose: false`
+    // opt-out is honoured, matching the Promise path.
+    (spawned, exit) =>
+      Effect.sync(() =>
+        spawned.releaseOwned({
+          successOptOut: Exit.isSuccess(exit) && options?.cleanupProcessGroupOnClose === false,
+        }),
+      ),
+  ).pipe(
+    Effect.flatMap((spawned) =>
+      spawned.exitEffect().pipe(
+        Effect.flatMap((result) => {
+          const failure = spawned.stdinFailure(result);
+          return failure === undefined
+            ? Effect.succeed(result)
+            : Effect.fail(new CliStdinWriteError({ cause: failure }));
+        }),
+      ),
+    ),
+    Effect.scoped,
+  );
 
 export function requireCliSuccess(
   result: {

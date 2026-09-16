@@ -3,22 +3,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
-// CLI-1970 shrank the bundled `supabase-go` binary down to exactly the
-// commands the TypeScript CLI's `LegacyGoProxy` can spawn — every other Go
-// command was deleted outright. Every TS integration test stubs that
-// subprocess boundary, so nothing in the normal test pyramid notices when a
-// still-reachable Go command gets trimmed away by mistake: that regression
-// was previously caught only by a human audit.
+// The bundled `supabase-go` binary retains only the commands the TypeScript
+// CLI's `GoProxy` can spawn; every other Go command was deleted. TS
+// integration tests stub that subprocess boundary, so nothing else notices if
+// a still-reachable Go command gets trimmed away by mistake.
 //
-// This suite is the durable guard: it enumerates every argv shape the TS
-// side can hand to `LegacyGoProxy` and asserts the built `supabase-go`
-// binary still resolves it. If this fails after trimming the Go binary,
-// either the TS spawn surface grew (add the new command to the retained
+// This suite enumerates every argv shape the TS side can hand to `GoProxy`
+// and asserts the built `supabase-go` binary still resolves it. If this
+// fails, either the TS spawn surface grew (add the command to the retained
 // set in `apps/cli-go`) or the trim cut too deep (restore the command).
 //
 // `SUPABASE_GO_BINARY` is only set to a freshly built binary in CI (see
-// `.github/workflows/test.yml`); locally this whole suite no-ops so a
-// developer without a Go toolchain/build isn't forced to fail it.
+// `.github/workflows/test.yml`); locally this whole suite no-ops.
 const GO_BINARY = process.env["SUPABASE_GO_BINARY"];
 
 describe.skipIf(GO_BINARY === undefined)("go binary spawn surface (CLI-1970)", () => {
@@ -30,20 +26,17 @@ describe.skipIf(GO_BINARY === undefined)("go binary spawn surface (CLI-1970)", (
   beforeAll(() => {
     workspaceDir = mkdtempSync(join(tmpdir(), "cli-e2e-go-binary-surface-"));
 
-    // `cmd/root.go`'s `checkUpgrade` hits the real GitHub releases API on
-    // every invocation that returns a nil error (e.g. every `--help` call
-    // below), unless a `supabase/.temp/cli-latest` cache file already exists
-    // relative to the spawn's cwd and is less than 10h old (`shouldFetchRelease`).
-    // Pre-seeding it here keeps this whole suite hermetic instead of quietly
-    // depending on network access.
+    // The upgrade check hits the real GitHub releases API on every invocation
+    // that returns a nil error (e.g. every `--help` call below), unless a
+    // `supabase/.temp/cli-latest` cache file already exists and is less than
+    // 10h old. Pre-seeding it here keeps this suite hermetic.
     mkdirSync(join(workspaceDir, "supabase", ".temp"), { recursive: true });
     writeFileSync(join(workspaceDir, "supabase", ".temp", "cli-latest"), "v0.0.0");
 
     // A bogus `--profile` for the two Management-API-gated delegates (`gen
-    // keys`, `functions download --legacy-bundle`). The unique profile name
-    // guarantees an OS-keyring credential from a real `supabase login` can
-    // never match it, and the unreachable api_url means even a stray token
-    // match still fails at connect instead of reaching a real API.
+    // keys`, `functions download --legacy-bundle`): the unique profile name
+    // can never match a real stored credential, and the unreachable api_url
+    // means even a stray match still fails at connect.
     bogusProfilePath = join(workspaceDir, "profile.yaml");
     writeFileSync(
       bogusProfilePath,
@@ -83,7 +76,7 @@ describe.skipIf(GO_BINARY === undefined)("go binary spawn surface (CLI-1970)", (
     };
   }
 
-  // The complete spawn surface, mirrored from `LegacyGoProxy` call sites:
+  // The complete spawn surface, mirrored from `GoProxy` call sites:
   //   - db diff (diff.handler.ts, `--use-pg-schema` delegate path)
   //   - db branch create|delete|list|switch (thin proxies)
   //   - db remote changes (thin proxy)
@@ -107,27 +100,19 @@ describe.skipIf(GO_BINARY === undefined)("go binary spawn surface (CLI-1970)", (
         const output = stdout + stderr;
         expect(exitCode).toBe(0);
         expect(output).not.toContain("unknown command");
-        // A deleted NESTED subcommand (as opposed to a deleted top-level
-        // one) does not produce an "unknown command" error at all: cobra's
-        // default Args validator only rejects unmatched positional args on
-        // the root command, so `db diff --help` with `diff` deleted would
-        // otherwise silently fall through to printing `db`'s own help and
-        // exit 0 — verified empirically by deleting a command and watching
-        // this exact assertion catch it. Asserting the full resolved
-        // command path appears in the printed usage closes that gap: cobra
-        // renders `Usage:\n  supabase <path> [flags]` using each ancestor's
-        // Name() (the Use string's first token), so this substring is only
-        // present when the whole path actually resolved.
+        // A deleted nested subcommand doesn't error "unknown command": cobra
+        // only rejects unmatched args on the root command, so `db diff --help`
+        // with `diff` deleted would fall through to `db`'s own help (exit 0).
+        // Asserting the full command path appears in the usage output closes
+        // that gap — cobra only prints it once the whole path has resolved.
         expect(output).toContain(`supabase ${path.join(" ")}`);
       }, 5_000);
     }
   });
 
   describe("accepts the exact argv shape the TS proxy builds", () => {
-    // `db diff --use-pg-schema` (diff.handler.ts's `rebuildPgSchemaDelegateArgs`).
-    // `db diff` always provisions a Docker shadow database first, regardless
-    // of the differ engine, so the bogus DOCKER_HOST is what makes this fail
-    // fast rather than the bogus --db-url.
+    // `db diff` always provisions a Docker shadow database first, so the bogus
+    // DOCKER_HOST is what makes this fail fast, not the bogus --db-url.
     test("db diff --use-pg-schema", () => {
       const { exitCode, stderr } = runGo([
         "db",
@@ -142,10 +127,8 @@ describe.skipIf(GO_BINARY === undefined)("go binary spawn surface (CLI-1970)", (
       expect(stderr).not.toMatch(/unknown flag|invalid argument/i);
     }, 5_000);
 
-    // `db remote changes` (changes.handler.ts), with the complete global-flag
-    // set root.ts can prepend (globalArgs) — the only invocation in this
-    // suite exercising all ten at once. Also provisions a Docker shadow first
-    // (same as `db diff`), so the bogus DOCKER_HOST is what trips this one.
+    // The only invocation in this suite exercising the full global-flag set at
+    // once. Also provisions a Docker shadow first, so DOCKER_HOST trips it.
     test("db remote changes (full global flag set)", () => {
       const { exitCode, stderr } = runGo([
         "--output",
@@ -176,10 +159,8 @@ describe.skipIf(GO_BINARY === undefined)("go binary spawn surface (CLI-1970)", (
       expect(stderr).not.toMatch(/unknown flag|invalid argument/i);
     }, 5_000);
 
-    // `gen keys` (keys.handler.ts). Gated behind Go's Management-API login
-    // check before any network call, so an isolated SUPABASE_HOME (no stored
-    // credentials) plus the bogus --profile fails fast without ever reaching
-    // a real API — regardless of whatever is logged into on this machine.
+    // Gated behind a login check before any network call, so an isolated
+    // SUPABASE_HOME plus the bogus --profile fails fast without reaching a real API.
     test("gen keys", () => {
       const { exitCode, stderr } = runGo([
         "gen",
@@ -196,8 +177,7 @@ describe.skipIf(GO_BINARY === undefined)("go binary spawn surface (CLI-1970)", (
       expect(stderr).not.toMatch(/unknown flag|invalid argument/i);
     }, 5_000);
 
-    // `functions download --legacy-bundle` (shared/functions/download.ts's
-    // `makeGoProxyLegacyBundleArgs`). Same login-gate fail-fast as `gen keys`.
+    // Same login-gate fail-fast as `gen keys`.
     test("functions download --legacy-bundle", () => {
       const { exitCode, stderr } = runGo([
         "functions",
@@ -215,14 +195,10 @@ describe.skipIf(GO_BINARY === undefined)("go binary spawn surface (CLI-1970)", (
   });
 
   describe("negative control: a deleted command still reports unknown", () => {
-    // `["db", "start"]` deliberately is NOT used here even though it's a
-    // deleted command: cobra's default Args validator only rejects unmatched
-    // positional args on the ROOT command. A nested group like `db` silently
-    // falls through to printing its own help (exit 0) for an unrecognized
-    // child instead of erroring — verified empirically against the built
-    // binary. Only a deleted TOP-LEVEL command reliably reproduces the
-    // "unknown command" failure this guard needs to detect drift in both
-    // directions.
+    // `["db", "start"]` isn't used here even though it's a deleted command:
+    // like the nested-subcommand case above, `db` would fall through to its
+    // own help (exit 0) instead of erroring. Only a deleted top-level command
+    // reliably reproduces "unknown command".
     for (const deletedCommand of ["inspect", "start"]) {
       test(`supabase-go ${deletedCommand} reports unknown command`, () => {
         const { exitCode, stderr } = runGo([deletedCommand]);

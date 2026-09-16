@@ -1,10 +1,10 @@
 import { describe, expect, test } from "vitest";
 
-import { legacyBuildMailpitContainerSpec } from "./mailpit.service.ts";
+import { buildMailpitContainerSpec } from "./mailpit.service.ts";
 
-describe("legacyBuildMailpitContainerSpec", () => {
+describe("buildMailpitContainerSpec", () => {
   test("builds the minimal spec with only the always-on web UI port bound (start.go:853-901)", () => {
-    const spec = legacyBuildMailpitContainerSpec({
+    const spec = buildMailpitContainerSpec({
       image: "supabase/mailpit:v1",
       projectId: "proj",
       networkId: "supabase_network_proj",
@@ -32,7 +32,7 @@ describe("legacyBuildMailpitContainerSpec", () => {
   });
 
   test("adds the SMTP port binding only when smtpPort is set and non-zero (start.go:858-862)", () => {
-    const spec = legacyBuildMailpitContainerSpec({
+    const spec = buildMailpitContainerSpec({
       image: "img",
       projectId: "proj",
       networkId: "net",
@@ -46,7 +46,7 @@ describe("legacyBuildMailpitContainerSpec", () => {
   });
 
   test("omits the SMTP port binding when smtpPort is explicitly 0, matching Go's zero-value guard", () => {
-    const spec = legacyBuildMailpitContainerSpec({
+    const spec = buildMailpitContainerSpec({
       image: "img",
       projectId: "proj",
       networkId: "net",
@@ -57,7 +57,7 @@ describe("legacyBuildMailpitContainerSpec", () => {
   });
 
   test("adds the POP3 port binding only when pop3Port is set and non-zero (start.go:863-867)", () => {
-    const spec = legacyBuildMailpitContainerSpec({
+    const spec = buildMailpitContainerSpec({
       image: "img",
       projectId: "proj",
       networkId: "net",
@@ -71,7 +71,7 @@ describe("legacyBuildMailpitContainerSpec", () => {
   });
 
   test("adds both optional ports together, in Go's declared order", () => {
-    const spec = legacyBuildMailpitContainerSpec({
+    const spec = buildMailpitContainerSpec({
       image: "img",
       projectId: "proj",
       networkId: "net",

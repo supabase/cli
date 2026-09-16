@@ -91,12 +91,10 @@ async function main() {
   await rm(tmpDir, { recursive: true, force: true });
   await mkdir(tmpDir, { recursive: true });
 
-  // Resolve {root} placeholder in the config template.
   const template = await Bun.file(path.join(root, "verdaccio.yaml")).text();
   const resolved = template.replaceAll("{root}", root);
   await writeFile(configPath, resolved, "utf-8");
 
-  // Start Verdaccio, piping output to a log file.
   const logFd = openSync(logPath, "w");
   const verdaccioBin = path.join(root, "node_modules", ".bin", "verdaccio");
   const proc = Bun.spawn([verdaccioBin, "--config", configPath], {
@@ -117,7 +115,7 @@ async function main() {
   await waitForRegistry();
   process.stdout.write(" ready.\n");
 
-  // Create a publish user and persist the token so local-release.ts can use it.
+  // Persisted so local-release.ts can read it.
   const token = await createUser();
   await writeFile(tokenPath, token, "utf-8");
 
@@ -127,8 +125,7 @@ async function main() {
   Logs     : ${logPath}
 
   Publish the CLI in another terminal:
-    pnpm cli-release --next
-    pnpm cli-release --legacy
+    pnpm cli-release
 
   Global npm/pnpm registry config is untouched — pass --registry ${REGISTRY}
   to npx / npm install when testing the published package.

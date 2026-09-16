@@ -2,13 +2,13 @@
 
 ## Files Read
 
-| Path                                           | Format                    | When                                                                                            |
-| ---------------------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------- |
-| keyring `"Supabase CLI"` / `<profile>`         | OS keychain               | when `SUPABASE_ACCESS_TOKEN` unset and keyring available; account = `LegacyCliSettings.profile` |
-| keyring `"Supabase CLI"` / `access-token`      | OS keychain               | legacy-key fallback when the profile-keyed lookup misses                                        |
-| `~/.supabase/access-token`                     | plain text (token string) | last-resort fallback after env + keyring miss                                                   |
-| `<workdir>/supabase/.temp/project-ref`         | plain text                | when `--project-ref` flag and `SUPABASE_PROJECT_ID` env are unset                               |
-| `<workdir>/supabase/.temp/linked-project.json` | JSON                      | always — `linkedProjectCache` reads to decide whether to write                                  |
+| Path                                           | Format                    | When                                                                                          |
+| ---------------------------------------------- | ------------------------- | --------------------------------------------------------------------------------------------- |
+| keyring `"Supabase CLI"` / `<profile>`         | OS keychain               | when `SUPABASE_ACCESS_TOKEN` unset and keyring available; account = `CommandSettings.profile` |
+| keyring `"Supabase CLI"` / `access-token`      | OS keychain               | legacy-key fallback when the profile-keyed lookup misses                                      |
+| `~/.supabase/access-token`                     | plain text (token string) | last-resort fallback after env + keyring miss                                                 |
+| `<workdir>/supabase/.temp/project-ref`         | plain text                | when `--project-ref` flag and `SUPABASE_PROJECT_ID` env are unset                             |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON                      | always — `linkedProjectCache` reads to decide whether to write                                |
 
 ## Files Written
 
@@ -33,13 +33,13 @@
 
 ## Exit Codes
 
-| Code | Condition                                                           |
-| ---- | ------------------------------------------------------------------- |
-| `0`  | success                                                             |
-| `1`  | `LegacySnippetsEnvNotSupportedError` — `--output env` was requested |
-| `1`  | `LegacyInvalidProjectRefError` / `LegacyProjectNotLinkedError`      |
-| `1`  | `LegacySnippetsListUnexpectedStatusError` — non-2xx response        |
-| `1`  | `LegacySnippetsListNetworkError` — transport-level failure          |
+| Code | Condition                                                     |
+| ---- | ------------------------------------------------------------- |
+| `0`  | success                                                       |
+| `1`  | `SnippetsEnvNotSupportedError` — `--output env` was requested |
+| `1`  | `InvalidProjectRefError` / `ProjectRefNotLinkedError`         |
+| `1`  | `SnippetsListUnexpectedStatusError` — non-2xx response        |
+| `1`  | `SnippetsListNetworkError` — transport-level failure          |
 
 ## Telemetry Events Fired
 
@@ -95,6 +95,6 @@ NDJSON `success` event with the full response as `data`.
 
 ## Notes
 
-- When both `--output` and `--output-format` are set, `--output` wins (matches the precedence used elsewhere in legacy ports).
+- When both `--output` and `--output-format` are set, `--output` wins (matches the precedence used elsewhere in ports).
 - `--output env` is rejected **after** project-ref resolution but **before** the API call.
 - The linked-project cache fires after project-ref resolves; the telemetry state always flushes. Both run on success and on every error path via the two `Effect.ensuring` blocks in the handler.

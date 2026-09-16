@@ -1,17 +1,17 @@
 import { type V1GetHostnameConfigOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Option, Schema } from "effect";
 
 import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
-  buildLegacyTestRuntime,
-  mockLegacyCliSettings,
-  mockLegacyLinkedProjectCacheTracked,
-  mockLegacyPlatformApi,
-  mockLegacyTelemetryStateTracked,
-  useLegacyTempWorkdir,
-} from "../../../../tests/helpers/legacy-mocks.ts";
-import { legacyDomainsGet } from "./get.handler.ts";
+  buildTestRuntime,
+  mockCommandSettings,
+  mockLinkedProjectCacheTracked,
+  mockCommandPlatformApi,
+  mockTelemetryStateTracked,
+  useTempWorkdir,
+} from "../../../../tests/helpers/command-mocks.ts";
+import { domainsGet } from "./get.handler.ts";
 
 const HOSTNAME_RESPONSE: typeof V1GetHostnameConfigOutput.Type = {
   status: "1_not_started",
@@ -41,19 +41,32 @@ interface SetupOpts {
   readonly response?: unknown;
 }
 
-const tempRoot = useLegacyTempWorkdir("supabase-domains-get-int-");
+/** Just enough of the Go JSON envelope to reach the fields under assertion. */
+const GoJsonResult = Schema.Struct({
+  data: Schema.Struct({
+    result: Schema.Struct({
+      ownership_verification: Schema.Unknown,
+      custom_origin_server: Schema.String,
+      ssl: Schema.Struct({ status: Schema.String, validation_records: Schema.Unknown }),
+    }),
+  }),
+});
+
+const GoJsonEnvelope = Schema.Record(Schema.String, Schema.Unknown);
+
+const tempRoot = useTempWorkdir("supabase-domains-get-int-");
 
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
   const analytics = mockAnalytics();
-  const api = mockLegacyPlatformApi({
+  const api = mockCommandPlatformApi({
     response: { status: opts.status ?? 200, body: opts.response ?? HOSTNAME_RESPONSE },
     network: opts.network,
   });
-  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
-  const telemetry = mockLegacyTelemetryStateTracked();
-  const linkedProjectCache = mockLegacyLinkedProjectCacheTracked();
-  const layer = buildLegacyTestRuntime({
+  const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
+  const telemetry = mockTelemetryStateTracked();
+  const linkedProjectCache = mockLinkedProjectCacheTracked();
+  const layer = buildTestRuntime({
     out,
     api,
     cliSettings,
@@ -67,11 +80,11 @@ function setup(opts: SetupOpts = {}) {
 
 const baseFlags = { projectRef: Option.none<string>(), includeRawOutput: false };
 
-describe("legacy domains get integration", () => {
+describe("domains get integration", () => {
   it.live("prints the hostname status to stderr in text mode", () => {
     const { layer, out, telemetry, linkedProjectCache } = setup();
     return Effect.gen(function* () {
-      yield* legacyDomainsGet(baseFlags);
+      yield* domainsGet(baseFlags);
       expect(out.stderrText).toContain("Custom hostname configuration not started.");
       expect(out.stdoutText).toBe("");
       expect(telemetry.flushed).toBe(true);
@@ -82,7 +95,7 @@ describe("legacy domains get integration", () => {
   it.live("emits a structured success object for --output-format json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
-      yield* legacyDomainsGet(baseFlags);
+      yield* domainsGet(baseFlags);
       const success = out.messages.find((m) => m.type === "success");
       expect(success?.data).toMatchObject({ custom_hostname: "shop.acme.dev" });
     }).pipe(Effect.provide(layer));
@@ -91,7 +104,7 @@ describe("legacy domains get integration", () => {
   it.live("emits a structured success object for --output-format stream-json", () => {
     const { layer, out } = setup({ format: "stream-json" });
     return Effect.gen(function* () {
-      yield* legacyDomainsGet(baseFlags);
+      yield* domainsGet(baseFlags);
       expect(out.messages.some((m) => m.type === "success")).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -99,7 +112,7 @@ describe("legacy domains get integration", () => {
   it.live("emits indented Go JSON to stdout with no status on stderr for -o json", () => {
     const { layer, out } = setup({ goOutput: "json" });
     return Effect.gen(function* () {
-      yield* legacyDomainsGet(baseFlags);
+      yield* domainsGet(baseFlags);
       expect(out.stdoutText.startsWith("{")).toBe(true);
       expect(out.stdoutText).toContain('"custom_hostname": "shop.acme.dev"');
       // Structured -o output: human status is suppressed entirely — see emit.
@@ -110,6 +123,7 @@ describe("legacy domains get integration", () => {
   it.live("backfills Go zero values in JSON output when the API omits nested fields", () => {
     const {
       ownership_verification: _ownershipVerification,
+      custom_origin_server: _customOriginServer,
       ...resultWithoutOwnershipVerification
     } = HOSTNAME_RESPONSE.data.result;
     const response: typeof V1GetHostnameConfigOutput.Type = {
@@ -118,16 +132,42 @@ describe("legacy domains get integration", () => {
         ...HOSTNAME_RESPONSE.data,
         result: {
           ...resultWithoutOwnershipVerification,
-          ssl: { status: "pending_validation" },
+          ssl: { validation_records: [{ txt_name: "_acme" }] },
         },
       },
     };
     const { layer, out } = setup({ goOutput: "json", response });
     return Effect.gen(function* () {
-      yield* legacyDomainsGet(baseFlags);
-      const parsed = JSON.parse(out.stdoutText) as typeof V1GetHostnameConfigOutput.Type;
+      yield* domainsGet(baseFlags);
+      const parsed = yield* Schema.decodeEffect(Schema.fromJsonString(GoJsonResult))(
+        out.stdoutText,
+      );
       expect(parsed.data.result.ownership_verification).toEqual({ type: "", name: "", value: "" });
-      expect(parsed.data.result.ssl.validation_records).toEqual([]);
+      expect(parsed.data.result.custom_origin_server).toBe("");
+      expect(parsed.data.result.ssl.status).toBe("");
+      expect(parsed.data.result.ssl.validation_records).toEqual([
+        { txt_name: "_acme", txt_value: "" },
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("handles a pending hostname response without SSL details", () => {
+    const { ssl: _ssl, ...resultWithoutSsl } = HOSTNAME_RESPONSE.data.result;
+    const response: typeof V1GetHostnameConfigOutput.Type = {
+      ...HOSTNAME_RESPONSE,
+      status: "2_initiated",
+      data: {
+        ...HOSTNAME_RESPONSE.data,
+        result: { ...resultWithoutSsl, status: "pending" },
+      },
+    };
+    const { layer, out } = setup({ response });
+    return Effect.gen(function* () {
+      yield* domainsGet(baseFlags);
+      expect(out.stderrText).toBe(
+        "Custom hostname setup is being initialized; please request re-verification in a few seconds.\n",
+      );
+      expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(layer));
   });
 
@@ -154,8 +194,10 @@ describe("legacy domains get integration", () => {
     };
     const { layer, out } = setup({ goOutput: "json", response });
     return Effect.gen(function* () {
-      yield* legacyDomainsGet(baseFlags);
-      const parsed = JSON.parse(out.stdoutText) as Record<string, unknown>;
+      yield* domainsGet(baseFlags);
+      const parsed = yield* Schema.decodeEffect(Schema.fromJsonString(GoJsonEnvelope))(
+        out.stdoutText,
+      );
       expect(parsed.status).toBe("");
       expect(parsed.custom_hostname).toBe("");
       expect(parsed.data).toMatchObject({
@@ -187,7 +229,7 @@ describe("legacy domains get integration", () => {
     };
     const { layer, out } = setup({ response });
     return Effect.gen(function* () {
-      yield* legacyDomainsGet(baseFlags);
+      yield* domainsGet(baseFlags);
       expect(out.stderrText).toBe(
         "Custom hostname setup is being initialized; please request re-verification in a few seconds.\n",
       );
@@ -223,7 +265,7 @@ describe("legacy domains get integration", () => {
     };
     const { layer, out } = setup({ response });
     return Effect.gen(function* () {
-      yield* legacyDomainsGet(baseFlags);
+      yield* domainsGet(baseFlags);
       expect(out.stderrText).toBe(
         "Custom hostname verification in-progress; please configure the appropriate DNS entries and request re-verification.\n" +
           "Required outstanding validation records:\n" +
@@ -233,11 +275,37 @@ describe("legacy domains get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("does not print partial ACME validation records", () => {
+    const response: typeof V1GetHostnameConfigOutput.Type = {
+      ...HOSTNAME_RESPONSE,
+      status: "2_initiated",
+      data: {
+        ...HOSTNAME_RESPONSE.data,
+        result: {
+          ...HOSTNAME_RESPONSE.data.result,
+          ssl: {
+            status: "pending_validation",
+            validation_records: [{ txt_name: "_acme-challenge.shop.acme.dev" }],
+          },
+        },
+      },
+    };
+    const { layer, out } = setup({ response });
+    return Effect.gen(function* () {
+      yield* domainsGet(baseFlags);
+      expect(out.stderrText).toBe(
+        "Custom hostname verification in-progress; please configure the appropriate DNS entries and request re-verification.\n" +
+          "Required outstanding validation records:\n",
+      );
+      expect(out.stderrText).not.toContain("undefined");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("emits YAML to stdout for -o yaml", () => {
     const { layer, out } = setup({ goOutput: "yaml" });
     return Effect.gen(function* () {
-      yield* legacyDomainsGet(baseFlags);
-      // yaml.v3 lowercases the whole field name (CLI-1975).
+      yield* domainsGet(baseFlags);
+      // yaml.v3 lowercases the whole field name.
       expect(out.stdoutText).toContain("customhostname: shop.acme.dev");
     }).pipe(Effect.provide(layer));
   });
@@ -245,8 +313,8 @@ describe("legacy domains get integration", () => {
   it.live("emits TOML to stdout for -o toml", () => {
     const { layer, out } = setup({ goOutput: "toml" });
     return Effect.gen(function* () {
-      yield* legacyDomainsGet(baseFlags);
-      // BurntSushi emits PascalCase field names (CLI-1975).
+      yield* domainsGet(baseFlags);
+      // BurntSushi emits PascalCase field names.
       expect(out.stdoutText).toContain('CustomHostname = "shop.acme.dev"');
     }).pipe(Effect.provide(layer));
   });
@@ -254,7 +322,7 @@ describe("legacy domains get integration", () => {
   it.live("emits KEY=VALUE lines for -o env", () => {
     const { layer, out } = setup({ goOutput: "env" });
     return Effect.gen(function* () {
-      yield* legacyDomainsGet(baseFlags);
+      yield* domainsGet(baseFlags);
       expect(out.stdoutText).toContain('CUSTOM_HOSTNAME="shop.acme.dev"');
     }).pipe(Effect.provide(layer));
   });
@@ -262,7 +330,7 @@ describe("legacy domains get integration", () => {
   it.live("treats -o pretty as text mode (status to stderr only)", () => {
     const { layer, out } = setup({ goOutput: "pretty" });
     return Effect.gen(function* () {
-      yield* legacyDomainsGet(baseFlags);
+      yield* domainsGet(baseFlags);
       expect(out.stderrText).toContain("Custom hostname configuration not started.");
       expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(layer));
@@ -271,7 +339,7 @@ describe("legacy domains get integration", () => {
   it.live("forces Go JSON output when --include-raw-output is set", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
-      yield* legacyDomainsGet({ projectRef: Option.none(), includeRawOutput: true });
+      yield* domainsGet({ projectRef: Option.none(), includeRawOutput: true });
       expect(out.stdoutText.startsWith("{")).toBe(true);
       expect(out.stdoutText).toContain('"custom_hostname": "shop.acme.dev"');
     }).pipe(Effect.provide(layer));
@@ -282,21 +350,21 @@ describe("legacy domains get integration", () => {
     () => {
       const { layer, out } = setup({ goOutput: "pretty" });
       return Effect.gen(function* () {
-        yield* legacyDomainsGet({ projectRef: Option.none(), includeRawOutput: true });
+        yield* domainsGet({ projectRef: Option.none(), includeRawOutput: true });
         expect(out.stdoutText.startsWith("{")).toBe(true);
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live("fails with LegacyDomainsUnexpectedStatusError on HTTP 503", () => {
+  it.live("fails with DomainsUnexpectedStatusError on HTTP 503", () => {
     const { layer, telemetry, linkedProjectCache } = setup({ status: 503 });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyDomainsGet(baseFlags));
+      const exit = yield* Effect.exit(domainsGet(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("LegacyDomainsUnexpectedStatusError");
-        expect(json).toContain("unexpected get hostname status 503");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("DomainsUnexpectedStatusError");
+        expect(causeText).toContain("unexpected get hostname status 503");
       }
       // PersistentPostRun still fires on failure.
       expect(telemetry.flushed).toBe(true);
@@ -318,7 +386,7 @@ describe("legacy domains get integration", () => {
       },
     });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyDomainsGet(baseFlags));
+      const exit = yield* Effect.exit(domainsGet(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       expect(api.requests).toHaveLength(1);
       expect(out.stderrText).toContain("Upgrade your plan:");
@@ -338,7 +406,7 @@ describe("legacy domains get integration", () => {
       response: { message: "not found" },
     });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyDomainsGet(baseFlags));
+      const exit = yield* Effect.exit(domainsGet(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       expect(api.requests).toHaveLength(1);
       expect(analytics.captured).toHaveLength(0);
@@ -349,21 +417,21 @@ describe("legacy domains get integration", () => {
   it.live("maps an HTTP error without a spinner in json mode", () => {
     const { layer, out } = setup({ format: "json", status: 503 });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyDomainsGet(baseFlags));
+      const exit = yield* Effect.exit(domainsGet(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       expect(out.progressEvents).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with LegacyDomainsNetworkError on transport failure", () => {
+  it.live("fails with DomainsNetworkError on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyDomainsGet(baseFlags));
+      const exit = yield* Effect.exit(domainsGet(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("LegacyDomainsNetworkError");
-        expect(json).toContain("failed to get custom hostname");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("DomainsNetworkError");
+        expect(causeText).toContain("failed to get custom hostname");
       }
     }).pipe(Effect.provide(layer));
   });

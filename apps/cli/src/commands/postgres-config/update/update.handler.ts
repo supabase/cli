@@ -1,15 +1,15 @@
 import { Effect } from "effect";
 
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import {
-  LegacyPostgresConfigInvalidConfigValueError,
-  LegacyPostgresConfigUpdateNetworkError,
-  LegacyPostgresConfigUpdateSerializeError,
-  LegacyPostgresConfigUpdateUnexpectedStatusError,
-  LegacyPostgresConfigUpdateUnmarshalError,
+  PostgresConfigInvalidConfigValueError,
+  PostgresConfigUpdateNetworkError,
+  PostgresConfigUpdateSerializeError,
+  PostgresConfigUpdateUnexpectedStatusError,
+  PostgresConfigUpdateUnmarshalError,
 } from "../postgres-config.errors.ts";
 import {
   fetchCurrentPostgresConfig,
@@ -18,22 +18,22 @@ import {
   putPostgresConfig,
   writePostgresConfigOutput,
 } from "../postgres-config.shared.ts";
-import type { LegacyPostgresConfigUpdateFlags } from "./update.command.ts";
+import type { PostgresConfigUpdateFlags } from "./update.command.ts";
 
-export const legacyPostgresConfigUpdate = Effect.fn("legacy.postgres-config.update")(function* (
-  flags: LegacyPostgresConfigUpdateFlags,
+export const postgresConfigUpdate = Effect.fn("postgres-config.update")(function* (
+  flags: PostgresConfigUpdateFlags,
 ) {
   const output = yield* Output;
-  const resolver = yield* LegacyProjectRefResolver;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
+  const resolver = yield* ProjectRefResolver;
+  const linkedProjectCache = yield* LinkedProjectCache;
+  const telemetryState = yield* TelemetryState;
 
   yield* Effect.gen(function* () {
     const nextOverrides: Record<string, string> = {};
     for (const config of flags.config) {
       const splits = config.split("=");
       if (splits.length !== 2) {
-        return yield* new LegacyPostgresConfigInvalidConfigValueError({ input: config });
+        return yield* new PostgresConfigInvalidConfigValueError({ input: config });
       }
       nextOverrides[splits[0] ?? ""] = splits[1] ?? "";
     }
@@ -61,10 +61,10 @@ export const legacyPostgresConfigUpdate = Effect.fn("legacy.postgres-config.upda
       normalizeTimeoutConfig(finalOverrides);
 
       const updated = yield* putPostgresConfig(ref, finalOverrides, {
-        serializeError: (args) => new LegacyPostgresConfigUpdateSerializeError(args),
-        networkError: (args) => new LegacyPostgresConfigUpdateNetworkError(args),
-        statusError: (args) => new LegacyPostgresConfigUpdateUnexpectedStatusError(args),
-        unmarshalError: (args) => new LegacyPostgresConfigUpdateUnmarshalError(args),
+        serializeError: (args) => new PostgresConfigUpdateSerializeError(args),
+        networkError: (args) => new PostgresConfigUpdateNetworkError(args),
+        statusError: (args) => new PostgresConfigUpdateUnexpectedStatusError(args),
+        unmarshalError: (args) => new PostgresConfigUpdateUnmarshalError(args),
         networkMessage: (description) => `failed to update config overrides: ${description}`,
         statusMessage: (status, body) =>
           `unexpected update config overrides status ${status}: ${body}`,

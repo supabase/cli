@@ -7,14 +7,7 @@ import {
   statusCodeActionability,
 } from "../../shared/telemetry/error-actionability.ts";
 
-// ---------------------------------------------------------------------------
-// HTTP-bound errors — one (Network + UnexpectedStatus) pair per error site.
-// Templates match the established `errors.Errorf(...)` phrasing byte-for-byte.
-// ---------------------------------------------------------------------------
-
-export class LegacyBranchesListNetworkError extends Data.TaggedError(
-  "LegacyBranchesListNetworkError",
-)<{
+export class BranchesListNetworkError extends Data.TaggedError("BranchesListNetworkError")<{
   readonly message: string;
   readonly decode?: boolean;
 }> {
@@ -25,8 +18,8 @@ export class LegacyBranchesListNetworkError extends Data.TaggedError(
   }
 }
 
-export class LegacyBranchesListUnexpectedStatusError extends Data.TaggedError(
-  "LegacyBranchesListUnexpectedStatusError",
+export class BranchesListUnexpectedStatusError extends Data.TaggedError(
+  "BranchesListUnexpectedStatusError",
 )<{
   readonly status: number;
   readonly body: string;
@@ -37,9 +30,7 @@ export class LegacyBranchesListUnexpectedStatusError extends Data.TaggedError(
   }
 }
 
-export class LegacyBranchesCreateNetworkError extends Data.TaggedError(
-  "LegacyBranchesCreateNetworkError",
-)<{
+export class BranchesCreateNetworkError extends Data.TaggedError("BranchesCreateNetworkError")<{
   readonly message: string;
   readonly decode?: boolean;
 }> {
@@ -50,8 +41,8 @@ export class LegacyBranchesCreateNetworkError extends Data.TaggedError(
   }
 }
 
-export class LegacyBranchesCreateUnexpectedStatusError extends Data.TaggedError(
-  "LegacyBranchesCreateUnexpectedStatusError",
+export class BranchesCreateUnexpectedStatusError extends Data.TaggedError(
+  "BranchesCreateUnexpectedStatusError",
 )<{
   readonly status: number;
   readonly body: string;
@@ -59,11 +50,8 @@ export class LegacyBranchesCreateUnexpectedStatusError extends Data.TaggedError(
   readonly upgradeSuggested?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    // A non-gated 409 on `branches create` means the branch name already
-    // exists (the next shell maps this endpoint's 409 to
-    // BranchAlreadyExistsError) — user input, not a raw API status. The gate
-    // guard stays ahead so a confirmed plan-limited 409 still classifies as
-    // plan_limit via the shared policy.
+    // A non-gated 409 means the branch name already exists (user input, not a raw API status);
+    // the gate check stays ahead so a plan-limited 409 still classifies as plan_limit.
     if (this.upgradeSuggested !== true && this.status === 409) {
       return { ...actionability.invalidInput, fingerprint_suffix: "conflict" };
     }
@@ -75,9 +63,7 @@ export class LegacyBranchesCreateUnexpectedStatusError extends Data.TaggedError(
 }
 
 // Lookup phase of `branches get` (only runs when input is not UUID / not ref).
-export class LegacyBranchesFindNetworkError extends Data.TaggedError(
-  "LegacyBranchesFindNetworkError",
-)<{
+export class BranchesFindNetworkError extends Data.TaggedError("BranchesFindNetworkError")<{
   readonly message: string;
   readonly decode?: boolean;
 }> {
@@ -88,8 +74,8 @@ export class LegacyBranchesFindNetworkError extends Data.TaggedError(
   }
 }
 
-export class LegacyBranchesFindUnexpectedStatusError extends Data.TaggedError(
-  "LegacyBranchesFindUnexpectedStatusError",
+export class BranchesFindUnexpectedStatusError extends Data.TaggedError(
+  "BranchesFindUnexpectedStatusError",
 )<{
   readonly status: number;
   readonly body: string;
@@ -100,11 +86,8 @@ export class LegacyBranchesFindUnexpectedStatusError extends Data.TaggedError(
   }
 }
 
-// `branches get` detail phase + the resolver's UUID branch (both use
-// V1GetABranchConfig; Go shares the same error template).
-export class LegacyBranchesGetNetworkError extends Data.TaggedError(
-  "LegacyBranchesGetNetworkError",
-)<{
+// `branches get` detail phase + the resolver's UUID branch (both use V1GetABranchConfig).
+export class BranchesGetNetworkError extends Data.TaggedError("BranchesGetNetworkError")<{
   readonly message: string;
   readonly decode?: boolean;
 }> {
@@ -115,8 +98,8 @@ export class LegacyBranchesGetNetworkError extends Data.TaggedError(
   }
 }
 
-export class LegacyBranchesGetUnexpectedStatusError extends Data.TaggedError(
-  "LegacyBranchesGetUnexpectedStatusError",
+export class BranchesGetUnexpectedStatusError extends Data.TaggedError(
+  "BranchesGetUnexpectedStatusError",
 )<{
   readonly status: number;
   readonly body: string;
@@ -127,9 +110,7 @@ export class LegacyBranchesGetUnexpectedStatusError extends Data.TaggedError(
   }
 }
 
-export class LegacyBranchesApiKeysNetworkError extends Data.TaggedError(
-  "LegacyBranchesApiKeysNetworkError",
-)<{
+export class BranchesApiKeysNetworkError extends Data.TaggedError("BranchesApiKeysNetworkError")<{
   readonly message: string;
   readonly decode?: boolean;
 }> {
@@ -140,8 +121,8 @@ export class LegacyBranchesApiKeysNetworkError extends Data.TaggedError(
   }
 }
 
-export class LegacyBranchesApiKeysUnexpectedStatusError extends Data.TaggedError(
-  "LegacyBranchesApiKeysUnexpectedStatusError",
+export class BranchesApiKeysUnexpectedStatusError extends Data.TaggedError(
+  "BranchesApiKeysUnexpectedStatusError",
 )<{
   readonly status: number;
   readonly body: string;
@@ -152,9 +133,7 @@ export class LegacyBranchesApiKeysUnexpectedStatusError extends Data.TaggedError
   }
 }
 
-export class LegacyBranchesPoolerNetworkError extends Data.TaggedError(
-  "LegacyBranchesPoolerNetworkError",
-)<{
+export class BranchesPoolerNetworkError extends Data.TaggedError("BranchesPoolerNetworkError")<{
   readonly message: string;
   readonly decode?: boolean;
 }> {
@@ -165,8 +144,8 @@ export class LegacyBranchesPoolerNetworkError extends Data.TaggedError(
   }
 }
 
-export class LegacyBranchesPoolerUnexpectedStatusError extends Data.TaggedError(
-  "LegacyBranchesPoolerUnexpectedStatusError",
+export class BranchesPoolerUnexpectedStatusError extends Data.TaggedError(
+  "BranchesPoolerUnexpectedStatusError",
 )<{
   readonly status: number;
   readonly body: string;
@@ -177,9 +156,7 @@ export class LegacyBranchesPoolerUnexpectedStatusError extends Data.TaggedError(
   }
 }
 
-export class LegacyBranchesPrimaryNotFoundError extends Data.TaggedError(
-  "LegacyBranchesPrimaryNotFoundError",
-)<{
+export class BranchesPrimaryNotFoundError extends Data.TaggedError("BranchesPrimaryNotFoundError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -189,9 +166,7 @@ export class LegacyBranchesPrimaryNotFoundError extends Data.TaggedError(
   }
 }
 
-export class LegacyBranchesUpdateNetworkError extends Data.TaggedError(
-  "LegacyBranchesUpdateNetworkError",
-)<{
+export class BranchesUpdateNetworkError extends Data.TaggedError("BranchesUpdateNetworkError")<{
   readonly message: string;
   readonly decode?: boolean;
 }> {
@@ -202,8 +177,8 @@ export class LegacyBranchesUpdateNetworkError extends Data.TaggedError(
   }
 }
 
-export class LegacyBranchesUpdateUnexpectedStatusError extends Data.TaggedError(
-  "LegacyBranchesUpdateUnexpectedStatusError",
+export class BranchesUpdateUnexpectedStatusError extends Data.TaggedError(
+  "BranchesUpdateUnexpectedStatusError",
 )<{
   readonly status: number;
   readonly body: string;
@@ -218,9 +193,7 @@ export class LegacyBranchesUpdateUnexpectedStatusError extends Data.TaggedError(
   }
 }
 
-export class LegacyBranchesPauseNetworkError extends Data.TaggedError(
-  "LegacyBranchesPauseNetworkError",
-)<{
+export class BranchesPauseNetworkError extends Data.TaggedError("BranchesPauseNetworkError")<{
   readonly message: string;
   readonly decode?: boolean;
 }> {
@@ -231,8 +204,8 @@ export class LegacyBranchesPauseNetworkError extends Data.TaggedError(
   }
 }
 
-export class LegacyBranchesPauseUnexpectedStatusError extends Data.TaggedError(
-  "LegacyBranchesPauseUnexpectedStatusError",
+export class BranchesPauseUnexpectedStatusError extends Data.TaggedError(
+  "BranchesPauseUnexpectedStatusError",
 )<{
   readonly status: number;
   readonly body: string;
@@ -243,9 +216,7 @@ export class LegacyBranchesPauseUnexpectedStatusError extends Data.TaggedError(
   }
 }
 
-export class LegacyBranchesUnpauseNetworkError extends Data.TaggedError(
-  "LegacyBranchesUnpauseNetworkError",
-)<{
+export class BranchesUnpauseNetworkError extends Data.TaggedError("BranchesUnpauseNetworkError")<{
   readonly message: string;
   readonly decode?: boolean;
 }> {
@@ -256,8 +227,8 @@ export class LegacyBranchesUnpauseNetworkError extends Data.TaggedError(
   }
 }
 
-export class LegacyBranchesUnpauseUnexpectedStatusError extends Data.TaggedError(
-  "LegacyBranchesUnpauseUnexpectedStatusError",
+export class BranchesUnpauseUnexpectedStatusError extends Data.TaggedError(
+  "BranchesUnpauseUnexpectedStatusError",
 )<{
   readonly status: number;
   readonly body: string;
@@ -268,9 +239,7 @@ export class LegacyBranchesUnpauseUnexpectedStatusError extends Data.TaggedError
   }
 }
 
-export class LegacyBranchesDeleteNetworkError extends Data.TaggedError(
-  "LegacyBranchesDeleteNetworkError",
-)<{
+export class BranchesDeleteNetworkError extends Data.TaggedError("BranchesDeleteNetworkError")<{
   readonly message: string;
   readonly decode?: boolean;
 }> {
@@ -281,8 +250,8 @@ export class LegacyBranchesDeleteNetworkError extends Data.TaggedError(
   }
 }
 
-export class LegacyBranchesDeleteUnexpectedStatusError extends Data.TaggedError(
-  "LegacyBranchesDeleteUnexpectedStatusError",
+export class BranchesDeleteUnexpectedStatusError extends Data.TaggedError(
+  "BranchesDeleteUnexpectedStatusError",
 )<{
   readonly status: number;
   readonly body: string;
@@ -293,9 +262,7 @@ export class LegacyBranchesDeleteUnexpectedStatusError extends Data.TaggedError(
   }
 }
 
-export class LegacyBranchesDisableNetworkError extends Data.TaggedError(
-  "LegacyBranchesDisableNetworkError",
-)<{
+export class BranchesDisableNetworkError extends Data.TaggedError("BranchesDisableNetworkError")<{
   readonly message: string;
   readonly decode?: boolean;
 }> {
@@ -306,8 +273,8 @@ export class LegacyBranchesDisableNetworkError extends Data.TaggedError(
   }
 }
 
-export class LegacyBranchesDisableUnexpectedStatusError extends Data.TaggedError(
-  "LegacyBranchesDisableUnexpectedStatusError",
+export class BranchesDisableUnexpectedStatusError extends Data.TaggedError(
+  "BranchesDisableUnexpectedStatusError",
 )<{
   readonly status: number;
   readonly body: string;
@@ -318,13 +285,7 @@ export class LegacyBranchesDisableUnexpectedStatusError extends Data.TaggedError
   }
 }
 
-// ---------------------------------------------------------------------------
-// Pure-path errors (validation, prompt-time semantics, user cancellation).
-// ---------------------------------------------------------------------------
-
-export class LegacyBranchesEnvNotSupportedError extends Data.TaggedError(
-  "LegacyBranchesEnvNotSupportedError",
-)<{
+export class BranchesEnvNotSupportedError extends Data.TaggedError("BranchesEnvNotSupportedError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -332,9 +293,7 @@ export class LegacyBranchesEnvNotSupportedError extends Data.TaggedError(
   }
 }
 
-export class LegacyBranchesCreateCancelledError extends Data.TaggedError(
-  "LegacyBranchesCreateCancelledError",
-)<{
+export class BranchesCreateCancelledError extends Data.TaggedError("BranchesCreateCancelledError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -342,9 +301,7 @@ export class LegacyBranchesCreateCancelledError extends Data.TaggedError(
   }
 }
 
-export class LegacyBranchesBranchNameEmptyError extends Data.TaggedError(
-  "LegacyBranchesBranchNameEmptyError",
-)<{
+export class BranchesBranchNameEmptyError extends Data.TaggedError("BranchesBranchNameEmptyError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -352,14 +309,13 @@ export class LegacyBranchesBranchNameEmptyError extends Data.TaggedError(
   }
 }
 
-export class LegacyBranchesBranchingDisabledError extends Data.TaggedError(
-  "LegacyBranchesBranchingDisabledError",
+export class BranchesBranchingDisabledError extends Data.TaggedError(
+  "BranchesBranchingDisabledError",
 )<{
   readonly message: string;
   /**
-   * Established suggestion text: "Create your first branch with: supabase
-   * branches create". Picked up by `normalizeCliError` and printed after the
-   * error message in text mode.
+   * Suggestion text ("Create your first branch with: supabase branches create") picked up by
+   * `normalizeCliError` and printed after the error message in text mode.
    */
   readonly suggestion: string;
 }> {

@@ -1,0 +1,227 @@
+import { V1ListAllBackupsOutput } from "@supabase/api/effect";
+import { describe, expect, it } from "vitest";
+
+import { encodeEnv, encodeGoJson, encodeToml, encodeYaml } from "./go-output.encoders.ts";
+
+// Shaped like the backups response because the `nullForEmptyArrays` byte-parity assertions were
+// extracted from that port; see the `{ items, name }` fixtures below for plain-object coverage.
+const SAMPLE_RESPONSE: typeof V1ListAllBackupsOutput.Type = {
+  region: "ap-southeast-1",
+  walg_enabled: true,
+  pitr_enabled: true,
+  backups: [
+    {
+      id: 1,
+      is_physical_backup: true,
+      status: "COMPLETED",
+      inserted_at: "2026-02-08T16:44:07Z",
+    },
+  ],
+  physical_backup_data: {
+    earliest_physical_backup_date_unix: 1700000000,
+    latest_physical_backup_date_unix: 1700001000,
+  },
+};
+
+describe("encodeGoJson", () => {
+  it("emits Go's alphabetical struct-field order and trailing newline for a populated response", () => {
+    const out = encodeGoJson(SAMPLE_RESPONSE, { nullForEmptyArrays: ["backups"] });
+    expect(out).toBe(
+      `{
+  "backups": [
+    {
+      "id": 1,
+      "inserted_at": "2026-02-08T16:44:07Z",
+      "is_physical_backup": true,
+      "status": "COMPLETED"
+    }
+  ],
+  "physical_backup_data": {
+    "earliest_physical_backup_date_unix": 1700000000,
+    "latest_physical_backup_date_unix": 1700001000
+  },
+  "pitr_enabled": true,
+  "region": "ap-southeast-1",
+  "walg_enabled": true
+}
+`,
+    );
+  });
+
+  it("emits backups: null and an empty physical_backup_data object for a PITR-only response", () => {
+    const out = encodeGoJson(
+      {
+        region: "ap-southeast-1",
+        walg_enabled: false,
+        pitr_enabled: false,
+        backups: [],
+        physical_backup_data: {},
+      },
+      { nullForEmptyArrays: ["backups"] },
+    );
+    expect(out).toBe(
+      `{
+  "backups": null,
+  "physical_backup_data": {},
+  "pitr_enabled": false,
+  "region": "ap-southeast-1",
+  "walg_enabled": false
+}
+`,
+    );
+  });
+
+  it("leaves arrays intact when nullForEmptyArrays is not provided", () => {
+    const out = encodeGoJson({ items: [], name: "x" });
+    expect(out).toBe(
+      `{
+  "items": [],
+  "name": "x"
+}
+`,
+    );
+  });
+
+  it("does not substitute null for non-empty arrays even when listed in nullForEmptyArrays", () => {
+    const out = encodeGoJson({ items: [1, 2], name: "x" }, { nullForEmptyArrays: ["items"] });
+    expect(out).toBe(
+      `{
+  "items": [
+    1,
+    2
+  ],
+  "name": "x"
+}
+`,
+    );
+  });
+
+  it("keeps Go's true lexicographic order for numeric-looking keys (CLI-1961 Codex review finding)", () => {
+    const out = encodeGoJson({ 10: "a", 2: "b", role: "anon" });
+    expect(out).toBe(
+      `{
+  "10": "a",
+  "2": "b",
+  "role": "anon"
+}
+`,
+    );
+  });
+
+  it("sorts keys by Go's byte/code-point order, not JS's UTF-16 code-unit order (CLI-1961 Codex review finding)", () => {
+    const highBmp = String.fromCodePoint(0xe000);
+    const astral = String.fromCodePoint(0x10000);
+    const out = encodeGoJson({ [astral]: 2, [highBmp]: 1 });
+    expect(out).toBe(`{\n  "${highBmp}": 1,\n  "${astral}": 2\n}\n`);
+  });
+});
+
+describe("encodeYaml", () => {
+  it("renders nested objects as YAML", () => {
+    const out = encodeYaml(SAMPLE_RESPONSE);
+    expect(out).toContain("region: ap-southeast-1");
+    expect(out).toContain("walg_enabled: true");
+    expect(out).toContain("status: COMPLETED");
+    expect(out).toContain("earliest_physical_backup_date_unix: 1700000000");
+  });
+});
+
+describe("encodeToml", () => {
+  it("renders a TOML document for the response", () => {
+    const out = encodeToml(SAMPLE_RESPONSE);
+    expect(out).toContain('region = "ap-southeast-1"');
+    expect(out).toContain("walg_enabled = true");
+    expect(out).toContain("[physical_backup_data]");
+    expect(out).toContain("earliest_physical_backup_date_unix = 1700000000");
+  });
+});
+
+describe("encodeEnv", () => {
+  it("quotes string values and flattens nested fields to uppercased dotted keys", () => {
+    const out = encodeEnv(SAMPLE_RESPONSE);
+    const lines = out.split("\n");
+    expect(lines).toContain('REGION="ap-southeast-1"');
+    expect(lines).toContain('WALG_ENABLED="true"');
+    expect(lines).toContain('PITR_ENABLED="true"');
+  });
+
+  it("emits integer-parseable values unquoted (matches godotenv strconv.Atoi branch)", () => {
+    const out = encodeEnv(SAMPLE_RESPONSE);
+    const lines = out.split("\n");
+    expect(lines).toContain("PHYSICAL_BACKUP_DATA_EARLIEST_PHYSICAL_BACKUP_DATE_UNIX=1700000000");
+    expect(lines).toContain("PHYSICAL_BACKUP_DATA_LATEST_PHYSICAL_BACKUP_DATE_UNIX=1700001000");
+  });
+
+  it("collapses arrays to a single empty leaf (Go viper does not descend into slices)", () => {
+    const out = encodeEnv(SAMPLE_RESPONSE);
+    const lines = out.split("\n");
+    expect(lines).toContain('BACKUPS=""');
+    expect(lines.some((line) => line.startsWith("BACKUPS_0_"))).toBe(false);
+  });
+
+  it("matches Go's full env output for the sample backup response", () => {
+    expect(encodeEnv(SAMPLE_RESPONSE)).toBe(
+      [
+        'BACKUPS=""',
+        "PHYSICAL_BACKUP_DATA_EARLIEST_PHYSICAL_BACKUP_DATE_UNIX=1700000000",
+        "PHYSICAL_BACKUP_DATA_LATEST_PHYSICAL_BACKUP_DATE_UNIX=1700001000",
+        'PITR_ENABLED="true"',
+        'REGION="ap-southeast-1"',
+        'WALG_ENABLED="true"',
+      ].join("\n"),
+    );
+  });
+
+  it("escapes embedded backslashes and double quotes", () => {
+    const out = encodeEnv({ message: 'with "quotes" and \\backslash' });
+    expect(out).toBe('MESSAGE="with \\"quotes\\" and \\\\backslash"');
+  });
+
+  it("escapes embedded newlines, carriage returns, and tabs (Go %q parity)", () => {
+    const out = encodeEnv({ description: "line one\nline two\rwith\ttab" });
+    expect(out).toBe('DESCRIPTION="line one\\nline two\\rwith\\ttab"');
+  });
+
+  it("sorts keys deterministically and emits numeric leafs without quotes", () => {
+    const out = encodeEnv({ z: 1, a: 2, m: 3 });
+    expect(out.split("\n")).toEqual(["A=2", "M=3", "Z=1"]);
+  });
+
+  it("omits empty nested maps entirely (Go viper parity)", () => {
+    expect(encodeEnv({ physical_backup_data: {} })).toBe("");
+  });
+
+  it("matches Go for the PITR-only response shape with empty physical_backup_data", () => {
+    expect(
+      encodeEnv({
+        region: "ap-southeast-1",
+        walg_enabled: true,
+        pitr_enabled: true,
+        backups: [],
+        physical_backup_data: {},
+      }),
+    ).toBe(
+      ['BACKUPS=""', 'PITR_ENABLED="true"', 'REGION="ap-southeast-1"', 'WALG_ENABLED="true"'].join(
+        "\n",
+      ),
+    );
+  });
+
+  it("emits an empty-string value for an explicit null leaf", () => {
+    expect(encodeEnv({ physical_backup_data: { earliest_physical_backup_date_unix: null } })).toBe(
+      'PHYSICAL_BACKUP_DATA_EARLIEST_PHYSICAL_BACKUP_DATE_UNIX=""',
+    );
+  });
+
+  it("treats non-integer numeric strings (quoted)", () => {
+    const out = encodeEnv({ ratio: "3.14", empty: "" });
+    const lines = out.split("\n");
+    expect(lines).toContain('RATIO="3.14"');
+    expect(lines).toContain('EMPTY=""');
+  });
+
+  it("handles negative integers unquoted", () => {
+    const out = encodeEnv({ offset: -42 });
+    expect(out).toBe("OFFSET=-42");
+  });
+});

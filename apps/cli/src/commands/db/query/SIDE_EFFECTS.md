@@ -69,7 +69,7 @@ from the environment. Agent mode defaults the format to JSON (table for humans).
   flags from the whole token stream before the leaf parse and builds one tree-wide
   registry, so a second command-scoped `output` global is impossible
   (`Parser.createFlagRegistry` throws on duplicate names). Instead the global
-  `LegacyOutputFlag` choice is the UNION of every command's `--output` values
+  `OutputFlag` choice is the UNION of every command's `--output` values
   (`env|pretty|json|toml|yaml|table|csv`), and the command wrapper enforces this
   command's own enum (`json|table|csv`, declared via `outputFormats` in
   `query.command.ts`):
@@ -79,7 +79,7 @@ from the environment. Agent mode defaults the format to JSON (table for humans).
   - Values outside the `json|table|csv` enum (`pretty|yaml|toml|env`) are rejected
     before the handler runs with the fixed diagnostic text — `invalid argument "yaml" for
 "-o, --output" flag: must be one of [ json | table | csv ]` — and exit 1,
-    matching the old CLI's per-command enum validation. See `legacy-go-output-flag.ts`.
+    matching the old CLI's per-command enum validation. See `go-output-flag.ts`.
 - **Local DDL command tags** use the raw `commandComplete` protocol tag (so
   `CREATE TABLE` etc. survive node-postgres' first-word-only parse of the tag).
 - **`--project-ref`** (TS-only, no Go equivalent on any user-facing `db`
@@ -96,4 +96,4 @@ from the environment. Agent mode defaults the format to JSON (table for humans).
   the access token is missing, or the GET is non-200 — so an auth-failing query
   still fires the GET but writes nothing. `--local` / `--db-url` never resolve a
   project ref and so never trigger this request or write. Shared with `backups`
-  via `LegacyLinkedProjectCache`.
+  via `LinkedProjectCache`.

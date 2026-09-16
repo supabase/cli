@@ -11,7 +11,7 @@ import {
  * (`"no SQL query provided. Pass SQL as an argument, via --file, or pipe to
  * stdin"`) is an established output contract.
  */
-export class LegacyDbQueryNoSqlError extends Data.TaggedError("LegacyDbQueryNoSqlError")<{
+export class DbQueryNoSqlError extends Data.TaggedError("DbQueryNoSqlError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -20,7 +20,7 @@ export class LegacyDbQueryNoSqlError extends Data.TaggedError("LegacyDbQueryNoSq
 }
 
 /** Stdin was piped but empty; message text (`"no SQL provided via stdin"`) is an established output contract. */
-export class LegacyDbQueryNoStdinSqlError extends Data.TaggedError("LegacyDbQueryNoStdinSqlError")<{
+export class DbQueryNoStdinSqlError extends Data.TaggedError("DbQueryNoStdinSqlError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -29,7 +29,7 @@ export class LegacyDbQueryNoStdinSqlError extends Data.TaggedError("LegacyDbQuer
 }
 
 /** `--file` could not be read; message text (`"failed to read SQL file: " + err`) is an established output contract. */
-export class LegacyDbQueryReadFileError extends Data.TaggedError("LegacyDbQueryReadFileError")<{
+export class DbQueryReadFileError extends Data.TaggedError("DbQueryReadFileError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -41,9 +41,7 @@ export class LegacyDbQueryReadFileError extends Data.TaggedError("LegacyDbQueryR
  * `--linked` was used without an access token; message text and the
  * `Run supabase login first.` suggestion are an established output contract.
  */
-export class LegacyDbQueryLoginRequiredError extends Data.TaggedError(
-  "LegacyDbQueryLoginRequiredError",
-)<{
+export class DbQueryLoginRequiredError extends Data.TaggedError("DbQueryLoginRequiredError")<{
   readonly message: string;
   readonly suggestion: string;
 }> {
@@ -53,7 +51,7 @@ export class LegacyDbQueryLoginRequiredError extends Data.TaggedError(
 }
 
 /** Query execution failed; message text (`"failed to execute query: " + err`) is an established output contract. */
-export class LegacyDbQueryExecError extends Data.TaggedError("LegacyDbQueryExecError")<{
+export class DbQueryExecError extends Data.TaggedError("DbQueryExecError")<{
   readonly message: string;
   /**
    * Set when this failure came from the linked path's HTTP transport
@@ -76,8 +74,8 @@ export class LegacyDbQueryExecError extends Data.TaggedError("LegacyDbQueryExecE
  * is an established output contract, so the invocation fails before any SQL
  * runs.
  */
-export class LegacyDbQueryMutuallyExclusiveFlagsError extends Data.TaggedError(
-  "LegacyDbQueryMutuallyExclusiveFlagsError",
+export class DbQueryMutuallyExclusiveFlagsError extends Data.TaggedError(
+  "DbQueryMutuallyExclusiveFlagsError",
 )<{
   readonly message: string;
 }> {
@@ -90,15 +88,13 @@ export class LegacyDbQueryMutuallyExclusiveFlagsError extends Data.TaggedError(
  * The linked Management API returned a non-201 status; message text
  * (`"unexpected status %d: %s"`) is an established output contract.
  */
-export class LegacyDbQueryUnexpectedStatusError extends Data.TaggedError(
-  "LegacyDbQueryUnexpectedStatusError",
-)<{
+export class DbQueryUnexpectedStatusError extends Data.TaggedError("DbQueryUnexpectedStatusError")<{
   readonly status: number;
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     // The endpoint executes the user's SQL: a 400 is the remote twin of the
-    // local LegacyDbQueryExecError (syntax/constraint failures in user SQL).
+    // local DbQueryExecError (syntax/constraint failures in user SQL).
     if (this.status === 400) {
       return { ...actionability.dbFinding, fingerprint_suffix: "query" };
     }

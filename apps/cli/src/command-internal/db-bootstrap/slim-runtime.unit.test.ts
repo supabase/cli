@@ -1,10 +1,10 @@
 import { describe, expect, test } from "vitest";
 
-import { legacySlimWgetHealthcheck, legacySlimWgetWaitCommand } from "./slim-runtime.ts";
+import { slimWgetHealthcheck, slimWgetWaitCommand } from "./slim-runtime.ts";
 
-describe("legacySlimWgetHealthcheck", () => {
+describe("slimWgetHealthcheck", () => {
   test("uses only BusyBox-documented wget flags", () => {
-    expect(legacySlimWgetHealthcheck("http://127.0.0.1:4000/health")).toEqual({
+    expect(slimWgetHealthcheck("http://127.0.0.1:4000/health")).toEqual({
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:4000/health"],
       intervalSeconds: 10,
       timeoutSeconds: 2,
@@ -14,7 +14,7 @@ describe("legacySlimWgetHealthcheck", () => {
 
   test("keeps --header, which BusyBox documents, and an optional start period", () => {
     expect(
-      legacySlimWgetHealthcheck("http://127.0.0.1:4000/api/ping", {
+      slimWgetHealthcheck("http://127.0.0.1:4000/api/ping", {
         header: "Host:realtime-dev",
         startPeriodSeconds: 10,
       }),
@@ -36,9 +36,9 @@ describe("legacySlimWgetHealthcheck", () => {
   });
 });
 
-describe("legacySlimWgetWaitCommand", () => {
+describe("slimWgetWaitCommand", () => {
   test("uses BusyBox -q/-T/--spider, not GNU --no-verbose/--tries", () => {
-    expect(legacySlimWgetWaitCommand("http://supabase_analytics_proj:4000/health")).toBe(
+    expect(slimWgetWaitCommand("http://supabase_analytics_proj:4000/health")).toBe(
       "wget -q -T 2 --spider http://supabase_analytics_proj:4000/health",
     );
   });

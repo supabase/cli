@@ -1,46 +1,43 @@
 import { Effect } from "effect";
 
-import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
+import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
+import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { Tty } from "../../../shared/runtime/tty.service.ts";
-import { mapLegacyHttpError } from "../../../command-internal/legacy-http-errors.ts";
-import { legacyResolveParentScopedProjectRef } from "../../../command-internal/legacy-parent-project-ref.ts";
+import { mapHttpError } from "../../../command-internal/http-errors.ts";
+import { resolveParentScopedProjectRef } from "../../../command-internal/parent-project-ref.ts";
 import {
-  LegacyBranchesUnpauseNetworkError,
-  LegacyBranchesUnpauseUnexpectedStatusError,
+  BranchesUnpauseNetworkError,
+  BranchesUnpauseUnexpectedStatusError,
 } from "../branches.errors.ts";
-import { legacyPromptBranchId } from "../branches.prompt.ts";
-import { legacyResolveBranchProjectRef } from "../branches.resolver.ts";
-import type { LegacyBranchesUnpauseFlags } from "./unpause.command.ts";
+import { promptBranchId } from "../branches.prompt.ts";
+import { resolveBranchProjectRef } from "../branches.resolver.ts";
+import type { BranchesUnpauseFlags } from "./unpause.command.ts";
 
-const mapUnpauseError = mapLegacyHttpError({
-  networkError: LegacyBranchesUnpauseNetworkError,
-  statusError: LegacyBranchesUnpauseUnexpectedStatusError,
+const mapUnpauseError = mapHttpError({
+  networkError: BranchesUnpauseNetworkError,
+  statusError: BranchesUnpauseUnexpectedStatusError,
   networkMessage: (cause) => `failed to unpause branch: ${cause}`,
   statusMessage: (status, body) => `unexpected unpause branch status ${status}: ${body}`,
 });
 
-export const legacyBranchesUnpause = Effect.fn("legacy.branches.unpause")(function* (
-  flags: LegacyBranchesUnpauseFlags,
+export const branchesUnpause = Effect.fn("branches.unpause")(function* (
+  flags: BranchesUnpauseFlags,
 ) {
   const output = yield* Output;
-  const api = yield* LegacyPlatformApi;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
-  // Force `Tty` into the handler's R channel so `legacyPromptBranchId` (which
-  // requires it) resolves. The yielded value itself is unused.
-  void (yield* Tty);
+  const api = yield* CommandPlatformApi;
+  const linkedProjectCache = yield* LinkedProjectCache;
+  const telemetryState = yield* TelemetryState;
+  void (yield* Tty); // ensures Tty is in handler R so promptBranchId resolves
 
-  // `branches` is PARENT-scoped: after `supabase link <branch>`,
-  // `supabase/.temp/project-ref` holds the branch's own ref, and the platform
-  // 403s on that ref for every branches-management endpoint (CLI-2167 follow-up).
-  const ref = yield* legacyResolveParentScopedProjectRef(flags.projectRef);
+  // `branches` is parent-scoped: after `supabase link <branch>`, `supabase/.temp/project-ref`
+  // holds the branch's own ref, which the platform 403s on for every branches-management endpoint.
+  const ref = yield* resolveParentScopedProjectRef(flags.projectRef);
 
   yield* Effect.gen(function* () {
-    const branchInput = yield* legacyPromptBranchId(flags.name, ref);
-    const branchRef = yield* legacyResolveBranchProjectRef(branchInput, ref);
+    const branchInput = yield* promptBranchId(flags.name, ref);
+    const branchRef = yield* resolveBranchProjectRef(branchInput, ref);
 
     const restoring =
       output.format === "text" ? yield* output.task("Unpausing branch...") : undefined;

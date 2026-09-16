@@ -1,18 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { classifyCliErrorActionability } from "../../shared/telemetry/error-actionability.ts";
 import {
-  LegacySsoAddAttributeMappingFileError,
-  LegacySsoAddMetadataFileError,
-  LegacySsoMetadataUrlNetworkError,
-  LegacySsoUpdateAttributeMappingFileError,
-  LegacySsoUpdateMetadataFileError,
+  SsoAddAttributeMappingFileError,
+  SsoAddMetadataFileError,
+  SsoMetadataUrlNetworkError,
+  SsoUpdateAttributeMappingFileError,
+  SsoUpdateMetadataFileError,
 } from "./sso.errors.ts";
-import type { LegacySsoFileErrorReason } from "./sso.saml.ts";
+import type { SsoFileErrorReason } from "./sso.saml.ts";
 
-describe("LegacySsoMetadataUrlNetworkError actionability", () => {
+describe("SsoMetadataUrlNetworkError actionability", () => {
   it("classifies a failed user-supplied --metadata-url as a flag input problem", () => {
     const result = classifyCliErrorActionability(
-      new LegacySsoMetadataUrlNetworkError({ message: "failed to fetch metadata url: timeout" }),
+      new SsoMetadataUrlNetworkError({ message: "failed to fetch metadata url: timeout" }),
     );
     expect(result.error_kind).toBe("user_actionable");
     expect(result.error_category).toBe("invalid_input");
@@ -21,11 +21,11 @@ describe("LegacySsoMetadataUrlNetworkError actionability", () => {
 });
 
 describe("SSO file error actionability", () => {
-  const factories: ReadonlyArray<(reason: LegacySsoFileErrorReason) => Error> = [
-    (reason) => new LegacySsoAddMetadataFileError({ message: "file error", reason }),
-    (reason) => new LegacySsoAddAttributeMappingFileError({ message: "file error", reason }),
-    (reason) => new LegacySsoUpdateMetadataFileError({ message: "file error", reason }),
-    (reason) => new LegacySsoUpdateAttributeMappingFileError({ message: "file error", reason }),
+  const factories: ReadonlyArray<(reason: SsoFileErrorReason) => Error> = [
+    (reason) => new SsoAddMetadataFileError({ message: "file error", reason }),
+    (reason) => new SsoAddAttributeMappingFileError({ message: "file error", reason }),
+    (reason) => new SsoUpdateMetadataFileError({ message: "file error", reason }),
+    (reason) => new SsoUpdateAttributeMappingFileError({ message: "file error", reason }),
   ];
 
   it("distinguishes missing, unreadable, invalid, URL, and ambiguous failures", () => {

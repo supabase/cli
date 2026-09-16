@@ -3,18 +3,18 @@ import { describe, expect, it } from "vitest";
 import {
   formatHostnameStatus,
   formatSslStructDump,
-  type LegacyHostnameResponse,
+  type HostnameResponse,
 } from "./domains.format.ts";
 
-type Status = Exclude<LegacyHostnameResponse["status"], undefined>;
-type Ssl = LegacyHostnameResponse["data"]["result"]["ssl"];
+type Status = Exclude<HostnameResponse["status"], undefined>;
+type Ssl = HostnameResponse["data"]["result"]["ssl"];
 
 function makeResponse(args: {
   readonly status?: Status;
   readonly customHostname?: string;
   readonly customOriginServer?: string;
   readonly ssl: Ssl;
-}): LegacyHostnameResponse {
+}): HostnameResponse {
   const hostname = args.customHostname ?? "example.com";
   return {
     status: args.status,
@@ -63,6 +63,21 @@ describe("formatHostnameStatus", () => {
         "Please ensure that your custom domain is set up as a CNAME record to your Supabase subdomain:\n" +
         "shop.acme.dev CNAME -> abc.supabase.co",
     );
+  });
+
+  it("omits incomplete CNAME instructions when the origin is absent", () => {
+    const response = makeResponse({
+      status: "4_origin_setup_completed",
+      ssl: { status: "active", validation_records: [] },
+    });
+    const out = formatHostnameStatus({
+      ...response,
+      data: {
+        ...response.data,
+        result: { ...response.data.result, custom_origin_server: undefined },
+      },
+    });
+    expect(out).toBe("Custom hostname configuration complete, and ready for activation.");
   });
 
   it("reports an initializing SSL state during verification", () => {

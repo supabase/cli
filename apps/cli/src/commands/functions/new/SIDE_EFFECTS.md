@@ -33,22 +33,23 @@
 
 ## Environment Variables
 
-| Variable                | Purpose                                                                                    | Required?                                                         |
-| ----------------------- | ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | resolved into legacy CLI config even though this command performs no API calls             | no (falls back to credential lookup paths that are not used here) |
-| `SUPABASE_HOME`         | changes where telemetry state is persisted                                                 | no (defaults to `~/.supabase`)                                    |
-| `SUPABASE_PROFILE`      | selects a built-in profile or YAML profile path during legacy CLI config resolution        | no (falls back to `~/.supabase/profile` -> `supabase`)            |
-| `SUPABASE_PROJECT_ID`   | resolved into legacy CLI config even though this command does not use a linked project ref | no                                                                |
-| `SUPABASE_WORKDIR`      | sets `<workdir>` for all local project reads and writes                                    | no (falls back to `--workdir` -> current working dir)             |
+| Variable                | Purpose                                                                             | Required?                                                         |
+| ----------------------- | ----------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | resolved into CLI config even though this command performs no API calls             | no (falls back to credential lookup paths that are not used here) |
+| `SUPABASE_HOME`         | changes where telemetry state is persisted                                          | no (defaults to `~/.supabase`)                                    |
+| `SUPABASE_PROFILE`      | selects a built-in profile or YAML profile path during CLI config resolution        | no (falls back to `~/.supabase/profile` -> `supabase`)            |
+| `SUPABASE_PROJECT_ID`   | resolved into CLI config even though this command does not use a linked project ref | no                                                                |
+| `SUPABASE_WORKDIR`      | sets `<workdir>` for all local project reads and writes                             | no (falls back to `--workdir` -> current working dir)             |
 
 ## Exit Codes
 
-| Code | Condition                          |
-| ---- | ---------------------------------- |
-| `0`  | success                            |
-| `1`  | invalid function name              |
-| `1`  | function entrypoint already exists |
-| `1`  | local file write failed            |
+| Code | Condition                                                                                                                                                  |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                                                                                    |
+| `1`  | resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a directory (`FunctionsNewWorkdirError`) — beats slug validation and every filesystem write |
+| `1`  | invalid function name                                                                                                                                      |
+| `1`  | function entrypoint already exists                                                                                                                         |
+| `1`  | local file write failed                                                                                                                                    |
 
 ## Telemetry Events Fired
 
@@ -80,3 +81,4 @@ Emits a structured success result event with `path`, `function_name`, and `auth`
 - Existing-declaration detection scans the raw `config.toml` text (`^\s*\[functions\.<slug>\]\s*$`) rather than a parsed config map. This is a deliberate design choice: config loading here is non-fatal, so a raw-text scan stays deterministic even when the file fails to parse. For all well-formed configs the two approaches agree.
 - IDE settings scaffolding (`.vscode`, `.idea`) only runs in `--output-format text`; json / stream-json runs are payload-only.
 - No Management API requests are made; all behavior is local filesystem work plus telemetry flush.
+- A non-existent `--workdir`/`SUPABASE_WORKDIR` now fails before any directory or file is created (CLI-2285) — previously a typo'd `--workdir` could scaffold a fresh `supabase/functions/…` tree (plus a new `config.toml`) at the wrong path.

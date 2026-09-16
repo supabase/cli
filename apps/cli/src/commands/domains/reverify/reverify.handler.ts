@@ -1,25 +1,25 @@
 import { Effect } from "effect";
 
-import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
+import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { emitLegacyHostnameResult } from "../domains.emit.ts";
-import { mapLegacyDomainsHttpError } from "../domains.errors.ts";
-import { legacyGateMapError } from "../../../command-internal/legacy-upgrade-suggest.ts";
-import type { LegacyDomainsReverifyFlags } from "./reverify.command.ts";
+import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
+import { emitHostnameResult } from "../domains.emit.ts";
+import { mapDomainsHttpError } from "../domains.errors.ts";
+import { gateMapError } from "../../../command-internal/upgrade-suggest.ts";
+import type { DomainsReverifyFlags } from "./reverify.command.ts";
 
-const mapReverifyError = mapLegacyDomainsHttpError("re-verify");
+const mapReverifyError = mapDomainsHttpError("re-verify");
 
-export const legacyDomainsReverify = Effect.fn("legacy.domains.reverify")(function* (
-  flags: LegacyDomainsReverifyFlags,
+export const domainsReverify = Effect.fn("domains.reverify")(function* (
+  flags: DomainsReverifyFlags,
 ) {
   const output = yield* Output;
-  const api = yield* LegacyPlatformApi;
-  const resolver = yield* LegacyProjectRefResolver;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
+  const api = yield* CommandPlatformApi;
+  const resolver = yield* ProjectRefResolver;
+  const linkedProjectCache = yield* LinkedProjectCache;
+  const telemetryState = yield* TelemetryState;
 
   const ref = yield* resolver.resolve(flags.projectRef);
 
@@ -28,10 +28,10 @@ export const legacyDomainsReverify = Effect.fn("legacy.domains.reverify")(functi
       output.format === "text" ? yield* output.task("Re-verifying custom hostname...") : undefined;
     const response = yield* api.v1.verifyDnsConfig({ ref }).pipe(
       Effect.tapError(() => reverifying?.fail() ?? Effect.void),
-      Effect.catch(legacyGateMapError({ projectRef: ref }, mapReverifyError)),
+      Effect.catch(gateMapError({ projectRef: ref }, mapReverifyError)),
     );
     yield* reverifying?.clear() ?? Effect.void;
 
-    yield* emitLegacyHostnameResult(response, flags.includeRawOutput);
+    yield* emitHostnameResult(response, flags.includeRawOutput);
   }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));
 });

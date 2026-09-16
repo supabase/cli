@@ -8,7 +8,7 @@ import { runSupabase } from "../../../tests/helpers/cli.ts";
 const E2E_TIMEOUT_MS = 30_000;
 const TEST_PROJECT_REF = "abcdefghijklmnopqrst";
 
-describe("supabase unlink (legacy)", () => {
+describe("supabase unlink", () => {
   // Golden path: with a seeded `supabase/.temp/project-ref`, a real subprocess
   // removes the temp dir and prints the Finished line. No network is involved.
   test(
@@ -21,7 +21,6 @@ describe("supabase unlink (legacy)", () => {
         writeFileSync(join(projectDir, "supabase", ".temp", "project-ref"), TEST_PROJECT_REF);
 
         const { exitCode, stdout, stderr } = await runSupabase(["unlink"], {
-          entrypoint: "legacy",
           cwd: projectDir,
         });
 
@@ -43,7 +42,6 @@ describe("supabase unlink (legacy)", () => {
       const projectDir = mkdtempSync(join(tmpdir(), "sb-unlink-e2e-"));
       try {
         const { exitCode, stdout, stderr } = await runSupabase(["unlink"], {
-          entrypoint: "legacy",
           cwd: projectDir,
         });
         expect(exitCode).toBe(1);

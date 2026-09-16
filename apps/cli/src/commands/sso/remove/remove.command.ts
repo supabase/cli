@@ -2,9 +2,9 @@ import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { legacyManagementApiRuntimeLayer } from "../../../command-internal/legacy-management-api-runtime.layer.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacySsoRemove } from "./remove.handler.ts";
+import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { ssoRemove } from "./remove.handler.ts";
 
 const config = {
   projectRef: Flag.string("project-ref").pipe(
@@ -15,9 +15,9 @@ const config = {
     Argument.withDescription("The ID of the SSO identity provider to remove."),
   ),
 };
-export type LegacySsoRemoveFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type SsoRemoveFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacySsoRemoveCommand = Command.make("remove", config).pipe(
+export const ssoRemoveCommand = Command.make("remove", config).pipe(
   Command.withDescription(
     "Remove a connection to an already added SSO identity provider. Removing the provider will prevent existing users from logging in. Please treat this command with care.",
   ),
@@ -30,10 +30,10 @@ export const legacySsoRemoveCommand = Command.make("remove", config).pipe(
     },
   ]),
   Command.withHandler((flags) =>
-    legacySsoRemove(flags).pipe(
-      withLegacyCommandInstrumentation({ flags, safeFlags: ["project-ref"] }),
+    ssoRemove(flags).pipe(
+      withCommandTelemetry({ flags, safeFlags: ["project-ref"] }),
       withJsonErrorHandling,
     ),
   ),
-  Command.provide(legacyManagementApiRuntimeLayer(["sso", "remove"])),
+  Command.provide(managementApiRuntimeLayer(["sso", "remove"])),
 );

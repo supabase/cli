@@ -1,12 +1,12 @@
 import { Effect } from "effect";
 import { Output } from "../../../shared/output/output.service.ts";
-import { setLegacyTelemetryEnabled } from "../../../telemetry/legacy-telemetry-state.layer.ts";
-import type { LegacyTelemetryEnableFlags } from "./enable.command.ts";
+import { setTelemetryEnabled } from "../../../telemetry/telemetry-state.layer.ts";
+import type { TelemetryEnableFlags } from "./enable.command.ts";
 
-export const legacyTelemetryEnable = Effect.fn("legacy.telemetry.enable")(function* (
-  _flags: LegacyTelemetryEnableFlags,
+export const telemetryEnable = Effect.fn("telemetry.enable")(function* (
+  _flags: TelemetryEnableFlags,
 ) {
   const output = yield* Output;
-  yield* setLegacyTelemetryEnabled(true);
+  yield* setTelemetryEnabled(true);
   yield* output.raw("Telemetry is enabled.\n");
 });

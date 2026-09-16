@@ -6,27 +6,24 @@ import { Cause, Effect, Exit, Layer, Option } from "effect";
 
 import { stripAnsi } from "../../../../tests/helpers/ansi.ts";
 import {
-  LEGACY_VALID_REF,
-  mockLegacyCliSettings,
-  mockLegacyLinkedProjectCacheTracked,
-  mockLegacyTelemetryStateTracked,
-  useLegacyTempWorkdir,
-} from "../../../../tests/helpers/legacy-mocks.ts";
+  VALID_REF,
+  mockCommandSettings,
+  mockLinkedProjectCacheTracked,
+  mockTelemetryStateTracked,
+  useTempWorkdir,
+} from "../../../../tests/helpers/command-mocks.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
-import { LegacyDnsResolverFlag } from "../../../shared/legacy/global-flags.ts";
+import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { LegacyDbConfigResolver } from "../../../command-internal/legacy-db-config.service.ts";
-import { LegacyMigrationsReadError } from "../../../command-internal/legacy-migration.errors.ts";
-import type {
-  LegacyDbConfigFlags,
-  LegacyResolvedDbConfig,
-} from "../../../command-internal/legacy-db-config.types.ts";
-import { LegacyDbExecError } from "../../../command-internal/legacy-db-connection.errors.ts";
-import { LegacyDbConnection } from "../../../command-internal/legacy-db-connection.service.ts";
-import { legacyMigrationList } from "./list.handler.ts";
-import type { LegacyMigrationListFlags } from "./list.command.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
+import { MigrationsReadError } from "../../../command-internal/migration.errors.ts";
+import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
+import { DbExecError } from "../../../command-internal/db-connection.errors.ts";
+import { DbConnection } from "../../../command-internal/db-connection.service.ts";
+import { migrationList } from "./list.handler.ts";
+import type { MigrationListFlags } from "./list.command.ts";
 
 const LIST_SQL = "SELECT version FROM supabase_migrations.schema_migrations ORDER BY version";
 
@@ -35,17 +32,17 @@ interface SetupOpts {
   readonly args?: ReadonlyArray<string>;
   readonly isLocal?: boolean;
   readonly remote?: ReadonlyArray<string>;
-  readonly remoteError?: LegacyDbExecError;
+  readonly remoteError?: DbExecError;
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
-  const telemetry = mockLegacyTelemetryStateTracked();
-  const cache = mockLegacyLinkedProjectCacheTracked();
+  const telemetry = mockTelemetryStateTracked();
+  const cache = mockLinkedProjectCacheTracked();
 
-  const resolverCalls: Array<LegacyDbConfigFlags> = [];
-  const resolver = Layer.succeed(LegacyDbConfigResolver, {
-    resolve: (flags: LegacyDbConfigFlags) => {
+  const resolverCalls: Array<DbConfigFlags> = [];
+  const resolver = Layer.succeed(DbConfigResolver, {
+    resolve: (flags: DbConfigFlags) => {
       resolverCalls.push(flags);
       return Effect.succeed({
         conn: {
@@ -56,13 +53,13 @@ function setup(workdir: string, opts: SetupOpts = {}) {
           database: "postgres",
         },
         isLocal: opts.isLocal ?? false,
-        ref: Option.some(LEGACY_VALID_REF),
-      } satisfies LegacyResolvedDbConfig);
+        ref: Option.some(VALID_REF),
+      } satisfies ResolvedDbConfig);
     },
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
 
-  const connection = Layer.succeed(LegacyDbConnection, {
+  const connection = Layer.succeed(DbConnection, {
     connect: () =>
       Effect.succeed({
         exec: () => Effect.void,
@@ -81,18 +78,17 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       }),
   });
 
-  // `loadProjectRef` gives an explicit `--project-ref` flag top precedence, same
-  // as Go's `flags.LoadProjectRef` — mirror that so a test can prove the flag
-  // (not just the hardcoded `LEGACY_VALID_REF` fallback) drives the linked ref.
-  const projectRef = Layer.succeed(LegacyProjectRefResolver, {
-    resolve: () => Effect.succeed(LEGACY_VALID_REF),
-    resolveForLink: () => Effect.succeed(LEGACY_VALID_REF),
-    resolveOptional: () => Effect.succeed(Option.some(LEGACY_VALID_REF)),
+  // Gives an explicit --project-ref flag precedence over the VALID_REF fallback, so a
+  // test can prove the flag drives the linked ref.
+  const projectRef = Layer.succeed(ProjectRefResolver, {
+    resolve: () => Effect.succeed(VALID_REF),
+    resolveForLink: () => Effect.succeed(VALID_REF),
+    resolveOptional: () => Effect.succeed(Option.some(VALID_REF)),
     loadProjectRef: (flagValue: Option.Option<string>) =>
       Effect.succeed(
-        Option.isSome(flagValue) && flagValue.value.length > 0 ? flagValue.value : LEGACY_VALID_REF,
+        Option.isSome(flagValue) && flagValue.value.length > 0 ? flagValue.value : VALID_REF,
       ),
-    promptProjectRef: () => Effect.succeed(LEGACY_VALID_REF),
+    promptProjectRef: () => Effect.succeed(VALID_REF),
   });
 
   const layer = Layer.mergeAll(
@@ -102,8 +98,8 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     resolver,
     connection,
     projectRef,
-    mockLegacyCliSettings({ workdir }),
-    Layer.succeed(LegacyDnsResolverFlag, "native"),
+    mockCommandSettings({ workdir }),
+    Layer.succeed(DnsResolverFlag, "native"),
     Layer.succeed(CliArgs, { args: opts.args ?? [] }),
     BunServices.layer,
   );
@@ -116,7 +112,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   };
 }
 
-const flags = (over: Partial<LegacyMigrationListFlags> = {}): LegacyMigrationListFlags => ({
+const flags = (over: Partial<MigrationListFlags> = {}): MigrationListFlags => ({
   dbUrl: over.dbUrl ?? Option.none(),
   linked: over.linked ?? true,
   local: over.local ?? false,
@@ -130,40 +126,38 @@ const seedMigrations = (workdir: string, names: ReadonlyArray<string>) => {
   for (const name of names) writeFileSync(join(dir, name), "select 1;\n");
 };
 
-const tmp = useLegacyTempWorkdir();
+const tmp = useTempWorkdir();
 
-describe("legacy migration list", () => {
+describe("migration list", () => {
   it.live("lists merged local + remote migrations for the linked project by default", () => {
     seedMigrations(tmp.current, ["20240101000000_a.sql", "20240103000000_c.sql"]);
     const ctx = setup(tmp.current, {
       remote: ["20240101000000", "20240102000000"],
     });
     return Effect.gen(function* () {
-      yield* legacyMigrationList(flags());
-      // The connection banner prints to stderr before dialing.
+      yield* migrationList(flags());
       expect(stripAnsi(ctx.out.stderrText)).toContain("Connecting to remote database...");
       const stdout = stripAnsi(ctx.out.stdoutText);
       expect(stdout).toContain("Local");
       expect(stdout).toContain("Time (UTC)");
-      expect(stdout).toContain("`20240101000000`"); // in sync (both)
-      expect(stdout).toContain("`20240102000000`"); // remote only
-      expect(stdout).toContain("`20240103000000`"); // local only
-      // linked by default → resolver receives connType "linked" + cache written.
+      expect(stdout).toContain("`20240101000000`");
+      expect(stdout).toContain("`20240102000000`");
+      expect(stdout).toContain("`20240103000000`");
       expect(ctx.resolverCalls[0]?.connType).toBe("linked");
-      expect(ctx.cache.cachedRef).toBe(LEGACY_VALID_REF);
+      expect(ctx.cache.cachedRef).toBe(VALID_REF);
     }).pipe(Effect.provide(ctx.layer));
   });
 
   it.live("shows an empty Remote column when the history table is absent (42P01)", () => {
     seedMigrations(tmp.current, ["20240101000000_a.sql"]);
     const { layer, out } = setup(tmp.current, {
-      remoteError: new LegacyDbExecError({
+      remoteError: new DbExecError({
         message: 'relation "supabase_migrations.schema_migrations" does not exist',
         code: "42P01",
       }),
     });
     return Effect.gen(function* () {
-      yield* legacyMigrationList(flags());
+      yield* migrationList(flags());
       const stdout = stripAnsi(out.stdoutText);
       expect(stdout).toContain("`20240101000000`");
       expect(stdout).toContain("` `"); // empty Remote cell
@@ -178,7 +172,7 @@ describe("legacy migration list", () => {
     ]);
     const { layer, out } = setup(tmp.current, { remote: [] });
     return Effect.gen(function* () {
-      yield* legacyMigrationList(flags());
+      yield* migrationList(flags());
       const stdout = stripAnsi(out.stdoutText);
       expect(stdout).toContain("`20240105000000`");
       expect(stdout).not.toContain("20211208000000");
@@ -186,16 +180,15 @@ describe("legacy migration list", () => {
   });
 
   it.live("lists the project given via --project-ref, overriding the default linked ref", () => {
-    // The fake resolver's own fallback (LEGACY_VALID_REF) represents whatever
-    // the workdir would resolve to absent the flag — the flag must win over it
-    // and drive the cached ref.
+    // VALID_REF is the fake resolver's fallback; the flag must win over it and drive
+    // the cached ref.
     const FLAG_REF = "flagflagflagflagflag";
     seedMigrations(tmp.current, ["20240101000000_a.sql"]);
     const ctx = setup(tmp.current, { remote: ["20240101000000"] });
     return Effect.gen(function* () {
-      yield* legacyMigrationList(flags({ projectRef: Option.some(FLAG_REF) }));
+      yield* migrationList(flags({ projectRef: Option.some(FLAG_REF) }));
       expect(ctx.cache.cachedRef).toBe(FLAG_REF);
-      expect(ctx.cache.cachedRef).not.toBe(LEGACY_VALID_REF);
+      expect(ctx.cache.cachedRef).not.toBe(VALID_REF);
     }).pipe(Effect.provide(ctx.layer));
   });
 
@@ -204,15 +197,13 @@ describe("legacy migration list", () => {
     seedMigrations(tmp.current, ["20240101000000_a.sql"]);
     const ctx = setup(tmp.current, { args: ["--local"], isLocal: true, remote: [] });
     return Effect.gen(function* () {
-      const exit = yield* legacyMigrationList(
+      const exit = yield* migrationList(
         flags({ linked: false, local: true, projectRef: Option.some(FLAG_REF) }),
       ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure) && failure.value._tag).toBe(
-          "LegacyMigrationTargetFlagsError",
-        );
+        expect(Option.isSome(failure) && failure.value._tag).toBe("MigrationTargetFlagsError");
         expect(Option.isSome(failure) && (failure.value as { message: string }).message).toBe(
           "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
         );
@@ -230,7 +221,7 @@ describe("legacy migration list", () => {
       remote: [],
     });
     return Effect.gen(function* () {
-      yield* legacyMigrationList(flags({ linked: false, local: true }));
+      yield* migrationList(flags({ linked: false, local: true }));
       expect(ctx.resolverCalls[0]?.connType).toBe("local");
       expect(ctx.cache.cachedRef).toBeUndefined();
     }).pipe(Effect.provide(ctx.layer));
@@ -239,15 +230,13 @@ describe("legacy migration list", () => {
   it.live("rejects --db-url combined with --linked", () => {
     const { layer } = setup(tmp.current, { args: ["--db-url", "postgresql://x", "--linked"] });
     return Effect.gen(function* () {
-      const exit = yield* legacyMigrationList(
+      const exit = yield* migrationList(
         flags({ dbUrl: Option.some("postgresql://x"), linked: true }),
       ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure) && failure.value._tag).toBe(
-          "LegacyMigrationTargetFlagsError",
-        );
+        expect(Option.isSome(failure) && failure.value._tag).toBe("MigrationTargetFlagsError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -255,15 +244,13 @@ describe("legacy migration list", () => {
   it.live("rejects --db-url combined with --password", () => {
     const { layer } = setup(tmp.current, { args: ["--db-url", "postgresql://x"] });
     return Effect.gen(function* () {
-      const exit = yield* legacyMigrationList(
+      const exit = yield* migrationList(
         flags({ dbUrl: Option.some("postgresql://x"), password: Option.some("pw") }),
       ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure) && failure.value._tag).toBe(
-          "LegacyMigrationPasswordFlagsError",
-        );
+        expect(Option.isSome(failure) && failure.value._tag).toBe("MigrationPasswordFlagsError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -272,7 +259,7 @@ describe("legacy migration list", () => {
     seedMigrations(tmp.current, ["20240103000000_c.sql"]);
     const { layer, out } = setup(tmp.current, { format: "json", remote: ["20240102000000"] });
     return Effect.gen(function* () {
-      yield* legacyMigrationList(flags());
+      yield* migrationList(flags());
       expect(out.stdoutText).toBe(""); // no glamour table on stdout in json mode
       expect(out.messages).toContainEqual(
         expect.objectContaining({
@@ -292,19 +279,17 @@ describe("legacy migration list", () => {
   it.live("propagates a non-undefined-table remote read failure", () => {
     seedMigrations(tmp.current, ["20240101000000_a.sql"]);
     const { layer } = setup(tmp.current, {
-      remoteError: new LegacyDbExecError({
+      remoteError: new DbExecError({
         message: "permission denied for schema",
         code: "42501",
       }),
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyMigrationList(flags()).pipe(Effect.exit);
+      const exit = yield* migrationList(flags()).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure) && failure.value instanceof LegacyMigrationsReadError).toBe(
-          true,
-        );
+        expect(Option.isSome(failure) && failure.value instanceof MigrationsReadError).toBe(true);
       }
     }).pipe(Effect.provide(layer));
   });

@@ -84,12 +84,11 @@ export function resetCounters(counters: SequenceCounters): void {
   counters.clear();
 }
 
-/** Sort array bodies canonically so body comparison is order-insensitive for
- *  APIs where element ordering is not semantically meaningful (e.g. bulk-create
- *  secrets). Go maps iterate in non-deterministic order, so proxy commands that
- *  build request bodies from maps produce different orderings on Linux vs macOS.
- *  Nested object fields are still compared exactly — only the top-level array
- *  order is normalized. */
+/** Sorts array bodies canonically so comparison is order-insensitive where
+ *  element order isn't semantically meaningful (e.g. bulk-create secrets) — a
+ *  proxied command building a request body from a Go map can produce a
+ *  different key order per platform. Nested object fields are still compared
+ *  exactly; only the top-level array order is normalized. */
 export function sortBody(body: unknown): unknown {
   if (Array.isArray(body)) {
     return [...body].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));

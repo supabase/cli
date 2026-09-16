@@ -1,15 +1,15 @@
 import { Effect, FileSystem, Path } from "effect";
 
-import { legacyDeclaredExtensions, legacyExtensionDeclaration } from "./declarative.flow.ts";
+import { declaredExtensions, extensionDeclaration } from "./declarative.flow.ts";
 
-interface LegacyExtensionRepairResult {
+interface ExtensionRepairResult {
   readonly path: string;
   readonly addedExtensions: ReadonlyArray<string>;
   readonly addedDeclarations: ReadonlyArray<string>;
 }
 
 /** Appends missing legacy extension declarations without replacing existing SQL. */
-export const legacyAppendExtensionDeclarations = Effect.fnUntraced(function* (
+export const appendExtensionDeclarations = Effect.fnUntraced(function* (
   declarativeDir: string,
   extensions: ReadonlyArray<string>,
 ) {
@@ -18,11 +18,11 @@ export const legacyAppendExtensionDeclarations = Effect.fnUntraced(function* (
   const extensionPath = path.join(declarativeDir, "extension.sql");
   const exists = yield* fs.exists(extensionPath);
   const existing = exists ? yield* fs.readFileString(extensionPath) : "";
-  const declared = legacyDeclaredExtensions([{ name: "extension.sql", sql: existing }]);
+  const declared = declaredExtensions([{ name: "extension.sql", sql: existing }]);
   const addedExtensions = [...new Set(extensions)]
     .filter((extension) => !declared.has(extension))
     .sort();
-  const addedDeclarations = addedExtensions.map(legacyExtensionDeclaration);
+  const addedDeclarations = addedExtensions.map(extensionDeclaration);
 
   if (addedDeclarations.length > 0) {
     const newline = existing.includes("\r\n") ? "\r\n" : "\n";
@@ -35,5 +35,5 @@ export const legacyAppendExtensionDeclarations = Effect.fnUntraced(function* (
     path: extensionPath,
     addedExtensions,
     addedDeclarations,
-  } satisfies LegacyExtensionRepairResult;
+  } satisfies ExtensionRepairResult;
 });

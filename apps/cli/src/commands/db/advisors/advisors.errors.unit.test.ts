@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { classifyCliErrorActionability } from "../../../shared/telemetry/error-actionability.ts";
-import { LegacyDbAdvisorsInvalidTokenError } from "./advisors.errors.ts";
+import { DbAdvisorsInvalidTokenError } from "./advisors.errors.ts";
 
-describe("LegacyDbAdvisorsInvalidTokenError actionability", () => {
+describe("DbAdvisorsInvalidTokenError actionability", () => {
   const build = (source?: "env" | "stored") =>
-    new LegacyDbAdvisorsInvalidTokenError({
+    new DbAdvisorsInvalidTokenError({
       message: "Invalid access token format. Must be like `sbp_0102...1920`.",
       suggestion: "Run supabase login first.",
       source,
@@ -15,7 +15,7 @@ describe("LegacyDbAdvisorsInvalidTokenError actionability", () => {
     expect(result.error_kind).toBe("user_actionable");
     expect(result.error_category).toBe("auth");
     expect(result.suggestion_type).toBe("set_env_var");
-    expect(result.error_fingerprint).toBe("tag:LegacyDbAdvisorsInvalidTokenError");
+    expect(result.error_fingerprint).toBe("tag:DbAdvisorsInvalidTokenError");
   });
 
   it("classifies a stored malformed token as a re-login remediation", () => {

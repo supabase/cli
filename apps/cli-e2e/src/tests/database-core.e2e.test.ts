@@ -3,19 +3,11 @@ import { join } from "node:path";
 import { describe, expect } from "vitest";
 import { testBehaviour } from "./test-context.ts";
 
-// ---------------------------------------------------------------------------
-// Workspace helpers
-// ---------------------------------------------------------------------------
-
-/** Write .supabase/.temp/project-ref and a stub pooler-url so --linked commands
- *  can pass ParseDatabaseConfig without a real postgres TCP connection.
- *
- *  The Go CLI's PersistentPreRunE calls ParseDatabaseConfig which, for --linked,
- *  tries a TCP probe to db.{ref}.localhost:5432. Nothing listens there in the
- *  test harness. By writing a pooler-url file (which GetPoolerConfig reads), the
- *  CLI takes the pooler path instead. Combined with SUPABASE_DB_PASSWORD (set in
- *  harness.ts), ParseDatabaseConfig succeeds without any network call, so the
- *  command reaches its RunE and makes the Management API call under test. */
+/** Writes .supabase/.temp/project-ref and a stub pooler-url so --linked
+ *  commands resolve a connection without a live postgres TCP probe (nothing
+ *  listens on db.{ref}.localhost:5432 in the test harness); combined with
+ *  SUPABASE_DB_PASSWORD (set in harness.ts), the command reaches its handler
+ *  and makes the Management API call under test. */
 function linkProject(dir: string, ref: string): void {
   const tempDir = join(dir, "supabase", ".temp");
   mkdirSync(tempDir, { recursive: true });
@@ -35,10 +27,6 @@ function seedMigration(dir: string): void {
   mkdirSync(migrationsDir, { recursive: true });
   writeFileSync(join(migrationsDir, "20240101000000_e2e_test.sql"), TEST_MIGRATION_SQL);
 }
-
-// ---------------------------------------------------------------------------
-// db advisors
-// ---------------------------------------------------------------------------
 
 describe("db advisors", () => {
   describe("db advisors:security", () => {
@@ -139,10 +127,6 @@ describe("db advisors", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// db query
-// ---------------------------------------------------------------------------
-
 describe("db query", () => {
   describe("db query:linked", () => {
     testBehaviour(
@@ -193,10 +177,6 @@ describe("db query", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// db push
-// ---------------------------------------------------------------------------
-
 describe("db push", () => {
   describe("db push:dry-run", () => {
     testBehaviour(
@@ -232,10 +212,6 @@ describe("db push", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// db pull
-// ---------------------------------------------------------------------------
-
 describe("db pull", () => {
   testBehaviour("exits non-zero on connection refused with --local", async ({ run }) => {
     const result = await run(["db", "pull", "--local"]);
@@ -244,10 +220,6 @@ describe("db pull", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// db lint
-// ---------------------------------------------------------------------------
-
 describe("db lint", () => {
   testBehaviour("exits non-zero on connection refused with --local", async ({ run }) => {
     const result = await run(["db", "lint", "--local"]);
@@ -255,10 +227,6 @@ describe("db lint", () => {
     expect(result.stderr).toContain("connect");
   });
 });
-
-// ---------------------------------------------------------------------------
-// db dump
-// ---------------------------------------------------------------------------
 
 describe("db dump", () => {
   testBehaviour("exits non-zero on connection refused with --local", async ({ run }) => {
@@ -274,10 +242,6 @@ describe("db dump", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// db reset
-// ---------------------------------------------------------------------------
-
 describe("db reset", () => {
   testBehaviour("exits non-zero on connection refused with --local", async ({ run }) => {
     const result = await run(["db", "reset", "--local"]);
@@ -285,10 +249,6 @@ describe("db reset", () => {
     expect(result.stderr).toMatch(/connect|not running/i);
   });
 });
-
-// ---------------------------------------------------------------------------
-// test new
-// ---------------------------------------------------------------------------
 
 describe("test new", () => {
   testBehaviour("creates a pgTAP test file", async ({ run, workspace }) => {
@@ -306,10 +266,6 @@ describe("test new", () => {
     expect(result.exitCode).not.toBe(0);
   });
 });
-
-// ---------------------------------------------------------------------------
-// test db
-// ---------------------------------------------------------------------------
 
 describe("test db", () => {
   testBehaviour("exits non-zero on connection refused with --local", async ({ run }) => {

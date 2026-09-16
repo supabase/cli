@@ -1,43 +1,29 @@
 /**
- * pg-meta container spec builder, gated on `config.studio.enabled` (pg-meta
- * has no `enabled` flag of its own — it only exists to back Studio's schema
- * browser) and
- * `!isContainerExcluded(config.studio.pgmeta_image, excluded)` — see
- * `legacy-service-catalog.ts`'s `pgMeta` entry (`excludeKey: "postgres-meta"`,
- * gated on `studio.enabled`). Gating and image resolution/pre-pull are the
- * caller's job (a future `start.handler.ts`); this module only assembles the
- * container spec once the caller has already decided to start it, matching
- * `docker-create-args.ts`'s "image already resolved/pulled" contract.
- *
- * No separately-tested pure env function the way Studio has
- * (`legacyBuildStudioEnv`): pg-meta's env is 6 straight `KEY=value`
- * assignments with no derived formatting or conditional logic, so
- * {@link legacyBuildPgMetaContainerSpec} is the only exported entry point.
+ * pg-meta container spec builder. Gated on `config.studio.enabled` (pg-meta has no `enabled`
+ * flag of its own — it exists only to back Studio's schema browser) and image exclusion; gating
+ * and image resolution/pre-pull are the caller's responsibility.
  */
 
-import type { LegacyStartContainerSpec } from "../../../command-internal/db-bootstrap/docker-create-args.ts";
+import type { StartContainerSpec } from "../../../command-internal/db-bootstrap/docker-create-args.ts";
 
-/** The hardcoded pg-meta listen port (`PG_META_PORT=8080`) — never configurable. */
+/** pg-meta's listen port; not configurable. */
 const PG_META_PORT = 8080;
 
-/** The pg-meta network alias — a fixed, non-configurable constant. */
+/** pg-meta's fixed network alias. */
 const PG_META_NETWORK_ALIASES = ["pg_meta"];
 
-export interface LegacyPgMetaContainerInput {
+export interface PgMetaContainerInput {
   /** `config.studio.pgmeta_image`, already resolved/pulled by the caller. */
   readonly image: string;
-  /** `legacyServiceContainerName("pg_meta", projectId)`. */
+  /** `serviceContainerName("pg_meta", projectId)`. */
   readonly containerName: string;
-  /**
-   * The local Postgres container's own hostname on the shared Docker
-   * network.
-   */
+  /** The local Postgres container's own hostname on the shared Docker network. */
   readonly dbHost: string;
   /** Hardcoded `5432`. */
   readonly dbPort: number;
   /** Hardcoded `"postgres"`. */
   readonly dbUser: string;
-  /** `config.db.password` (`legacyResolveLocalConfigValues`'s resolved value). */
+  /** `config.db.password` (`resolveLocalConfigValues`'s resolved value). */
   readonly dbPassword: string;
   /** Hardcoded `"postgres"`. */
   readonly dbName: string;
@@ -45,13 +31,8 @@ export interface LegacyPgMetaContainerInput {
   readonly networkId: string;
 }
 
-/**
- * Assembles pg-meta's {@link LegacyStartContainerSpec}. Pure — no Effect or
- * I/O — matching `docker-create-args.ts`'s own builder shape.
- */
-export function legacyBuildPgMetaContainerSpec(
-  input: LegacyPgMetaContainerInput,
-): LegacyStartContainerSpec {
+/** Builds pg-meta's {@link StartContainerSpec}. */
+export function buildPgMetaContainerSpec(input: PgMetaContainerInput): StartContainerSpec {
   return {
     image: input.image,
     containerName: input.containerName,

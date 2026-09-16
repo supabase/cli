@@ -42,11 +42,11 @@ describe("resolveAgentOutputFormat", () => {
     ).toBe("json");
   });
 
-  it("keeps legacy --output authoritative over the agent JSON default", () => {
+  it("keeps --output authoritative over the agent JSON default", () => {
     expect(
       resolveAgentOutputFormat({
         explicitOutputFormat: Option.none(),
-        legacyOutputFormat: Option.some("pretty"),
+        goOutputFormat: Option.some("pretty"),
         detectedAgentName: Option.some("codex"),
       }),
     ).toBe("text");
@@ -116,6 +116,47 @@ describe("resolveAgentOutputFormat", () => {
         Option.some("codex"),
       ),
     ).toBe("text");
+    expect(
+      resolveAgentOutputFormatFromArgs(["--log-level", "error", "--version"], Option.some("codex")),
+    ).toBe("text");
+    expect(
+      resolveAgentOutputFormatFromArgs(["--log-level=error", "--version"], Option.some("codex")),
+    ).toBe("text");
+    expect(
+      resolveAgentOutputFormatFromArgs(
+        ["--completions", "bash", "--version"],
+        Option.some("codex"),
+      ),
+    ).toBe("text");
+    expect(resolveAgentOutputFormatFromArgs(["--wizard", "--version"], Option.some("codex"))).toBe(
+      "text",
+    );
+    expect(
+      resolveAgentOutputFormatFromArgs(["--wizard=true", "--version"], Option.some("codex")),
+    ).toBe("text");
+    expect(
+      resolveAgentOutputFormatFromArgs(["--debug=false", "--version"], Option.some("codex")),
+    ).toBe("text");
+    expect(
+      resolveAgentOutputFormatFromArgs(["--wizard=bogus", "--version"], Option.some("codex")),
+    ).toBe("text");
+    expect(
+      resolveAgentOutputFormatFromArgs(["--wizard", "false", "--version"], Option.some("codex")),
+    ).toBe("text");
+    expect(
+      resolveAgentOutputFormatFromArgs(["--debug", "0", "--version"], Option.some("codex")),
+    ).toBe("text");
+    expect(
+      resolveAgentOutputFormatFromArgs(["--wizard", "bogus", "--version"], Option.some("codex")),
+    ).toBe("json");
+    expect(resolveAgentOutputFormatFromArgs(["--version=true"], Option.some("codex"))).toBe("text");
+    expect(resolveAgentOutputFormatFromArgs(["--version=0"], Option.some("codex"))).toBe("text");
+    expect(resolveAgentOutputFormatFromArgs(["-v=true"], Option.some("codex"))).toBe("text");
+    expect(resolveAgentOutputFormatFromArgs(["--help=true"], Option.some("codex"))).toBe("text");
+    expect(resolveAgentOutputFormatFromArgs(["--version=bogus"], Option.some("codex"))).toBe(
+      "json",
+    );
+    expect(resolveAgentOutputFormatFromArgs(["--help=bogus"], Option.some("codex"))).toBe("json");
     expect(resolveAgentOutputFormatFromArgs(["--help"], Option.some("codex"))).toBe("text");
     expect(
       resolveAgentOutputFormatFromArgs(["db", "reset", "--version", "1"], Option.some("codex")),

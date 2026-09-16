@@ -4,15 +4,19 @@ import { join, resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { buildDockerBinds, formatDockerBind, type ResolvedDeployFunctionConfig } from "./deploy.ts";
+import {
+  buildDockerBinds,
+  formatDockerBind,
+  pruneRedundantDockerBinds,
+  type ResolvedDeployFunctionConfig,
+} from "./deploy.ts";
 import { FunctionImportNotDirectoryError } from "./deploy.errors.ts";
 
 /**
- * `../../` from `<root>/supabase/functions/hello/deno.json`'s directory
- * lands at `<root>/supabase/_vendor/package/dist/index.mjs` — deliberately
- * OUTSIDE `functionsDir` (`<root>/supabase/functions`) so a bind for it
- * survives `sanitizeDockerBinds`, which strips every bind under
- * `functionsDir`/`outputDir`. That makes bind-list assertions observable
+ * `../../` from `<root>/supabase/functions/hello/deno.json`'s directory lands at
+ * `<root>/supabase/_vendor/package/dist/index.mjs`, outside `functionsDir`
+ * (`<root>/supabase/functions`), so a bind for it survives `sanitizeDockerBinds`, which strips
+ * every bind under `functionsDir`/`outputDir`. That makes bind-list assertions observable
  * instead of vacuously true.
  */
 const VENDOR_TARGET_RELATIVE = "../../_vendor/package/dist/index.mjs";
@@ -24,12 +28,10 @@ async function createFunctionProjectWithDenoJson(
   indexTsContents: string,
   options: { readonly nestedProject?: boolean } = {},
 ) {
-  // realpath the temp dir up front: on macOS `TMPDIR` resolves through a
-  // `/var` -> `/private/var` symlink, and `buildDockerBinds` compares
-  // realpath'd module roots against a non-realpath'd fallback path for a
-  // dotted-but-nonexistent specifier — an unresolved symlink prefix would
-  // make every path below "outside the source root" and mask the real
-  // assertions this file is testing.
+  // realpath the temp dir up front: on macOS `TMPDIR` resolves through a `/var` ->
+  // `/private/var` symlink, and `buildDockerBinds` compares realpath'd module roots against a
+  // non-realpath'd fallback path — an unresolved prefix would make every path look "outside the
+  // source root" and mask the real assertions here.
   const root = await realpath(await mkdtemp(join(tmpdir(), "deploy-import-scanner-")));
   const projectRoot = options.nestedProject ? join(root, "infra", "my-project") : root;
   const functionsDir = join(projectRoot, "supabase", "functions");
@@ -95,12 +97,9 @@ async function createSlashVendoredFunctionProject(indexTsContents: string) {
 
 describe("buildDockerBinds — import-map key matching (spec-strict) and the file-mapped-key guard", () => {
   it("drops a specifier reachable only through a JSDoc comment, now via a no-match on the unqualified bare key (not the extension guard)", async () => {
-    // Import-maps spec: a bare key ("@supabase/server", no trailing slash)
-    // matches only exactly, so "@supabase/server/core" no longer substitutes
-    // at all here — it is dropped as an unresolvable bare specifier before
-    // the final-segment guard ever runs. Kept as its own test because it
-    // pins the exact field-reported shape; see the "final-segment guard"
-    // test below for the guard itself under a spec-valid `/`-suffixed key.
+    // A bare key ("@supabase/server", no trailing slash) matches only exactly, so
+    // "@supabase/server/core" is dropped as an unresolvable bare specifier before the
+    // final-segment guard ever runs — see "final-segment guard" below for the guard itself.
     const { root, functionsDir, outputDir, config, vendorIndexPath } =
       await createVendoredFunctionProject(
         [
@@ -121,8 +120,6 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
         },
       });
 
-      // The vendor file is still bound via the import-map target walk
-      // (independent of whether the entrypoint's own specifier matched).
       expect(binds.some((bind) => bind.hostPath === vendorIndexPath)).toBe(true);
       expect(binds.some((bind) => formatDockerBind(bind).includes("index.mjs/core"))).toBe(false);
       expect(warnings).toEqual([]);
@@ -266,14 +263,10 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
   });
 
   it("does not crash when an unreferenced `/`-suffixed import-map target resolves through a file, with no options passed", async () => {
-    // Regression for a bug found while writing the test above:
-    // `forEachLocalImportMapTarget` enumerates every import-map VALUE
-    // unconditionally (regardless of whether the entrypoint references it),
-    // and Bun's `realpath` — unlike Node's — throws ENOTDIR on a
-    // trailing-slash path through a file. A spec-valid `/`-suffixed value
-    // (which SHOULD end in "/") pointing at a real file used to crash
-    // `buildDockerBinds` with a raw ENOTDIR here, with no options passed —
-    // exactly how the real `functions deploy` bundling call site invokes it.
+    // `forEachLocalImportMapTarget` enumerates every import-map value unconditionally, and
+    // Bun's `realpath` (unlike Node's) throws ENOTDIR on a trailing-slash path through a file —
+    // this reproduces that with no options passed, matching how the real bundling call site
+    // invokes it.
     const { root, functionsDir, outputDir, config } = await createHelloFunctionProject(
       { "@x/": VENDOR_TARGET_RELATIVE_SLASH },
       'Deno.serve(() => new Response("ok"));\n',
@@ -288,10 +281,9 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
   });
 
   it("skips an unreferenced import-map target that resolves through a file, regardless of skipMissingImportMapTargets", async () => {
-    // ENOTDIR (a target routed through a file) is now always skippable, with
-    // its own wording distinct from the ENOENT "missing" case below — see
-    // "skips a genuinely missing import-map target" for the option's actual
-    // gate.
+    // ENOTDIR (a target routed through a file) is always skippable, with its own wording
+    // distinct from the ENOENT "missing" case below — see "skips a genuinely missing import-map
+    // target" for that option's actual gate.
     const { root, functionsDir, outputDir, config } = await createHelloFunctionProject(
       { "@x": `${VENDOR_TARGET_RELATIVE}/sub.ts` },
       'Deno.serve(() => new Response("ok"));\n',
@@ -503,9 +495,6 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
         },
       });
 
-      // Pre-fix, "pkg/core.ts" fabricated "<vendor>/index.mjscore.ts" (no
-      // separator) and "pkg//core.ts" fabricated "<vendor>/index.mjs/core.ts"
-      // (a genuine through-a-file crash shape) — both warned or threw.
       expect(warnings).toEqual([]);
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -562,10 +551,6 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
         },
       });
 
-      // Proves the LONGER key ("@v/deep/") won: the walker followed
-      // "@v/deep/mod.ts" through dirB and bound the resolved FILE. Had the
-      // shorter key incorrectly won, the walker would have tried
-      // "<dirA>/deep/mod.ts" instead (which does not exist).
       expect(binds.some((bind) => bind.hostPath === modPath)).toBe(true);
       expect(binds.some((bind) => formatDockerBind(bind).includes(join("dirA", "deep")))).toBe(
         false,
@@ -598,16 +583,9 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
         skipMissingImportMapTargets: true,
       });
 
-      // Scope name "../hell" resolves to ".../functions/hell" — the OLD bare
-      // `startsWith` rule let that match the entrypoint's OWN directory
-      // (".../functions/hello") purely as a string prefix ("hello" starts
-      // with "hell" as characters, not as a path segment). If that scope
-      // incorrectly applied, "@lib" would resolve to the scoped (nonexistent)
-      // target and the walker itself would emit a "failed to read file"
-      // warning for it — distinct from the constant "Skipping missing import
-      // map target" warning that the independent, unconditional
-      // target-enumeration walk always emits for that same value regardless
-      // of whether its scope matches anything.
+      // If the scope incorrectly matched, "@lib" would emit a "failed to read file" warning
+      // instead of the constant "Skipping missing import map target" warning every target
+      // enumeration walk emits regardless of scope matching.
       expect(
         warnings.some(
           (warning) => warning.includes("failed to read file") && warning.includes("not-real"),
@@ -643,5 +621,95 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe("pruneRedundantDockerBinds — child binds covered by a parent bind", () => {
+  const bind = (hostPath: string, containerPath: string, mode: "ro" | "rw" = "ro") => ({
+    hostPath,
+    containerPath,
+    mode,
+    externalScope: false,
+  });
+
+  it("drops a file bind nested inside a same-mode directory bind at the same container offset", () => {
+    const parent = bind("/repo/packages/orm", "/repo/packages/orm");
+    const child = bind("/repo/packages/orm/core/foo.ts", "/repo/packages/orm/core/foo.ts");
+    expect(pruneRedundantDockerBinds([parent, child])).toEqual([parent]);
+  });
+
+  it("collapses a whole covered subtree while keeping every parent, regardless of order", () => {
+    const ormDir = bind("/repo/packages/orm", "/repo/packages/orm");
+    const schemasDir = bind("/repo/packages/schemas", "/repo/packages/schemas");
+    const children = [
+      bind("/repo/packages/orm/index.ts", "/repo/packages/orm/index.ts"),
+      bind("/repo/packages/orm/core/foo.ts", "/repo/packages/orm/core/foo.ts"),
+      bind("/repo/packages/schemas/kinds/blah.ts", "/repo/packages/schemas/kinds/blah.ts"),
+    ];
+    expect(
+      pruneRedundantDockerBinds([children[0]!, ormDir, children[1]!, schemasDir, children[2]!]),
+    ).toEqual([ormDir, schemasDir]);
+  });
+
+  it("prunes through chains: a file covered by a directory that is itself covered", () => {
+    const outer = bind("/repo/packages", "/repo/packages");
+    const inner = bind("/repo/packages/orm", "/repo/packages/orm");
+    const leaf = bind("/repo/packages/orm/index.ts", "/repo/packages/orm/index.ts");
+    expect(pruneRedundantDockerBinds([outer, inner, leaf])).toEqual([outer]);
+  });
+
+  it("keeps a child whose mode differs from the covering parent", () => {
+    const parent = bind("/repo/packages/orm", "/repo/packages/orm", "ro");
+    const child = bind("/repo/packages/orm/data", "/repo/packages/orm/data", "rw");
+    expect(pruneRedundantDockerBinds([parent, child])).toEqual([parent, child]);
+  });
+
+  it("keeps a child mapped to a different container offset than the parent supplies", () => {
+    const parent = bind("/repo/packages/orm", "/repo/packages/orm");
+    const overridden = bind("/repo/packages/orm/index.ts", "/elsewhere/index.ts");
+    expect(pruneRedundantDockerBinds([parent, overridden])).toEqual([parent, overridden]);
+  });
+
+  it("never treats sibling paths sharing a name prefix as nested", () => {
+    const a = bind("/repo/packages/orm", "/repo/packages/orm");
+    const sibling = bind("/repo/packages/orm-extras/x.ts", "/repo/packages/orm-extras/x.ts");
+    expect(pruneRedundantDockerBinds([a, sibling])).toEqual([a, sibling]);
+  });
+
+  it("leaves named-volume binds and unrelated host binds untouched", () => {
+    const volume = bind("supabase_edge_runtime_x", "/root/.cache/deno", "rw");
+    const output = bind("/repo/out", "/repo/out", "rw");
+    expect(pruneRedundantDockerBinds([volume, output])).toEqual([volume, output]);
+  });
+
+  it("never collapses two identical binds into one", () => {
+    const first = bind("/repo/packages/orm", "/repo/packages/orm");
+    const second = bind("/repo/packages/orm", "/repo/packages/orm");
+    expect(pruneRedundantDockerBinds([first, second])).toEqual([first, second]);
+  });
+
+  it("normalizes Windows-style separators when matching ancestry", () => {
+    const parent = bind("C:\\repo\\packages\\orm", "/repo/packages/orm");
+    const child = bind("C:\\repo\\packages\\orm\\index.ts", "/repo/packages/orm/index.ts");
+    expect(pruneRedundantDockerBinds([parent, child])).toEqual([parent]);
+  });
+
+  it("lets a filesystem-root bind cover descendants without covering itself", () => {
+    const root = bind("/", "/");
+    const child = bind("/repo/packages/orm", "/repo/packages/orm");
+    expect(pruneRedundantDockerBinds([root, child])).toEqual([root]);
+    expect(pruneRedundantDockerBinds([root, root])).toEqual([root, root]);
+  });
+
+  it("lets a drive-root bind cover descendants", () => {
+    const root = bind("C:\\", "/");
+    const child = bind("C:\\repo\\orm", "/repo/orm");
+    expect(pruneRedundantDockerBinds([root, child])).toEqual([root]);
+  });
+
+  it("keeps a child a root bind does not supply at that container path", () => {
+    const root = bind("/", "/");
+    const overridden = bind("/repo/orm/index.ts", "/elsewhere/index.ts");
+    expect(pruneRedundantDockerBinds([root, overridden])).toEqual([root, overridden]);
   });
 });

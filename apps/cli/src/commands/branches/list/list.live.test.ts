@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { expect } from "vitest";
 
-import { requireLiveSuccess, test, throwWithCleanup } from "../../../../tests/helpers/live.ts";
+import {
+  removeLiveBranch,
+  requireLiveSuccess,
+  test,
+  throwWithCleanup,
+} from "../../../../tests/helpers/live.ts";
 
 test("lists a preview branch for the project", async ({ cli, project }) => {
   const name = `cli-e2e-list-${randomUUID().slice(0, 8)}`;
@@ -26,22 +31,7 @@ test("lists a preview branch for the project", async ({ cli, project }) => {
     targetError = error;
   } finally {
     try {
-      const deleted = await cli([
-        "branches",
-        "delete",
-        name,
-        "--project-ref",
-        project.ref,
-        "--yes",
-      ]);
-      if (
-        deleted.exitCode !== 0 &&
-        !/not found|does not exist/i.test(`${deleted.stdout}\n${deleted.stderr}`)
-      ) {
-        cleanupError = new Error(
-          `branches delete cleanup failed:\n${deleted.stdout}\n${deleted.stderr}`,
-        );
-      }
+      await removeLiveBranch(cli, project, name);
     } catch (error) {
       cleanupError = error;
     }

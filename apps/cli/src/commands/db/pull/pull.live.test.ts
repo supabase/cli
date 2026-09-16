@@ -5,11 +5,9 @@ import { expect } from "vitest";
 
 import { requireLiveSuccess, test, throwWithCleanup } from "../../../../tests/helpers/live.ts";
 
-// `db pull` exits non-zero when the diff comes back empty (the in-sync
-// finding, see IN_SYNC_SUGGESTION in pull.handler.ts), so the journey seeds a remote-only
-// marker table through `db query` — no local migration and no history row.
-// The marker cannot exist in the freshly provisioned shadow, so the diff is
-// never empty regardless of engine and the pull deterministically writes it.
+// `db pull` exits non-zero on an empty diff (the in-sync finding), so this seeds a
+// remote-only marker table via `db query` with no local migration/history row — the
+// marker can't exist in the fresh shadow, so the diff is never empty.
 test("pulls the remote schema into an initial migration", async ({ cli, project, workspace }) => {
   const marker = `e2e_pull_${randomUUID().slice(0, 8)}`;
   const migrations = join(workspace.path, "supabase", "migrations");

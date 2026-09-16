@@ -8,31 +8,28 @@ import { Effect, Exit, Layer, Option } from "effect";
 
 import { mockOutput, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
-  LEGACY_VALID_REF,
-  mockLegacyCliSettings,
-  mockLegacyLinkedProjectCacheTracked,
-  mockLegacyTelemetryStateTracked,
-  useLegacyTempWorkdir,
-  legacySequentialExecBatch,
-} from "../../../../tests/helpers/legacy-mocks.ts";
+  VALID_REF,
+  mockCommandSettings,
+  mockLinkedProjectCacheTracked,
+  mockTelemetryStateTracked,
+  useTempWorkdir,
+  sequentialExecBatch,
+} from "../../../../tests/helpers/command-mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
-import { LegacyDnsResolverFlag, LegacyYesFlag } from "../../../shared/legacy/global-flags.ts";
+import { DnsResolverFlag, YesFlag } from "../../../command-internal/global-flags.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { LegacyProjectNotLinkedError } from "../../../config/legacy-project-ref.errors.ts";
-import { LegacyDbConfigResolver } from "../../../command-internal/legacy-db-config.service.ts";
-import type {
-  LegacyDbConfigFlags,
-  LegacyResolvedDbConfig,
-} from "../../../command-internal/legacy-db-config.types.ts";
-import { LegacyDbExecError } from "../../../command-internal/legacy-db-connection.errors.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { ProjectRefNotLinkedError } from "../../../config/project-ref.errors.ts";
+import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
+import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
+import { DbExecError } from "../../../command-internal/db-connection.errors.ts";
 import {
-  LegacyDbConnection,
-  type LegacyPgConnInput,
-  type LegacyDbSession,
-} from "../../../command-internal/legacy-db-connection.service.ts";
-import { legacyDbPush } from "./push.handler.ts";
-import type { LegacyDbPushFlags } from "./push.command.ts";
+  DbConnection,
+  type PgConnInput,
+  type DbSession,
+} from "../../../command-internal/db-connection.service.ts";
+import { dbPush } from "./push.handler.ts";
+import type { DbPushFlags } from "./push.command.ts";
 
 const LIST_MIGRATIONS =
   "SELECT version FROM supabase_migrations.schema_migrations ORDER BY version";
@@ -41,7 +38,7 @@ const READ_VAULT = "SELECT id, name FROM vault.secrets WHERE name = ANY($1)";
 
 const FLAG_PROJECT_REF = "flagflagflagflagflag";
 
-const LOCAL_CONN: LegacyPgConnInput = {
+const LOCAL_CONN: PgConnInput = {
   host: "127.0.0.1",
   port: 54322,
   user: "postgres",
@@ -49,7 +46,7 @@ const LOCAL_CONN: LegacyPgConnInput = {
   database: "postgres",
 };
 
-const DEFAULT_FLAGS: LegacyDbPushFlags = {
+const DEFAULT_FLAGS: DbPushFlags = {
   includeAll: false,
   includeRoles: false,
   includeSeed: false,
@@ -63,18 +60,18 @@ const DEFAULT_FLAGS: LegacyDbPushFlags = {
 };
 
 function mockResolver(
-  opts: { isLocal?: boolean; onResolve?: (flags: LegacyDbConfigFlags) => void } = {},
+  opts: { isLocal?: boolean; onResolve?: (flags: DbConfigFlags) => void } = {},
 ) {
-  const calls: Array<LegacyDbConfigFlags> = [];
-  const layer = Layer.succeed(LegacyDbConfigResolver, {
-    resolve: (flags: LegacyDbConfigFlags) =>
+  const calls: Array<DbConfigFlags> = [];
+  const layer = Layer.succeed(DbConfigResolver, {
+    resolve: (flags: DbConfigFlags) =>
       Effect.sync(() => {
         calls.push(flags);
         opts.onResolve?.(flags);
         return {
           conn: LOCAL_CONN,
           isLocal: opts.isLocal ?? true,
-        } satisfies LegacyResolvedDbConfig;
+        } satisfies ResolvedDbConfig;
       }),
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
@@ -91,20 +88,18 @@ function mockConnection(opts: {
 }) {
   const execs: Array<string> = [];
   const queries: Array<{ sql: string; params?: ReadonlyArray<unknown> }> = [];
-  const layer = Layer.succeed(LegacyDbConnection, {
+  const layer = Layer.succeed(DbConnection, {
     connect: () => {
-      const session: LegacyDbSession = {
+      const session: DbSession = {
         extensionExists: () => Effect.succeed(false),
         copyToCsv: () => Effect.succeed(new Uint8Array()),
         queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
-        exec: (sql: string): Effect.Effect<void, LegacyDbExecError> =>
-          Effect.suspend((): Effect.Effect<void, LegacyDbExecError> => {
+        exec: (sql: string): Effect.Effect<void, DbExecError> =>
+          Effect.suspend((): Effect.Effect<void, DbExecError> => {
             execs.push(sql);
             if (opts.failExec !== undefined && sql === opts.failExec) {
               return Effect.fail(
-                new LegacyDbExecError(
-                  opts.failExecWith ?? { message: "ERROR: boom (SQLSTATE 42601)" },
-                ),
+                new DbExecError(opts.failExecWith ?? { message: "ERROR: boom (SQLSTATE 42601)" }),
               );
             }
             return Effect.void;
@@ -112,37 +107,33 @@ function mockConnection(opts: {
         query: (
           sql: string,
           params?: ReadonlyArray<unknown>,
-        ): Effect.Effect<ReadonlyArray<Record<string, unknown>>, LegacyDbExecError> =>
-          Effect.suspend(
-            (): Effect.Effect<ReadonlyArray<Record<string, unknown>>, LegacyDbExecError> => {
-              queries.push({ sql, params });
-              if (sql === LIST_MIGRATIONS) {
-                return Effect.succeed(
-                  (opts.remoteMigrations ?? []).map((version) => ({ version })),
+        ): Effect.Effect<ReadonlyArray<Record<string, unknown>>, DbExecError> =>
+          Effect.suspend((): Effect.Effect<ReadonlyArray<Record<string, unknown>>, DbExecError> => {
+            queries.push({ sql, params });
+            if (sql === LIST_MIGRATIONS) {
+              return Effect.succeed((opts.remoteMigrations ?? []).map((version) => ({ version })));
+            }
+            if (sql === SELECT_SEEDS) {
+              if (opts.noSeedTable === true) {
+                return Effect.fail(
+                  new DbExecError({
+                    message: 'relation "supabase_migrations.seed_files" does not exist',
+                    code: "42P01",
+                  }),
                 );
               }
-              if (sql === SELECT_SEEDS) {
-                if (opts.noSeedTable === true) {
-                  return Effect.fail(
-                    new LegacyDbExecError({
-                      message: 'relation "supabase_migrations.seed_files" does not exist',
-                      code: "42P01",
-                    }),
-                  );
-                }
-                return Effect.succeed(
-                  Object.entries(opts.remoteSeeds ?? {}).map(([path, hash]) => ({ path, hash })),
-                );
-              }
-              if (sql === READ_VAULT) {
-                return Effect.succeed(opts.vaultRows ?? []);
-              }
-              return Effect.succeed([]);
-            },
-          ),
+              return Effect.succeed(
+                Object.entries(opts.remoteSeeds ?? {}).map(([path, hash]) => ({ path, hash })),
+              );
+            }
+            if (sql === READ_VAULT) {
+              return Effect.succeed(opts.vaultRows ?? []);
+            }
+            return Effect.succeed([]);
+          }),
         // A migration file's statements arrive as one batch; replay them through
         // `exec`/`query` so this suite's recordings and failure injection still apply.
-        execBatch: (statements) => legacySequentialExecBatch(session)(statements),
+        execBatch: (statements) => sequentialExecBatch(session)(statements),
       };
       return Effect.succeed(session);
     },
@@ -177,12 +168,9 @@ function setup(
     failExec?: string;
     failExecWith?: { message: string; code?: string; detail?: string; position?: number };
     noProjectId?: boolean;
-    // Simulates the real `LegacyDbConfigResolver`'s own "Initialising login
-    // role..." stderr line (`legacy-db-config.layer.ts`'s `initLoginRole`),
-    // fired as part of `resolve()`'s own connection-resolution work — i.e.
-    // strictly before `legacyDbPushCore` (and its "DRY RUN: …" line) ever runs.
-    // `mockResolver` is otherwise silent, so tests pin the established output
-    // ordering against this stand-in line.
+    // Simulates the real `DbConfigResolver`'s "Initialising login role..." stderr line,
+    // fired as part of `resolve()`'s own connection work, strictly before `dbPushCore`
+    // runs; `mockResolver` is otherwise silent, so tests pin output ordering against it.
     simulateInitialisingLoginRole?: boolean;
   },
 ) {
@@ -198,27 +186,26 @@ function setup(
 
   const out = mockOutput({ format: opts.format ?? "text", promptConfirmResponses: opts.confirm });
   const conn = mockConnection(opts);
-  const telemetry = mockLegacyTelemetryStateTracked();
-  const linkedCache = mockLegacyLinkedProjectCacheTracked();
+  const telemetry = mockTelemetryStateTracked();
+  const linkedCache = mockLinkedProjectCacheTracked();
 
-  const projectRefLayer = Layer.succeed(LegacyProjectRefResolver, {
-    resolve: () => Effect.succeed(opts.projectRef ?? LEGACY_VALID_REF),
-    resolveForLink: () => Effect.succeed(opts.projectRef ?? LEGACY_VALID_REF),
-    resolveOptional: () => Effect.succeed(Option.some(opts.projectRef ?? LEGACY_VALID_REF)),
-    // Go's `loadProjectRef` gives `--project-ref` top precedence, short-circuiting
-    // BEFORE the "not linked" failure — mirror that here so a test can prove the
-    // flag resolves a ref even when the workdir would otherwise fail to link.
+  const projectRefLayer = Layer.succeed(ProjectRefResolver, {
+    resolve: () => Effect.succeed(opts.projectRef ?? VALID_REF),
+    resolveForLink: () => Effect.succeed(opts.projectRef ?? VALID_REF),
+    resolveOptional: () => Effect.succeed(Option.some(opts.projectRef ?? VALID_REF)),
+    // An explicit `--project-ref` flag takes top precedence, short-circuiting before
+    // the "not linked" failure.
     loadProjectRef: (flagValue: Option.Option<string>) =>
       Option.isSome(flagValue) && flagValue.value.length > 0
         ? Effect.succeed(flagValue.value)
         : opts.linkedFails === true
           ? Effect.fail(
-              new LegacyProjectNotLinkedError({
+              new ProjectRefNotLinkedError({
                 message: "Cannot find project ref. Have you run supabase link?",
               }),
             )
-          : Effect.succeed(opts.projectRef ?? LEGACY_VALID_REF),
-    promptProjectRef: () => Effect.succeed(opts.projectRef ?? LEGACY_VALID_REF),
+          : Effect.succeed(opts.projectRef ?? VALID_REF),
+    promptProjectRef: () => Effect.succeed(opts.projectRef ?? VALID_REF),
   });
 
   const resolver = mockResolver({
@@ -234,19 +221,19 @@ function setup(
     out.layer,
     conn.layer,
     resolver.layer,
-    mockLegacyCliSettings({
+    mockCommandSettings({
       workdir,
       ...(opts.noProjectId === true ? { projectId: Option.none() } : {}),
     }),
     BunServices.layer,
-    // Prompts (migration/seed confirmation) are answered through mockOutput's
-    // `promptConfirmResponses` (the TTY/clack path), so mark stdin a TTY. Stdin is
-    // only referenced by legacyPromptYesNo's non-TTY branch (unreached here).
+    // Prompts are answered through mockOutput's `promptConfirmResponses` (the
+    // TTY/clack path); Stdin is only used by promptYesNo's non-TTY branch (unreached
+    // here).
     mockTty({ stdinIsTty: true }),
     mockStdin(true),
     Layer.succeed(CliArgs, { args: opts.args ?? ["db", "push", "--local"] }),
-    Layer.succeed(LegacyYesFlag, opts.yes ?? false),
-    Layer.succeed(LegacyDnsResolverFlag, "native"),
+    Layer.succeed(YesFlag, opts.yes ?? false),
+    Layer.succeed(DnsResolverFlag, "native"),
     projectRefLayer,
     telemetry.layer,
     linkedCache.layer,
@@ -266,13 +253,13 @@ const migrationFile = (version: string, body = "create table t ();") => ({
   [`${MIGRATION_DIR}/${version}_test.sql`]: body,
 });
 
-describe("legacy db push", () => {
-  const tmp = useLegacyTempWorkdir("supabase-db-push-");
+describe("db push", () => {
+  const tmp = useTempWorkdir("supabase-db-push-");
 
   it.live("reports up to date when nothing is pending (text)", () => {
     const { layer, out, conn } = setup(tmp.current, { toml: 'project_id = "test"\n' });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      const exit = yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(out.stdoutText).toBe("Local database is up to date.\n");
       expect(conn.execs).not.toContain("BEGIN");
@@ -286,7 +273,7 @@ describe("legacy db push", () => {
       remoteMigrations: ["20260420", "20260420010000"],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      const exit = yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(out.stdoutText).toBe("Local database is up to date.\n");
       expect(conn.execs).not.toContain("BEGIN");
@@ -296,7 +283,7 @@ describe("legacy db push", () => {
   it.live("emits a json result for an up-to-date run", () => {
     const { layer, out } = setup(tmp.current, { toml: 'project_id = "test"\n', format: "json" });
     return Effect.gen(function* () {
-      yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
       const success = out.messages.find((m) => m.type === "success");
       expect(success?.data?.["upToDate"]).toBe(true);
       expect(success?.data?.["migrations"]).toEqual([]);
@@ -309,7 +296,7 @@ describe("legacy db push", () => {
       args: ["db", "push", "--local", "--linked"],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      const exit = yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
     });
   });
@@ -321,12 +308,10 @@ describe("legacy db push", () => {
       confirm: [true],
     });
     return Effect.gen(function* () {
-      yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
       expect(out.stderrText).toContain("Applying migration 20240101000000_test.sql...");
-      // "supabase db push" is wrapped in Aqua (cyan) on stdout (established output contract).
       expect(out.stdoutText).toContain("Finished");
       expect(out.stdoutText).toContain("supabase db push");
-      // The migration body + history insert ran inside a transaction.
       expect(conn.execs).toContain("BEGIN");
       expect(conn.execs).toContain("COMMIT");
       expect(conn.queries.some((q) => q.sql.includes("INSERT INTO supabase_migrations"))).toBe(
@@ -347,7 +332,7 @@ describe("legacy db push", () => {
       confirm: [true],
     });
     return Effect.gen(function* () {
-      yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
       const setupCommit = conn.execs.indexOf("COMMIT");
       const setIndex = conn.execs.indexOf(`-- pg-delta: transaction=false\n${set}`);
       const actionIndex = conn.execs.indexOf(action);
@@ -371,7 +356,7 @@ describe("legacy db push", () => {
       confirm: [false],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      const exit = yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain("context canceled");
@@ -386,7 +371,7 @@ describe("legacy db push", () => {
       files: migrationFile("20240101000000"),
     });
     return Effect.gen(function* () {
-      yield* legacyDbPush({ ...DEFAULT_FLAGS, dryRun: true }).pipe(Effect.provide(layer));
+      yield* dbPush({ ...DEFAULT_FLAGS, dryRun: true }).pipe(Effect.provide(layer));
       expect(out.stderrText).toContain("DRY RUN: migrations will *not* be pushed to the database.");
       expect(out.stderrText).toContain("Would push these migrations:");
       expect(out.stderrText).toContain("20240101000000_test.sql");
@@ -400,7 +385,7 @@ describe("legacy db push", () => {
       files: migrationFile("20240101000000"),
     });
     return Effect.gen(function* () {
-      yield* legacyDbPush({ ...DEFAULT_FLAGS, dryRun: true, skipVault: true }).pipe(
+      yield* dbPush({ ...DEFAULT_FLAGS, dryRun: true, skipVault: true }).pipe(
         Effect.provide(layer),
       );
       expect(out.stderrText).toContain("Would push these migrations:");
@@ -412,19 +397,15 @@ describe("legacy db push", () => {
   it.live(
     "prints the DRY RUN heads-up line after the connection resolves, not before (Go's push.Run order)",
     () => {
-      // The connection-resolution phase (which prints "Initialising login
-      // role..." when minting a temp role) runs BEFORE the push itself runs —
-      // and "DRY RUN: …" is the literal first line the push prints, so it
-      // prints AFTER that resolution output, never before.
-      // `simulateInitialisingLoginRole` stands in for the real resolver's
-      // stderr line (the fake resolver is otherwise silent) so this asserts on
-      // actual accumulated stderr text ordering, not internal call timing.
+      // `simulateInitialisingLoginRole` stands in for the real resolver's stderr line
+      // (the fake resolver is otherwise silent), so this asserts on actual stderr
+      // ordering, not internal call timing.
       const { layer, out } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
         simulateInitialisingLoginRole: true,
       });
       return Effect.gen(function* () {
-        yield* legacyDbPush({ ...DEFAULT_FLAGS, dryRun: true }).pipe(Effect.provide(layer));
+        yield* dbPush({ ...DEFAULT_FLAGS, dryRun: true }).pipe(Effect.provide(layer));
         const loginRoleIndex = out.stderrText.indexOf("Initialising login role...");
         const dryRunIndex = out.stderrText.indexOf(
           "DRY RUN: migrations will *not* be pushed to the database.",
@@ -444,7 +425,7 @@ describe("legacy db push", () => {
       remoteMigrations: ["20240101000000"],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      const exit = yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain(
@@ -465,7 +446,7 @@ describe("legacy db push", () => {
       remoteMigrations: ["20240101000000"],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbPush({
+      const exit = yield* dbPush({
         ...DEFAULT_FLAGS,
         dbUrl: Option.some(dbUrl),
         local: false,
@@ -483,7 +464,7 @@ describe("legacy db push", () => {
       remoteMigrations: ["20240202000000"],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      const exit = yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain("--include-all");
@@ -499,7 +480,7 @@ describe("legacy db push", () => {
       confirm: [true],
     });
     return Effect.gen(function* () {
-      yield* legacyDbPush({ ...DEFAULT_FLAGS, includeAll: true }).pipe(Effect.provide(layer));
+      yield* dbPush({ ...DEFAULT_FLAGS, includeAll: true }).pipe(Effect.provide(layer));
       expect(out.stderrText).toContain("Applying migration 20240101000000_test.sql...");
     });
   });
@@ -510,7 +491,7 @@ describe("legacy db push", () => {
       files: migrationFile("20240101000000"),
     });
     return Effect.gen(function* () {
-      yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
       expect(out.stderrText).toContain(
         "Skipping migrations because it is disabled in config.toml for project:",
       );
@@ -525,7 +506,7 @@ describe("legacy db push", () => {
       confirm: [true],
     });
     return Effect.gen(function* () {
-      yield* legacyDbPush({ ...DEFAULT_FLAGS, includeSeed: true }).pipe(Effect.provide(layer));
+      yield* dbPush({ ...DEFAULT_FLAGS, includeSeed: true }).pipe(Effect.provide(layer));
       expect(out.stderrText).toContain("Seeding data from supabase/seed.sql...");
       expect(
         conn.queries.some((q) => q.sql.includes("INSERT INTO supabase_migrations.seed_files")),
@@ -534,9 +515,8 @@ describe("legacy db push", () => {
   });
 
   it.live("expands a directory in [db.seed].sql_paths to its sorted .sql children", () => {
-    // A matched directory is walked and its regular `.sql` files seeded
-    // recursively; non-.sql files are skipped. Without dir expansion the
-    // directory path reached `readFileString(<dir>)` and failed.
+    // Directories are walked recursively; without expansion the path would reach
+    // `readFileString(<dir>)` and fail.
     const { layer, out } = setup(tmp.current, {
       toml: 'project_id = "test"\n\n[db.seed]\nsql_paths = ["seeds"]\n',
       files: {
@@ -547,7 +527,7 @@ describe("legacy db push", () => {
       confirm: [true],
     });
     return Effect.gen(function* () {
-      yield* legacyDbPush({ ...DEFAULT_FLAGS, includeSeed: true }).pipe(Effect.provide(layer));
+      yield* dbPush({ ...DEFAULT_FLAGS, includeSeed: true }).pipe(Effect.provide(layer));
       expect(out.stderrText).toContain("Seeding data from supabase/seeds/a.sql...");
       expect(out.stderrText).toContain("Seeding data from supabase/seeds/nested/b.sql...");
       expect(out.stderrText).not.toContain("notes.txt");
@@ -564,17 +544,15 @@ describe("legacy db push", () => {
       remoteSeeds: { "supabase/seed.sql": hash },
     });
     return Effect.gen(function* () {
-      yield* legacyDbPush({ ...DEFAULT_FLAGS, includeSeed: true }).pipe(Effect.provide(layer));
+      yield* dbPush({ ...DEFAULT_FLAGS, includeSeed: true }).pipe(Effect.provide(layer));
       expect(out.stdoutText).toBe("Local database is up to date.\n");
     });
   });
 
   it.live("hashes a non-UTF-8 seed file by its raw bytes (Go's io.Copy parity)", () => {
-    // The seed file hashes the raw byte stream; a UTF-8 string decode would
-    // replace the invalid bytes and change the hash. Write invalid UTF-8 and
-    // pre-seed the remote with the RAW-byte sha256 — the push must treat it as
-    // already-applied (byte hash matches), not re-run it. A string-decoded hash
-    // here would differ and mark the seed dirty.
+    // Writing invalid UTF-8 and pre-seeding the remote with the raw-byte sha256 proves
+    // the push hashes bytes, not a UTF-8 decode (which would replace invalid bytes and
+    // mark the seed dirty).
     const raw = Buffer.from([0x2d, 0x2d, 0x20, 0xff, 0xfe, 0x00, 0x01, 0x0a]);
     const rawHash = createHash("sha256").update(raw).digest("hex");
     const { layer, out } = setup(tmp.current, {
@@ -584,7 +562,7 @@ describe("legacy db push", () => {
     mkdirSync(join(tmp.current, "supabase"), { recursive: true });
     writeFileSync(join(tmp.current, "supabase", "seed.sql"), raw);
     return Effect.gen(function* () {
-      yield* legacyDbPush({ ...DEFAULT_FLAGS, includeSeed: true }).pipe(Effect.provide(layer));
+      yield* dbPush({ ...DEFAULT_FLAGS, includeSeed: true }).pipe(Effect.provide(layer));
       expect(out.stdoutText).toBe("Local database is up to date.\n");
     });
   });
@@ -595,7 +573,7 @@ describe("legacy db push", () => {
       files: { "supabase/seed.sql": "insert into t values (1);" },
     });
     return Effect.gen(function* () {
-      yield* legacyDbPush({ ...DEFAULT_FLAGS, includeSeed: true }).pipe(Effect.provide(layer));
+      yield* dbPush({ ...DEFAULT_FLAGS, includeSeed: true }).pipe(Effect.provide(layer));
       expect(out.stderrText).toContain(
         "Skipping seed because it is disabled in config.toml for project:",
       );
@@ -609,22 +587,20 @@ describe("legacy db push", () => {
       confirm: [true],
     });
     return Effect.gen(function* () {
-      yield* legacyDbPush({ ...DEFAULT_FLAGS, includeRoles: true }).pipe(Effect.provide(layer));
+      yield* dbPush({ ...DEFAULT_FLAGS, includeRoles: true }).pipe(Effect.provide(layer));
       expect(out.stderrText).toContain("Seeding globals from roles.sql...");
     });
   });
 
   it.live("--include-roles without a roles.sql pushes migrations and skips globals", () => {
-    // `supabase/roles.sql` is only globbed when it exists; an absent file is
-    // silently skipped (no error, no "Seeding globals" line) and the rest
-    // pushes.
+    // An absent roles.sql is silently skipped (no error, no "Seeding globals" line).
     const { layer, out } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
       files: migrationFile("20240101000000"),
       confirm: [true],
     });
     return Effect.gen(function* () {
-      yield* legacyDbPush({ ...DEFAULT_FLAGS, includeRoles: true }).pipe(Effect.provide(layer));
+      yield* dbPush({ ...DEFAULT_FLAGS, includeRoles: true }).pipe(Effect.provide(layer));
       expect(out.stderrText).not.toContain("Seeding globals");
       expect(out.stderrText).toContain("Applying migration 20240101000000_test.sql...");
     });
@@ -640,7 +616,7 @@ describe("legacy db push", () => {
       format: "json",
     });
     return Effect.gen(function* () {
-      yield* legacyDbPush({ ...DEFAULT_FLAGS, includeSeed: true }).pipe(Effect.provide(layer));
+      yield* dbPush({ ...DEFAULT_FLAGS, includeSeed: true }).pipe(Effect.provide(layer));
       const success = out.messages.find((m) => m.type === "success");
       expect(success?.data?.["upToDate"]).toBe(false);
       expect(success?.data?.["migrations"]).toEqual(["20240101000000_test.sql"]);
@@ -655,7 +631,7 @@ describe("legacy db push", () => {
       confirm: [true],
     });
     return Effect.gen(function* () {
-      yield* legacyDbPush({ ...DEFAULT_FLAGS, includeRoles: true }).pipe(Effect.provide(layer));
+      yield* dbPush({ ...DEFAULT_FLAGS, includeRoles: true }).pipe(Effect.provide(layer));
       expect(out.stderrText).toContain("Schema migrations are up to date.");
     });
   });
@@ -667,7 +643,7 @@ describe("legacy db push", () => {
       confirm: [false],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbPush({ ...DEFAULT_FLAGS, includeRoles: true }).pipe(
+      const exit = yield* dbPush({ ...DEFAULT_FLAGS, includeRoles: true }).pipe(
         Effect.provide(layer),
         Effect.exit,
       );
@@ -683,7 +659,7 @@ describe("legacy db push", () => {
       confirm: [false],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbPush({ ...DEFAULT_FLAGS, includeSeed: true }).pipe(
+      const exit = yield* dbPush({ ...DEFAULT_FLAGS, includeSeed: true }).pipe(
         Effect.provide(layer),
         Effect.exit,
       );
@@ -701,9 +677,8 @@ describe("legacy db push", () => {
       confirm: [true],
     });
     return Effect.gen(function* () {
-      yield* legacyDbPush({ ...DEFAULT_FLAGS, includeSeed: true }).pipe(Effect.provide(layer));
+      yield* dbPush({ ...DEFAULT_FLAGS, includeSeed: true }).pipe(Effect.provide(layer));
       expect(out.stderrText).toContain("Updating seed hash to supabase/seed.sql...");
-      // Dirty seed only upserts the hash; the body statement is not executed.
       expect(conn.execs).not.toContain("insert into t values (1);");
     });
   });
@@ -716,7 +691,7 @@ describe("legacy db push", () => {
       confirm: [true],
     });
     return Effect.gen(function* () {
-      yield* legacyDbPush({ ...DEFAULT_FLAGS, includeSeed: true }).pipe(Effect.provide(layer));
+      yield* dbPush({ ...DEFAULT_FLAGS, includeSeed: true }).pipe(Effect.provide(layer));
       expect(out.stderrText).toContain("Seeding data from supabase/seed.sql...");
     });
   });
@@ -726,7 +701,7 @@ describe("legacy db push", () => {
       toml: 'project_id = "test"\n\n[db.seed]\nsql_paths = ["missing.sql"]\n',
     });
     return Effect.gen(function* () {
-      yield* legacyDbPush({ ...DEFAULT_FLAGS, includeSeed: true }).pipe(Effect.provide(layer));
+      yield* dbPush({ ...DEFAULT_FLAGS, includeSeed: true }).pipe(Effect.provide(layer));
       expect(out.stderrText).toContain("WARN: no files matched pattern: supabase/missing.sql");
       expect(out.stdoutText).toBe("Local database is up to date.\n");
     });
@@ -739,7 +714,7 @@ describe("legacy db push", () => {
       confirm: [true],
     });
     return Effect.gen(function* () {
-      yield* legacyDbPush({ ...DEFAULT_FLAGS, includeSeed: true }).pipe(Effect.provide(layer));
+      yield* dbPush({ ...DEFAULT_FLAGS, includeSeed: true }).pipe(Effect.provide(layer));
       expect(out.stderrText).toContain("Seed files are up to date.");
     });
   });
@@ -753,7 +728,7 @@ describe("legacy db push", () => {
       confirm: [true],
     });
     return Effect.gen(function* () {
-      yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
       expect(out.stderrText).toContain("Updating vault secrets...");
       expect(resolver.calls[0]?.resolveVaultSecrets).toBe(true);
       const sqls = conn.queries.map((q) => q.sql);
@@ -770,7 +745,7 @@ describe("legacy db push", () => {
       confirm: [true],
     });
     return Effect.gen(function* () {
-      yield* legacyDbPush({ ...DEFAULT_FLAGS, skipVault: true }).pipe(Effect.provide(layer));
+      yield* dbPush({ ...DEFAULT_FLAGS, skipVault: true }).pipe(Effect.provide(layer));
       expect(out.stderrText).not.toContain("Updating vault secrets...");
       expect(resolver.calls[0]?.resolveVaultSecrets).toBe(false);
       expect(conn.queries.some((query) => query.sql.includes("vault."))).toBe(false);
@@ -787,7 +762,7 @@ describe("legacy db push", () => {
       confirm: [true],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbPush({ ...DEFAULT_FLAGS, skipVault: true }).pipe(
+      const exit = yield* dbPush({ ...DEFAULT_FLAGS, skipVault: true }).pipe(
         Effect.provide(layer),
         Effect.exit,
       );
@@ -803,7 +778,7 @@ describe("legacy db push", () => {
       files: migrationFile("20240101000000"),
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbPush({ ...DEFAULT_FLAGS, skipVault: true }).pipe(
+      const exit = yield* dbPush({ ...DEFAULT_FLAGS, skipVault: true }).pipe(
         Effect.provide(layer),
         Effect.exit,
       );
@@ -815,10 +790,8 @@ describe("legacy db push", () => {
   });
 
   it.live("decrypts an encrypted vault secret keyed by the project .env (not process.env)", () => {
-    // Regression: the old point-of-use vault decryption keyed only on `process.env`, so a
-    // `DOTENV_PRIVATE_KEY` present only in the project `.env` failed to decrypt. The
-    // config load merges the project `.env` into the key set (`legacyCheckDbToml`), so
-    // it resolves.
+    // `DOTENV_PRIVATE_KEY` present only in the project .env must still decrypt — the
+    // config load merges the project .env into the key set (`checkDbToml`).
     const PRIVATE_KEY = "7fd7210cef8f331ee8c55897996aaaafd853a2b20a4dc73d6d75759f65d2a7eb";
     const ENCRYPTED =
       "encrypted:BKiXH15AyRzeohGyUrmB6cGjSklCrrBjdesQlX1VcXo/Xp20Bi2gGZ3AlIqxPQDmjVAALnhZamKnuY73l8Dz1P+BYiZUgxTSLzdCvdYUyVbNekj2UudbdUizBViERtZkuQwZHIv/";
@@ -831,7 +804,7 @@ describe("legacy db push", () => {
       confirm: [true],
     });
     return Effect.gen(function* () {
-      yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
       expect(out.stderrText).toContain("Updating vault secrets...");
       // The decrypted plaintext ("value") is written, proving the project-.env key was used.
       const create = conn.queries.find((q) => q.sql === "SELECT vault.create_secret($1, $2)");
@@ -844,10 +817,10 @@ describe("legacy db push", () => {
       toml: 'project_id = "test"\n',
       args: ["db", "push"],
       isLocal: false,
-      projectRef: LEGACY_VALID_REF,
+      projectRef: VALID_REF,
     });
     return Effect.gen(function* () {
-      yield* legacyDbPush({ ...DEFAULT_FLAGS, local: false }).pipe(Effect.provide(layer));
+      yield* dbPush({ ...DEFAULT_FLAGS, local: false }).pipe(Effect.provide(layer));
       expect(out.stderrText).toContain("Connecting to remote database...");
       expect(out.stdoutText).toBe("Remote database is up to date.\n");
     });
@@ -861,17 +834,16 @@ describe("legacy db push", () => {
       confirm: [true],
     });
     return Effect.gen(function* () {
-      const error = yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.flip);
+      const error = yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.flip);
       // A server error without position/detail keeps the plain error layout.
-      expect(error._tag).toBe("LegacyDbPushApplyError");
+      expect(error._tag).toBe("DbPushApplyError");
       expect(error.message).toBe("ERROR: boom (SQLSTATE 42601)\nAt statement: 0\nBOOM");
     });
   });
 
   it.live("renders Go's caret, Detail line, and 42704 extension hint on a failed migration", () => {
-    // Established failure-rendering format: the `^` caret under the
-    // server-reported error position, the `Detail` line, and the
-    // undefined-object extension hint.
+    // Established failure-rendering format: caret under the error position, Detail
+    // line, and undefined-object extension hint.
     const stat = "CREATE TABLE test (path ltree NOT NULL)";
     const { layer } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
@@ -886,8 +858,8 @@ describe("legacy db push", () => {
       confirm: [true],
     });
     return Effect.gen(function* () {
-      const error = yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.flip);
-      expect(error._tag).toBe("LegacyDbPushApplyError");
+      const error = yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.flip);
+      expect(error._tag).toBe("DbPushApplyError");
       expect(error.message).toBe(
         'ERROR: type "ltree" does not exist (SQLSTATE 42704)\n' +
           "Detail from the server.\n" +
@@ -913,13 +885,12 @@ describe("legacy db push", () => {
       },
     });
     return Effect.gen(function* () {
-      yield* legacyDbPush({
+      yield* dbPush({
         ...DEFAULT_FLAGS,
         dryRun: true,
         includeRoles: true,
         includeSeed: true,
       }).pipe(Effect.provide(layer));
-      // The roles path is wrapped in Bold (ANSI).
       expect(out.stderrText).toContain("Would create custom roles");
       expect(out.stderrText).toContain("roles.sql");
       expect(out.stderrText).toContain("Would push these migrations:");
@@ -934,7 +905,7 @@ describe("legacy db push", () => {
       files: { "supabase/roles.sql": "create role app;" },
     });
     return Effect.gen(function* () {
-      yield* legacyDbPush({ ...DEFAULT_FLAGS, dryRun: true, includeRoles: true }).pipe(
+      yield* dbPush({ ...DEFAULT_FLAGS, dryRun: true, includeRoles: true }).pipe(
         Effect.provide(layer),
       );
       expect(out.stderrText).toContain("Would create custom roles");
@@ -950,7 +921,7 @@ describe("legacy db push", () => {
     return Effect.gen(function* () {
       // No config.toml written → loadCliConfig returns null → default config
       // (migrations enabled), and the vault document is absent.
-      yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
       expect(out.stderrText).toContain("Applying migration 20240101000000_test.sql...");
     });
   });
@@ -962,10 +933,10 @@ describe("legacy db push", () => {
     const { layer, out } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
       files: { ...migrationFile("20240101000000"), "supabase/.env": "SUPABASE_YES=true\n" },
-      // Deliberately no `confirm` responses — the prompt must be auto-confirmed.
+      // No `confirm` responses; the prompt must be auto-confirmed.
     });
     return Effect.gen(function* () {
-      yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
       expect(out.stderrText).toContain("Applying migration 20240101000000_test.sql...");
     });
   });
@@ -973,22 +944,19 @@ describe("legacy db push", () => {
   it.live("fails when config.toml cannot be parsed", () => {
     const { layer } = setup(tmp.current, { toml: "this is = = not [[[ valid toml" });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      const exit = yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        // Config loads through the shared reader (`legacyCheckDbToml`), so a
-        // malformed config aborts with the established `failed to load config`
-        // message (the reader path), same as the other db commands
-        // (diff/dump/pull/migration).
+        // Config loads through the shared reader (`checkDbToml`), same as the other db
+        // commands.
         expect(JSON.stringify(exit.cause)).toContain("failed to load config");
       }
     });
   });
 
   it.live("loads a Go-style env() boolean in config (no CliConfigParseError)", () => {
-    // Regression for the strict @supabase/config loader rejecting `enabled = "env(VAR)"`:
-    // env-expansion + boolean parsing must resolve it, so the config loads and the
-    // migration proceeds. Previously native push aborted before that parse ran.
+    // env-expansion + boolean parsing must resolve `env(VAR)` so the config loads and
+    // the migration proceeds.
     const previous = process.env["SEED_ENABLED"];
     process.env["SEED_ENABLED"] = "true";
     const { layer, out } = setup(tmp.current, {
@@ -997,7 +965,7 @@ describe("legacy db push", () => {
       confirm: [true],
     });
     return Effect.gen(function* () {
-      yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
       expect(out.stderrText).toContain("Applying migration 20240101000000_test.sql...");
     }).pipe(
       Effect.ensuring(
@@ -1012,23 +980,19 @@ describe("legacy db push", () => {
   it.live("a matched remote block's migrations.enabled beats the shell env override", () => {
     // A matched [remotes.<ref>] block overrides the shell env, so
     // `[remotes.preview.db.migrations] enabled = false` wins over
-    // `SUPABASE_DB_MIGRATIONS_ENABLED=true` and the push skips migrations.
-    // (Before the config-reader convergence, push resolved this gate
-    // env-first and wrongly applied.)
+    // `SUPABASE_DB_MIGRATIONS_ENABLED=true`.
     const previous = process.env["SUPABASE_DB_MIGRATIONS_ENABLED"];
     process.env["SUPABASE_DB_MIGRATIONS_ENABLED"] = "true";
     const { layer, out } = setup(tmp.current, {
-      toml: `project_id = "base"\n\n[remotes.preview]\nproject_id = "${LEGACY_VALID_REF}"\n\n[remotes.preview.db.migrations]\nenabled = false\n`,
+      toml: `project_id = "base"\n\n[remotes.preview]\nproject_id = "${VALID_REF}"\n\n[remotes.preview.db.migrations]\nenabled = false\n`,
       files: migrationFile("20240101000000"),
       args: ["db", "push", "--linked"],
       isLocal: false,
-      projectRef: LEGACY_VALID_REF,
+      projectRef: VALID_REF,
       confirm: [true],
     });
     return Effect.gen(function* () {
-      yield* legacyDbPush({ ...DEFAULT_FLAGS, local: false, linked: true }).pipe(
-        Effect.provide(layer),
-      );
+      yield* dbPush({ ...DEFAULT_FLAGS, local: false, linked: true }).pipe(Effect.provide(layer));
       expect(out.stderrText).toContain("Skipping migrations because it is disabled");
       expect(out.stderrText).not.toContain("Applying migration 20240101000000");
     }).pipe(
@@ -1043,15 +1007,13 @@ describe("legacy db push", () => {
 
   it.live("announces a matching [remotes.*] override on the linked path", () => {
     const { layer, out } = setup(tmp.current, {
-      toml: `project_id = "base"\n\n[remotes.preview]\nproject_id = "${LEGACY_VALID_REF}"\n`,
+      toml: `project_id = "base"\n\n[remotes.preview]\nproject_id = "${VALID_REF}"\n`,
       args: ["db", "push", "--linked"],
       isLocal: false,
-      projectRef: LEGACY_VALID_REF,
+      projectRef: VALID_REF,
     });
     return Effect.gen(function* () {
-      yield* legacyDbPush({ ...DEFAULT_FLAGS, local: false, linked: true }).pipe(
-        Effect.provide(layer),
-      );
+      yield* dbPush({ ...DEFAULT_FLAGS, local: false, linked: true }).pipe(Effect.provide(layer));
       expect(out.stderrText).toContain("Loading config override: [remotes.preview]");
     });
   });
@@ -1062,25 +1024,22 @@ describe("legacy db push", () => {
       files: migrationFile("20240101000000"),
       args: ["db", "push", "--linked"],
       isLocal: false,
-      projectRef: LEGACY_VALID_REF,
+      projectRef: VALID_REF,
       format: "json",
       confirm: [true],
     });
     return Effect.gen(function* () {
-      yield* legacyDbPush({ ...DEFAULT_FLAGS, local: false, linked: true }).pipe(
-        Effect.provide(layer),
-      );
+      yield* dbPush({ ...DEFAULT_FLAGS, local: false, linked: true }).pipe(Effect.provide(layer));
       expect(out.stderrText).toContain("Connecting to remote database...");
       expect(linkedCache.cached).toBe(true);
-      expect(linkedCache.cachedRef).toBe(LEGACY_VALID_REF);
+      expect(linkedCache.cachedRef).toBe(VALID_REF);
       const success = out.messages.find((m) => m.type === "success");
       expect(success?.data?.["migrations"]).toEqual(["20240101000000_test.sql"]);
     });
   });
 
   it.live("pushes to the project given via --project-ref without a linked workdir", () => {
-    // No `.temp/project-ref` and the resolver's own ref-file fallback is
-    // simulated as failing (`linkedFails`) — only the flag can resolve a ref.
+    // `linkedFails: true` simulates an unlinked workdir; only the flag can resolve a ref.
     const { layer, out, linkedCache, resolver } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
       files: migrationFile("20240101000000"),
@@ -1091,7 +1050,7 @@ describe("legacy db push", () => {
       confirm: [true],
     });
     return Effect.gen(function* () {
-      yield* legacyDbPush({
+      yield* dbPush({
         ...DEFAULT_FLAGS,
         local: false,
         linked: true,
@@ -1107,16 +1066,15 @@ describe("legacy db push", () => {
   });
 
   it.live("--project-ref drives which [remotes.<ref>] block merges into config", () => {
-    // The `[remotes.staging]` block's `project_id` matches the FLAG ref, not the
-    // resolver's own `LEGACY_VALID_REF` fallback — the override only announces if
-    // the flag (not the fallback) actually resolved the ref config merges against.
+    // `[remotes.staging]`'s `project_id` matches the flag ref, not the resolver's own
+    // `VALID_REF` fallback, so the override only announces if the flag resolved it.
     const { layer, out } = setup(tmp.current, {
       toml: `project_id = "base"\n\n[remotes.staging]\nproject_id = "${FLAG_PROJECT_REF}"\n`,
       args: ["db", "push", "--linked"],
       isLocal: false,
     });
     return Effect.gen(function* () {
-      yield* legacyDbPush({
+      yield* dbPush({
         ...DEFAULT_FLAGS,
         local: false,
         linked: true,
@@ -1132,13 +1090,12 @@ describe("legacy db push", () => {
       files: migrationFile("20240101000000"),
       args: ["db", "push", "--linked"],
       isLocal: false,
-      // The workdir is linked to LEGACY_VALID_REF (e.g. via .temp/project-ref) —
-      // the flag must win over it.
-      projectRef: LEGACY_VALID_REF,
+      // A distinct fixed ref proves the flag, not the workdir's own ref, wins.
+      projectRef: VALID_REF,
       confirm: [true],
     });
     return Effect.gen(function* () {
-      yield* legacyDbPush({
+      yield* dbPush({
         ...DEFAULT_FLAGS,
         local: false,
         linked: true,
@@ -1146,7 +1103,7 @@ describe("legacy db push", () => {
       }).pipe(Effect.provide(layer));
       expect(linkedCache.cached).toBe(true);
       expect(linkedCache.cachedRef).toBe(FLAG_PROJECT_REF);
-      expect(linkedCache.cachedRef).not.toBe(LEGACY_VALID_REF);
+      expect(linkedCache.cachedRef).not.toBe(VALID_REF);
     });
   });
 
@@ -1157,7 +1114,7 @@ describe("legacy db push", () => {
       args: ["db", "push", "--local"],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbPush({
+      const exit = yield* dbPush({
         ...DEFAULT_FLAGS,
         projectRef: Option.some(FLAG_PROJECT_REF),
       }).pipe(Effect.provide(layer), Effect.exit);

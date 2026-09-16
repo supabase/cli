@@ -1,14 +1,10 @@
 import { Command } from "effect/unstable/cli";
-import { legacySecretsListCommand } from "./list/list.command.ts";
-import { legacySecretsSetCommand } from "./set/set.command.ts";
-import { legacySecretsUnsetCommand } from "./unset/unset.command.ts";
+import { secretsListCommand } from "./list/list.command.ts";
+import { secretsSetCommand } from "./set/set.command.ts";
+import { secretsUnsetCommand } from "./unset/unset.command.ts";
 
-export const legacySecretsCommand = Command.make("secrets").pipe(
+export const secretsCommand = Command.make("secrets").pipe(
   Command.withDescription("Manage Supabase secrets."),
   Command.withShortDescription("Manage Supabase secrets"),
-  Command.withSubcommands([
-    legacySecretsListCommand,
-    legacySecretsSetCommand,
-    legacySecretsUnsetCommand,
-  ]),
+  Command.withSubcommands([secretsListCommand, secretsSetCommand, secretsUnsetCommand]),
 );

@@ -1,43 +1,43 @@
 import { Effect, Option } from "effect";
 
-import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { LegacyOutputFlag } from "../../../shared/legacy/global-flags.ts";
+import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
+import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import {
   encodeEnv,
   encodeGoJson,
   encodeToml,
   encodeYaml,
-} from "../../../command-internal/legacy-go-output.encoders.ts";
-import { mapLegacyHttpError } from "../../../command-internal/legacy-http-errors.ts";
+} from "../../../command-internal/go-output.encoders.ts";
+import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import {
-  LegacyNetworkRestrictionsGetNetworkError,
-  LegacyNetworkRestrictionsGetUnexpectedStatusError,
+  NetworkRestrictionsGetNetworkError,
+  NetworkRestrictionsGetUnexpectedStatusError,
 } from "../network-restrictions.errors.ts";
 import { printNetworkRestrictionsStatus } from "../network-restrictions.format.ts";
-import type { LegacyNetworkRestrictionsGetFlags } from "./get.command.ts";
+import type { NetworkRestrictionsGetFlags } from "./get.command.ts";
 
 // Note the *semicolon* in the status template — `; received: ` (vs the colon
 // used in the update/patch templates).
-const mapGetError = mapLegacyHttpError({
-  networkError: LegacyNetworkRestrictionsGetNetworkError,
-  statusError: LegacyNetworkRestrictionsGetUnexpectedStatusError,
+const mapGetError = mapHttpError({
+  networkError: NetworkRestrictionsGetNetworkError,
+  statusError: NetworkRestrictionsGetUnexpectedStatusError,
   networkMessage: (cause) => `failed to retrieve network restrictions: ${cause}`,
   statusMessage: (_status, body) => `failed to retrieve network restrictions; received: ${body}`,
 });
 
-export const legacyNetworkRestrictionsGet = Effect.fn("legacy.network-restrictions.get")(function* (
-  flags: LegacyNetworkRestrictionsGetFlags,
+export const networkRestrictionsGet = Effect.fn("network-restrictions.get")(function* (
+  flags: NetworkRestrictionsGetFlags,
 ) {
   const output = yield* Output;
-  const goOutputFlag = yield* LegacyOutputFlag;
-  const api = yield* LegacyPlatformApi;
-  const resolver = yield* LegacyProjectRefResolver;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const telemetryState = yield* LegacyTelemetryState;
+  const goOutputFlag = yield* OutputFlag;
+  const api = yield* CommandPlatformApi;
+  const resolver = yield* ProjectRefResolver;
+  const linkedProjectCache = yield* LinkedProjectCache;
+  const telemetryState = yield* TelemetryState;
 
   yield* Effect.gen(function* () {
     const ref = yield* resolver.resolve(flags.projectRef);

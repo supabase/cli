@@ -12,7 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
-import { Effect, Exit, Layer, Option, Context, Tracer } from "effect";
+import { ConfigProvider, Effect, Exit, Layer, Option, Context, Tracer } from "effect";
 import { cliSettingsLayer } from "../config/cli-settings.layer.ts";
 import type { TelemetryConfig } from "./types.ts";
 import {
@@ -22,10 +22,6 @@ import {
   processEnvLayer,
 } from "../../../tests/helpers/mocks.ts";
 import { tracingLayer } from "./tracing.layer.ts";
-
-// ---------------------------------------------------------------------------
-// Filesystem helpers
-// ---------------------------------------------------------------------------
 
 const fsLayer = BunServices.layer;
 
@@ -37,10 +33,6 @@ function writeConfig(dir: string, config: TelemetryConfig): void {
   mkdirSync(dir, { recursive: true });
   writeFileSync(path.join(dir, "telemetry.json"), JSON.stringify(config));
 }
-
-// ---------------------------------------------------------------------------
-// Layer builder helpers
-// ---------------------------------------------------------------------------
 
 function buildLayer(opts: { home: string; env?: Record<string, string>; stdoutIsTty?: boolean }) {
   const env: Record<string, string> = {
@@ -54,12 +46,20 @@ function buildLayer(opts: { home: string; env?: Record<string, string>; stdoutIs
     arch: "x64",
   });
   const cliProjectContextLayer = mockCliProjectContext();
+  const configProviderLayer = ConfigProvider.layer(
+    ConfigProvider.fromEnvRecord(env, { preserveEmptyStrings: true }),
+  );
   return Layer.mergeAll(
     fsLayer,
     runtimeInfoLayer,
     cliProjectContextLayer,
     processEnvLayer(env),
-    cliSettingsLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(cliProjectContextLayer)),
+    cliSettingsLayer.pipe(
+      Layer.provide(runtimeInfoLayer),
+      Layer.provide(cliProjectContextLayer),
+      Layer.provide(configProviderLayer),
+    ),
+    configProviderLayer,
     mockTty({
       stdoutIsTty: opts.stdoutIsTty ?? false,
       stdinIsTty: false,
@@ -74,10 +74,6 @@ function buildTracingLayer(opts: {
 }) {
   return tracingLayer.pipe(Layer.provide(buildLayer(opts)));
 }
-
-// ---------------------------------------------------------------------------
-// Span factory helper (mirrors ExportableSpan constructor options)
-// ---------------------------------------------------------------------------
 
 function makeSpanOptions(
   overrides: Partial<{
@@ -97,10 +93,6 @@ function makeSpanOptions(
     sampled: overrides.sampled ?? true,
   };
 }
-
-// ---------------------------------------------------------------------------
-// Layer construction & first-run
-// ---------------------------------------------------------------------------
 
 describe("tracingLayer – layer construction & first-run", () => {
   it.live("first-run TTY: creates telemetry.json with consent=granted", () => {
@@ -195,10 +187,6 @@ describe("tracingLayer – layer construction & first-run", () => {
     },
   );
 });
-
-// ---------------------------------------------------------------------------
-// Span behaviour
-// ---------------------------------------------------------------------------
 
 describe("tracingLayer – span behaviour", () => {
   it.live("span creation attaches global attributes", () => {
@@ -375,10 +363,6 @@ describe("tracingLayer – span behaviour", () => {
     );
   });
 });
-
-// ---------------------------------------------------------------------------
-// ExportableSpan unit tests
-// ---------------------------------------------------------------------------
 
 describe("ExportableSpan unit tests", () => {
   it.live("child span inherits traceId from parent span", () => {

@@ -1,10 +1,10 @@
 import {
-  legacyInspectBool,
-  legacyInspectInt,
-  legacyInspectStmt,
-  legacyInspectText,
-  type LegacyInspectQuerySpec,
-} from "../legacy-inspect-query.ts";
+  inspectBool,
+  inspectInt,
+  inspectStmt,
+  inspectText,
+  type InspectQuerySpec,
+} from "../inspect-query.ts";
 
 const SQL = `SELECT
   pg_stat_activity.pid,
@@ -23,17 +23,17 @@ ORDER BY query_start`;
  * `inspect db locks` — queries holding an exclusive lock on a relation.
  * The `stmt` column is whitespace-collapsed; the rest render as-is.
  */
-export const legacyLocksSpec: LegacyInspectQuerySpec = {
+export const locksSpec: InspectQuerySpec = {
   name: "locks",
   sql: SQL,
   params: () => [],
   headers: ["pid", "relname", "transaction id", "granted", "stmt", "age"],
   project: (row) => [
-    legacyInspectInt(row["pid"]),
-    legacyInspectText(row["relname"]),
-    legacyInspectText(row["transactionid"]),
-    legacyInspectBool(row["granted"]),
-    legacyInspectStmt(row["stmt"]),
-    legacyInspectText(row["age"]),
+    inspectInt(row["pid"]),
+    inspectText(row["relname"]),
+    inspectText(row["transactionid"]),
+    inspectBool(row["granted"]),
+    inspectStmt(row["stmt"]),
+    inspectText(row["age"]),
   ],
 };

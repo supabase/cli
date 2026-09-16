@@ -11,9 +11,7 @@ import {
  * mutually-exclusive-flags error text for `db-url`/`linked`/`local`. Shared by
  * list / fetch / repair / up / down / squash.
  */
-export class LegacyMigrationTargetFlagsError extends Data.TaggedError(
-  "LegacyMigrationTargetFlagsError",
-)<{
+export class MigrationTargetFlagsError extends Data.TaggedError("MigrationTargetFlagsError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -25,9 +23,7 @@ export class LegacyMigrationTargetFlagsError extends Data.TaggedError(
  * `--db-url` combined with `--password`/`-p`. Matches the established
  * mutually-exclusive-flags error text for `db-url`/`password` (list / repair / squash).
  */
-export class LegacyMigrationPasswordFlagsError extends Data.TaggedError(
-  "LegacyMigrationPasswordFlagsError",
-)<{
+export class MigrationPasswordFlagsError extends Data.TaggedError("MigrationPasswordFlagsError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -39,9 +35,7 @@ export class LegacyMigrationPasswordFlagsError extends Data.TaggedError(
  * A positional version argument is not a valid integer. Matches the established
  * `failed to parse <v>: invalid version number` text.
  */
-export class LegacyMigrationInvalidVersionError extends Data.TaggedError(
-  "LegacyMigrationInvalidVersionError",
-)<{
+export class MigrationInvalidVersionError extends Data.TaggedError("MigrationInvalidVersionError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -54,9 +48,7 @@ export class LegacyMigrationInvalidVersionError extends Data.TaggedError(
  * established `glob supabase/migrations/<version>_*.sql: file does not exist`
  * text. Shared by repair (applied) and squash.
  */
-export class LegacyMigrationFileNotFoundError extends Data.TaggedError(
-  "LegacyMigrationFileNotFoundError",
-)<{
+export class MigrationFileNotFoundError extends Data.TaggedError("MigrationFileNotFoundError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -68,7 +60,7 @@ export class LegacyMigrationFileNotFoundError extends Data.TaggedError(
  * The user declined a confirmation prompt (overwrite / repair-all / revert).
  * Maps to a non-zero exit with no extra output.
  */
-export class LegacyOperationCanceledError extends Data.TaggedError("LegacyOperationCanceledError")<{
+export class OperationCanceledError extends Data.TaggedError("OperationCanceledError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {

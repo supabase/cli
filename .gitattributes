@@ -1,5 +1,36 @@
-# pnpm 12 parses patch files with a Rust patch parser that rejects a carriage
-# return in the `---`/`+++` header lines. Git for Windows checks text files out
-# with CRLF by default, which broke `pnpm install` on the Windows release
-# smoke-test. Keep patch files LF everywhere.
+# pnpm 12 briefly had a bug (pnpm/pnpm#14557) where it parsed patch files with a 
+# Rust patch parser that rejects a carriage return in the `---`/`+++` header lines.
+# Git for Windows checks text files out with CRLF by default, which broke
+# `pnpm install` on the Windows release smoke-test.
+# This guarantees that we keep patch files LF everywhere.
 patches/*.patch text eol=lf
+
+# error-tag-stability.unit.test.ts splits this fixture on newlines to diff it
+# against a live-scanned tag set. Pin it to LF so a CRLF checkout on Windows
+# can't leave a trailing `\r` on every entry and make every tag mismatch.
+apps/cli/src/shared/telemetry/__fixtures__/error-tags.txt text eol=lf
+
+# Generated artifacts. `linguist-generated` keeps these out of GitHub's language
+# statistics and collapses them in pull request diffs -- they are build output to
+# be regenerated, not code to review, and together they outweigh the hand-written
+# source. The attribute is GitHub-only: git, CI, and local diffs are unaffected.
+# Collapsed is not hidden. v1-openapi.yaml and the lockfiles do carry changes
+# worth reading -- an upstream API change, a dependency substitution -- and both
+# stay one click away in review.
+# Regeneration is owned by `go generate` in apps/cli-go and by the `generate`
+# turbo task, whose `outputs` in turbo.json are the source of truth for this list.
+# Only the generated files are listed, not their hand-written inputs
+# (pkg/api/*.cfg.yaml, api/overlay.yaml). apps/docs/content/docs/commands/ is
+# generated too but gitignored, so it needs no entry.
+apps/cli-go/api/v1-openapi.yaml linguist-generated=true
+apps/cli-go/pkg/api/*.gen.go linguist-generated=true
+packages/api/src/generated/* linguist-generated=true
+packages/api/scripts/openapi-source.json linguist-generated=true
+apps/cli/src/shared/feedback/database.types.ts linguist-generated=true
+apps/docs/public/cli/config.schema.json linguist-generated=true
+apps/docs/public/cli/project-config.schema.json linguist-generated=true
+
+# Lockfiles. Collapsed rather than hidden -- a dependency change is still one
+# click away in review, which is the same treatment GitHub gives package-lock.json.
+pnpm-lock.yaml linguist-generated=true
+apps/cli-go/go.sum linguist-generated=true

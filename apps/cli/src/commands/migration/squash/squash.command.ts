@@ -2,9 +2,9 @@ import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyMigrationSquashRuntimeLayer } from "../migration.layers.ts";
-import { legacyMigrationSquash } from "./squash.handler.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { migrationSquashRuntimeLayer } from "../migration.layers.ts";
+import { migrationSquash } from "./squash.handler.ts";
 
 const config = {
   version: Flag.string("version").pipe(
@@ -37,14 +37,14 @@ const config = {
   ),
 } as const;
 
-export type LegacyMigrationSquashFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type MigrationSquashFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyMigrationSquashCommand = Command.make("squash", config).pipe(
+export const migrationSquashCommand = Command.make("squash", config).pipe(
   Command.withDescription("Squash migrations to a single file."),
   Command.withShortDescription("Squash migrations to a single file"),
   Command.withHandler((flags) =>
-    legacyMigrationSquash(flags).pipe(
-      withLegacyCommandInstrumentation({
+    migrationSquash(flags).pipe(
+      withCommandTelemetry({
         flags: {
           version: flags.version,
           "db-url": flags.dbUrl,
@@ -62,5 +62,5 @@ export const legacyMigrationSquashCommand = Command.make("squash", config).pipe(
       withJsonErrorHandling,
     ),
   ),
-  Command.provide(legacyMigrationSquashRuntimeLayer),
+  Command.provide(migrationSquashRuntimeLayer),
 );

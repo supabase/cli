@@ -1,66 +1,62 @@
 import { Effect, FileSystem, Option, Path } from "effect";
 
-import { LegacyDnsResolverFlag } from "../../../shared/legacy/global-flags.ts";
+import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { legacyBold } from "../../../command-internal/legacy-colors.ts";
-import { legacyReadDbToml } from "../../../command-internal/legacy-db-config.toml-read.ts";
-import { LegacyDbConfigResolver } from "../../../command-internal/legacy-db-config.service.ts";
-import { LegacyDbConnection } from "../../../command-internal/legacy-db-connection.service.ts";
-import { resolveLegacyDbTargetFlags } from "../../../command-internal/legacy-db-target-flags.ts";
+import { CommandSettings } from "../../../config/command-settings.service.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { bold } from "../../../command-internal/colors.ts";
+import { readDbToml } from "../../../command-internal/db-config.toml-read.ts";
+import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
+import { DbConnection } from "../../../command-internal/db-connection.service.ts";
+import { resolveDbTargetFlags } from "../../../command-internal/db-target-flags.ts";
 import {
-  LegacyMigrationApplyError,
-  legacyApplyMigrationFile,
-} from "../../../command-internal/legacy-migration-apply.ts";
+  MigrationApplyError,
+  applyMigrationFile,
+} from "../../../command-internal/migration-apply.ts";
 import {
-  legacyFindPendingMigrations,
-  legacyListLocalMigrationPaths,
-  legacyListRemoteMigrations,
-  legacySortMigrationPathsByVersion,
-  legacySuggestRevertHistory,
-} from "../../../command-internal/legacy-migration-history.ts";
-import { legacyUpsertVaultSecrets } from "../../../command-internal/legacy-vault.ts";
-import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { LegacyMigrationTargetFlagsError } from "../migration.errors.ts";
-import type { LegacyMigrationUpFlags } from "./up.command.ts";
-import {
-  LegacyMigrationMissingLocalError,
-  LegacyMigrationMissingRemoteError,
-} from "./up.errors.ts";
+  findPendingMigrations,
+  listLocalMigrationPaths,
+  listRemoteMigrations,
+  sortMigrationPathsByVersion,
+  suggestRevertHistory,
+} from "../../../command-internal/migration-history.ts";
+import { upsertVaultSecrets } from "../../../command-internal/vault.ts";
+import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
+import { MigrationTargetFlagsError } from "../migration.errors.ts";
+import type { MigrationUpFlags } from "./up.command.ts";
+import { MigrationMissingLocalError, MigrationMissingRemoteError } from "./up.errors.ts";
 
 const suggestIgnoreFlag = (paths: ReadonlyArray<string>): string =>
   "\nRerun the command with --include-all flag to apply these migrations:\n" +
-  `${legacyBold(paths.join("\n"))}\n`;
+  `${bold(paths.join("\n"))}\n`;
 
 const runUp = Effect.fnUntraced(function* (
-  flags: LegacyMigrationUpFlags,
-  target: ReturnType<typeof resolveLegacyDbTargetFlags>,
+  flags: MigrationUpFlags,
+  target: ReturnType<typeof resolveDbTargetFlags>,
 ) {
   const output = yield* Output;
-  const resolver = yield* LegacyDbConfigResolver;
-  const connection = yield* LegacyDbConnection;
-  const cliSettings = yield* LegacyCliSettings;
+  const resolver = yield* DbConfigResolver;
+  const connection = yield* DbConnection;
+  const cliSettings = yield* CommandSettings;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const dnsResolver = yield* LegacyDnsResolverFlag;
+  const dnsResolver = yield* DnsResolverFlag;
 
   if (target.setFlags.length > 1) {
     return yield* Effect.fail(
-      new LegacyMigrationTargetFlagsError({
+      new MigrationTargetFlagsError({
         message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
       }),
     );
   }
 
   // `--project-ref` never implies `--linked` and must not be silently
-  // discarded on a non-linked target — see push.handler.ts's identical guard
-  // (db push) for the full TS-only rationale.
+  // discarded on a non-linked target; see push.handler.ts's identical guard.
   if (Option.isSome(flags.projectRef) && (target.connType ?? "local") !== "linked") {
     return yield* Effect.fail(
-      new LegacyMigrationTargetFlagsError({
+      new MigrationTargetFlagsError({
         message:
           "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
       }),
@@ -70,7 +66,6 @@ const runUp = Effect.fnUntraced(function* (
   const migrationsDir = path.join(cliSettings.workdir, "supabase", "migrations");
 
   const upBody = Effect.gen(function* () {
-    // up defaults to `--local`.
     const cfg = yield* resolver.resolve({
       dbUrl: flags.dbUrl,
       connType: target.connType ?? "local",
@@ -78,12 +73,10 @@ const runUp = Effect.fnUntraced(function* (
       linkedProjectRef: flags.projectRef,
     });
     const ref = Option.getOrUndefined(cfg.ref ?? Option.none());
-    const toml = yield* legacyReadDbToml(fs, path, cliSettings.workdir, ref);
+    const toml = yield* readDbToml(fs, path, cliSettings.workdir, ref);
 
     yield* Effect.scoped(
       Effect.gen(function* () {
-        // The connect diagnostic prints to stderr before dialing,
-        // local/remote per the resolved connection.
         yield* output.raw(
           `Connecting to ${cfg.isLocal ? "local" : "remote"} database...\n`,
           "stderr",
@@ -93,16 +86,16 @@ const runUp = Effect.fnUntraced(function* (
           dnsResolver,
         });
 
-        const remote = yield* legacyListRemoteMigrations(session);
-        const local = yield* legacyListLocalMigrationPaths(fs, path, migrationsDir);
-        const result = legacyFindPendingMigrations(local, remote);
+        const remote = yield* listRemoteMigrations(session);
+        const local = yield* listLocalMigrationPaths(fs, path, migrationsDir);
+        const result = findPendingMigrations(local, remote);
 
         let pending: ReadonlyArray<string>;
         if (result.kind === "missing-local") {
           return yield* Effect.fail(
-            new LegacyMigrationMissingLocalError({
+            new MigrationMissingLocalError({
               message: "Remote migration versions not found in local migrations directory.",
-              suggestion: legacySuggestRevertHistory(
+              suggestion: suggestRevertHistory(
                 result.versions,
                 (target.connType ?? "local") === "local",
               ),
@@ -111,36 +104,34 @@ const runUp = Effect.fnUntraced(function* (
         } else if (result.kind === "missing-remote") {
           if (!flags.includeAll) {
             return yield* Effect.fail(
-              new LegacyMigrationMissingRemoteError({
+              new MigrationMissingRemoteError({
                 message:
                   "Found local migration files to be inserted before the last migration on remote database.",
                 suggestion: suggestIgnoreFlag(result.paths),
               }),
             );
           }
-          // `--include-all`: the out-of-order set + everything after the
-          // applied prefix. Slices the same version-ordered list
-          // `result.paths` was taken from — indexing a name-ordered list with a
-          // version-ordered offset would skip a pending migration and re-apply
-          // an already-applied one.
+          // Slices the same version-ordered list `result.paths` was taken from; indexing
+          // a name-ordered list with this offset would skip a pending migration and
+          // re-apply an already-applied one.
           pending = [
             ...result.paths,
-            ...legacySortMigrationPathsByVersion(local).slice(remote.length + result.paths.length),
+            ...sortMigrationPathsByVersion(local).slice(remote.length + result.paths.length),
           ];
         } else {
           pending = result.paths;
         }
 
-        yield* legacyUpsertVaultSecrets(session, toml.vault);
+        yield* upsertVaultSecrets(session, toml.vault);
 
         for (const migrationPath of pending) {
           yield* output.raw(`Applying migration ${path.basename(migrationPath)}...\n`, "stderr");
-          yield* legacyApplyMigrationFile(
+          yield* applyMigrationFile(
             session,
             fs,
             path,
             migrationPath,
-            (message) => new LegacyMigrationApplyError({ message }),
+            (message) => new MigrationApplyError({ message }),
           );
         }
 
@@ -154,19 +145,17 @@ const runUp = Effect.fnUntraced(function* (
   });
 
   if ((target.connType ?? "local") === "linked") {
-    const projectRef = yield* LegacyProjectRefResolver;
-    const linkedProjectCache = yield* LegacyLinkedProjectCache;
+    const projectRef = yield* ProjectRefResolver;
+    const linkedProjectCache = yield* LinkedProjectCache;
     const linkedRef = yield* projectRef.loadProjectRef(flags.projectRef);
     return yield* upBody.pipe(Effect.ensuring(linkedProjectCache.cache(linkedRef)));
   }
   return yield* upBody;
 });
 
-export const legacyMigrationUp = Effect.fn("legacy.migration.up")(function* (
-  flags: LegacyMigrationUpFlags,
-) {
-  const telemetryState = yield* LegacyTelemetryState;
+export const migrationUp = Effect.fn("migration.up")(function* (flags: MigrationUpFlags) {
+  const telemetryState = yield* TelemetryState;
   const cliArgs = yield* CliArgs;
-  const target = resolveLegacyDbTargetFlags(cliArgs.args);
+  const target = resolveDbTargetFlags(cliArgs.args);
   yield* runUp(flags, target).pipe(Effect.ensuring(telemetryState.flush));
 });

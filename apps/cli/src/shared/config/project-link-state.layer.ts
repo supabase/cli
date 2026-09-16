@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Layer, Option, Schema } from "effect";
+import { Effect, FileSystem, Layer, Option, Predicate, Schema } from "effect";
 import {
   InvalidProjectLinkStateError,
   ProjectLinkState,
@@ -11,7 +11,7 @@ import { CliProjectHome } from "./cli-project-home.service.ts";
 
 const ProjectLinkStateValueFileSchema = Schema.fromJsonString(ProjectLinkStateValueSchema);
 const decodeProjectLinkStateValue = Schema.decodeUnknownEffect(ProjectLinkStateValueFileSchema);
-const encodeProjectLinkStateValue = Schema.encodeUnknownSync(ProjectLinkStateValueSchema);
+const encodeProjectLinkStateValue = Schema.encodeEffect(ProjectLinkStateValueSchema);
 
 function encodePrettyJson(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
@@ -30,36 +30,36 @@ const makeProjectLinkState = Effect.gen(function* () {
 
   const loadFromPath = (filePath: string) =>
     Effect.gen(function* () {
-      const exists = yield* fs
-        .exists(filePath)
-        .pipe(Effect.mapError(() => invalidProjectLinkStateError(filePath)));
+      const exists = yield* fs.exists(filePath);
       if (!exists) {
         return Option.none<ProjectLinkStateValue>();
       }
 
-      const content = yield* fs
-        .readFileString(filePath)
-        .pipe(Effect.mapError(() => invalidProjectLinkStateError(filePath)));
-      const decoded = yield* decodeProjectLinkStateValue(content).pipe(
-        Effect.mapError(() => invalidProjectLinkStateError(filePath)),
-      );
+      const content = yield* fs.readFileString(filePath);
+      const decoded = yield* decodeProjectLinkStateValue(content);
       return Option.some(decoded);
-    });
+    }).pipe(Effect.mapError(() => invalidProjectLinkStateError(filePath)));
 
-  const load = Effect.gen(function* () {
-    return yield* loadFromPath(cliProjectHome.projectLinkPath);
-  });
+  const load = loadFromPath(cliProjectHome.projectLinkPath);
 
   const save = (state: ProjectLinkStateValue) =>
     Effect.gen(function* () {
       yield* cliProjectHome.ensureCliProjectHomeDir;
-      const encoded = encodeProjectLinkStateValue(state);
+      const encoded = yield* encodeProjectLinkStateValue(state).pipe(
+        Effect.mapError(() => invalidProjectLinkStateError(cliProjectHome.projectLinkPath)),
+      );
       yield* fs.writeFileString(cliProjectHome.projectLinkPath, encodePrettyJson(encoded), {
         mode: 0o600,
       });
-    }).pipe(Effect.orDie);
+    });
 
-  const clear = fs.remove(cliProjectHome.projectLinkPath).pipe(Effect.ignore, Effect.orDie);
+  const clear = fs
+    .remove(cliProjectHome.projectLinkPath)
+    .pipe(
+      Effect.catchTag("PlatformError", (error) =>
+        Predicate.isTagged(error.reason, "NotFound") ? Effect.void : Effect.fail(error),
+      ),
+    );
 
   const getActiveBranch = load.pipe(Effect.map(Option.map((state) => state.active_branch)));
 
@@ -67,12 +67,10 @@ const makeProjectLinkState = Effect.gen(function* () {
     Effect.gen(function* () {
       const current = yield* load;
       if (Option.isNone(current)) {
-        return yield* Effect.fail(
-          new ProjectNotLinkedError({
-            detail: "Cannot set active branch: no linked project found.",
-            suggestion: "Run `supabase link` to link this checkout to a Supabase project first.",
-          }),
-        );
+        return yield* new ProjectNotLinkedError({
+          detail: "Cannot set active branch: no linked project found.",
+          suggestion: "Run `supabase link` to link this checkout to a Supabase project first.",
+        });
       }
       yield* save({ ...current.value, active_branch: branch });
     });

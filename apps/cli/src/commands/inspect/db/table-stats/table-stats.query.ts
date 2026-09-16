@@ -1,9 +1,5 @@
-import {
-  legacyInspectInt,
-  legacyInspectText,
-  type LegacyInspectQuerySpec,
-} from "../legacy-inspect-query.ts";
-import { LEGACY_INTERNAL_SCHEMAS, legacyLikeEscapeSchema } from "../legacy-inspect-schemas.ts";
+import { inspectInt, inspectText, type InspectQuerySpec } from "../inspect-query.ts";
+import { INTERNAL_SCHEMAS, likeEscapeSchema } from "../inspect-schemas.ts";
 
 const SQL = `SELECT
   ts.name,
@@ -34,22 +30,21 @@ LEFT JOIN (
 ORDER BY ts.total_size_bytes DESC`;
 
 /**
- * `inspect db table-stats` — combined table size, index size, and row count.
- * Also the routed query for the deprecated `table-sizes` / `table-index-sizes` /
- * `total-table-sizes` aliases (but NOT `table-record-counts`, which routes to
- * index-stats — preserved in that alias's handler).
+ * `inspect db table-stats` — combined table size, index size, and row count. Also the routed
+ * query for the deprecated `table-sizes` / `table-index-sizes` / `total-table-sizes` aliases
+ * (not `table-record-counts`, which routes to index-stats instead).
  */
-export const legacyTableStatsSpec: LegacyInspectQuerySpec = {
+export const tableStatsSpec: InspectQuerySpec = {
   name: "table-stats",
   sql: SQL,
-  params: () => [legacyLikeEscapeSchema(LEGACY_INTERNAL_SCHEMAS)],
+  params: () => [likeEscapeSchema(INTERNAL_SCHEMAS)],
   headers: ["Name", "Table size", "Index size", "Total size", "Estimated row count", "Seq scans"],
   project: (row) => [
-    legacyInspectText(row["name"]),
-    legacyInspectText(row["table_size"]),
-    legacyInspectText(row["index_size"]),
-    legacyInspectText(row["total_size"]),
-    legacyInspectInt(row["estimated_row_count"]),
-    legacyInspectInt(row["seq_scans"]),
+    inspectText(row["name"]),
+    inspectText(row["table_size"]),
+    inspectText(row["index_size"]),
+    inspectText(row["total_size"]),
+    inspectInt(row["estimated_row_count"]),
+    inspectInt(row["seq_scans"]),
   ],
 };

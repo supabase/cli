@@ -1,10 +1,5 @@
-import {
-  legacyInspectBool,
-  legacyInspectInt,
-  legacyInspectText,
-  type LegacyInspectQuerySpec,
-} from "../legacy-inspect-query.ts";
-import { LEGACY_INTERNAL_SCHEMAS, legacyLikeEscapeSchema } from "../legacy-inspect-schemas.ts";
+import { inspectBool, inspectInt, inspectText, type InspectQuerySpec } from "../inspect-query.ts";
+import { INTERNAL_SCHEMAS, likeEscapeSchema } from "../inspect-schemas.ts";
 
 const SQL = `-- Combined index statistics: size, usage percent, seq scans, mark unused, expose table + columns
 WITH idx_sizes AS (
@@ -69,10 +64,10 @@ ORDER BY s.index_size_bytes DESC`;
  * `inspect db index-stats` — combined index size, usage percent, scan counts,
  * and unused status. Also the routed query for the deprecated index/table aliases.
  */
-export const legacyIndexStatsSpec: LegacyInspectQuerySpec = {
+export const indexStatsSpec: InspectQuerySpec = {
   name: "index-stats",
   sql: SQL,
-  params: () => [legacyLikeEscapeSchema(LEGACY_INTERNAL_SCHEMAS)],
+  params: () => [likeEscapeSchema(INTERNAL_SCHEMAS)],
   headers: [
     "Name",
     "Table",
@@ -84,13 +79,13 @@ export const legacyIndexStatsSpec: LegacyInspectQuerySpec = {
     "Unused",
   ],
   project: (row) => [
-    legacyInspectText(row["name"]),
-    legacyInspectText(row["table"]),
-    legacyInspectText(row["columns"]),
-    legacyInspectText(row["size"]),
-    legacyInspectText(row["percent_used"]),
-    legacyInspectInt(row["index_scans"]),
-    legacyInspectInt(row["seq_scans"]),
-    legacyInspectBool(row["unused"]),
+    inspectText(row["name"]),
+    inspectText(row["table"]),
+    inspectText(row["columns"]),
+    inspectText(row["size"]),
+    inspectText(row["percent_used"]),
+    inspectInt(row["index_scans"]),
+    inspectInt(row["seq_scans"]),
+    inspectBool(row["unused"]),
   ],
 };

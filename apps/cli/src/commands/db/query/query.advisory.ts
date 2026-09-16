@@ -1,5 +1,5 @@
 import { Option } from "effect";
-import type { LegacyAdvisory } from "./query.format.ts";
+import type { Advisory } from "./query.format.ts";
 
 /**
  * RLS advisory. Agent mode only: a best-effort check for user-schema tables
@@ -7,7 +7,7 @@ import type { LegacyAdvisory } from "./query.format.ts";
  */
 
 /** `rlsCheckSQL` — user-schema tables with RLS disabled (mirrors `lints.sql`). */
-export const LEGACY_RLS_CHECK_SQL = `
+export const RLS_CHECK_SQL = `
 SELECT format('%I.%I', n.nspname, c.relname)
 FROM pg_catalog.pg_class c
 JOIN pg_catalog.pg_namespace n ON c.relnamespace = n.oid
@@ -33,9 +33,7 @@ ORDER BY n.nspname, c.relname
  * `None` when the list is empty (no advisory) — the caller treats a query
  * failure the same way.
  */
-export function legacyBuildRlsAdvisory(
-  tables: ReadonlyArray<string>,
-): Option.Option<LegacyAdvisory> {
+export function buildRlsAdvisory(tables: ReadonlyArray<string>): Option.Option<Advisory> {
   if (tables.length === 0) return Option.none();
   const remediationSql = tables
     .map((table) => `ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY;`)

@@ -5,15 +5,15 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect } from "effect";
 
-import { useLegacyTempWorkdir } from "../../../../../tests/helpers/legacy-mocks.ts";
-import { legacyAppendExtensionDeclarations } from "./declarative.extension-repair.ts";
+import { useTempWorkdir } from "../../../../../tests/helpers/command-mocks.ts";
+import { appendExtensionDeclarations } from "./declarative.extension-repair.ts";
 
-describe("legacyAppendExtensionDeclarations", () => {
-  const tmp = useLegacyTempWorkdir();
+describe("appendExtensionDeclarations", () => {
+  const tmp = useTempWorkdir();
 
   it.effect("creates root extension.sql with sorted idempotent declarations", () => {
     return Effect.gen(function* () {
-      const result = yield* legacyAppendExtensionDeclarations(tmp.current, [
+      const result = yield* appendExtensionDeclarations(tmp.current, [
         "uuid-ossp",
         "pgcrypto",
         "pgcrypto",
@@ -27,7 +27,7 @@ describe("legacyAppendExtensionDeclarations", () => {
         ].join("\n"),
       );
 
-      const repeated = yield* legacyAppendExtensionDeclarations(tmp.current, ["uuid-ossp"]);
+      const repeated = yield* appendExtensionDeclarations(tmp.current, ["uuid-ossp"]);
       expect(repeated.addedDeclarations).toEqual([]);
     }).pipe(Effect.provide(BunServices.layer));
   });
@@ -36,7 +36,7 @@ describe("legacyAppendExtensionDeclarations", () => {
     const extensionPath = join(tmp.current, "extension.sql");
     writeFileSync(extensionPath, 'CREATE EXTENSION "pgcrypto";\r\n-- keep me');
     return Effect.gen(function* () {
-      const result = yield* legacyAppendExtensionDeclarations(tmp.current, ["pgcrypto", "pg_net"]);
+      const result = yield* appendExtensionDeclarations(tmp.current, ["pgcrypto", "pg_net"]);
       expect(result.addedExtensions).toEqual(["pg_net"]);
       expect(readFileSync(extensionPath, "utf8")).toBe(
         'CREATE EXTENSION "pgcrypto";\r\n-- keep me\r\n' +

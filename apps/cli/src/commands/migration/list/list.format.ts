@@ -1,12 +1,12 @@
 import {
-  LEGACY_MIGRATION_VERSION_MAX,
-  legacyFormatTimestampVersion,
-  legacyParseMigrationVersion,
-  legacySortMigrationVersions,
-} from "../../../command-internal/legacy-migration-timestamp.format.ts";
+  MIGRATION_VERSION_MAX,
+  formatTimestampVersion,
+  parseMigrationVersion,
+  sortMigrationVersions,
+} from "../../../command-internal/migration-timestamp.format.ts";
 
 /** A merged local/remote migration row. `local`/`remote` are empty when absent. */
-export interface LegacyMigrationListRow {
+export interface MigrationListRow {
   readonly local: string;
   readonly remote: string;
   readonly time: string;
@@ -14,33 +14,33 @@ export interface LegacyMigrationListRow {
 
 /**
  * Two-pointer merge of remote + local migration versions into chronological
- * rows, minus the markdown framing: non-numeric versions are skipped, and the time
- * column uses `FormatTimestampVersion`.
+ * rows: non-numeric versions are skipped, and the time column uses
+ * `formatTimestampVersion`.
  */
-export function legacyMakeMigrationListRows(
+export function makeMigrationListRows(
   remote: ReadonlyArray<string>,
   local: ReadonlyArray<string>,
-): ReadonlyArray<LegacyMigrationListRow> {
-  // `legacyLoadLocalVersions` yields versions in file-name order, which reverses
-  // `ORDER BY version` whenever one version is a prefix of another
-  // (supabase/cli#6036), desynchronising the walk into duplicate half-empty rows.
-  const sortedLocal = legacySortMigrationVersions(local);
-  const rows: Array<LegacyMigrationListRow> = [];
+): ReadonlyArray<MigrationListRow> {
+  // Local versions arrive in file-name order, which can invert `ORDER BY version`
+  // order when one version is a prefix of another (supabase/cli#6036); sorted here
+  // to keep the merge in sync.
+  const sortedLocal = sortMigrationVersions(local);
+  const rows: Array<MigrationListRow> = [];
   let i = 0;
   let j = 0;
   while (i < remote.length || j < sortedLocal.length) {
-    let remoteTs = LEGACY_MIGRATION_VERSION_MAX;
+    let remoteTs = MIGRATION_VERSION_MAX;
     if (i < remote.length) {
-      const parsed = legacyParseMigrationVersion(remote[i]!);
+      const parsed = parseMigrationVersion(remote[i]!);
       if (parsed === undefined) {
         i++;
         continue;
       }
       remoteTs = parsed;
     }
-    let localTs = LEGACY_MIGRATION_VERSION_MAX;
+    let localTs = MIGRATION_VERSION_MAX;
     if (j < sortedLocal.length) {
-      const parsed = legacyParseMigrationVersion(sortedLocal[j]!);
+      const parsed = parseMigrationVersion(sortedLocal[j]!);
       if (parsed === undefined) {
         j++;
         continue;
@@ -51,17 +51,17 @@ export function legacyMakeMigrationListRows(
       rows.push({
         local: sortedLocal[j]!,
         remote: "",
-        time: legacyFormatTimestampVersion(sortedLocal[j]!),
+        time: formatTimestampVersion(sortedLocal[j]!),
       });
       j++;
     } else if (remoteTs < localTs) {
-      rows.push({ local: "", remote: remote[i]!, time: legacyFormatTimestampVersion(remote[i]!) });
+      rows.push({ local: "", remote: remote[i]!, time: formatTimestampVersion(remote[i]!) });
       i++;
     } else {
       rows.push({
         local: sortedLocal[j]!,
         remote: remote[i]!,
-        time: legacyFormatTimestampVersion(remote[i]!),
+        time: formatTimestampVersion(remote[i]!),
       });
       i++;
       j++;
@@ -71,13 +71,12 @@ export function legacyMakeMigrationListRows(
 }
 
 /**
- * Renders the merged rows as backtick-wrapped Glamour markdown cells
- * (`|`<v>`|` `|`<time>`|`): present cells are inline code spans, absent
- * cells are a single space inside backticks. AsciiStyle preserves the backticks
- * (`code.block_prefix`/`block_suffix` = "`"), so the rendered table includes them.
+ * Renders merged rows as backtick-wrapped Glamour markdown cells: present cells are
+ * inline code spans, and absent cells are a lone space inside backticks so AsciiStyle
+ * keeps the code-span formatting.
  */
-export function legacyMigrationListTableCells(
-  rows: ReadonlyArray<LegacyMigrationListRow>,
+export function migrationListTableCells(
+  rows: ReadonlyArray<MigrationListRow>,
 ): ReadonlyArray<readonly [string, string, string]> {
   const cell = (value: string): string => (value.length > 0 ? `\`${value}\`` : "` `");
   return rows.map((row) => [cell(row.local), cell(row.remote), `\`${row.time}\``] as const);

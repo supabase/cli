@@ -1,0 +1,117 @@
+name: Sync Stack Workload Catalog
+
+# Pins `packages/stack/src/model/WorkloadCatalog.ts` to slim-services releases,
+# off the same `mirror-slim-image` dispatch that drives the ECR mirror.
+# Dependabot owns the Dockerfile and cannot own this table: these pins carry
+# image digests, which tag resolution never produces (ADR 0017).
+#
+# Separate from `mirror-slim-image.yml` on purpose — that mirror runs against
+# the sender's 15-minute verification poll and must not be delayed or reddened
+# by a catalog PR. Opens a PR rather than pushing: `develop` is protected and a
+# version pin is reviewable. Re-dispatches are no-ops, so retries do not open
+# duplicate PRs.
+
+on:
+  repository_dispatch:
+    types:
+      - mirror-slim-image
+  workflow_dispatch:
+    inputs:
+      service:
+        description: "Service name (e.g. postgrest)"
+        required: true
+        type: string
+      version:
+        description: "Image tag (e.g. v16.2)"
+        required: true
+        type: string
+      digest:
+        description: "Expected index digest (sha256:<64 hex chars>)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  # Per service, so two releases of one service cannot race onto the shared
+  # branch. Not cancel-in-progress: a superseded run may already have opened it.
+  group: sync-stack-workload-catalog-${{ github.event.client_payload.service || inputs.service }}
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Sync workload catalog
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+
+      # Payload is untrusted; the script revalidates it. Passed via env, never
+      # interpolated into the shell.
+      - name: Sync workload catalog
+        env:
+          SLIM_SERVICE: ${{ github.event.client_payload.service || inputs.service }}
+          SLIM_VERSION: ${{ github.event.client_payload.version || inputs.version }}
+          SLIM_DIGEST: ${{ github.event.client_payload.digest || inputs.digest }}
+        run: bun .github/scripts/sync-workload-catalog.ts
+
+      - name: Format catalog
+        run: pnpm run fmt:fix
+
+      - name: Check for catalog changes
+        id: check
+        run: |
+          if git diff --exit-code --quiet packages/stack/src/model/WorkloadCatalog.ts; then
+            echo "Workload catalog is already in sync."
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Workload catalog updated."
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Prove the rewritten pin compiles and passes the catalog's own tests.
+      - name: Type-check stack
+        if: steps.check.outputs.has_changes == 'true'
+        run: pnpm types:check
+        working-directory: packages/stack
+
+      - name: Test catalog
+        if: steps.check.outputs.has_changes == 'true'
+        run: pnpm run test:unit && pnpm run test:integration
+        working-directory: packages/stack
+
+      - name: Generate token
+        if: steps.check.outputs.has_changes == 'true'
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.GH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          permission-pull-requests: write
+          permission-contents: write
+
+      - name: Create Pull Request
+        if: steps.check.outputs.has_changes == 'true'
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          commit-message: "chore(stack): pin ${{ github.event.client_payload.service || inputs.service }} to ${{ github.event.client_payload.version || inputs.version }}"
+          title: "chore(stack): pin ${{ github.event.client_payload.service || inputs.service }} to ${{ github.event.client_payload.version || inputs.version }}"
+          body: |
+            Pins `packages/stack/src/model/WorkloadCatalog.ts` to the
+            `${{ github.event.client_payload.service || inputs.service }}` `${{ github.event.client_payload.version || inputs.version }}`
+            slim-services release and its image digest.
+
+            Opened from the `mirror-slim-image` dispatch. `artifactFor` derives the
+            native release tag, asset names, and URLs from service + version, so this
+            pin is the whole change.
+          branch: sync/stack-workload-catalog-${{ github.event.client_payload.service || inputs.service }}
+          base: develop
