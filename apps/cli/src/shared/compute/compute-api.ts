@@ -36,11 +36,11 @@ import {
  * | no such route | `{"error":{"code":"not_found","message":"Cannot GET /v2/..."}}` |
  *
  * `GET /compute/{name}` and `DELETE /compute/{name}` add a fourth: the named compute is not
- * deployed. That one carries no distinguishing body, so those two read any 404 as "not deployed"
- * unless {@link refuseUnroutedPath} recognizes the router's text, which no compute name can
- * explain. Every other route — list, uploads, deploy — cannot mean an absent compute (an enrolled
- * project with none answers `200 {"data":[]}`, and uploads and deploy create), so those classify
- * by body through {@link projectScoped404}.
+ * deployed. That one is the only 404 with no body of its own, so those two read a 404 as "not
+ * deployed" once {@link refuseUnreachableCompute} has ruled out the two that are not about the
+ * compute at all. Every other route — list, uploads, deploy — cannot mean an absent compute (an
+ * enrolled project with none answers `200 {"data":[]}`, and uploads and deploy create), so those
+ * classify by body through {@link projectScoped404}.
  */
 
 /** The compute shape the API returns, flattened out of its JSON:API envelope. */
@@ -100,8 +100,14 @@ function toComputeRecord(data: ComputeResourceData): ComputeRecord {
   };
 }
 
-const computeSuggestion =
-  "Compute is in private alpha. Ask in the Supabase dashboard to have this project enrolled.";
+/** The code the API answers with for a project outside the alpha's allow-list. */
+const NOT_ENROLLED_CODE = "not_found.compute.not_enabled";
+
+const notEnrolled = (projectRef: string) =>
+  new ComputeUnavailableError({
+    detail: `Compute is not available for project ${projectRef}.`,
+    suggestion: "Compute is in private alpha. Stay tuned for the public alpha coming soon.",
+  });
 
 const NotFoundBody = Schema.Struct({
   error: Schema.Struct({
@@ -130,6 +136,9 @@ const unroutedPath = (
     : Option.none();
 };
 
+const isNotEnrolled = (parsed: Option.Option<Schema.Schema.Type<typeof NotFoundBody>>) =>
+  Option.isSome(parsed) && parsed.value.error.code === NOT_ENROLLED_CODE;
+
 const routeNotFound = (projectRef: string, route: string) =>
   new ComputeRouteNotFoundError({
     detail: `The Management API does not serve ${route}, so this CLI cannot reach compute for project ${projectRef}.`,
@@ -143,6 +152,7 @@ const projectScoped404 = Effect.fnUntraced(function* (projectRef: string, body: 
   const route = unroutedPath(parsed);
 
   if (Option.isSome(route)) return yield* routeNotFound(projectRef, route.value);
+  if (isNotEnrolled(parsed)) return yield* notEnrolled(projectRef);
 
   if (Option.isSome(parsed) && parsed.value.error.code === "not_found") {
     return yield* new ComputeProjectNotFoundError({
@@ -155,19 +165,21 @@ const projectScoped404 = Effect.fnUntraced(function* (projectRef: string, body: 
 
   // Unavailable is the safe default for an unrecognized body: guessing the other way would send
   // someone to check a ref that is actually fine.
-  return yield* new ComputeUnavailableError({
-    detail: `Compute is not available for project ${projectRef}.`,
-    suggestion: computeSuggestion,
-  });
+  return yield* notEnrolled(projectRef);
 });
 
 /**
- * Fails when a named-compute 404 came from the router, and returns otherwise so the caller can go
- * on reading it as "not deployed". Without it, `delete` claims it removed something it never reached.
+ * Fails when a named-compute 404 was not about the compute at all — the route is unserved, or the
+ * project is not in the alpha — and returns otherwise so the caller can read it as "not deployed".
+ * Without it, an unenrolled project is told its compute is not deployed, and `delete` claims it
+ * removed something it never reached.
  */
-const refuseUnroutedPath = Effect.fnUntraced(function* (projectRef: string, body: string) {
-  const route = unroutedPath(yield* parse404(body));
+const refuseUnreachableCompute = Effect.fnUntraced(function* (projectRef: string, body: string) {
+  const parsed = yield* parse404(body);
+  const route = unroutedPath(parsed);
+
   if (Option.isSome(route)) return yield* routeNotFound(projectRef, route.value);
+  if (isNotEnrolled(parsed)) return yield* notEnrolled(projectRef);
 });
 
 export const listCompute = Effect.fnUntraced(function* (api: ApiClient, projectRef: string) {
@@ -199,7 +211,7 @@ export const getCompute = Effect.fnUntraced(function* (
     .pipe(Effect.mapError(mapRequestError(operation)));
 
   if (response.status === 404) {
-    yield* refuseUnroutedPath(projectRef, yield* bodyText(response));
+    yield* refuseUnreachableCompute(projectRef, yield* bodyText(response));
     return Option.none<ComputeRecord>();
   }
   if (response.status !== 200) {
@@ -327,7 +339,7 @@ export const deleteCompute = Effect.fnUntraced(function* (
   // 404 is the caller's own "not deployed" verdict to report; a delete that
   // races another one is still a delete that happened.
   if (response.status === 404) {
-    return yield* refuseUnroutedPath(projectRef, yield* bodyText(response));
+    return yield* refuseUnreachableCompute(projectRef, yield* bodyText(response));
   }
   if (response.status === 204 || response.status === 200) {
     return;

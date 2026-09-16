@@ -12,6 +12,7 @@ import {
   ComputeDeleteConfirmationRequiredError,
   ComputeDeleteNotConfirmedError,
   ComputeNotDeployedError,
+  ComputeUnavailableError,
   ComputeApiUnexpectedStatusError,
   ComputeRouteNotFoundError,
 } from "../../../../shared/compute/compute.errors.ts";
@@ -448,6 +449,38 @@ describe("compute delete", () => {
 
         expect(error).toBeInstanceOf(ComputeRouteNotFoundError);
         expect(error).not.toBeInstanceOf(ComputeNotDeployedError);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  const notEnrolled = {
+    status: 404,
+    body: {
+      error: {
+        code: "not_found.compute.not_enabled",
+        message: "Compute is not available for this project",
+      },
+    },
+  };
+
+  it.live("names the alpha, not an undeployed compute, when the project is not enrolled", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer, out } = setupCompute({
+        workdir: repo.dir,
+        routes: { [getRoute]: notEnrolled },
+        yes: true,
+      });
+
+      return yield* Effect.gen(function* () {
+        const error = yield* computeDelete({
+          name: "api",
+          projectRef: Option.none(),
+        }).pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(ComputeUnavailableError);
+        expect(error).not.toBeInstanceOf(ComputeNotDeployedError);
+        expect(out.stdoutText).not.toContain("Deleted Compute");
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
