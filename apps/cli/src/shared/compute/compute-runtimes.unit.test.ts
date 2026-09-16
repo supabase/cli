@@ -1,3 +1,4 @@
+import { RESERVED_COMPUTE_NAMES } from "@supabase/config/internal";
 import { describe, expect, test } from "vitest";
 import {
   apiSizeFor,
@@ -7,6 +8,7 @@ import {
   parseComputeSize,
   validateComputeNameMessage,
   vcpuForSize,
+  reservedComputeNameMessage,
 } from "./compute-runtimes.ts";
 
 describe("parseComputeRuntime", () => {
@@ -63,6 +65,13 @@ describe("parseComputeExposure", () => {
 });
 
 describe("validateComputeNameMessage", () => {
+  test.each([...RESERVED_COMPUTE_NAMES])("accepts the reserved name %j", (name) => {
+    // Reserved names are valid DNS labels. They are refused where config is written, not
+    // here, so `status`/`logs`/`delete` can still reach a compute created before the name
+    // was reserved.
+    expect(validateComputeNameMessage(name)).toBeUndefined();
+  });
+
   test("accepts DNS labels", () => {
     expect(validateComputeNameMessage("api")).toBeUndefined();
     expect(validateComputeNameMessage("my-compute-1")).toBeUndefined();
@@ -75,4 +84,15 @@ describe("validateComputeNameMessage", () => {
       expect(validateComputeNameMessage(name)).toBeDefined();
     },
   );
+});
+
+describe("reservedComputeNameMessage", () => {
+  test.each([...RESERVED_COMPUTE_NAMES])("refuses to record %j", (name) => {
+    expect(reservedComputeNameMessage(name)).toContain("reserved");
+  });
+
+  test("allows any other name", () => {
+    expect(reservedComputeNameMessage("api")).toBeUndefined();
+    expect(reservedComputeNameMessage("my-compute-1")).toBeUndefined();
+  });
 });

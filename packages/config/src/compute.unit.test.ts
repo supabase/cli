@@ -1,10 +1,28 @@
 import { Schema } from "effect";
 import { describe, expect, test } from "vitest";
-import { compute } from "./compute.ts";
+import { compute, RESERVED_COMPUTE_NAMES, settings } from "./compute.ts";
 
 const decode = Schema.decodeUnknownSync(compute);
 
-const computeNamePattern = "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$";
+/** The sole `patternProperties` key of the generated schema: what a compute name may be. */
+function computeNamePattern(): string {
+  const json = JSON.parse(JSON.stringify(Schema.toJsonSchemaDocument(compute).schema));
+  const objectSchema = json.anyOf?.find((entry: { type?: string }) => entry?.type === "object");
+  const patterns = Object.keys(objectSchema?.patternProperties ?? {});
+  expect(patterns).toHaveLength(1);
+  return patterns[0] as string;
+}
+
+/**
+ * The fixed keys `[compute]` declares for its own settings. Read off the generated schema
+ * rather than the struct: the exported schema is annotated and piped, so the underlying
+ * `StructWithRest` is not reachable through it, and the compiled output is what ships.
+ */
+function declaredSettings(): Set<string> {
+  const json = JSON.parse(JSON.stringify(Schema.toJsonSchemaDocument(compute).schema));
+  const objectSchema = json.anyOf?.find((entry: { type?: string }) => entry?.type === "object");
+  return new Set(Object.keys(objectSchema?.properties ?? {}));
+}
 
 describe("compute schema", () => {
   test("decodes a compute table with every dial set", () => {
@@ -61,10 +79,55 @@ describe("compute schema", () => {
     expect(() => decode({ api: "node" })).toThrow();
   });
 
+  test("drops a reserved name that no setting backs yet", () => {
+    // A forward-reserved name has no field to claim it, so the key is filtered from the
+    // record exactly like any other name that is not a valid compute name. Once a setting
+    // does back the name, the refusal changes shape — the key meets that field's own type
+    // instead — so this only covers the names still waiting for one.
+    for (const reserved of RESERVED_COMPUTE_NAMES.filter((name) => !declaredSettings().has(name))) {
+      expect(decode({ [reserved]: { runtime: "node" } })).toEqual({});
+    }
+  });
+
+  test("excludes reserved names from the generated schema, not only at runtime", () => {
+    // A filter is not expressible in JSON Schema, so the exclusion lives in the pattern.
+    // Without it an editor validating config.toml would accept a key the CLI then drops.
+    const pattern = new RegExp(computeNamePattern());
+    expect(pattern.test("api")).toBe(true);
+    for (const reserved of RESERVED_COMPUTE_NAMES) {
+      expect(pattern.test(reserved)).toBe(false);
+    }
+  });
+
+  test("is built from `settings`, not an inline struct", () => {
+    // The other direction of the guard below. That one allows a setting declared outside
+    // `settings` as long as its name was also reserved by hand, which is correct but leaves
+    // `settings` describing something the section no longer holds — and its doc comment
+    // still telling the next contributor that is where settings go.
+    expect([...declaredSettings()].sort()).toEqual(Object.keys(settings.fields).sort());
+  });
+
+  test("reserves every settings key `[compute]` defines for itself", () => {
+    // The guard for a setting added without reserving its name. The list is derived from
+    // `settings`, so adding one there reserves it automatically; this fails if a field is
+    // declared some other way, which would leave it able to collide with a compute name.
+    for (const declared of declaredSettings()) {
+      expect(RESERVED_COMPUTE_NAMES).toContain(declared);
+    }
+  });
+
+  test("rejects a scalar setting until one is declared as a shared setting", () => {
+    // `[compute]` is a struct-with-rest so shared settings can sit beside the per-compute
+    // tables, but none are declared yet. Until one is, a scalar here is still an error
+    // rather than a silently-ignored key — adding `source` (or any other) is a deliberate
+    // field in the struct, and this expectation is what flips when that happens.
+    expect(() => decode({ source: "./my-apps" })).toThrow();
+  });
+
   test("includes compute properties in the generated JSON schema", () => {
     const json = JSON.parse(JSON.stringify(Schema.toJsonSchemaDocument(compute).schema));
     const objectSchema = json.anyOf?.find((entry: { type?: string }) => entry?.type === "object");
-    const computeSchema = objectSchema?.patternProperties?.[computeNamePattern];
+    const computeSchema = objectSchema?.patternProperties?.[computeNamePattern()];
 
     expect(computeSchema?.properties?.runtime).toBeDefined();
     expect(computeSchema?.properties?.size).toBeDefined();
@@ -76,7 +139,7 @@ describe("compute schema", () => {
   test("bounds instances as a non-negative integer in the generated JSON schema", () => {
     const json = JSON.parse(JSON.stringify(Schema.toJsonSchemaDocument(compute).schema));
     const objectSchema = json.anyOf?.find((entry: { type?: string }) => entry?.type === "object");
-    const computeSchema = objectSchema?.patternProperties?.[computeNamePattern];
+    const computeSchema = objectSchema?.patternProperties?.[computeNamePattern()];
 
     expect(computeSchema?.properties?.instances?.type).toBe("integer");
     expect(JSON.stringify(computeSchema?.properties?.instances)).toContain('"minimum":0');

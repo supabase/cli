@@ -491,6 +491,7 @@ describe("src/internal.ts export surface", () => {
         "AUTH_HOOK_NAMES",
         "CliConfigWriteError",
         "ENV_CAPTURE_REGEX",
+        "RESERVED_COMPUTE_NAMES",
         "applyConfigEdits",
         "decodeCliConfigDocumentForValidationEffect",
         "dualScopeProjectConfigPaths",

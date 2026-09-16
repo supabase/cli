@@ -3,9 +3,39 @@ import { Effect, Schema } from "effect";
 
 const tags = ["compute"];
 
+/**
+ * Settings that apply to every compute rather than to one. Empty today.
+ *
+ * A key belongs here only when it cannot be expressed as a default: when setting it is not
+ * equivalent to writing the same key and value into every `[compute.<name>]` table that
+ * omits it. Anything expressible as one belongs in `[compute.defaults]`, nested rather than
+ * sharing the namespace with compute names, so it costs no reserved word.
+ *
+ * The struct itself rather than a plain object handed to one, so `[compute]` has a single
+ * declaration of what it holds and `.fields` is the schema's own view of it. Exported so a
+ * test can check the section is built from this and not an inline struct.
+ */
+export const settings = Schema.Struct({});
+
+// Reserved before the settings using them exist, so introducing one later does not break a
+// project that had already named a compute after it.
+const forwardReserved = ["defaults"];
+
+/** Names a compute may not take, because `[compute]` uses them for itself. */
+export const RESERVED_COMPUTE_NAMES: ReadonlyArray<string> = [
+  ...Object.keys(settings.fields),
+  ...forwardReserved,
+];
+
 // Compute names end up in hostnames, so they must be valid DNS labels, matching the
-// Management API's own validation.
-const computeName = Schema.String.check(Schema.isPattern(/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/));
+// Management API's own validation. Reserved names are excluded by the same pattern rather
+// than a separate filter, so the generated JSON Schema carries the exclusion too — a filter
+// is not expressible there, which would let an editor accept a key the CLI drops.
+const computeName = Schema.String.check(
+  Schema.isPattern(
+    new RegExp(`^(?!(?:${RESERVED_COMPUTE_NAMES.join("|")})$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`),
+  ),
+);
 
 const computeEntry = Schema.Struct({
   runtime: Schema.optionalKey(
@@ -72,8 +102,16 @@ const computeEntry = Schema.Struct({
   ),
 });
 
-/** `[compute]` — one `[compute.<name>]` table per Compute service, keyed by name. */
-export const compute = Schema.Record(computeName, computeEntry)
+/**
+ * `[compute]` — one `[compute.<name>]` table per Compute service, keyed by name, alongside
+ * the settings in {@link settings} that apply to every compute.
+ *
+ * A struct-with-rest rather than a bare `Record` so both can share the one table: a `Record`
+ * has no slot for a sibling key, so a setting would be read as a compute *named* after it.
+ * Adding one is a field in {@link settings} and nothing else — `[compute.<name>]` does not
+ * move, and the name is reserved automatically.
+ */
+export const compute = Schema.StructWithRest(settings, [Schema.Record(computeName, computeEntry)])
   .annotate({
     default: {},
     description: "Compute-specific configuration keyed by compute name.",

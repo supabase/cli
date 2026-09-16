@@ -36,6 +36,26 @@ const firstExplicitLongFlagValue = (
 
 const UnknownFromJsonString = Schema.fromJsonString(Schema.Unknown);
 
+/**
+ * Flattens both gate shapes to one boolean:
+ *
+ * ```toml
+ * [experimental]
+ * stack = true
+ *
+ * [experimental.compute]
+ * enabled = true
+ * ```
+ */
+const featureEnabled = (configured: unknown): boolean | undefined => {
+  if (typeof configured === "boolean") return configured;
+  if (typeof configured === "object" && configured !== null && "enabled" in configured) {
+    const { enabled } = configured;
+    return typeof enabled === "boolean" ? enabled : undefined;
+  }
+  return undefined;
+};
+
 /** Reads one experimental feature, treating unavailable or invalid configuration as unset. */
 export const readExperimentalFeatureConfig = (input: {
   readonly feature: keyof typeof featureSchemas;
@@ -68,7 +88,7 @@ export const readExperimentalFeatureConfig = (input: {
       ),
     });
     const decoded = yield* Schema.decodeUnknownEffect(schema)(document);
-    return decoded.experimental?.[input.feature];
+    return featureEnabled(decoded.experimental?.[input.feature]);
   }).pipe(Effect.orElseSucceed(() => undefined));
 
 /** Resolves one experimental boolean from its environment override and config fallback. */

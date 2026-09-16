@@ -33,10 +33,23 @@ const inspectRule = Schema.Struct({
 
 export const experimental = Schema.Struct({
   compute: Schema.optionalKey(
-    Schema.Boolean.annotate({
-      description: "Enable the experimental compute command family.",
-      tags,
-    }),
+    Schema.Struct({
+      enabled: Schema.Boolean.annotate({
+        default: false,
+        description: "Enable the experimental compute command family.",
+        tags,
+      }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
+    })
+      // TODO: remove this message once the bare-boolean form has aged out. It names one
+      // superseded spelling, so it is only worth carrying while configs still use it —
+      // every opt-in predating the table form wrote `compute = true`, and the generic
+      // "Expected object" that would otherwise appear says nothing about the replacement.
+      // Dropping it restores the default wording and costs nothing else.
+      .annotate({
+        message:
+          "[experimental] compute = true is no longer supported; use [experimental.compute] with enabled = true",
+      })
+      .pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
   ),
   stack: Schema.optionalKey(
     Schema.Boolean.annotate({
