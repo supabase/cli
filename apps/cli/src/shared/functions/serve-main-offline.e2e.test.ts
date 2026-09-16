@@ -34,6 +34,7 @@ function hasDocker(): boolean {
 
 const dockerAvailable = hasDocker();
 const SERVE_OFFLINE_STARTUP_TIMEOUT_MS = 60_000;
+const SERVE_OFFLINE_ATTEMPT_TIMEOUT_MS = 10_000;
 // Cold-cache image resolution (up to a shared 90s budget) runs ahead of the
 // 60s startup wait; the test timeout must cover both stacked.
 const SERVE_OFFLINE_TEST_TIMEOUT_MS = 180_000;
@@ -149,6 +150,31 @@ function containerLogs(container: string): string {
   return `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
 }
 
+function containerState(container: string): string {
+  const result = spawnSync(
+    "docker",
+    [
+      "inspect",
+      "--format",
+      '{{.State.Status}}{{if ne .State.Status "running"}} (exit code {{.State.ExitCode}}{{if .State.OOMKilled}}, OOM-killed{{end}}){{end}}',
+      container,
+    ],
+    { encoding: "utf8" },
+  );
+  return result.status === 0
+    ? result.stdout.trim()
+    : `not inspectable (${(result.stderr ?? String(result.error)).trim()})`;
+}
+
+function containerDiagnostics(containers: readonly string[]): string {
+  return containers
+    .map(
+      (container) =>
+        `${container} (${containerState(container)}) logs:\n${containerLogs(container)}`,
+    )
+    .join("\n");
+}
+
 async function fetchFunctionWithDiagnostics(
   url: string,
   diagnosticContainers: readonly string[],
@@ -157,10 +183,10 @@ async function fetchFunctionWithDiagnostics(
   try {
     return await fetch(url, init);
   } catch (cause) {
-    const diagnostics = diagnosticContainers
-      .map((container) => `${container} logs:\n${containerLogs(container)}`)
-      .join("\n");
-    throw new Error(`Function request to ${url} failed.\n${diagnostics}`, { cause });
+    throw new Error(
+      `Function request to ${url} failed.\n${containerDiagnostics(diagnosticContainers)}`,
+      { cause },
+    );
   }
 }
 
@@ -171,7 +197,9 @@ async function fetchColdFunction(
 ): Promise<Response> {
   // Runtime health does not start user workers, and Edge Runtime exposes no
   // per-worker readiness signal. A cold worker can briefly disconnect or
-  // return 502/503, so retry only those transient outcomes.
+  // return 502/503, so retry only those transient outcomes, each bounded so
+  // one hung request cannot eat the budget. A container that exited ends the
+  // wait: nothing will answer.
   const deadline = Date.now() + SERVE_OFFLINE_STARTUP_TIMEOUT_MS;
   let lastError: unknown;
 
@@ -179,7 +207,9 @@ async function fetchColdFunction(
     try {
       const response = await fetch(url, {
         ...init,
-        signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())),
+        signal: AbortSignal.timeout(
+          Math.max(1, Math.min(SERVE_OFFLINE_ATTEMPT_TIMEOUT_MS, deadline - Date.now())),
+        ),
       });
       if (response.status !== 502 && response.status !== 503) {
         return response;
@@ -190,14 +220,16 @@ async function fetchColdFunction(
       lastError = error;
     }
 
+    const exited = diagnosticContainers
+      .map((container) => `${container} is ${containerState(container)}`)
+      .filter((state) => !state.endsWith(" is running"));
     const remainingMs = deadline - Date.now();
-    if (remainingMs <= 0) {
-      const diagnostics = diagnosticContainers
-        .map((container) => `${container} logs:\n${containerLogs(container)}`)
-        .join("\n");
-      throw new Error(`Function at ${url} did not become ready.\n${diagnostics}`, {
-        cause: lastError,
-      });
+    if (exited.length > 0 || remainingMs <= 0) {
+      const reason = exited.length > 0 ? `: ${exited.join(", ")}` : "";
+      throw new Error(
+        `Function at ${url} did not become ready${reason}.\n${containerDiagnostics(diagnosticContainers)}`,
+        { cause: lastError },
+      );
     }
 
     await Bun.sleep(Math.min(250, remainingMs));
@@ -333,7 +365,9 @@ describe("functions serve runtime template (offline)", () => {
         let ready = false;
         while (Date.now() < deadline) {
           try {
-            const response = await fetch(url);
+            const response = await fetch(url, {
+              signal: AbortSignal.timeout(SERVE_OFFLINE_ATTEMPT_TIMEOUT_MS),
+            });
             if (response.status === 401) {
               ready = true;
               break;
@@ -341,7 +375,7 @@ describe("functions serve runtime template (offline)", () => {
           } catch {}
           await new Promise((resolve) => setTimeout(resolve, 250));
         }
-        expect(ready, containerLogs(container)).toBe(true);
+        expect(ready, containerDiagnostics([container])).toBe(true);
 
         for (const { name, authorization, code, message } of authFailureCases) {
           const response = await fetch(url, {
@@ -473,11 +507,14 @@ describe("functions serve runtime template (offline)", () => {
         const functionsUrl = `http://127.0.0.1:${port}/functions/v1`;
         const authUrl = `${functionsUrl}/test`;
 
+        const diagnosticContainers = [kongContainer, runtimeContainer] as const;
         const deadline = Date.now() + SERVE_OFFLINE_STARTUP_TIMEOUT_MS;
         let ready = false;
         while (Date.now() < deadline) {
           try {
-            const response = await fetch(authUrl);
+            const response = await fetch(authUrl, {
+              signal: AbortSignal.timeout(SERVE_OFFLINE_ATTEMPT_TIMEOUT_MS),
+            });
             if (response.status === 401) {
               ready = true;
               break;
@@ -485,11 +522,8 @@ describe("functions serve runtime template (offline)", () => {
           } catch {}
           await new Promise((resolve) => setTimeout(resolve, 250));
         }
-        expect(ready, `${containerLogs(kongContainer)}\n${containerLogs(runtimeContainer)}`).toBe(
-          true,
-        );
+        expect(ready, containerDiagnostics(diagnosticContainers)).toBe(true);
 
-        const diagnosticContainers = [kongContainer, runtimeContainer] as const;
         const [customResponse, aliasResponse, nestedResponse] = await Promise.all([
           fetchColdFunction(`${functionsUrl}/custom`, diagnosticContainers, {
             headers: { Origin: "http://localhost:3000" },
