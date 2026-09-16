@@ -1,22 +1,36 @@
-import { appendFileSync } from "node:fs";
-import { Effect, FileSystem, Path } from "effect";
+import { Clock, DateTime, Effect, Exit, FileSystem, Match, Option, Path, Schema } from "effect";
 import type { Tracer } from "effect";
 
 const RETENTION_DAYS = 7;
+type EndedSpanStatus = Extract<Tracer.SpanStatus, { readonly _tag: "Ended" }>;
+
+const NdjsonPayloadSchema = Schema.fromJsonString(
+  Schema.Struct({
+    timestamp: Schema.String,
+    traceId: Schema.String,
+    spanId: Schema.String,
+    name: Schema.String,
+    duration_ms: Schema.Finite,
+    status: Schema.Literals(["ok", "error"]),
+    error_code: Schema.optionalKey(Schema.String),
+    attributes: Schema.Record(Schema.String, Schema.Unknown),
+  }),
+);
 
 export const initNdjsonExporter = Effect.fnUntraced(
   function* (tracesDir: string) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const now = yield* Clock.currentTimeMillis;
     yield* fs.makeDirectory(tracesDir, { recursive: true, mode: 0o700 });
 
     const files = yield* fs.readDirectory(tracesDir);
-    const cutoff = Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000;
+    const cutoff = now - RETENTION_DAYS * 24 * 60 * 60 * 1000;
     for (const file of files) {
       if (!file.endsWith(".ndjson")) continue;
       const dateStr = file.replace(".ndjson", "");
-      const fileDate = new Date(dateStr).getTime();
-      if (!Number.isNaN(fileDate) && fileDate < cutoff) {
+      const fileDate = DateTime.make(dateStr);
+      if (Option.isSome(fileDate) && DateTime.toEpochMillis(fileDate.value) < cutoff) {
         yield* fs.remove(path.join(tracesDir, file));
       }
     }
@@ -24,40 +38,44 @@ export const initNdjsonExporter = Effect.fnUntraced(
   (effect, _tracesDir) => Effect.ignore(effect),
 );
 
-export function exportSpanToNdjson(span: Tracer.Span, tracesDir: string): void {
+export const exportSpanToNdjson = Effect.fnUntraced(function* (
+  span: Tracer.Span,
+  tracesDir: string,
+) {
   const status = span.status;
-  if (status._tag !== "Ended") return;
+  const ended = Match.value(status).pipe(
+    Match.tag("Started", (): Option.Option<EndedSpanStatus> => Option.none()),
+    Match.tag("Ended", (status): Option.Option<EndedSpanStatus> => Option.some(status)),
+    Match.exhaustive,
+  );
+  if (Option.isNone(ended)) return;
 
-  const durationMs = Number(status.endTime - status.startTime) / 1_000_000;
-  const timestampMs = Number(status.startTime / BigInt(1_000_000));
+  const durationMs = Number(ended.value.endTime - ended.value.startTime) / 1_000_000;
+  const timestamp = DateTime.make(Number(ended.value.startTime / BigInt(1_000_000)));
+  if (Option.isNone(timestamp)) return;
 
   const attributes: Record<string, unknown> = {};
   for (const [key, value] of span.attributes) {
     attributes[key] = value;
   }
 
-  let errorCode: string | undefined;
-  if (status.exit._tag !== "Success") {
-    const exitStr = JSON.stringify(status.exit);
-    const match = exitStr.match(/"_tag"\s*:\s*"([^"]+)"/);
-    if (match) errorCode = match[1];
-  }
-
-  const line = JSON.stringify({
-    timestamp: new Date(timestampMs).toISOString(),
+  const payload = {
+    timestamp: DateTime.formatIso(timestamp.value),
     traceId: span.traceId,
     spanId: span.spanId,
     name: span.name,
     duration_ms: Math.round(durationMs),
-    status: status.exit._tag === "Success" ? "ok" : "error",
-    ...(errorCode && { error_code: errorCode }),
+    status: Exit.isSuccess(ended.value.exit) ? ("ok" as const) : ("error" as const),
+    ...(Exit.isFailure(ended.value.exit) && { error_code: "Failure" }),
     attributes,
-  });
+  };
 
-  try {
-    const date = new Date().toISOString().split("T")[0];
-    appendFileSync(`${tracesDir}/${date}.ndjson`, `${line}\n`);
-  } catch {
-    // ignore write errors
-  }
-}
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const now = yield* Clock.currentTimeMillis;
+  const dateTime = DateTime.make(now);
+  if (Option.isNone(dateTime)) return;
+  const date = DateTime.formatIsoDateUtc(dateTime.value);
+  const line = yield* Schema.encodeEffect(NdjsonPayloadSchema)(payload);
+  yield* fs.writeFileString(path.join(tracesDir, `${date}.ndjson`), `${line}\n`, { flag: "a" });
+});

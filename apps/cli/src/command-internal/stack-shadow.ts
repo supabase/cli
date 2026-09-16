@@ -35,6 +35,7 @@ import {
   type StackVersionUnsupportedError,
 } from "@supabase/stack/effect";
 import { Output } from "../shared/output/output.service.ts";
+import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { DbConnection } from "./db-connection.service.ts";
 import { shadowBaselineCacheDir } from "./pgdelta.paths.ts";
@@ -291,7 +292,11 @@ const overlaySetupTrio = (
 
 const loadEphemeralCatalogConfig = (
   input: ShadowSetupInput<unknown>,
-): Effect.Effect<StackConfig, ShadowDbError, FileSystem.FileSystem | Path.Path> =>
+): Effect.Effect<
+  StackConfig,
+  ShadowDbError,
+  FileSystem.FileSystem | Path.Path | RuntimeInfo | Crypto.Crypto
+> =>
   loadStackConfig(input.workdir, { context: input.context }).pipe(
     Effect.map((config) => overlaySetupTrio(config, input.setup)),
     Effect.mapError((cause) => new ShadowDbError({ message: cause.message, reason: "filesystem" })),
@@ -328,7 +333,11 @@ const applyColdCatalog = (
   handle: EffectEphemeralPostgres,
   input: ShadowSetupInput<unknown>,
   webhooks: SetupDatabaseOptions["webhooks"],
-): Effect.Effect<void, ShadowDbError, FileSystem.FileSystem | Path.Path | Output> =>
+): Effect.Effect<
+  void,
+  ShadowDbError,
+  FileSystem.FileSystem | Path.Path | Output | RuntimeInfo | Crypto.Crypto
+> =>
   Effect.gen(function* () {
     const catalog = yield* Effect.serviceOption(StackCatalogSetup);
     if (Option.isNone(catalog))
@@ -514,6 +523,7 @@ export const stackAcquireShadowDatabase = <E>(
   | FileSystem.FileSystem
   | Path.Path
   | Crypto.Crypto
+  | RuntimeInfo
   | ChildProcessSpawner.ChildProcessSpawner
   | Scope.Scope
   | CommandSettings
@@ -697,6 +707,7 @@ export const stackWithShadowDatabase = <E, A, E2, R2>(
   | FileSystem.FileSystem
   | Path.Path
   | Crypto.Crypto
+  | RuntimeInfo
   | ChildProcessSpawner.ChildProcessSpawner
   | CommandSettings
 > =>

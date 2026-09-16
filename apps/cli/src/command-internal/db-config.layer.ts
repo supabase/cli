@@ -1,6 +1,6 @@
 import * as net from "node:net";
 import { BunServices } from "@effect/platform-bun";
-import { Duration, Effect, FileSystem, Layer, Option, Path } from "effect";
+import { Crypto, Duration, Effect, FileSystem, Layer, Option, Path } from "effect";
 
 import { CommandPlatformApiFactory } from "../auth/command-platform-api-factory.service.ts";
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
@@ -385,6 +385,8 @@ const dbConfigResolverLayer = Layer.effect(
     const stackApi = yield* StackApi;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const runtimeInfo = yield* RuntimeInfo;
+    const crypto = yield* Crypto.Crypto;
     const debug = yield* DebugLogger;
     const output = yield* Output;
     const dbConn = yield* DbConnection;
@@ -463,7 +465,12 @@ const dbConfigResolverLayer = Layer.effect(
         // `--db-url`/`--local` read base config, since neither merges a remote block.
         // Honors `SUPABASE_SERVICES_HOSTNAME` / a tcp `DOCKER_HOST` in dev-container or
         // remote-Docker setups, defaulting to 127.0.0.1.
-        const localHost = getHostname();
+        const localHost = yield* getHostname().pipe(
+          Effect.provideService(RuntimeInfo, runtimeInfo),
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.provideService(Path.Path, path),
+          Effect.provideService(Crypto.Crypto, crypto),
+        );
 
         // --db-url (direct) takes precedence.
         if (flags.connType === "db-url" && Option.isSome(flags.dbUrl)) {

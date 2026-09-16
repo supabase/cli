@@ -1434,6 +1434,23 @@ describe("db diff", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.effect("resolves both explicit local refs before completing the diff", () => {
+    const s = setup(tmp.current, { isLocal: false, diffSql: "create table local ( );\n" });
+    return Effect.gen(function* () {
+      yield* dbDiff(flags({ from: Option.some("local"), to: Option.some("local") }));
+      expect(s.explicitDiffCalls[0]?.source).toMatchObject({
+        kind: "database",
+        connection: { host: "127.0.0.1", port: 54322 },
+        connectOptions: { isLocal: true, dnsResolver: "native" },
+      });
+      expect(s.explicitDiffCalls[0]?.desired).toMatchObject({
+        kind: "database",
+        connection: { host: "127.0.0.1", port: 54322 },
+        connectOptions: { isLocal: true, dnsResolver: "native" },
+      });
+    }).pipe(Effect.provide(s.layer));
+  });
+
   it.effect("explicit URL endpoints retain the raw ref and remote connection options", () => {
     const s = setup(tmp.current, { diffSql: "create table u ();\n" });
     return Effect.gen(function* () {

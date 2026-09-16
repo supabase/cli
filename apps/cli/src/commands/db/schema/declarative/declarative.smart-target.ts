@@ -1,4 +1,4 @@
-import { Effect, type FileSystem, Option, type Path } from "effect";
+import { Effect, FileSystem, Option, Path } from "effect";
 
 import {
   DnsResolverFlag,
@@ -45,28 +45,29 @@ export interface SmartTargetFlags {
   readonly reset: boolean;
 }
 
-const localConnection = (local: LocalConn) => ({
-  // Host resolution order: SUPABASE_SERVICES_HOSTNAME → tcp DOCKER_HOST → 127.0.0.1, not a
-  // hardcoded loopback.
-  host: getHostname(),
-  port: local.port,
-  user: "postgres",
-  password: local.password,
-  database: "postgres",
+const localConnection = Effect.fnUntraced(function* (local: LocalConn) {
+  // Host resolution order: SUPABASE_SERVICES_HOSTNAME → tcp DOCKER_HOST → 127.0.0.1.
+  return {
+    host: yield* getHostname(),
+    port: local.port,
+    user: "postgres",
+    password: local.password,
+    database: "postgres",
+  };
 });
 
-const localEndpoint = (
+export const localEndpoint = Effect.fnUntraced(function* (
   local: LocalConn,
   dnsResolver: "native" | "https",
-): PgDeltaDatabaseEndpoint => {
-  const connection = localConnection(local);
+) {
+  const connection = yield* localConnection(local);
   return {
     kind: "database",
     ref: toPostgresURL(connection),
     connection,
     connectOptions: { isLocal: true, dnsResolver },
-  };
-};
+  } satisfies PgDeltaDatabaseEndpoint;
+});
 
 /** Local target URL: stack credentials when the stack backend is on, else config.toml `[db]`. */
 export const resolveLocalTargetEndpoint = Effect.fnUntraced(function* (
@@ -74,7 +75,7 @@ export const resolveLocalTargetEndpoint = Effect.fnUntraced(function* (
   dnsResolver: "native" | "https",
 ) {
   const backend = yield* currentStackBackend;
-  if (backend.kind !== "stack") return localEndpoint(local, dnsResolver);
+  if (backend.kind !== "stack") return yield* localEndpoint(local, dnsResolver);
   const resolver = yield* DbConfigResolver;
   const resolved = yield* resolver.resolve({
     dbUrl: Option.none(),

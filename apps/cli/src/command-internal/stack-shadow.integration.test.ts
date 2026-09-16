@@ -12,6 +12,7 @@ import {
   type StackConfig,
 } from "@supabase/stack/effect";
 import { mockOutput } from "../../tests/helpers/mocks.ts";
+import { runtimeInfoLayer } from "../shared/runtime/runtime-info.layer.ts";
 import {
   mockCommandSettings,
   useTempWorkdir,
@@ -219,6 +220,7 @@ describe("stackAcquireShadowDatabase", () => {
         Effect.provide(
           Layer.mergeAll(
             BunServices.layer,
+            runtimeInfoLayer,
             out.layer,
             db,
             mockCommandSettings({ workdir: tmp.current }),
@@ -257,6 +259,7 @@ describe("stackAcquireShadowDatabase", () => {
       Effect.provide(
         Layer.mergeAll(
           BunServices.layer,
+          runtimeInfoLayer,
           out.layer,
           db,
           mockCommandSettings({ workdir: tmp.current }),
@@ -319,6 +322,7 @@ describe("stackAcquireShadowDatabase", () => {
       Effect.provide(
         Layer.mergeAll(
           BunServices.layer,
+          runtimeInfoLayer,
           out.layer,
           db,
           mockCommandSettings({ workdir: tmp.current }),
@@ -383,6 +387,7 @@ describe("stackAcquireShadowDatabase", () => {
       Effect.provide(
         Layer.mergeAll(
           BunServices.layer,
+          runtimeInfoLayer,
           out.layer,
           db,
           mockCommandSettings({ workdir: tmp.current }),
@@ -437,6 +442,7 @@ describe("stackAcquireShadowDatabase", () => {
             Effect.provide(
               Layer.mergeAll(
                 BunServices.layer,
+                runtimeInfoLayer,
                 out.layer,
                 db,
                 mockCommandSettings({ workdir: tmp.current }),
@@ -486,6 +492,7 @@ describe("stackAcquireShadowDatabase", () => {
       Effect.provide(
         Layer.mergeAll(
           BunServices.layer,
+          runtimeInfoLayer,
           out.layer,
           db,
           mockCommandSettings({ workdir: tmp.current }),
@@ -523,6 +530,7 @@ describe("stackAcquireShadowDatabase", () => {
       Effect.provide(
         Layer.mergeAll(
           BunServices.layer,
+          runtimeInfoLayer,
           out.layer,
           db,
           mockCommandSettings({ workdir: tmp.current }),
@@ -599,6 +607,7 @@ describe("stackAcquireShadowDatabase", () => {
       Effect.provide(
         Layer.mergeAll(
           BunServices.layer,
+          runtimeInfoLayer,
           out.layer,
           db,
           mockCommandSettings({ workdir: tmp.current }),
@@ -684,6 +693,7 @@ describe("stackAcquireShadowDatabase", () => {
         Effect.provide(
           Layer.mergeAll(
             BunServices.layer,
+            runtimeInfoLayer,
             out.layer,
             db,
             mockCommandSettings({ workdir: tmp.current }),

@@ -590,7 +590,7 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
             ),
           )
         : {
-            host: getHostname(),
+            host: yield* getHostname(),
             port: toml.port,
             password: toml.password,
           };

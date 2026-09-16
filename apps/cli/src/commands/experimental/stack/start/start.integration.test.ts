@@ -12,6 +12,7 @@ import {
   Schema,
   Stream,
 } from "effect";
+import { runtimeInfoLayer } from "../../../../shared/runtime/runtime-info.layer.ts";
 import { CliOutput, Command } from "effect/unstable/cli";
 import {
   ContainerEngineError,
@@ -210,6 +211,7 @@ function handlerLayer(opts: {
       targetLayer,
       apiLayer,
       BunServices.layer,
+      runtimeInfoLayer,
       noopStackCatalogSetupLayer,
       Layer.succeed(ExperimentalFlag, false),
       Layer.succeed(CliArgs, { args: ["stack", "start"] }),
@@ -259,7 +261,7 @@ describe("stack start targeting", () => {
                   Effect.mapError(
                     (error) => new StackStateInvalidError({ message: error.message }),
                   ),
-                  Effect.provide(BunServices.layer),
+                  Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
                 );
                 expect(compiled.definition.capabilities[exclusion].enabled).toBe(false);
                 expect(compiled.definition.capabilities.studio.enabled).toBe(studioEnabled);
@@ -981,6 +983,7 @@ enabled = false
           discoverStacks: () => Effect.succeed({ stacks: [], errors: [] }),
         }),
         BunServices.layer,
+        runtimeInfoLayer,
         Layer.succeed(ExperimentalFlag, false),
         Layer.succeed(CliArgs, { args: ["stack", "start"] }),
         Layer.succeed(DbConnection, {

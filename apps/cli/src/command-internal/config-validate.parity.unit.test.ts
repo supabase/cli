@@ -11,6 +11,7 @@ import { CommandPlatformApiFactory } from "../auth/command-platform-api-factory.
 import { readDbToml } from "./db-config.toml-read.ts";
 import { resolveStorageCredentials } from "./storage-credentials.ts";
 import { resolveLocalConfigValues } from "./local-config-values.ts";
+import { runtimeInfoLayer } from "../shared/runtime/runtime-info.layer.ts";
 
 /**
  * Cross-caller parity coverage: for a table of shared misconfigurations, drives both real
@@ -320,6 +321,7 @@ describe("shared api + auth validation branches, cross-caller parity (S vs L)", 
         Effect.provide(
           Layer.mergeAll(
             BunServices.layer,
+            runtimeInfoLayer,
             mockCommandSettings({ workdir: dir }),
             // Local-path parity only — the remote branch (and with it the
             // platform API) is never reached.

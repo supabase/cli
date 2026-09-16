@@ -133,6 +133,7 @@ export const pgDeltaNextShadowLayer = Layer.effect(
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const crypto = yield* Crypto.Crypto;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const runtimeInfo = yield* RuntimeInfo;
     const networkIdFlag = yield* NetworkIdFlag;
@@ -143,13 +144,13 @@ export const pgDeltaNextShadowLayer = Layer.effect(
     const docker = yield* DockerRun;
     const dbConnection = yield* DbConnection;
     const httpClient = yield* HttpClient.HttpClient;
-    const crypto = yield* Crypto.Crypto;
     const cliSettings = yield* CommandSettings;
 
     const runtimeWith = (outputService: typeof Output.Service) => {
       const deps = Layer.mergeAll(
         Layer.succeed(FileSystem.FileSystem, fs),
         Layer.succeed(Path.Path, path),
+        Layer.succeed(Crypto.Crypto, crypto),
         Layer.succeed(DebugFlag, debugFlag),
         Layer.succeed(ExperimentalFlag, experimentalFlag),
         Layer.succeed(NetworkIdFlag, networkIdFlag),

@@ -8,11 +8,13 @@
  * separately-resolved `--experimental` gate (needed earlier, before `cfg.isLocal` is known).
  */
 
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Crypto, Effect, FileSystem, Option, Path } from "effect";
+import { HttpClient } from "effect/unstable/http";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 import type { GlobalFlag } from "effect/unstable/cli";
 
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
+import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import { resolveExperimentalWithProjectEnv } from "../global-flags.ts";
 import { DbConfigLoadError } from "../db-config.errors.ts";
 import { localDbContainerId } from "../docker-ids.ts";
@@ -91,9 +93,16 @@ export const buildLocalDbContainerInputs = (
 ): Effect.Effect<
   LocalDbContainerInputs,
   DbConfigLoadError,
-  FileSystem.FileSystem | Path.Path | GlobalFlag.Setting.Identifier<"experimental"> | CliArgs
+  | FileSystem.FileSystem
+  | Path.Path
+  | RuntimeInfo
+  | Crypto.Crypto
+  | GlobalFlag.Setting.Identifier<"experimental">
+  | CliArgs
+  | HttpClient.HttpClient
 > =>
   Effect.gen(function* () {
+    const httpClient = yield* HttpClient.HttpClient;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const mapError = (message: string) => new DbConfigLoadError({ message });
@@ -133,7 +142,9 @@ export const buildLocalDbContainerInputs = (
     const extraHosts = platform === "linux" ? ["host.docker.internal:host-gateway"] : [];
     const containerOpts: ContainerOpts = {
       projectId,
-      isBitbucketPipeline: isBitbucketPipeline(),
+      isBitbucketPipeline: yield* isBitbucketPipeline(projectEnvValues).pipe(
+        Effect.mapError((error) => mapError(`failed to read config: ${error.message}`)),
+      ),
       workdir,
       extraHosts,
     };
@@ -200,11 +211,16 @@ export const buildLocalDbContainerInputs = (
       dbUrl: values.dbUrl,
       jwtSecret: values.jwtSecret,
       // Lazy: only evaluated when `runFreshDbSetup` reaches realtime setup and it's enabled.
-      jwks: Effect.tryPromise({
-        try: () =>
-          resolveLocalJwks(config, workdir, values.jwtSecret, projectEnvValues, remoteOverrideKeys),
-        catch: (cause) => mapError(cause instanceof Error ? cause.message : String(cause)),
-      }),
+      jwks: resolveLocalJwks(
+        config,
+        workdir,
+        values.jwtSecret,
+        projectEnvValues,
+        remoteOverrideKeys,
+      ).pipe(
+        Effect.provideService(HttpClient.HttpClient, httpClient),
+        Effect.mapError((cause) => mapError(cause.message)),
+      ),
       apiUrl: values.apiUrl,
       authExternalUrl: resolveAuthExternalUrl(
         loaded?.document,

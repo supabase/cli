@@ -144,6 +144,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
   const linkedProjectCache = yield* LinkedProjectCache;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const runtimeInfo = yield* RuntimeInfo;
   const dnsResolver = yield* DnsResolverFlag;
   const debug = yield* DebugFlag;
   const stackApi = yield* Effect.serviceOption(StackApi);
@@ -272,14 +273,14 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
       // Each ref resolves in order; the `linked` branch re-merges the matching
       // `[remotes.<ref>]` block so a later `local` ref read and the trailing
       // `pgDeltaFormatOptions()` see the override. Thread the merged config through.
-      const resolveRef = (ref: string): Effect.Effect<PgDeltaEndpoint, unknown> =>
+      const resolveRef = (ref: string) =>
         Effect.gen(function* () {
           switch (classifyExplicitRef(ref)) {
             case "local": {
               const backend = yield* currentStackBackend;
               if (backend.kind !== "stack") {
                 const connection = {
-                  host: getHostname(),
+                  host: yield* getHostname(),
                   port: cfg.port,
                   user: "postgres",
                   password: cfg.password,
@@ -499,7 +500,6 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
     }
 
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const runtimeInfo = yield* RuntimeInfo;
     const networkIdFlag = yield* NetworkIdFlag;
     // Built before `resolver.resolve()` below, not just before the "Creating shadow
     // database..." banner: this performs a second config load (distinct from `cfg` above) with

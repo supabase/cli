@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer, Option } from "effect";
+import { ConfigProvider, Effect, Exit, Layer, Option } from "effect";
 
 import { mockOutput } from "../../tests/helpers/mocks.ts";
 import {
@@ -276,18 +276,14 @@ describe("test db integration", () => {
 
   it.live("omits --security-opt inside Bitbucket Pipelines (BITBUCKET_CLONE_DIR set)", () => {
     const { layer, docker } = setup();
-    const prev = process.env["BITBUCKET_CLONE_DIR"];
-    process.env["BITBUCKET_CLONE_DIR"] = "/opt/atlassian/pipelines/agent/build";
     return Effect.gen(function* () {
       yield* testDb(flags());
       expect(docker.lastOpts?.securityOpt).toEqual([]);
     }).pipe(
       Effect.provide(layer),
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (prev === undefined) delete process.env["BITBUCKET_CLONE_DIR"];
-          else process.env["BITBUCKET_CLONE_DIR"] = prev;
-        }),
+      Effect.provideService(
+        ConfigProvider.ConfigProvider,
+        ConfigProvider.fromEnvRecord({ BITBUCKET_CLONE_DIR: "/pipeline/project" }),
       ),
     );
   });

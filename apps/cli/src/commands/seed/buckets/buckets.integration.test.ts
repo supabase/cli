@@ -6,7 +6,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { afterEach, beforeEach } from "vitest";
 import { loadCliConfig } from "@supabase/config/internal";
-import { Effect, Exit, Layer, Option } from "effect";
+import { ConfigProvider, Effect, Exit, Layer, Option } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import type * as HttpClientError from "effect/unstable/http/HttpClientError";
 
@@ -34,6 +34,7 @@ import { seedBuckets } from "./buckets.handler.ts";
 import type { BucketsFlags } from "./buckets.command.ts";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
+import { runtimeInfoLayer } from "../../../shared/runtime/runtime-info.layer.ts";
 
 interface MockRoute {
   readonly method: string;
@@ -193,8 +194,10 @@ function setupSeedBuckets(
     out.layer,
     httpLayer,
     telemetry.layer,
+    ConfigProvider.layer(ConfigProvider.fromEnvRecord(process.env, { preserveEmptyStrings: true })),
     mockCommandSettings({ workdir, explicitWorkdir: opts.explicitWorkdir ?? false }),
     BunServices.layer,
+    runtimeInfoLayer,
     // Seed-bucket prompts model an interactive user answering via `confirm`.
     mockTty({ stdinIsTty: true, stdoutIsTty: false }),
     mockStdin(true, opts.pipedAnswers ? `${opts.pipedAnswers.join("\n")}\n` : undefined),
@@ -226,6 +229,7 @@ describe("seed buckets", () => {
   // env vars would shadow the dotenv fixtures below, so pin them unset for
   // every test here (the ambient-override test restores its own via `withEnvVar`).
   const OVERRIDE_ENV_KEYS = [
+    "SUPABASE_SERVICES_HOSTNAME",
     "SUPABASE_API_ENABLED",
     "SUPABASE_API_EXTERNAL_URL",
     "SUPABASE_API_PORT",
@@ -1162,6 +1166,23 @@ describe("seed buckets", () => {
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(requests.length).toBeGreaterThan(0);
       expect([...new Set(requests.map((r) => new URL(r.url).port))]).toEqual(["55512"]);
+    });
+  });
+
+  it.live("uses SUPABASE_SERVICES_HOSTNAME set only in supabase/.env", () => {
+    const { layer, requests } = setupSeedBuckets(tmp.current, {
+      toml: "[api]\nport = 54321\n[storage.buckets.images]\npublic = true\n",
+      files: { "supabase/.env": "SUPABASE_SERVICES_HOSTNAME=dotenv-host\n" },
+      routes: [
+        { method: "GET", match: "/storage/v1/bucket", body: [] },
+        { method: "POST", match: "/storage/v1/bucket", body: { name: "images" } },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* seedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(requests.length).toBeGreaterThan(0);
+      expect(requests.every((r) => r.url.startsWith("http://dotenv-host:54321"))).toBe(true);
     });
   });
 

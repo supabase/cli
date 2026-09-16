@@ -1,3 +1,4 @@
+import { FetchHttpClient } from "effect/unstable/http";
 import { existsSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -377,6 +378,7 @@ function mockDockerLogSpawner(behaviors: ReadonlyArray<LogProcessBehavior>) {
 }
 
 interface SetupOptions {
+  readonly fetch?: typeof globalThis.fetch;
   readonly debug?: boolean;
   readonly workdir?: string;
   readonly networkId?: Option.Option<string>;
@@ -404,7 +406,16 @@ function setupServe(options: SetupOptions = {}) {
   const layer = Layer.mergeAll(
     buildTestRuntime({
       out,
-      api,
+      api: {
+        ...api,
+        ...(options.fetch === undefined
+          ? {}
+          : {
+              httpClientLayer: FetchHttpClient.layer.pipe(
+                Layer.provide(Layer.succeed(FetchHttpClient.Fetch, options.fetch)),
+              ),
+            }),
+      },
       cliSettings,
       telemetry: telemetry.layer,
       runtimeInfo: mockRuntimeInfo({
@@ -2815,7 +2826,7 @@ describe("functions serve integration", () => {
       );
       yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
 
-      const { layer } = setupServe({ childSpawner });
+      const { layer } = setupServe({ childSpawner, fetch: fetchMock });
       const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
       expect(error).toBeInstanceOf(Error);
@@ -2902,7 +2913,7 @@ describe("functions serve integration", () => {
         );
         yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
 
-        const { layer } = setupServe({ childSpawner });
+        const { layer } = setupServe({ childSpawner, fetch: fetchMock });
         const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
         expect(error).toBeInstanceOf(Error);
