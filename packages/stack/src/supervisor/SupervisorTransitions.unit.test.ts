@@ -3,7 +3,13 @@ import { Cause, Deferred, Effect, Exit, Predicate } from "effect";
 import type { ActivationResult, BackendEndpoint } from "../gateway/Gateway.ts";
 import { StackRuntimeError, type StackError } from "../public/Errors.ts";
 import { isStackId } from "../public/StackId.ts";
-import { beginStarting, beginStopping, dormant, ready } from "./CapabilityState.ts";
+import {
+  beginStarting,
+  beginStopping,
+  dormant,
+  ready,
+  type CapabilityState,
+} from "./CapabilityState.ts";
 import {
   activationGate,
   admitActivation,
@@ -16,7 +22,7 @@ import {
   type EndpointExit,
 } from "./SupervisorTransitions.ts";
 
-const snapshotFor = (capability: ReturnType<typeof ready>) => ({
+const snapshotFor = (capability: CapabilityState) => ({
   stack: { _tag: "running" as const },
   sessionId: Symbol("session"),
   plan: undefined,
@@ -129,19 +135,14 @@ describe("supervisor transitions", () => {
       const value = "a".repeat(64);
       if (!isStackId(value)) return yield* Effect.die("invalid stack id fixture");
       const endpoint = yield* Deferred.make<EndpointExit, never>();
-      const activation = yield* Deferred.make<ActivationExit, never>();
       const decision = admitActivation(
         snapshotFor(ready(Symbol("session"), 0, false)),
         "rest",
         value,
-        endpoint,
-        activation,
-        Symbol("activation"),
       );
       expect(Predicate.isTagged(decision, "endpoint-owner")).toBe(true);
       if (Predicate.isTagged(decision, "endpoint-owner")) {
-        expect(decision.owner.endpoint).toBe(endpoint);
-        const current = decision.snapshot.snapshot.capabilities.get("rest");
+        const current = decision.transition(endpoint).snapshot.capabilities.get("rest");
         expect(Predicate.isTagged(current, "ready")).toBe(true);
         if (Predicate.isTagged(current, "ready"))
           expect(current.endpoint).toEqual({ _tag: "resolving", deferred: endpoint });
@@ -173,6 +174,29 @@ describe("supervisor transitions", () => {
         expect(next.endpoint).toEqual({ _tag: "unresolved" });
       }
       expect(settlement.reconcile).toBe("all-ready");
+    }),
+  );
+
+  it.effect("rejects a deferred-mismatched endpoint completion", () =>
+    Effect.gen(function* () {
+      const ownerEndpoint = yield* Deferred.make<EndpointExit, never>();
+      const currentEndpoint = yield* Deferred.make<EndpointExit, never>();
+      const snapshot = snapshotFor(
+        ready(Symbol("session"), 0, false, { _tag: "resolving", deferred: currentEndpoint }),
+      );
+      const cause = Cause.fail(new StackRuntimeError({ message: "stale endpoint" }));
+      const settlement = settleActivationTerminal(
+        snapshot,
+        { _tag: "endpoint", capability: "rest", endpoint: ownerEndpoint, priorRoot: false },
+        { _tag: "none" },
+        { _tag: "failed", cause, cleanup: { _tag: "proven" } },
+      );
+      expect(settlement.snapshot).toBe(snapshot);
+      expect(settlement.notifications[0]).toMatchObject({
+        _tag: "endpoint",
+        completion: ownerEndpoint,
+        result: Exit.failCause(cause),
+      });
     }),
   );
 
@@ -211,8 +235,18 @@ describe("supervisor transitions", () => {
     Effect.gen(function* () {
       const completion = yield* Deferred.make<ActivationExit, never>();
       const newer = ready(Symbol("newer"), 1, false);
-      const snapshot = snapshotFor(newer);
+      const currentCompletion = yield* Deferred.make<ActivationExit, never>();
+      const current = beginStarting(newer, Symbol("current"), {
+        _tag: "activation",
+        deferred: currentCompletion,
+      });
+      const snapshot = {
+        ...snapshotFor(newer),
+        capabilities: new Map([["rest" as const, current]]),
+      };
       const cause = Cause.fail(new StackRuntimeError({ message: "stale activation failed" }));
+      // Execution serializes a live activation claim through settlement; an unmatched
+      // owner is stale/already-settled evidence and cannot impose recovery on its replacement.
       const settlement = settleActivationTerminal(
         snapshot,
         { _tag: "activation", capability: "rest", completion },
@@ -221,7 +255,7 @@ describe("supervisor transitions", () => {
       );
 
       expect(settlement.snapshot).toBe(snapshot);
-      expect(settlement.snapshot.capabilities.get("rest")).toBe(newer);
+      expect(settlement.snapshot.capabilities.get("rest")).toBe(current);
       expect(settlement.snapshot.stack).toEqual({ _tag: "running" });
       const notification = settlement.notifications[0];
       if (notification !== undefined && Predicate.isTagged("activation")(notification)) {
@@ -236,21 +270,35 @@ describe("supervisor transitions", () => {
       const endpoint = yield* Deferred.make<EndpointExit, never>();
       const completion = yield* Deferred.make<Exit.Exit<void, StackError>, never>();
       const prior = dormant(Symbol("old-session"));
-      const current = ready(Symbol("new-session"), 0, false);
-      const snapshot = snapshotFor(current);
+      const current = ready(Symbol("new-session"), 0, false, {
+        _tag: "resolving",
+        deferred: endpoint,
+      });
+      const claimedCurrent = ready(Symbol("new-session"), 0, false);
+      const snapshot = {
+        ...snapshotFor(current),
+        capabilities: new Map([
+          ["rest" as const, current],
+          ["studio" as const, claimedCurrent],
+        ]),
+      };
       const cause = Cause.fail(new StackRuntimeError({ message: "activation failed" }));
       const settlement = settleActivationTerminal(
         snapshot,
         { _tag: "endpoint", capability: "rest", endpoint, priorRoot: false },
         {
           _tag: "claimed",
-          claimed: [{ name: "rest", completion, prior }],
-          affected: new Set(["rest"]),
+          claimed: [{ name: "studio", completion, prior }],
+          affected: new Set(["studio"]),
         },
         { _tag: "failed", cause, cleanup: { _tag: "proven" } },
       );
-      expect(settlement.snapshot).toBe(snapshot);
-      expect(settlement.snapshot.capabilities.get("rest")).toBe(current);
+      expect(settlement.snapshot).not.toBe(snapshot);
+      expect(settlement.snapshot.capabilities.get("rest")).toMatchObject({
+        _tag: "ready",
+        endpoint: { _tag: "unresolved" },
+      });
+      expect(settlement.snapshot.capabilities.get("studio")).toBe(claimedCurrent);
     }),
   );
 
@@ -290,6 +338,164 @@ describe("supervisor transitions", () => {
         completion: lifecycleCompletion,
         cause,
       });
+    }),
+  );
+
+  it.effect("preserves a stopping capability when settlement reports no retirement", () =>
+    Effect.gen(function* () {
+      const completion = yield* Deferred.make<Exit.Exit<void, StackError>, never>();
+      const current = ready(Symbol("session"), 1, true);
+      const operation = Symbol("retirement");
+      const capability = beginStopping(current, operation, completion);
+      const snapshot = {
+        ...snapshotFor(current),
+        capabilities: new Map([["rest" as const, capability]]),
+      };
+      const settlement = settleRetirementOwner(snapshot, {
+        _tag: "retirement",
+        capability: "rest",
+        operation,
+        completion,
+        result: Exit.succeed(false),
+      });
+      expect(settlement.snapshot.capabilities.get("rest")).toBe(capability);
+      expect(settlement.notifications).toEqual([
+        { _tag: "stopping", completion, result: Exit.void },
+      ]);
+    }),
+  );
+
+  it.effect("retires a capability only after retirement succeeds", () =>
+    Effect.gen(function* () {
+      const completion = yield* Deferred.make<Exit.Exit<void, StackError>, never>();
+      const current = ready(Symbol("session"), 1, true);
+      const operation = Symbol("retirement");
+      const capability = beginStopping(current, operation, completion);
+      const snapshot = {
+        ...snapshotFor(current),
+        capabilities: new Map([["rest" as const, capability]]),
+      };
+      const settlement = settleRetirementOwner(snapshot, {
+        _tag: "retirement",
+        capability: "rest",
+        operation,
+        completion,
+        result: Exit.succeed(true),
+      });
+      expect(settlement.snapshot.capabilities.get("rest")).toMatchObject({
+        _tag: "dormant",
+        sessionId: current.sessionId,
+        root: false,
+      });
+      expect(settlement.notifications).toEqual([
+        { _tag: "stopping", completion, result: Exit.void },
+      ]);
+    }),
+  );
+
+  it.effect("publishes a stale retirement result without changing state", () =>
+    Effect.gen(function* () {
+      const currentCompletion = yield* Deferred.make<Exit.Exit<void, StackError>, never>();
+      const staleCompletion = yield* Deferred.make<Exit.Exit<void, StackError>, never>();
+      const current = beginStopping(
+        ready(Symbol("session"), 1, true),
+        Symbol("current"),
+        currentCompletion,
+      );
+      const snapshot = {
+        ...snapshotFor(ready(Symbol("session"), 1, true)),
+        capabilities: new Map([["rest" as const, current]]),
+      };
+      const settlement = settleRetirementOwner(snapshot, {
+        _tag: "retirement",
+        capability: "rest",
+        operation: Symbol("stale"),
+        completion: staleCompletion,
+        result: Exit.succeed(true),
+      });
+      expect(settlement.snapshot).toBe(snapshot);
+      expect(settlement.notifications).toEqual([
+        { _tag: "stopping", completion: staleCompletion, result: Exit.void },
+      ]);
+    }),
+  );
+
+  it.effect("settles every starting failure disposition", () =>
+    Effect.gen(function* () {
+      const cause = Cause.fail(new StackRuntimeError({ message: "start failed" }));
+      const scenarios = [
+        {
+          name: "running-proven",
+          prior: ready(Symbol("running"), 0, false),
+          cleanup: { _tag: "proven" as const },
+          durable: "stopped" as const,
+          stack: { _tag: "running" as const },
+          capability: "stopped" as const,
+        },
+        {
+          name: "running-unproven",
+          prior: ready(Symbol("running"), 0, false),
+          cleanup: { _tag: "unproven" as const, cause },
+          durable: "unsafe" as const,
+          stack: { _tag: "stop-required" as const, cause },
+          capability: "cleanup-failed" as const,
+        },
+        {
+          name: "stopped-proven",
+          prior: dormant(Symbol("stopped")),
+          cleanup: { _tag: "proven" as const },
+          durable: "stopped" as const,
+          stack: { _tag: "stopped" as const, session: "initialized" as const },
+          capability: "stopped" as const,
+        },
+        {
+          name: "stopped-unsafe",
+          prior: dormant(Symbol("stopped")),
+          cleanup: { _tag: "proven" as const },
+          durable: "unsafe" as const,
+          stack: { _tag: "stop-required" as const, cause },
+          capability: "dormant" as const,
+        },
+      ];
+      for (const scenario of scenarios) {
+        const lifecycleCompletion = yield* Deferred.make<Exit.Exit<void, StackError>, never>();
+        const workloadCompletion = yield* Deferred.make<Exit.Exit<void, StackError>, never>();
+        const current = beginStarting(scenario.prior, Symbol(scenario.name), {
+          _tag: "workload",
+          deferred: workloadCompletion,
+        });
+        const snapshot = {
+          ...snapshotFor(current),
+          stack: {
+            _tag: "starting" as const,
+            attempt: Symbol(scenario.name),
+            completion: lifecycleCompletion,
+            prior: Predicate.isTagged(scenario.prior, "ready")
+              ? { _tag: "running" as const }
+              : { _tag: "stopped" as const, session: "initialized" as const },
+          },
+        };
+        const settlement = settleLifecycleOwner(snapshot, {
+          _tag: "lifecycle",
+          completion: lifecycleCompletion,
+          result: { _tag: "failed", cause, cleanup: scenario.cleanup, durable: scenario.durable },
+        });
+        expect(settlement.snapshot.stack).toEqual(scenario.stack);
+        expect(settlement.snapshot.capabilities.get("rest")).toMatchObject({
+          _tag: scenario.capability,
+        });
+        expect(settlement.notifications).toHaveLength(2);
+        expect(settlement.notifications[0]).toMatchObject({
+          _tag: "workload",
+          completion: workloadCompletion,
+          result: Exit.failCause(cause),
+        });
+        expect(settlement.notifications[1]).toMatchObject({
+          _tag: "lifecycle",
+          completion: lifecycleCompletion,
+          result: Exit.failCause(cause),
+        });
+      }
     }),
   );
 

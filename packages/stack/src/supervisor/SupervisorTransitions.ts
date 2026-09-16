@@ -5,7 +5,6 @@ import {
   GatewayActivationError,
   StackLifecycleConflictError,
   StackNotRunningError,
-  type GatewayActivationError as GatewayActivationErrorType,
   type StackError,
 } from "../public/Errors.ts";
 import type { CleanupOutcome, LifecycleInput } from "./Lifecycle.ts";
@@ -86,7 +85,7 @@ type TransitionState =
   | Extract<StackControlState, { readonly _tag: "stopping" }>
   | Extract<StackControlState, { readonly _tag: "destroying" }>;
 
-export type LifecycleAdmission =
+type LifecycleAdmission =
   | (SnapshotTransition & { readonly _tag: "accepted" })
   | {
       readonly _tag: "rejected";
@@ -111,7 +110,7 @@ export const publicPhase = (
   );
 };
 
-export type ActiveLifecycle = Readonly<{
+type ActiveLifecycle = Readonly<{
   readonly kind: LifecycleKind;
   readonly result: Deferred.Deferred<Exit.Exit<void, StackError>, never>;
 }>;
@@ -202,23 +201,27 @@ export type ActivationToken =
       readonly result: Deferred.Deferred<Exit.Exit<void, StackError>, never>;
     };
 
-export type ActivationDecision =
+type ActivationDecision =
   | { readonly _tag: "respond"; readonly token: ActivationToken }
   | {
       readonly _tag: "endpoint-owner";
-      readonly owner: Extract<ActivationOwner, { readonly _tag: "endpoint" }>;
-      readonly snapshot: SnapshotTransition;
+      readonly capability: CapabilityName;
+      readonly priorRoot: boolean;
+      readonly transition: (endpoint: Deferred.Deferred<EndpointExit, never>) => SnapshotTransition;
     }
   | {
       readonly _tag: "activation-owner";
-      readonly owner: Extract<ActivationOwner, { readonly _tag: "activation" }>;
-      readonly snapshot: SnapshotTransition;
+      readonly capability: CapabilityName;
+      readonly transition: (
+        operation: symbol,
+        completion: Deferred.Deferred<ActivationExit, never>,
+      ) => SnapshotTransition;
     }
-  | { readonly _tag: "rejected"; readonly error: GatewayActivationErrorType | StackError };
+  | { readonly _tag: "rejected"; readonly error: GatewayActivationError | StackError };
 
-export type ActivationGate =
+type ActivationGate =
   | { readonly _tag: "accepted" }
-  | { readonly _tag: "rejected"; readonly error: GatewayActivationErrorType | StackError };
+  | { readonly _tag: "rejected"; readonly error: GatewayActivationError | StackError };
 
 export const activationGate = (snapshot: SupervisorSnapshot, stackId: StackId): ActivationGate => {
   const inProgress = (kind: LifecycleKind): ActivationGate => ({
@@ -262,9 +265,6 @@ export const admitActivation = (
   snapshot: SupervisorSnapshot,
   capability: CapabilityName,
   stackId: StackId,
-  endpoint: Deferred.Deferred<EndpointExit, never>,
-  activation: Deferred.Deferred<ActivationExit, never>,
-  operation: symbol,
 ): ActivationDecision => {
   const gate = activationGate(snapshot, stackId);
   if (Predicate.isTagged(gate, "rejected")) return gate;
@@ -322,27 +322,32 @@ export const admitActivation = (
           _tag: "respond" as const,
           token: { _tag: "endpoint" as const, capability, result: endpointState.deferred },
         })),
-        Match.tag("unresolved", () => ({
-          _tag: "endpoint-owner" as const,
-          owner: { _tag: "endpoint" as const, capability, endpoint, priorRoot: state.root },
-          snapshot: {
-            snapshot: beginEndpointResolution(snapshot, capability, endpoint),
-            notifications: [],
-            reconcile: "none" as const,
-          },
-        })),
+        Match.tag("unresolved", () => {
+          return {
+            _tag: "endpoint-owner" as const,
+            capability,
+            priorRoot: state.root,
+            transition: (endpoint: Deferred.Deferred<EndpointExit, never>) => ({
+              snapshot: beginEndpointResolution(snapshot, capability, endpoint),
+              notifications: [],
+              reconcile: "none" as const,
+            }),
+          };
+        }),
         Match.exhaustive,
       ),
     ),
-    Match.tag("dormant", (state) => ({
-      _tag: "activation-owner" as const,
-      owner: { _tag: "activation" as const, capability, completion: activation },
-      snapshot: {
-        snapshot: beginActivation(snapshot, capability, state, operation, activation),
-        notifications: [],
-        reconcile: "none" as const,
-      },
-    })),
+    Match.tag("dormant", (state) => {
+      return {
+        _tag: "activation-owner" as const,
+        capability,
+        transition: (operation: symbol, completion: Deferred.Deferred<ActivationExit, never>) => ({
+          snapshot: beginActivation(snapshot, capability, state, operation, completion),
+          notifications: [],
+          reconcile: "none" as const,
+        }),
+      };
+    }),
     Match.exhaustive,
   );
 };
@@ -586,7 +591,7 @@ export const setRootSet = (
   return { snapshot: { ...snapshot, capabilities }, notifications: [], reconcile: "none" };
 };
 
-export type TrafficTransition = SnapshotTransition &
+type TrafficTransition = SnapshotTransition &
   Readonly<{
     readonly timer: Fiber.Fiber<void, unknown> | undefined;
     readonly shouldArm: boolean;
@@ -700,7 +705,7 @@ const idleCandidate = (
   return canRetire(plan, rootSet(snapshot), capability) ? { capability, plan, state } : undefined;
 };
 
-export type IdleTimerPlan = IdleCandidate & Readonly<{ readonly timeout: number }>;
+type IdleTimerPlan = IdleCandidate & Readonly<{ readonly timeout: number }>;
 
 export const planIdleTimer = (
   snapshot: SupervisorSnapshot,
@@ -804,6 +809,11 @@ export type CleanupHandle = Readonly<{
   readonly completion: Deferred.Deferred<Exit.Exit<void, StackError>, never>;
 }>;
 
+export const isCleanupCandidate = (
+  state: CapabilityState,
+): state is Extract<CapabilityState, { readonly _tag: "ready" | "cleanup-failed" }> =>
+  Predicate.isTagged(state, "ready") || Predicate.isTagged(state, "cleanup-failed");
+
 export const enterCapabilityCleanup = (
   snapshot: SupervisorSnapshot,
   handles: ReadonlyMap<CapabilityName, CleanupHandle>,
@@ -811,10 +821,7 @@ export const enterCapabilityCleanup = (
   const capabilities = new Map(snapshot.capabilities);
   for (const [name, state] of capabilities) {
     const handle = handles.get(name);
-    if (
-      handle !== undefined &&
-      (Predicate.isTagged(state, "ready") || Predicate.isTagged(state, "cleanup-failed"))
-    )
+    if (handle !== undefined && isCleanupCandidate(state))
       capabilities.set(name, beginStopping(state, handle.operation, handle.completion));
   }
   return { snapshot: { ...snapshot, capabilities }, notifications: [], reconcile: "none" };
@@ -907,7 +914,6 @@ export const settleActivationTerminal = (
     : new Set<CapabilityName>();
   const capabilities = new Map(snapshot.capabilities);
   const notifications: Array<TransitionNotification> = [];
-  let mutated = false;
   if (failed) {
     for (const entry of claimed) {
       const current = capabilities.get(entry.name);
@@ -916,7 +922,6 @@ export const settleActivationTerminal = (
         Predicate.isTagged(current.completion, "workload") &&
         current.completion.deferred === entry.completion
       ) {
-        mutated = true;
         capabilities.set(
           entry.name,
           Predicate.isTagged(cleanup, "unproven")
@@ -928,7 +933,6 @@ export const settleActivationTerminal = (
         Predicate.isTagged(current, "ready") &&
         current.sessionId === entry.prior.sessionId
       ) {
-        mutated = true;
         capabilities.set(
           entry.name,
           Predicate.isTagged(cleanup, "unproven")
@@ -946,7 +950,6 @@ export const settleActivationTerminal = (
           !Predicate.isTagged(current.completion, "activation")
         )
           continue;
-        mutated = true;
         capabilities.set(name, cleanupFailed(current, cleanup.cause));
         notifications.push({
           _tag: "activation",
@@ -969,7 +972,6 @@ export const settleActivationTerminal = (
           ? { ...current, root: event.priorRoot, endpoint: { _tag: "unresolved" } }
           : { ...current, endpoint: { _tag: "resolved", endpoint: outcome.value.endpoint } },
       );
-      mutated = true;
     }),
     Match.tag("activation", (event) => {
       if (
@@ -987,14 +989,11 @@ export const settleActivationTerminal = (
               : restoreStarting(current)
           : completeStarting(current, { _tag: "resolved", endpoint: outcome.value.endpoint }, true),
       );
-      mutated = true;
     }),
     Match.exhaustive,
   );
-  const changed = mutated || (failed && Predicate.isTagged(cleanup, "unproven"));
-  let next = !changed
-    ? snapshot
-    : failed && Predicate.isTagged(cleanup, "unproven")
+  const next =
+    failed && Predicate.isTagged(cleanup, "unproven")
       ? stopRecoverySnapshot({ ...snapshot, capabilities }, cleanup.cause)
       : { ...snapshot, capabilities };
   notifications.push(notification);

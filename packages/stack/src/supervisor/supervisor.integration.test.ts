@@ -82,6 +82,7 @@ const invokeCredentials = (
 type ReadGate = {
   readonly started: Deferred.Deferred<void>;
   readonly gate: Deferred.Deferred<void>;
+  readonly beforeRead?: boolean;
 };
 
 const makeFixture = (
@@ -127,9 +128,6 @@ const makeFixture = (
     readonly observeFailure?: Ref.Ref<boolean>;
     readonly stoppedReplaceFail?: Ref.Ref<boolean>;
     readonly startQueue?: Queue.Queue<string>;
-    readonly shutdownReadArmed?: Ref.Ref<boolean>;
-    readonly shutdownReadStarted?: Deferred.Deferred<void>;
-    readonly shutdownReadGate?: Deferred.Deferred<void>;
     readonly readGateQueue?: Ref.Ref<ReadonlyArray<ReadGate>>;
     readonly readCalls?: Ref.Ref<number>;
     readonly prefetchStarted?: Deferred.Deferred<void>;
@@ -187,37 +185,25 @@ const makeFixture = (
             ...persistedStore,
             read: (stackId: string) =>
               Effect.gen(function* () {
-                const state = yield* persistedStore.read(stackId);
                 const gate = yield* Ref.modify(fixtureOptions.readGateQueue!, (gates) => [
                   gates[0],
                   gates.slice(1),
                 ]);
                 if (gate !== undefined) {
+                  if (gate.beforeRead === true) {
+                    yield* Deferred.succeed(gate.started, undefined);
+                    yield* Deferred.await(gate.gate);
+                  }
+                }
+                const state = yield* persistedStore.read(stackId);
+                if (gate !== undefined && gate.beforeRead !== true) {
                   yield* Deferred.succeed(gate.started, undefined);
                   yield* Deferred.await(gate.gate);
                 }
                 return state;
               }),
           }
-        : fixtureOptions.shutdownReadArmed === undefined ||
-            fixtureOptions.shutdownReadStarted === undefined ||
-            fixtureOptions.shutdownReadGate === undefined
-          ? persistedStore
-          : {
-              ...persistedStore,
-              read: (stackId: string) =>
-                Effect.gen(function* () {
-                  const armed = yield* Ref.modify(fixtureOptions.shutdownReadArmed!, (value) => [
-                    value,
-                    false,
-                  ]);
-                  if (armed) {
-                    yield* Deferred.succeed(fixtureOptions.shutdownReadStarted!, undefined);
-                    yield* Deferred.await(fixtureOptions.shutdownReadGate!);
-                  }
-                  return yield* persistedStore.read(stackId);
-                }),
-            };
+        : persistedStore;
     const store =
       fixtureOptions.readCalls === undefined
         ? runtimeStore
@@ -656,15 +642,13 @@ describe("Supervisor composition", () => {
   it.live("does not admit a lifecycle while idle shutdown makes its final decision", () =>
     run(
       Effect.gen(function* () {
-        const readArmed = yield* Ref.make(false);
+        const readGateQueue = yield* Ref.make<ReadonlyArray<ReadGate>>([]);
         const readStarted = yield* Deferred.make<void>();
         const readGate = yield* Deferred.make<void>();
         const fixture = yield* makeFixture({
-          shutdownReadArmed: readArmed,
-          shutdownReadStarted: readStarted,
-          shutdownReadGate: readGate,
+          readGateQueue,
         });
-        yield* Ref.set(readArmed, true);
+        yield* Ref.set(readGateQueue, [{ started: readStarted, gate: readGate, beforeRead: true }]);
         const shutdown = yield* Effect.forkChild(fixture.supervisor.shutdownIfIdle);
         yield* Deferred.await(readStarted);
         const start = yield* Effect.forkChild(fixture.supervisor.start({ config: {} }));
@@ -1708,9 +1692,13 @@ describe("Supervisor composition", () => {
           capabilities: {
             rest: { activation: "lazy" as const },
             studio: { activation: "lazy" as const },
+            functions: { activation: "lazy" as const },
           },
         };
         yield* fixture.supervisor.start({ config });
+        expect(yield* Ref.get(fixture.resources)).toContainEqual(
+          expect.objectContaining({ workloadId: "database:database", state: "ready" }),
+        );
         const studio = yield* Effect.forkChild(fixture.supervisor.activate("studio"), {
           startImmediately: true,
         });
@@ -1718,8 +1706,15 @@ describe("Supervisor composition", () => {
         const rest = yield* Effect.forkChild(fixture.supervisor.activate("rest"), {
           startImmediately: true,
         });
+        const functions = yield* Effect.forkChild(fixture.supervisor.activate("functions"), {
+          startImmediately: true,
+        });
         expect(
           (yield* fixture.supervisor.status).capabilities.find(({ name }) => name === "rest")
+            ?.state,
+        ).toBe("starting");
+        expect(
+          (yield* fixture.supervisor.status).capabilities.find(({ name }) => name === "functions")
             ?.state,
         ).toBe("starting");
 
@@ -1745,6 +1740,21 @@ describe("Supervisor composition", () => {
         if (Exit.isFailure(studioExit)) expect(Cause.hasInterrupts(studioExit.cause)).toBe(true);
         expect(Exit.isFailure(restExit)).toBe(true);
         if (Exit.isFailure(restExit)) expect(Cause.hasInterrupts(restExit.cause)).toBe(true);
+        const functionsExit = yield* Fiber.await(functions).pipe(
+          Effect.timeoutOrElse({
+            duration: "5 seconds",
+            orElse: () =>
+              Effect.die("Functions activation remained pending after owner scope close"),
+          }),
+        );
+        expect(Exit.isFailure(functionsExit)).toBe(true);
+        if (Exit.isFailure(functionsExit))
+          expect(Cause.hasInterrupts(functionsExit.cause)).toBe(true);
+        const status = yield* fixture.supervisor.status;
+        expect(status.lifecycle).toBe("stopping");
+        expect(status.recovery?.operation).toBe("stop");
+        expect(status.capabilities.find(({ name }) => name === "studio")?.state).toBe("failed");
+        expect(status.capabilities.find(({ name }) => name === "functions")?.state).toBe("dormant");
       }),
     ),
   );
@@ -1918,7 +1928,19 @@ describe("Supervisor composition", () => {
         expect(yield* Deferred.isDone(activationStarted)).toBe(false);
 
         const status = yield* fixture.supervisor.status;
-        expect(status.recovery?.operation).toBe("stop");
+        expect(status.lifecycle).toBe("running");
+        expect(status.capabilities.find(({ name }) => name === "rest")?.state).toBe("dormant");
+
+        const successor = yield* makeSupervisor({
+          stackId: fixture.id,
+          ownerSessionId: "successor-session",
+          stateStore: fixture.store,
+          context: fixture.context,
+          runtime: fixture.runtime,
+        });
+        yield* successor.start();
+        const retry = yield* successor.activate("rest");
+        expect(retry.endpoint).toEqual({ host: "127.0.0.1", port: 9999 });
       }),
     ),
   );

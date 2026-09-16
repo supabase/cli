@@ -123,6 +123,7 @@ import {
   type CommandResult,
   type CleanupHandle,
   type EndpointExit,
+  isCleanupCandidate,
   matchesActivationOwner,
   type StartupHandle,
   type SettlementOwner,
@@ -421,40 +422,40 @@ export const makeSupervisor = (
         yield* applyTransitionInAdmission(transition);
       });
     const setReadySet = (names: ReadonlySet<CapabilityName>): Effect.Effect<void> =>
-      admission.withPermit(setReadySetInAdmission(names));
+      admission.withPermit(Effect.uninterruptible(setReadySetInAdmission(names)));
     const promoteActivationSet = (
       names: ReadonlySet<CapabilityName>,
       activationOwner: CapabilityName,
       plan: ExecutionPlan,
     ): Effect.Effect<void> =>
       admission.withPermit(
-        Effect.gen(function* () {
-          const transition = transitionPromoteActivationSet(
-            yield* Ref.get(machine),
-            names,
-            activationOwner,
-            plan,
-          );
-          yield* applyTransitionInAdmission(transition);
-        }),
+        Effect.uninterruptible(
+          Effect.gen(function* () {
+            const transition = transitionPromoteActivationSet(
+              yield* Ref.get(machine),
+              names,
+              activationOwner,
+              plan,
+            );
+            yield* applyTransitionInAdmission(transition);
+          }),
+        ),
       );
-    const claimWorkloads = (
+    const claimWorkloadsInAdmission = (
       names: ReadonlySet<CapabilityName>,
     ): Effect.Effect<ReadonlyArray<ClaimedWorkload>> =>
-      admission.withPermit(
-        Effect.gen(function* () {
-          const handles = new Map<CapabilityName, StartupHandle>();
-          for (const name of names) {
-            handles.set(name, {
-              completion: yield* Deferred.make<Exit.Exit<void, StackError>, never>(),
-              operation: Symbol("dependency-startup"),
-            });
-          }
-          const transition = transitionClaimWorkloads(yield* Ref.get(machine), names, handles);
-          yield* applyTransitionInAdmission(transition);
-          return transition.claimed;
-        }),
-      );
+      Effect.gen(function* () {
+        const handles = new Map<CapabilityName, StartupHandle>();
+        for (const name of names) {
+          handles.set(name, {
+            completion: yield* Deferred.make<Exit.Exit<void, StackError>, never>(),
+            operation: Symbol("dependency-startup"),
+          });
+        }
+        const transition = transitionClaimWorkloads(yield* Ref.get(machine), names, handles);
+        yield* applyTransitionInAdmission(transition);
+        return transition.claimed;
+      });
     const settleActivationTerminalInAdmission = (
       owner: ActivationOwner,
       claims: ActivationClaims,
@@ -485,13 +486,15 @@ export const makeSupervisor = (
       ReadonlyMap<CapabilityName, CleanupHandle>
     > =>
       Effect.gen(function* () {
+        const snapshot = yield* Ref.get(machine);
         const handles = new Map<CapabilityName, CleanupHandle>();
-        for (const name of CAPABILITY_NAMES)
-          handles.set(name, {
-            operation: Symbol("cleanup"),
-            completion: yield* Deferred.make<Exit.Exit<void, StackError>, never>(),
-          });
-        const transition = transitionEnterCapabilityCleanup(yield* Ref.get(machine), handles);
+        for (const [name, state] of snapshot.capabilities)
+          if (isCleanupCandidate(state))
+            handles.set(name, {
+              operation: Symbol("cleanup"),
+              completion: yield* Deferred.make<Exit.Exit<void, StackError>, never>(),
+            });
+        const transition = transitionEnterCapabilityCleanup(snapshot, handles);
         yield* applyTransitionInAdmission(transition);
         return handles;
       });
@@ -763,6 +766,7 @@ export const makeSupervisor = (
                   });
                   return operation;
                 });
+              let entered = false;
               const owner = Effect.uninterruptibleMask((restore) =>
                 Effect.gen(function* () {
                   const cancelled = yield* restore(cancelIdleTimers).pipe(Effect.exit);
@@ -770,23 +774,25 @@ export const makeSupervisor = (
                     yield* finish(Exit.failCause(cancelled.cause));
                     return yield* Effect.failCause(cancelled.cause);
                   }
-                  const acquired = yield* restore(execution.take(1)).pipe(Effect.exit);
-                  if (Exit.isFailure(acquired)) {
-                    yield* finish(Exit.failCause(acquired.cause));
-                    return yield* Effect.failCause(acquired.cause);
-                  }
-                  return yield* Effect.ensuring(
-                    Effect.gen(function* () {
-                      const result = yield* restore(effect).pipe(Effect.exit);
-                      const operation = yield* finish(result);
-                      return yield* joinExit(
-                        Predicate.isTagged(operation, "failed")
-                          ? Exit.failCause(operation.cause)
-                          : Exit.succeed(operation),
-                      );
-                    }),
-                    execution.release(1),
-                  );
+                  const result = yield* restore(
+                    execution.withPermit(
+                      Effect.uninterruptibleMask((inner) =>
+                        Effect.gen(function* () {
+                          entered = true;
+                          const result = yield* inner(effect).pipe(Effect.exit);
+                          const operation = yield* finish(result);
+                          return yield* joinExit(
+                            Predicate.isTagged(operation, "failed")
+                              ? Exit.failCause(operation.cause)
+                              : Exit.succeed(operation),
+                          );
+                        }),
+                      ),
+                    ),
+                  ).pipe(Effect.exit);
+                  if (!entered && Exit.isFailure(result))
+                    yield* finish(Exit.failCause(result.cause));
+                  return yield* joinExit(result);
                 }),
               );
               const ownerFiber = yield* FiberSet.run(ownedFibers, owner, {
@@ -963,16 +969,16 @@ export const makeSupervisor = (
     const cleanupRuntime = (destroy: boolean): Effect.Effect<void, StackError> =>
       Effect.uninterruptibleMask((restore) =>
         Effect.gen(function* () {
-          const admissionPermit = yield* restore(admission.take(1)).pipe(Effect.exit);
-          if (Exit.isFailure(admissionPermit))
-            return yield* Effect.failCause(admissionPermit.cause);
-          const entered = yield* Effect.uninterruptibleMask(() =>
-            enterCapabilityCleanupInAdmission().pipe(Effect.ensuring(admission.release(1))),
-          ).pipe(Effect.exit);
-          if (Exit.isFailure(entered)) return yield* Effect.failCause(entered.cause);
-          const handles = entered.value;
+          let handles: ReadonlyMap<CapabilityName, CleanupHandle> | undefined;
           const result = yield* restore(
             Effect.gen(function* () {
+              yield* admission.withPermit(
+                Effect.uninterruptible(
+                  Effect.gen(function* () {
+                    handles = yield* enterCapabilityCleanupInAdmission();
+                  }),
+                ),
+              );
               const background = yield* Ref.get(backgroundPreparation);
               if (background !== undefined) yield* Fiber.interrupt(background);
               yield* Ref.set(backgroundPreparation, undefined);
@@ -992,7 +998,8 @@ export const makeSupervisor = (
               if (cause.reasons.length > 0) return yield* Effect.failCause(cause);
             }),
           ).pipe(Effect.exit);
-          yield* admission.withPermit(settleCapabilityCleanupInAdmission(handles, result));
+          if (handles !== undefined)
+            yield* admission.withPermit(settleCapabilityCleanupInAdmission(handles, result));
           if (Exit.isFailure(result)) return yield* Effect.failCause(result.cause);
           yield* completeDormantCleanup();
           if (destroy) yield* launcher.clear;
@@ -1050,160 +1057,109 @@ export const makeSupervisor = (
 
     const runActivationOwner = (owner: ActivationOwner): Effect.Effect<void> =>
       Effect.gen(function* () {
+        let entered = false;
+        let claims: ActivationClaims = { _tag: "none" };
+        const activation = Effect.gen(function* () {
+          const fence = yield* admission.withPermit(
+            Effect.gen(function* () {
+              const snapshot = yield* Ref.get(machine);
+              return {
+                ownerMatches: matchesActivationOwner(snapshot, owner),
+                gate: activationGate(snapshot, options.stackId),
+              };
+            }),
+          );
+          if (!fence.ownerMatches)
+            return yield* new StackLifecycleConflictError({
+              stackId: options.stackId,
+              message: Predicate.isTagged(owner, "endpoint")
+                ? "Endpoint activation was superseded by a lifecycle transition"
+                : "Lazy activation was superseded by a lifecycle transition",
+            });
+          if (Predicate.isTagged(fence.gate, "rejected")) return yield* fence.gate.error;
+
+          const prepared = yield* prepareActivation(owner);
+          yield* admission.withPermit(
+            Effect.uninterruptible(
+              Effect.gen(function* () {
+                const claimed = yield* claimWorkloadsInAdmission(prepared.selected);
+                claims = {
+                  _tag: "claimed",
+                  claimed,
+                  affected: prepared.selected,
+                };
+                return claimed;
+              }),
+            ),
+          );
+          const launched = yield* launchBackend(prepared.input, "current", prepared.selected).pipe(
+            Effect.exit,
+          );
+          if (Exit.isFailure(launched))
+            return {
+              _tag: "failed" as const,
+              cause: launched.cause,
+              cleanup: { _tag: "unproven" as const, cause: launched.cause },
+            } satisfies ActivationTerminalOutcome;
+          if (Predicate.isTagged(launched.value, "failed"))
+            return {
+              _tag: "failed" as const,
+              cause: launched.value.cause,
+              cleanup: launched.value.cleanup,
+            } satisfies ActivationTerminalOutcome;
+          yield* setReadySet(prepared.selected);
+          const activated = yield* runtime
+            .activate(owner.capability, prepared.input)
+            .pipe(Effect.exit);
+          if (Exit.isFailure(activated)) {
+            const rolledBack = yield* launched.value.rollback;
+            const cause = Predicate.isTagged(rolledBack, "unproven")
+              ? Cause.combine(activated.cause, rolledBack.cause)
+              : activated.cause;
+            return {
+              _tag: "failed" as const,
+              cause,
+              cleanup: rolledBack,
+            } satisfies ActivationTerminalOutcome;
+          }
+          yield* promoteActivationSet(prepared.selected, owner.capability, prepared.input.plan);
+          return {
+            _tag: "succeeded" as const,
+            value: { capability: owner.capability, endpoint: activated.value },
+          } satisfies ActivationTerminalOutcome;
+        });
         const fiber = Effect.uninterruptibleMask((restore) =>
           Effect.gen(function* () {
-            const acquired = yield* restore(execution.take(1)).pipe(Effect.exit);
-            if (Exit.isFailure(acquired)) {
+            const result = yield* restore(
+              execution.withPermit(
+                Effect.uninterruptibleMask((inner) =>
+                  Effect.gen(function* () {
+                    entered = true;
+                    const result = yield* inner(activation).pipe(Effect.exit);
+                    const outcome: ActivationTerminalOutcome = Exit.isSuccess(result)
+                      ? result.value
+                      : {
+                          _tag: "failed",
+                          cause: result.cause,
+                          cleanup: Predicate.isTagged(claims, "none")
+                            ? { _tag: "proven" }
+                            : { _tag: "unproven", cause: result.cause },
+                        };
+                    yield* settleActivationTerminal(owner, claims, outcome);
+                    return yield* Predicate.isTagged(outcome, "failed")
+                      ? Effect.failCause(outcome.cause)
+                      : Effect.succeed(outcome.value);
+                  }),
+                ),
+              ),
+            ).pipe(Effect.exit);
+            if (!entered && Exit.isFailure(result))
               yield* settleActivationTerminal(
                 owner,
                 { _tag: "none" },
-                {
-                  _tag: "failed",
-                  cause: acquired.cause,
-                  cleanup: { _tag: "proven" },
-                },
+                { _tag: "failed", cause: result.cause, cleanup: { _tag: "proven" } },
               );
-              return yield* Effect.failCause(acquired.cause);
-            }
-            return yield* Effect.ensuring(
-              Effect.gen(function* () {
-                const fence = yield* admission.withPermit(
-                  Effect.gen(function* () {
-                    const snapshot = yield* Ref.get(machine);
-                    return {
-                      ownerMatches: matchesActivationOwner(snapshot, owner),
-                      gate: activationGate(snapshot, options.stackId),
-                    };
-                  }),
-                );
-                if (!fence.ownerMatches) {
-                  const conflict = new StackLifecycleConflictError({
-                    stackId: options.stackId,
-                    message: Predicate.isTagged(owner, "endpoint")
-                      ? "Endpoint activation was superseded by a lifecycle transition"
-                      : "Lazy activation was superseded by a lifecycle transition",
-                  });
-                  yield* settleActivationTerminal(
-                    owner,
-                    { _tag: "none" },
-                    {
-                      _tag: "failed",
-                      cause: Cause.fail(conflict),
-                      cleanup: { _tag: "proven" },
-                    },
-                  );
-                  return yield* conflict;
-                }
-                if (Predicate.isTagged(fence.gate, "rejected")) {
-                  yield* settleActivationTerminal(
-                    owner,
-                    { _tag: "none" },
-                    {
-                      _tag: "failed",
-                      cause: Cause.fail(fence.gate.error),
-                      cleanup: { _tag: "proven" },
-                    },
-                  );
-                  return yield* fence.gate.error;
-                }
-                const prepared = yield* restore(prepareActivation(owner)).pipe(Effect.exit);
-                if (Exit.isFailure(prepared)) {
-                  yield* settleActivationTerminal(
-                    owner,
-                    { _tag: "none" },
-                    {
-                      _tag: "failed",
-                      cause: prepared.cause,
-                      cleanup: { _tag: "proven" },
-                    },
-                  );
-                  return yield* Effect.failCause(prepared.cause);
-                }
-                const claimed = yield* claimWorkloads(prepared.value.selected).pipe(Effect.exit);
-                if (Exit.isFailure(claimed)) {
-                  yield* settleActivationTerminal(
-                    owner,
-                    { _tag: "none" },
-                    {
-                      _tag: "failed",
-                      cause: claimed.cause,
-                      cleanup: { _tag: "unproven", cause: claimed.cause },
-                    },
-                  );
-                  return yield* Effect.failCause(claimed.cause);
-                }
-                const claims: ActivationClaims = {
-                  _tag: "claimed",
-                  claimed: claimed.value,
-                  affected: prepared.value.selected,
-                };
-                const attempt = yield* restore(
-                  Effect.gen(function* () {
-                    const launched = yield* launchBackend(
-                      prepared.value.input,
-                      "current",
-                      prepared.value.selected,
-                    ).pipe(Effect.exit);
-                    if (Exit.isFailure(launched))
-                      return {
-                        _tag: "failed" as const,
-                        cause: launched.cause,
-                        cleanup: { _tag: "unproven" as const, cause: launched.cause },
-                      } satisfies ActivationTerminalOutcome;
-                    if (Predicate.isTagged(launched.value, "failed"))
-                      return {
-                        _tag: "failed" as const,
-                        cause: launched.value.cause,
-                        cleanup: launched.value.cleanup,
-                      } satisfies ActivationTerminalOutcome;
-                    yield* setReadySet(prepared.value.selected);
-                    const activated = yield* runtime
-                      .activate(owner.capability, prepared.value.input)
-                      .pipe(Effect.exit);
-                    if (Exit.isFailure(activated)) {
-                      const rolledBack = yield* launched.value.rollback;
-                      const cause = Predicate.isTagged(rolledBack, "unproven")
-                        ? Cause.combine(activated.cause, rolledBack.cause)
-                        : activated.cause;
-                      return {
-                        _tag: "failed" as const,
-                        cause,
-                        cleanup: rolledBack,
-                      } satisfies ActivationTerminalOutcome;
-                    }
-                    yield* promoteActivationSet(
-                      prepared.value.selected,
-                      owner.capability,
-                      prepared.value.input.plan,
-                    );
-                    return {
-                      _tag: "succeeded" as const,
-                      value: { capability: owner.capability, endpoint: activated.value },
-                    } satisfies ActivationTerminalOutcome;
-                  }),
-                ).pipe(
-                  Effect.onExit((result) =>
-                    settleActivationTerminal(
-                      owner,
-                      claims,
-                      Exit.isSuccess(result)
-                        ? result.value
-                        : {
-                            _tag: "failed",
-                            cause: result.cause,
-                            cleanup: { _tag: "unproven", cause: result.cause },
-                          },
-                    ),
-                  ),
-                  Effect.exit,
-                );
-                if (Exit.isFailure(attempt)) return yield* Effect.failCause(attempt.cause);
-                if (Predicate.isTagged(attempt.value, "failed"))
-                  return yield* Effect.failCause(attempt.value.cause);
-                return attempt.value.value;
-              }),
-              execution.release(1),
-            );
+            return yield* joinExit(result);
           }),
         );
         const ownerFiber = yield* FiberSet.run(ownedFibers, fiber, { startImmediately: true });
@@ -1251,30 +1207,40 @@ export const makeSupervisor = (
         const token = yield* admission.withPermit(
           Effect.uninterruptible(
             Effect.gen(function* () {
-              const endpoint = yield* Deferred.make<EndpointExit, never>();
-              const activation = yield* Deferred.make<ActivationExit, never>();
               const decision = admitActivation(
                 yield* Ref.get(machine),
                 capability,
                 options.stackId,
-                endpoint,
-                activation,
-                Symbol("activation"),
               );
               if (Predicate.isTagged(decision, "rejected")) return yield* decision.error;
               if (Predicate.isTagged(decision, "respond")) return decision.token;
-              yield* applyTransitionInAdmission(decision.snapshot);
-              yield* runActivationOwner(decision.owner);
-              return Predicate.isTagged(decision, "endpoint-owner")
-                ? ({
-                    _tag: "endpoint",
-                    capability,
-                    result: decision.owner.endpoint,
-                  } satisfies ActivationToken)
-                : ({
-                    _tag: "deferred",
-                    result: decision.owner.completion,
-                  } satisfies ActivationToken);
+              if (Predicate.isTagged(decision, "endpoint-owner")) {
+                const endpoint = yield* Deferred.make<EndpointExit, never>();
+                const owner: ActivationOwner = {
+                  _tag: "endpoint",
+                  capability: decision.capability,
+                  endpoint,
+                  priorRoot: decision.priorRoot,
+                };
+                yield* applyTransitionInAdmission(decision.transition(endpoint));
+                yield* runActivationOwner(owner);
+                return {
+                  _tag: "endpoint",
+                  capability,
+                  result: endpoint,
+                } satisfies ActivationToken;
+              }
+              const activation = yield* Deferred.make<ActivationExit, never>();
+              const owner: ActivationOwner = {
+                _tag: "activation",
+                capability: decision.capability,
+                completion: activation,
+              };
+              yield* applyTransitionInAdmission(
+                decision.transition(Symbol("activation"), activation),
+              );
+              yield* runActivationOwner(owner);
+              return { _tag: "deferred", result: activation } satisfies ActivationToken;
             }),
           ),
         );
