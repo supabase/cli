@@ -1067,6 +1067,51 @@ describe("Supervisor composition", () => {
       ),
   );
 
+  it.live("retries lazy activation after a preclaim state read failure", () =>
+    run(
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        yield* fixture.supervisor.start({
+          config: { capabilities: { functions: { activation: "lazy" } } },
+        });
+        const failRead = yield* Ref.make(false);
+        const stateStore = {
+          ...fixture.store,
+          read: (stackId: string) =>
+            Effect.gen(function* () {
+              if (yield* Ref.getAndSet(failRead, false))
+                return yield* new StackStateInvalidError({
+                  message: "transient activation state read failure",
+                });
+              return yield* fixture.store.read(stackId);
+            }),
+        };
+        const successor = yield* makeSupervisor({
+          stackId: fixture.id,
+          ownerSessionId: "successor-session",
+          stateStore,
+          context: fixture.context,
+          runtime: fixture.runtime,
+        });
+        yield* successor.start();
+        const before = yield* Ref.get(fixture.resources);
+        yield* Ref.set(failRead, true);
+        const failed = yield* successor
+          .activate("functions")
+          .pipe(Effect.timeout("5 seconds"), Effect.exit);
+        expect(Exit.isFailure(failed)).toBe(true);
+        expect(errorOf(failed)).toBeInstanceOf(StackStateInvalidError);
+        expect(errorOf(failed)?.message).toBe("transient activation state read failure");
+        expect(yield* Ref.get(fixture.resources)).toEqual(before);
+        const retry = yield* successor.activate("functions").pipe(Effect.timeout("5 seconds"));
+        expect(retry.endpoint).toEqual({ host: "127.0.0.1", port: 9999 });
+        expect(
+          (yield* successor.status).capabilities.find(({ name }) => name === "functions")?.state,
+        ).toBe("ready");
+      }),
+    ),
+  );
+
   it.live("shares the original workload start failure with concurrent dependency callers", () =>
     run(
       Effect.gen(function* () {
@@ -1919,7 +1964,12 @@ describe("Supervisor composition", () => {
         if (tracker === undefined) return yield* Effect.die("gateway activity was not installed");
         yield* tracker.track("rest", fixture.supervisor.activate("rest"));
         yield* TestClock.adjust("1 second");
-        yield* Deferred.await(workloadStopStarted);
+        yield* Deferred.await(workloadStopStarted).pipe(
+          Effect.timeoutOrElse({
+            duration: "5 seconds",
+            orElse: () => Effect.die("workload stop did not start"),
+          }),
+        );
         yield* Deferred.await(logWritten);
         const messages = yield* Ref.get(logRecords);
         expect(messages).toEqual(
@@ -3225,6 +3275,49 @@ describe("Supervisor composition", () => {
         expect(afterStop.running).toBe(false);
         expect(afterStop.entries).toHaveLength(2);
         expect(afterStop.entries.filter(({ message }) => message === "stopped")).toHaveLength(1);
+      }),
+    ),
+  );
+
+  it.live("settles stop when the owner scope closes during workload cleanup", () =>
+    run(
+      Effect.gen(function* () {
+        const ownerScope = yield* Scope.make();
+        const workloadStopStarted = yield* Deferred.make<void>();
+        const workloadStopGate = yield* Deferred.make<void>();
+        const fixture = yield* makeFixture({
+          supervisorScope: ownerScope,
+          workloadStopStarted,
+          workloadStopGate,
+        });
+        yield* fixture.supervisor.start({
+          config: { capabilities: { rest: { activation: "eager" } } },
+        });
+        const stopping = yield* Effect.forkChild(fixture.supervisor.maintenanceHandlers.stop, {
+          startImmediately: true,
+        });
+        yield* Deferred.await(workloadStopStarted);
+        yield* Scope.close(ownerScope, Exit.void).pipe(
+          Effect.timeoutOrElse({
+            duration: "5 seconds",
+            orElse: () => Effect.die("owner scope did not close"),
+          }),
+        );
+        const result = yield* Fiber.await(stopping).pipe(
+          Effect.timeoutOrElse({
+            duration: "5 seconds",
+            orElse: () => Effect.die("stop remained pending after owner scope close"),
+          }),
+        );
+        expect(Exit.isFailure(result)).toBe(true);
+        const status = yield* fixture.supervisor.status;
+        expect(status.lifecycle).toBe("stopping");
+        expect(status.recovery).toMatchObject({
+          operation: "stop",
+          message: expect.any(String),
+        });
+        expect(status.recovery?.message.length).toBeGreaterThan(0);
+        expect(status.capabilities.find(({ name }) => name === "rest")?.state).toBe("failed");
       }),
     ),
   );
