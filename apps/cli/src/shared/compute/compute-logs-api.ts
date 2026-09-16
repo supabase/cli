@@ -159,8 +159,7 @@ export const fetchComputeLogs = Effect.fnUntraced(function* (
   if (response.status === 404) {
     return yield* new ComputeUnavailableError({
       detail: `Logs are not available for project ${projectRef}.`,
-      suggestion:
-        "Compute is in private alpha. Ask in the Supabase dashboard to have this project enrolled.",
+      suggestion: "Compute is in private alpha. Stay tuned for the public alpha coming soon.",
     });
   }
   if (response.status !== 200) {

@@ -11,6 +11,7 @@ import {
 import {
   InvalidComputeNameError,
   ComputeNotDeployedError,
+  ComputeUnavailableError,
 } from "../../../../shared/compute/compute.errors.ts";
 import { ComputeEnvNotSupportedError } from "../compute.errors.ts";
 import { computeStatus } from "./status.handler.ts";
@@ -276,6 +277,37 @@ describe("compute status", () => {
         expect(error).toBeInstanceOf(ComputeNotDeployedError);
         const suggestion = error instanceof ComputeNotDeployedError ? error.suggestion : "";
         expect(suggestion).toContain("supabase compute push api");
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live("names the alpha, not an undeployed compute, when the project is not enrolled", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer } = setupCompute({
+        workdir: repo.dir,
+        routes: {
+          [getRoute]: {
+            status: 404,
+            body: {
+              error: {
+                code: "not_found.compute.not_enabled",
+                message: "Compute is not available for this project",
+              },
+            },
+          },
+        },
+      });
+
+      return yield* Effect.gen(function* () {
+        const error = yield* computeStatus({
+          name: "api",
+          projectRef: Option.none(),
+        }).pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(ComputeUnavailableError);
+        expect(error).not.toBeInstanceOf(ComputeNotDeployedError);
+        expect((error as ComputeUnavailableError).suggestion).toContain("private alpha");
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
