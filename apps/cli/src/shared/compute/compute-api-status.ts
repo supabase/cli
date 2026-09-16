@@ -1,6 +1,7 @@
 import { markSupabaseApiInputErrorAsUserInput, SupabaseApiInputError } from "@supabase/api/effect";
 import { Effect, Schema } from "effect";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
+import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import { CLI_UPGRADE_GUIDE_URL } from "../cli/version.ts";
 import { ComputeApiNetworkError, ComputeApiUnexpectedStatusError } from "./compute.errors.ts";
 
@@ -39,15 +40,22 @@ export function mapRequestError(operation: string) {
   };
 }
 
-export const unexpectedStatus = Effect.fnUntraced(function* (options: {
-  readonly operation: string;
-  readonly status: number;
-  readonly body: string;
-}) {
-  const trimmed = options.body.trim();
+/**
+ * The response body as text, empty when it cannot be read. Every caller wants it for an error
+ * message, where a failed read is not worth a second failure of its own.
+ */
+export const bodyText = (response: HttpClientResponse.HttpClientResponse) =>
+  response.text.pipe(Effect.orElseSucceed(() => ""));
+
+/** Fails with the status the response carries, quoting whatever body came with it. */
+export const unexpectedStatus = Effect.fnUntraced(function* (
+  operation: string,
+  response: HttpClientResponse.HttpClientResponse,
+) {
+  const trimmed = (yield* bodyText(response)).trim();
   return yield* new ComputeApiUnexpectedStatusError({
-    status: options.status,
-    detail: `The Compute API answered ${options.status} while trying to ${options.operation}${
+    status: response.status,
+    detail: `The Compute API answered ${response.status} while trying to ${operation}${
       trimmed === "" ? "" : `: ${trimmed}`
     }.`,
     suggestion: "Retry shortly; if it persists, report it with `supabase issue`.",
@@ -69,4 +77,15 @@ export const decodeBody = <A, I>(
           suggestion: `Update the CLI, then retry: ${CLI_UPGRADE_GUIDE_URL}`,
         }),
     ),
+  );
+
+/** The response's JSON body decoded against `schema`, the shape every 2xx read here needs. */
+export const decodeJsonBody = <A, I>(
+  schema: Schema.Codec<A, I>,
+  operation: string,
+  response: HttpClientResponse.HttpClientResponse,
+) =>
+  response.json.pipe(
+    Effect.mapError(mapRequestError(operation)),
+    Effect.flatMap((body) => decodeBody(schema, operation, body, response.status)),
   );
