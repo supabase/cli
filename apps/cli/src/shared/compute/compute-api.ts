@@ -9,7 +9,6 @@ import {
 import { Effect, Option, Schedule, Schema } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import { CLI_UPGRADE_GUIDE_URL } from "../cli/version.ts";
 import { decodeBody, mapRequestError, unexpectedStatus } from "./compute-api-status.ts";
 import {
   ComputeBuildTimeoutError,
@@ -117,8 +116,11 @@ const NotFoundBody = Schema.Struct({
  */
 const ROUTE_NOT_FOUND_MESSAGE = /^Cannot [A-Z]+ \//;
 
-/** The CLI-side fix for a route the API no longer serves. */
-const outdatedClientSuggestion = `This CLI build is out of step with the Management API. Update it: ${CLI_UPGRADE_GUIDE_URL}`;
+/**
+ * Compute is an allow-listed alpha, so a route the API does not serve is nobody's to fix locally:
+ * neither a newer CLI nor enrolment puts the route back. Reporting it is the only move.
+ */
+const unservedRouteSuggestion = "Report it with `supabase issue`, including the route named above.";
 
 const parse404 = (body: string) =>
   Schema.decodeEffect(Schema.fromJsonString(NotFoundBody))(body).pipe(Effect.option);
@@ -138,7 +140,7 @@ const unroutedPath = (
 const routeNotFound = (projectRef: string, route: string) =>
   new ComputeRouteNotFoundError({
     detail: `The Management API does not serve ${route}, so this CLI cannot reach compute for project ${projectRef}.`,
-    suggestion: outdatedClientSuggestion,
+    suggestion: unservedRouteSuggestion,
   });
 
 /**

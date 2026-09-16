@@ -1085,7 +1085,7 @@ describe("compute push", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("blames the CLI, not the project, when the API has no such route", () =>
+  it.live("names the unserved route instead of the project when the API has no such route", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({

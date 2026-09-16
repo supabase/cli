@@ -381,7 +381,7 @@ describe("compute list", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("blames the CLI, not the project, when the API has no such route", () =>
+  it.live("names the unserved route instead of the project when the API has no such route", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({
@@ -407,7 +407,7 @@ describe("compute list", () => {
         expect((error as ComputeRouteNotFoundError).detail).toContain(
           `GET /v2/projects/${COMPUTE_PROJECT_REF}/compute`,
         );
-        expect((error as ComputeRouteNotFoundError).suggestion).toContain("Update it");
+        expect((error as ComputeRouteNotFoundError).suggestion).toContain("supabase issue");
         expect((error as ComputeRouteNotFoundError).suggestion).not.toContain("supabase link");
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),

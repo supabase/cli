@@ -59,7 +59,6 @@ export const CliSuggestionType = {
   UpgradePlan: "upgrade_plan",
   RerunDebug: "rerun_debug",
   OpenDashboard: "open_dashboard",
-  UpdateCli: "update_cli",
   None: "none",
 } as const;
 
@@ -366,14 +365,6 @@ export const actionability = {
     error_category: CliErrorCategory.ApiStatus,
     has_suggestion: false,
     suggestion_type: CliSuggestionType.None,
-  },
-  // There is no self-update command, so the remediation is a link rather than an invocation —
-  // hence a type of its own instead of `RunCommand`.
-  updateCli: {
-    error_kind: CliErrorKind.ExternalService,
-    error_category: CliErrorCategory.ApiStatus,
-    has_suggestion: true,
-    suggestion_type: CliSuggestionType.UpdateCli,
   },
   cancelled: {
     error_kind: CliErrorKind.UserCancelled,
