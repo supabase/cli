@@ -1,7 +1,19 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option, PlatformError, Sink, Stdio, Stream } from "effect";
+import {
+  Cause,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  PlatformError,
+  Schema,
+  Sink,
+  Stdio,
+  Stream,
+} from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
@@ -41,8 +53,10 @@ import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { DbConfigResolver } from "../../command-internal/db-config.service.ts";
 import { DbConnection, type DbSession } from "../../command-internal/db-connection.service.ts";
 import { DbExecError } from "../../command-internal/db-connection.errors.ts";
+import { DbPullMigrationConflictError } from "../../command-internal/db-pull-run.errors.ts";
 import { DockerRun } from "../../command-internal/docker-run.service.ts";
 import { EdgeRuntimeScript } from "../../command-internal/edge-runtime-script.service.ts";
+import { MigrationFetchWriteError } from "../migration/fetch/fetch.errors.ts";
 import { PgDeltaSslProbe } from "../../command-internal/pgdelta-ssl-probe.service.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { PgDeltaEngine, PgDeltaEngineError } from "../db/shared/pgdelta-engine.service.ts";
@@ -75,47 +89,84 @@ const BRANCH_BY_NAME = {
   with_data: false,
 };
 
-function configPath(): string {
-  return join(tempRoot.current, "supabase", "config.toml");
-}
+const projectPath = (...segments: ReadonlyArray<string>) =>
+  Effect.map(Path.Path, (path) => path.join(tempRoot.current, ...segments));
 
-function migrationsDir(): string {
-  return join(tempRoot.current, "supabase", "migrations");
-}
+const configPath = projectPath("supabase", "config.toml");
+const migrationsDir = projectPath("supabase", "migrations");
+
+const readTextFile = (filePath: string) =>
+  Effect.flatMap(FileSystem.FileSystem, (fs) => fs.readFileString(filePath));
+
+const readConfigFile = Effect.flatMap(configPath, readTextFile);
+
+const projectFileExists = (...segments: ReadonlyArray<string>) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    return yield* fs.exists(yield* projectPath(...segments));
+  });
+
+const listMigrations = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  return yield* fs.readDirectory(yield* migrationsDir);
+});
+
+/** Writes `supabase/config.toml` verbatim, without the pg-delta preamble `writeConfig` adds. */
+const writeConfigFile = (toml: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    yield* fs.makeDirectory(yield* projectPath("supabase"), { recursive: true });
+    yield* fs.writeFileString(yield* configPath, toml);
+  });
 
 /** Writes a minimal, schema-valid `supabase/config.toml` with pg-delta forced on
  *  (so every db step exercises the fully-mocked `PgDeltaEngine`, never the
  *  migra/edge-runtime path or the pg_dump initial-pull seed). */
-function writeConfig(extraToml = ""): string {
-  const dir = join(tempRoot.current, "supabase");
-  mkdirSync(dir, { recursive: true });
-  const path = configPath();
-  writeFileSync(
-    path,
+const writeConfig = (extraToml = "") =>
+  writeConfigFile(
     `project_id = "${VALID_REF}"\n\n[experimental.pgdelta]\nenabled = true\n${extraToml}`,
   );
-  return path;
-}
 
 /** Seeds a local migration file whose basename `loadLocalVersions` parses
  *  back into `version` — content is irrelevant to every mocked collaborator here. */
-function seedLocalMigration(
-  version: string,
-  name = "local",
-  sql = "create table local ();\n",
-): string {
-  mkdirSync(migrationsDir(), { recursive: true });
-  const path = join(migrationsDir(), `${version}_${name}.sql`);
-  writeFileSync(path, sql);
-  return path;
-}
+const seedLocalMigration = (version: string, name = "local", sql = "create table local ();\n") =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const dir = yield* migrationsDir;
+    yield* fs.makeDirectory(dir, { recursive: true });
+    const filePath = yield* projectPath("supabase", "migrations", `${version}_${name}.sql`);
+    yield* fs.writeFileString(filePath, sql);
+    return filePath;
+  });
 
 /** Writes `supabase/.env`, backing `env(VAR)` resolution. */
-function writeProjectEnv(dotenv: string): void {
-  const dir = join(tempRoot.current, "supabase");
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, ".env"), dotenv);
-}
+const writeProjectEnv = (dotenv: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    yield* fs.makeDirectory(yield* projectPath("supabase"), { recursive: true });
+    yield* fs.writeFileString(yield* projectPath("supabase", ".env"), dotenv);
+  });
+
+const jsonEnvelope = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown));
+
+const dbStepFailureEnvelope = Schema.fromJsonString(
+  Schema.Struct({
+    steps: Schema.Struct({
+      db: Schema.Struct({
+        status: Schema.String,
+        failure: Schema.Struct({ code: Schema.String, suggestion: Schema.String }),
+      }),
+    }),
+  }),
+);
+
+const dbStepWrittenEnvelope = Schema.fromJsonString(
+  Schema.Struct({
+    steps: Schema.Struct({
+      db: Schema.Struct({ status: Schema.String, written: Schema.Array(Schema.String) }),
+    }),
+  }),
+);
 
 /** The rendered step row for `step` in `renderPullSummary`'s output, with
  *  internal padding collapsed to single spaces so assertions don't hardcode
@@ -510,7 +561,7 @@ function mockCapturingStdio(args: ReadonlyArray<string>) {
  */
 function withConfirmSideEffect(
   base: Layer.Layer<Output>,
-  onConfirm: () => void,
+  onConfirm: Effect.Effect<void, PlatformError.PlatformError>,
 ): Layer.Layer<Output> {
   return Layer.effect(
     Output,
@@ -518,8 +569,10 @@ function withConfirmSideEffect(
       const inner = yield* Output;
       return {
         ...inner,
+        // `promptConfirm` has no error channel to carry a fixture write failure, and a
+        // fixture that cannot write is a broken test rather than a pull disposition.
         promptConfirm: (message: string, promptOpts?: { defaultValue?: boolean }) =>
-          Effect.sync(onConfirm).pipe(Effect.andThen(inner.promptConfirm(message, promptOpts))),
+          onConfirm.pipe(Effect.orDie, Effect.andThen(inner.promptConfirm(message, promptOpts))),
       };
     }),
   ).pipe(Layer.provide(base));
@@ -544,7 +597,7 @@ interface SetupOpts {
   /** Runs as a side effect of the orchestrator's "Proceed with pull?" confirmation, before it
    *  resolves — simulates a concurrent edit to `supabase/config.toml` while that prompt is on
    *  screen (text-mode, interactive TTY only). */
-  readonly confirmSideEffect?: () => void;
+  readonly confirmSideEffect?: Effect.Effect<void, PlatformError.PlatformError>;
   /** Overrides `cliSettings.workdir` — defaults to the temp project root. */
   readonly workdir?: string;
   /** Overrides the ambient `--experimental`/`SUPABASE_EXPERIMENTAL` gate — defaults to `false`. */
@@ -659,7 +712,6 @@ describe("pull integration", () => {
   it.live(
     "bootstraps a fresh checkout: migration history auto-runs, config/functions/db all report changed",
     () => {
-      writeConfig("[api]\nmax_rows = 500\n");
       const { layer, out, telemetry, analytics } = setup({
         yes: true,
         api: { functionSlugs: ["hello"] },
@@ -672,14 +724,15 @@ describe("pull integration", () => {
         }),
       });
       return Effect.gen(function* () {
+        yield* writeConfig("[api]\nmax_rows = 500\n");
         yield* runPull(pullFlags());
 
-        expect(readFileSync(configPath(), "utf8")).toContain("max_rows = 1000");
-        expect(existsSync(join(migrationsDir(), "20260101000000_init.sql"))).toBe(true);
-        expect(readdirSync(migrationsDir()).length).toBeGreaterThan(1);
-        expect(
-          existsSync(join(tempRoot.current, "supabase", "functions", "hello", "index.ts")),
-        ).toBe(true);
+        expect(yield* readConfigFile).toContain("max_rows = 1000");
+        expect(yield* projectFileExists("supabase", "migrations", "20260101000000_init.sql")).toBe(
+          true,
+        );
+        expect((yield* listMigrations).length).toBeGreaterThan(1);
+        expect(yield* projectFileExists("supabase", "functions", "hello", "index.ts")).toBe(true);
 
         expect(stepLine(out!.stdoutText, "config")).toContain("changed");
         expect(stepLine(out!.stdoutText, "migration_history")).toContain("changed");
@@ -696,7 +749,6 @@ describe("pull integration", () => {
   it.live(
     "bootstraps a fresh checkout with --output-format json: exactly one JSON object with all four step keys",
     () => {
-      writeConfig("[api]\nmax_rows = 500\n");
       const { layer, capturingStdio, dbConfig, linkedProjectCache } = setup({
         format: "json",
         yes: true,
@@ -710,29 +762,23 @@ describe("pull integration", () => {
         }),
       });
       return Effect.gen(function* () {
+        yield* writeConfig("[api]\nmax_rows = 500\n");
         yield* runPull(pullFlags());
 
         expect(capturingStdio!.stdout).toHaveLength(1);
-        const payload = JSON.parse(capturingStdio!.stdout[0]!) as Record<string, unknown>;
-        const steps = payload["steps"] as Record<string, unknown>;
-        expect(Object.keys(steps).sort()).toEqual([
-          "config",
-          "db",
-          "functions",
-          "migration_history",
-        ]);
-        expect((steps["config"] as Record<string, unknown>)["status"]).toBe("changed");
-        expect((steps["migration_history"] as Record<string, unknown>)["status"]).toBe("changed");
-        expect((steps["db"] as Record<string, unknown>)["status"]).toBe("changed");
-        expect((steps["functions"] as Record<string, unknown>)["status"]).toBe("changed");
+        const payload = yield* Schema.decodeEffect(jsonEnvelope)(capturingStdio!.stdout[0]!);
+        expect(payload["steps"]).toEqual({
+          config: expect.objectContaining({ status: "changed" }),
+          migration_history: expect.objectContaining({ status: "changed" }),
+          db: expect.objectContaining({
+            status: "changed",
+            detail: expect.objectContaining({ remote_history_updated: true }),
+          }),
+          functions: expect.objectContaining({ status: "changed" }),
+        });
         expect(payload["wrote"]).toBe(true);
 
         expect(dbConfig.historyUpserts.length).toBeGreaterThan(0);
-        const dbDetail = (steps["db"] as Record<string, unknown>)["detail"] as Record<
-          string,
-          unknown
-        >;
-        expect(dbDetail["remote_history_updated"]).toBe(true);
 
         expect(linkedProjectCache.cached).toBe(true);
         expect(linkedProjectCache.cachedRef).toBe(VALID_REF);
@@ -746,10 +792,10 @@ describe("pull integration", () => {
       // Every other managed field sits at its schema default, so `auth.site_url` is the only
       // change in the changeset — and, being declared as `env(SITE_URL)`, it's skipped rather
       // than written, leaving `runPlan.hasWork` false even though a real (unwritable) diff exists.
-      writeConfig('[auth]\nsite_url = "env(SITE_URL)"\n');
-      writeProjectEnv("SITE_URL=https://local.example.com\n");
       const { layer, out } = setup({ yes: true });
       return Effect.gen(function* () {
+        yield* writeConfig('[auth]\nsite_url = "env(SITE_URL)"\n');
+        yield* writeProjectEnv("SITE_URL=https://local.example.com\n");
         yield* runPull(pullFlags());
 
         expect(out!.stdoutText).not.toContain("No config differences found.");
@@ -762,14 +808,14 @@ describe("pull integration", () => {
   it.live(
     "a branch-name --project-ref resolves exactly once: one branch lookup, one config GET, no picker prompt",
     () => {
-      writeConfig();
-      seedLocalMigration("20260101000000");
       const { layer, out, api } = setup({
         yes: true,
         remoteMigrations: [{ version: "20260101000000", name: "init", statements: ["select 1;"] }],
         diffOutcome: () => ({ changes: false }),
       });
       return Effect.gen(function* () {
+        yield* writeConfig();
+        yield* seedLocalMigration("20260101000000");
         yield* runPull(pullFlags({ projectRef: Option.some("staging") }));
 
         const branchLookups = api.requests.filter((request) => request.url.includes("/branches/"));
@@ -784,8 +830,6 @@ describe("pull integration", () => {
   it.live(
     "on an interactive TTY with real diffs, the confirmation prompt appears exactly once",
     () => {
-      writeConfig("[api]\nmax_rows = 500\n");
-      seedLocalMigration("20260101000000");
       const { layer, out } = setup({
         stdinIsTty: true,
         confirm: [true],
@@ -793,6 +837,8 @@ describe("pull integration", () => {
         diffOutcome: () => ({ changes: false }),
       });
       return Effect.gen(function* () {
+        yield* writeConfig("[api]\nmax_rows = 500\n");
+        yield* seedLocalMigration("20260101000000");
         yield* runPull(pullFlags());
 
         expect(out!.promptConfirmCalls).toHaveLength(1);
@@ -804,14 +850,6 @@ describe("pull integration", () => {
   it.live(
     "the single confirmation suppresses BOTH sub-step prompts, and both underlying writes still complete: db updates remote history, migration fetch overwrites the pre-existing file",
     () => {
-      writeConfig("[api]\nmax_rows = 500\n");
-      // Shares the remote row's exact version+name: `migration fetch`'s overwrite prompt only
-      // fires when `supabase/migrations` is non-empty, and this file is what gets clobbered.
-      const preExisting = seedLocalMigration(
-        "20260101000000",
-        "init",
-        "create table local_only ();\n",
-      );
       const { layer, out, dbConfig } = setup({
         stdinIsTty: true,
         confirm: [true],
@@ -830,6 +868,14 @@ describe("pull integration", () => {
         }),
       });
       return Effect.gen(function* () {
+        yield* writeConfig("[api]\nmax_rows = 500\n");
+        // Shares the remote row's exact version+name: `migration fetch`'s overwrite prompt only
+        // fires when `supabase/migrations` is non-empty, and this file is what gets clobbered.
+        const preExisting = yield* seedLocalMigration(
+          "20260101000000",
+          "init",
+          "create table local_only ();\n",
+        );
         // `--with-migration-history` over an already-populated directory is the other
         // condition (besides real db drift) that would make both sub-prompts reachable if
         // `assumeYes` didn't suppress them.
@@ -838,7 +884,7 @@ describe("pull integration", () => {
         expect(out!.promptConfirmCalls).toHaveLength(1);
         expect(out!.promptConfirmCalls[0]?.message).toBe("Proceed with pull?");
 
-        const rewritten = readFileSync(preExisting, "utf8");
+        const rewritten = yield* readTextFile(preExisting);
         expect(rewritten).toContain("create table remote_only");
         expect(rewritten).not.toContain("create table local_only");
 
@@ -850,15 +896,14 @@ describe("pull integration", () => {
   it.live("--dry-run writes nothing and reports every step planned/skipped", () => {
     const before =
       'project_id = "test"\n\n[experimental.pgdelta]\nenabled = true\n[api]\nmax_rows = 500\n';
-    mkdirSync(join(tempRoot.current, "supabase"), { recursive: true });
-    writeFileSync(configPath(), before);
     const { layer, out, api } = setup({ yes: true });
     return Effect.gen(function* () {
+      yield* writeConfigFile(before);
       const exit = yield* Effect.exit(runPull(pullFlags({ dryRun: true })));
       expect(Exit.isSuccess(exit)).toBe(true);
 
-      expect(readFileSync(configPath(), "utf8")).toBe(before);
-      expect(existsSync(migrationsDir())).toBe(false);
+      expect(yield* readConfigFile).toBe(before);
+      expect(yield* projectFileExists("supabase", "migrations")).toBe(false);
       expect(api.requests.some((request) => request.method !== "GET")).toBe(false);
 
       expect(stepLine(out!.stdoutText, "config")).toContain("planned");
@@ -871,13 +916,13 @@ describe("pull integration", () => {
   it.live(
     "a --dry-run --output-format json payload surfaces dirty_paths, even though the dry-run itself never runs the abort logic that would otherwise trip on them",
     () => {
-      writeConfig("[api]\nmax_rows = 500\n");
       const { layer, capturingStdio } = setup({ format: "json", yes: true, gitDirty: true });
       return Effect.gen(function* () {
+        yield* writeConfig("[api]\nmax_rows = 500\n");
         const exit = yield* Effect.exit(runPull(pullFlags({ dryRun: true })));
         expect(Exit.isSuccess(exit)).toBe(true);
 
-        const payload = JSON.parse(capturingStdio!.stdout[0]!) as Record<string, unknown>;
+        const payload = yield* Schema.decodeEffect(jsonEnvelope)(capturingStdio!.stdout[0]!);
         expect(payload["dirty_paths"]).toEqual(["supabase/config.toml"]);
       }).pipe(Effect.provide(layer));
     },
@@ -886,8 +931,6 @@ describe("pull integration", () => {
   it.live(
     "a clean-tree run reports an empty dirty_paths array in the JSON payload, present on every disposition",
     () => {
-      writeConfig();
-      seedLocalMigration("20260101000000");
       const { layer, capturingStdio } = setup({
         format: "json",
         yes: true,
@@ -895,8 +938,10 @@ describe("pull integration", () => {
         diffOutcome: () => ({ changes: false }),
       });
       return Effect.gen(function* () {
+        yield* writeConfig();
+        yield* seedLocalMigration("20260101000000");
         yield* runPull(pullFlags());
-        const payload = JSON.parse(capturingStdio!.stdout[0]!) as Record<string, unknown>;
+        const payload = yield* Schema.decodeEffect(jsonEnvelope)(capturingStdio!.stdout[0]!);
         expect(payload["dirty_paths"]).toEqual([]);
       }).pipe(Effect.provide(layer));
     },
@@ -905,15 +950,15 @@ describe("pull integration", () => {
   it.live(
     "declining the confirmation writes nothing; migration history reports declined, db/functions report planned",
     () => {
-      writeConfig("[api]\nmax_rows = 500\n");
-      const before = readFileSync(configPath(), "utf8");
       const { layer, out } = setup({ stdinIsTty: true, confirm: [false] });
       return Effect.gen(function* () {
+        yield* writeConfig("[api]\nmax_rows = 500\n");
+        const before = yield* readConfigFile;
         const exit = yield* Effect.exit(runPull(pullFlags()));
         expect(Exit.isSuccess(exit)).toBe(true);
 
-        expect(readFileSync(configPath(), "utf8")).toBe(before);
-        expect(existsSync(migrationsDir())).toBe(false);
+        expect(yield* readConfigFile).toBe(before);
+        expect(yield* projectFileExists("supabase", "migrations")).toBe(false);
 
         expect(stepLine(out!.stdoutText, "config")).toContain("planned");
         expect(stepLine(out!.stdoutText, "migration_history")).toContain("skipped");
@@ -927,8 +972,6 @@ describe("pull integration", () => {
   it.live(
     "a functions-step failure still reports every other step, exits non-zero, with exactly one JSON envelope",
     () => {
-      writeConfig();
-      seedLocalMigration("20260101000000");
       const { layer, capturingStdio, processControl, telemetry, linkedProjectCache } = setup({
         format: "json",
         yes: true,
@@ -937,23 +980,19 @@ describe("pull integration", () => {
         diffOutcome: () => ({ changes: false }),
       });
       return Effect.gen(function* () {
+        yield* writeConfig();
+        yield* seedLocalMigration("20260101000000");
         yield* runPull(pullFlags());
 
         expect(capturingStdio!.stdout).toHaveLength(1);
-        const envelope = JSON.parse(capturingStdio!.stdout[0]!) as Record<string, unknown>;
+        const envelope = yield* Schema.decodeEffect(jsonEnvelope)(capturingStdio!.stdout[0]!);
         expect(envelope["_tag"]).toBe("Error");
-        const steps = envelope["steps"] as Record<string, unknown>;
-        expect((steps["config"] as Record<string, unknown>)["status"]).not.toBe("failed");
-        expect((steps["migration_history"] as Record<string, unknown>)["status"]).not.toBe(
-          "failed",
-        );
-        expect((steps["db"] as Record<string, unknown>)["status"]).not.toBe("failed");
-        expect((steps["functions"] as Record<string, unknown>)["status"]).toBe("failed");
-        const failure = (steps["functions"] as Record<string, unknown>)["failure"] as Record<
-          string,
-          unknown
-        >;
-        expect(String(failure["message"])).toContain("500");
+        expect(envelope["steps"]).toMatchObject({
+          config: { status: expect.not.stringMatching(/^failed$/) },
+          migration_history: { status: expect.not.stringMatching(/^failed$/) },
+          db: { status: expect.not.stringMatching(/^failed$/) },
+          functions: { status: "failed", failure: { message: expect.stringContaining("500") } },
+        });
         expect(processControl.exitCode).toBe(1);
 
         expect(linkedProjectCache.cached).toBe(true);
@@ -966,14 +1005,14 @@ describe("pull integration", () => {
   it.live(
     "a steady-state pull (no config drift, no schema drift, no functions) exits 0 with every step non-failed",
     () => {
-      writeConfig();
-      seedLocalMigration("20260101000000");
       const { layer, out } = setup({
         yes: true,
         remoteMigrations: [{ version: "20260101000000", name: "init", statements: ["select 1;"] }],
         diffOutcome: () => ({ changes: false }),
       });
       return Effect.gen(function* () {
+        yield* writeConfig();
+        yield* seedLocalMigration("20260101000000");
         const exit = yield* Effect.exit(runPull(pullFlags()));
         expect(Exit.isSuccess(exit)).toBe(true);
 
@@ -989,16 +1028,16 @@ describe("pull integration", () => {
   it.live(
     "--remote-label creates the named [remotes.*] block even on an otherwise zero-drift config",
     () => {
-      writeConfig();
-      seedLocalMigration("20260101000000");
       const { layer } = setup({
         yes: true,
         remoteMigrations: [{ version: "20260101000000", name: "init", statements: ["select 1;"] }],
         diffOutcome: () => ({ changes: false }),
       });
       return Effect.gen(function* () {
+        yield* writeConfig();
+        yield* seedLocalMigration("20260101000000");
         yield* runPull(pullFlags({ remoteLabel: Option.some("customname") }));
-        expect(readFileSync(configPath(), "utf8")).toContain("[remotes.customname]");
+        expect(yield* readConfigFile).toContain("[remotes.customname]");
       }).pipe(Effect.provide(layer));
     },
   );
@@ -1006,63 +1045,62 @@ describe("pull integration", () => {
   it.live(
     "an empty-string --remote-label is treated as not provided: no forced [remotes.*] block on an otherwise zero-drift config",
     () => {
-      writeConfig();
-      seedLocalMigration("20260101000000");
       const { layer, out } = setup({
         yes: true,
         remoteMigrations: [{ version: "20260101000000", name: "init", statements: ["select 1;"] }],
         diffOutcome: () => ({ changes: false }),
       });
       return Effect.gen(function* () {
+        yield* writeConfig();
+        yield* seedLocalMigration("20260101000000");
         yield* runPull(pullFlags({ remoteLabel: Option.some("") }));
         expect(stepLine(out!.stdoutText, "config")).toContain("unchanged");
-        expect(readFileSync(configPath(), "utf8")).not.toContain("[remotes.");
+        expect(yield* readConfigFile).not.toContain("[remotes.");
       }).pipe(Effect.provide(layer));
     },
   );
 
   describe("dirty supabase/config.toml", () => {
     it.live("interactive TTY: the prompt defaults to decline", () => {
-      writeConfig("[api]\nmax_rows = 500\n");
-      const before = readFileSync(configPath(), "utf8");
       const { layer, out } = setup({ stdinIsTty: true, confirm: [false], gitDirty: true });
       return Effect.gen(function* () {
+        yield* writeConfig("[api]\nmax_rows = 500\n");
+        const before = yield* readConfigFile;
         yield* runPull(pullFlags());
         expect(out!.promptConfirmCalls[0]?.opts?.defaultValue).toBe(false);
-        expect(readFileSync(configPath(), "utf8")).toBe(before);
+        expect(yield* readConfigFile).toBe(before);
       }).pipe(Effect.provide(layer));
     });
 
     it.live(
       "--yes on a dirty tree aborts with the uncommitted-changes error, no prompt shown",
       () => {
-        writeConfig("[api]\nmax_rows = 500\n");
-        const before = readFileSync(configPath(), "utf8");
         const { layer, out } = setup({ yes: true, gitDirty: true });
         return Effect.gen(function* () {
+          yield* writeConfig("[api]\nmax_rows = 500\n");
+          const before = yield* readConfigFile;
           const exit = yield* Effect.exit(runPull(pullFlags()));
           expect(Exit.isFailure(exit)).toBe(true);
-          const rendered = JSON.stringify(exit);
-          expect(rendered).toContain("PullUncommittedChangesError");
+          if (Exit.isFailure(exit)) {
+            expect(Cause.pretty(exit.cause)).toContain("PullUncommittedChangesError");
+          }
           expect(out!.promptConfirmCalls).toHaveLength(0);
-          expect(readFileSync(configPath(), "utf8")).toBe(before);
+          expect(yield* readConfigFile).toBe(before);
         }).pipe(Effect.provide(layer));
       },
     );
 
     it.live("--output-format json on a dirty tree aborts without --yes and without a TTY", () => {
-      writeConfig("[api]\nmax_rows = 500\n");
       const { layer, capturingStdio, processControl } = setup({
         format: "json",
         gitDirty: true,
       });
       return Effect.gen(function* () {
+        yield* writeConfig("[api]\nmax_rows = 500\n");
         yield* runPull(pullFlags());
         expect(capturingStdio!.stdout).toHaveLength(1);
-        const envelope = JSON.parse(capturingStdio!.stdout[0]!) as Record<string, unknown>;
-        expect((envelope["error"] as Record<string, unknown>)["code"]).toBe(
-          "PullUncommittedChangesError",
-        );
+        const envelope = yield* Schema.decodeEffect(jsonEnvelope)(capturingStdio!.stdout[0]!);
+        expect(envelope["error"]).toMatchObject({ code: "PullUncommittedChangesError" });
         expect(processControl.exitCode).toBe(1);
       }).pipe(Effect.provide(layer));
     });
@@ -1070,12 +1108,14 @@ describe("pull integration", () => {
     it.live(
       "a non-interactive text terminal (piped stdin) on a dirty tree aborts without prompting",
       () => {
-        writeConfig("[api]\nmax_rows = 500\n");
         const { layer, out } = setup({ stdinIsTty: false, gitDirty: true });
         return Effect.gen(function* () {
+          yield* writeConfig("[api]\nmax_rows = 500\n");
           const exit = yield* Effect.exit(runPull(pullFlags()));
           expect(Exit.isFailure(exit)).toBe(true);
-          expect(JSON.stringify(exit)).toContain("PullUncommittedChangesError");
+          if (Exit.isFailure(exit)) {
+            expect(Cause.pretty(exit.cause)).toContain("PullUncommittedChangesError");
+          }
           expect(out!.promptConfirmCalls).toHaveLength(0);
         }).pipe(Effect.provide(layer));
       },
@@ -1084,7 +1124,6 @@ describe("pull integration", () => {
     it.live(
       "--force proceeds and writes despite all three locations being dirty, never even checking git",
       () => {
-        writeConfig("[api]\nmax_rows = 500\n");
         const { layer, spawner } = setup({
           yes: true,
           gitDirty: true,
@@ -1092,20 +1131,21 @@ describe("pull integration", () => {
           gitDirtyFunctions: true,
         });
         return Effect.gen(function* () {
+          yield* writeConfig("[api]\nmax_rows = 500\n");
           yield* runPull(pullFlags({ force: true }));
-          expect(readFileSync(configPath(), "utf8")).toContain("max_rows = 1000");
+          expect(yield* readConfigFile).toContain("max_rows = 1000");
           expect(spawner.gitCalls).toHaveLength(0);
         }).pipe(Effect.provide(layer));
       },
     );
 
     it.live("a git spawn failure degrades to 'not dirty' rather than blocking the pull", () => {
-      writeConfig("[api]\nmax_rows = 500\n");
       const { layer } = setup({ yes: true, gitSpawnFails: true });
       return Effect.gen(function* () {
+        yield* writeConfig("[api]\nmax_rows = 500\n");
         const exit = yield* Effect.exit(runPull(pullFlags()));
         expect(Exit.isSuccess(exit)).toBe(true);
-        expect(readFileSync(configPath(), "utf8")).toContain("max_rows = 1000");
+        expect(yield* readConfigFile).toContain("max_rows = 1000");
       }).pipe(Effect.provide(layer));
     });
   });
@@ -1116,8 +1156,6 @@ describe("pull integration", () => {
     it.live(
       "already-populated, no --with-migration-history pending: still aborts without --force (the db step might still write there)",
       () => {
-        writeConfig();
-        seedLocalMigration("20260101000000");
         const { layer } = setup({
           yes: true,
           gitDirtyMigrations: true,
@@ -1127,9 +1165,13 @@ describe("pull integration", () => {
           diffOutcome: () => ({ changes: false }),
         });
         return Effect.gen(function* () {
+          yield* writeConfig();
+          yield* seedLocalMigration("20260101000000");
           const exit = yield* Effect.exit(runPull(pullFlags()));
           expect(Exit.isFailure(exit)).toBe(true);
-          expect(JSON.stringify(exit)).toContain("PullUncommittedChangesError");
+          if (Exit.isFailure(exit)) {
+            expect(Cause.pretty(exit.cause)).toContain("PullUncommittedChangesError");
+          }
         }).pipe(Effect.provide(layer));
       },
     );
@@ -1137,7 +1179,6 @@ describe("pull integration", () => {
     it.live(
       "a fresh checkout with migration-history bootstrap pending: also aborts without --force",
       () => {
-        writeConfig();
         const { layer } = setup({
           yes: true,
           gitDirtyMigrations: true,
@@ -1147,9 +1188,12 @@ describe("pull integration", () => {
           diffOutcome: () => ({ changes: false }),
         });
         return Effect.gen(function* () {
+          yield* writeConfig();
           const exit = yield* Effect.exit(runPull(pullFlags()));
           expect(Exit.isFailure(exit)).toBe(true);
-          expect(JSON.stringify(exit)).toContain("PullUncommittedChangesError");
+          if (Exit.isFailure(exit)) {
+            expect(Cause.pretty(exit.cause)).toContain("PullUncommittedChangesError");
+          }
         }).pipe(Effect.provide(layer));
       },
     );
@@ -1157,8 +1201,6 @@ describe("pull integration", () => {
     it.live(
       "interactive TTY: the prompt defaults to decline and the confirmation body names supabase/migrations",
       () => {
-        writeConfig();
-        seedLocalMigration("20260101000000");
         const { layer, out } = setup({
           stdinIsTty: true,
           confirm: [false],
@@ -1169,6 +1211,8 @@ describe("pull integration", () => {
           diffOutcome: () => ({ changes: false }),
         });
         return Effect.gen(function* () {
+          yield* writeConfig();
+          yield* seedLocalMigration("20260101000000");
           yield* runPull(pullFlags());
           expect(out!.promptConfirmCalls[0]?.opts?.defaultValue).toBe(false);
           expect(out!.stdoutText).toContain(
@@ -1183,8 +1227,6 @@ describe("pull integration", () => {
   // step always runs with no "does it have work" signal without calling the API first.
   describe("dirty supabase/functions", () => {
     it.live("aborts without --force, even with zero config/db drift", () => {
-      writeConfig();
-      seedLocalMigration("20260101000000");
       const { layer } = setup({
         yes: true,
         gitDirtyFunctions: true,
@@ -1192,17 +1234,19 @@ describe("pull integration", () => {
         diffOutcome: () => ({ changes: false }),
       });
       return Effect.gen(function* () {
+        yield* writeConfig();
+        yield* seedLocalMigration("20260101000000");
         const exit = yield* Effect.exit(runPull(pullFlags()));
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(JSON.stringify(exit)).toContain("PullUncommittedChangesError");
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("PullUncommittedChangesError");
+        }
       }).pipe(Effect.provide(layer));
     });
 
     it.live(
       "interactive TTY: the prompt defaults to decline and the confirmation body names supabase/functions",
       () => {
-        writeConfig();
-        seedLocalMigration("20260101000000");
         const { layer, out } = setup({
           stdinIsTty: true,
           confirm: [false],
@@ -1213,6 +1257,8 @@ describe("pull integration", () => {
           diffOutcome: () => ({ changes: false }),
         });
         return Effect.gen(function* () {
+          yield* writeConfig();
+          yield* seedLocalMigration("20260101000000");
           yield* runPull(pullFlags());
           expect(out!.promptConfirmCalls[0]?.opts?.defaultValue).toBe(false);
           expect(out!.stdoutText).toContain(
@@ -1227,8 +1273,6 @@ describe("pull integration", () => {
     it.live(
       "config AND functions dirty together: the confirmation body names both, config before functions",
       () => {
-        writeConfig("[api]\nmax_rows = 500\n");
-        seedLocalMigration("20260101000000");
         const { layer, out } = setup({
           stdinIsTty: true,
           confirm: [false],
@@ -1240,6 +1284,8 @@ describe("pull integration", () => {
           diffOutcome: () => ({ changes: false }),
         });
         return Effect.gen(function* () {
+          yield* writeConfig("[api]\nmax_rows = 500\n");
+          yield* seedLocalMigration("20260101000000");
           yield* runPull(pullFlags());
           expect(out!.stdoutText).toContain(
             "supabase/config.toml and supabase/functions have uncommitted or untracked changes. Commit or stash them (-u for untracked), or rerun with --force.",
@@ -1251,8 +1297,6 @@ describe("pull integration", () => {
     it.live(
       "all three dirty at once: the abort error names all three, in config, migrations, functions order",
       () => {
-        writeConfig("[api]\nmax_rows = 500\n");
-        seedLocalMigration("20260101000000");
         const { layer } = setup({
           yes: true,
           gitDirty: true,
@@ -1264,11 +1308,15 @@ describe("pull integration", () => {
           diffOutcome: () => ({ changes: false }),
         });
         return Effect.gen(function* () {
+          yield* writeConfig("[api]\nmax_rows = 500\n");
+          yield* seedLocalMigration("20260101000000");
           const exit = yield* Effect.exit(runPull(pullFlags()));
           expect(Exit.isFailure(exit)).toBe(true);
-          expect(JSON.stringify(exit)).toContain(
-            "supabase/config.toml, supabase/migrations, and supabase/functions have uncommitted or untracked changes",
-          );
+          if (Exit.isFailure(exit)) {
+            expect(Cause.pretty(exit.cause)).toContain(
+              "supabase/config.toml, supabase/migrations, and supabase/functions have uncommitted or untracked changes",
+            );
+          }
         }).pipe(Effect.provide(layer));
       },
     );
@@ -1277,8 +1325,6 @@ describe("pull integration", () => {
   it.live(
     "the db step's shadow setup observes the config step's own db.major_version write, not the stale pre-pull value",
     () => {
-      writeConfig("[db]\nmajor_version = 14\n");
-      seedLocalMigration("20260101000000");
       const { layer, spawner } = setup({
         yes: true,
         api: {
@@ -1296,9 +1342,11 @@ describe("pull integration", () => {
         diffOutcome: () => ({ changes: false }),
       });
       return Effect.gen(function* () {
+        yield* writeConfig("[db]\nmajor_version = 14\n");
+        yield* seedLocalMigration("20260101000000");
         yield* runPull(pullFlags());
 
-        expect(readFileSync(configPath(), "utf8")).toContain("major_version = 15");
+        expect(yield* readConfigFile).toContain("major_version = 15");
         const createCalls = spawner.shadowSpawned.filter((call) => call.args[0] === "create");
         expect(createCalls.length).toBeGreaterThan(0);
         const createArgs = createCalls.flatMap((call) => call.args);
@@ -1311,8 +1359,6 @@ describe("pull integration", () => {
   it.live(
     "the db step stays in migration mode with the ambient --experimental gate on, never taking the declarative export path",
     () => {
-      writeConfig();
-      seedLocalMigration("20260101000000");
       const { layer, out } = setup({
         yes: true,
         experimental: true,
@@ -1327,11 +1373,13 @@ describe("pull integration", () => {
         }),
       });
       return Effect.gen(function* () {
+        yield* writeConfig();
+        yield* seedLocalMigration("20260101000000");
         const exit = yield* Effect.exit(runPull(pullFlags()));
         expect(Exit.isSuccess(exit)).toBe(true);
 
-        expect(readdirSync(migrationsDir()).length).toBeGreaterThan(1);
-        expect(existsSync(join(tempRoot.current, "supabase", "schemas"))).toBe(false);
+        expect((yield* listMigrations).length).toBeGreaterThan(1);
+        expect(yield* projectFileExists("supabase", "schemas")).toBe(false);
         expect(stepLine(out!.stdoutText, "db")).toContain("changed");
       }).pipe(Effect.provide(layer));
     },
@@ -1340,16 +1388,18 @@ describe("pull integration", () => {
   it.live(
     "the migration-history step's remote read happens before the db step's own remote read",
     () => {
-      writeConfig();
       const { layer, callOrder } = setup({
         yes: true,
         remoteMigrations: [{ version: "20260101000000", name: "init", statements: ["select 1;"] }],
         diffOutcome: () => ({ changes: false }),
       });
       return Effect.gen(function* () {
+        yield* writeConfig();
         yield* runPull(pullFlags());
 
-        expect(existsSync(join(migrationsDir(), "20260101000000_init.sql"))).toBe(true);
+        expect(yield* projectFileExists("supabase", "migrations", "20260101000000_init.sql")).toBe(
+          true,
+        );
         expect(callOrder).toContain("migration_history_read");
         expect(callOrder).toContain("db_list_remote");
         expect(callOrder.indexOf("migration_history_read")).toBeLessThan(
@@ -1362,14 +1412,16 @@ describe("pull integration", () => {
   it.live(
     "supabase pull -o json fails with a message pointing at --output-format, not a machine payload",
     () => {
-      writeConfig();
       const { layer, api } = setup({ goOutput: Option.some("json") });
       return Effect.gen(function* () {
+        yield* writeConfig();
         const exit = yield* Effect.exit(runPull(pullFlags()));
         expect(Exit.isFailure(exit)).toBe(true);
-        const rendered = JSON.stringify(exit);
-        expect(rendered).toContain("PullOutputFlagUnsupportedError");
-        expect(rendered).toContain("--output-format");
+        if (Exit.isFailure(exit)) {
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("PullOutputFlagUnsupportedError");
+          expect(causeText).toContain("--output-format");
+        }
         expect(api.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
     },
@@ -1377,31 +1429,33 @@ describe("pull integration", () => {
 
   it.live(
     "a --workdir naming a directory that does not exist fails before any target resolution",
-    () => {
-      const missing = join(tempRoot.current, "does-not-exist");
-      const { layer, api, telemetry, linkedProjectCache } = setup({ workdir: missing });
-      return Effect.gen(function* () {
-        const exit = yield* Effect.exit(runPull(pullFlags()));
+    () =>
+      Effect.gen(function* () {
+        const missing = yield* projectPath("does-not-exist");
+        const { layer, api, telemetry, linkedProjectCache } = setup({ workdir: missing });
+        const exit = yield* Effect.exit(runPull(pullFlags()).pipe(Effect.provide(layer)));
         expect(Exit.isFailure(exit)).toBe(true);
-        const rendered = JSON.stringify(exit);
-        expect(rendered).toContain("PullWorkdirError");
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("PullWorkdirError");
+        }
         expect(api.requests).toHaveLength(0);
 
         expect(telemetry.flushed).toBe(true);
         expect(linkedProjectCache.cached).toBe(false);
-      }).pipe(Effect.provide(layer));
-    },
+      }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.live(
     "a network failure resolving a branch-name --project-ref fails with a network error, not a status error",
     () => {
-      writeConfig();
       const { layer } = setup({ api: { branchNetworkFails: true } });
       return Effect.gen(function* () {
+        yield* writeConfig();
         const exit = yield* Effect.exit(runPull(pullFlags({ projectRef: Option.some("staging") })));
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(JSON.stringify(exit)).toContain("PullBranchResolveNetworkError");
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("PullBranchResolveNetworkError");
+        }
       }).pipe(Effect.provide(layer));
     },
   );
@@ -1409,16 +1463,19 @@ describe("pull integration", () => {
   it.live(
     "a supabase/migrations read failure that is NOT 'missing' (a plain file colliding with the directory) fails with a read error, instead of silently treating it as empty",
     () => {
-      writeConfig();
-      // `fs.readDirectory` against a plain file fails with ENOTDIR, not "NotFound" — the
-      // bootstrap-detection read must propagate this instead of treating it as "no migrations
-      // yet".
-      writeFileSync(migrationsDir(), "not a directory");
       const { layer } = setup({ yes: true });
       return Effect.gen(function* () {
+        yield* writeConfig();
+        // `fs.readDirectory` against a plain file fails with ENOTDIR, not "NotFound" — the
+        // bootstrap-detection read must propagate this instead of treating it as "no migrations
+        // yet".
+        const fs = yield* FileSystem.FileSystem;
+        yield* fs.writeFileString(yield* migrationsDir, "not a directory");
         const exit = yield* Effect.exit(runPull(pullFlags()));
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(JSON.stringify(exit)).toContain("MigrationsReadError");
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("MigrationsReadError");
+        }
       }).pipe(Effect.provide(layer));
     },
   );
@@ -1427,8 +1484,6 @@ describe("pull integration", () => {
     it.live(
       "supabase/migrations already has files and the flag is not set: skipped as not_needed",
       () => {
-        writeConfig();
-        seedLocalMigration("20260101000000");
         const { layer, out } = setup({
           yes: true,
           remoteMigrations: [
@@ -1437,6 +1492,8 @@ describe("pull integration", () => {
           diffOutcome: () => ({ changes: false }),
         });
         return Effect.gen(function* () {
+          yield* writeConfig();
+          yield* seedLocalMigration("20260101000000");
           yield* runPull(pullFlags());
           expect(stepLine(out!.stdoutText, "migration_history")).toContain("not_needed");
         }).pipe(Effect.provide(layer));
@@ -1446,10 +1503,6 @@ describe("pull integration", () => {
     it.live(
       "supabase/migrations already has files but --with-migration-history is set: the step actually runs",
       () => {
-        writeConfig();
-        // Named "init" to match the remote row below, so the fetch rewrites this file instead
-        // of leaving a stale differently-named duplicate under the same version.
-        seedLocalMigration("20260101000000", "init");
         const { layer, out } = setup({
           yes: true,
           remoteMigrations: [
@@ -1459,8 +1512,14 @@ describe("pull integration", () => {
           diffOutcome: () => ({ changes: false }),
         });
         return Effect.gen(function* () {
+          yield* writeConfig();
+          // Named "init" to match the remote row below, so the fetch rewrites this file instead
+          // of leaving a stale differently-named duplicate under the same version.
+          yield* seedLocalMigration("20260101000000", "init");
           yield* runPull(pullFlags({ withMigrationHistory: true }));
-          expect(existsSync(join(migrationsDir(), "20260102000000_second.sql"))).toBe(true);
+          expect(
+            yield* projectFileExists("supabase", "migrations", "20260102000000_second.sql"),
+          ).toBe(true);
           expect(stepLine(out!.stdoutText, "migration_history")).toContain("changed");
         }).pipe(Effect.provide(layer));
       },
@@ -1469,7 +1528,6 @@ describe("pull integration", () => {
     it.live(
       "supabase/migrations is missing entirely: the step auto-runs (bootstrap reason)",
       () => {
-        writeConfig();
         const { layer, out } = setup({
           yes: true,
           remoteMigrations: [
@@ -1478,9 +1536,12 @@ describe("pull integration", () => {
           diffOutcome: () => ({ changes: false }),
         });
         return Effect.gen(function* () {
+          yield* writeConfig();
           yield* runPull(pullFlags());
           expect(out!.stdoutText).toContain("supabase/migrations has no migration files");
-          expect(existsSync(join(migrationsDir(), "20260101000000_init.sql"))).toBe(true);
+          expect(
+            yield* projectFileExists("supabase", "migrations", "20260101000000_init.sql"),
+          ).toBe(true);
         }).pipe(Effect.provide(layer));
       },
     );
@@ -1490,18 +1551,14 @@ describe("pull integration", () => {
     it.live(
       "a config-step failure (a concurrent edit during the confirmation prompt) still runs migration_history/db/functions, in text mode",
       () => {
-        writeConfig("[api]\nmax_rows = 500\n");
-        seedLocalMigration("20260101000000");
         const { layer, out } = setup({
           stdinIsTty: true,
           confirm: [true],
           // Keeps `[experimental.pgdelta] enabled = true` intact, so this exercises the config
           // step's TOCTOU guard rather than routing the db step onto the unmocked migra path.
-          confirmSideEffect: () =>
-            writeFileSync(
-              configPath(),
-              'project_id = "changed-mid-flight"\n\n[experimental.pgdelta]\nenabled = true\n',
-            ),
+          confirmSideEffect: writeConfigFile(
+            'project_id = "changed-mid-flight"\n\n[experimental.pgdelta]\nenabled = true\n',
+          ).pipe(Effect.provide(BunServices.layer)),
           api: { functionSlugs: ["hello"] },
           remoteMigrations: [
             { version: "20260101000000", name: "init", statements: ["select 1;"] },
@@ -1509,9 +1566,13 @@ describe("pull integration", () => {
           diffOutcome: () => ({ changes: false }),
         });
         return Effect.gen(function* () {
+          yield* writeConfig("[api]\nmax_rows = 500\n");
+          yield* seedLocalMigration("20260101000000");
           const exit = yield* Effect.exit(runPull(pullFlags()));
           expect(Exit.isFailure(exit)).toBe(true);
-          expect(JSON.stringify(exit)).toContain("ConfigPullFileChangedError");
+          if (Exit.isFailure(exit)) {
+            expect(Cause.pretty(exit.cause)).toContain("ConfigPullFileChangedError");
+          }
 
           expect(stepLine(out!.stdoutText, "config")).toContain("failed");
           expect(stepLine(out!.stdoutText, "migration_history")).toContain("not_needed");
@@ -1528,16 +1589,12 @@ describe("pull integration", () => {
     it.live(
       "a config-step failure carries --remote-label through to its own retry hint when one was passed",
       () => {
-        writeConfig("[api]\nmax_rows = 500\n");
-        seedLocalMigration("20260101000000");
         const { layer, out } = setup({
           stdinIsTty: true,
           confirm: [true],
-          confirmSideEffect: () =>
-            writeFileSync(
-              configPath(),
-              'project_id = "changed-mid-flight"\n\n[experimental.pgdelta]\nenabled = true\n',
-            ),
+          confirmSideEffect: writeConfigFile(
+            'project_id = "changed-mid-flight"\n\n[experimental.pgdelta]\nenabled = true\n',
+          ).pipe(Effect.provide(BunServices.layer)),
           api: { functionSlugs: [] },
           remoteMigrations: [
             { version: "20260101000000", name: "init", statements: ["select 1;"] },
@@ -1545,6 +1602,8 @@ describe("pull integration", () => {
           diffOutcome: () => ({ changes: false }),
         });
         return Effect.gen(function* () {
+          yield* writeConfig("[api]\nmax_rows = 500\n");
+          yield* seedLocalMigration("20260101000000");
           const exit = yield* Effect.exit(
             runPull(pullFlags({ remoteLabel: Option.some("staging-remote") })),
           );
@@ -1561,19 +1620,15 @@ describe("pull integration", () => {
     it.live(
       "a branch-derived implicit remote-block target: the config step's retry hint names that SAME derived label, even though --remote-label was never passed",
       () => {
-        writeConfig("[api]\nmax_rows = 500\n");
-        seedLocalMigration("20260101000000");
         const { layer, out } = setup({
           stdinIsTty: true,
           confirm: [true],
           // Concurrent edit during the confirmation prompt trips the config step's TOCTOU
           // guard before the planned `[remotes.staging]` block (implicit target;
           // --remote-label was never passed) is ever written.
-          confirmSideEffect: () =>
-            writeFileSync(
-              configPath(),
-              'project_id = "changed-mid-flight"\n\n[experimental.pgdelta]\nenabled = true\n',
-            ),
+          confirmSideEffect: writeConfigFile(
+            'project_id = "changed-mid-flight"\n\n[experimental.pgdelta]\nenabled = true\n',
+          ).pipe(Effect.provide(BunServices.layer)),
           api: { functionSlugs: [] },
           remoteMigrations: [
             { version: "20260101000000", name: "init", statements: ["select 1;"] },
@@ -1581,12 +1636,14 @@ describe("pull integration", () => {
           diffOutcome: () => ({ changes: false }),
         });
         return Effect.gen(function* () {
+          yield* writeConfig("[api]\nmax_rows = 500\n");
+          yield* seedLocalMigration("20260101000000");
           const exit = yield* Effect.exit(
             runPull(pullFlags({ projectRef: Option.some("staging") })),
           );
           expect(Exit.isFailure(exit)).toBe(true);
           expect(stepLine(out!.stdoutText, "config")).toContain("failed");
-          expect(readFileSync(configPath(), "utf8")).not.toContain("[remotes.staging]");
+          expect(yield* readConfigFile).not.toContain("[remotes.staging]");
 
           expect(out!.stdoutText).toContain(
             `To retry just this step, run: supabase config pull --project-ref ${BRANCH_REF} --remote-label 'staging'`,
@@ -1598,7 +1655,6 @@ describe("pull integration", () => {
     it.live(
       "a migration-history-step failure (a hostile remote history row) still runs config/functions, and re-fails with its OWN (first) cause even though db also fails downstream",
       () => {
-        writeConfig();
         const { layer, out } = setup({
           yes: true,
           api: { functionSlugs: [] },
@@ -1611,10 +1667,19 @@ describe("pull integration", () => {
           diffOutcome: () => ({ changes: false }),
         });
         return Effect.gen(function* () {
+          yield* writeConfig();
           const exit = yield* Effect.exit(runPull(pullFlags()));
           expect(Exit.isFailure(exit)).toBe(true);
-          expect(JSON.stringify(exit)).toContain("MigrationFetchWriteError");
-          expect(JSON.stringify(exit)).not.toContain("DbPullMigrationConflictError");
+          if (Exit.isFailure(exit)) {
+            expect(exit.cause.reasons.every(Cause.isFailReason)).toBe(true);
+            const failures = exit.cause.reasons
+              .filter(Cause.isFailReason)
+              .map((reason) => reason.error);
+            expect(failures.some((error) => error instanceof MigrationFetchWriteError)).toBe(true);
+            expect(failures.some((error) => error instanceof DbPullMigrationConflictError)).toBe(
+              false,
+            );
+          }
 
           expect(stepLine(out!.stdoutText, "config")).toContain("unchanged");
           expect(stepLine(out!.stdoutText, "migration_history")).toContain("failed");
@@ -1634,7 +1699,6 @@ describe("pull integration", () => {
     it.live(
       "a migration-history-step failure AFTER an earlier row already wrote reports that file as written, not written: [] (a real partial-write case)",
       () => {
-        writeConfig();
         const { layer, capturingStdio } = setup({
           format: "json",
           yes: true,
@@ -1649,17 +1713,20 @@ describe("pull integration", () => {
           diffOutcome: () => ({ changes: false }),
         });
         return Effect.gen(function* () {
+          yield* writeConfig();
           yield* runPull(pullFlags());
 
-          expect(existsSync(join(migrationsDir(), "20260101000000_good.sql"))).toBe(true);
+          expect(
+            yield* projectFileExists("supabase", "migrations", "20260101000000_good.sql"),
+          ).toBe(true);
 
-          const envelope = JSON.parse(capturingStdio!.stdout[0]!) as Record<string, unknown>;
-          const steps = envelope["steps"] as Record<string, unknown>;
-          const migrationHistory = steps["migration_history"] as Record<string, unknown>;
-          expect(migrationHistory["status"]).toBe("failed");
-          expect(migrationHistory["written"]).toEqual([
-            "supabase/migrations/20260101000000_good.sql",
-          ]);
+          const envelope = yield* Schema.decodeEffect(jsonEnvelope)(capturingStdio!.stdout[0]!);
+          expect(envelope["steps"]).toMatchObject({
+            migration_history: {
+              status: "failed",
+              written: ["supabase/migrations/20260101000000_good.sql"],
+            },
+          });
 
           expect(envelope["wrote"]).toBe(true);
         }).pipe(Effect.provide(layer));
@@ -1669,8 +1736,6 @@ describe("pull integration", () => {
     it.live(
       "a db-step failure (a pg-delta engine error) still runs config/migration_history/functions",
       () => {
-        writeConfig();
-        seedLocalMigration("20260101000000");
         const { layer, out } = setup({
           yes: true,
           api: { functionSlugs: [] },
@@ -1680,9 +1745,13 @@ describe("pull integration", () => {
           diffOutcome: () => ({ changes: false, fail: "boom: pg-delta blew up" }),
         });
         return Effect.gen(function* () {
+          yield* writeConfig();
+          yield* seedLocalMigration("20260101000000");
           const exit = yield* Effect.exit(runPull(pullFlags()));
           expect(Exit.isFailure(exit)).toBe(true);
-          expect(JSON.stringify(exit)).toContain("PgDeltaEngineError");
+          if (Exit.isFailure(exit)) {
+            expect(Cause.pretty(exit.cause)).toContain("PgDeltaEngineError");
+          }
 
           expect(stepLine(out!.stdoutText, "config")).toContain("unchanged");
           expect(stepLine(out!.stdoutText, "migration_history")).toContain("not_needed");
@@ -1699,11 +1768,6 @@ describe("pull integration", () => {
     it.live(
       "a db-step migration-conflict failure carries BOTH the --with-migration-history hint AND the generic retry hint, in that order",
       () => {
-        writeConfig();
-        // A local file that doesn't match the remote history row trips `db pull`'s own
-        // `DbPullMigrationConflictError`, since `reconcileMigrations` treats any non-matching
-        // version as a conflict.
-        seedLocalMigration("20260101000000");
         const { layer, capturingStdio } = setup({
           format: "json",
           yes: true,
@@ -1714,18 +1778,20 @@ describe("pull integration", () => {
           diffOutcome: () => ({ changes: false }),
         });
         return Effect.gen(function* () {
+          yield* writeConfig();
+          // A local file that doesn't match the remote history row trips `db pull`'s own
+          // `DbPullMigrationConflictError`, since `reconcileMigrations` treats any non-matching
+          // version as a conflict.
+          yield* seedLocalMigration("20260101000000");
           yield* runPull(pullFlags());
 
-          const envelope = JSON.parse(capturingStdio!.stdout[0]!) as Record<string, unknown>;
-          const steps = envelope["steps"] as Record<string, unknown>;
-          expect((steps["db"] as Record<string, unknown>)["status"]).toBe("failed");
-          const failure = (steps["db"] as Record<string, unknown>)["failure"] as Record<
-            string,
-            unknown
-          >;
-          expect(String(failure["code"])).toBe("DbPullMigrationConflictError");
+          const envelope = yield* Schema.decodeEffect(dbStepFailureEnvelope)(
+            capturingStdio!.stdout[0]!,
+          );
+          expect(envelope.steps.db.status).toBe("failed");
+          expect(envelope.steps.db.failure.code).toBe("DbPullMigrationConflictError");
 
-          const suggestion = String(failure["suggestion"]);
+          const suggestion = envelope.steps.db.failure.suggestion;
           const migrationHistoryHintIndex = suggestion.indexOf(
             `Alternatively, rerun \`supabase pull --with-migration-history --project-ref ${VALID_REF}\``,
           );
@@ -1741,8 +1807,6 @@ describe("pull integration", () => {
     it.live(
       "a db-step migration-conflict failure's --with-migration-history remedy also carries a shell-quoted --remote-label when one was passed",
       () => {
-        writeConfig();
-        seedLocalMigration("20260101000000");
         const { layer, capturingStdio } = setup({
           format: "json",
           yes: true,
@@ -1753,15 +1817,14 @@ describe("pull integration", () => {
           diffOutcome: () => ({ changes: false }),
         });
         return Effect.gen(function* () {
+          yield* writeConfig();
+          yield* seedLocalMigration("20260101000000");
           yield* runPull(pullFlags({ remoteLabel: Option.some("staging remote") }));
 
-          const envelope = JSON.parse(capturingStdio!.stdout[0]!) as Record<string, unknown>;
-          const steps = envelope["steps"] as Record<string, unknown>;
-          const failure = (steps["db"] as Record<string, unknown>)["failure"] as Record<
-            string,
-            unknown
-          >;
-          expect(String(failure["suggestion"])).toContain(
+          const envelope = yield* Schema.decodeEffect(dbStepFailureEnvelope)(
+            capturingStdio!.stdout[0]!,
+          );
+          expect(envelope.steps.db.failure.suggestion).toContain(
             `Alternatively, rerun \`supabase pull --with-migration-history --project-ref ${VALID_REF} --remote-label 'staging remote'\``,
           );
         }).pipe(Effect.provide(layer));
@@ -1771,8 +1834,6 @@ describe("pull integration", () => {
     it.live(
       "a db-step failure AFTER the migration file already wrote, but the remote-history update failed, reports that file as written (a real partial-write case)",
       () => {
-        writeConfig();
-        seedLocalMigration("20260101000000");
         const { layer, capturingStdio } = setup({
           format: "json",
           yes: true,
@@ -1789,17 +1850,19 @@ describe("pull integration", () => {
           dbHistoryUpdateFails: true,
         });
         return Effect.gen(function* () {
+          yield* writeConfig();
+          yield* seedLocalMigration("20260101000000");
           yield* runPull(pullFlags());
 
-          const migrationFiles = readdirSync(migrationsDir());
+          const migrationFiles = yield* listMigrations;
           expect(migrationFiles.some((file) => file.includes("_remote_schema.sql"))).toBe(true);
 
-          const envelope = JSON.parse(capturingStdio!.stdout[0]!) as Record<string, unknown>;
-          const steps = envelope["steps"] as Record<string, unknown>;
-          const db = steps["db"] as Record<string, unknown>;
-          expect(db["status"]).toBe("failed");
-          expect((db["written"] as ReadonlyArray<string>).length).toBeGreaterThan(0);
-          expect((db["written"] as ReadonlyArray<string>)[0]).toContain("supabase/migrations/");
+          const envelope = yield* Schema.decodeEffect(dbStepWrittenEnvelope)(
+            capturingStdio!.stdout[0]!,
+          );
+          expect(envelope.steps.db.status).toBe("failed");
+          expect(envelope.steps.db.written.length).toBeGreaterThan(0);
+          expect(envelope.steps.db.written[0]).toContain("supabase/migrations/");
         }).pipe(Effect.provide(layer));
       },
     );
@@ -1807,8 +1870,6 @@ describe("pull integration", () => {
     it.live(
       "a functions-step failure AFTER an earlier slug already downloaded reports that slug's directory as written (a real partial-download case)",
       () => {
-        writeConfig();
-        seedLocalMigration("20260101000000");
         const { layer, capturingStdio } = setup({
           format: "json",
           yes: true,
@@ -1819,17 +1880,16 @@ describe("pull integration", () => {
           diffOutcome: () => ({ changes: false }),
         });
         return Effect.gen(function* () {
+          yield* writeConfig();
+          yield* seedLocalMigration("20260101000000");
           yield* runPull(pullFlags());
 
-          expect(
-            existsSync(join(tempRoot.current, "supabase", "functions", "hello", "index.ts")),
-          ).toBe(true);
+          expect(yield* projectFileExists("supabase", "functions", "hello", "index.ts")).toBe(true);
 
-          const envelope = JSON.parse(capturingStdio!.stdout[0]!) as Record<string, unknown>;
-          const steps = envelope["steps"] as Record<string, unknown>;
-          const functions = steps["functions"] as Record<string, unknown>;
-          expect(functions["status"]).toBe("failed");
-          expect(functions["written"]).toEqual(["supabase/functions/hello"]);
+          const envelope = yield* Schema.decodeEffect(jsonEnvelope)(capturingStdio!.stdout[0]!);
+          expect(envelope["steps"]).toMatchObject({
+            functions: { status: "failed", written: ["supabase/functions/hello"] },
+          });
         }).pipe(Effect.provide(layer));
       },
     );
@@ -1837,8 +1897,6 @@ describe("pull integration", () => {
     it.live(
       "a functions-step failure reported in TEXT mode inlines the failure message in the summary block",
       () => {
-        writeConfig();
-        seedLocalMigration("20260101000000");
         const { layer, out } = setup({
           yes: true,
           api: { functionsListStatus: 500 },
@@ -1848,6 +1906,8 @@ describe("pull integration", () => {
           diffOutcome: () => ({ changes: false }),
         });
         return Effect.gen(function* () {
+          yield* writeConfig();
+          yield* seedLocalMigration("20260101000000");
           const exit = yield* Effect.exit(runPull(pullFlags()));
           expect(Exit.isFailure(exit)).toBe(true);
 
@@ -1866,8 +1926,6 @@ describe("pull integration", () => {
     it.live(
       "a defect inside a step (not a typed failure) propagates as a defect instead of a captured step failure",
       () => {
-        writeConfig();
-        seedLocalMigration("20260101000000");
         const { layer } = setup({
           yes: true,
           remoteMigrations: [
@@ -1876,6 +1934,8 @@ describe("pull integration", () => {
           diffOutcome: () => ({ changes: false, die: "pg-delta engine defect" }),
         });
         return Effect.gen(function* () {
+          yield* writeConfig();
+          yield* seedLocalMigration("20260101000000");
           const exit = yield* Effect.exit(runPull(pullFlags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
@@ -1892,10 +1952,10 @@ describe("pull integration", () => {
   it.live(
     "--dry-run over an already-populated supabase/migrations reports migration_history as not_needed",
     () => {
-      writeConfig("[api]\nmax_rows = 500\n");
-      seedLocalMigration("20260101000000");
       const { layer, out } = setup({ yes: true });
       return Effect.gen(function* () {
+        yield* writeConfig("[api]\nmax_rows = 500\n");
+        yield* seedLocalMigration("20260101000000");
         yield* runPull(pullFlags({ dryRun: true }));
         expect(stepLine(out!.stdoutText, "migration_history")).toContain("skipped");
         expect(stepLine(out!.stdoutText, "migration_history")).toContain("not_needed");
@@ -1906,10 +1966,10 @@ describe("pull integration", () => {
   it.live(
     "declining over an already-populated supabase/migrations reports migration_history as not_needed",
     () => {
-      writeConfig("[api]\nmax_rows = 500\n");
-      seedLocalMigration("20260101000000");
       const { layer, out } = setup({ stdinIsTty: true, confirm: [false] });
       return Effect.gen(function* () {
+        yield* writeConfig("[api]\nmax_rows = 500\n");
+        yield* seedLocalMigration("20260101000000");
         yield* runPull(pullFlags());
         expect(stepLine(out!.stdoutText, "migration_history")).toContain("skipped");
         expect(stepLine(out!.stdoutText, "migration_history")).toContain("not_needed");
@@ -1929,9 +1989,9 @@ describe("pull telemetry wiring", () => {
     );
 
   it.live("logs a ref-shaped --project-ref verbatim in cli_command_executed", () => {
-    writeConfig();
     const { layer, analytics } = setup({ yes: true });
     return Effect.gen(function* () {
+      yield* writeConfig();
       yield* runPull(pullFlags({ projectRef: Option.some(VALID_REF), dryRun: true }));
       const event = analytics.captured.find((c) => c.event === "cli_command_executed");
       expect(event?.properties["flags"]).toEqual({ "project-ref": VALID_REF });
@@ -1941,9 +2001,9 @@ describe("pull telemetry wiring", () => {
   it.live("redacts a branch-name-shaped --project-ref in cli_command_executed", () => {
     // `--project-ref` accepts branch names too; a user-created branch name must never reach
     // PostHog verbatim.
-    writeConfig();
     const { layer, analytics } = setup({ yes: true });
     return Effect.gen(function* () {
+      yield* writeConfig();
       yield* runPull(pullFlags({ projectRef: Option.some("staging"), dryRun: true }));
       const event = analytics.captured.find((c) => c.event === "cli_command_executed");
       expect(event?.properties["flags"]).toEqual({ "project-ref": "<redacted>" });
@@ -1958,7 +2018,6 @@ describe("pull stream-json output", () => {
   it.live(
     "a successful run emits exactly one NDJSON result event with the payload nested under data",
     () => {
-      writeConfig("[api]\nmax_rows = 500\n");
       const { layer, capturingStdio } = setup({
         format: "stream-json",
         yes: true,
@@ -1972,17 +2031,17 @@ describe("pull stream-json output", () => {
         }),
       });
       return Effect.gen(function* () {
+        yield* writeConfig("[api]\nmax_rows = 500\n");
         yield* runPull(pullFlags());
 
         expect(capturingStdio!.stdout).toHaveLength(1);
-        const event = JSON.parse(capturingStdio!.stdout[0]!) as Record<string, unknown>;
+        const event = yield* Schema.decodeEffect(jsonEnvelope)(capturingStdio!.stdout[0]!);
         expect(event["type"]).toBe("result");
         expect(event["steps"]).toBeUndefined();
-        const data = event["data"] as Record<string, unknown>;
-        expect(data["message"]).toContain("Pull complete");
-        const steps = data["steps"] as Record<string, unknown>;
-        expect((steps["config"] as Record<string, unknown>)["status"]).toBe("changed");
-        expect((steps["db"] as Record<string, unknown>)["status"]).toBe("changed");
+        expect(event["data"]).toMatchObject({
+          message: expect.stringContaining("Pull complete"),
+          steps: { config: { status: "changed" }, db: { status: "changed" } },
+        });
       }).pipe(Effect.provide(layer));
     },
   );
@@ -1990,8 +2049,6 @@ describe("pull stream-json output", () => {
   it.live(
     "a partial step failure emits exactly one NDJSON error event with the payload spread at the top level, NOT nested under data",
     () => {
-      writeConfig();
-      seedLocalMigration("20260101000000");
       const { layer, capturingStdio } = setup({
         format: "stream-json",
         yes: true,
@@ -2000,21 +2057,18 @@ describe("pull stream-json output", () => {
         diffOutcome: () => ({ changes: false }),
       });
       return Effect.gen(function* () {
+        yield* writeConfig();
+        yield* seedLocalMigration("20260101000000");
         yield* runPull(pullFlags());
 
         expect(capturingStdio!.stdout).toHaveLength(1);
-        const event = JSON.parse(capturingStdio!.stdout[0]!) as Record<string, unknown>;
+        const event = yield* Schema.decodeEffect(jsonEnvelope)(capturingStdio!.stdout[0]!);
         expect(event["type"]).toBe("error");
         expect(event["data"]).toBeUndefined();
-        const error = event["error"] as Record<string, unknown>;
-        expect(String(error["message"])).toContain("500");
-        const steps = event["steps"] as Record<string, unknown>;
-        expect((steps["functions"] as Record<string, unknown>)["status"]).toBe("failed");
-        const failure = (steps["functions"] as Record<string, unknown>)["failure"] as Record<
-          string,
-          unknown
-        >;
-        expect(String(failure["message"])).toContain("500");
+        expect(event["error"]).toMatchObject({ message: expect.stringContaining("500") });
+        expect(event["steps"]).toMatchObject({
+          functions: { status: "failed", failure: { message: expect.stringContaining("500") } },
+        });
       }).pipe(Effect.provide(layer));
     },
   );

@@ -1,6 +1,6 @@
 import { type V1ListAllSecretsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option } from "effect";
 
 import { YesFlag } from "../../../command-internal/global-flags.ts";
 import { mockOutput, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
@@ -12,6 +12,7 @@ import {
   mockCommandSettings,
   mockCommandPlatformApi,
   useTempWorkdir,
+  withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { secretsUnset } from "./unset.handler.ts";
 
@@ -167,7 +168,7 @@ describe("secrets unset integration", () => {
       const exit = yield* Effect.exit(secretsUnset({ projectRef: Option.none(), names: ["FOO"] }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("SecretsUnsetCancelledError");
+        expect(Cause.pretty(exit.cause)).toContain("SecretsUnsetCancelledError");
       }
       expect(out.stderrText).toContain("[Y/n] n\n");
       expect(api.requests.filter((r) => r.method === "DELETE")).toHaveLength(0);
@@ -184,23 +185,18 @@ describe("secrets unset integration", () => {
   });
 
   it.live("SUPABASE_YES=1 in the environment auto-confirms with the [Y/n] y echo", () => {
-    const prev = process.env["SUPABASE_YES"];
-    process.env["SUPABASE_YES"] = "1";
     const { layer, out, api } = setup();
-    return Effect.gen(function* () {
-      yield* secretsUnset({ projectRef: Option.none(), names: ["FOO"] });
-      expect(out.stderrText).toContain(
-        "Do you want to unset these function secrets?\n • FOO\n\n [Y/n] y\n",
-      );
-      expect(api.requests.filter((r) => r.method === "DELETE")).toHaveLength(1);
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (prev === undefined) delete process.env["SUPABASE_YES"];
-          else process.env["SUPABASE_YES"] = prev;
-        }),
-      ),
-      Effect.provide(layer),
+    // Inner provide so the layer builds inside the pinned-env sandbox.
+    return withEnvVar(
+      "SUPABASE_YES",
+      "1",
+      Effect.gen(function* () {
+        yield* secretsUnset({ projectRef: Option.none(), names: ["FOO"] });
+        expect(out.stderrText).toContain(
+          "Do you want to unset these function secrets?\n • FOO\n\n [Y/n] y\n",
+        );
+        expect(api.requests.filter((r) => r.method === "DELETE")).toHaveLength(1);
+      }).pipe(Effect.provide(layer)),
     );
   });
 
@@ -218,7 +214,7 @@ describe("secrets unset integration", () => {
       const exit = yield* Effect.exit(secretsUnset({ projectRef: Option.none(), names: ["FOO"] }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("SecretsUnsetCancelledError");
+        expect(Cause.pretty(exit.cause)).toContain("SecretsUnsetCancelledError");
       }
       expect(api.requests.filter((r) => r.method === "DELETE")).toHaveLength(0);
     }).pipe(Effect.provide(layer));
@@ -230,7 +226,7 @@ describe("secrets unset integration", () => {
       const exit = yield* Effect.exit(secretsUnset({ projectRef: Option.none(), names: [] }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("SecretsListNetworkError");
+        expect(Cause.pretty(exit.cause)).toContain("SecretsListNetworkError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -241,7 +237,7 @@ describe("secrets unset integration", () => {
       const exit = yield* Effect.exit(secretsUnset({ projectRef: Option.none(), names: [] }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("SecretsListUnexpectedStatusError");
+        expect(Cause.pretty(exit.cause)).toContain("SecretsListUnexpectedStatusError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -252,9 +248,9 @@ describe("secrets unset integration", () => {
       const exit = yield* Effect.exit(secretsUnset({ projectRef: Option.none(), names: ["FOO"] }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errJson = JSON.stringify(exit.cause);
-        expect(errJson).toContain("SecretsUnsetNetworkError");
-        expect(errJson).toContain("failed to delete secrets");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("SecretsUnsetNetworkError");
+        expect(causeText).toContain("failed to delete secrets");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -265,9 +261,9 @@ describe("secrets unset integration", () => {
       const exit = yield* Effect.exit(secretsUnset({ projectRef: Option.none(), names: ["FOO"] }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errJson = JSON.stringify(exit.cause);
-        expect(errJson).toContain("SecretsUnsetUnexpectedStatusError");
-        expect(errJson).toContain("Unexpected error unsetting project secrets");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("SecretsUnsetUnexpectedStatusError");
+        expect(causeText).toContain("Unexpected error unsetting project secrets");
       }
     }).pipe(Effect.provide(layer));
   });

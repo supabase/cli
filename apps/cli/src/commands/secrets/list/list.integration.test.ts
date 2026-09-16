@@ -1,6 +1,6 @@
 import { type V1ListAllSecretsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Option } from "effect";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
@@ -163,9 +163,9 @@ describe("secrets list integration", () => {
       const exit = yield* Effect.exit(secretsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errJson = JSON.stringify(exit.cause);
-        expect(errJson).toContain("SecretsEnvNotSupportedError");
-        expect(errJson).toContain("--output env flag is not supported");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("SecretsEnvNotSupportedError");
+        expect(causeText).toContain("--output env flag is not supported");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -215,9 +215,9 @@ describe("secrets list integration", () => {
       const exit = yield* Effect.exit(secretsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errJson = JSON.stringify(exit.cause);
-        expect(errJson).toContain("SecretsListUnexpectedStatusError");
-        expect(errJson).toContain("unexpected list secrets status 503");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("SecretsListUnexpectedStatusError");
+        expect(causeText).toContain("unexpected list secrets status 503");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -228,9 +228,9 @@ describe("secrets list integration", () => {
       const exit = yield* Effect.exit(secretsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errJson = JSON.stringify(exit.cause);
-        expect(errJson).toContain("SecretsListNetworkError");
-        expect(errJson).toContain("failed to list secrets");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("SecretsListNetworkError");
+        expect(causeText).toContain("failed to list secrets");
       }
     }).pipe(Effect.provide(layer));
   });

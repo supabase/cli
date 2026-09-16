@@ -134,46 +134,45 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
             : Effect.void
         ).pipe(Effect.as(loaded.config));
       }),
-      Effect.catchTag("CliConfigParseError", (cause) => {
-        // `smol-toml` embeds a source codeblock (which can include real secret values) after a
-        // blank-line separator on a raw parse failure; truncate before it. A schema-decode
-        // error puts the rejected value inline instead, with no such separator, so use a fixed,
-        // content-free message there.
-        const shortMessage =
-          cause.document === undefined
-            ? String(cause.cause).split("\n\n")[0]
-            : "schema validation failed";
-        // Printed here too since a matching `[remotes.*]` block is found before decode runs,
-        // even though decode then failed. Emitted ahead of the debug log below to preserve
-        // that order.
-        return (
-          cause.appliedRemote !== undefined
-            ? output.raw(`Loading config override: [remotes.${cause.appliedRemote}]\n`, "stderr")
-            : Effect.void
-        ).pipe(
-          Effect.andThen(
-            debugLogger.debug(`failed to parse supabase/config.toml: ${shortMessage}`),
-          ),
-          Effect.as(recoverEdgeRuntimeConfig(cause)),
-        );
+      Effect.catchTags({
+        CliConfigParseError: (cause) => {
+          // `smol-toml` embeds a source codeblock (which can include real secret values) after a
+          // blank-line separator on a raw parse failure; truncate before it. A schema-decode
+          // error puts the rejected value inline instead, with no such separator, so use a fixed,
+          // content-free message there.
+          const shortMessage =
+            cause.document === undefined
+              ? String(cause.cause).split("\n\n")[0]
+              : "schema validation failed";
+          // Printed here too since a matching `[remotes.*]` block is found before decode runs,
+          // even though decode then failed. Emitted ahead of the debug log below to preserve
+          // that order.
+          return (
+            cause.appliedRemote !== undefined
+              ? output.raw(`Loading config override: [remotes.${cause.appliedRemote}]\n`, "stderr")
+              : Effect.void
+          ).pipe(
+            Effect.andThen(
+              debugLogger.debug(`failed to parse supabase/config.toml: ${shortMessage}`),
+            ),
+            Effect.as(recoverEdgeRuntimeConfig(cause)),
+          );
+        },
+        // A malformed dotenv line fails with this distinct tag (env resolution runs before
+        // schema decode), so there's no parsed document to recover a subtree from — recover to
+        // `null`, not `recoverEdgeRuntimeConfig`.
+        CliProjectEnvParseError: (cause) =>
+          debugLogger.debug(`failed to parse ${cause.path}:${cause.line}`).pipe(Effect.as(null)),
+        // Two `[remotes.*]` blocks declaring the same `project_id` as `ref`; swallowed
+        // non-fatally like every other load error here.
+        DuplicateRemoteProjectIdError: (cause) =>
+          debugLogger.debug(cause.message).pipe(Effect.as(null)),
+        // A `[remotes.*]` block's `project_id` fails the ref-pattern check; swallowed the same
+        // non-fatal way, so a malformed remote block must not abort an otherwise-valid
+        // `secrets set`.
+        InvalidRemoteProjectIdError: (cause) =>
+          debugLogger.debug(cause.message).pipe(Effect.as(null)),
       }),
-      // A malformed dotenv line fails with this distinct tag (env resolution runs before
-      // schema decode), so there's no parsed document to recover a subtree from — recover to
-      // `null`, not `recoverEdgeRuntimeConfig`.
-      Effect.catchTag("CliProjectEnvParseError", (cause) =>
-        debugLogger.debug(`failed to parse ${cause.path}:${cause.line}`).pipe(Effect.as(null)),
-      ),
-      // Two `[remotes.*]` blocks declaring the same `project_id` as `ref`; swallowed
-      // non-fatally like every other load error here.
-      Effect.catchTag("DuplicateRemoteProjectIdError", (cause) =>
-        debugLogger.debug(cause.message).pipe(Effect.as(null)),
-      ),
-      // A `[remotes.*]` block's `project_id` fails the ref-pattern check; swallowed the same
-      // non-fatal way, so a malformed remote block must not abort an otherwise-valid
-      // `secrets set`.
-      Effect.catchTag("InvalidRemoteProjectIdError", (cause) =>
-        debugLogger.debug(cause.message).pipe(Effect.as(null)),
-      ),
     );
     if (loadedConfig !== null) {
       const projectEnv = yield* loadCliProjectEnvironment({
@@ -217,16 +216,13 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
             }),
         ),
       );
-      let parsed: Record<string, string>;
-      try {
-        parsed = parseDotenv(content);
-      } catch (cause) {
-        return yield* Effect.fail(
+      const parsed = yield* Effect.try({
+        try: () => parseDotenv(content),
+        catch: (cause) =>
           new SecretsEnvFileParseError({
             message: `failed to parse env file: ${String(cause)}`,
           }),
-        );
-      }
+      });
       for (const [name, value] of Object.entries(parsed)) {
         merged.set(name, value);
       }
@@ -236,12 +232,10 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
     for (const pair of flags.secrets) {
       const eqIdx = pair.indexOf("=");
       if (eqIdx === -1) {
-        return yield* Effect.fail(
-          new InvalidSecretPairError({
-            pair,
-            message: `Invalid secret pair: ${pair}. Must be NAME=VALUE.`,
-          }),
-        );
+        return yield* new InvalidSecretPairError({
+          pair,
+          message: `Invalid secret pair: ${pair}. Must be NAME=VALUE.`,
+        });
       }
       merged.set(pair.slice(0, eqIdx), pair.slice(eqIdx + 1));
     }
@@ -258,11 +252,9 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
     }
 
     if (body.length === 0) {
-      return yield* Effect.fail(
-        new SecretsNoArgumentsError({
-          message: "No arguments found. Use --env-file to read from a .env file.",
-        }),
-      );
+      return yield* new SecretsNoArgumentsError({
+        message: "No arguments found. Use --env-file to read from a .env file.",
+      });
     }
 
     // The Management API caps a single bulk-create request at 100 secrets
@@ -278,7 +270,7 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
     // partially updated after earlier batches already uploaded.
     yield* Effect.forEach(
       batches,
-      (batch) => Schema.decodeUnknownEffect(V1BulkCreateSecretsInput)({ ref, body: batch }),
+      (batch) => Schema.decodeEffect(V1BulkCreateSecretsInput)({ ref, body: batch }),
       { discard: true },
     ).pipe(
       Effect.mapError(
