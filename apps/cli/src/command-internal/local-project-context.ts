@@ -5,11 +5,12 @@ import {
   type CliConfig,
 } from "@supabase/config/effect";
 import { loadCliConfig } from "@supabase/config/internal";
-import { Effect, FileSystem, Path, Schema } from "effect";
+import { Crypto, Effect, FileSystem, Path, Schema } from "effect";
 
 import { resolveLocalProjectId, sanitizeProjectId } from "./docker-ids.ts";
 import { getHostname } from "./hostname.ts";
 import { resolveProjectEnvironmentValues } from "./project-environment.ts";
+import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 
 /** Config, resolved project env values, hostname, and sanitized project id for a command. */
 export interface LocalProjectContext {
@@ -29,7 +30,11 @@ export const loadLocalProjectContext = <E>(
   // matching `[remotes.<ref>]` block over the base config. Defaults to `undefined` (no remote
   // merge) for callers that don't have one yet.
   projectRef?: string,
-): Effect.Effect<LocalProjectContext, E, FileSystem.FileSystem | Path.Path> =>
+): Effect.Effect<
+  LocalProjectContext,
+  E,
+  FileSystem.FileSystem | Path.Path | RuntimeInfo | Crypto.Crypto
+> =>
   Effect.gen(function* () {
     // `workdir` is already the fully-resolved chdir target, so `search: false` stops
     // `@supabase/config` from climbing ancestors and picking up an unrelated project's
@@ -66,8 +71,16 @@ export const loadLocalProjectContext = <E>(
     }).pipe(
       Effect.mapError((cause) => mapConfigLoadError(`failed to read config: ${String(cause)}`)),
     );
-    const config = loaded?.config ?? Schema.decodeUnknownSync(CliConfigSchema)({});
-    const hostname = getHostname();
+    const config =
+      loaded?.config ??
+      (yield* Schema.decodeEffect(CliConfigSchema)({}).pipe(
+        Effect.mapError((cause) => mapConfigLoadError(`failed to read config: ${String(cause)}`)),
+      ));
+    const hostname = yield* getHostname().pipe(
+      Effect.mapError((cause) =>
+        mapConfigLoadError(`failed to resolve hostname: ${cause.message}`),
+      ),
+    );
     // When a `[remotes.<ref>]` block matched `projectRef` above, its own `project_id` field is
     // what selected it, so a stale or differently-scoped `SUPABASE_PROJECT_ID` must not win over
     // it here.

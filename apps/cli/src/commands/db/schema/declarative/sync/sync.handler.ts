@@ -306,7 +306,7 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
       }
       const generated = yield* generateDeclarativeOutput(
         { ...run, declarativeDir: stagedDir },
-        localEndpoint({ port: toml.port, password: toml.password }, dnsResolver),
+        yield* localEndpoint({ port: toml.port, password: toml.password }, dnsResolver),
       );
       const written = yield* writeDeclarativeSchemas(fs, path, stagedDir, generated);
       yield* warnPreservedUnmanagedDeclarativeFiles(stagedDirRel, written);
@@ -696,7 +696,7 @@ const applyMigrationToLocal = (
         {
           // Host resolution order: SUPABASE_SERVICES_HOSTNAME → tcp DOCKER_HOST → 127.0.0.1, not
           // a hardcoded loopback.
-          host: getHostname(),
+          host: yield* getHostname(),
           port: local.port,
           user: "postgres",
           password: local.password,

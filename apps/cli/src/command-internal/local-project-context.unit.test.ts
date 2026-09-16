@@ -2,10 +2,11 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { afterEach, describe, expect, it } from "@effect/vitest";
-import { Effect } from "effect";
+import { Effect, Layer } from "effect";
 
 import { useTempWorkdir } from "../../tests/helpers/command-mocks.ts";
 import { loadLocalProjectContext } from "./local-project-context.ts";
+import { runtimeInfoLayer } from "../shared/runtime/runtime-info.layer.ts";
 
 /** Stands in for the whole Docker-client env-key set, which a project dotenv file never reaches. */
 const DOCKER_HOST_KEY = "DOCKER_HOST";
@@ -56,7 +57,7 @@ describe("loadLocalProjectContext", () => {
           expect(context.loaded?.appliedRemote).toBe("prod");
           expect(context.projectId).toBe(ref);
         }),
-        Effect.provide(BunServices.layer),
+        Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
       );
     },
   );
@@ -72,7 +73,7 @@ describe("loadLocalProjectContext", () => {
         expect(context.loaded?.appliedRemote).toBeUndefined();
         expect(context.projectId).toBe("env-project");
       }),
-      Effect.provide(BunServices.layer),
+      Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
     );
   });
 
@@ -87,7 +88,7 @@ describe("loadLocalProjectContext", () => {
         Effect.map(() => {
           expect(process.env[DOCKER_HOST_KEY]).toBeUndefined();
         }),
-        Effect.provide(BunServices.layer),
+        Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
       );
     },
   );
@@ -103,7 +104,7 @@ describe("loadLocalProjectContext", () => {
         Effect.map(() => {
           expect(process.env[DOCKER_HOST_KEY]).toBe("tcp://real-shell-host:2375");
         }),
-        Effect.provide(BunServices.layer),
+        Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
       );
     },
   );
@@ -120,7 +121,7 @@ describe("loadLocalProjectContext", () => {
         );
         expect(process.env[BITBUCKET_CLONE_DIR_KEY]).toBeUndefined();
       }),
-      Effect.provide(BunServices.layer),
+      Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
     );
   });
 
@@ -134,7 +135,7 @@ describe("loadLocalProjectContext", () => {
         expect(context.projectEnvValues[BITBUCKET_CLONE_DIR_KEY]).toBe("/real-shell-clone-dir");
         expect(process.env[BITBUCKET_CLONE_DIR_KEY]).toBe("/real-shell-clone-dir");
       }),
-      Effect.provide(BunServices.layer),
+      Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
     );
   });
 });

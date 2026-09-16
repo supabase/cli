@@ -110,7 +110,12 @@ export const resolveStorageCredentials = Effect.fnUntraced(function* (opts: {
       Effect.mapError((cause) => new StorageConfigError({ message: cause.message })),
     ));
   const api = yield* resolveLocalApiConfig(opts.config.api, projectEnvValues);
-  const baseUrl = resolveApiExternalUrl(api, getHostname());
+  const baseUrl = resolveApiExternalUrl(
+    api,
+    yield* getHostname(projectEnvValues).pipe(
+      Effect.mapError((cause) => new StorageConfigError({ message: cause.message })),
+    ),
+  );
   const apiKey = yield* resolveLocalServiceRoleKey(opts.config.auth, projectEnvValues);
 
   // Validate the cert/key pairing only when the API and TLS are both enabled;
