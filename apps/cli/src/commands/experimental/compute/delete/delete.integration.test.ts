@@ -13,6 +13,7 @@ import {
   ComputeDeleteNotConfirmedError,
   ComputeNotDeployedError,
   ComputeApiUnexpectedStatusError,
+  ComputeRouteNotFoundError,
 } from "../../../../shared/compute/compute.errors.ts";
 import { ComputeEnvNotSupportedError } from "../compute.errors.ts";
 import { computeDelete } from "./delete.handler.ts";
@@ -416,6 +417,58 @@ describe("compute delete", () => {
         expect(suggestion).toContain("supabase compute list");
         expect(suggestion).not.toContain("compute push");
         expect(out.messages.filter((message) => message.type === "warn")).toHaveLength(0);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  const routerNotFound = (method: string) => ({
+    status: 404,
+    body: {
+      error: {
+        code: "not_found",
+        message: `Cannot ${method} ${computeRoute("/api")}`,
+      },
+    },
+  });
+
+  it.live("does not read an unserved route as a compute that was never deployed", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer } = setupCompute({
+        workdir: repo.dir,
+        routes: { [getRoute]: routerNotFound("GET") },
+        yes: true,
+      });
+
+      return yield* Effect.gen(function* () {
+        const error = yield* computeDelete({
+          name: "api",
+          projectRef: Option.none(),
+        }).pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(ComputeRouteNotFoundError);
+        expect(error).not.toBeInstanceOf(ComputeNotDeployedError);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live("does not report a delete it never reached as done", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer, out } = setupCompute({
+        workdir: repo.dir,
+        routes: { ...routes, [deleteRoute]: routerNotFound("DELETE") },
+        yes: true,
+      });
+
+      return yield* Effect.gen(function* () {
+        const error = yield* computeDelete({
+          name: "api",
+          projectRef: Option.none(),
+        }).pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(ComputeRouteNotFoundError);
+        expect(out.stdoutText).not.toContain("Deleted Compute");
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
