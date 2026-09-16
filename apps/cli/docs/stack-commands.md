@@ -287,8 +287,10 @@ and `stopping` proceed without waiting everywhere Storage capability is checked,
 under the flag) invocation runs the stack's first configured start (`desiredLifecycle` was
 `unconfigured`, including after `stack prepare`) — never when it resumes an existing one — and
 Storage is not `disabled`, it seeds `[storage.buckets]` against the stack before printing status,
-reusing the `seed buckets` core. Auto-confirm is safe here since a first-start stack has no
-pre-existing buckets. Any other unusable Storage state, a missing capability/credentials, or a
+reusing the `seed buckets` core. A project with no `[storage.buckets]` or
+`[storage.vector.buckets]` configured resolves no credentials and prints nothing. Auto-confirm is
+safe here since a first-start stack has no pre-existing buckets. Any other unusable Storage state,
+a missing capability/credentials, or a
 gateway activation failure prints a stderr warning and skips seeding; any other seeding failure
 (e.g. an invalid bucket entry) fails the `start` command (exit `1`) but leaves the stack running.
 `start` fails only on a genuine seeding error, never on Storage being unavailable. See
@@ -301,7 +303,9 @@ an invalid bucket config — prints `WARNING: skipped seeding storage buckets: <
 to stderr and the reset still exits `0`. The warning is omitted when the project configures no
 buckets, and
 disabled Storage gets configuration-specific next steps (enable `[storage]`, `supabase stack
-restart`, then `supabase seed buckets --local`). This is the
+restart`, then `supabase seed buckets --local`). When the underlying stack-storage error carries
+its own suggestion (a missing API gateway endpoint, Auth disabled, or a gateway 502/503), that
+suggestion is the next step instead of the generic `supabase seed buckets --local` one. This is the
 deliberate policy split from `stack start`: the database is already rebuilt by the time buckets
 are seeded, so `db reset` never fails the command for a Storage problem, while `start` still fails
 on a genuine seeding error. Bucket SQL/schema preparation is the stack runtime's own storage

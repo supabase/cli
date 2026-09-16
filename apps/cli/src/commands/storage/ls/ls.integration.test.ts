@@ -1,10 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Option } from "effect";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { VALID_REF, useTempWorkdir, withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
 import { setupStorage } from "../../../../tests/helpers/storage.ts";
+import { StackStorageCapabilityError } from "../../../command-internal/stack-storage.ts";
 import { storageLs } from "./ls.handler.ts";
 import type { StorageLsFlags } from "./ls.command.ts";
 
@@ -675,21 +676,24 @@ describe("stack backend", () => {
   );
 
   it.live(
-    "sanitizes a failed capability's error message, stripping ANSI escapes from the stack",
+    "sanitizes a failed capability's error message, stripping control characters from the stack",
     () => {
       const { layer } = setupStorage(tmp.current, {
         toml: 'project_id = "test"\n',
         local: true,
         stackBackend: true,
-        stackApi: { storageState: "failed", storageError: "[31mboom[0m" },
+        stackApi: { storageState: "failed", storageError: "\u001b[31mboom\u001b[0m" },
       });
       return Effect.gen(function* () {
         const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        const json = JSON.stringify(exit);
-        expect(json).toContain("Storage failed to start for this stack");
-        expect(json).toContain("boom");
-        expect(json).not.toContain("[31m");
+        if (!Exit.isFailure(exit)) return;
+        const error = Cause.squash(exit.cause);
+        expect(error).toBeInstanceOf(StackStorageCapabilityError);
+        if (!(error instanceof StackStorageCapabilityError)) return;
+        expect(error.message).toContain("Storage failed to start for this stack");
+        expect(error.message).toContain("boom");
+        expect(error.message).not.toContain("\u001b");
       });
     },
   );

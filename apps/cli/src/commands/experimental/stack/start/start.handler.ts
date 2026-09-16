@@ -23,7 +23,12 @@ import {
   classifyStorageCapability,
   stackStorageEndpointFor,
 } from "../../../../command-internal/stack-storage.ts";
-import { seedBucketsRun } from "../../../../command-internal/seed-buckets.ts";
+import {
+  hasConfiguredBuckets,
+  SeedConfigLoadError,
+  seedBucketsRun,
+} from "../../../../command-internal/seed-buckets.ts";
+import { loadLocalProjectContext } from "../../../../command-internal/local-project-context.ts";
 import { yellow } from "../../../../command-internal/colors.ts";
 import {
   StackApi,
@@ -276,17 +281,24 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       if (classifyStorageCapability(capability) === "disabled") {
         // Skip silently: the stack was started with Storage excluded.
       } else {
-        yield* stackStorageEndpointFor(stack, status).pipe(
-          Effect.flatMap((credentials) =>
-            seedBucketsRun({
-              projectRef: "",
-              emitSummary: false,
-              interactive: false,
-              yes: true,
-              credentials,
-              workdir: target.projectRoot,
-            }),
-          ),
+        yield* Effect.gen(function* () {
+          const context = yield* loadLocalProjectContext(
+            target.projectRoot,
+            (message) => new SeedConfigLoadError({ message }),
+          );
+          if (!hasConfiguredBuckets(context.config)) return;
+          const credentials = yield* stackStorageEndpointFor(stack, status);
+          yield* seedBucketsRun({
+            projectRef: "",
+            emitSummary: false,
+            interactive: false,
+            yes: true,
+            credentials,
+            resolvedConfig: { config: context.config, document: context.loaded?.document },
+            projectEnvValues: toml.projectEnv,
+            workdir: target.projectRoot,
+          });
+        }).pipe(
           // Missing capability/credentials and gateway-activation failures never abort a
           // successful start; report and continue, same as an underlying seed-config
           // failure below.

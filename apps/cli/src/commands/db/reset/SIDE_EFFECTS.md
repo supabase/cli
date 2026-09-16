@@ -40,8 +40,10 @@ failure, or an invalid bucket config all print `WARNING: skipped seeding storage
 <next step>` to stderr and exit `0`,
 where the next step is `Run supabase seed buckets --local once Storage is available.` (or, for
 disabled Storage, to enable `[storage]`, run `supabase stack restart`, then `supabase seed buckets
---local`). The warning is omitted when the project configures no `[storage.buckets]` or vector
-buckets, since there is nothing to seed. The
+--local`), unless the underlying stack-storage error carries its own suggestion (a missing API
+gateway endpoint, Auth disabled, or a gateway 502/503), in which case that suggestion is printed as
+the next step instead. The warning is omitted when the project configures no `[storage.buckets]`
+or vector buckets, since there is nothing to seed. The
 Storage gateway URL is the selected stack's API gateway URL (`status.endpoints.api.url`), not
 `[api].port`/`[api.tls]`, and the credential is the stack's service-role JWT — never `[api]`/
 `SUPABASE_API_*`/`SUPABASE_AUTH_{JWT_SECRET,SERVICE_ROLE_KEY}`. Bucket SQL/schema preparation is
@@ -244,8 +246,10 @@ to those defaults (the usual outcome for an interactive terminal).
   failure, or an invalid bucket config — skips seeding with a stderr
   `WARNING: skipped seeding storage buckets: <reason> <next step>` and the command still
   exits `0`; the warning is omitted when no buckets are configured, and disabled Storage
-  gets configuration-specific next steps. The stack's service-role JWT is never printed or
-  logged.
+  gets configuration-specific next steps. When the underlying stack-storage error carries
+  its own suggestion (missing API gateway endpoint, Auth disabled, gateway 502/503), that
+  suggestion is the next step instead of the generic one. The stack's service-role JWT is
+  never printed or logged.
 - **Target/local split** follows whether the resolved config points at the local
   stack, not the flag name: a `--db-url` pointing at the local stack is treated
   as a local reset.

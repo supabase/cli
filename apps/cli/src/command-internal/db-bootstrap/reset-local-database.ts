@@ -32,8 +32,7 @@ import { checkDbToml, loadProjectEnv, readDbToml } from "../db-config.toml-read.
 import { DbConnection } from "../db-connection.service.ts";
 import { loadLocalProjectContext } from "../local-project-context.ts";
 import { migrateAndSeed } from "../migrate-and-seed.ts";
-import { seedBucketsRun } from "../seed-buckets.ts";
-import { SeedConfigLoadError } from "../../commands/seed/buckets/buckets.errors.ts";
+import { hasConfiguredBuckets, seedBucketsRun } from "../seed-buckets.ts";
 import { awaitStorageReady } from "./await-storage-ready.ts";
 import { resolveResetSeedConfig } from "./db-setup.ts";
 import { buildLocalDbContainerInputs } from "./local-container-inputs.ts";
@@ -48,6 +47,8 @@ import {
 import {
   classifyStorageCapability,
   describeStorageCapability,
+  StackStorageCapabilityError,
+  StackStorageUnavailableError,
   stackStorageEndpointFor,
 } from "../stack-storage.ts";
 import { loadStackConfig } from "../stack-config.ts";
@@ -93,6 +94,11 @@ const notRunning = () =>
   });
 
 const resetFailed = (message: string) => new ResetLocalDbFailedError({ message });
+
+const suggestionOf = (error: unknown): string | undefined =>
+  error instanceof StackStorageUnavailableError || error instanceof StackStorageCapabilityError
+    ? error.suggestion
+    : undefined;
 
 /** Resets the local database in-process. See this module's own header for the full design rationale. */
 export const resetLocalDatabase = Effect.fnUntraced(function* (
@@ -197,52 +203,33 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
         "stderr",
       );
     const capability = status.capabilities.find((entry) => entry.name === "storage");
-    const decision = classifyStorageCapability(capability);
-    if (decision !== "proceed") {
-      // Only a project that configures buckets has anything to skip; an unreadable config
-      // still warns so a real skip is never silent.
-      const configuresBuckets = yield* loadLocalProjectContext(
-        workdir,
-        (message) => new SeedConfigLoadError({ message }),
-      ).pipe(
-        Effect.map(
-          (context) =>
-            Object.keys(context.config.storage.buckets ?? {}).length > 0 ||
-            Object.keys(context.config.storage.vector.buckets).length > 0,
-        ),
-        Effect.orElseSucceed(() => true),
-      );
-      if (configuresBuckets) {
+    // The database is already rebuilt, so any typed seeding failure only warns; defects and
+    // interruption still propagate.
+    yield* Effect.gen(function* () {
+      const context = yield* loadLocalProjectContext(workdir, (message) => resetFailed(message));
+      if (!hasConfiguredBuckets(context.config)) return;
+      const decision = classifyStorageCapability(capability);
+      if (decision !== "proceed") {
         yield* skipSeeding(
           describeStorageCapability(capability),
           decision === "disabled"
             ? "Set [storage] enabled = true in supabase/config.toml or start without -x storage, run supabase stack restart, then supabase seed buckets --local."
             : undefined,
         );
+        return;
       }
-    } else {
-      // Bucket seeding never fails the reset: the database is already rebuilt, so any
-      // typed failure here (config load, credential resolution, gateway error, or a
-      // filesystem error walking `objects_path`) only warns and skips; defects and
-      // interruption still propagate.
-      yield* Effect.gen(function* () {
-        const context = yield* loadLocalProjectContext(
-          workdir,
-          (message) => new SeedConfigLoadError({ message }),
-        );
-        const credentials = yield* stackStorageEndpointFor(opened.value.stack, status);
-        yield* seedBucketsRun({
-          projectRef: "",
-          emitSummary: false,
-          interactive: false,
-          yes,
-          credentials,
-          resolvedConfig: { config: context.config, document: context.loaded?.document },
-          projectEnvValues: projectEnv,
-          workdir,
-        });
-      }).pipe(Effect.catch((error) => skipSeeding(error.message)));
-    }
+      const credentials = yield* stackStorageEndpointFor(opened.value.stack, status);
+      yield* seedBucketsRun({
+        projectRef: "",
+        emitSummary: false,
+        interactive: false,
+        yes,
+        credentials,
+        resolvedConfig: { config: context.config, document: context.loaded?.document },
+        projectEnvValues: projectEnv,
+        workdir,
+      });
+    }).pipe(Effect.catch((error) => skipSeeding(error.message, suggestionOf(error))));
     const branch = Option.getOrElse(yield* detectGitBranch(workdir), () => "main");
     yield* output.raw(
       `Finished ${aqua("supabase db reset")} on branch ${aqua(branch)}.\n`,

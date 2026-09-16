@@ -102,6 +102,9 @@ and the project dotenv files used for config resolution. Network calls:
 `POST`/`GET /storage/v1/bucket` and `POST /storage/v1/object/...` against the stack's
 API URL.
 
+A project with no `[storage.buckets]` or `[storage.vector.buckets]` configured resolves
+no credentials and prints nothing — there is nothing to seed.
+
 A resumed stack is never re-seeded by `start`. Storage `disabled` skips seeding
 silently; any other unusable capability state, a missing capability/credentials, or a
 stack-gateway activation failure prints a stderr warning and skips seeding without

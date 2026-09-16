@@ -37,7 +37,7 @@ export class StackCommandStartError extends Data.TaggedError("ExperimentalStackS
       case "lifecycle":
         return actionability.invalidConfig;
       case "seed":
-        return actionability.startStack;
+        return actionability.seedBuckets;
       case "unknown":
         return actionability.unknown;
     }

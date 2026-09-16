@@ -1274,7 +1274,7 @@ describe("db reset", () => {
         return Effect.gen(function* () {
           yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
           expect(out.stderrText).toContain(
-            "WARNING: skipped seeding storage buckets: Storage failed to start for this stack: boom",
+            "WARNING: skipped seeding storage buckets: Storage failed to start for this stack: boom. Run supabase seed buckets --local once Storage is available.",
           );
           expect(out.stderrText).not.toContain("Storage is failed");
         });
@@ -1299,8 +1299,33 @@ describe("db reset", () => {
             "WARNING: skipped seeding storage buckets: The stack exposes no API gateway endpoint.",
           );
           expect(out.stderrText).toContain(
+            "Run supabase stack status to inspect the stack, or supabase stack restart.",
+          );
+          expect(out.stderrText).not.toContain(
             "Run supabase seed buckets --local once Storage is available.",
           );
+        });
+      },
+    );
+
+    it.live(
+      "skips seeding silently when no buckets are configured even without an API gateway endpoint",
+      () => {
+        const client = recordingStackStorageHttpClient();
+        const { layer, out } = setup(tmp.current, {
+          toml: 'project_id = "test"\n',
+          args: ["db", "reset", "--local"],
+          isLocal: true,
+          stackBackend: true,
+          stackStorageState: "dormant",
+          // `stackApiEndpoint` intentionally omitted so `status.endpoints.api` is undefined.
+          httpClient: client.layer,
+        });
+        return Effect.gen(function* () {
+          const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+          expect(Exit.isSuccess(exit)).toBe(true);
+          expect(out.stderrText).not.toContain("skipped seeding storage buckets");
+          expect(client.requests).toHaveLength(0);
         });
       },
     );

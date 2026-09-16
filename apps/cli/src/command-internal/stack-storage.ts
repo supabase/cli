@@ -63,6 +63,10 @@ export const classifyStorageCapability = (
   );
 };
 
+// Callers concatenate this with a following sentence (a next-step suggestion), so the
+// sanitized error always needs its own terminal punctuation.
+const withTerminalPunctuation = (text: string): string => (/[.!?]$/.test(text) ? text : `${text}.`);
+
 /**
  * Renders the current Storage capability state in the same wording `stackStorageEndpointFor`
  * fails with, so pre-check warnings (`db reset`, `stack start`) and the endpoint resolver never
@@ -77,7 +81,9 @@ export const describeStorageCapability = (capability: CapabilityStatus | undefin
         ? "The stack reports no Storage capability."
         : capability.state === "failed"
           ? `Storage failed to start for this stack${
-              capability.error === undefined ? "." : `: ${sanitizeInlineName(capability.error)}`
+              capability.error === undefined
+                ? "."
+                : `: ${withTerminalPunctuation(sanitizeInlineName(capability.error))}`
             }`
           : "Storage is stopped for this stack.",
     ),

@@ -34,8 +34,17 @@ import {
 import { SeedConfigLoadError } from "../commands/seed/buckets/buckets.errors.ts";
 import { bucketObjectKey } from "../commands/seed/buckets/buckets.upload.ts";
 
+// Re-exported so `stack start` can report a project-context config-load failure with the
+// same tag `seedBucketsRun` itself fails with, without importing across command boundaries.
+export { SeedConfigLoadError };
+
 const CONFIG_PATH = "supabase/config.toml";
 const UPLOAD_CONCURRENCY = 5;
+
+/** Whether `[storage.buckets]` or `[storage.vector.buckets]` declares anything to seed. */
+export const hasConfiguredBuckets = (config: CliConfig): boolean =>
+  Object.keys(config.storage.buckets ?? {}).length > 0 ||
+  Object.keys(config.storage.vector.buckets).length > 0;
 
 // OS metadata files (macOS Finder, Windows Explorer) that must never be uploaded as seeded
 // objects.
@@ -204,7 +213,7 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
   }
 
   // Short-circuit: nothing to seed (ref present → never short-circuits).
-  if (projectRef === "" && bucketNames.length === 0 && !hasVectorBuckets) {
+  if (projectRef === "" && !hasConfiguredBuckets(config)) {
     // Config validation (SUPABASE_API_*/SUPABASE_AUTH_* overrides, TLS cert/key pairing)
     // still runs here even with nothing to seed; it's validate-only — the seeding path
     // re-resolves these values through `resolveStorageCredentials`. The stack backend never

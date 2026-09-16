@@ -176,6 +176,12 @@ const statusWithoutStorageCapability = (id: string): StackStatus => ({
   capabilities: status(id).capabilities.filter((capability) => capability.name !== "storage"),
 });
 
+/** `status()` with no API gateway endpoint exposed. */
+const statusWithoutApiEndpoint = (id: string): StackStatus => ({
+  ...status(id),
+  endpoints: {},
+});
+
 /** Records every request the seed-buckets gateway client issues, responding 200 to all. */
 function recordingStackStorageHttpClient(opts: { readonly bucketCreateStatus?: number } = {}) {
   const requests: Array<{
@@ -1277,6 +1283,28 @@ describe("stack start bucket seeding", () => {
         expect(setup.out.stderrText).toContain("WARNING: skipped seeding storage buckets:");
         expect(setup.out.stderrText).toContain("API credentials");
         expect(setup.out.stderrText).toContain("Auth");
+        expect(client.requests).toHaveLength(0);
+      }).pipe(Effect.provide(BunServices.layer));
+    },
+  );
+
+  it.live(
+    "does not warn or resolve credentials when no buckets are configured and the stack exposes no API endpoint",
+    () => {
+      return Effect.gen(function* () {
+        const root = yield* project();
+        const client = recordingStackStorageHttpClient();
+        const stack = fakeStack("0".repeat(64), () =>
+          Effect.succeed(statusWithoutApiEndpoint("0".repeat(64))),
+        );
+        const setup = handlerLayer({
+          root,
+          target: { projectRoot: root },
+          stack,
+          httpClient: client.layer,
+        });
+        yield* stackStart(flags()).pipe(Effect.provide(setup.layer));
+        expect(setup.out.stderrText).not.toContain("skipped seeding storage buckets");
         expect(client.requests).toHaveLength(0);
       }).pipe(Effect.provide(BunServices.layer));
     },
