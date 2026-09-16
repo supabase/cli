@@ -32,6 +32,10 @@ interface CommandSettingsShape {
   /** Dashboard base URL for the active profile, used by the connect-failure network-restrictions hint. */
   readonly dashboardUrl: string;
   readonly accessToken: Option.Option<Redacted.Redacted<string>>;
+  /** `SUPABASE_DB_PASSWORD` captured at settings resolution; empty captures as none. */
+  readonly dbPassword: Option.Option<Redacted.Redacted<string>>;
+  /** Ambient `GITHUB_TOKEN`; raises anonymous GitHub API rate limits. Empty captures as none. */
+  readonly githubToken: Option.Option<Redacted.Redacted<string>>;
   readonly projectId: Option.Option<string>;
   readonly workdir: string;
   /**
@@ -40,6 +44,8 @@ interface CommandSettingsShape {
    * directories; see `shouldSearchAncestors` in `command-internal/workdir-search.ts`.
    */
   readonly explicitWorkdir: boolean;
+  /** Raw `SUPABASE_WORKDIR` value; `Some("")` differs from an absent variable and is used verbatim. */
+  readonly workdirEnvValue: Option.Option<string>;
   readonly userAgent: string;
 }
 

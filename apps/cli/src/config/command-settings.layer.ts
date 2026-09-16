@@ -141,6 +141,16 @@ export const commandSettingsLayer = Layer.unwrap(
           debugLogger,
         );
 
+        const rawDbPassword = yield* read(Config.option(Config.string("SUPABASE_DB_PASSWORD")));
+        const dbPassword = Option.filter(rawDbPassword, (value) => value.length > 0).pipe(
+          Option.map((value) => Redacted.make(value, { label: "SUPABASE_DB_PASSWORD" })),
+        );
+
+        const rawGithubToken = yield* read(Config.option(Config.string("GITHUB_TOKEN")));
+        const githubToken = Option.filter(rawGithubToken, (value) => value.length > 0).pipe(
+          Option.map((value) => Redacted.make(value, { label: "GITHUB_TOKEN" })),
+        );
+
         const rawAccessToken = yield* read(Config.option(Config.string("SUPABASE_ACCESS_TOKEN")));
         const accessToken = Option.filter(rawAccessToken, (value) => value.length > 0).pipe(
           Option.map((value) => Redacted.make(value, { label: "SUPABASE_ACCESS_TOKEN" })),
@@ -149,9 +159,10 @@ export const commandSettingsLayer = Layer.unwrap(
         const rawProjectId = yield* read(Config.option(Config.string("SUPABASE_PROJECT_ID")));
         const projectId = Option.filter(rawProjectId, (value) => value.length > 0);
 
+        const workdirEnvValue = yield* read(Config.option(Config.string("SUPABASE_WORKDIR")));
         const { workdir, explicit: explicitWorkdir } = yield* resolveWorkdir(
           workdirFlag,
-          yield* read(Config.option(Config.string("SUPABASE_WORKDIR"))),
+          workdirEnvValue,
           runtimeInfo.cwd,
           (filePath) => fs.exists(filePath).pipe(Effect.orElseSucceed(() => false)),
           path,
@@ -168,9 +179,12 @@ export const commandSettingsLayer = Layer.unwrap(
           poolerHost,
           dashboardUrl,
           accessToken,
+          dbPassword,
+          githubToken,
           projectId,
           workdir,
           explicitWorkdir,
+          workdirEnvValue,
           userAgent,
         });
       }),

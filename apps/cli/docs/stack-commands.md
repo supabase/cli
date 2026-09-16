@@ -87,6 +87,33 @@ For temporary selection, set `SUPABASE_EXPERIMENTAL_STACK=1` to select the new b
 precedence over `experimental.stack`; an unset or empty value falls back to the file setting.
 Other values are rejected. The override is applied before reading the project configuration.
 
+When the flag is on, `--local` targets of the `db`, `migration`, `test db`, `gen types`, and
+`inspect` families use the project stack and provision throwaway shadow Postgres through
+`@supabase/stack` (`EphemeralPostgres`). Top-level `supabase pull` uses the same stack shadow
+as `db pull`. Linked and `--db-url` targets stay on the Management API for engine selection.
+A `--db-url` that matches `config.toml` host and port is still rewritten like a published
+stack target for dump's tool container. Compose names (`supabase_db_*`, `supabase_network_*`,
+`db:5432`) are not used. The stack backend requires the in-process pg-delta engine;
+`--use-migra`, `--use-pgadmin`, `--use-pg-schema`, and `db pull --diff-engine migra` are
+rejected. The flag does not switch functions or storage command families.
+
+`db start` brings up a postgres-only project stack on first create. An existing stack resumes
+its persisted services (webhooks setup only; no second overlay or migrate-and-seed).
+`supabase start` while that postgres-only stack is running stops it and starts the full
+configured stack, keeping data. `--from-backup` is not supported on the stack path. `db reset
+--local` and declarative `--apply` wipe Postgres through `resetDatabase` and then migrate or
+seed on stack credentials.
+
+`gen types --local` and `inspect db … --local` resolve the project stack through the same
+`--local` database target as `db dump`. They do not start a stack.
+
+`db dump --local`, `db test` / `test db`, and `migration squash` use host `pg_dump` / `pg_prove`
+only when the stack engine is native. Those PATH clients must match the stack Postgres major;
+otherwise install matching client tools or create a new stack that uses a container runtime.
+The Docker/Podman
+engine keeps the one-shot tool container and targets published stack credentials, never
+`PGHOST=db`.
+
 ## Reading stack logs
 
 `supabase stack logs` reads retained logs without starting or stopping the selected stack. Use
@@ -162,6 +189,10 @@ The flag is local CLI configuration in `supabase/config.toml` or `supabase/confi
 excluded from hosted project configuration. Routing applies the CLI's working-directory rules,
 including `--workdir` and `SUPABASE_WORKDIR`, and prefers JSON when both files exist.
 
+## Port intents
+
+Host listener assignment for `supabase stack` is documented in [Port intents](./supabase-home.md#port-intents).
+
 ## Service selection and shutdown
 
 With the current defaults, lazy REST, Auth, Realtime, Studio, and pooler services stop after 60 seconds without traffic. An
@@ -191,7 +222,7 @@ An unconfigured stack must be initialized with `supabase stack start` before it 
 `supabase stack start --exclude studio,analytics -x mail` disables those services in the effective
 start configuration without changing the project file. Valid names are `rest`, `auth`, `realtime`,
 `storage`, `functions`, `studio`, `mail`, `analytics`, and `pooler`; the database is required.
-Excluding `rest` or `analytics` also disables Studio. The effective configuration is
+Excluding `rest` also disables Studio; excluding `analytics` does not. The effective configuration is
 retained in stack state, so starting without `--exclude` restores the project's configured services.
 
 `supabase stack stop --all` stops every readable managed stack while preserving data. It continues

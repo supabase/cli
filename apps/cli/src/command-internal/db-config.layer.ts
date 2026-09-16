@@ -1,6 +1,6 @@
 import * as net from "node:net";
 import { BunServices } from "@effect/platform-bun";
-import { Duration, Effect, FileSystem, Layer, Option, Path } from "effect";
+import { Config, Crypto, Duration, Effect, FileSystem, Layer, Option, Path } from "effect";
 
 import { CommandPlatformApiFactory } from "../auth/command-platform-api-factory.service.ts";
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
@@ -38,6 +38,9 @@ import type { DbConfigFlags } from "./db-config.types.ts";
 import { DebugLogger } from "./debug-logger.service.ts";
 import { getHostname } from "./hostname.ts";
 import { mapHttpError } from "./http-errors.ts";
+import { currentStackBackend } from "./stack-backend.ts";
+import { StackApi, stackApiLayer } from "./stack-api.ts";
+import { stackLocalDatabaseConn } from "./stack-local-database.ts";
 
 const DIRECT_PORT = 5432;
 const TCP_PROBE_TIMEOUT = Duration.seconds(5);
@@ -195,9 +198,10 @@ const resolveDbPassword = Effect.fnUntraced(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const projectEnv = yield* loadProjectEnv(fs, path, workdir);
+  const ambientPassword = yield* Config.option(Config.string("SUPABASE_DB_PASSWORD"));
   return (
     Option.getOrUndefined(passwordFlag) ??
-    process.env["SUPABASE_DB_PASSWORD"] ??
+    Option.getOrUndefined(ambientPassword) ??
     projectEnv["SUPABASE_DB_PASSWORD"] ??
     ""
   );
@@ -375,12 +379,15 @@ export const resolveLinkedConn = Effect.fnUntraced(function* (
   return poolerConn.value;
 });
 
-export const dbConfigLayer = Layer.effect(
+const dbConfigResolverLayer = Layer.effect(
   DbConfigResolver,
   Effect.gen(function* () {
     const cliSettings = yield* CommandSettings;
+    const stackApi = yield* StackApi;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const runtimeInfo = yield* RuntimeInfo;
+    const crypto = yield* Crypto.Crypto;
     const debug = yield* DebugLogger;
     const output = yield* Output;
     const dbConn = yield* DbConnection;
@@ -459,7 +466,12 @@ export const dbConfigLayer = Layer.effect(
         // `--db-url`/`--local` read base config, since neither merges a remote block.
         // Honors `SUPABASE_SERVICES_HOSTNAME` / a tcp `DOCKER_HOST` in dev-container or
         // remote-Docker setups, defaulting to 127.0.0.1.
-        const localHost = getHostname();
+        const localHost = yield* getHostname().pipe(
+          Effect.provideService(RuntimeInfo, runtimeInfo),
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.provideService(Path.Path, path),
+          Effect.provideService(Crypto.Crypto, crypto),
+        );
 
         // --db-url (direct) takes precedence.
         if (flags.connType === "db-url" && Option.isSome(flags.dbUrl)) {
@@ -561,6 +573,15 @@ export const dbConfigLayer = Layer.effect(
         const tomlValues = yield* readDbToml(fs, path, cliSettings.workdir, undefined, {
           resolveVaultSecrets,
         });
+        const backend = yield* currentStackBackend;
+        if (backend.kind === "stack") {
+          // `resolve`'s R is `never`, so capture StackApi at layer build.
+          const conn = yield* stackLocalDatabaseConn.pipe(
+            Effect.provideService(CommandSettings, cliSettings),
+            Effect.provideService(StackApi, stackApi),
+          );
+          return { conn, isLocal: true };
+        }
         return {
           conn: {
             host: localHost,
@@ -628,3 +649,5 @@ export const dbConfigLayer = Layer.effect(
     });
   }),
 );
+
+export const dbConfigLayer = dbConfigResolverLayer.pipe(Layer.provide(stackApiLayer));

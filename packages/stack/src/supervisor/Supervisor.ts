@@ -50,6 +50,7 @@ import {
   type ObservedWorkload,
   type RuntimeDriver,
 } from "../runtime/RuntimeDriver.ts";
+import { withLeftoverPersistentDataGuidance } from "../runtime/Diagnostics.ts";
 import type { PersistedStackState } from "../state/StackState.ts";
 import { isMissingStateRemnantError, type StackStateStore } from "../state/StackStateStore.ts";
 import {
@@ -147,6 +148,8 @@ export interface Supervisor {
     readonly config?: StackConfig;
   }) => Effect.Effect<StackStatus, StackError>;
   readonly destroy: Effect.Effect<void, StackError>;
+  /** Wipes Postgres data for the running stack and bootstraps a fresh cluster. */
+  readonly resetDatabase: Effect.Effect<StackStatus, StackError>;
   /** Completes after a successful stop or destroy shutdown signal. */
   readonly shutdown: Effect.Effect<void>;
   /** Shuts down only when durable state is absent or cleanly non-running. */
@@ -169,6 +172,14 @@ export type SupervisorOptions = {
   readonly context: Context.Context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>;
   readonly runtime: SupervisorRuntime;
 };
+
+const RESET_DATABASE_BOUNCE_CAPABILITIES: ReadonlySet<CapabilityName> = new Set([
+  "auth",
+  "storage",
+  "realtime",
+  "pooler",
+  "analytics",
+]);
 
 const rpcError = (tag: StackRpcError["tag"], message: string): StackRpcError => ({ tag, message });
 const credentialsUnavailable = rpcError(
@@ -204,7 +215,9 @@ const mapRuntimeError = (error: unknown): StackError => {
   if (error instanceof SessionCleanupError)
     return new StackCleanupError({ message: sessionCleanupMessage(error), cause: error });
   return new StackRuntimeError({
-    message: error instanceof Error ? error.message : String(error),
+    message: withLeftoverPersistentDataGuidance(
+      error instanceof Error ? error.message : String(error),
+    ),
     cause: error,
   });
 };
@@ -1862,6 +1875,122 @@ export const makeSupervisor = (
         yield* submitLifecycle("start", startOperation(startOptions));
         return yield* snapshot();
       });
+    const resetDatabaseOperation = (): Effect.Effect<CommandResult, StackError> =>
+      Effect.gen(function* () {
+        const notRunning = new StackNotRunningError({
+          stackId: options.stackId,
+          message: "Stack is not running",
+        });
+        const rejectNotRunning = {
+          _tag: "failed" as const,
+          cause: Cause.fail(notRunning),
+          cleanup: { _tag: "proven" as const },
+          durable: "stopped" as const,
+        } satisfies CommandResult;
+        const failedWithoutMutation = (cause: Cause.Cause<StackError>): CommandResult => ({
+          _tag: "failed",
+          cause,
+          cleanup: { _tag: "proven" },
+          durable: "unsafe",
+        });
+        const failedAfterMutation = (cause: Cause.Cause<StackError>): CommandResult => ({
+          _tag: "failed",
+          cause,
+          cleanup: { _tag: "unproven", cause },
+          durable: "unsafe",
+        });
+        const control = (yield* Ref.get(machine)).stack;
+        if (
+          !Predicate.isTagged(control, "starting") ||
+          !Predicate.isTagged(control.prior, "running")
+        )
+          return rejectNotRunning;
+        const state = yield* read();
+        if (state === undefined || state.definition === undefined)
+          return failedWithoutMutation(
+            Cause.fail(new StackStateInvalidError({ message: "Stack state is missing" })),
+          );
+        const status = yield* snapshot();
+        const database = status.capabilities.find((capability) => capability.name === "database");
+        if (database?.state !== "ready")
+          return {
+            ...rejectNotRunning,
+            cause: Cause.fail(
+              new StackNotRunningError({
+                stackId: options.stackId,
+                message: "Database is not running",
+              }),
+            ),
+          };
+        const plan =
+          (yield* planValue()) ??
+          (yield* rebuildExecutionPlan(state.runtime, state.definition).pipe(
+            Effect.mapError(
+              (error) => new StackStateInvalidError({ message: error.message, cause: error }),
+            ),
+          ));
+        const bounceNames = new Set<CapabilityName>(
+          status.capabilities.flatMap((capability) =>
+            capability.state === "ready" && RESET_DATABASE_BOUNCE_CAPABILITIES.has(capability.name)
+              ? [capability.name]
+              : [],
+          ),
+        );
+        const bounce = plan.workloads.filter((workload) => bounceNames.has(workload.capability));
+        const databaseWorkload = plan.workloads.find(
+          (workload) => workload.id === "database:database",
+        );
+        if (databaseWorkload === undefined)
+          return failedWithoutMutation(
+            Cause.fail(new StackStateInvalidError({ message: "Database workload is missing" })),
+          );
+        const stopped = yield* launcher
+          .stopCapabilities(new Set(["database", ...bounceNames]))
+          .pipe(Effect.mapError(mapRuntimeError), Effect.exit);
+        if (Exit.isFailure(stopped)) return failedAfterMutation(stopped.cause);
+        const wiped = yield* runtime.driver
+          .wipePersistentData({ stackId: options.stackId, workloadId: databaseWorkload.id })
+          .pipe(Effect.mapError(mapRuntimeError), Effect.exit);
+        if (Exit.isFailure(wiped)) return failedAfterMutation(wiped.cause);
+        const launched = yield* launcher.launch({
+          ...plan,
+          workloads: [databaseWorkload, ...bounce],
+        });
+        if (Predicate.isTagged(launched, "failed")) {
+          // Wipe emptied PGDATA; persist first-create so stop → start does not skip schema init.
+          const launchCause = Cause.map(launched.cause, mapRuntimeError);
+          const current = yield* read().pipe(Effect.exit);
+          let cause = launchCause;
+          if (Exit.isFailure(current)) {
+            cause = Cause.combine(cause, current.cause);
+          } else if (current.value === undefined) {
+            cause = Cause.combine(
+              cause,
+              Cause.fail(new StackStateInvalidError({ message: "Stack state is missing" })),
+            );
+          } else {
+            const persisted = yield* options.stateStore
+              .replace(options.stackId, {
+                ...current.value,
+                desiredLifecycle: "unconfigured",
+              })
+              .pipe(Effect.provideContext(options.context), Effect.exit);
+            if (Exit.isFailure(persisted)) cause = Cause.combine(cause, persisted.cause);
+          }
+          return failedAfterMutation(cause);
+        }
+        return { _tag: "succeeded" } satisfies CommandResult;
+      });
+    const resetDatabase = Effect.gen(function* () {
+      const control = (yield* Ref.get(machine)).stack;
+      if (!Predicate.isTagged(control, "running"))
+        return yield* new StackNotRunningError({
+          stackId: options.stackId,
+          message: "Stack is not running",
+        });
+      yield* submitLifecycle("start", resetDatabaseOperation());
+      return yield* snapshot();
+    });
     const stopOperation = (): Effect.Effect<CommandResult, StackError> =>
       Effect.gen(function* () {
         const result = yield* controller.stop.pipe(
@@ -2084,11 +2213,13 @@ export const makeSupervisor = (
       credentials: () => credentials,
       start: ({ config }: { readonly config?: StackConfig }) => operation(start({ config })),
       destroy: () => operation(destroy),
+      resetDatabase: () => operation(resetDatabase),
       logs: (query: LogQuery) => operation(logs(query)),
     });
     return {
       status,
       start,
+      resetDatabase,
       destroy,
       shutdown: Deferred.await(shutdownSignal),
       shutdownIfIdle,

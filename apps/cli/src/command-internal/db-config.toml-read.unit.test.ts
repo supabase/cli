@@ -3,10 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunPath, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, FileSystem, Option, Path } from "effect";
+import { ConfigProvider, Effect, Exit, FileSystem, Option, Path } from "effect";
 
 import {
-  applyProjectEnv,
   checkDbToml,
   loadProjectEnv,
   readDbToml,
@@ -47,6 +46,16 @@ const loadEnv = (workdir: string) =>
     const path = yield* Path.Path;
     return yield* loadProjectEnv(fs, path, workdir);
   }).pipe(Effect.provide(BunServices.layer));
+
+const loadEnvWithConfig = (workdir: string, values: Readonly<Record<string, string>>) =>
+  loadEnv(workdir).pipe(
+    Effect.provideService(
+      ConfigProvider.ConfigProvider,
+      ConfigProvider.fromEnvRecord(Object.fromEntries(Object.entries(values)), {
+        preserveEmptyStrings: true,
+      }),
+    ),
+  );
 
 describe("read (lenient) vs check (throws) split", () => {
   const withServices = <A, E>(
@@ -2412,8 +2421,7 @@ describe("readDbToml", () => {
   });
 
   it.effect("loadProjectEnv is pure: returns every key and never touches process.env", () => {
-    // Applying to process.env is the separate, opt-in `applyProjectEnv` below, so a mere load
-    // for SUPABASE_YES has no global side effect.
+    // A mere load for SUPABASE_YES has no global side effect.
     const saved: Record<string, string | undefined> = {};
     for (const k of ["SUPABASE_INTERNAL_IMAGE_REGISTRY", "SUPABASE_PROJECT_ID", "SUPABASE_ENV"]) {
       saved[k] = process.env[k];
@@ -2446,48 +2454,22 @@ describe("readDbToml", () => {
   });
 
   it.effect(
-    "applyProjectEnv sets only the allowlisted keys in-scope, never overrides, reverts on close",
+    "uses injected config for env selection and excludes ambient keys including empty values",
     () => {
-      // Our resolvers read process.env lazily, so only the allowlisted
-      // `SUPABASE_INTERNAL_IMAGE_REGISTRY` (the process.env-only reader) is applied: a .env
-      // project-ref must not retarget the lazy ref/pooler resolvers, and a .env SUPABASE_ENV
-      // must not switch the env-file set.
-      const saved: Record<string, string | undefined> = {};
-      for (const k of ["SUPABASE_INTERNAL_IMAGE_REGISTRY", "SUPABASE_PROJECT_ID", "SUPABASE_ENV"]) {
-        saved[k] = process.env[k];
-        delete process.env[k];
-      }
-      const loaded = {
-        SUPABASE_INTERNAL_IMAGE_REGISTRY: "my-mirror.example.com",
-        SUPABASE_PROJECT_ID: "envonlyref",
-        SUPABASE_ENV: "staging",
-      };
-      return Effect.gen(function* () {
-        // Inside the scope: only the registry key is applied; the ref/env selector are not.
-        yield* Effect.scoped(
-          Effect.gen(function* () {
-            yield* applyProjectEnv(loaded);
-            expect(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]).toBe("my-mirror.example.com");
-            expect(process.env["SUPABASE_PROJECT_ID"]).toBeUndefined();
-            expect(process.env["SUPABASE_ENV"]).toBeUndefined();
-          }),
-        );
-        // After the scope closes the applied keys are reverted (no test-worker leak).
-        expect(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]).toBeUndefined();
-
-        // An existing process.env value is never overridden, and is not deleted on close.
-        process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"] = "shell-wins.example.com";
-        yield* Effect.scoped(applyProjectEnv(loaded));
-        expect(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]).toBe("shell-wins.example.com");
-      }).pipe(
-        Effect.ensuring(
+      const dir = mkdtempSync(join(tmpdir(), "db-toml-"));
+      mkdirSync(join(dir, "supabase"), { recursive: true });
+      writeFileSync(
+        join(dir, "supabase", ".env.development"),
+        "FROM_AMBIENT=from-file\nDEVELOPMENT_ONLY=from-development\n",
+      );
+      writeFileSync(join(dir, "supabase", ".env.staging"), "WRONG_ENV=from-file\n");
+      return loadEnvWithConfig(dir, { SUPABASE_ENV: "", FROM_AMBIENT: "" }).pipe(
+        Effect.tap((env) =>
           Effect.sync(() => {
-            for (const [k, v] of Object.entries(saved)) {
-              if (v === undefined) delete process.env[k];
-              else process.env[k] = v;
-            }
+            expect(env).toEqual({ DEVELOPMENT_ONLY: "from-development" });
           }),
         ),
+        Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
       );
     },
   );

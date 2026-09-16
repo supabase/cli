@@ -3,7 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Option, Path } from "effect";
 import { respondToComplete } from "../../../cli/complete.ts";
 import { rootCommandForFeatures } from "../../../cli/root.ts";
-import { StackRoutingError, resolveStackBackend } from "./stack-backend.ts";
+import { StackRoutingError, resolveStackBackend } from "../../../command-internal/stack-backend.ts";
 
 const resolve = (input: Parameters<typeof resolveStackBackend>[0]) =>
   resolveStackBackend(input).pipe(Effect.provide(BunServices.layer));
@@ -56,6 +56,13 @@ stack = true
         );
         expect(yield* resolve({ args: ["stop"], cwd: root, env: {} })).toBe("stack");
         expect(yield* resolve({ args: ["status"], cwd: root, env: {} })).toBe("stack");
+        expect(yield* resolve({ args: ["db", "diff"], cwd: root, env: {} })).toBe("stack");
+        expect(yield* resolve({ args: ["db", "test"], cwd: root, env: {} })).toBe("stack");
+        expect(yield* resolve({ args: ["test", "db"], cwd: root, env: {} })).toBe("stack");
+        expect(yield* resolve({ args: ["migration", "squash"], cwd: root, env: {} })).toBe("stack");
+        expect(yield* resolve({ args: ["pull"], cwd: root, env: {} })).toBe("stack");
+        expect(yield* resolve({ args: ["gen", "types"], cwd: root, env: {} })).toBe("stack");
+        expect(yield* resolve({ args: ["inspect", "db"], cwd: root, env: {} })).toBe("stack");
       }),
     );
   });

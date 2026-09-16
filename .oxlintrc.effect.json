@@ -8,6 +8,7 @@
     "**",
     "!packages/stack/**",
     "!apps/cli/src/commands/backups/**",
+    "!apps/cli/src/commands/bootstrap/**",
     "!apps/cli/src/commands/completion/**",
     "!apps/cli/src/commands/domains/**",
     "!apps/cli/src/commands/encryption/**",
@@ -20,6 +21,10 @@
     "!apps/cli/src/commands/network-bans/**",
     "!apps/cli/src/commands/network-restrictions/**",
     "!apps/cli/src/commands/orgs/**",
+    "!apps/cli/src/commands/postgres-config/**",
+    "!apps/cli/src/commands/projects/**",
+    "!apps/cli/src/commands/pull/**",
+    "!apps/cli/src/commands/secrets/**",
     "!apps/cli/src/commands/services/**",
     "!apps/cli/src/commands/snippets/**",
     "!apps/cli/src/commands/ssl-enforcement/**",
@@ -33,6 +38,15 @@
     // `!` entry that would otherwise re-include them.
     "apps/cli/src/shared/compute/stacks/**",
     "!apps/cli/tests/helpers/compute.ts",
-    "!apps/cli/src/command-internal/experimental-feature.ts"
+    "!apps/cli/tests/helpers/postgres-config-live.ts",
+    "!apps/cli/tests/helpers/secrets-live.ts",
+    "!apps/cli/src/command-internal/experimental-feature.ts",
+    "!apps/cli/src/command-internal/postgres-client.run.ts",
+    "!apps/cli/src/command-internal/stack-api.ts",
+    "!apps/cli/src/command-internal/stack-backend.ts",
+    "!apps/cli/src/command-internal/stack-catalog-setup.ts",
+    "!apps/cli/src/command-internal/stack-config.ts",
+    "!apps/cli/src/command-internal/stack-local-database.ts",
+    "!apps/cli/src/command-internal/stack-shadow.ts"
   ]
 }

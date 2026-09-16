@@ -42,6 +42,9 @@ function fakeDocker(result: { exitCode: number; stdout?: string; stderr?: string
 // falls back to the default tag.
 function makeCliSettings(workdir = "/nonexistent-workdir") {
   return Layer.succeed(CommandSettings, {
+    dbPassword: Option.none(),
+    githubToken: Option.none(),
+    workdirEnvValue: Option.none(),
     profile: "supabase",
     profileEnvValue: Option.none(),
     supabaseHome: "/tmp/.supabase",
@@ -221,4 +224,25 @@ describe("edgeRuntimeScriptLayer sentinel handling", () => {
       );
     },
   );
+
+  it.effect("forwards project dotenv values to the Docker invocation", () => {
+    const { layer, docker } = setup({
+      exitCode: 1,
+      stdout: "{}",
+      stderr: "main worker has been destroyed\n",
+    });
+    const projectEnvValues = { BITBUCKET_CLONE_DIR: "/pipeline/project" };
+    return Effect.gen(function* () {
+      const edge = yield* EdgeRuntimeScript;
+      yield* edge.run({
+        script: "console.log('x')",
+        env: {},
+        binds: ["supabase_edge_runtime_proj:/root/.cache/deno:rw"],
+        errPrefix: "error diffing schema",
+        denoVersion: 2,
+        projectEnvValues,
+      });
+      expect(docker.lastOpts?.projectEnvValues).toEqual(projectEnvValues);
+    }).pipe(Effect.provide(layer));
+  });
 });

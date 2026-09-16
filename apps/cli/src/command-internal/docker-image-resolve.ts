@@ -27,6 +27,13 @@ const spawnError = () =>
 const runtimeNotFound = (cause: ContainerRuntimeNotFoundError) =>
   new DockerRunError({ message: cause.message, reason: "spawn", daemonDown: false });
 
+const configError = (cause: unknown) =>
+  new DockerRunError({
+    message: `failed to resolve Docker image registry configuration: ${cause instanceof Error ? cause.message : String(cause)}`,
+    reason: "config",
+    daemonDown: false,
+  });
+
 /**
  * Detects a confirmed "image not found" `image inspect` failure across Docker (`No such image`)
  * and Podman (`image not known`) — any other inspect error is unexpected and must not fall
@@ -56,6 +63,7 @@ const concat = (chunks: ReadonlyArray<Uint8Array>): Uint8Array => {
 export function makeDockerImageResolver(
   spawner: Spawner,
   projectEnvValues?: Readonly<Record<string, string>>,
+  childEnvValues?: Readonly<Record<string, string>>,
 ): (image: string, deadline?: number) => Effect.Effect<string, DockerRunError> {
   const hasLocalImage = (image: string): Effect.Effect<boolean, DockerRunError> =>
     Effect.gen(function* () {
@@ -66,6 +74,8 @@ export function makeDockerImageResolver(
         stdin: "ignore",
         stdout: "ignore",
         stderr: "pipe",
+        env: childEnvValues === undefined ? undefined : { ...childEnvValues },
+        extendEnv: true,
       }).pipe(Effect.mapError(runtimeNotFound));
       const stderrChunks: Array<Uint8Array> = [];
       yield* Stream.runForEach(handle.stderr, (chunk) =>
@@ -107,6 +117,7 @@ export function makeDockerImageResolver(
         stdout: "pipe",
         stderr: "pipe",
         detached: false,
+        env: childEnvValues === undefined ? undefined : { ...childEnvValues },
         extendEnv: true,
       }).pipe(Effect.mapError(runtimeNotFound));
       // Tee pull progress to the parent's stderr in real time, so a slow uncached pull doesn't
@@ -150,7 +161,9 @@ export function makeDockerImageResolver(
 
   return (image: string, deadline?: number): Effect.Effect<string, DockerRunError> =>
     Effect.gen(function* () {
-      const candidates = getRegistryImageUrlCandidates(image, projectEnvValues);
+      const candidates = yield* getRegistryImageUrlCandidates(image, projectEnvValues).pipe(
+        Effect.mapError(configError),
+      );
       for (const candidate of candidates) {
         if (yield* hasLocalImage(candidate)) {
           return candidate;

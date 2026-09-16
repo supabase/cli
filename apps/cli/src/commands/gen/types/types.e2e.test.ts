@@ -2,10 +2,10 @@ import { spawn } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
+import { Effect } from "effect";
 import { makeTempHome, makeTempStackProject, runSupabase } from "../../../../tests/helpers/cli.ts";
 import { dockerfileServiceImage } from "../../../shared/services/dockerfile-images.ts";
 import { localDbContainerId, localNetworkId } from "../../../command-internal/docker-ids.ts";
-import { getRegistryImageUrl } from "../../../command-internal/docker-registry.ts";
 import {
   RESOLVE_BUDGET_MS,
   ensureImage,
@@ -16,7 +16,7 @@ import { resolvePgmetaImage } from "./types.shared.ts";
 const TYPEGEN_LANGS = ["typescript", "go", "swift", "python"] as const;
 type TypegenLang = (typeof TYPEGEN_LANGS)[number];
 
-const LOCAL_POSTGRES_IMAGE = getRegistryImageUrl(dockerfileServiceImage("pg"));
+const LOCAL_POSTGRES_IMAGE = dockerfileServiceImage("pg");
 const LOCAL_POSTGRES_TIMEOUT_MS = 120_000;
 const TYPEGEN_TIMEOUT_MS = 90_000;
 // Image resolution runs inside the test body, so its timeout must add on top of the
@@ -207,7 +207,7 @@ async function waitForLocalPostgres(containerName: string) {
 // Pre-pulls pg-meta inside the image budget and retags the winning candidate onto the
 // reference `gen types` resolves, so the CLI's own resolver takes the cached path.
 async function ensurePgmetaImage(deadline?: number) {
-  const expected = resolvePgmetaImage();
+  const expected = await Effect.runPromise(resolvePgmetaImage());
   const resolved = await ensureImage(dockerfileServiceImage("pgmeta"), deadline);
   if (resolved !== expected) {
     await expectDockerSucceeded(["tag", resolved, expected], 30_000);

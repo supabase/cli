@@ -15,11 +15,7 @@ import { aqua, yellow } from "../../../command-internal/colors.ts";
 import { resolveResetSeedConfig } from "../../../command-internal/db-bootstrap/db-setup.ts";
 import { resetLocalDatabase } from "../../../command-internal/db-bootstrap/reset-local-database.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
-import {
-  applyProjectEnv,
-  checkDbToml,
-  loadProjectEnv,
-} from "../../../command-internal/db-config.toml-read.ts";
+import { checkDbToml, loadProjectEnv } from "../../../command-internal/db-config.toml-read.ts";
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
 import { applyMigrations, applySchemaFiles } from "../../../command-internal/migration-apply.ts";
 import { parseMigrationVersion } from "../../../command-internal/migration-timestamp.format.ts";
@@ -72,18 +68,13 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
 
   const workdir = cliSettings.workdir;
   const migrationsDir = path.join(workdir, "supabase", "migrations");
-  // The project `.env` is applied before the `yes`/`experimental` gates are read, so a
-  // `SUPABASE_YES`/`SUPABASE_EXPERIMENTAL` set only in `supabase/.env` is honored.
+  // Load the project values before the `yes`/`experimental` gates are read.
   const projectEnv = yield* loadProjectEnv(fs, path, workdir);
   const yes = yield* resolveYesWithProjectEnv(projectEnv);
   const experimental = yield* resolveExperimentalWithProjectEnv(projectEnv);
   let linkedRefForCache: string | undefined;
 
   const body = Effect.gen(function* () {
-    // The project `.env` is applied to make every key visible to the whole reset run, not just
-    // the flag-gate reads above — `getRegistryImageUrl` reads `SUPABASE_INTERNAL_IMAGE_REGISTRY`
-    // straight from `process.env` for the container image resolution below.
-    yield* applyProjectEnv(projectEnv);
     const target = resolveDbTargetFlags(cliArgs.args);
     // Mutually-exclusive db-url/linked/local group.
     if (target.setFlags.length > 1) {
@@ -323,7 +314,5 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
       ),
     ),
     Effect.ensuring(telemetryState.flush),
-    // Closes the `Scope` that `applyProjectEnv` acquires its `process.env` revert against.
-    Effect.scoped,
   );
 });

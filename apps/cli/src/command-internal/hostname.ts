@@ -1,141 +1,163 @@
-import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { Config, Crypto, Effect, FileSystem, Option, Path, Schema } from "effect";
+
+import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 
 const LOCAL_HOST = "127.0.0.1";
 const LOOPBACK_NO_PROXY = `localhost,${LOCAL_HOST},[::1]`;
-
-/** Docker CLI's name for the default context, which has no context-store entry. */
 const DEFAULT_CONTEXT_NAME = "default";
 
-/**
- * Docker CLI's config directory (`$DOCKER_CONFIG` or `~/.docker`), read
- * directly since this module only needs the on-disk config and context-store
- * files, not a full Docker client.
- */
-function dockerConfigDir(): string {
-  const override = process.env["DOCKER_CONFIG"];
-  return override !== undefined && override.length > 0 ? override : join(homedir(), ".docker");
-}
+type Environment = Readonly<Record<string, string | undefined>>;
 
-/**
- * Resolves the active Docker CLI context: `DOCKER_CONTEXT` env, else the
- * config file's `currentContext`, else `"default"`. Only called when
- * `DOCKER_HOST` is unset; {@link getHostname} handles that case separately.
- */
-function currentDockerContextName(): string {
-  const fromEnv = process.env["DOCKER_CONTEXT"];
-  if (fromEnv !== undefined && fromEnv.length > 0) {
-    return fromEnv;
-  }
-  try {
-    const config = JSON.parse(readFileSync(join(dockerConfigDir(), "config.json"), "utf8")) as {
-      currentContext?: unknown;
-    };
-    if (typeof config.currentContext === "string" && config.currentContext.length > 0) {
-      return config.currentContext;
+const envOption = (
+  name: string,
+  projectEnvValues?: Environment,
+): Effect.Effect<Option.Option<string>, Config.ConfigError> => {
+  const projectValue = Option.fromNullishOr(projectEnvValues?.[name]);
+  return Option.isSome(projectValue)
+    ? Effect.succeed(projectValue)
+    : Config.option(Config.string(name));
+};
+
+const dockerConfigDir = (
+  projectEnvValues?: Environment,
+): Effect.Effect<string, Config.ConfigError, RuntimeInfo | Path.Path> =>
+  Effect.gen(function* () {
+    const runtime = yield* RuntimeInfo;
+    const path = yield* Path.Path;
+    const configured = yield* envOption("DOCKER_CONFIG", projectEnvValues);
+    return Option.getOrElse(configured.pipe(Option.filter((value) => value.length > 0)), () =>
+      path.join(runtime.homeDir, ".docker"),
+    );
+  });
+
+const DockerConfigSchema = Schema.Struct({
+  currentContext: Schema.optionalKey(Schema.String),
+});
+const DockerMetaSchema = Schema.Struct({
+  Endpoints: Schema.optionalKey(
+    Schema.Struct({
+      docker: Schema.optionalKey(Schema.Struct({ Host: Schema.optionalKey(Schema.String) })),
+    }),
+  ),
+});
+
+const decodeDockerConfig = (
+  content: string,
+): Effect.Effect<Option.Option<Schema.Schema.Type<typeof DockerConfigSchema>>> =>
+  Schema.decodeEffect(Schema.fromJsonString(DockerConfigSchema))(content).pipe(Effect.option);
+
+const decodeDockerMeta = (
+  content: string,
+): Effect.Effect<Option.Option<Schema.Schema.Type<typeof DockerMetaSchema>>> =>
+  Schema.decodeEffect(Schema.fromJsonString(DockerMetaSchema))(content).pipe(Effect.option);
+
+const currentDockerContextName = (
+  projectEnvValues?: Environment,
+): Effect.Effect<string, Config.ConfigError, RuntimeInfo | FileSystem.FileSystem | Path.Path> =>
+  Effect.gen(function* () {
+    const fromEnv = yield* envOption("DOCKER_CONTEXT", projectEnvValues);
+    if (Option.isSome(fromEnv) && fromEnv.value.length > 0) return fromEnv.value;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const configDir = yield* dockerConfigDir(projectEnvValues);
+
+    const configPath = path.join(configDir, "config.json");
+    const config = yield* fs.readFileString(configPath).pipe(Effect.option);
+    if (Option.isSome(config)) {
+      const parsed = yield* decodeDockerConfig(config.value);
+      if (Option.isSome(parsed)) {
+        const currentContext = parsed.value.currentContext;
+        if (currentContext !== undefined && currentContext.length > 0) return currentContext;
+      }
     }
-  } catch {
-    // Missing or malformed config.json falls back to the default context.
-  }
-  return DEFAULT_CONTEXT_NAME;
-}
+    return DEFAULT_CONTEXT_NAME;
+  });
 
-/**
- * Reads a non-default context's daemon endpoint from Docker CLI's context
- * store: `<configDir>/contexts/meta/<sha256hex(name)>/meta.json`'s
- * `Endpoints.docker.Host`. The `"default"` context has no store entry, so
- * it's never looked up here.
- */
-function dockerContextEndpointHost(contextName: string): string | undefined {
-  if (contextName === DEFAULT_CONTEXT_NAME) {
-    return undefined;
-  }
-  try {
-    const contextId = createHash("sha256").update(contextName).digest("hex");
-    const metaPath = join(dockerConfigDir(), "contexts", "meta", contextId, "meta.json");
-    const meta = JSON.parse(readFileSync(metaPath, "utf8")) as {
-      readonly Endpoints?: { readonly docker?: { readonly Host?: unknown } };
-    };
-    const host = meta.Endpoints?.docker?.Host;
-    return typeof host === "string" && host.length > 0 ? host : undefined;
-  } catch {
-    // Missing or malformed context store entry: treat as unresolvable.
-    return undefined;
-  }
-}
+const dockerContextEndpointHost = (contextName: string, projectEnvValues?: Environment) => {
+  if (contextName === DEFAULT_CONTEXT_NAME) return Effect.succeed(Option.none<string>());
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const crypto = yield* Crypto.Crypto;
+    const configDir = yield* dockerConfigDir(projectEnvValues);
+    const digest = yield* crypto
+      .digest("SHA-256", new TextEncoder().encode(contextName))
+      .pipe(Effect.option);
+    if (Option.isNone(digest)) return Option.none<string>();
+    const contextId = Array.from(digest.value, (byte) => byte.toString(16).padStart(2, "0")).join(
+      "",
+    );
+    const metaPath = path.join(configDir, "contexts", "meta", contextId, "meta.json");
+    const content = yield* fs.readFileString(metaPath).pipe(Effect.option);
+    if (Option.isNone(content)) return Option.none<string>();
+    const parsed = yield* decodeDockerMeta(content.value);
+    if (Option.isNone(parsed)) return Option.none<string>();
+    const host = parsed.value.Endpoints?.docker?.Host;
+    return host === undefined || host.length === 0 ? Option.none<string>() : Option.some(host);
+  });
+};
 
-/**
- * Extracts the bare host from a `tcp://host:port` daemon endpoint. Returns
- * `undefined` for a non-`tcp://` endpoint (e.g. `unix://`, `npipe://`) or an
- * unparseable one.
- */
-function hostFromTcpEndpoint(endpoint: string): string | undefined {
-  try {
-    const url = new URL(endpoint);
-    if (url.protocol !== "tcp:" || url.hostname.length === 0) {
-      return undefined;
-    }
-    // WHATWG URL.hostname brackets IPv6 (`[::1]`); strip the brackets so the
-    // returned host matches IPv4/named hosts' unbracketed form.
-    const host = url.hostname;
-    return host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
-  } catch {
-    return undefined;
-  }
-}
+const hostFromTcpEndpoint = (endpoint: string): Effect.Effect<Option.Option<string>> =>
+  Effect.try({
+    try: () => new URL(endpoint),
+    catch: () => undefined,
+  }).pipe(
+    Effect.option,
+    Effect.map(
+      Option.flatMap((url) =>
+        url.protocol === "tcp:" && url.hostname.length > 0
+          ? Option.some(
+              url.hostname.startsWith("[") && url.hostname.endsWith("]")
+                ? url.hostname.slice(1, -1)
+                : url.hostname,
+            )
+          : Option.none(),
+      ),
+    ),
+  );
 
-/**
- * The platform's default Docker daemon socket, which the `"default"` context stands for.
- */
-export function platformDefaultDockerHost(platform: NodeJS.Platform = process.platform): string {
+/** The platform's default Docker daemon socket. */
+export function platformDefaultDockerHost(platform: NodeJS.Platform): string {
   return platform === "win32" ? "npipe:////./pipe/docker_engine" : "unix:///var/run/docker.sock";
 }
 
-/**
- * The daemon endpoint the `docker` CLI itself would dial, without spawning it: `DOCKER_HOST`, else
- * the active context's stored endpoint (`"default"` meaning the platform socket). `undefined` for
- * an unreadable non-default context, in which case direct-transport callers fall back to the CLI.
- */
-export function resolveDockerDaemonEndpoint(): string | undefined {
-  const dockerHost = process.env["DOCKER_HOST"];
-  if (dockerHost !== undefined && dockerHost.length > 0) {
-    return dockerHost;
-  }
-  const contextName = currentDockerContextName();
-  if (contextName === DEFAULT_CONTEXT_NAME) {
-    return platformDefaultDockerHost();
-  }
-  return dockerContextEndpointHost(contextName);
-}
-
-/**
- * Resolves the hostname used for local Supabase service connections:
- *
- * 1. `SUPABASE_SERVICES_HOSTNAME` env override, for dev containers or when the Docker daemon
- *    isn't reachable on the container's own loopback.
- * 2. The active daemon endpoint's host when it is `tcp://host:port`, resolved by
- *    {@link resolveDockerDaemonEndpoint} the same way the `docker`/`podman` binary resolves it, so
- *    a remote daemon is never inspected correctly while printing unusable `127.0.0.1` URLs.
- * 3. `127.0.0.1` otherwise (default unix-socket daemon, non-tcp endpoint, or unresolvable context).
- *
- * Shared by every command that connects to the local Supabase stack.
- */
-export function getHostname(): string {
-  const override = process.env["SUPABASE_SERVICES_HOSTNAME"];
-  if (override !== undefined && override.length > 0) {
-    return override;
-  }
-  const endpoint = resolveDockerDaemonEndpoint();
-  if (endpoint !== undefined) {
-    const host = hostFromTcpEndpoint(endpoint);
-    if (host !== undefined) {
-      return host;
+/** Resolves the daemon endpoint selected by the Docker CLI. */
+export const resolveDockerDaemonEndpoint = (
+  projectEnvValues?: Environment,
+): Effect.Effect<
+  Option.Option<string>,
+  Config.ConfigError,
+  RuntimeInfo | FileSystem.FileSystem | Path.Path | Crypto.Crypto
+> =>
+  Effect.gen(function* () {
+    const runtime = yield* RuntimeInfo;
+    const dockerHost = yield* envOption("DOCKER_HOST", projectEnvValues);
+    if (Option.isSome(dockerHost) && dockerHost.value.length > 0) return dockerHost;
+    const contextName = yield* currentDockerContextName(projectEnvValues);
+    if (contextName === DEFAULT_CONTEXT_NAME) {
+      return Option.some(platformDefaultDockerHost(runtime.platform));
     }
-  }
-  return LOCAL_HOST;
-}
+    return yield* dockerContextEndpointHost(contextName, projectEnvValues);
+  });
+
+/** Resolves the hostname used for local Supabase service connections. */
+export const getHostname = (
+  projectEnvValues?: Environment,
+): Effect.Effect<
+  string,
+  Config.ConfigError,
+  RuntimeInfo | FileSystem.FileSystem | Path.Path | Crypto.Crypto
+> =>
+  Effect.gen(function* () {
+    const override = yield* envOption("SUPABASE_SERVICES_HOSTNAME", projectEnvValues);
+    if (Option.isSome(override) && override.value.length > 0) return override.value;
+    const endpoint = yield* resolveDockerDaemonEndpoint(projectEnvValues);
+    if (Option.isSome(endpoint)) {
+      const host = yield* hostFromTcpEndpoint(endpoint.value);
+      if (Option.isSome(host)) return host.value;
+    }
+    return LOCAL_HOST;
+  });
 
 /** Keeps Bun from proxying the CLI's loopback HTTP requests. */
 export function configureLoopbackProxyBypass(env: NodeJS.ProcessEnv = process.env): void {

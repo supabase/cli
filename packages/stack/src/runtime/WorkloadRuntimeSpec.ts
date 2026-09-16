@@ -26,7 +26,7 @@ export { FUNCTIONS_CONTAINER_ROOT } from "../functions/serve-main-deps.ts";
 type WorkloadRuntimeKind = "native" | "container";
 
 /** Closed set of private ports a workload may expose to the host gateway. */
-type WorkloadBindingName = "primary" | "admin" | "ui" | "smtp" | "pop3" | "inspector";
+type WorkloadBindingName = "primary" | "admin" | "ui" | "smtp" | "pop3" | "inspector" | "rpc";
 
 interface WorkloadBinding {
   readonly containerPort: number;
@@ -39,7 +39,10 @@ interface WorkloadBindings {
   readonly smtp?: WorkloadBinding;
   readonly pop3?: WorkloadBinding;
   readonly inspector?: WorkloadBinding;
+  readonly rpc?: WorkloadBinding;
 }
+
+type BindingSelectionState = Pick<PersistedStackState, "definition" | "runtime">;
 
 export interface WorkloadBindingIntent {
   readonly workloadId: string;
@@ -1006,10 +1009,16 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
     readiness: { protocol: "http", path: "/health" },
   },
   "realtime:realtime": {
-    bindings: { primary: { containerPort: 4000 } },
+    bindings: { primary: { containerPort: 4000 }, rpc: { containerPort: 5369 } },
     args: () => [],
-    env: (state, _workload, port, runtime = "native", inputs = {}) =>
-      compactEnvironment({
+    env: (state, _workload, port, runtime = "native", inputs = {}) => {
+      // Production Realtime defaults both gen_rpc TCP ports to 5369. Native stacks
+      // need a unique host binding; container netns already owns 5369 in-container.
+      const rpcPort =
+        state.runtime.kind === "native"
+          ? privatePortFor(state, "realtime:realtime", "rpc")
+          : undefined;
+      return compactEnvironment({
         ...capabilityEnv(state, "realtime", "REALTIME"),
         PORT: String(port),
         DB_HOST: dbHost(runtime),
@@ -1032,7 +1041,15 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
             ? "-proto_dist inet6_tcp"
             : "-proto_dist inet_tcp",
         RUN_JANITOR: "true",
-      }),
+        ...(rpcPort === undefined
+          ? {}
+          : {
+              GEN_RPC_TCP_SERVER_PORT: String(rpcPort),
+              GEN_RPC_TCP_CLIENT_PORT: String(rpcPort),
+              GEN_RPC_SOCKET_IP: "127.0.0.1",
+            }),
+      });
+    },
     containerEntrypoint: "/usr/bin/tini",
     containerArgs: () => ["-s", "-g", "--", "/app/bin/server"],
     containerStartupProcesses: () => [{ entrypoint: "/app/bin/prepare", command: [] }],
@@ -1109,8 +1126,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
             ? `http://${containerAliasFor("analytics:analytics")}:4000`
             : `http://127.0.0.1:${workloadPort(state, "analytics:analytics", "primary", runtime, 4000)}`,
         LOGFLARE_PRIVATE_ACCESS_TOKEN: valueAt(state, "analytics", "api_key"),
-        NEXT_PUBLIC_ENABLE_LOGS:
-          valueAt(state, "analytics", "backend").length > 0 ? "true" : "false",
+        NEXT_PUBLIC_ENABLE_LOGS: capabilityEnabled(state, "analytics") ? "true" : "false",
         NEXT_ANALYTICS_BACKEND_PROVIDER: valueAt(state, "analytics", "backend"),
         SUPABASE_URL: apiGatewayUrl(state, runtime === "container" ? inputs : undefined),
         SUPABASE_PUBLIC_URL: apiListenerUrl(state),
@@ -1273,6 +1289,7 @@ const WORKLOAD_BINDING_NAMES: ReadonlyArray<WorkloadBindingName> = [
   "smtp",
   "pop3",
   "inspector",
+  "rpc",
 ];
 
 const declaredBindings = (
@@ -1284,18 +1301,22 @@ const declaredBindings = (
   });
 
 const selectedBindings = (
-  state: Pick<PersistedStackState, "definition">,
+  state: BindingSelectionState,
   bindings: WorkloadBindings,
 ): ReadonlyArray<readonly [WorkloadBindingName, WorkloadBinding]> => {
-  return declaredBindings(bindings).filter(
-    ([binding]) => binding !== "inspector" || functionsInspectorRequested(state),
-  );
+  return declaredBindings(bindings).filter(([binding]) => {
+    if (binding === "inspector") return functionsInspectorRequested(state);
+    // Docker already owns 5369 in the container netns; publishing it on the host
+    // collides when two stacks share a host.
+    if (binding === "rpc") return state.runtime.kind === "native";
+    return true;
+  });
 };
 
 /** Derive the exact private endpoint reservations required by a compiled plan. */
 export const privateBindingIntentsFor = (
   plan: ExecutionPlan,
-  state: Pick<PersistedStackState, "definition">,
+  state: BindingSelectionState,
 ): ReadonlyArray<WorkloadBindingIntent> =>
   plan.workloads.flatMap((workload) => {
     const spec = specs[workload.id];

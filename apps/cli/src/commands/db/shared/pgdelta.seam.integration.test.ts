@@ -29,6 +29,7 @@ import {
 import { DockerRun } from "../../../command-internal/docker-run.service.ts";
 import { dockerfileServiceImageRaw } from "../../../shared/services/dockerfile-images.ts";
 import { SUGGEST_DOCKER_INSTALL } from "../../../command-internal/docker-suggest.ts";
+import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
 import { DeclarativeShadowDbError } from "./pgdelta.errors.ts";
 import { declarativeSeamLayer } from "./pgdelta.seam.layer.ts";
 import { DeclarativeSeam } from "./pgdelta.seam.service.ts";
@@ -82,6 +83,7 @@ function setup(
     readonly failCreate?: boolean;
     readonly dbInspectFailsWith?: string;
     readonly dbInspectImage?: string;
+    readonly stackBackend?: boolean;
   } = {},
 ) {
   const out = mockOutput();
@@ -134,6 +136,7 @@ function setup(
     Layer.succeed(DebugFlag, false),
     Layer.succeed(CliArgs, { args: [] }),
     seam,
+    ...(opts.stackBackend === true ? [stackBackendLayer("stack")] : []),
   );
 
   return { layer, out, shadowSpawned: shadowSpawner.spawned };
@@ -223,6 +226,21 @@ describe("declarativeSeamLayer.ensureLocalPostgresImageCurrent", () => {
       const seam = yield* DeclarativeSeam;
       const exit = yield* seam.ensureLocalPostgresImageCurrent().pipe(Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
+      rmSync(dir, { recursive: true, force: true });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("skips docker container inspect when the stack backend is on", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pgdelta-seam-"));
+    const { layer, shadowSpawned } = setup(dir, {
+      dbInspectImage: dockerfileServiceImageRaw("pg"),
+      stackBackend: true,
+    });
+    return Effect.gen(function* () {
+      const seam = yield* DeclarativeSeam;
+      const exit = yield* seam.ensureLocalPostgresImageCurrent().pipe(Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(shadowSpawned.some((s) => s.args.includes("inspect"))).toBe(false);
       rmSync(dir, { recursive: true, force: true });
     }).pipe(Effect.provide(layer));
   });

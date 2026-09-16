@@ -64,7 +64,7 @@ export const bootstrapRuntimeLayer = Layer.mergeAll(
   identityStitchLayer,
   loginApiLayer.pipe(Layer.provide(httpClient), Layer.provide(cliSettings)),
   loginCryptoLayer,
-  templateServiceLayer.pipe(Layer.provide(httpClient)),
+  templateServiceLayer.pipe(Layer.provide(httpClient), Layer.provide(cliSettings)),
   browserLayer,
   stdinLayer,
   commandRuntimeLayer(["bootstrap"]),

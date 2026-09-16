@@ -25,6 +25,8 @@ export interface EdgeRuntimeRunOpts {
   readonly env: Readonly<Record<string, string>>;
   /** Volume binds (e.g. the Deno cache volume + `cwd:/workspace`). */
   readonly binds: ReadonlyArray<string>;
+  /** Project dotenv values used for Bitbucket's Docker restrictions. */
+  readonly projectEnvValues?: Readonly<Record<string, string>>;
   /** Prefix for the failure message. */
   readonly errPrefix: string;
   /**

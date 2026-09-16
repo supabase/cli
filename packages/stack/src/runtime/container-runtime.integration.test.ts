@@ -2877,7 +2877,7 @@ describe("container runtime", () => {
             expect(failure.value.message).toContain("follower disconnected before readiness");
           }
         }
-        expect((yield* supervisor.status).lifecycle).toBe("stopped");
+        expect((yield* supervisor.status).lifecycle).toBe("unconfigured");
         yield* supervisor.shutdownIfIdle;
         yield* supervisor.shutdown;
       }),

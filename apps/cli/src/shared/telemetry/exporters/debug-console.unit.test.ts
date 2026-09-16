@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { Option, Context, Tracer } from "effect";
+import { Cause, Context, Effect, Exit, Option, Schema, Tracer } from "effect";
 import { formatSpanForDebugConsole, makeDebugConsoleExporter } from "./debug-console.ts";
 
 function makeEndedSpan(name: string, attrs: Record<string, unknown> = {}): Tracer.Span {
@@ -34,11 +34,13 @@ describe("debug-console exporter", () => {
   test("formats and writes ended span info", () => {
     let stderrOutput = "";
     const span = makeEndedSpan("test-span", { command: "login" });
-    const exportSpanToDebugConsole = makeDebugConsoleExporter((line) => {
-      stderrOutput += line;
-    });
+    const exportSpanToDebugConsole = makeDebugConsoleExporter((line) =>
+      Effect.sync(() => {
+        stderrOutput += line;
+      }),
+    );
 
-    exportSpanToDebugConsole(span);
+    Effect.runSync(exportSpanToDebugConsole(span));
 
     expect(stderrOutput).toContain("test-span");
     expect(stderrOutput).toContain("50ms");
@@ -55,6 +57,21 @@ describe("debug-console exporter", () => {
       } as Tracer.SpanStatus,
     };
 
-    expect(formatSpanForDebugConsole(span)).toBeUndefined();
+    expect(Effect.runSync(formatSpanForDebugConsole(span))).toEqual(Option.none());
+  });
+
+  test("returns a typed failure for unserializable attributes", () => {
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    const result = Effect.runSyncExit(formatSpanForDebugConsole(makeEndedSpan("cyclic", cyclic)));
+
+    expect(Exit.isFailure(result)).toBe(true);
+    if (Exit.isFailure(result)) {
+      const error = Cause.findErrorOption(result.cause);
+      expect(Option.isSome(error)).toBe(true);
+      if (Option.isSome(error)) {
+        expect(Schema.isSchemaError(error.value)).toBe(true);
+      }
+    }
   });
 });

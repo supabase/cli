@@ -41,7 +41,7 @@ const mapFile = <A, R>(
     ),
   );
 
-const contentFor = (
+export const encodeRuntimeEnvFile = (
   values: Readonly<Record<string, string>>,
 ): Effect.Effect<string, StackPreparationError> => {
   const entries = Object.entries(values).sort(([left], [right]) => left.localeCompare(right));
@@ -81,7 +81,7 @@ export const makeRuntimeEnvFileOwner = (
       if (!validWorkloadId(input.workloadId))
         return Effect.fail(error("Invalid runtime environment workload identity"));
       return Effect.gen(function* () {
-        const text = yield* contentFor(input.values);
+        const text = yield* encodeRuntimeEnvFile(input.values);
         const target = path.join(envRoot, `${encodeWorkloadId(input.workloadId)}.env`);
         const token = yield* crypto.randomUUIDv4.pipe(
           Effect.mapError(() => error("Unable to allocate runtime environment file name")),

@@ -71,9 +71,7 @@ export const secretsUnset = Effect.fn("secrets.unset")(function* (flags: Secrets
     const confirmed = yield* promptYesNo(output, yes, label, true);
 
     if (!confirmed) {
-      return yield* Effect.fail(
-        new SecretsUnsetCancelledError({ message: CONTEXT_CANCELED_MESSAGE }),
-      );
+      return yield* new SecretsUnsetCancelledError({ message: CONTEXT_CANCELED_MESSAGE });
     }
 
     const unsetting =
