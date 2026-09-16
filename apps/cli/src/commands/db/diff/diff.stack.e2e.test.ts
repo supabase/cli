@@ -18,7 +18,8 @@ const STACK_DIFF_TEST_TIMEOUT_MS =
 
 const STACK_BASELINE_TAR = /^stack-shadow-baseline-[0-9a-f]{16}\.tar$/u;
 const COMPOSE_BASELINE_TAR = /^shadow-baseline-[0-9a-f]{16}\.tar$/u;
-const PROBE_FN_SQL = /CREATE(?:\s+OR\s+REPLACE)?\s+FUNCTION\s+"?public"?\s*\.\s*"?probe_fn"?\s*\(\)/i;
+const PROBE_FN_SQL =
+  /CREATE(?:\s+OR\s+REPLACE)?\s+FUNCTION\s+"?public"?\s*\.\s*"?probe_fn"?\s*\(\)/i;
 
 describe("supabase db diff (e2e, stack shadow)", () => {
   test(
