@@ -10,6 +10,8 @@ export interface DockerRunOpts {
   readonly image: string;
   readonly cmd: ReadonlyArray<string>;
   readonly env: Readonly<Record<string, string>>;
+  /** Project dotenv values used for per-invocation Docker environment decisions. */
+  readonly projectEnvValues?: Readonly<Record<string, string>>;
   readonly binds: ReadonlyArray<string>;
   readonly workingDir: Option.Option<string>;
   readonly securityOpt: ReadonlyArray<string>;

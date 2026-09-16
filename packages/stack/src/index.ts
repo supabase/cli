@@ -5,6 +5,7 @@ export {
   listStacks,
   discoverStacks,
   inspectStack,
+  createEphemeralPostgres,
 } from "./public/PromiseStack.ts";
 export type {
   PromiseStack,
@@ -12,6 +13,8 @@ export type {
   PromiseInspectStackOptions,
   PromiseStartStackOptions,
   PromisePrepareStackOptions,
+  PromiseCreateEphemeralPostgresOptions,
+  PromiseEphemeralPostgres,
   CreateStackOptions,
   FindStackOptions,
   ListStacksOptions,
@@ -27,6 +30,7 @@ export type {
   NetworkPort,
   StackEndpoint,
   StackStatus,
+  StackRecovery,
   ArtifactPreparationState,
   ArtifactPreparationStatus,
   StackDescriptor,
@@ -38,6 +42,7 @@ export { StackRuntimeSchema, RuntimeEngineSchema } from "./public/Runtime.ts";
 export type { StackRuntime, RuntimeEngine, StackRuntimePreference } from "./public/Runtime.ts";
 export {
   StackEndpointsSchema,
+  StackRecoverySchema,
   CapabilityVersionsSchema,
   ArtifactPreparationStateSchema,
   ArtifactPreparationStatusSchema,

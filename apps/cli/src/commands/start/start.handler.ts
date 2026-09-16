@@ -610,7 +610,9 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
       return statusValuesFromState(state, new Map());
     });
 
-    const inBitbucketPipeline = isBitbucketPipeline();
+    const inBitbucketPipeline = yield* isBitbucketPipeline(projectEnvValues).pipe(
+      Effect.mapError((error) => new StartConfigLoadError({ message: error.message })),
+    );
 
     // 3. A missing container proceeds to startup; other inspect failures propagate. Stopped
     // stacks are recovered unless Bitbucket's lack of named volumes makes removal destructive.
@@ -705,13 +707,12 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
 
     // 6. JWKS resolution runs unconditionally, before any image pull, regardless of which
     // services end up enabled.
-    const jwks = yield* Effect.tryPromise({
-      try: () => resolveLocalJwks(config, cliSettings.workdir, values.jwtSecret, projectEnvValues),
-      catch: (cause) =>
-        new StartInvalidConfigError({
-          message: cause instanceof Error ? cause.message : String(cause),
-        }),
-    });
+    const jwks = yield* resolveLocalJwks(
+      config,
+      cliSettings.workdir,
+      values.jwtSecret,
+      projectEnvValues,
+    ).pipe(Effect.mapError((cause) => new StartInvalidConfigError({ message: cause.message })));
 
     // The `edge_runtime.deno_version` -> image switch is start-only (no `db start` equivalent),
     // so it's resolved here rather than inside the shared bootstrap-config derivation below.
@@ -798,6 +799,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
           Option.none(),
           Option.none(),
           cliSettings.workdir,
+          projectEnvValues,
         )
       : new Set<string>();
 
@@ -1523,6 +1525,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
           const edgeRuntimeInput: EdgeRuntimeBringUpInput = {
             projectId,
             networkId,
+            projectEnvValues,
             image: resolveImage(edgeRuntimeDefaultImage),
             workdir: cliSettings.workdir,
             dbUrl: values.dbUrl,

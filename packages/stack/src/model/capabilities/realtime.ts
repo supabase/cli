@@ -25,6 +25,7 @@ export const RealtimeModule: CapabilityModule<RealtimeSettings> = {
   },
   defaultEnabled: true,
   defaultActivation: "lazy",
+  defaultIdleTimeoutSeconds: 60,
   defaultVersion: version,
   dependencies: ["database"],
   releases: {

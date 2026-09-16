@@ -1,4 +1,5 @@
 import { Layer } from "effect";
+import { httpClientLayer } from "../../../auth/http-debug.layer.ts";
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
@@ -15,6 +16,7 @@ import { functionsServe } from "./serve.handler.ts";
 const cliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
 const functionsServeRuntimeLayer = Layer.mergeAll(
   serveFileWatcherLayer,
+  httpClientLayer.pipe(Layer.provide(debugLoggerLayer)),
   cliSettings,
   debugLoggerLayer,
   telemetryStateLayer,

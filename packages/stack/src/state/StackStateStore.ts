@@ -103,12 +103,16 @@ const withoutKeys = (
   return result;
 };
 
-/** Drops settings removed from the local model when reading older durable state. */
+/** Restores defaults and drops settings removed from the local model when reading older durable state. */
 const normalizeDurableState = (raw: Readonly<Record<string, unknown>>): unknown => {
   const identity = isRecord(raw.identity) ? withoutKeys(raw.identity, ["stackId"]) : raw.identity;
   const definition = raw.definition;
   if (!isRecord(definition) || !isRecord(definition.capabilities)) return { ...raw, identity };
   const capabilities: Record<string, unknown> = { ...definition.capabilities };
+  for (const [capability, value] of Object.entries(capabilities)) {
+    if (isRecord(value) && !Object.hasOwn(value, "idleTimeoutSeconds"))
+      capabilities[capability] = { ...value, idleTimeoutSeconds: false };
+  }
   const obsolete: ReadonlyArray<readonly [string, ReadonlyArray<string>]> = [
     ["database", ["network_restrictions", "ssl_enforcement", "vault"]],
     ["rest", ["auto_expose_new_tables", "tls"]],

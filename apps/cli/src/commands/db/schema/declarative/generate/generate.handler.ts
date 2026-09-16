@@ -44,7 +44,7 @@ import {
 import type { DbSchemaDeclarativeGenerateFlags } from "./generate.command.ts";
 import {
   type LocalConn,
-  localEndpoint,
+  resolveLocalTargetEndpoint,
   resolveRemoteEndpoint,
   resolveSmartTargetEndpoint,
 } from "../declarative.smart-target.ts";
@@ -178,7 +178,7 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
         if (Option.getOrElse(flags.local, () => false)) {
           yield* seam.ensureLocalDatabaseStarted();
         }
-        target = localEndpoint(local, dnsResolver);
+        target = yield* resolveLocalTargetEndpoint(local, dnsResolver);
       } else {
         target = yield* resolveRemoteEndpoint(flags);
       }

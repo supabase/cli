@@ -1,23 +1,19 @@
-import { Context, Data, Effect, FileSystem, Layer, Option, Path, Crypto } from "effect";
+import { Context, Data, Effect, Layer, Option } from "effect";
 import {
-  createStack,
-  discoverStacks,
-  findStack,
-  inspectStack,
   isStackId,
-  openStack,
+  StackNotFoundError,
   type StackRuntimePreference,
-  type StackDiscoveryResult,
   type StackStatus,
 } from "@supabase/stack/effect";
 import type { StackId } from "@supabase/stack";
-import { StackNotFoundError } from "@supabase/stack/effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../../../shared/telemetry/error-actionability.ts";
+import { StackApi, stackApiLayer } from "../../../command-internal/stack-api.ts";
+
+export { StackApi, stackApiLayer };
 
 /** The target selected by the CLI adapter for one stack command. */
 interface StackTarget {
@@ -55,39 +51,6 @@ export class StackTargetResolver extends Context.Service<
   StackTargetResolver,
   StackTargetResolverShape
 >()("supabase/experimental-stack/TargetResolver") {}
-
-export class StackApi extends Context.Service<
-  StackApi,
-  {
-    readonly findStack: (
-      ...args: Parameters<typeof findStack>
-    ) => Effect.Effect<
-      Effect.Success<ReturnType<typeof findStack>>,
-      Effect.Error<ReturnType<typeof findStack>>
-    >;
-    readonly createStack: (
-      ...args: Parameters<typeof createStack>
-    ) => Effect.Effect<
-      Effect.Success<ReturnType<typeof createStack>>,
-      Effect.Error<ReturnType<typeof createStack>>
-    >;
-    readonly openStack: (
-      ...args: Parameters<typeof openStack>
-    ) => Effect.Effect<
-      Effect.Success<ReturnType<typeof openStack>>,
-      Effect.Error<ReturnType<typeof openStack>>
-    >;
-    readonly inspectStack: (
-      ...args: Parameters<typeof inspectStack>
-    ) => Effect.Effect<
-      Effect.Success<ReturnType<typeof inspectStack>>,
-      Effect.Error<ReturnType<typeof inspectStack>>
-    >;
-    readonly discoverStacks: (
-      ...args: Parameters<typeof discoverStacks>
-    ) => Effect.Effect<StackDiscoveryResult, Effect.Error<ReturnType<typeof discoverStacks>>>;
-  }
->()("supabase/experimental-stack/StackApi") {}
 
 export const validateStackTarget = (input: {
   readonly stack?: string;
@@ -135,7 +98,32 @@ export const stackStatusPayload = (status: StackStatus) => ({
   versions: status.versions,
   capabilities: status.capabilities,
   artifacts: status.artifacts,
+  ...(status.recovery === undefined ? {} : { recovery: status.recovery }),
 });
+
+export const stackStatusIssueLines = (status: StackStatus): ReadonlyArray<string> => {
+  const lines: Array<string> = [];
+  const diagnostics = status.capabilities.filter(({ error }) => error !== undefined);
+  if (diagnostics.length > 0) {
+    lines.push("Capability diagnostics:");
+    for (const capability of diagnostics) {
+      const detail = capability.error?.split(/\r?\n/u)[0] ?? "No diagnostic was recorded.";
+      lines.push(`  ${capability.name}: ${capability.state} — ${detail}`);
+    }
+  }
+  if (status.recovery !== undefined) {
+    lines.push(`Recovery: ${status.recovery.message}`);
+    if (status.recovery.operation === "stop") {
+      lines.push(
+        `Recovery command: supabase stack stop --stack-id ${status.id} && supabase stack start --stack-id ${status.id}`,
+      );
+    } else {
+      lines.push(`Recovery command: supabase stack destroy --stack-id ${status.id}`);
+      lines.push("Warning: destroy is destructive and removes the stack data.");
+    }
+  }
+  return lines;
+};
 
 export const renderStackStatus = (status: StackStatus): string => {
   const lines = [
@@ -152,35 +140,9 @@ export const renderStackStatus = (status: StackStatus): string => {
   const dormant = status.capabilities.filter(({ state }) => state === "dormant");
   if (dormant.length > 0)
     lines.push(`Dormant capabilities: ${dormant.map(({ name }) => name).join(", ")}`);
+  lines.push(...stackStatusIssueLines(status));
   return `${lines.join("\n")}\n`;
 };
-
-export const stackApiLayer = Layer.effect(
-  StackApi,
-  Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const crypto = yield* Crypto.Crypto;
-    const childProcess = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const provideServices = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-      effect.pipe(
-        Effect.provideService(FileSystem.FileSystem, fileSystem),
-        Effect.provideService(Path.Path, path),
-        Effect.provideService(Crypto.Crypto, crypto),
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcess),
-      );
-    return {
-      findStack: (...args: Parameters<typeof findStack>) => provideServices(findStack(...args)),
-      createStack: (...args: Parameters<typeof createStack>) =>
-        provideServices(createStack(...args)),
-      openStack: (...args: Parameters<typeof openStack>) => provideServices(openStack(...args)),
-      inspectStack: (...args: Parameters<typeof inspectStack>) =>
-        provideServices(inspectStack(...args)),
-      discoverStacks: (...args: Parameters<typeof discoverStacks>) =>
-        provideServices(discoverStacks(...args)),
-    };
-  }),
-);
 
 /** Runtime configuration for the first stack command. Later commands reuse this layer. */
 export const stackTargetResolverLayer = Layer.succeed(StackTargetResolver, {

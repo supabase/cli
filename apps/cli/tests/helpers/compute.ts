@@ -26,7 +26,7 @@ import { mockOutput, mockProcessControl, mockRuntimeInfo, mockTty } from "./mock
 
 export const COMPUTE_PROJECT_REF = "abcdefghijklmnopqrst";
 
-export interface RecordedRequest {
+interface RecordedRequest {
   readonly method: string;
   readonly url: string;
   /**
@@ -41,7 +41,7 @@ export interface RecordedRequest {
   readonly byteLength: number;
 }
 
-export interface StubResponse {
+interface StubResponse {
   readonly status: number;
   readonly body?: unknown;
 }
@@ -51,7 +51,7 @@ export interface StubResponse {
  * Distinct from a `StubResponse` with an error status, which is a server that
  * answered.
  */
-export interface StubTransportFailure {
+interface StubTransportFailure {
   readonly transportError: string;
 }
 
@@ -62,7 +62,7 @@ function isTransportFailure(
 }
 
 /** How a test answers one request; sequential entries reply to repeated calls. */
-export type RouteHandler =
+type RouteHandler =
   | StubResponse
   | StubTransportFailure
   | ReadonlyArray<StubResponse | StubTransportFailure>;
@@ -100,7 +100,7 @@ function isRouteSequence(
  * build-context upload, so a test can assert the whole request sequence — mint
  * the slot, PUT the bytes, deploy, poll — in the order it happened.
  */
-export function mockComputeHttp(routes: ComputeHttpRoutes) {
+function mockComputeHttp(routes: ComputeHttpRoutes) {
   const requests: Array<RecordedRequest> = [];
   const remaining = new Map<string, Array<StubResponse | StubTransportFailure>>(
     Object.entries(routes).map(([route, handler]) => [
@@ -348,19 +348,29 @@ export function makeComputeProject(files: Readonly<Record<string, string>> = {})
  * `CommandSettingsShape` requires.
  */
 const testCliConfigLayer = (workdir: string, explicitWorkdir: boolean) =>
-  Layer.succeed(CommandSettings, {
-    profileEnvValue: undefined,
-    profile: "supabase",
-    apiUrl: "https://api.supabase.com",
-    projectHost: "supabase.co",
-    poolerHost: "pooler.supabase.com",
-    dashboardUrl: "https://supabase.com/dashboard",
-    accessToken: Option.some(Redacted.make("sbp_test")),
-    projectId: Option.none(),
-    workdir,
-    explicitWorkdir,
-    userAgent: "supabase",
-  });
+  Layer.effect(
+    CommandSettings,
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      return CommandSettings.of({
+        profile: "supabase",
+        profileEnvValue: Option.none(),
+        supabaseHome: path.join(workdir, ".supabase"),
+        dbPassword: Option.none(),
+        githubToken: Option.none(),
+        apiUrl: "https://api.supabase.com",
+        projectHost: "supabase.co",
+        poolerHost: "pooler.supabase.com",
+        dashboardUrl: "https://supabase.com/dashboard",
+        accessToken: Option.some(Redacted.make("sbp_test")),
+        projectId: Option.none(),
+        workdir,
+        explicitWorkdir,
+        workdirEnvValue: Option.none(),
+        userAgent: "supabase",
+      });
+    }),
+  ).pipe(Layer.provide(BunServices.layer));
 
 /** The resolver, stubbed: `--project-ref` wins, else the linked project. */
 const testProjectRefLayer = (linked: boolean) =>

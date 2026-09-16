@@ -12,6 +12,46 @@ export type DeepPartial<T> =
       ? { readonly [K in keyof T]?: DeepPartial<T[K]> }
       : T;
 
+// A path segment must match the key exactly in both directions, so a `string` index signature
+// never absorbs a literal segment meant for one named key.
+type ChildPaths<Paths, K extends PropertyKey> = Paths extends readonly [infer Head, ...infer Rest]
+  ? Head extends K
+    ? K extends Head
+      ? Rest
+      : never
+    : never
+  : never;
+
+type IsPlainObject<T> = T extends ReadonlyArray<unknown> ? false : T extends object ? true : false;
+
+// True when `T` had keys but its `OmitPaths` result has none, so the emptied container is dropped
+// along with its last member rather than surviving as `{}`.
+type IsEmptiedBy<T, Paths extends ReadonlyArray<string>> =
+  IsPlainObject<T> extends true
+    ? [keyof T] extends [never]
+      ? false
+      : [keyof OmitPaths<T, Paths>] extends [never]
+        ? true
+        : false
+    : false;
+
+/** `T` with every property addressed by a tuple in the `Paths` union removed, at any depth; arrays are left whole and a container emptied by the removal is removed too. */
+export type OmitPaths<T, Paths extends ReadonlyArray<string>> = [Paths] extends [never]
+  ? T
+  : T extends ReadonlyArray<unknown>
+    ? T
+    : T extends object
+      ? {
+          [
+            K in keyof T as [] extends ChildPaths<Paths, K>
+              ? never
+              : IsEmptiedBy<T[K], ChildPaths<Paths, K>> extends true
+                ? never
+                : K
+          ]: OmitPaths<T[K], ChildPaths<Paths, K>>;
+        }
+      : T;
+
 export type SparseCliConfig = DeepPartial<CliConfig>;
 
 /**

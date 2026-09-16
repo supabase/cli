@@ -2,9 +2,18 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
-import { Effect, Layer, Option } from "effect";
+import { Effect, Layer, Option, Redacted, Stream } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import {
+  CAPABILITY_NAMES,
+  InvalidProjectRootError,
+  StackIdSchema,
+  StackNotFoundError,
+  type CapabilityState,
+  type EffectStack,
+  type StackLifecycle,
+} from "@supabase/stack/effect";
 
 import { CliArgs } from "../../src/shared/cli/cli-args.service.ts";
 import { CommandPlatformApi } from "../../src/auth/command-platform-api.service.ts";
@@ -12,6 +21,8 @@ import { CommandPlatformApiFactory } from "../../src/auth/command-platform-api-f
 import { ProjectRefNotLinkedError } from "../../src/config/project-ref.errors.ts";
 import { ProjectRefResolver } from "../../src/config/project-ref.service.ts";
 import { YesFlag } from "../../src/command-internal/global-flags.ts";
+import { StackApi } from "../../src/command-internal/stack-api.ts";
+import { stackBackendLayer } from "../../src/command-internal/stack-backend.ts";
 import type { OutputFormat } from "../../src/shared/output/types.ts";
 import { mockOutput, mockRuntimeInfo, mockStdin, mockTty } from "./mocks.ts";
 import {
@@ -31,7 +42,7 @@ import {
  * or recursive flows need one route per expected call unless `persist` is set.
  * `when` narrows a match by the parsed request body.
  */
-export interface StorageRoute {
+interface StorageRoute {
   readonly method: string;
   /** Substring matched against the request URL. */
   readonly match: string;
@@ -49,7 +60,7 @@ export interface StorageRoute {
   readonly persist?: boolean;
 }
 
-export interface RecordedStorageRequest {
+interface RecordedStorageRequest {
   readonly method: string;
   readonly url: string;
   readonly headers: Record<string, string | undefined>;
@@ -85,6 +96,135 @@ export interface SetupStorageOptions {
   readonly linkedFails?: boolean;
   /** cliSettings.explicitWorkdir override — true iff --workdir/SUPABASE_WORKDIR was set verbatim. */
   readonly explicitWorkdir?: boolean;
+  /** Selects the `stack` backend (`StackBackendContext`); omitted/false keeps the legacy default. */
+  readonly stackBackend?: boolean;
+  /** Configures the fake `StackApi` consulted by the stack backend's credential resolution. */
+  readonly stackApi?: SetupStorageStackApiOptions;
+}
+
+export interface SetupStorageStackApiOptions {
+  /** Whether the `StackApi` service is provided at all. Defaults to `true`. */
+  readonly present?: boolean;
+  /** Whether `findStack` resolves a descriptor for the workdir. Defaults to `true`. */
+  readonly found?: boolean;
+  readonly lifecycle?: StackLifecycle;
+  /** The stack's `api` gateway endpoint URL, or `null` to omit it entirely. */
+  readonly apiEndpoint?: string | null;
+  readonly storageState?: CapabilityState;
+  readonly storageError?: string;
+  readonly serviceRoleJwt?: string;
+  /** Omits `credentials.api` from the fake stack's credentials effect. */
+  readonly omitApiCredentials?: boolean;
+  /** Makes `findStack` fail with `InvalidProjectRootError({ message })`. */
+  readonly findStackFails?: string;
+  /** Makes `status` fail with `StackNotFoundError({ message })`. */
+  readonly statusFails?: string;
+}
+
+const STORAGE_STACK_ID = StackIdSchema.make("e".repeat(64));
+
+/**
+ * Builds the fake `EffectStack`/`StackApi` consulted by `resolveStorageCredentials` under the
+ * stack backend. Every method besides `findStack`/`openStack`/`status`/`credentials` dies —
+ * `storage`/`seed buckets` never call them.
+ */
+export function buildStorageStackApi(
+  workdir: string,
+  opts: SetupStorageStackApiOptions | undefined,
+) {
+  const options = opts ?? {};
+  const apiEndpointUrl =
+    options.apiEndpoint === undefined ? "http://127.0.0.1:59999" : options.apiEndpoint;
+  const lifecycle = options.lifecycle ?? "running";
+  const storageState = options.storageState ?? "dormant";
+  const serviceRoleJwt = options.serviceRoleJwt ?? "stack-service-role-jwt";
+  const findStackCalls: Array<{ readonly projectRoot: string }> = [];
+  const unused = Effect.die("unused in storage stack-backend tests");
+  const unusedFn = () => unused;
+
+  const stack: EffectStack = {
+    id: STORAGE_STACK_ID,
+    status:
+      options.statusFails !== undefined
+        ? Effect.fail(new StackNotFoundError({ message: options.statusFails }))
+        : Effect.succeed({
+            id: STORAGE_STACK_ID,
+            lifecycle,
+            desiredLifecycle: lifecycle === "running" ? "running" : "stopped",
+            runtime: { kind: "native" },
+            endpoints:
+              apiEndpointUrl === null
+                ? {}
+                : {
+                    api: {
+                      protocol: "http" as const,
+                      address: "127.0.0.1",
+                      port: 59999,
+                      url: apiEndpointUrl,
+                    },
+                  },
+            versions: {},
+            capabilities: CAPABILITY_NAMES.map((name) => ({
+              name,
+              activation: name === "database" ? ("eager" as const) : ("lazy" as const),
+              state: name === "storage" ? storageState : ("ready" as const),
+              error: name === "storage" ? options.storageError : undefined,
+            })),
+            artifacts: [],
+          }),
+    credentials: Effect.succeed({
+      database: {
+        url: Redacted.make("postgresql://postgres:postgres@127.0.0.1:54329/postgres"),
+        password: Redacted.make("postgres"),
+      },
+      api:
+        options.omitApiCredentials === true
+          ? undefined
+          : {
+              publishableKey: "anon",
+              secretKey: Redacted.make("secret"),
+              anonJwt: "anon",
+              serviceRoleJwt: Redacted.make(serviceRoleJwt),
+            },
+    }),
+    prepare: unusedFn,
+    start: unusedFn,
+    stop: unused,
+    destroy: unused,
+    resetDatabase: unused,
+    logs: unusedFn,
+    followLogs: () => Stream.empty,
+  };
+
+  const layer =
+    options.present === false
+      ? Layer.empty
+      : Layer.succeed(StackApi, {
+          createStack: unusedFn,
+          findStack: (input: { readonly projectRoot: string }) => {
+            findStackCalls.push({ projectRoot: input.projectRoot });
+            if (options.findStackFails !== undefined) {
+              return Effect.fail(new InvalidProjectRootError({ message: options.findStackFails }));
+            }
+            return Effect.succeed(
+              options.found === false
+                ? Option.none()
+                : Option.some({
+                    id: STORAGE_STACK_ID,
+                    projectRoot: workdir,
+                    name: "default",
+                    branchContext: "main",
+                    runtime: { kind: "native" as const },
+                    desiredLifecycle: "running" as const,
+                  }),
+            );
+          },
+          openStack: () => Effect.succeed(stack),
+          discoverStacks: unusedFn,
+          inspectStack: unusedFn,
+        });
+
+  return { layer, stackCalls: { findStack: findStackCalls } };
 }
 
 /**
@@ -201,6 +341,8 @@ export function setupStorage(workdir: string, opts: SetupStorageOptions) {
     },
   });
 
+  const stackApi = buildStorageStackApi(workdir, opts.stackApi);
+
   const layer = Layer.mergeAll(
     out.layer,
     httpLayer,
@@ -225,7 +367,8 @@ export function setupStorage(workdir: string, opts: SetupStorageOptions) {
     mockRuntimeInfo({ cwd: workdir }),
     // `resolveYes` scans the raw argv for an explicit `--yes=false`.
     Layer.succeed(CliArgs, { args: opts.cliArgs ?? [] }),
+    ...(opts.stackBackend === true ? [stackBackendLayer("stack"), stackApi.layer] : []),
   );
 
-  return { layer, out, requests, telemetry, linkedCache };
+  return { layer, out, requests, telemetry, linkedCache, stackCalls: stackApi.stackCalls };
 }

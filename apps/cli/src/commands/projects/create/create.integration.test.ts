@@ -1,10 +1,11 @@
 import type { OrganizationResponseV1_Output, V1CreateAProjectOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
-import { Command } from "effect/unstable/cli";
+import { Cause, Effect, Exit, Layer, Option, Schema } from "effect";
+import { CliOutput, Command } from "effect/unstable/cli";
 
-import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockTelemetryRuntime, mockTty } from "../../../../tests/helpers/mocks.ts";
 import { GLOBAL_FLAGS, ExperimentalFlag } from "../../../command-internal/global-flags.ts";
+import { textCliOutputFormatter } from "../../../shared/output/text-formatter.ts";
 import {
   type ApiResponse,
   type HttpMethod,
@@ -14,6 +15,7 @@ import {
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { projectsCreateCommand, type ProjectsCreateFlags } from "./create.command.ts";
 import { projectsCreate } from "./create.handler.ts";
@@ -47,6 +49,8 @@ const BASE_FLAGS: ProjectsCreateFlags = {
 };
 
 const tempRoot = useTempWorkdir("supabase-projects-create-int-");
+
+const jsonText = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
@@ -272,31 +276,22 @@ describe("projects create integration", () => {
     "accepts --release-channel and --postgres-engine when only SUPABASE_EXPERIMENTAL is set",
     () => {
       const { layer, api } = setup();
-      const previous = process.env["SUPABASE_EXPERIMENTAL"];
-      process.env["SUPABASE_EXPERIMENTAL"] = "true";
-      return Effect.gen(function* () {
-        yield* projectsCreate({
-          ...BASE_FLAGS,
-          name: Option.some("alpha"),
-          orgId: Option.some("acme"),
-          dbPassword: Option.some("s3cret-pass"),
-          region: Option.some("us-east-1"),
-          releaseChannel: Option.some("internal"),
-          postgresEngine: Option.some("17-oriole"),
-        });
-        expect(postBody(api)?.release_channel).toBe("internal");
-        expect(postBody(api)?.postgres_engine).toBe("17-oriole");
-      }).pipe(
-        Effect.provide(layer),
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (previous === undefined) {
-              delete process.env["SUPABASE_EXPERIMENTAL"];
-            } else {
-              process.env["SUPABASE_EXPERIMENTAL"] = previous;
-            }
-          }),
-        ),
+      return withEnvVar(
+        "SUPABASE_EXPERIMENTAL",
+        "true",
+        Effect.gen(function* () {
+          yield* projectsCreate({
+            ...BASE_FLAGS,
+            name: Option.some("alpha"),
+            orgId: Option.some("acme"),
+            dbPassword: Option.some("s3cret-pass"),
+            region: Option.some("us-east-1"),
+            releaseChannel: Option.some("internal"),
+            postgresEngine: Option.some("17-oriole"),
+          });
+          expect(postBody(api)?.release_channel).toBe("internal");
+          expect(postBody(api)?.postgres_engine).toBe("17-oriole");
+        }).pipe(Effect.provide(layer)),
       );
     },
   );
@@ -339,9 +334,9 @@ describe("projects create integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("ProjectsCreateMissingArgError");
-        expect(json).toContain("--org-id");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("ProjectsCreateMissingArgError");
+        expect(causeText).toContain("--org-id");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -358,7 +353,7 @@ describe("projects create integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("ProjectsCreateMissingArgError");
+        expect(Cause.pretty(exit.cause)).toContain("ProjectsCreateMissingArgError");
       }
       expect(api.requests.some((r) => r.method === "GET")).toBe(false);
     }).pipe(Effect.provide(layer));
@@ -390,7 +385,7 @@ describe("projects create integration", () => {
       const exit = yield* Effect.exit(projectsCreate({ ...BASE_FLAGS }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("ProjectsCreateNameEmptyError");
+        expect(Cause.pretty(exit.cause)).toContain("ProjectsCreateNameEmptyError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -406,7 +401,7 @@ describe("projects create integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("ProjectsOrgsListUnexpectedStatusError");
+        expect(Cause.pretty(exit.cause)).toContain("ProjectsOrgsListUnexpectedStatusError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -498,9 +493,9 @@ describe("projects create integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("ProjectsCreateNetworkError");
-        expect(json).toContain("failed to create project");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("ProjectsCreateNetworkError");
+        expect(causeText).toContain("failed to create project");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -519,7 +514,7 @@ describe("projects create integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("ProjectsCreateUnexpectedStatusError");
+        expect(Cause.pretty(exit.cause)).toContain("ProjectsCreateUnexpectedStatusError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -535,10 +530,11 @@ describe("projects create integration", () => {
         region: Option.some("us-east-1"),
         size: Option.some("micro"),
       });
-      // JSON.stringify preserves key order, so this pins the exact wire order rather than
+      // JSON encoding preserves key order, so this pins the exact wire order rather than
       // just deep-equality.
       const body = api.requests.find((r) => r.method === "POST")?.body;
-      expect(JSON.stringify(body)).toBe(
+      const wire = yield* jsonText(body);
+      expect(wire).toBe(
         '{"db_pass":"s3cret-pass","desired_instance_size":"micro","name":"alpha","organization_slug":"acme","region":"us-east-1"}',
       );
     }).pipe(Effect.provide(layer));
@@ -603,6 +599,17 @@ describe("projects create integration", () => {
       Command.withSubcommands([projectsCreateCommand]),
       Command.withGlobalFlags(GLOBAL_FLAGS),
     );
+    const { layer } = setup();
+    // `Command.runWith` keeps the leaf handler's services in the effect type even though the
+    // parse error fires before the handler body runs, so the whole pipeline is provided.
+    const commandLayer = Layer.mergeAll(
+      layer,
+      CliOutput.layer(textCliOutputFormatter()),
+      mockTelemetryRuntime({
+        configDir: `${tempRoot.current}/.supabase`,
+        tracesDir: `${tempRoot.current}/.supabase/traces`,
+      }),
+    );
 
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -623,12 +630,12 @@ describe("projects create integration", () => {
       if (Exit.isFailure(exit)) {
         expect(rejectsInvalidSizeChoice(Cause.squash(exit.cause))).toBe(true);
       }
-    }) as Effect.Effect<void>;
+    }).pipe(Effect.provide(commandLayer));
   });
 });
 
-// Confirms the failure came from the `--size` flag itself, not an unrelated error (e.g. a missing
-// runtime service in this minimal setup), so the regression test can't pass for the wrong reason.
+// Confirms the failure came from the `--size` flag itself, not an unrelated error, so the
+// regression test can't pass for the wrong reason.
 function rejectsInvalidSizeChoice(error: unknown): boolean {
   if (typeof error !== "object" || error === null || !("errors" in error)) return false;
   const { errors } = error;

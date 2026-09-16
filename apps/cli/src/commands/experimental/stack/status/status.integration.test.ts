@@ -13,6 +13,7 @@ import {
   Schema,
   Stream,
 } from "effect";
+import { runtimeInfoLayer } from "../../../../shared/runtime/runtime-info.layer.ts";
 import { CliOutput, Command } from "effect/unstable/cli";
 import {
   InvalidStackConfigError,
@@ -170,6 +171,7 @@ const runStatus = (options: {
           start: () => Effect.die("unused"),
           stop: Effect.die("unused"),
           destroy: Effect.die("unused"),
+          resetDatabase: Effect.die("unused"),
           logs: () => Effect.die("unused"),
           followLogs: () => Stream.empty,
         } satisfies EffectStack),
@@ -195,6 +197,7 @@ const runStatus = (options: {
         ? []
         : [Layer.succeed(OutputFlag, Option.some(options.legacyOutput))]),
       BunServices.layer,
+      runtimeInfoLayer,
     );
     const effect = stackStatus(options.flags ?? flags()).pipe(Effect.provide(layer));
     return { effect, out, findInputs, inspectInputs, projectRoot, root };
@@ -334,6 +337,76 @@ describe("stack status", () => {
             Effect.sync(() => expect(run.out.stdoutText).toContain("Readiness: stopped")),
           ),
         ),
+    );
+  });
+
+  it.effect("reports a retiring capability as stopping in text and JSON", () => {
+    const base = makeStatus(id);
+    const status = {
+      ...base,
+      capabilities: base.capabilities.map((capability) =>
+        capability.name === "rest" ? { ...capability, state: "stopping" as const } : capability,
+      ),
+    };
+    return Effect.all([runStatus({ status }), runStatus({ status, outputFormat: "json" })]).pipe(
+      Effect.flatMap(([text, json]) =>
+        Effect.all([text.effect, json.effect]).pipe(
+          Effect.tap(() =>
+            Effect.sync(() => {
+              expect(text.out.stdoutText).toContain("Readiness: stopping");
+              const success = json.out.messages.find((message) => message.type === "success");
+              expect(success?.data).toMatchObject({ readiness: "stopping" });
+            }),
+          ),
+        ),
+      ),
+    );
+  });
+
+  it.effect("reports failed capability diagnostics and targeted recovery in text and JSON", () => {
+    const base = makeStatus(id);
+    const status: StackStatus = {
+      ...base,
+      capabilities: base.capabilities.map((capability) =>
+        capability.name === "rest"
+          ? {
+              ...capability,
+              state: "failed" as const,
+              error: "Unable to remove REST workload",
+            }
+          : capability,
+      ),
+      recovery: {
+        operation: "stop",
+        message: "Cleanup is incomplete; stop and start the stack to retry it.",
+      },
+    };
+    return Effect.all([runStatus({ status }), runStatus({ status, outputFormat: "json" })]).pipe(
+      Effect.flatMap(([text, json]) =>
+        Effect.all([text.effect, json.effect]).pipe(
+          Effect.tap(() =>
+            Effect.sync(() => {
+              expect(text.out.stdoutText).toContain(
+                "rest: failed — Unable to remove REST workload",
+              );
+              expect(text.out.stdoutText).toContain(
+                `supabase stack stop --stack-id ${id} && supabase stack start --stack-id ${id}`,
+              );
+              const success = json.out.messages.find((message) => message.type === "success");
+              expect(success?.data).toMatchObject({ recovery: status.recovery });
+              expect(success?.data).toMatchObject({
+                capabilities: expect.arrayContaining([
+                  expect.objectContaining({
+                    name: "rest",
+                    state: "failed",
+                    error: "Unable to remove REST workload",
+                  }),
+                ]),
+              });
+            }),
+          ),
+        ),
+      ),
     );
   });
 
@@ -549,6 +622,7 @@ describe("stack status", () => {
             discovery,
             mockCommandSettings({ workdir: run.projectRoot }),
             BunServices.layer,
+            runtimeInfoLayer,
           ),
         ),
         Effect.exit,

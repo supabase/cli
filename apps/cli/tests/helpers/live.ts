@@ -21,7 +21,7 @@ type RunOptions = NonNullable<Parameters<typeof runSupabase>[1]>;
 type RunResult = Awaited<ReturnType<typeof runSupabase>>;
 type RunEffectOptions = Parameters<typeof runSupabaseEffect>[1];
 
-export interface LiveWorkspace {
+interface LiveWorkspace {
   readonly path: string;
 }
 

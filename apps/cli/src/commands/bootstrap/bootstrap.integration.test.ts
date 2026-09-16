@@ -1,9 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer, Option, Schedule } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Redacted, Schedule } from "effect";
 
 import {
   mockAnalytics,
@@ -25,6 +22,7 @@ import {
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  withEnvVar,
 } from "../../../tests/helpers/command-mocks.ts";
 import {
   DebugFlag,
@@ -93,9 +91,13 @@ interface SetupOpts {
   readonly promptTextResponses?: ReadonlyArray<string>;
   readonly promptConfirmResponses?: ReadonlyArray<boolean>;
   readonly promptPasswordResponses?: ReadonlyArray<string>;
+  /** Seeds `CommandSettings.dbPassword`, the captured `SUPABASE_DB_PASSWORD`. */
+  readonly dbPassword?: string;
+  /** Raw `SUPABASE_WORKDIR` the settings captured; used verbatim, so no prompt fires. */
+  readonly workdirEnvValue?: string;
 }
 
-function setup(opts: SetupOpts = {}) {
+function setup(path: Path.Path, opts: SetupOpts = {}) {
   const out = mockOutput({
     format: opts.format ?? "text",
     promptTextResponses: opts.promptTextResponses,
@@ -108,9 +110,11 @@ function setup(opts: SetupOpts = {}) {
   const credentials = mockCommandCredentialsTracked();
 
   let apiKeysCalls = 0;
+  const createBodies: Array<unknown> = [];
   const handler: ApiHandler = (request, recorded) => {
     const url = recorded.urlWithParams;
     if (recorded.method === "POST" && /\/v1\/projects(\?|$)/.test(url)) {
+      createBodies.push(recorded.body);
       return Effect.succeed(jsonResponse(request, 201, CREATED));
     }
     if (url.includes("/api-keys")) {
@@ -162,8 +166,11 @@ function setup(opts: SetupOpts = {}) {
 
   const cliSettings = mockCommandSettings({
     workdir: tempRoot.current,
+    workdirEnvValue: opts.workdirEnvValue,
     projectHost: "supabase.co",
     accessToken: opts.loggedIn === false ? Option.none() : undefined,
+    dbPassword:
+      opts.dbPassword === undefined ? undefined : Option.some(Redacted.make(opts.dbPassword)),
   });
 
   const samples = opts.samples ?? [];
@@ -211,7 +218,7 @@ function setup(opts: SetupOpts = {}) {
     cliSettings,
     mockTty({ stdinIsTty: opts.stdinIsTty ?? true, stdoutIsTty: false }),
     // cwd differs from the workdir so the "Using workdir" line prints.
-    mockRuntimeInfo({ cwd: dirname(tempRoot.current) }),
+    mockRuntimeInfo({ cwd: path.dirname(tempRoot.current) }),
     telemetry.layer,
     linkedCache.layer,
     analytics.layer,
@@ -242,6 +249,7 @@ function setup(opts: SetupOpts = {}) {
     api,
     workdir: tempRoot.current,
     downloads,
+    createBodies,
     pushConnectCalls,
     loginApi,
     get apiKeysCalls() {
@@ -259,231 +267,290 @@ function flags(overrides: Partial<BootstrapFlags> = {}): BootstrapFlags {
 }
 
 describe("bootstrap integration", () => {
-  it.live("bootstraps the scratch template into the workdir (blank init, logged in)", () => {
-    const s = setup();
-    return Effect.gen(function* () {
-      yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF);
-      expect(existsSync(join(s.workdir, "supabase", "config.toml"))).toBe(true);
-      expect(readFileSync(join(s.workdir, "supabase", ".temp", "project-ref"), "utf8")).toBe(
-        VALID_REF,
+  it.live("bootstraps the scratch template into the workdir (blank init, logged in)", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const s = setup(path);
+      yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF).pipe(
+        Effect.provide(s.layer),
       );
-      const env = readFileSync(join(s.workdir, ".env"), "utf8");
+      expect(yield* fs.exists(path.join(s.workdir, "supabase", "config.toml"))).toBe(true);
+      expect(
+        yield* fs.readFileString(path.join(s.workdir, "supabase", ".temp", "project-ref")),
+      ).toBe(VALID_REF);
+      const env = yield* fs.readFileString(path.join(s.workdir, ".env"));
       expect(env).toContain('SUPABASE_ANON_KEY="anon-key"');
       expect(env).toContain("SUPABASE_URL=");
       expect(env).toContain("POSTGRES_URL=");
       expect(s.out.stderrText).toContain("Using workdir");
       expect(s.out.stderrText).toContain("Created a new project at");
       expect(s.out.stderrText).toContain("To start your app:");
-    }).pipe(Effect.provide(s.layer));
-  });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
-  it.live("downloads a named template matched by argument", () => {
-    const s = setup({ samples: [NEXTJS_TEMPLATE] });
-    return Effect.gen(function* () {
-      yield* bootstrap(flags({ template: Option.some("NextJS") }), FAST_BACKOFF);
+  it.live("downloads a named template matched by argument", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const s = setup(path, { samples: [NEXTJS_TEMPLATE] });
+      yield* bootstrap(flags({ template: Option.some("NextJS") }), FAST_BACKOFF).pipe(
+        Effect.provide(s.layer),
+      );
       expect(s.downloads).toHaveLength(1);
       expect(s.downloads[0]).toEqual({ url: NEXTJS_TEMPLATE.url, targetDir: s.workdir });
-      expect(existsSync(join(s.workdir, "supabase", "config.toml"))).toBe(false);
+      expect(yield* fs.exists(path.join(s.workdir, "supabase", "config.toml"))).toBe(false);
       expect(s.out.stdoutText).toContain(`Downloading: ${NEXTJS_TEMPLATE.url}`);
-    }).pipe(Effect.provide(s.layer));
-  });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
-  it.live("rejects an unknown template argument", () => {
-    const s = setup({ samples: [NEXTJS_TEMPLATE] });
-    return Effect.gen(function* () {
+  it.live("rejects an unknown template argument", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const s = setup(path, { samples: [NEXTJS_TEMPLATE] });
       const exit = yield* Effect.exit(
-        bootstrap(flags({ template: Option.some("nope") }), FAST_BACKOFF),
+        bootstrap(flags({ template: Option.some("nope") }), FAST_BACKOFF).pipe(
+          Effect.provide(s.layer),
+        ),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("BootstrapInvalidTemplateError");
-        expect(json).toContain("Invalid template: nope");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("BootstrapInvalidTemplateError");
+        expect(causeText).toContain("Invalid template: nope");
       }
-    }).pipe(Effect.provide(s.layer));
-  });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
-  it.live("prompts for a template when none is given", () => {
-    const s = setup({ samples: [NEXTJS_TEMPLATE] });
-    return Effect.gen(function* () {
+  it.live("prompts for a template when none is given", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const s = setup(path, { samples: [NEXTJS_TEMPLATE] });
       // Default mock promptSelect picks the first option (the nextjs template).
-      yield* bootstrap(flags(), FAST_BACKOFF);
+      yield* bootstrap(flags(), FAST_BACKOFF).pipe(Effect.provide(s.layer));
       expect(s.out.promptSelectCalls[0]?.message).toBe(
         "Which starter template do you want to use?",
       );
       expect(s.downloads).toHaveLength(1);
-    }).pipe(Effect.provide(s.layer));
-  });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
-  it.live("prompts for a workdir when none is configured", () => {
-    const s = setup({
-      workdir: Option.none(),
-      promptTextResponses: [tempRoot.current],
-    });
-    const prevWorkdir = process.env["SUPABASE_WORKDIR"];
-    delete process.env["SUPABASE_WORKDIR"];
-    return Effect.gen(function* () {
-      yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF);
-      expect(existsSync(join(s.workdir, "supabase", "config.toml"))).toBe(true);
-    }).pipe(
-      Effect.provide(s.layer),
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (prevWorkdir !== undefined) process.env["SUPABASE_WORKDIR"] = prevWorkdir;
-        }),
-      ),
-    );
-  });
+  it.live("prompts for a workdir when none is configured", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const s = setup(path, {
+        workdir: Option.none(),
+        promptTextResponses: [tempRoot.current],
+      });
+      // No `--workdir` flag and no captured `SUPABASE_WORKDIR`, so the handler must prompt.
+      yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF).pipe(
+        Effect.provide(s.layer),
+      );
+      expect(yield* fs.exists(path.join(s.workdir, "supabase", "config.toml"))).toBe(true);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
-  it.live("aborts when the user declines to overwrite a non-empty workdir", () => {
-    const s = setup({ promptConfirmResponses: [false] });
-    writeFileSync(join(tempRoot.current, "existing.txt"), "keep me");
-    return Effect.gen(function* () {
+  it.live("uses the SUPABASE_WORKDIR env value without prompting", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      // No `--workdir` flag; the settings carry the captured `SUPABASE_WORKDIR`, which the
+      // handler uses verbatim instead of prompting.
+      const s = setup(path, { workdir: Option.none(), workdirEnvValue: tempRoot.current });
+      yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF).pipe(
+        Effect.provide(s.layer),
+      );
+      expect(s.out.promptTextCalls).toEqual([]);
+      expect(yield* fs.exists(path.join(s.workdir, "supabase", "config.toml"))).toBe(true);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("aborts when the user declines to overwrite a non-empty workdir", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const s = setup(path, { promptConfirmResponses: [false] });
+      yield* fs.writeFileString(path.join(tempRoot.current, "existing.txt"), "keep me");
       const exit = yield* Effect.exit(
-        bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF),
+        bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF).pipe(
+          Effect.provide(s.layer),
+        ),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("BootstrapOverwriteDeclinedError");
+        expect(Cause.pretty(exit.cause)).toContain("BootstrapOverwriteDeclinedError");
       }
-    }).pipe(Effect.provide(s.layer));
-  });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
-  it.live("proceeds past a non-empty workdir with --yes", () => {
-    const s = setup({ yes: true });
-    writeFileSync(join(tempRoot.current, "existing.txt"), "keep me");
-    return Effect.gen(function* () {
-      yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF);
+  it.live("proceeds past a non-empty workdir with --yes", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const s = setup(path, { yes: true });
+      yield* fs.writeFileString(path.join(tempRoot.current, "existing.txt"), "keep me");
+      yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF).pipe(
+        Effect.provide(s.layer),
+      );
       expect(s.out.stderrText).toContain("Do you want to overwrite existing files in ");
       expect(s.out.stderrText).toContain(" directory? [Y/n] y\n");
-      expect(existsSync(join(s.workdir, "supabase", "config.toml"))).toBe(true);
-    }).pipe(Effect.provide(s.layer));
-  });
+      expect(yield* fs.exists(path.join(s.workdir, "supabase", "config.toml"))).toBe(true);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
-  it.live("runs the browser login flow when no token is present (one cli_login_completed)", () => {
-    const s = setup({ loggedIn: false });
-    return Effect.gen(function* () {
-      yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF);
+  it.live("runs the browser login flow when no token is present (one cli_login_completed)", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const s = setup(path, { loggedIn: false });
+      yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF).pipe(
+        Effect.provide(s.layer),
+      );
       expect(s.credentials.savedToken).toBeDefined();
       expect(
         s.analytics.captured.map((c) => c.event).filter((e) => e === "cli_login_completed"),
       ).toHaveLength(1);
-    }).pipe(Effect.provide(s.layer));
-  });
-
-  it.live(
-    "skips login when already authenticated (no login event, no project-linked event)",
-    () => {
-      const s = setup({ loggedIn: true });
-      return Effect.gen(function* () {
-        yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF);
-        const events = s.analytics.captured.map((c) => c.event);
-        expect(events).not.toContain("cli_login_completed");
-        expect(events).not.toContain("cli_project_linked");
-      }).pipe(Effect.provide(s.layer));
-    },
+    }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("retries fetching api keys until they are available", () => {
-    const s = setup({ apiKeysFailTimes: 2 });
-    return Effect.gen(function* () {
-      yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF);
+  it.live("skips login when already authenticated (no login event, no project-linked event)", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const s = setup(path, { loggedIn: true });
+      yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF).pipe(
+        Effect.provide(s.layer),
+      );
+      const events = s.analytics.captured.map((c) => c.event);
+      expect(events).not.toContain("cli_login_completed");
+      expect(events).not.toContain("cli_project_linked");
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("retries fetching api keys until they are available", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const s = setup(path, { apiKeysFailTimes: 2 });
+      yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF).pipe(
+        Effect.provide(s.layer),
+      );
       expect(s.apiKeysCalls).toBe(3);
       const linkingLines = s.out.stderrText.match(/Linking project\.\.\./g) ?? [];
       expect(linkingLines.length).toBeGreaterThanOrEqual(3);
-    }).pipe(Effect.provide(s.layer));
-  });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
-  it.live("retries the native push connection until it succeeds", () => {
-    const s = setup({ pushConnectFailTimes: 2, debug: true });
-    return Effect.gen(function* () {
-      yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF);
+  it.live("retries the native push connection until it succeeds", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const s = setup(path, { pushConnectFailTimes: 2, debug: true });
+      yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF).pipe(
+        Effect.provide(s.layer),
+      );
       expect(s.pushConnectCalls).toHaveLength(3);
       // The stderr retry notice needs 3+ failures to fire; asserting via the debug logger
       // (`debug: true` above) catches both attempts with only 2 failures here.
       const retryLines = s.out.stderrText.match(/connection refused\nRetry \(\d\/8\): /g) ?? [];
       expect(retryLines.length).toBe(2);
-    }).pipe(Effect.provide(s.layer));
-  });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
-  it.live("fails when a service stays unhealthy", () => {
-    const s = setup({
-      health: { status: 200, body: [{ name: "db", healthy: false, status: "UNHEALTHY" }] },
-    });
-    return Effect.gen(function* () {
+  it.live("fails when a service stays unhealthy", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const s = setup(path, {
+        health: { status: 200, body: [{ name: "db", healthy: false, status: "UNHEALTHY" }] },
+      });
       const exit = yield* Effect.exit(
-        bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF),
+        bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF).pipe(
+          Effect.provide(s.layer),
+        ),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("Service not healthy: db (UNHEALTHY)");
+        expect(Cause.pretty(exit.cause)).toContain("Service not healthy: db (UNHEALTHY)");
       }
-    }).pipe(Effect.provide(s.layer));
-  });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
-  it.live("fails with an Error status when the health endpoint returns non-200", () => {
-    const s = setup({ health: { status: 503, body: { message: "down" } } });
-    return Effect.gen(function* () {
+  it.live("fails with an Error status when the health endpoint returns non-200", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const s = setup(path, { health: { status: 503, body: { message: "down" } } });
       const exit = yield* Effect.exit(
-        bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF),
+        bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF).pipe(
+          Effect.provide(s.layer),
+        ),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("Error status 503");
+        expect(Cause.pretty(exit.cause)).toContain("Error status 503");
       }
-    }).pipe(Effect.provide(s.layer));
-  });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
-  it.live("merges .env.example derived keys", () => {
-    const s = setup();
-    mkdirSync(tempRoot.current, { recursive: true });
-    writeFileSync(
-      join(tempRoot.current, ".env.example"),
-      "POSTGRES_USER=example\nNEXT_PUBLIC_SUPABASE_ANON_KEY=example\n",
-    );
-    return Effect.gen(function* () {
-      yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF);
-      const env = readFileSync(join(s.workdir, ".env"), "utf8");
+  it.live("merges .env.example derived keys", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const s = setup(path);
+      yield* fs.makeDirectory(tempRoot.current, { recursive: true });
+      yield* fs.writeFileString(
+        path.join(tempRoot.current, ".env.example"),
+        "POSTGRES_USER=example\nNEXT_PUBLIC_SUPABASE_ANON_KEY=example\n",
+      );
+      yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF).pipe(
+        Effect.provide(s.layer),
+      );
+      const env = yield* fs.readFileString(path.join(s.workdir, ".env"));
       expect(env).toContain('POSTGRES_USER="postgres"');
       expect(env).toContain('NEXT_PUBLIC_SUPABASE_ANON_KEY="anon-key"');
-    }).pipe(Effect.provide(s.layer));
-  });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
-  it.live("continues (non-fatal) when the .env.example is malformed", () => {
-    const s = setup();
-    mkdirSync(tempRoot.current, { recursive: true });
-    writeFileSync(join(tempRoot.current, ".env.example"), "!=");
-    return Effect.gen(function* () {
-      yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF);
+  it.live("continues (non-fatal) when the .env.example is malformed", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const s = setup(path);
+      yield* fs.makeDirectory(tempRoot.current, { recursive: true });
+      yield* fs.writeFileString(path.join(tempRoot.current, ".env.example"), "!=");
+      yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF).pipe(
+        Effect.provide(s.layer),
+      );
       expect(s.out.stderrText).toContain("Failed to create .env file:");
       // Bootstrap still completes through the native db push step.
       expect(s.pushConnectCalls).toHaveLength(1);
-    }).pipe(Effect.provide(s.layer));
-  });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
   it.live(
     "pushes natively — falls back to the IPv4 pooler when the direct host is unreachable, no Go subprocess",
-    () => {
+    () =>
       // The test's direct db host is never reachable, so `resolveLinkedConn` falls back to the
       // IPv4 pooler fed by `setup()`'s pooler-config mock via the saved pooler-url file.
-      const s = setup();
-      return Effect.gen(function* () {
-        yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF);
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const s = setup(path);
+        yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF).pipe(
+          Effect.provide(s.layer),
+        );
         expect(s.pushConnectCalls).toHaveLength(1);
         expect(s.pushConnectCalls[0]?.host).toBe("aws-0-us-east-1.pooler.supabase.com");
         expect(s.pushConnectCalls[0]?.user).toBe(`postgres.${VALID_REF}`);
         expect(s.out.stderrText).toContain("Connecting to remote database...");
         expect(s.out.stdoutText).toContain("Remote database is up to date.");
-      }).pipe(Effect.provide(s.layer));
-    },
+      }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.live(
     "falls back to the direct-host config and keeps retrying push when connection resolution itself fails",
-    () => {
-      const s = setup({ poolerAvailable: false, pushConnectFailTimes: 1 });
-      return Effect.gen(function* () {
-        yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF);
+    () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const s = setup(path, { poolerAvailable: false, pushConnectFailTimes: 1 });
+        yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF).pipe(
+          Effect.provide(s.layer),
+        );
         expect(s.out.stderrText).toContain("IPv6 is not supported on your current network");
         expect(s.pushConnectCalls).toHaveLength(2);
         expect(s.pushConnectCalls[0]?.host).toBe(`db.${VALID_REF}.supabase.co`);
@@ -492,79 +559,86 @@ describe("bootstrap integration", () => {
         expect(s.pushConnectCalls[0]?.database).toBe("postgres");
         expect(s.pushConnectCalls[0]?.password).toBe("s3cret");
         expect(s.out.stdoutText).toContain("Remote database is up to date.");
-      }).pipe(Effect.provide(s.layer));
-    },
+      }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("pushes with the flag-sourced password (used as the create password too)", () => {
-    const s = setup();
-    return Effect.gen(function* () {
+  it.live("pushes with the flag-sourced password (used as the create password too)", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const s = setup(path);
       yield* bootstrap(
         flags({ template: Option.some("scratch"), password: Option.some("pw123") }),
         FAST_BACKOFF,
-      );
+      ).pipe(Effect.provide(s.layer));
       expect(s.pushConnectCalls[0]?.password).toBe("pw123");
-    }).pipe(Effect.provide(s.layer));
-  });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
-  it.live("pushes with the prompted password when --password is empty", () => {
-    // An explicit `--password ""` (e.g. unset `$SUPABASE_DB_PASSWORD` expanded by the shell)
-    // leaves the password empty, so the create step prompts, and the push reuses that same
-    // resolved connection.
-    const s = setup({ promptPasswordResponses: ["prompted-pw"] });
-    const prev = process.env["SUPABASE_DB_PASSWORD"];
-    delete process.env["SUPABASE_DB_PASSWORD"];
-    return Effect.gen(function* () {
-      yield* bootstrap(
-        flags({ template: Option.some("scratch"), password: Option.some("") }),
-        FAST_BACKOFF,
+  it.live("pushes with the prompted password when --password is empty", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      // An explicit `--password ""` (e.g. unset `$SUPABASE_DB_PASSWORD` expanded by the shell)
+      // leaves the password empty, so the create step prompts, and the push reuses that same
+      // resolved connection.
+      const s = setup(path, { promptPasswordResponses: ["prompted-pw"] });
+      yield* withEnvVar(
+        "SUPABASE_DB_PASSWORD",
+        undefined,
+        bootstrap(
+          flags({ template: Option.some("scratch"), password: Option.some("") }),
+          FAST_BACKOFF,
+        ).pipe(Effect.provide(s.layer)),
       );
       expect(s.pushConnectCalls[0]?.password).toBe("prompted-pw");
-    }).pipe(
-      Effect.provide(s.layer),
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (prev === undefined) delete process.env["SUPABASE_DB_PASSWORD"];
-          else process.env["SUPABASE_DB_PASSWORD"] = prev;
-        }),
-      ),
-    );
-  });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
-  it.live("pushes with a SUPABASE_DB_PASSWORD env var-sourced password", () => {
-    const s = setup();
-    const prev = process.env["SUPABASE_DB_PASSWORD"];
-    process.env["SUPABASE_DB_PASSWORD"] = "env-pw";
-    return Effect.gen(function* () {
+  it.live("pushes with the settings-captured SUPABASE_DB_PASSWORD password", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      // The create seed reads the captured password from settings, and the push reuses the
+      // created project's password — no live env read on this path.
+      const s = setup(path, { dbPassword: "env-pw" });
       yield* bootstrap(
         flags({ template: Option.some("scratch"), password: Option.none() }),
         FAST_BACKOFF,
-      );
+      ).pipe(Effect.provide(s.layer));
       expect(s.pushConnectCalls[0]?.password).toBe("env-pw");
-    }).pipe(
-      Effect.provide(s.layer),
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (prev === undefined) delete process.env["SUPABASE_DB_PASSWORD"];
-          else process.env["SUPABASE_DB_PASSWORD"] = prev;
-        }),
-      ),
-    );
-  });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
-  it.live("flushes telemetry and caches the linked project via ensuring", () => {
-    const s = setup();
-    return Effect.gen(function* () {
-      yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF);
+  it.live("seeds the project create request with the settings-captured password", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const s = setup(path, { dbPassword: "settings-pw" });
+      yield* bootstrap(
+        flags({ template: Option.some("scratch"), password: Option.none() }),
+        FAST_BACKOFF,
+      ).pipe(Effect.provide(s.layer));
+      expect(s.createBodies).toHaveLength(1);
+      expect(s.createBodies[0]).toMatchObject({ db_pass: "settings-pw" });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("flushes telemetry and caches the linked project via ensuring", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const s = setup(path);
+      yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF).pipe(
+        Effect.provide(s.layer),
+      );
       expect(s.telemetry.flushed).toBe(true);
       expect(s.linkedCache.cached).toBe(true);
-    }).pipe(Effect.provide(s.layer));
-  });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
-  it.live("emits a single structured result in json mode", () => {
-    const s = setup({ format: "json" });
-    return Effect.gen(function* () {
-      yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF);
+  it.live("emits a single structured result in json mode", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const s = setup(path, { format: "json" });
+      yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF).pipe(
+        Effect.provide(s.layer),
+      );
       const successes = s.out.messages.filter((m) => m.type === "success");
       expect(successes).toHaveLength(1);
       expect(successes[0]?.data).toMatchObject({
@@ -574,17 +648,21 @@ describe("bootstrap integration", () => {
         workdir: s.workdir,
       });
       expect(s.out.stdoutText).not.toContain("To start your app:");
-    }).pipe(Effect.provide(s.layer));
-  });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
-  it.live("reports env_file: null in the json result when the .env write fails", () => {
-    const s = setup({ format: "json" });
-    mkdirSync(tempRoot.current, { recursive: true });
-    writeFileSync(join(tempRoot.current, ".env.example"), "!=");
-    return Effect.gen(function* () {
-      yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF);
+  it.live("reports env_file: null in the json result when the .env write fails", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const s = setup(path, { format: "json" });
+      yield* fs.makeDirectory(tempRoot.current, { recursive: true });
+      yield* fs.writeFileString(path.join(tempRoot.current, ".env.example"), "!=");
+      yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF).pipe(
+        Effect.provide(s.layer),
+      );
       const success = s.out.messages.find((m) => m.type === "success");
       expect(success?.data).toMatchObject({ env_file: null });
-    }).pipe(Effect.provide(s.layer));
-  });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 });

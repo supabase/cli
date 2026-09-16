@@ -1,6 +1,6 @@
 import type { V1GetProjectApiKeysOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Option } from "effect";
 
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -142,7 +142,7 @@ describe("projects api-keys integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("ProjectRefNotLinkedError");
+        expect(Cause.pretty(exit.cause)).toContain("ProjectRefNotLinkedError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -206,9 +206,9 @@ describe("projects api-keys integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("ProjectsApiKeysNetworkError");
-        expect(json).toContain("failed to get api keys");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("ProjectsApiKeysNetworkError");
+        expect(causeText).toContain("failed to get api keys");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -221,9 +221,9 @@ describe("projects api-keys integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("ProjectsApiKeysUnexpectedStatusError");
-        expect(json).toContain("unexpected get api keys status 503");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("ProjectsApiKeysUnexpectedStatusError");
+        expect(causeText).toContain("unexpected get api keys status 503");
       }
     }).pipe(Effect.provide(layer));
   });

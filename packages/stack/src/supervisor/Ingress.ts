@@ -8,9 +8,11 @@ import type {
   HttpGatewayListenerOptions,
   StackGateway,
 } from "../gateway/Gateway.ts";
+import type { GatewayActivity } from "../gateway/ActivityTracker.ts";
 import {
   GatewayActivationError,
   PortUnavailableError,
+  StackLifecycleConflictError,
   StackPreparationError,
   type StackError,
 } from "../public/Errors.ts";
@@ -58,6 +60,7 @@ export interface SupervisorIngress {
     activate: (
       capability: import("../public/Capability.ts").CapabilityName,
     ) => Effect.Effect<ActivationResult, GatewayActivationError | StackError>,
+    activity?: GatewayActivity,
   ) => Effect.Effect<void, GatewayActivationError | StackError>;
   /** Close gateway, accepted sockets, and exact listeners; safe to call repeatedly. */
   readonly close: Effect.Effect<void, StackError>;
@@ -261,6 +264,7 @@ export const makeSupervisorIngress = (
       activate: (
         capability: import("../public/Capability.ts").CapabilityName,
       ) => Effect.Effect<ActivationResult, GatewayActivationError | StackError>,
+      activity?: GatewayActivity,
     ): Effect.Effect<void, GatewayActivationError | StackError> =>
       lock.withPermit(
         Effect.gen(function* () {
@@ -273,7 +277,8 @@ export const makeSupervisorIngress = (
               message: "Gateway reservation is no longer current",
             });
           if (entry.gateway !== undefined) return;
-          const material = input.definition.listeners.api.enabled
+          const intents = listenerIntents(input);
+          const material = intents.api.enabled
             ? yield* (options.apiMaterial ?? defaultApiMaterial)(input.state)
             : undefined;
           const catalog = routeCatalogFor(input.plan, material);
@@ -341,7 +346,7 @@ export const makeSupervisorIngress = (
               },
             }));
           const internalApiAddress =
-            input.definition.listeners.api.enabled &&
+            intents.api.enabled &&
             reservation.assignments.api !== undefined &&
             options.resolveInternalApiBindAddress !== undefined
               ? yield* options.resolveInternalApiBindAddress()
@@ -401,9 +406,17 @@ export const makeSupervisorIngress = (
                   Effect.mapError((error) =>
                     error instanceof GatewayActivationError
                       ? error
-                      : new GatewayActivationError({ message: error.message, cause: error }),
+                      : new GatewayActivationError({
+                          message: error.message,
+                          cause: error,
+                          recovery:
+                            error instanceof StackLifecycleConflictError
+                              ? error.recovery
+                              : undefined,
+                        }),
                   ),
                 ),
+              activity,
             }).pipe(Effect.provideService(Scope.Scope, entry.scope)),
           );
           if (Exit.isFailure(gatewayResult)) {

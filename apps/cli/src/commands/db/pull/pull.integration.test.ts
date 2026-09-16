@@ -1482,9 +1482,8 @@ describe("db pull", () => {
   it.effect(
     "resolves the pg_dump image via SUPABASE_INTERNAL_IMAGE_REGISTRY from supabase/.env",
     () => {
-      // Applied before resolving the registry image, so a mirror set only in
-      // supabase/.env is used for the native pg_dump seed (scoped to the run via
-      // `applyProjectEnv`, reverted on close).
+      // Passed explicitly to the native pg_dump seed, so a mirror set only in
+      // supabase/.env is used without mutating process.env.
       const prev = process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
       delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
       mkdirSync(join(tmp.current, "supabase"), { recursive: true });

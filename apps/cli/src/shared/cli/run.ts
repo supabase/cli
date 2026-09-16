@@ -2,6 +2,7 @@ import { BunServices } from "@effect/platform-bun";
 import { CliConfigStore } from "@supabase/config/effect";
 import {
   Cause,
+  Config,
   Console,
   Crypto,
   Effect,
@@ -10,6 +11,7 @@ import {
   Fiber,
   Layer,
   Path,
+  PlatformError,
   Runtime,
   Scope,
   Stdio,
@@ -33,6 +35,7 @@ import {
   goProxyInvocationLayer,
 } from "../../command-internal/go-proxy-invocation.ts";
 import { cliSettingsLayer } from "../config/cli-settings.layer.ts";
+import { cliConfigProviderLayer } from "../config/cli-config-provider.layer.ts";
 import { cliProjectHomeLayer } from "../config/cli-project-home.layer.ts";
 import { CliProjectLocalServiceVersions } from "../config/cli-project-local-service-versions.service.ts";
 import { cliProjectContextLayer } from "../config/cli-project-context.layer.ts";
@@ -531,7 +534,11 @@ function cliProjectHomeLayerFor(runtimeLayer: Layer.Layer<never>) {
   );
 }
 
-type AnyAnalyticsLayer = Layer.Layer<Analytics, never, any>;
+type AnyAnalyticsLayer = Layer.Layer<
+  Analytics,
+  Config.ConfigError | PlatformError.PlatformError,
+  any
+>;
 
 export interface RunCliOptions {
   /** Runs after runtime services are installed and before command parsing. */
@@ -749,6 +756,7 @@ export async function runCli<
       Effect.provide(BunServices.layer),
       Effect.provide(goProxyInvocationLayer),
       Effect.provide(successTrailerLayer),
+      Effect.provide(cliConfigProviderLayer),
     );
 
   if (useGlobalSignalInterrupt) {

@@ -177,6 +177,26 @@ background task for callers that want full lazy preparation. Eager capability
 activation remains independent of this setting.
 That runtime session owns the shared preparation fibers.
 
+Lazy traffic capabilities may retire independently after their configured idle timeout (see the
+package [traffic stopping documentation](../../packages/stack/README.md)). The traffic policy is
+per capability: supported lazy capabilities default to 60 seconds, `false` disables retirement,
+eager capabilities never retire, and unsupported capabilities remain opted out. Activity covers
+in-flight HTTP requests and streams plus open WebSocket or TCP connections; idle HTTP keep-alive
+sockets do not count. The Supervisor serializes workload retirement with activation and lifecycle
+operations, and fences new requests for the retiring capability. Unrelated ingress continues;
+dependencies stay running while their dependants are active, and Studio with `pg-meta` retires
+together. Retained data and listeners let the next request wake the capability and restart its
+workloads.
+An unproven cleanup marks the participating capabilities as failed and fences new activation
+across the stack. This is an operation-level result; the workload ledger tracks resources still
+requiring removal. Unrelated healthy capabilities retain their observations. An explicit stop
+retries the retained ledger. A committed destructive intent uses a separate destroy-required
+recovery state, projects destroying, and accepts only a destroy retry until durable state removal
+has completed.
+Public status exposes the recovery operation and reason separately from capability observations.
+CLI text includes those diagnostics and targets recovery commands to the selected stack. A shared
+cleanup failure describes the operation's incomplete cleanup, even when workload removal succeeded.
+
 In both modes, lazy activation prepares the requested dependency closure with
 bounded concurrency before starting its workloads. Explicit
 `stack.prepare(...)` remains available as a cache-only warmup for callers that
@@ -267,8 +287,8 @@ Tests follow consumed boundaries:
 
 - stack integration covers identity, sticky ports, durable lifecycle,
   ownership, stale-owner recovery, and interrupted cleanup;
-- supervisor integration covers detached ownership, RPC, stop, and
-  destroy; and
+- supervisor integration covers detached ownership, RPC, stop, destroy,
+  retirement, and wake-up; and
 - one shared stack-package E2E journey runs in native and Docker modes, starts
   with PostgreSQL alone, activates every other service through realistic
   traffic, verifies cross-service behavior, then exercises
@@ -284,3 +304,10 @@ The architecture has one source of truth for lifecycle state and one owner for
 ephemeral resources. Refactors update the package facade and its real consumers
 together. The private document format may change with the current build, while
 destructive cleanup and ownership remain explicit safeguards.
+
+Supervisor state transitions return `{snapshot, notifications, reconcile}`.
+The Supervisor commits the snapshot, performs any requested reconciliation,
+and then delivers notifications while holding admission. Every transition,
+including intermediate workload readiness, rollback, and cleanup, follows this
+commit → reconcile → notify contract, so observers cannot receive completion
+before state and retirement timer decisions are settled.

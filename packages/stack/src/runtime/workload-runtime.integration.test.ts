@@ -50,6 +50,7 @@ const state: PersistedStackState = {
     { workloadId: "rest:rest", binding: "admin", port: 30_015 },
     { workloadId: "auth:auth", binding: "primary", port: 30_003 },
     { workloadId: "realtime:realtime", binding: "primary", port: 30_004 },
+    { workloadId: "realtime:realtime", binding: "rpc", port: 30_019 },
     { workloadId: "storage:storage", binding: "primary", port: 30_005 },
     { workloadId: "storage:imgproxy", binding: "primary", port: 30_006 },
     { workloadId: "functions:edge-runtime", binding: "primary", port: 30_007 },
@@ -131,6 +132,9 @@ describe("workload runtime catalog", () => {
       const realtime = planned("realtime:realtime");
       expect(runtimeSpecFor(realtime)?.env(configured, realtime, 4000)).toMatchObject({
         MAX_HEADER_LENGTH: "4096",
+        GEN_RPC_TCP_SERVER_PORT: "30019",
+        GEN_RPC_TCP_CLIENT_PORT: "30019",
+        GEN_RPC_SOCKET_IP: "127.0.0.1",
       });
       const functions = planned("functions:edge-runtime");
       expect(runtimeSpecFor(functions)?.env(configured, functions, 9000)).toMatchObject({
@@ -169,18 +173,84 @@ describe("workload runtime catalog", () => {
       }).pipe(Effect.provide(NodeServices.layer));
       const intents = privateBindingIntentsFor(compiled.executionPlan, {
         definition: compiled.definition,
+        runtime: { kind: "native" },
       });
       expect(intents).toContainEqual({ workloadId: "database:database", binding: "primary" });
       expect(intents).toContainEqual({ workloadId: "mail:mail", binding: "ui" });
       expect(intents).toContainEqual({ workloadId: "mail:mail", binding: "smtp" });
       expect(intents).toContainEqual({ workloadId: "mail:mail", binding: "pop3" });
       expect(intents).toContainEqual({ workloadId: "rest:rest", binding: "admin" });
+      expect(intents).toContainEqual({ workloadId: "realtime:realtime", binding: "rpc" });
       expect(intents.filter(({ workloadId }) => workloadId === "mail:mail")).toHaveLength(3);
       expect(
         intents.every(({ binding }) =>
-          ["primary", "admin", "ui", "smtp", "pop3", "inspector"].includes(binding),
+          ["primary", "admin", "ui", "smtp", "pop3", "inspector", "rpc"].includes(binding),
         ),
       ).toBe(true);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("assigns distinct native realtime rpc ports to two stacks", () =>
+    Effect.gen(function* () {
+      const compiled = yield* compileStack({
+        projectRoot: state.identity.projectRoot,
+        runtime: { kind: "native" },
+      }).pipe(Effect.provide(NodeServices.layer));
+      const intents = privateBindingIntentsFor(compiled.executionPlan, {
+        definition: compiled.definition,
+        runtime: { kind: "native" },
+      });
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-realtime-rpc-" });
+      const store = yield* makeStackStateStore({ stateRoot: root });
+      const coordinator = makePortCoordinator({
+        stateRoot: root,
+        store,
+        bindHost: bindHostListener,
+        bindPrivate: (address, port) => bindHeldPort(address, port, "private-binding"),
+      });
+      const ports: number[] = [];
+      for (const stackName of ["first", "second"] as const) {
+        const identity = { ...state.identity, projectRoot: root, stackName };
+        const stackId = yield* deriveStackId(identity);
+        yield* store.initialize(stackId, {
+          ...state,
+          identity,
+          desiredLifecycle: "running",
+          ports: [],
+          privatePorts: [],
+        });
+        const reservation = yield* coordinator.acquire(stackId, disabledListenerIntents, intents);
+        const rpc = reservation.privateAssignments.find(
+          ({ workloadId, binding }) => workloadId === "realtime:realtime" && binding === "rpc",
+        );
+        if (rpc === undefined) throw new Error("Missing realtime rpc assignment");
+        ports.push(rpc.port);
+      }
+      expect(ports).toHaveLength(2);
+      expect(ports[0]).not.toBe(ports[1]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("omits realtime rpc from Docker publications", () =>
+    Effect.gen(function* () {
+      const compiled = yield* compileStack({
+        projectRoot: state.identity.projectRoot,
+        runtime: { kind: "container", engine: "docker" },
+      }).pipe(Effect.provide(NodeServices.layer));
+      const configured: PersistedStackState = {
+        ...state,
+        definition: compiled.definition,
+        runtime: { kind: "container", engine: "docker" },
+      };
+      expect(
+        privateBindingIntentsFor(compiled.executionPlan, configured).some(
+          ({ workloadId, binding }) => workloadId === "realtime:realtime" && binding === "rpc",
+        ),
+      ).toBe(false);
+      expect(
+        containerResolutionFor(configured, planned("realtime:realtime"))?.publications,
+      ).not.toContainEqual(expect.objectContaining({ containerPort: 5369 }));
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -305,6 +375,7 @@ describe("workload runtime catalog", () => {
       }).pipe(Effect.provide(NodeServices.layer));
       const relevant = privateBindingIntentsFor(compiled.executionPlan, {
         definition: compiled.definition,
+        runtime: { kind: "native" },
       }).filter(
         ({ workloadId }) => workloadId === "studio:pgmeta" || workloadId === "analytics:vector",
       );
@@ -336,7 +407,10 @@ describe("workload runtime catalog", () => {
       }).acquire(
         stackId,
         disabledListenerIntents,
-        privateBindingIntentsFor(compiled.executionPlan, { definition: compiled.definition }),
+        privateBindingIntentsFor(compiled.executionPlan, {
+          definition: compiled.definition,
+          runtime: { kind: "native" },
+        }),
       );
       const pgmetaPrimary = reservation.privateAssignments.find(
         ({ workloadId, binding }) => workloadId === "studio:pgmeta" && binding === "primary",

@@ -1,6 +1,7 @@
 // Embedded templates for the migra rollback path (`db diff --use-migra`,
-// `db pull --diff-engine migra`). `migra.deno-templates.unit.test.ts` pins their
-// exact content — edit through that test, not by hand.
+// `db pull --diff-engine migra`). `migra.deno-templates.unit.test.ts` checks
+// that `migraDiffScript` contains its error sentinel; neither template's
+// content is pinned by a test.
 
 /** `templates/migra.ts` — diffs SOURCE→TARGET via @pgkit/migra inside Edge Runtime. */
 export const migraDiffScript =

@@ -24,10 +24,53 @@ capability is lazy. Starting the stack therefore launches only
 PostgreSQL by default; capabilities configured as eager join its startup dependency closure.
 The remaining lazy capabilities activate through the stack's listeners on demand for the current
 running session.
+
+Lazy REST, Auth, Realtime, Studio, and pooler capabilities stop after 60 seconds without traffic
+by default. Traffic means an active request or stream; idle HTTP keep-alive sockets do not keep a
+service running, while open WebSocket or TCP connections do. Configure a different positive
+timeout, or disable traffic stopping for a capability, with `idleTimeoutSeconds`:
+
+```ts
+await stack.start({
+  config: {
+    capabilities: {
+      rest: { idleTimeoutSeconds: 120 },
+      realtime: { idleTimeoutSeconds: false },
+    },
+  },
+});
+```
+
+To change `idleTimeoutSeconds` on a running stack, call `stop()` and then `start()` with the updated
+configuration.
+
+Stacks saved before idle stopping retain their previous policy: missing timeout values are read as
+`false`. Restarting with the saved definition preserves that policy. To adopt the current defaults,
+stop the stack and start it with the project configuration. Status can report changed effective
+defaults even when the project file is unchanged; a stack still marked running must be stopped
+before those defaults can be applied.
+
+Eager capabilities never auto-stop; an explicit timeout on an eager capability is ignored and its
+effective timeout is `false`. PostgreSQL, Storage, Functions, Mail, and Analytics do not accept
+idle timeout configuration. Studio and its `pg-meta` companion are stopped and started together.
+Dependency protection keeps required dependencies available while a capability is running.
+Stopping preserves listeners and data, and the next request wakes the lazy capability and restarts
+its workloads.
+Retirement cleanup is fail closed: if removal is unproven, the stack remains stopping and new
+activation is rejected. An unproven cleanup marks participating capabilities as failed and fences
+new activation across the stack. This is an operation-level result; the workload ledger tracks
+resources still requiring removal. Unrelated healthy capabilities retain their observations. An
+explicit stop retries the retained ledger. A failed committed destroy remains destroying and
+accepts only a destroy retry; successful cleanup is required before the managed state is removed.
+Status exposes the required recovery operation (`stop` or `destroy`) and its reason in `recovery`.
+Participating capability failure states describe incomplete cleanup, including shared listener
+cleanup; they do not imply that each workload process failed.
+
 The Effect API's `excludeStackCapabilities` helper disables requested optional capabilities and
-their dependents in an in-memory config. Excluding `rest` or `analytics` also disables `studio`,
-while the database remains required. The project config is unchanged, and runtime listeners are
+their dependents in an in-memory config. Excluding `rest` also disables `studio`; excluding
+`analytics` does not. The database remains required. The project config is unchanged, and runtime listeners are
 created only for enabled capability routes.
+
 Native workloads have a two-minute readiness budget to allow cold starts to load shared libraries;
 container workloads retain a 30-second budget, and PostgreSQL uses its configured `health_timeout`.
 Each readiness probe returns immediately when its endpoint becomes healthy.
@@ -112,7 +155,15 @@ Each capability may opt into eager activation in `StackConfig`; omitted settings
 non-PostgreSQL capability lazy. Prepared artifacts are not automatically pruned. `followLogs(...)`
 provides filterable live entries through a stateless client-polled cursor.
 
-Database reset is intentionally outside the current API. Applying migrations, declarative schemas,
-and seeds remains the caller's responsibility. The runtime bootstrap only reconciles the `_realtime`
-schema owner, closed database role passwords, and JWT settings in one transaction; the slim database
-artifact owns its initialization and migrations.
+`resetDatabase()` wipes Postgres data only: identity, ports, secrets, logs, and storage volumes
+stay. The database is started and bootstrapped before return. Applying migrations, declarative
+schemas, and seeds remains the caller's responsibility. The runtime bootstrap only reconciles the
+`_realtime` schema owner, closed database role passwords, and JWT settings in one transaction; the
+slim database artifact owns its initialization and migrations.
+
+`createEphemeralPostgres` is a scoped, Supervisor-free Postgres cluster for schema tooling. It uses
+the same catalog artifact and bootstrap as a stack database, is not registered in `listStacks` /
+`discoverStacks`, and destroys its data directory or volume when the Effect scope closes. The
+Promise facade returns a handle with explicit `destroy()`. Callers own migrations and PGDATA
+cache keys. `exportPgData` is valid only while the cluster is stopped; native and container snapshots
+are not interchangeable.

@@ -1,5 +1,9 @@
 # `supabase gen types`
 
+When `[experimental].stack` is on, `--local` resolves the project stack through
+`DbConfigResolver` and runs pg-meta on the host network. It does not inspect
+`supabase_db_*`.
+
 ## Files Read
 
 | Path                                              | Format     | When                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |

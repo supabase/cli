@@ -1,6 +1,6 @@
 import http from "node:http";
 
-import { Context, Data, Effect, type FileSystem, Layer, Option, type Path, Stream } from "effect";
+import { Context, Crypto, Data, Effect, FileSystem, Layer, Option, Path, Stream } from "effect";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
 import {
@@ -14,6 +14,7 @@ import { resolveLocalProjectId, localDbContainerId } from "../docker-ids.ts";
 import { SUGGEST_DOCKER_INSTALL, isDockerDaemonUnreachable } from "../docker-suggest.ts";
 import { redactHttpUrl } from "../../auth/http-debug.layer.ts";
 import { DebugLogger } from "../debug-logger.service.ts";
+import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import { resolveDockerDaemonEndpoint } from "../hostname.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
@@ -236,9 +237,24 @@ const inspectContainerOverSocket = (
  * this is the one HTTP call the debug side channel cannot see. An endpoint it
  * cannot address is named by {@link describeEndpoint}, never printed.
  */
-export const localDockerEngineLayer: Layer.Layer<LocalDockerEngine> = Layer.effect(
+export const localDockerEngineLayer: Layer.Layer<
+  LocalDockerEngine,
+  never,
+  Crypto.Crypto | FileSystem.FileSystem | Path.Path | RuntimeInfo
+> = Layer.effect(
   LocalDockerEngine,
   Effect.gen(function* () {
+    const runtime = yield* RuntimeInfo;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const crypto = yield* Crypto.Crypto;
+    const resolveEndpoint = resolveDockerDaemonEndpoint().pipe(
+      Effect.provideService(RuntimeInfo, runtime),
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+      Effect.provideService(Crypto.Crypto, crypto),
+      Effect.orElseSucceed(() => Option.none<string>()),
+    );
     const debugLogger = yield* Effect.serviceOption(DebugLogger);
     const debug = (line: string) =>
       Option.isSome(debugLogger) ? debugLogger.value.debug(line) : Effect.void;
@@ -246,16 +262,17 @@ export const localDockerEngineLayer: Layer.Layer<LocalDockerEngine> = Layer.effe
       Option.isSome(debugLogger) ? debugLogger.value.http("GET", redactHttpUrl(url)) : Effect.void;
     return LocalDockerEngine.of({
       containerExists: (containerId) =>
-        Effect.suspend(() => {
-          const endpoint = resolveDockerDaemonEndpoint();
+        Effect.gen(function* () {
+          const endpoint = yield* resolveEndpoint;
+          const endpointValue = Option.getOrUndefined(endpoint);
           const socketPath =
-            endpoint === undefined ? undefined : dockerEndpointSocketPath(endpoint);
+            endpointValue === undefined ? undefined : dockerEndpointSocketPath(endpointValue);
           if (socketPath === undefined) {
-            return debug(
-              `local db engine probe: endpoint not directly addressable (${describeEndpoint(endpoint)}) — using the container CLI`,
+            return yield* debug(
+              `local db engine probe: endpoint not directly addressable (${describeEndpoint(endpointValue)}) — using the container CLI`,
             ).pipe(Effect.as(Option.none()));
           }
-          return httpLine(`${endpoint}/containers/${containerId}/json`).pipe(
+          return yield* httpLine(`${endpointValue}/containers/${containerId}/json`).pipe(
             Effect.andThen(inspectContainerOverSocket(socketPath, containerId)),
             Effect.timeoutOrElse({
               duration: ENGINE_PROBE_DEADLINE_MS,

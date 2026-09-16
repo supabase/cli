@@ -3,6 +3,7 @@ import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { stringSliceFlag } from "../../../../command-internal/string-slice-flag.ts";
+import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
 import { stackStart } from "./start.handler.ts";
 import { STACK_START_EXCLUDABLE_CAPABILITIES } from "./start.options.ts";
 
@@ -28,7 +29,9 @@ const config = {
     Flag.withDefault("background" as const),
   ),
   eager: Flag.boolean("eager").pipe(
-    Flag.withDescription("Activate all enabled capabilities before returning."),
+    Flag.withDescription(
+      "Activate all enabled capabilities before returning and disable automatic idle stops.",
+    ),
     Flag.withDefault(false),
   ),
 } as const;
@@ -59,4 +62,7 @@ export const stackStartCommand = Command.make("start", config).pipe(
       withJsonErrorHandling,
     ),
   ),
+  // `stackStart`'s bucket-seeding path satisfies `promptYesNo`'s `Stdin` requirement here even
+  // though it always passes `yes: true`/`interactive: false` and never reaches the prompt.
+  Command.provide(stdinLayer),
 );

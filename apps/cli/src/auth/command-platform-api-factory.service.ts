@@ -1,5 +1,6 @@
 import type { ApiClient, SupabaseApiConfigError } from "@supabase/api/effect";
 import { type Effect, Context } from "effect";
+import type { PlatformError } from "effect/PlatformError";
 
 import type { InvalidAccessTokenError, AccessTokenRequiredError } from "./errors.ts";
 
@@ -13,7 +14,8 @@ import type { InvalidAccessTokenError, AccessTokenRequiredError } from "./errors
 export type CommandPlatformApiFactoryError =
   | InvalidAccessTokenError
   | AccessTokenRequiredError
-  | SupabaseApiConfigError;
+  | SupabaseApiConfigError
+  | PlatformError;
 
 /**
  * Lazy accessor for the typed Management API client.

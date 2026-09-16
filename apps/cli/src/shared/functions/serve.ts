@@ -1,3 +1,4 @@
+import { bitbucketCloneDir } from "../../command-internal/bitbucket-pipeline.ts";
 import {
   CliConfigSchema,
   findCliProjectPaths,
@@ -321,6 +322,8 @@ export interface StartEdgeRuntimeContainerInput {
   readonly noVerifyJwt: Option.Option<boolean>;
   readonly inspectMode: FunctionsServeInspectMode | undefined;
   readonly inspectMain: boolean;
+  /** Project dotenv values used for Bitbucket's Docker restrictions. */
+  readonly projectEnvValues?: Readonly<Record<string, string>>;
 }
 
 type SigningKeyJwk = JsonWebKeyInput["key"] & {
@@ -684,10 +687,9 @@ const finalizeAuthArtifacts = Effect.fnUntraced(function* (local: ServeLocalAuth
   const keys: unknown[] = [];
   if (local.issuerUrl !== undefined) {
     const issuerUrl = local.issuerUrl;
-    const remoteJwks = yield* Effect.tryPromise({
-      try: () => resolveRemoteJwks(issuerUrl),
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    }).pipe(Effect.catch(() => Effect.succeed([] as ReadonlyArray<unknown>)));
+    const remoteJwks = yield* resolveRemoteJwks(issuerUrl).pipe(
+      Effect.catchTag("RemoteJwksError", () => Effect.succeed<ReadonlyArray<unknown>>([])),
+    );
     keys.push(...remoteJwks);
   }
   keys.push(...local.localKeys);
@@ -698,7 +700,9 @@ const finalizeAuthArtifacts = Effect.fnUntraced(function* (local: ServeLocalAuth
     jwtSecret: local.jwtSecret,
     anonKey: local.anonKey,
     serviceRoleKey: local.serviceRoleKey,
-    jwks: JSON.stringify({ keys }),
+    jwks: yield* Schema.encodeEffect(
+      Schema.fromJsonString(Schema.Struct({ keys: Schema.Array(Schema.Unknown) })),
+    )({ keys }),
   } satisfies ServeAuthArtifacts;
 });
 
@@ -1638,6 +1642,7 @@ export const resolveFunctionBindMounts = Effect.fn("functions.resolveFunctionBin
     importMapOverride: Option.Option<string>,
     noVerifyJwtOverride: Option.Option<boolean>,
     flagCwd: string,
+    projectEnvValues?: Readonly<Record<string, string>>,
   ) {
     const output = yield* Output;
     const functionConfigs = yield* resolveServeFunctionConfigs(
@@ -1651,6 +1656,7 @@ export const resolveFunctionBindMounts = Effect.fn("functions.resolveFunctionBin
 
     const functionsDir = join(projectRoot, functionsDirName);
     const binds = new Set<string>();
+    const bitbucketCloneDirDefined = Option.isSome(yield* bitbucketCloneDir(projectEnvValues));
 
     for (const fnConfig of functionConfigs) {
       if (!fnConfig.enabled) {
@@ -1661,6 +1667,7 @@ export const resolveFunctionBindMounts = Effect.fn("functions.resolveFunctionBin
       const bindWarnings: string[] = [];
       for (const bind of yield* Effect.promise(() =>
         buildDockerBinds(projectId, functionsDir, functionsDir, fnConfig, {
+          bitbucketCloneDirDefined,
           additionalModuleRoots: [flagCwd],
           skipMissingImportMapTargets: true,
           onWarning: async (message) => {
@@ -1731,6 +1738,9 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
     );
 
     const functionsDir = join(input.projectRoot, functionsDirName);
+    const bitbucketCloneDirDefined = Option.isSome(
+      yield* bitbucketCloneDir(input.projectEnvValues),
+    );
     const functionBinds = new Map<string, DockerBind>();
     const watchableBinds = new Map<string, DockerBind>();
     const emittedScopeWarnings = new Set<string>();
@@ -1744,6 +1754,7 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
       const bindWarnings: string[] = [];
       for (const bind of yield* Effect.promise(() =>
         buildDockerBinds(projectId, functionsDir, functionsDir, config, {
+          bitbucketCloneDirDefined,
           additionalModuleRoots: [input.flagCwd],
           skipMissingImportMapTargets: true,
           onWarning: async (message) => {
@@ -1792,7 +1803,11 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
     // still exists through its covering parent.
     const binds = pruneRedundantDockerBinds(aggregatedBinds);
 
-    yield* ensureDockerNamedVolume(edgeRuntimeCacheVolume(projectId).name, projectId);
+    yield* ensureDockerNamedVolume(
+      edgeRuntimeCacheVolume(projectId).name,
+      projectId,
+      input.projectEnvValues,
+    );
     yield* ensureDockerNetwork(networkMode, projectId);
 
     const env = [
@@ -2034,6 +2049,7 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
       noVerifyJwt: input.flags.noVerifyJwt,
       inspectMode: input.inspectMode,
       inspectMain: input.flags.inspectMain,
+      projectEnvValues: resolved.projectEnvValues,
     });
 
     yield* reloadKong(projectId);

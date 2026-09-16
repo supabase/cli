@@ -74,7 +74,7 @@ export type RunResult = {
 };
 
 /** The CLI closed its stdin before the harness finished writing to it. */
-export class CliStdinWriteError extends Data.TaggedError("CliStdinWriteError")<{
+class CliStdinWriteError extends Data.TaggedError("CliStdinWriteError")<{
   readonly cause: Error;
 }> {
   override get message(): string {
@@ -83,7 +83,7 @@ export class CliStdinWriteError extends Data.TaggedError("CliStdinWriteError")<{
 }
 
 /** Spawning the CLI failed before the child was usable. */
-export class CliSpawnError extends Data.TaggedError("CliSpawnError")<{
+class CliSpawnError extends Data.TaggedError("CliSpawnError")<{
   readonly cause: unknown;
 }> {
   override get message(): string {

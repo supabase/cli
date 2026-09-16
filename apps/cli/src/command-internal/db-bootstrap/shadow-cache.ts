@@ -148,7 +148,7 @@ export interface ShadowCacheKeyInputs {
  * PG<=14 setup SQL is excluded because that major is cache-ineligible.
  */
 let shadowBaselineEmbeddedDigestMemo: string | undefined;
-const shadowBaselineEmbeddedDigest = (): string =>
+export const shadowBaselineEmbeddedDigest = (): string =>
   (shadowBaselineEmbeddedDigestMemo ??= createHash("sha256")
     .update(
       [
@@ -171,7 +171,7 @@ const shadowBaselineEmbeddedDigest = (): string =>
     .digest("hex"));
 
 /** JSON with recursively key-sorted objects, so `db.settings`' own property order cannot change the key. */
-function canonicalJson(value: unknown): string {
+export function canonicalJson(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
   const entries = Object.entries(value)
@@ -279,13 +279,28 @@ const resolveShadowCacheKeyInputs = <E>(
     const overrides = input.setup.serviceVersionOverrides;
     // Same registry rewrite the real migrate job applies when it runs — see
     // {@link ShadowCacheServiceInput.image}.
-    const resolveJobImage = (image: string): string =>
-      getRegistryImageUrl(image, input.setup.projectEnvValues);
+    const resolveJobImage = Effect.fnUntraced(function* (image: string) {
+      return yield* getRegistryImageUrl(image, input.setup.projectEnvValues).pipe(
+        Effect.map(Option.some),
+        Effect.catchTag("ConfigError", () => Effect.succeed(Option.none<string>())),
+      );
+    });
     // Same compound gate a real cold provision uses to decide whether the realtime job's JWKS
     // effect ever runs.
     const realtimeConsumesJwks =
       input.setup.majorVersion >= 15 && input.setup.config.realtime.enabled;
     const jwks = realtimeConsumesJwks ? yield* input.setup.jwks : "";
+    const realtimeImage = yield* resolveJobImage(
+      resolvePinnedImage("realtime", "realtime", overrides),
+    );
+    const storageImage = yield* resolveJobImage(
+      resolvePinnedImage("storage", "storage", overrides),
+    );
+    const authImage = yield* resolveJobImage(resolvePinnedImage("gotrue", "auth", overrides));
+    if (Option.isNone(realtimeImage) || Option.isNone(storageImage) || Option.isNone(authImage)) {
+      return Option.none();
+    }
+
     return Option.some({
       postgresImage: input.image,
       majorVersion: input.db.major_version,
@@ -305,15 +320,15 @@ const resolveShadowCacheKeyInputs = <E>(
       services: {
         realtime: {
           enabled: input.setup.config.realtime.enabled,
-          image: resolveJobImage(resolvePinnedImage("realtime", "realtime", overrides)),
+          image: realtimeImage.value,
         },
         storage: {
           enabled: input.setup.config.storage.enabled,
-          image: resolveJobImage(resolvePinnedImage("storage", "storage", overrides)),
+          image: storageImage.value,
         },
         auth: {
           enabled: input.setup.config.auth.enabled,
-          image: resolveJobImage(resolvePinnedImage("gotrue", "auth", overrides)),
+          image: authImage.value,
         },
       },
     } satisfies ShadowCacheKeyInputs);
@@ -363,6 +378,8 @@ export interface ShadowBaselineRetentionOpts {
   readonly maxAgeMs?: number;
   /** Never evict this published tar, even if it is older than the TTL or over the cap. */
   readonly retainFileName?: string;
+  /** Defaults to {@link isShadowBaselineTar}. */
+  readonly isPublishedTar?: (fileName: string) => boolean;
 }
 
 /**
@@ -377,8 +394,9 @@ export function shadowBaselineTarsToEvict(
   const keep = opts.keep ?? SHADOW_BASELINE_KEEP;
   const maxAgeMs = opts.maxAgeMs ?? SHADOW_BASELINE_MAX_AGE_MS;
   const retain = opts.retainFileName;
+  const isPublishedTar = opts.isPublishedTar ?? isShadowBaselineTar;
   const candidates = entries.filter(
-    (entry) => isShadowBaselineTar(entry.fileName) && entry.fileName !== retain,
+    (entry) => isPublishedTar(entry.fileName) && entry.fileName !== retain,
   );
   const aged = new Set(
     candidates.filter((entry) => now - entry.mtimeMs > maxAgeMs).map((entry) => entry.fileName),
@@ -469,7 +487,10 @@ const sweepShadowBaselineRetention = <E>(
   });
 
 /** Refresh mtime on a warm hit so frequently used keys survive LRU/TTL. Best-effort. */
-const touchShadowBaselineTar = (fs: FileSystem.FileSystem, tarPath: string): Effect.Effect<void> =>
+export const touchShadowBaselineTar = (
+  fs: FileSystem.FileSystem,
+  tarPath: string,
+): Effect.Effect<void> =>
   Effect.gen(function* () {
     const now = new Date(yield* Clock.currentTimeMillis);
     yield* fs.utimes(tarPath, now, now);

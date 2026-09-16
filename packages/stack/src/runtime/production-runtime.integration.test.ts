@@ -1699,7 +1699,10 @@ describe("production runtime", () => {
             },
             desiredLifecycle: "running" as const,
             definition: compiled.definition,
-            privatePorts: [{ workloadId: "realtime:realtime", binding: "primary", port }],
+            privatePorts: [
+              { workloadId: "realtime:realtime", binding: "primary", port },
+              { workloadId: "realtime:realtime", binding: "rpc", port: 41_069 },
+            ],
           },
         } satisfies { value: PersistedStackState };
         const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
@@ -2914,6 +2917,7 @@ describe("production runtime", () => {
       stop: () => Effect.void,
       remove: () => Effect.void,
       cleanup: () => Effect.fail(runtimeFailure),
+      wipePersistentData: () => Effect.void,
     };
     const envOwner: RuntimeEnvFileOwner = {
       write: () => Effect.die("unused"),
@@ -2941,6 +2945,7 @@ describe("production runtime", () => {
       stop: () => Effect.void,
       remove: () => Effect.void,
       cleanup: () => Effect.void,
+      wipePersistentData: () => Effect.void,
     };
     const envOwner: RuntimeEnvFileOwner = {
       write: () => Effect.die("unused"),

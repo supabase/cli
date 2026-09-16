@@ -1,38 +1,20 @@
 import { note } from "@clack/prompts";
-import { Effect, Layer, Option, Path } from "effect";
+import { Config, Crypto, Effect, Layer, Option, Path } from "effect";
 import { CliSettings } from "../config/cli-settings.service.ts";
 import { CLI_VERSION } from "../cli/version.ts";
 import { RuntimeInfo } from "../runtime/runtime-info.service.ts";
 import { Tty } from "../runtime/tty.service.ts";
 import { getConfigDir, getEffectiveConsent, readTelemetryConfig } from "./consent.ts";
 import { makeTelemetryIdentity, resolveIdentity } from "./identity.ts";
-import type { TelemetryConfig } from "./types.ts";
 import { TelemetryRuntime } from "./runtime.service.ts";
 
 const CI_ENV_VARS = ["CI", "GITHUB_ACTIONS", "GITLAB_CI", "CIRCLECI", "JENKINS_URL", "BUILDKITE"];
-
-function identityFromConfig(config: Option.Option<TelemetryConfig>) {
-  if (Option.isSome(config)) {
-    return {
-      deviceId: config.value.device_id,
-      sessionId: config.value.session_id,
-      distinctId: config.value.distinct_id,
-      isFirstRun: false,
-    } as const;
-  }
-
-  return {
-    deviceId: crypto.randomUUID(),
-    sessionId: crypto.randomUUID(),
-    distinctId: undefined,
-    isFirstRun: false,
-  } as const;
-}
 
 export const telemetryRuntimeLayer = Layer.effect(
   TelemetryRuntime,
   Effect.gen(function* () {
     const cliSettings = yield* CliSettings;
+    const crypto = yield* Crypto.Crypto;
     const path = yield* Path.Path;
     const configDir = yield* getConfigDir;
     const tracesDir = path.join(configDir, "traces");
@@ -43,7 +25,12 @@ export const telemetryRuntimeLayer = Layer.effect(
     const isTty = tty.stdoutIsTty;
     const consent = yield* getEffectiveConsent(config);
 
-    let identity;
+    let identity: {
+      readonly deviceId: string;
+      readonly sessionId: string;
+      readonly distinctId: string | undefined;
+      readonly isFirstRun: boolean;
+    };
     if (consent === "granted") {
       if (Option.isNone(config) && isTty) {
         yield* Effect.sync(() =>
@@ -55,7 +42,21 @@ export const telemetryRuntimeLayer = Layer.effect(
       }
       identity = yield* resolveIdentity(configDir);
     } else {
-      identity = identityFromConfig(config);
+      if (Option.isSome(config)) {
+        identity = {
+          deviceId: config.value.device_id,
+          sessionId: config.value.session_id,
+          distinctId: config.value.distinct_id,
+          isFirstRun: false,
+        };
+      } else {
+        identity = {
+          deviceId: yield* crypto.randomUUIDv4,
+          sessionId: yield* crypto.randomUUIDv4,
+          distinctId: undefined,
+          isFirstRun: false,
+        };
+      }
     }
 
     const showDebug =
@@ -64,7 +65,7 @@ export const telemetryRuntimeLayer = Layer.effect(
 
     let isCi = false;
     for (const envVar of CI_ENV_VARS) {
-      if (process.env[envVar] !== undefined) {
+      if (Option.isSome(yield* Config.option(Config.string(envVar)))) {
         isCi = true;
         break;
       }
