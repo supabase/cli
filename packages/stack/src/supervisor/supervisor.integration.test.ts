@@ -2726,6 +2726,27 @@ describe("Supervisor composition", () => {
     ),
   );
 
+  it.live("persists unconfigured after a wipe-then-relaunch reset failure", () =>
+    run(
+      Effect.gen(function* () {
+        const startFailures = yield* Ref.make(0);
+        const fixture = yield* makeFixture({
+          startFailures,
+          startFailureWorkload: "database:database",
+        });
+        yield* fixture.supervisor.start({ config: {} });
+        yield* Ref.set(startFailures, 1);
+        const failed = yield* fixture.supervisor.resetDatabase.pipe(Effect.exit);
+        expect(Exit.isFailure(failed)).toBe(true);
+        expect((yield* fixture.store.read(fixture.id))?.desiredLifecycle).toBe("unconfigured");
+        expect((yield* fixture.supervisor.status).lifecycle).toBe("stopping");
+        expect((yield* fixture.supervisor.maintenanceHandlers.stop).ok).toBe(true);
+        expect((yield* fixture.store.read(fixture.id))?.desiredLifecycle).toBe("unconfigured");
+        expect((yield* fixture.supervisor.status).lifecycle).toBe("unconfigured");
+      }),
+    ),
+  );
+
   it.live("publishes stopped after launch cleanup retry succeeds", () =>
     run(
       Effect.gen(function* () {

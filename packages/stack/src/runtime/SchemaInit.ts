@@ -604,12 +604,12 @@ export const schemaInitWorkloads = (
                 dummyPort,
                 inputs,
               );
-              const knownSecrets = [
-                Redacted.value(target.secrets.databasePassword),
-                ...(target.secrets.jwtSecret === undefined
-                  ? []
-                  : [Redacted.value(target.secrets.jwtSecret)]),
-              ];
+              const knownSecrets = Object.values(resolved.persisted).flatMap((entry) => {
+                const value = entry.value;
+                if (value.length === 0) return [];
+                const encoded = encodeURIComponent(value);
+                return encoded === value ? [value] : [value, encoded];
+              });
               yield* Effect.forEach(
                 startups,
                 (startup) => {

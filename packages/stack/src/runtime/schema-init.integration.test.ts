@@ -592,6 +592,10 @@ describe("schemaInit", () => {
 
   it.live("includes native schema-init stderr on a one-shot failure", () => {
     const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
+    const reservedPassword = "s3cret@x";
+    const encodedPassword = encodeURIComponent(reservedPassword);
+    let dbEncKey = "";
     const spawner = ChildProcessSpawner.make(() =>
       Effect.succeed(
         ChildProcessSpawner.makeHandle({
@@ -601,9 +605,26 @@ describe("schemaInit", () => {
           kill: () => Effect.void,
           stdin: Sink.drain,
           stdout: Stream.empty,
-          stderr: Stream.fromIterable([encoder.encode("migrate failed\n")]),
+          stderr: Stream.suspend(() =>
+            Stream.fromIterable([
+              encoder.encode(
+                `migrate failed password=${reservedPassword} encoded=${encodedPassword} enc=${dbEncKey}\n`,
+              ),
+            ]),
+          ),
           all: Stream.empty,
-          getInputFd: () => Sink.drain,
+          getInputFd: (fd) =>
+            fd === 4
+              ? Sink.forEach((chunk: Uint8Array) =>
+                  Effect.sync(() => {
+                    const decoded = Schema.decodeOption(
+                      Schema.fromJsonString(nativeLaunchEnvSchema),
+                    )(decoder.decode(chunk));
+                    if (Option.isNone(decoded)) return;
+                    dbEncKey = decoded.value.env?.DB_ENC_KEY ?? "";
+                  }),
+                )
+              : Sink.drain,
           getOutputFd: () => Stream.empty,
           unref: Effect.succeed(Effect.void),
         }),
@@ -622,14 +643,21 @@ describe("schemaInit", () => {
             projectRoot,
             runtime: { kind: "native" },
             config: {},
-            databaseUrl: "postgresql://postgres:s3cret@127.0.0.1:54322/postgres",
-            secrets: { databasePassword: password, jwtSecret },
+            databaseUrl: `postgresql://postgres:${encodedPassword}@127.0.0.1:54322/postgres`,
+            secrets: { databasePassword: Redacted.make(reservedPassword), jwtSecret },
           },
           { artifactPreparer: fakePreparer },
         ).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit))
-          expect(Cause.pretty(exit.cause)).toContain("stderr: migrate failed");
+        if (Exit.isFailure(exit)) {
+          const pretty = Cause.pretty(exit.cause);
+          expect(pretty).toContain("stderr: migrate failed");
+          expect(pretty).toContain("[REDACTED]");
+          expect(pretty).not.toContain(reservedPassword);
+          expect(pretty).not.toContain(encodedPassword);
+          expect(dbEncKey.length).toBeGreaterThan(0);
+          expect(pretty).not.toContain(dbEncKey);
+        }
       }),
     ).pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),

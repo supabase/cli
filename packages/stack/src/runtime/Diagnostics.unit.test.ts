@@ -10,8 +10,12 @@ describe("leftover persistent data guidance", () => {
   it("appends wipe guidance to initdb leftover errors", () => {
     const message = "initdb: directory exists but is not empty";
     expect(looksLikeLeftoverPersistentData(message)).toBe(true);
-    expect(withLeftoverPersistentDataGuidance(message)).toContain("db reset --local");
-    expect(withLeftoverPersistentDataGuidance(message)).toContain("stack destroy");
+    const guided = withLeftoverPersistentDataGuidance(message);
+    expect(guided).toBe(
+      "initdb: directory exists but is not empty. Leftover files from a failed first start remain. stack destroy wipes them.",
+    );
+    expect(guided).not.toContain("db reset --local");
+    expect(withLeftoverPersistentDataGuidance(guided)).toBe(guided);
   });
 
   it("leaves unrelated launch errors unchanged", () => {

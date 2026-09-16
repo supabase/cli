@@ -406,8 +406,8 @@ describe("native runtime", { timeout: 15_000 }, () => {
         if (Exit.isFailure(result)) {
           const pretty = Cause.pretty(result.cause);
           expect(pretty).toContain("stderr: initdb: directory exists but is not empty");
-          expect(pretty).toContain("db reset --local");
           expect(pretty).toContain("stack destroy");
+          expect(pretty).not.toContain("db reset --local");
         }
       }),
     ),

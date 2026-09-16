@@ -115,11 +115,11 @@ whether **this start created the stack identity** (first create / `unconfigured`
 - If catalog or migrate-and-seed fails after the engine is already `running`, the command exits
   non-zero and Postgres stays up. The next start is an existing cluster and does not retry.
   Recover with `db reset`. Same stuck case as Compose after a failed fresh-volume setup.
-- If the engine never reached `running` and cleanup is proven, the identity stays `unconfigured`
-  so the next start retries first-create. Already-written secrets are kept; pass-through
-  secrets may change while `unconfigured`. Leftover PGDATA/volume is not auto-wiped. A later
-  launch that fails because remnants remain names `db reset --local` / `stack destroy` as the
-  wipe. Unproven cleanup stays the in-process stopping fence.
+- If the engine never reached `running`, lifecycle is written `unconfigured` before cleanup, so
+  first-create survives both proven and unproven cleanup. Already-written secrets are kept;
+  pass-through secrets may change while `unconfigured`. Leftover PGDATA/volume is not
+  auto-wiped. A later launch that fails because remnants remain names `stack destroy` as the
+  wipe. Cleanup only decides the in-process fence.
 
 ### Default runtime and native-as-root
 

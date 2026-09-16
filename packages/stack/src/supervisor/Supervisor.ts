@@ -1956,8 +1956,29 @@ export const makeSupervisor = (
           ...plan,
           workloads: [databaseWorkload, ...bounce],
         });
-        if (Predicate.isTagged(launched, "failed"))
-          return failedAfterMutation(Cause.map(launched.cause, mapRuntimeError));
+        if (Predicate.isTagged(launched, "failed")) {
+          // Wipe emptied PGDATA; persist first-create so stop → start does not skip schema init.
+          const launchCause = Cause.map(launched.cause, mapRuntimeError);
+          const current = yield* read().pipe(Effect.exit);
+          let cause = launchCause;
+          if (Exit.isFailure(current)) {
+            cause = Cause.combine(cause, current.cause);
+          } else if (current.value === undefined) {
+            cause = Cause.combine(
+              cause,
+              Cause.fail(new StackStateInvalidError({ message: "Stack state is missing" })),
+            );
+          } else {
+            const persisted = yield* options.stateStore
+              .replace(options.stackId, {
+                ...current.value,
+                desiredLifecycle: "unconfigured",
+              })
+              .pipe(Effect.provideContext(options.context), Effect.exit);
+            if (Exit.isFailure(persisted)) cause = Cause.combine(cause, persisted.cause);
+          }
+          return failedAfterMutation(cause);
+        }
         return { _tag: "succeeded" } satisfies CommandResult;
       });
     const resetDatabase = Effect.gen(function* () {

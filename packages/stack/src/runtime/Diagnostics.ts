@@ -7,13 +7,14 @@ const LEFTOVER_PERSISTENT_DATA =
 
 /** Wipe guidance when a first-create retry cannot launch over leftover PGDATA/volume. */
 const LEFTOVER_PERSISTENT_DATA_GUIDANCE =
-  "Leftover files from a failed first start remain. db reset --local or stack destroy wipes them.";
+  "Leftover files from a failed first start remain. stack destroy wipes them.";
 
 export const looksLikeLeftoverPersistentData = (message: string): boolean =>
   LEFTOVER_PERSISTENT_DATA.test(message);
 
 export const withLeftoverPersistentDataGuidance = (message: string): string => {
-  if (!looksLikeLeftoverPersistentData(message) || message.includes("db reset")) return message;
+  if (!looksLikeLeftoverPersistentData(message) || message.includes("stack destroy"))
+    return message;
   return `${message}. ${LEFTOVER_PERSISTENT_DATA_GUIDANCE}`;
 };
 
