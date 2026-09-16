@@ -28,9 +28,11 @@ projects=$(jq -r --arg p "$PREFIX" '.[] | select(.name|startswith($p)) | "\(.ref
 # refused DELETE only counts once the project still reads as live afterwards
 # (12 bounded reads, 5s apart); a removed project is refused or GOING_DOWN.
 gone() {
-  local code status
-  for _ in $(seq 12); do
-    code=$(curl -sS --max-time 30 -o "$project" -w '%{http_code}' \
+  local attempt code status
+  for attempt in $(seq 12); do
+    # curl leaves the output file untouched when no body arrives.
+    : > "$project"
+    code=$(curl -sS --max-time 10 -o "$project" -w '%{http_code}' \
       -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
       "${SUPABASE_LIVE_API_URL}/v1/projects/$1") || code=000
     status=$(jq -r '.status // empty' "$project" 2>/dev/null || true)
@@ -40,7 +42,7 @@ gone() {
         return 0
         ;;
     esac
-    sleep 5
+    [ "$attempt" -lt 12 ] && sleep 5
   done
   echo "project $1 still reads $code${status:+ $status}"
   return 1
