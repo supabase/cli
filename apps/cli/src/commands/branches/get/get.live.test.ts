@@ -3,16 +3,14 @@ import { randomUUID } from "node:crypto";
 import { Cause, Effect, Exit, Schema } from "effect";
 import { expect } from "vitest";
 
-import {
-  awaitLiveBranch,
-  removeLiveBranch,
-  requireLiveSuccess,
-  test,
-  throwWithCleanup,
-} from "../../../../tests/helpers/live.ts";
+import { requireLiveSuccess, test, throwWithCleanup } from "../../../../tests/helpers/live.ts";
+import { awaitBranch, removeBranch } from "../../../../tests/helpers/branches-live.ts";
 
 const CreatedBranch = Schema.Struct({ project_ref: Schema.String });
 
+// Not wired to the test `signal`: cleanup runs through the plain-promise `cli` path, so an
+// interrupt would abandon an in-flight `branches delete` rather than stop it, leaving the
+// branch behind. Its own exit timeout bounds the wait instead.
 test("gets a preview branch by name", ({ cli, cliEffect, project }) =>
   Effect.runPromise(
     Effect.gen(function* () {
@@ -35,7 +33,7 @@ test("gets a preview branch by name", ({ cli, cliEffect, project }) =>
         )).project_ref;
         branchRef = ref;
         expect(ref, created.stdout).toBeTruthy();
-        yield* Effect.promise(() => awaitLiveBranch(cli, project, name));
+        yield* awaitBranch(cli, project, name);
 
         const result = yield* cliEffect(["branches", "get", name, "--project-ref", project.ref]);
         expect(result.exitCode, result.stderr).toBe(0);
@@ -52,9 +50,7 @@ test("gets a preview branch by name", ({ cli, cliEffect, project }) =>
       });
 
       const targetExit = yield* Effect.exit(target);
-      const cleanupExit = yield* Effect.exit(
-        Effect.promise(() => removeLiveBranch(cli, project, branchRef ?? name)),
-      );
+      const cleanupExit = yield* Effect.exit(removeBranch(cli, project, branchRef ?? name));
       return {
         targetError: Exit.isFailure(targetExit) ? Cause.squash(targetExit.cause) : undefined,
         cleanupErrors: Exit.isFailure(cleanupExit) ? [Cause.squash(cleanupExit.cause)] : [],

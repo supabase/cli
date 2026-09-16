@@ -3,16 +3,14 @@ import { randomUUID } from "node:crypto";
 import { Cause, Effect, Exit, Schema } from "effect";
 import { expect } from "vitest";
 
-import {
-  awaitLiveBranch,
-  removeLiveBranch,
-  requireLiveSuccess,
-  test,
-  throwWithCleanup,
-} from "../../../../tests/helpers/live.ts";
+import { requireLiveSuccess, test, throwWithCleanup } from "../../../../tests/helpers/live.ts";
+import { awaitBranch, removeBranch } from "../../../../tests/helpers/branches-live.ts";
 
 const CreatedBranch = Schema.Struct({ project_ref: Schema.String });
 
+// Not wired to the test `signal`: cleanup runs through the plain-promise `cli` path, so an
+// interrupt would abandon an in-flight `branches delete` rather than stop it, leaving the
+// branch behind. Its own exit timeout bounds the wait instead.
 test("renames a preview branch", ({ cli, cliEffect, project }) =>
   Effect.runPromise(
     Effect.gen(function* () {
@@ -36,7 +34,7 @@ test("renames a preview branch", ({ cli, cliEffect, project }) =>
         )).project_ref;
         branchRef = ref;
         expect(ref, created.stdout).toBeTruthy();
-        yield* Effect.promise(() => awaitLiveBranch(cli, project, name));
+        yield* awaitBranch(cli, project, name);
 
         // `--output json` keeps stdout payload-only and sends the confirmation to stderr.
         const updated = yield* cliEffect([
@@ -56,13 +54,11 @@ test("renames a preview branch", ({ cli, cliEffect, project }) =>
           updated.stdout,
         );
         expect(payload).toMatchObject({ name: renamed });
-        yield* Effect.promise(() => awaitLiveBranch(cli, project, renamed));
+        yield* awaitBranch(cli, project, renamed);
       });
 
       const targetExit = yield* Effect.exit(target);
-      const cleanupExit = yield* Effect.exit(
-        Effect.promise(() => removeLiveBranch(cli, project, branchRef ?? name)),
-      );
+      const cleanupExit = yield* Effect.exit(removeBranch(cli, project, branchRef ?? name));
       return {
         targetError: Exit.isFailure(targetExit) ? Cause.squash(targetExit.cause) : undefined,
         cleanupErrors: Exit.isFailure(cleanupExit) ? [Cause.squash(cleanupExit.cause)] : [],

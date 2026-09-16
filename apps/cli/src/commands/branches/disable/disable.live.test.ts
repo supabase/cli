@@ -3,15 +3,16 @@ import { randomUUID } from "node:crypto";
 import { Cause, Effect, Exit } from "effect";
 import { expect } from "vitest";
 
+import { requireLiveSuccess, test, throwWithCleanup } from "../../../../tests/helpers/live.ts";
 import {
-  awaitLiveBranch,
-  awaitLiveBranchesRemoved,
-  removeLiveBranch,
-  requireLiveSuccess,
-  test,
-  throwWithCleanup,
-} from "../../../../tests/helpers/live.ts";
+  awaitBranch,
+  awaitBranchesRemoved,
+  removeBranch,
+} from "../../../../tests/helpers/branches-live.ts";
 
+// Not wired to the test `signal`: cleanup runs through the plain-promise `cli` path, so an
+// interrupt would abandon an in-flight `branches delete` rather than stop it, leaving the
+// branch behind. Its own exit timeout bounds the wait instead.
 test("disables preview branching", ({ cli, cliEffect, project }) =>
   Effect.runPromise(
     Effect.gen(function* () {
@@ -31,7 +32,7 @@ test("disables preview branching", ({ cli, cliEffect, project }) =>
           project.ref,
         ]);
         requireLiveSuccess(created, "branches create");
-        yield* Effect.promise(() => awaitLiveBranch(cli, project, name));
+        yield* awaitBranch(cli, project, name);
 
         const removed = yield* cliEffect([
           "branches",
@@ -43,7 +44,7 @@ test("disables preview branching", ({ cli, cliEffect, project }) =>
         ]);
         if (removed.exitCode === 0) mayExist = false;
         requireLiveSuccess(removed, "branches delete");
-        yield* Effect.promise(() => awaitLiveBranchesRemoved(cli, project));
+        yield* awaitBranchesRemoved(cli, project);
 
         const disabled = yield* cliEffect(["branches", "disable", "--project-ref", project.ref]);
         expect(disabled.exitCode, disabled.stderr).toBe(0);
@@ -52,7 +53,7 @@ test("disables preview branching", ({ cli, cliEffect, project }) =>
 
       const targetExit = yield* Effect.exit(target);
       const cleanupExit = mayExist
-        ? yield* Effect.exit(Effect.promise(() => removeLiveBranch(cli, project, name)))
+        ? yield* Effect.exit(removeBranch(cli, project, name))
         : undefined;
       return {
         targetError: Exit.isFailure(targetExit) ? Cause.squash(targetExit.cause) : undefined,
