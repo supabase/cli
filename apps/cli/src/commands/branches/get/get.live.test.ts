@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { expect } from "vitest";
 
 import {
+  awaitLiveBranch,
   removeLiveBranch,
   requireLiveSuccess,
   test,
@@ -26,6 +27,7 @@ test("gets a preview branch by name", async ({ cli, project }) => {
     requireLiveSuccess(created, "branches create");
     branchRef = (JSON.parse(created.stdout) as { project_ref: string }).project_ref;
     expect(branchRef, created.stdout).toBeTruthy();
+    await awaitLiveBranch(cli, project, name);
 
     const result = await cli(["branches", "get", name, "--project-ref", project.ref]);
     expect(result.exitCode, result.stderr).toBe(0);

@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { expect } from "vitest";
 
-import { removeLiveBranch, test, throwWithCleanup } from "../../../../tests/helpers/live.ts";
+import {
+  awaitLiveBranch,
+  removeLiveBranch,
+  test,
+  throwWithCleanup,
+} from "../../../../tests/helpers/live.ts";
 
 test("creates a preview branch", async ({ cli, project }) => {
   const name = `cli-e2e-create-${randomUUID().slice(0, 8)}`;
@@ -11,6 +16,7 @@ test("creates a preview branch", async ({ cli, project }) => {
     const result = await cli(["branches", "create", name, "--project-ref", project.ref]);
     expect(result.exitCode, result.stderr).toBe(0);
     expect(result.stdout).toContain("Created preview branch");
+    await awaitLiveBranch(cli, project, name);
   } catch (error) {
     targetError = error;
   } finally {

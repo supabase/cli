@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { expect } from "vitest";
 
 import {
+  awaitLiveBranch,
   removeLiveBranch,
   requireLiveSuccess,
   test,
@@ -17,6 +18,7 @@ test("deletes a preview branch", async ({ cli, project }) => {
     mayExist = true;
     const created = await cli(["branches", "create", name, "--project-ref", project.ref]);
     requireLiveSuccess(created, "branches create");
+    await awaitLiveBranch(cli, project, name);
 
     const removed = await cli(["branches", "delete", name, "--project-ref", project.ref, "--yes"]);
     if (removed.exitCode === 0) mayExist = false;
