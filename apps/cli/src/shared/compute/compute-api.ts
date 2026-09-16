@@ -9,6 +9,7 @@ import {
 import { Effect, Option, Schedule, Schema } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import { CLI_UPGRADE_GUIDE_URL } from "../cli/version.ts";
 import { decodeBody, mapRequestError, unexpectedStatus } from "./compute-api-status.ts";
 import {
   ComputeBuildTimeoutError,
@@ -22,8 +23,9 @@ import {
  * The seam every compute command talks to: `/v2/projects/{ref}/compute` on the Management API. A
  * 404 here is overloaded — a project outside the alpha's allow-list, an unknown project ref, an
  * undeployed compute, and a route the API has since renamed all answer the same way. A
- * named-compute 404 is reported as "not deployed"; a collection-endpoint 404, where no compute
- * name could be wrong, is split by its body instead — see {@link projectScoped404}.
+ * named-compute 404 is reported as "not deployed" unless the body is the router's, which no
+ * compute name can explain; a collection-endpoint 404, where no name could be wrong either way,
+ * is split by its body instead — see {@link projectScoped404}.
  */
 
 /** The compute shape the API returns, flattened out of its JSON:API envelope. */
@@ -99,7 +101,9 @@ const computeSuggestion =
 const NotFoundBody = Schema.Struct({
   error: Schema.Struct({
     code: Schema.String,
-    message: Schema.optionalKey(Schema.String),
+    // Unknown rather than String: a non-string message must not fail the decode and cost the
+    // code-based classification the rest of this reads.
+    message: Schema.optionalKey(Schema.Unknown),
   }),
 });
 
@@ -111,9 +115,28 @@ const NotFoundBody = Schema.Struct({
 const ROUTE_NOT_FOUND_MESSAGE = /^Cannot [A-Z]+ \//;
 
 /** The CLI-side fix for a route the API no longer serves. */
-const outdatedClientSuggestion =
-  "This CLI build is out of step with the Management API. Update it: " +
-  "https://supabase.com/docs/guides/cli/getting-started#updating-the-supabase-cli";
+const outdatedClientSuggestion = `This CLI build is out of step with the Management API. Update it: ${CLI_UPGRADE_GUIDE_URL}`;
+
+const parse404 = (body: string) =>
+  Schema.decodeEffect(Schema.fromJsonString(NotFoundBody))(body).pipe(Effect.option);
+
+/** The route the router's own text names, when the body is that rather than a handler's. */
+const unroutedPath = (
+  parsed: Option.Option<Schema.Schema.Type<typeof NotFoundBody>>,
+): Option.Option<string> => {
+  if (Option.isNone(parsed) || parsed.value.error.code !== "not_found") return Option.none();
+  const { message } = parsed.value.error;
+  // `Cannot GET /v2/projects/{ref}/compute` -> `GET /v2/projects/{ref}/compute`
+  return typeof message === "string" && ROUTE_NOT_FOUND_MESSAGE.test(message)
+    ? Option.some(message.slice("Cannot ".length))
+    : Option.none();
+};
+
+const routeNotFound = (projectRef: string, route: string) =>
+  new ComputeRouteNotFoundError({
+    detail: `The Management API does not serve ${route}, so this CLI cannot reach compute for project ${projectRef}.`,
+    suggestion: outdatedClientSuggestion,
+  });
 
 /**
  * Which of the three a project-scoped 404 was. `not_found` carrying the router's message means
@@ -125,22 +148,12 @@ const projectScoped404 = Effect.fnUntraced(function* (options: {
   readonly projectRef: string;
   readonly body: string;
 }) {
-  const parsed = yield* Schema.decodeEffect(Schema.fromJsonString(NotFoundBody))(options.body).pipe(
-    Effect.option,
-  );
+  const parsed = yield* parse404(options.body);
+  const route = unroutedPath(parsed);
+
+  if (Option.isSome(route)) return routeNotFound(options.projectRef, route.value);
 
   if (Option.isSome(parsed) && parsed.value.error.code === "not_found") {
-    const message = parsed.value.error.message ?? "";
-
-    if (ROUTE_NOT_FOUND_MESSAGE.test(message)) {
-      // `Cannot GET /v2/projects/{ref}/compute` -> `GET /v2/projects/{ref}/compute`
-      const route = message.slice("Cannot ".length);
-      return new ComputeRouteNotFoundError({
-        detail: `The Management API does not serve ${route}, so this CLI cannot reach compute for project ${options.projectRef}.`,
-        suggestion: outdatedClientSuggestion,
-      });
-    }
-
     return new ComputeProjectNotFoundError({
       detail: `No project ${options.projectRef} was found for this account.`,
       suggestion:
@@ -153,6 +166,20 @@ const projectScoped404 = Effect.fnUntraced(function* (options: {
     detail: `Compute is not available for project ${options.projectRef}.`,
     suggestion: computeSuggestion,
   });
+});
+
+/**
+ * Fails when a named-compute 404 came from the router rather than from the compute being absent.
+ * Those routes read their own 404 as "not deployed", which is the right answer for every 404 but
+ * this one: an unserved route would otherwise report a live compute as missing, and let `delete`
+ * claim it removed something it never reached.
+ */
+const refuseUnroutedPath = Effect.fnUntraced(function* (options: {
+  readonly projectRef: string;
+  readonly body: string;
+}) {
+  const route = unroutedPath(yield* parse404(options.body));
+  if (Option.isSome(route)) return yield* routeNotFound(options.projectRef, route.value);
 });
 
 export const listCompute = Effect.fnUntraced(function* (api: ApiClient, projectRef: string) {
@@ -202,6 +229,10 @@ export const getCompute = Effect.fnUntraced(function* (
     .pipe(Effect.mapError(mapRequestError(operation)));
 
   if (response.status === 404) {
+    yield* refuseUnroutedPath({
+      projectRef,
+      body: yield* response.text.pipe(Effect.orElseSucceed(() => "")),
+    });
     return Option.none<ComputeRecord>();
   }
   if (response.status !== 200) {
@@ -364,7 +395,13 @@ export const deleteCompute = Effect.fnUntraced(function* (
 
   // 404 is the caller's own "not deployed" verdict to report; a delete that
   // races another one is still a delete that happened.
-  if (response.status === 204 || response.status === 200 || response.status === 404) {
+  if (response.status === 404) {
+    return yield* refuseUnroutedPath({
+      projectRef,
+      body: yield* response.text.pipe(Effect.orElseSucceed(() => "")),
+    });
+  }
+  if (response.status === 204 || response.status === 200) {
     return;
   }
 

@@ -241,7 +241,7 @@ export class ComputeRouteNotFoundError extends Data.TaggedError("ComputeRouteNot
   readonly suggestion: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return { ...actionability.apiStatus, fingerprint_suffix: "not_found" };
+    return { ...actionability.updateCli, fingerprint_suffix: "not_found" };
   }
 }
 
