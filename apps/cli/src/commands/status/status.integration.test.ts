@@ -19,7 +19,7 @@ import {
   Stream,
 } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
+import type * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientRequestModule from "effect/unstable/http/HttpClientRequest";
 import { vi } from "vitest";
 

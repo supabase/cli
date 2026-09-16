@@ -184,18 +184,24 @@ function tenantHttpLayer(opts: SetupOpts): Layer.Layer<HttpClient.HttpClient> {
         }
         const url = request.url;
         if (url.includes("/rest/v1/")) {
+          const body = yield* restInfoJson({
+            info: { version: opts.restVersion ?? "11.1.0" },
+          }).pipe(Effect.orDie);
           return HttpClientResponse.fromWeb(
             request,
-            new Response(`{"info":{"version":"${opts.restVersion ?? "11.1.0"}"}}`, {
+            new Response(body, {
               status: 200,
               headers: { "content-type": "application/json" },
             }),
           );
         }
         if (url.includes("/auth/v1/health")) {
+          const body = yield* gotrueHealthJson({ version: opts.gotrueVersion ?? "v2.74.2" }).pipe(
+            Effect.orDie,
+          );
           return HttpClientResponse.fromWeb(
             request,
-            new Response(`{"version":"${opts.gotrueVersion ?? "v2.74.2"}"}`, {
+            new Response(body, {
               status: 200,
               headers: { "content-type": "application/json" },
             }),
@@ -307,6 +313,14 @@ const decodeLinkedProjectCache = Schema.decodeEffect(
 );
 
 const jsonText = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+
+const restInfoJson = Schema.encodeEffect(
+  Schema.fromJsonString(Schema.Struct({ info: Schema.Struct({ version: Schema.String }) })),
+);
+
+const gotrueHealthJson = Schema.encodeEffect(
+  Schema.fromJsonString(Schema.Struct({ version: Schema.String })),
+);
 
 function transportFailureForMock() {
   return transportFailure(HttpClientRequestModule.get("https://api.supabase.com/mock"));

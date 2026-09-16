@@ -1,4 +1,3 @@
-import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Data, Effect, Schema } from "effect";
 
@@ -108,7 +107,7 @@ describe("supabase status (e2e)", () => {
             DB_URL: expect.stringContaining("postgresql://"),
           });
         }),
-      ).pipe(Effect.provide(BunServices.layer)),
+      ),
     STATUS_TEST_TIMEOUT_MS,
   );
 });
