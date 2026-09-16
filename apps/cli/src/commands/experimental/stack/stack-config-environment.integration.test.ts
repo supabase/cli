@@ -8,7 +8,7 @@ import { runtimeInfoLayer } from "../../../shared/runtime/runtime-info.layer.ts"
 import { compileStack } from "../../../../../../packages/stack/src/model/Compiler.ts";
 
 import { withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
-import { StackConfigError, loadStackConfig } from "./stack-config.ts";
+import { StackConfigError, loadStackConfig } from "../../../command-internal/stack-config.ts";
 import { createStackConfigProject } from "../../../../tests/helpers/stack-config.ts";
 
 function withEnvironment<A, E, R>(
@@ -189,14 +189,16 @@ enabled = false
         undefined,
         Effect.gen(function* () {
           const config = yield* load(root);
-          expect(config.capabilities?.auth).toEqual({ enabled: false });
+          expect(config.capabilities?.auth).toEqual(expect.objectContaining({ enabled: false }));
           expect(config.security?.jwt?.issuer).toBe("https://issuer.example.test");
           const signing = config.security?.jwt?.signing;
           expect(signing?.kind).toBe("symmetric");
           if (signing?.kind !== "symmetric") throw new Error("symmetric signing missing");
           expect(Redacted.value(signing.secret)).toBe("01234567890123456789012345678901");
           const signingPath = yield* load(signingPathRoot);
-          expect(signingPath.capabilities?.auth).toEqual({ enabled: false });
+          expect(signingPath.capabilities?.auth).toEqual(
+            expect.objectContaining({ enabled: false }),
+          );
           expect(signingPath.security?.jwt?.signing).toEqual({
             kind: "jwks-file",
             path: "supabase/keys.json",
@@ -245,7 +247,7 @@ secret = "encrypted:not-a-real-ciphertext"
           undefined,
           Effect.gen(function* () {
             const config = yield* load(root);
-            expect(config.capabilities?.auth).toEqual({ enabled: false });
+            expect(config.capabilities?.auth).toEqual(expect.objectContaining({ enabled: false }));
           }),
         ),
       ),
@@ -438,7 +440,7 @@ enabled = false
       if (Exit.isFailure(enabled)) expect(String(enabled.cause)).toContain("auth.external.github");
 
       const disabled = yield* withEnvVar("SUPABASE_AUTH_ENABLED", "false", load(root));
-      expect(disabled.capabilities?.auth).toEqual({ enabled: false });
+      expect(disabled.capabilities?.auth).toEqual(expect.objectContaining({ enabled: false }));
     });
   });
 
@@ -818,7 +820,9 @@ enabled = false
           { SUPABASE_STUDIO_ENABLED: "false", SUPABASE_STUDIO_PORT: "55451" },
           Effect.gen(function* () {
             const config = yield* load(root);
-            expect(config.capabilities?.studio).toEqual({ enabled: false });
+            expect(config.capabilities?.studio).toEqual(
+              expect.objectContaining({ enabled: false }),
+            );
             expect(config.listeners?.studio).toEqual({ enabled: false });
           }),
         ),

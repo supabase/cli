@@ -500,6 +500,7 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
           start: () =>
             Effect.fail({ tag: "StackPreparationError", message: "artifact is incomplete" }),
           destroy: () => Effect.void,
+          resetDatabase: () => Effect.succeed(status),
           logs: () => Effect.succeed({ entries: [], cursor: { opaque: "v1_0" }, running: false }),
         };
         yield* startControlServer({
@@ -604,6 +605,7 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
                 Effect.andThen(Deferred.await(responseRelease)),
                 Effect.asVoid,
               ),
+            resetDatabase: () => Effect.succeed(status),
             logs: () => Effect.succeed({ entries: [], cursor: { opaque: "v1_0" }, running: false }),
           },
           onShutdownReady: Deferred.succeed(callbackStarted, undefined).pipe(

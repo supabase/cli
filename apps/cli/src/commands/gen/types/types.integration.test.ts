@@ -80,6 +80,7 @@ import {
   parseQueryTimeoutSeconds,
   resolvePgmetaImage,
 } from "./types.shared.ts";
+import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
 
 function writeConfig(workdir: string, contents: string) {
   const supabaseDir = join(workdir, "supabase");
@@ -168,6 +169,10 @@ function statusApiError(status: number, body: string) {
 
 function remoteResolvedConfig(conn: PgConnInput, ref = VALID_REF): ResolvedDbConfig {
   return { conn, isLocal: false, ref: Option.some(ref) };
+}
+
+function localResolvedConfig(conn: PgConnInput): ResolvedDbConfig {
+  return { conn, isLocal: true, ref: Option.none() };
 }
 
 function mockDbConfigResolver(
@@ -2651,6 +2656,186 @@ describe("gen types", () => {
     }),
   );
 
+  it.live("connects pg-meta to the stack local database over host networking", () =>
+    Effect.tryPromise({
+      try: () =>
+        withSslProbeServer(async (port) => {
+          const docker = captureDockerRun();
+          const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-stack-local-"));
+          writeConfig(
+            workdir,
+            [
+              'project_id = "demo"',
+              "",
+              "[api]",
+              'schemas = ["public", "custom"]',
+              "",
+              "[db]",
+              `port = ${port}`,
+            ].join("\n"),
+          );
+
+          const { layer, out, child } = setup({
+            workdir,
+            childStdout: ["export type Database = {};"],
+            onSpawn: docker.onSpawn,
+            dbConfigResolve: () =>
+              Effect.succeed(
+                localResolvedConfig({
+                  host: "127.0.0.1",
+                  port,
+                  user: "postgres",
+                  password: "postgres",
+                  database: "postgres",
+                }),
+              ),
+          });
+
+          await Effect.runPromise(
+            genTypes(defaultFlags({ local: true })).pipe(
+              Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))),
+            ),
+          );
+
+          expect(out.stderrText).toContain(`Connecting to 127.0.0.1 ${port}`);
+          expect(out.stderrText).not.toContain("Connecting to db 5432");
+          expect(child.spawned.some((spawn) => spawn.args.includes("supabase_db_demo"))).toBe(
+            false,
+          );
+          expect(
+            child.spawned.some(
+              (spawn) => spawn.args.includes("--network") && spawn.args.includes("host"),
+            ),
+          ).toBe(true);
+          expect(child.spawned.some((spawn) => spawn.args.includes("supabase_network_demo"))).toBe(
+            false,
+          );
+          expect(
+            docker.env.has(
+              `PG_META_DB_URL=postgresql://postgres:postgres@127.0.0.1:${port}/postgres?connect_timeout=10`,
+            ),
+          ).toBe(true);
+        }),
+      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    }),
+  );
+
+  it.live("keeps loopback when Linux stack gen types uses --network-id host", () =>
+    Effect.tryPromise({
+      try: () =>
+        withSslProbeServer(async (port) => {
+          const docker = captureDockerRun();
+          const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-stack-host-net-"));
+          writeConfig(
+            workdir,
+            [
+              'project_id = "demo"',
+              "",
+              "[api]",
+              'schemas = ["public"]',
+              "",
+              "[db]",
+              `port = ${port}`,
+            ].join("\n"),
+          );
+
+          const { layer, child } = setup({
+            workdir,
+            childStdout: ["export type Database = {};"],
+            networkId: Option.some("host"),
+            onSpawn: docker.onSpawn,
+            dbConfigResolve: () =>
+              Effect.succeed(
+                localResolvedConfig({
+                  host: "127.0.0.1",
+                  port,
+                  user: "postgres",
+                  password: "postgres",
+                  database: "postgres",
+                }),
+              ),
+          });
+
+          await Effect.runPromise(
+            genTypes(defaultFlags({ local: true })).pipe(
+              Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))),
+            ),
+          );
+
+          expect(
+            child.spawned.some(
+              (spawn) => spawn.args.includes("--network") && spawn.args.includes("host"),
+            ),
+          ).toBe(true);
+          expect(
+            docker.env.has(
+              `PG_META_DB_URL=postgresql://postgres:postgres@127.0.0.1:${port}/postgres?connect_timeout=10`,
+            ),
+          ).toBe(true);
+          expect(docker.env.entries.some((entry) => entry.includes("host.docker.internal"))).toBe(
+            false,
+          );
+        }),
+      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    }),
+  );
+
+  it.live("adds host-gateway for Linux stack gen types on a named --network-id", () =>
+    Effect.tryPromise({
+      try: () =>
+        withSslProbeServer(async (port) => {
+          const docker = captureDockerRun();
+          const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-stack-named-net-"));
+          writeConfig(
+            workdir,
+            [
+              'project_id = "demo"',
+              "",
+              "[api]",
+              'schemas = ["public"]',
+              "",
+              "[db]",
+              `port = ${port}`,
+            ].join("\n"),
+          );
+
+          const { layer, child } = setup({
+            workdir,
+            childStdout: ["export type Database = {};"],
+            networkId: Option.some("custom-network"),
+            onSpawn: docker.onSpawn,
+            dbConfigResolve: () =>
+              Effect.succeed(
+                localResolvedConfig({
+                  host: "127.0.0.1",
+                  port,
+                  user: "postgres",
+                  password: "postgres",
+                  database: "postgres",
+                }),
+              ),
+          });
+
+          await Effect.runPromise(
+            genTypes(defaultFlags({ local: true })).pipe(
+              Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))),
+            ),
+          );
+
+          const pgmeta = child.spawned.find((spawn) => spawn.args.includes("custom-network"));
+          expect(pgmeta?.args).toContain("custom-network");
+          expect(pgmeta?.args).toContain("--add-host");
+          expect(pgmeta?.args).toContain("host.docker.internal:host-gateway");
+          expect(
+            docker.env.has(
+              `PG_META_DB_URL=postgresql://postgres:postgres@host.docker.internal:${port}/postgres?connect_timeout=10`,
+            ),
+          ).toBe(true);
+        }),
+      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    }),
+  );
+
   it.live("falls back to podman when the docker executable is missing for local generation", () =>
     Effect.tryPromise({
       try: () =>
@@ -3170,6 +3355,16 @@ describe("gen types", () => {
       skipConfig: true,
       childStdout: ["generated"],
       onSpawn: docker.onSpawn,
+      dbConfigResolve: () =>
+        Effect.succeed(
+          localResolvedConfig({
+            host: "127.0.0.1",
+            port: 54322,
+            user: "postgres",
+            password: "postgres",
+            database: "postgres",
+          }),
+        ),
       sslProbeLayer: Layer.succeed(PgDeltaSslProbe, {
         requireSsl: () => Effect.succeed(false),
         requireSslForHost: (host, port) =>
@@ -3220,6 +3415,16 @@ describe("gen types", () => {
       skipConfig: true,
       childStdout: ["generated"],
       onSpawn: docker.onSpawn,
+      dbConfigResolve: () =>
+        Effect.succeed(
+          localResolvedConfig({
+            host: "host.docker.internal",
+            port: 55432,
+            user: "postgres",
+            password: "postgres",
+            database: "postgres",
+          }),
+        ),
       sslProbeLayer: Layer.succeed(PgDeltaSslProbe, {
         requireSsl: () => Effect.succeed(false),
         requireSslForHost: (host, port) =>

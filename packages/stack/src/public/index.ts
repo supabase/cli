@@ -10,6 +10,19 @@ export * from "./Config.ts";
 export { excludeStackCapabilities } from "../model/Exclusions.ts";
 export type { ExcludableCapabilityName } from "../model/Exclusions.ts";
 export {
+  selectDefaultRuntime,
+  selectDefaultRuntimeSelection,
+  ContainerEngineResolver,
+  DOCKER_DAEMON_FALLBACK_NOTICE,
+  NATIVE_ROOT_UNSUPPORTED_MESSAGE,
+} from "../runtime/ContainerEngineResolver.ts";
+export { defaultRuntimeEnvironment } from "../supervisor/Launcher.ts";
+export {
+  nativePostgresClientBinDir,
+  cachedPostgresArtifactRoot,
+} from "../preparation/NativePostgresClients.ts";
+export type { NativePostgresClientCommand } from "../preparation/NativePostgresClients.ts";
+export {
   createStack,
   openStack,
   findStack,
@@ -30,3 +43,26 @@ export type {
   PreparedCapability,
   PrepareStackResult,
 } from "./EffectStack.ts";
+export { databaseBootstrapIdentity } from "../model/DatabaseBootstrap.ts";
+export { createEphemeralPostgres, resolveEphemeralPostgresRelease } from "./EphemeralPostgres.ts";
+export type {
+  CreateEphemeralPostgresOptions,
+  EffectEphemeralPostgres,
+  EphemeralPostgresRelease,
+  EphemeralPostgresServices,
+  EphemeralPostgresSettings,
+} from "./EphemeralPostgres.ts";
+export {
+  schemaInit,
+  SCHEMA_INIT_CAPABILITY_NAMES,
+  schemaInitArtifactIdentity,
+} from "./SchemaInit.ts";
+export type {
+  SchemaInitCapabilityName,
+  SchemaInitEphemeralTarget,
+  SchemaInitLiveTarget,
+  SchemaInitOptions,
+  SchemaInitSecrets,
+  SchemaInitServices,
+  SchemaInitTarget,
+} from "./SchemaInit.ts";

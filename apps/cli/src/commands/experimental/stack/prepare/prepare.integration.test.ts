@@ -72,6 +72,7 @@ const makeStack = (
   destroy: Effect.sync(() => {
     calls.destroy += 1;
   }),
+  resetDatabase: Effect.die("unused"),
   logs: () => Effect.die("unused"),
   followLogs: () => Stream.empty,
 });

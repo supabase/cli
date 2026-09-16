@@ -12,9 +12,9 @@ import {
 } from "effect";
 import { StackConfigSchema, type StackConfig } from "@supabase/stack/effect";
 
-import { loadLocalProjectContext } from "../../../command-internal/local-project-context.ts";
-import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
-import { parseDotEnv } from "../../../command-internal/dotenv.ts";
+import { loadLocalProjectContext, type LocalProjectContext } from "./local-project-context.ts";
+import { parseDotEnv } from "./dotenv.ts";
+import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import {
   envOverride,
   envOverrideApiMaxRows,
@@ -44,17 +44,13 @@ import {
   resolveGotrueSessions,
   resolveGotrueWeb3,
   strToArr,
-} from "../../../command-internal/local-config-values.ts";
-import {
-  collectDotenvPrivateKeys,
-  decryptSecret,
-  isEncryptedSecret,
-} from "../../../command-internal/vault-decrypt.ts";
+} from "./local-config-values.ts";
+import { collectDotenvPrivateKeys, decryptSecret, isEncryptedSecret } from "./vault-decrypt.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
-} from "../../../shared/telemetry/error-actionability.ts";
+} from "../shared/telemetry/error-actionability.ts";
 
 /** A config error suitable for a stack command's user-facing boundary. */
 export class StackConfigError extends Data.TaggedError("StackConfigError")<{
@@ -1213,7 +1209,7 @@ const configInput = (
   );
   const poolerResolved = pooler;
   const signingKeysPath = auth.signing_keys_path;
-  const authResolvedSettings = authEnabled ? authSettings(auth, document) : undefined;
+  const authResolvedSettings = authSettings(auth, document);
   const jwtIssuer = auth.jwt_issuer;
   const jwtSecret = secret(auth.jwt_secret);
   const jwtSigning = (): JwtSigning | undefined => {
@@ -1243,10 +1239,10 @@ const configInput = (
         max_rows: apiResolved.max_rows,
         external_url: apiResolved.external_url,
       }),
-      auth:
-        authResolvedSettings === undefined
-          ? { enabled: false as const }
-          : { settings: { ...authResolvedSettings, signing_keys_path: signingKeysPath } },
+      auth: capability(authEnabled, {
+        ...authResolvedSettings,
+        signing_keys_path: signingKeysPath,
+      }),
       realtime: capability(realtimeResolved.enabled, {
         ip_version: realtimeResolved.ip_version,
         max_header_length: realtimeResolved.max_header_length,
@@ -1278,16 +1274,11 @@ const configInput = (
         gcp_project_number: analyticsResolved.gcp_project_number,
         gcp_jwt_path: analyticsResolved.gcp_jwt_path,
       }),
-      pooler:
-        poolerEnabled !== false
-          ? {
-              settings: {
-                pool_mode: poolerResolved.pool_mode,
-                default_pool_size: poolerResolved.default_pool_size,
-                max_client_conn: poolerResolved.max_client_conn,
-              },
-            }
-          : { enabled: false as const },
+      pooler: capability(poolerEnabled !== false, {
+        pool_mode: poolerResolved.pool_mode,
+        default_pool_size: poolerResolved.default_pool_size,
+        max_client_conn: poolerResolved.max_client_conn,
+      }),
     },
     listeners: {
       api: apiListener(
@@ -1361,6 +1352,7 @@ const decryptConsumedSecrets = (
         decryptConsumedSecrets(item, keys, `${path}[${index}]`),
       );
     if (!isRecord(value)) return value;
+    if (value.enabled === false) return value;
     const entries = yield* Effect.forEach(Object.entries(value), ([key, item]) =>
       decryptConsumedSecrets(item, keys, `${path}.${key}`).pipe(
         Effect.map((resolved) => [key, resolved] as const),
@@ -1402,14 +1394,17 @@ const configValidationError = (
   return undefined;
 };
 
-/** Loads and translates the effective project config for all stack commands. */
-export const loadStackConfig = (projectRoot: string): StackConfigEffect =>
+/** Loads and translates the effective project config for all stack commands.
+ * Pass `opts.context` to reuse an already-loaded project context. */
+export const loadStackConfig = (
+  projectRoot: string,
+  opts?: { readonly context?: LocalProjectContext },
+): StackConfigEffect =>
   Effect.gen(function* () {
     const path = yield* Path.Path;
-    const context = yield* loadLocalProjectContext(
-      projectRoot,
-      (message) => new StackConfigError({ message }),
-    );
+    const context =
+      opts?.context ??
+      (yield* loadLocalProjectContext(projectRoot, (message) => new StackConfigError({ message })));
     const effectiveInput = yield* Effect.try({
       try: () =>
         resolveEffectiveCliConfig(
