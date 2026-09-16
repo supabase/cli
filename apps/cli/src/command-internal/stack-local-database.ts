@@ -234,8 +234,7 @@ export const parsePostgresServerMajor = (version: string): number | undefined =>
   return Number.isInteger(major) ? major : undefined;
 };
 
-/** Running stack Postgres major, or undefined when status is missing. */
-export const stackProjectDatabaseMajor: Effect.Effect<number | undefined, never, CommandSettings> =
+const stackProjectDatabaseVersionString: Effect.Effect<string | undefined, never, CommandSettings> =
   Effect.gen(function* () {
     const api = yield* Effect.serviceOption(StackApi);
     if (Option.isNone(api)) return undefined;
@@ -250,7 +249,21 @@ export const stackProjectDatabaseMajor: Effect.Effect<number | undefined, never,
     if (stack === undefined) return undefined;
     const status = yield* stack.status.pipe(Effect.orElseSucceed(() => undefined));
     if (status === undefined || typeof status.versions.database !== "string") return undefined;
-    return parsePostgresServerMajor(status.versions.database);
+    return status.versions.database;
+  });
+
+/** Catalog pin from `status().versions.database`, when the project stack is available. */
+export const stackProjectDatabaseVersion: Effect.Effect<
+  string | undefined,
+  never,
+  CommandSettings
+> = stackProjectDatabaseVersionString;
+
+/** Running stack Postgres major, or undefined when status is missing. */
+export const stackProjectDatabaseMajor: Effect.Effect<number | undefined, never, CommandSettings> =
+  Effect.gen(function* () {
+    const version = yield* stackProjectDatabaseVersionString;
+    return version === undefined ? undefined : parsePostgresServerMajor(version);
   });
 
 const STACK_NATIVE_ENGINE_MESSAGE = "The stack backend only supports the pg-delta engine.";

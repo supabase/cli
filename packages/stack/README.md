@@ -167,3 +167,8 @@ the same catalog artifact and bootstrap as a stack database, is not registered i
 Promise facade returns a handle with explicit `destroy()`. Callers own migrations and PGDATA
 cache keys. `exportPgData` is valid only while the cluster is stopped; native and container snapshots
 are not interchangeable.
+
+`runPostgresClient` prepares that same catalog pin and runs caller argv (`bash -c` dump scripts,
+`pg_prove`, …) without starting Postgres. Native prepends `artifact/bin` to `PATH`; container is a
+one-shot `docker|podman run --rm`. It is not an `EffectStack` method, so linked dump can prepare
+tools without a running stack.

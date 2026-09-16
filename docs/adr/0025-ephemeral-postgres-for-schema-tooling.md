@@ -85,15 +85,15 @@ The stack backend requires the in-process pg-delta engine. Migra, pgAdmin, and
 
 ### (d) Native dump, test, and squash clients
 
-`db dump`, `db test`, and `migration squash` talk to published loopback credentials. On native
-stacks they prefer `pg_dump` / `pg_dumpall` / `psql` from the prepared slim postgres artifact when
-those extras exist in the cache. The extras are not catalog `requiredRuntimePaths`; missing them is
-normal and the commands keep today's PATH clients and matching-major check. `pg_prove` stays a
-PATH requirement; artifact `psql` is prepended when present so prove's client matches.
-
-Windows still runs a one-shot Docker `pg_dump` / `pg_prove` client against the published URL
-(`host.docker.internal`). The stack stays native. If Docker is missing on that Windows path, the
-command fails and tells the user to install Docker Desktop (or Git Bash).
+`db dump`, `db test`, and `migration squash` talk to published loopback credentials for
+`--local`. On the stack backend they launch `pg_dump` from the catalog Postgres artifact
+(native: `PATH` prepend of `artifact/bin`) or a one-shot container of the same image.
+`pg_prove` uses that artifact only on native; container prove stays on `supabase/pg_prove`
+until the catalog image includes it. Native `--linked` / `--db-url` keep the resolved host
+instead of rewriting it to loopback. Windows has no native postgres artifact, so those
+commands run a one-shot Docker client against the published URL (`host.docker.internal`). The
+stack stays native. If Docker is missing on that Windows path, the command fails and tells the
+user to install Docker Desktop.
 
 ### (e) Studio does not require analytics
 

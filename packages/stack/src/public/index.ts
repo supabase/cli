@@ -18,11 +18,6 @@ export {
 } from "../runtime/ContainerEngineResolver.ts";
 export { defaultRuntimeEnvironment } from "../supervisor/Launcher.ts";
 export {
-  nativePostgresClientBinDir,
-  cachedPostgresArtifactRoot,
-} from "../preparation/NativePostgresClients.ts";
-export type { NativePostgresClientCommand } from "../preparation/NativePostgresClients.ts";
-export {
   createStack,
   openStack,
   findStack,
@@ -52,6 +47,13 @@ export type {
   EphemeralPostgresServices,
   EphemeralPostgresSettings,
 } from "./EphemeralPostgres.ts";
+export { runPostgresClient } from "./PostgresClient.ts";
+export type {
+  PostgresClientMount,
+  PostgresClientResult,
+  PostgresClientServices,
+  RunPostgresClientOptions,
+} from "./PostgresClient.ts";
 export {
   schemaInit,
   SCHEMA_INIT_CAPABILITY_NAMES,

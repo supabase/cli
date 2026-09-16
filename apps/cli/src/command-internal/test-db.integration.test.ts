@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { ConfigProvider, Effect, Exit, Layer, Option } from "effect";
+import { ConfigProvider, Effect, Exit, Layer, Option, Stream } from "effect";
 
 import { mockOutput } from "../../tests/helpers/mocks.ts";
 import {
@@ -18,8 +18,16 @@ import { DbConnectError, DbExecError } from "./db-connection.errors.ts";
 import { DbConnection, type DbSession, type PgConnInput } from "./db-connection.service.ts";
 import { DockerRunError } from "./docker-run.errors.ts";
 import { DockerRun, type DockerRunOpts } from "./docker-run.service.ts";
+import { BundledPostgresClient } from "./bundled-postgres-client.ts";
+import {
+  ContainerEngineResolver,
+  StackIdSchema,
+  type EffectStack,
+  type RunPostgresClientOptions,
+} from "@supabase/stack/effect";
 import { testDb } from "./test-db.handler.ts";
 import { stackBackendLayer } from "./stack-backend.ts";
+import { StackApi } from "./stack-api.ts";
 
 const LOCAL_CONN: PgConnInput = {
   host: "127.0.0.1",
@@ -174,6 +182,46 @@ function mockDockerRun(opts: {
   };
 }
 
+function mockBundledPostgresClient(opts: {
+  exitCode?: number;
+  runFails?: boolean;
+  stdout?: ReadonlyArray<string>;
+}) {
+  const allOpts: Array<RunPostgresClientOptions<unknown>> = [];
+  const layer = Layer.succeed(BundledPostgresClient, {
+    run: (runOpts) =>
+      Effect.gen(function* () {
+        allOpts.push(runOpts);
+        if (opts.runFails === true) {
+          return yield* Effect.fail(
+            new DockerRunError({
+              message: "failed to run docker: not found",
+              reason: "spawn",
+              daemonDown: false,
+            }),
+          );
+        }
+        const encoder = new TextEncoder();
+        for (const chunk of opts.stdout ?? []) {
+          yield* runOpts.onStdout(encoder.encode(chunk));
+        }
+        return { exitCode: opts.exitCode ?? 0, stderr: "" };
+      }),
+  });
+  return {
+    layer,
+    get lastOpts() {
+      return allOpts[allOpts.length - 1];
+    },
+  };
+}
+
+const containerEngineResolver = (installed: boolean) =>
+  Layer.succeed(ContainerEngineResolver, {
+    isInstalled: () => Effect.succeed(installed),
+    resolve: () => Effect.die("unused"),
+  });
+
 const runtimeInfoLayer = (platform: NodeJS.Platform) =>
   Layer.succeed(RuntimeInfo, {
     cwd: "/work/project",
@@ -200,6 +248,7 @@ interface SetupOpts {
   networkId?: string;
   workdir?: string;
   dnsResolver?: "native" | "https";
+  dockerInstalled?: boolean;
   /** Raw CLI args for `CliArgs` — drives DB target selection (Changed-based). */
   args?: ReadonlyArray<string>;
 }
@@ -210,11 +259,14 @@ function setup(opts: SetupOpts = {}) {
   const resolver = mockResolver({ conn: opts.conn, isLocal: opts.isLocal });
   const connection = mockDbConnection(opts);
   const docker = mockDockerRun(opts);
+  const bundled = mockBundledPostgresClient(opts);
   const layer = Layer.mergeAll(
     out.layer,
     resolver.layer,
     connection.layer,
     docker.layer,
+    bundled.layer,
+    containerEngineResolver(opts.dockerInstalled ?? true),
     mockCommandSettings({ workdir: opts.workdir ?? "/work/project", projectId: Option.none() }),
     telemetry.layer,
     runtimeInfoLayer(opts.platform ?? "linux"),
@@ -227,7 +279,7 @@ function setup(opts: SetupOpts = {}) {
     Layer.succeed(CliArgs, { args: opts.args ?? [] }),
     BunServices.layer,
   );
-  return { layer, out, telemetry, connection, docker, resolver };
+  return { layer, out, telemetry, connection, docker, bundled, resolver };
 }
 
 const flags = (over: Partial<Parameters<typeof testDb>[0]> = {}) => ({
@@ -354,7 +406,7 @@ describe("test db integration", () => {
   });
 
   it.live("stack db-url to published local ports never uses PGHOST=db", () => {
-    const { layer, docker } = setup({
+    const { layer, docker, bundled } = setup({
       conn: LOCAL_CONN,
       isLocal: true,
       args: ["--db-url=postgresql://postgres:postgres@127.0.0.1:54322/postgres"],
@@ -366,10 +418,111 @@ describe("test db integration", () => {
           dbUrl: Option.some("postgresql://postgres:postgres@127.0.0.1:54322/postgres"),
         }),
       );
-      const run = docker.lastOpts;
-      expect(run?.network).toEqual({ _tag: "host" });
-      expect(run?.env["PGHOST"]).toBe("127.0.0.1");
-      expect(run?.env["PGPORT"]).toBe("54322");
+      expect(bundled.lastOpts).toBeUndefined();
+      expect(docker.lastOpts?.network).toEqual({ _tag: "host" });
+      expect(docker.lastOpts?.env["PGHOST"]).toBe("127.0.0.1");
+      expect(docker.lastOpts?.env["PGPORT"]).toBe("54322");
+      expect(docker.lastOpts?.image).toContain("pg_prove");
+    }).pipe(Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))));
+  });
+
+  const PROVE_STACK_ID = StackIdSchema.make("e".repeat(64));
+  const unusedProve = () => Effect.die("unused");
+  const proveStackApi = (
+    runtime: { kind: "native" } | { kind: "container"; engine: "docker" },
+    databaseVersion = "17.6.1.168",
+  ) => {
+    const stack: EffectStack = {
+      id: PROVE_STACK_ID,
+      status: Effect.succeed({
+        id: PROVE_STACK_ID,
+        lifecycle: "running",
+        desiredLifecycle: "running",
+        runtime,
+        endpoints: {},
+        versions: { database: databaseVersion },
+        capabilities: [],
+        artifacts: [],
+      }),
+      credentials: Effect.die("unused"),
+      prepare: unusedProve,
+      start: unusedProve,
+      stop: Effect.die("unused"),
+      destroy: Effect.die("unused"),
+      resetDatabase: Effect.die("unused"),
+      logs: unusedProve,
+      followLogs: () => Stream.empty,
+    };
+    return Layer.succeed(StackApi, {
+      createStack: unusedProve,
+      findStack: () =>
+        Effect.succeed(
+          Option.some({
+            id: PROVE_STACK_ID,
+            projectRoot: "/work/project",
+            name: "default",
+            branchContext: "main",
+            runtime,
+            desiredLifecycle: "running",
+          }),
+        ),
+      discoverStacks: unusedProve,
+      openStack: () => Effect.succeed(stack),
+      inspectStack: unusedProve,
+    });
+  };
+
+  it.live("stack --local native uses bundled pg_prove, not supabase/pg_prove", () => {
+    const { layer, docker, bundled } = setup({ isLocal: true });
+    return Effect.gen(function* () {
+      yield* testDb(flags({ local: true }));
+      expect(docker.lastOpts).toBeUndefined();
+      expect(bundled.lastOpts?.runtime).toEqual({ kind: "native" });
+      expect(bundled.lastOpts?.argv.slice(0, 5)).toEqual([
+        "pg_prove",
+        "--ext",
+        ".pg",
+        "--ext",
+        ".sql",
+      ]);
+      expect(bundled.lastOpts?.env?.["PGHOST"]).toBe("127.0.0.1");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(layer, stackBackendLayer("stack"), proveStackApi({ kind: "native" })),
+      ),
+    );
+  });
+
+  it.live("stack --local docker uses supabase/pg_prove, not the catalog postgres image", () => {
+    const { layer, docker, bundled } = setup({ isLocal: true });
+    return Effect.gen(function* () {
+      yield* testDb(flags({ local: true }));
+      expect(bundled.lastOpts).toBeUndefined();
+      expect(docker.lastOpts?.image).toContain("pg_prove");
+      expect(docker.lastOpts?.env["PGHOST"]).toBe("127.0.0.1");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layer,
+          stackBackendLayer("stack"),
+          proveStackApi({ kind: "container", engine: "docker" }),
+        ),
+      ),
+    );
+  });
+
+  it.live("stack --linked native keeps the remote PGHOST", () => {
+    const { layer, docker, bundled } = setup({
+      conn: REMOTE_CONN,
+      isLocal: false,
+      dockerInstalled: false,
+      args: ["--linked"],
+    });
+    return Effect.gen(function* () {
+      yield* testDb(flags({ local: false, linked: true }));
+      expect(docker.lastOpts).toBeUndefined();
+      expect(bundled.lastOpts?.runtime).toEqual({ kind: "native" });
+      expect(bundled.lastOpts?.env?.["PGHOST"]).toBe(REMOTE_CONN.host);
     }).pipe(Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))));
   });
 

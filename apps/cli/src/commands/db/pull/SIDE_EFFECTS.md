@@ -63,7 +63,8 @@ disables formatting without disabling safe compaction.
   below. Migration-style pulls only; `--declarative` provisions no shadow.
 - `supabase/migra` container — the migra OOM bash fallback only.
 - `pg_dump` container — the initial-migra pull's native remote-schema dump
-  (`streamPgDump`, shared with `db dump`).
+  (`streamPgDumpWithClient`, shared with `db dump`). On the stack backend this is the
+  catalog Postgres artifact or image rather than the Compose dump image.
 
 ### Shadow baseline cache (`SUPABASE_SHADOW_CACHE`, default ON)
 

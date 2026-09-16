@@ -66,7 +66,7 @@ const workloadCatalog = {
     "17.6.1.168",
     "ghcr.io/supabase/cli/postgres:17.6.1.168@sha256:936536bb1f97bcab0e30f58613545f8a75676c185c5eb5b86d8f8b33ca3063a1",
     "bin/supabase-postgres-start",
-    ["bin/supabase-postgres-start"],
+    ["bin/supabase-postgres-start", "bin/pg_dump", "bin/pg_dumpall", "bin/psql"],
     {
       additionalReleases: {
         "15.14.1.168":

@@ -21,20 +21,19 @@ import {
 } from "./test-db.errors.ts";
 import { buildPgProveArgs } from "./test-db.pg-prove-args.ts";
 import { currentStackBackend } from "./stack-backend.ts";
-import { stackProjectDatabaseMajor, stackRequireProjectRuntime } from "./stack-local-database.ts";
+import { stackProjectDatabaseVersion, stackRequireProjectRuntime } from "./stack-local-database.ts";
 import {
   rewriteDumpHostForToolContainer,
-  nativeHostClientPathPrepend,
-  requireHostPgProve,
-  streamHostCommand,
   toolContainerUsesHostNetwork,
 } from "./postgres-client.run.ts";
 import { isBitbucketPipeline } from "./bitbucket-pipeline.ts";
+import { BundledPostgresClient, resolveBundledPostgresRuntime } from "./bundled-postgres-client.ts";
 
 const ENABLE_PGTAP = "create extension if not exists pgtap with schema extensions";
 const DISABLE_PGTAP = "drop extension if exists pgtap";
 // Fixed here: the config schema has no `[images]` override for this. Re-verify
 // `NO_TESTS_VERDICT` still matches pg_prove's summary format when bumping this tag.
+// Catalog postgres images do not ship pg_prove until the slim-services republish.
 const PG_PROVE_IMAGE = "supabase/pg_prove:3.36";
 const MAX_PROJECT_ID_LENGTH = 40;
 /**
@@ -115,15 +114,21 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
       backend.kind === "stack" && connType === "local"
         ? yield* stackRequireProjectRuntime
         : undefined;
-    const useHostProve = stackRuntime?.kind === "native" && runtimeInfo.platform !== "win32";
-    const stackContainerProve = backend.kind === "stack" && !useHostProve;
+    const proveRuntime =
+      backend.kind === "stack"
+        ? yield* resolveBundledPostgresRuntime(stackRuntime, runtimeInfo.platform)
+        : undefined;
+    const useNativeProve = proveRuntime?.kind === "native";
+    const stackPublishedProve = backend.kind === "stack" && !useNativeProve;
 
     const networkId = Option.getOrUndefined(networkIdFlag);
     const dumpUsesHostNetwork = toolContainerUsesHostNetwork(networkId);
     const runEnv = {
-      PGHOST: useHostProve
-        ? "127.0.0.1"
-        : stackContainerProve
+      PGHOST: useNativeProve
+        ? isLocal
+          ? "127.0.0.1"
+          : conn.host
+        : stackPublishedProve
           ? rewriteDumpHostForToolContainer(conn.host, {
               platform: runtimeInfo.platform,
               usesHostNetwork: dumpUsesHostNetwork,
@@ -214,13 +219,12 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
             }
             return output.rawBytes(chunk, "stdout");
           });
-        if (useHostProve) {
+        if (useNativeProve) {
+          const bundled = yield* BundledPostgresClient;
           const toml = yield* readDbToml(fs, path, cliSettings.workdir);
-          const expectedMajor =
-            (backend.kind === "stack" ? yield* stackProjectDatabaseMajor : undefined) ??
-            toml.majorVersion;
-          const pathPrepend = yield* nativeHostClientPathPrepend("psql", { major: expectedMajor });
-          yield* requireHostPgProve(expectedMajor, pathPrepend);
+          const version =
+            (connType === "local" ? yield* stackProjectDatabaseVersion : undefined) ??
+            String(toml.majorVersion);
           const hostPath = args.hostPaths[0];
           const hostWorkingDir =
             hostPath === undefined
@@ -228,14 +232,17 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
               : nodePath.extname(hostPath) !== ""
                 ? nodePath.dirname(hostPath)
                 : hostPath;
-          const hostArgs = ["--ext", ".pg", "--ext", ".sql", "-r", ...args.hostPaths];
-          if (debug) hostArgs.push("--verbose");
-          return yield* streamHostCommand({
-            command: "pg_prove",
-            args: hostArgs,
+          const nativeArgs = ["pg_prove", "--ext", ".pg", "--ext", ".sql", "-r", ...args.hostPaths];
+          if (debug) nativeArgs.push("--verbose");
+          return yield* bundled.run({
+            version,
+            runtime: proveRuntime,
+            argv: nativeArgs,
             env: runEnv,
             cwd: hostWorkingDir,
-            pathPrepend,
+            network: network._tag === "named" ? { name: network.name } : "host",
+            extraHosts: [],
+            securityOpt: [],
             onStdout,
             teeStderr: true,
             captureStderr: false,
@@ -270,7 +277,7 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
     if (exitCode !== 0) {
       return yield* Effect.fail(
         new TestDbRunError({
-          message: `error running ${useHostProve ? "pg_prove" : "container"}: exit ${exitCode}`,
+          message: `error running ${useNativeProve ? "pg_prove" : "container"}: exit ${exitCode}`,
         }),
       );
     }

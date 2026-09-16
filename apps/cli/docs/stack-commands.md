@@ -113,12 +113,14 @@ seed on stack credentials.
 `gen types --local` and `inspect db … --local` resolve the project stack through the same
 `--local` database target as `db dump`. They do not start a stack.
 
-`db dump --local`, `db test` / `test db`, and `migration squash` use host `pg_dump` / `pg_prove`
-only when the stack engine is native. Those PATH clients must match the stack Postgres major;
-otherwise install matching client tools or create a new stack that uses a container runtime.
-The Docker/Podman
-engine keeps the one-shot tool container and targets published stack credentials, never
-`PGHOST=db`.
+`db dump --local` and `migration squash` use bundled `pg_dump` from the catalog Postgres
+artifact (native `PATH` prepend) or a one-shot container of the same image. `db test` /
+`test db` use bundled `pg_prove` only on a native stack; stack+container prove stays on
+`supabase/pg_prove:3.36` until the catalog image ships `pg_prove`. Native `--linked` /
+`--db-url` keep the resolved host. Windows native stacks have no postgres artifact and keep a
+one-shot Docker client against published credentials. Install Docker Desktop when that Windows
+path cannot spawn Docker. The Docker/Podman engine keeps the one-shot tool container and targets
+published stack credentials, never `PGHOST=db`.
 
 ## Reading stack logs
 

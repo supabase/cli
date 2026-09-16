@@ -46,13 +46,12 @@ import { DockerRunError } from "../../../command-internal/docker-run.errors.ts";
 import { errorMessage, relativizeErrorMessage } from "../../../command-internal/error-message.ts";
 import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
 import { stackWithShadowDatabase } from "../../../command-internal/stack-shadow.ts";
-import { parsePostgresServerMajor } from "../../../command-internal/stack-local-database.ts";
 import {
   dumpConnForHostClient,
-  nativeHostClientPathPrepend,
   rewriteDumpHostForToolContainer,
   toolContainerUsesHostNetwork,
 } from "../../../command-internal/postgres-client.run.ts";
+import { bundledPostgresClientRuntime } from "../../../command-internal/bundled-postgres-client.ts";
 import { applyMigrations, MigrationApplyError } from "../../../command-internal/migration-apply.ts";
 import {
   INSERT_MIGRATION_VERSION,
@@ -137,35 +136,28 @@ const squashMigrations = Effect.fnUntraced(function* (
           const networkIdFlag = yield* NetworkIdFlag;
           const networkId = Option.getOrUndefined(networkIdFlag);
           const dumpUsesHostNetwork = toolContainerUsesHostNetwork(networkId);
-          const nativeShadow = handle.runtime.kind === "native" && runtimeInfo.platform !== "win32";
-          const expectedMajor =
-            parsePostgresServerMajor(handle.ephemeral.version) ?? toml.majorVersion;
-          const pathPrepend = nativeShadow
-            ? yield* nativeHostClientPathPrepend("pg_dump", {
-                artifactRoot: handle.ephemeral.nativeArtifactRoot,
-              })
-            : undefined;
-          const dumpClient = nativeShadow
-            ? {
-                kind: "host" as const,
-                command: "pg_dump" as const,
-                expectedMajor,
-                ...(pathPrepend === undefined ? {} : { pathPrepend }),
-              }
-            : { kind: "container" as const };
+          const dumpRuntime =
+            bundledPostgresClientRuntime(handle.runtime, runtimeInfo.platform) ?? handle.runtime;
           const release = yield* resolveEphemeralPostgresRelease(handle.ephemeral.version).pipe(
             Effect.orElseSucceed(() => undefined),
           );
           const image = release?.image ?? localInputs.bootstrapConfig.postgresImage;
-          const dumpConn: PgConnInput = nativeShadow
-            ? dumpConnForHostClient(stackConn)
-            : {
-                ...stackConn,
-                host: rewriteDumpHostForToolContainer(handle.host, {
-                  platform: runtimeInfo.platform,
-                  usesHostNetwork: dumpUsesHostNetwork,
-                }),
-              };
+          const dumpClient = {
+            kind: "bundled" as const,
+            command: "pg_dump" as const,
+            version: handle.ephemeral.version,
+            runtime: dumpRuntime,
+          };
+          const dumpConn: PgConnInput =
+            dumpRuntime.kind === "native"
+              ? dumpConnForHostClient(stackConn)
+              : {
+                  ...stackConn,
+                  host: rewriteDumpHostForToolContainer(handle.host, {
+                    platform: runtimeInfo.platform,
+                    usesHostNetwork: dumpUsesHostNetwork,
+                  }),
+                };
           const session = yield* connectShadowDatabase(stackConn);
           const before = yield* squashDumpSchemaToString({
             image,
@@ -238,8 +230,7 @@ const squashMigrations = Effect.fnUntraced(function* (
             Effect.fail(
               new MigrationSquashDumpError({
                 message: error.message,
-                suggestion:
-                  "Install Docker Desktop (or Git Bash) to squash a native stack on Windows.",
+                suggestion: "Install Docker Desktop to squash a native stack on Windows.",
               }),
             ),
         ),

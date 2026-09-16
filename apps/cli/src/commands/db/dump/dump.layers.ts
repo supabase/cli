@@ -14,6 +14,8 @@ import { linkedProjectCacheLayer } from "../../../telemetry/linked-project-cache
 import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { stackApiLayer } from "../../../command-internal/stack-api.ts";
+import { bundledPostgresClientLayer } from "../../../command-internal/bundled-postgres-client.ts";
+
 /**
  * Runtime layer for `supabase db dump`.
  *
@@ -74,7 +76,8 @@ export const dbDumpRuntimeLayer = Layer.mergeAll(
   linkedProjectCache,
   identityStitchLayer,
   telemetryStateLayer,
-  // Native engines read `runtime.kind` here to pick PATH `pg_dump`.
+  // Native engines read `runtime.kind` here to pick bundled `pg_dump`.
   stackApiLayer,
+  bundledPostgresClientLayer,
   commandRuntimeLayer(["db", "dump"]),
 );
