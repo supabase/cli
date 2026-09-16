@@ -356,6 +356,8 @@ const testCliConfigLayer = (workdir: string, explicitWorkdir: boolean) =>
         profile: "supabase",
         profileEnvValue: Option.none(),
         supabaseHome: path.join(workdir, ".supabase"),
+        dbPassword: Option.none(),
+        githubToken: Option.none(),
         apiUrl: "https://api.supabase.com",
         projectHost: "supabase.co",
         poolerHost: "pooler.supabase.com",
@@ -364,6 +366,7 @@ const testCliConfigLayer = (workdir: string, explicitWorkdir: boolean) =>
         projectId: Option.none(),
         workdir,
         explicitWorkdir,
+        workdirEnvValue: Option.none(),
         userAgent: "supabase",
       });
     }),

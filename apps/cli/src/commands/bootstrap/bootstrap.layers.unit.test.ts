@@ -116,7 +116,7 @@ describe("bootstrapRuntimeLayer — IdentityStitch exposure", () => {
       return Effect.gen(function* () {
         const stitch = yield* Effect.serviceOption(IdentityStitch);
         expect(Option.isSome(stitch)).toBe(true);
-      }).pipe(Effect.provide(bootstrapRuntimeLayer), Effect.provide(ambientStubs()));
+      }).pipe(Effect.provide(bootstrapRuntimeLayer.pipe(Layer.provide(ambientStubs()))));
     },
   );
 });

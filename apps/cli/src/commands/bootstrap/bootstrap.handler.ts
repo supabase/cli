@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Option, Path, Schedule } from "effect";
+import { Effect, FileSystem, Option, Path, Redacted, Schedule } from "effect";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 
 import { CommandPlatformApi } from "../../auth/command-platform-api.service.ts";
@@ -36,6 +36,7 @@ import { parseDotEnv } from "../../command-internal/dotenv.ts";
 import { initProject } from "../../shared/init/project-init.ts";
 import { buildDotEnv, marshalDotEnv } from "./bootstrap.dotenv.ts";
 import {
+  BootstrapDotEnvParseError,
   BootstrapHealthError,
   BootstrapInvalidTemplateError,
   BootstrapOverwriteDeclinedError,
@@ -92,7 +93,7 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
     // Reads the prefixed `SUPABASE_WORKDIR` only (never plain `WORKDIR`).
     const workdirRaw = Option.isSome(workdirFlag)
       ? workdirFlag.value
-      : process.env["SUPABASE_WORKDIR"];
+      : Option.getOrUndefined(cliSettings.workdirEnvValue);
     const workdirInput =
       workdirRaw ??
       (yield* output.promptText(
@@ -173,7 +174,9 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
 
     const seededPassword = Option.isSome(flags.password)
       ? flags.password.value
-      : (process.env["SUPABASE_DB_PASSWORD"] ?? "");
+      : Option.isSome(cliSettings.dbPassword)
+        ? Redacted.value(cliSettings.dbPassword.value)
+        : "";
     const created = yield* projectCreateCore({
       name: path.basename(workdir),
       orgId: "",
@@ -246,7 +249,10 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
         const content = yield* fs.readFileString(examplePath);
         example = yield* Effect.try({
           try: () => parseDotEnv(content),
-          catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+          catch: (cause) =>
+            new BootstrapDotEnvParseError({
+              message: cause instanceof Error ? cause.message : String(cause),
+            }),
         });
       }
       const env = buildDotEnv(keys, dbConfig, supabaseUrl, example);
@@ -306,7 +312,7 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
     }).pipe(pushNotify, Effect.retry(retry));
 
     if (isText) {
-      const suggestion = suggestAppStart(runtimeInfo.cwd, workdir, starter.start, aqua);
+      const suggestion = suggestAppStart(path, runtimeInfo.cwd, workdir, starter.start, aqua);
       yield* emitSuccessTrailer(`${suggestion}\n`);
     } else {
       yield* output.success("", {
