@@ -1101,8 +1101,8 @@ describe("db reset", () => {
           "WARNING: skipped seeding storage buckets: Storage is disabled for this stack.",
         );
         expect(out.stderrText).toContain(
-          "Set [storage] enabled = true in supabase/config.toml or start without -x storage, " +
-            "run supabase stack restart, then supabase seed buckets --local.",
+          "Set [storage] enabled = true in supabase/config.toml, run supabase stack stop " +
+            "followed by supabase stack start without -x storage, then supabase seed buckets --local.",
         );
         expect(out.stderrText).not.toContain(
           "Run supabase seed buckets --local once Storage is available.",

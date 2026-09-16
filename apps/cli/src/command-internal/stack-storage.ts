@@ -133,7 +133,7 @@ export const stackStorageEndpointFor = (
       return yield* new StackStorageCapabilityError({
         message: describeStorageCapability(capability),
         suggestion:
-          "Set [storage] enabled = true in supabase/config.toml, or start without -x storage, then run supabase stack restart.",
+          "Set [storage] enabled = true in supabase/config.toml, then run supabase stack stop followed by supabase stack start without -x storage, and retry.",
         disabled: true,
       });
     }
@@ -153,7 +153,7 @@ export const stackStorageEndpointFor = (
       return yield* new StackStorageUnavailableError({
         message: "The stack exposes no API credentials because Auth is disabled.",
         suggestion:
-          "Start the stack with Auth enabled (without -x auth, or [auth] enabled = true in supabase/config.toml), then retry.",
+          "Set [auth] enabled = true in supabase/config.toml, then run supabase stack stop followed by supabase stack start without -x auth, and retry.",
       });
     }
     return {

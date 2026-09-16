@@ -213,7 +213,7 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
         yield* skipSeeding(
           describeStorageCapability(capability),
           decision === "disabled"
-            ? "Set [storage] enabled = true in supabase/config.toml or start without -x storage, run supabase stack restart, then supabase seed buckets --local."
+            ? "Set [storage] enabled = true in supabase/config.toml, run supabase stack stop followed by supabase stack start without -x storage, then supabase seed buckets --local."
             : undefined,
         );
         return;

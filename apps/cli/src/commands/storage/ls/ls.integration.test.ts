@@ -698,7 +698,7 @@ describe("stack backend", () => {
     },
   );
 
-  it.live("suggests supabase stack restart when Storage is disabled", () => {
+  it.live("suggests stopping and starting the stack when Storage is disabled", () => {
     const { layer } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -708,7 +708,10 @@ describe("stack backend", () => {
     return Effect.gen(function* () {
       const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("supabase stack restart");
+      const serialized = JSON.stringify(exit);
+      expect(serialized).toContain("supabase stack stop");
+      expect(serialized).toContain("supabase stack start without -x storage");
+      expect(serialized).not.toContain("supabase stack restart");
     });
   });
 

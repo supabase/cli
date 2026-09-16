@@ -215,13 +215,14 @@ configured`, or a 404 on `ListVectorBuckets`), a WARNING is printed and object
   `[api.tls]`/`SUPABASE_API_*`/`SUPABASE_AUTH_{JWT_SECRET,SERVICE_ROLE_KEY}` config
   validation above (including the `<16`-char secret and TLS cert/key-pairing checks)
   is skipped on this path, even when there is nothing configured to seed.
-- **Stack backend — capability policy.** Storage `disabled` (e.g. `stack start -x
-storage`) errors with `StackStorageCapabilityError` ("Storage is disabled for this
-  stack.") with guidance to set `[storage] enabled = true` or start without `-x
-storage`, then run `supabase stack restart`; `failed`/`stopped` raises the same error
-  class ("Storage failed to start for this stack"/"Storage is stopped for this
-  stack."), with the capability error appended when present, and guidance to run
-  `supabase stack restart`. `dormant`/`starting`/`ready`/`stopping` all proceed — the
+- **Stack backend — capability policy.** Storage `disabled` (e.g.
+  `stack start -x storage`) errors with `StackStorageCapabilityError` ("Storage is
+  disabled for this stack.") with guidance to enable `[storage]`, then run
+  `supabase stack stop` followed by `supabase stack start` without `-x storage`;
+  `failed`/`stopped` raises the same error class ("Storage failed to start for this
+  stack"/"Storage is stopped for this stack."), with the capability error appended
+  when present, and guidance to run `supabase stack restart`.
+  `dormant`/`starting`/`ready`/`stopping` all proceed — the
   gateway activates a lazily-configured Storage on the first request and holds that
   request, and wakes a stopping Storage once its cleanup completes; there is no
   client-side polling. A stack that is not registered, not running, missing

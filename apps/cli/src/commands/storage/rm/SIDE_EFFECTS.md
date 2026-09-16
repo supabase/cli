@@ -110,13 +110,14 @@ read from the shell env OR the project `.env`/`.env.local`/`.env.<env>[.local]` 
   stack's service-role JWT read from the stack's credentials. The stack is located by
   the project root (workdir realpath) via the `@supabase/stack` API, which reads stack
   state under `SUPABASE_HOME`. `rm` never creates a stack.
-- **Stack backend — capability policy.** Storage `disabled` (e.g. `stack start -x
-storage`) errors with `StackStorageCapabilityError` ("Storage is disabled for this
-  stack.") with guidance to set `[storage] enabled = true` or start without `-x
-storage`, then run `supabase stack restart`; `failed`/`stopped` raises the same error
-  class ("Storage failed to start for this stack"/"Storage is stopped for this
-  stack."), with the capability error appended when present, and guidance to run
-  `supabase stack restart`. `dormant`/`starting`/`ready`/`stopping` all proceed — the
+- **Stack backend — capability policy.** Storage `disabled` (e.g.
+  `stack start -x storage`) errors with `StackStorageCapabilityError` ("Storage is
+  disabled for this stack.") with guidance to enable `[storage]`, then run
+  `supabase stack stop` followed by `supabase stack start` without `-x storage`;
+  `failed`/`stopped` raises the same error class ("Storage failed to start for this
+  stack"/"Storage is stopped for this stack."), with the capability error appended
+  when present, and guidance to run `supabase stack restart`.
+  `dormant`/`starting`/`ready`/`stopping` all proceed — the
   gateway activates a lazily-configured Storage on the first request and holds that
   request, and wakes a stopping Storage once its cleanup completes; there is no
   client-side polling. A stack that is not registered, not running, missing

@@ -261,19 +261,22 @@ service-role JWT is never printed or logged.
 
 Storage's capability state gates these operations:
 
-| Storage capability state                      | Effect                                                                                                                                                                          |
-| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `disabled` (e.g. `stack start -x storage`)    | Fails with `StackStorageCapabilityError` ("Storage is disabled for this stack."), guiding the user to enable Storage and run `supabase stack restart`.                          |
-| `failed` / `stopped`                          | Fails with the same `StackStorageCapabilityError` ("Storage failed to start for this stack"/"Storage is stopped for this stack"), guiding the user to `supabase stack restart`. |
-| `dormant` / `starting` / `ready` / `stopping` | Proceeds immediately; no client-side wait, everywhere `starting` is checked. A `stopping` capability is woken by the gateway once its cleanup completes.                        |
+| Storage capability state                      | Effect                                                                                                                                                                                                        |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `disabled` (e.g. `stack start -x storage`)    | Fails with `StackStorageCapabilityError` ("Storage is disabled for this stack."), guiding the user to enable Storage, then run `supabase stack stop` followed by `supabase stack start` without `-x storage`. |
+| `failed` / `stopped`                          | Fails with the same `StackStorageCapabilityError` ("Storage failed to start for this stack"/"Storage is stopped for this stack"), guiding the user to `supabase stack restart`.                               |
+| `dormant` / `starting` / `ready` / `stopping` | Proceeds immediately; no client-side wait, everywhere `starting` is checked. A `stopping` capability is woken by the gateway once its cleanup completes.                                                      |
 
 A stack that is not registered, not running, missing its API endpoint or credentials, or whose
 stack API is unavailable fails instead with `StackStorageUnavailableError`, guiding the user to
 run `supabase stack status`/`supabase stack restart`, or `supabase start` when the stack has never
-been configured. A stack-gateway 502/503 encountered while Storage activates is reported as
-`StackStorageCapabilityError` guiding the user to `supabase stack logs` then `supabase stack
-restart`, not as a raw status body — but only for a `--local` target; a `--linked` failure passes
-through unchanged. All of these failures exit `1` for `storage`/`seed buckets`, and no HTTP
+been configured. Missing API credentials because Auth is disabled instead guides the user to
+enable `[auth]` in `supabase/config.toml`, then run `supabase stack stop` followed by
+`supabase stack start` without `-x auth`. A stack-gateway 502/503 encountered while Storage
+activates is reported as `StackStorageCapabilityError` guiding the user to `supabase stack logs`
+then `supabase stack restart`, not as a raw status body — but only for a `--local` target; a
+`--linked` failure passes through unchanged. All of these failures exit `1` for
+`storage`/`seed buckets`, and no HTTP
 request is sent when Storage is disabled or the stack is not running.
 
 **Lazy activation.** A `dormant` or `starting` Storage capability is not yet listening; the stack
@@ -301,11 +304,11 @@ reset, when Storage is `ready`, `dormant`, `starting`, or `stopping`. Any other 
 an unusable capability state, a missing capability/credentials, a gateway activation failure, or
 an invalid bucket config — prints `WARNING: skipped seeding storage buckets: <reason> <next step>`
 to stderr and the reset still exits `0`. The warning is omitted when the project configures no
-buckets, and
-disabled Storage gets configuration-specific next steps (enable `[storage]`, `supabase stack
-restart`, then `supabase seed buckets --local`). When the underlying stack-storage error carries
-its own suggestion (a missing API gateway endpoint, Auth disabled, or a gateway 502/503), that
-suggestion is the next step instead of the generic `supabase seed buckets --local` one. This is the
+buckets, and disabled Storage gets configuration-specific next steps (enable `[storage]`,
+`supabase stack stop` then `supabase stack start`, then `supabase seed buckets --local`). When the
+underlying stack-storage error carries its own suggestion (a missing API gateway endpoint, Auth
+disabled, or a gateway 502/503), that suggestion is the next step instead of the generic
+`supabase seed buckets --local` one. This is the
 deliberate policy split from `stack start`: the database is already rebuilt by the time buckets
 are seeded, so `db reset` never fails the command for a Storage problem, while `start` still fails
 on a genuine seeding error. Bucket SQL/schema preparation is the stack runtime's own storage
