@@ -1888,10 +1888,8 @@ describe("Supervisor composition", () => {
         });
         yield* Deferred.await(shutdownReadStarted).pipe(Effect.timeout("5 seconds"), Effect.orDie);
 
-        // Deferred resumption reaches the masked admission wait synchronously; its wake-up is
-        // scheduled.
-        // Only the FiberSet finalizer is live here, so closing the scope installs interruption
-        // first.
+        // Deferred resumes synchronously to the masked wait; wake-up is queued.
+        // Only FiberSet has a live finalizer, so scope close installs interruption first.
         yield* Deferred.succeed(activationReadGate, undefined);
         const closing = yield* Effect.forkChild(
           Scope.close(ownerScope, Exit.void).pipe(
