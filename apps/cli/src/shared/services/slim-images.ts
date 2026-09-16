@@ -41,13 +41,7 @@ const V_PREFIXED_SERVICES: ReadonlySet<SlimServiceName> = new Set([
   "pooler",
 ]);
 
-/**
- * Ambient process env only — the project-dotenv installers
- * (`db-config.toml-read.ts`, `local-project-context.ts`) copy
- * only a fixed set of keys into `process.env`, not arbitrary flags, so a
- * value set only in `supabase/.env` is not observed here. Read per call
- * rather than cached so tests can stub the ambient env per case.
- */
+/** Reads the ambient slim-image flag for callers without an explicit project value. */
 export function slimImagesEnabled(): boolean {
   const value = process.env[SLIM_IMAGES_ENV];
   return value === "true" || value === "1";
@@ -138,10 +132,11 @@ export function slimImageForCurrentPin(
   alias: string,
   currentRawImage: string,
   pin?: string,
+  enabled = slimImagesEnabled(),
 ): string {
   const trimmed = pin?.trim() ?? "";
   const tagged = trimmed.length > 0 ? replaceImageTag(currentRawImage, trimmed) : currentRawImage;
-  if (!slimImagesEnabled()) {
+  if (!enabled) {
     return tagged;
   }
   if (trimmed.length > 0 && !pinMatchesCurrentImage(alias, trimmed, currentRawImage)) {

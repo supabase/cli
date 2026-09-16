@@ -11,11 +11,23 @@ import type {
   V1GetProjectOutput,
 } from "@supabase/api/effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
+import type * as ChildProcess from "effect/unstable/process/ChildProcess";
 import { CliOutput, Command } from "effect/unstable/cli";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
-import { Deferred, Effect, Exit, Layer, Option, PlatformError, Sink, Stdio, Stream } from "effect";
+import {
+  ConfigProvider,
+  Deferred,
+  Effect,
+  Exit,
+  Layer,
+  Option,
+  PlatformError,
+  Sink,
+  Stdio,
+  Stream,
+} from "effect";
 import {
   GLOBAL_FLAGS,
   DebugFlag,
@@ -43,6 +55,8 @@ import {
 } from "../../../../tests/helpers/command-mocks.ts";
 import { mockChildProcessSpawner } from "../../../../tests/helpers/child-process-spawner.ts";
 import { textCliOutputFormatter } from "../../../shared/output/text-formatter.ts";
+import { dockerfileServiceImageRaw } from "../../../shared/services/dockerfile-images.ts";
+import { toSlimImage } from "../../../shared/services/slim-images.ts";
 import { processControlLayer } from "../../../shared/runtime/process-control.layer.ts";
 import { TelemetryRuntime } from "../../../shared/telemetry/runtime.service.ts";
 import { makeTelemetryIdentity } from "../../../shared/telemetry/identity.ts";
@@ -389,6 +403,11 @@ function mockSequentialChildProcessSpawner(
     readonly stdout?: ReadonlyArray<string>;
     readonly stderr?: ReadonlyArray<string>;
   }>,
+  onSpawn?: (record: {
+    readonly command: string;
+    readonly args: ReadonlyArray<string>;
+    readonly options: ChildProcess.CommandOptions;
+  }) => void,
 ) {
   const encoder = new TextEncoder();
   const spawned: Array<{ command: string; args: ReadonlyArray<string> }> = [];
@@ -401,6 +420,8 @@ function mockSequentialChildProcessSpawner(
         const cmd = command._tag === "StandardCommand" ? command.command : "";
         const args = command._tag === "StandardCommand" ? command.args : [];
         spawned.push({ command: cmd, args });
+        if (command._tag === "StandardCommand")
+          onSpawn?.({ command: cmd, args, options: command.options });
 
         const step = steps[Math.min(stepIndex, steps.length - 1)];
         stepIndex += 1;
@@ -1536,8 +1557,8 @@ describe("gen types", () => {
     Effect.tryPromise({
       try: () =>
         withSslProbeServer(async (port) => {
-          const image = resolvePgmetaImage();
-          const candidates = getRegistryImageUrlCandidates(image);
+          const image = await Effect.runPromise(resolvePgmetaImage());
+          const candidates = await Effect.runPromise(getRegistryImageUrlCandidates(image));
           const child = mockSequentialChildProcessSpawner([
             ...candidates.map(() => ({
               exitCode: 1,
@@ -2551,7 +2572,6 @@ describe("gen types", () => {
     Effect.tryPromise({
       try: () =>
         withSslProbeServer(async (port) => {
-          const docker = captureDockerRun();
           const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-local-"));
           writeConfig(
             workdir,
@@ -2566,16 +2586,32 @@ describe("gen types", () => {
               `port = ${port}`,
             ].join("\n"),
           );
+          writeFileSync(
+            join(workdir, "supabase", ".env"),
+            "DOCKER_HOST=project-daemon\nSUPABASE_INTERNAL_IMAGE_REGISTRY=docker.io\nSUPABASE_USE_SLIM_IMAGES=1\nSUPABASE_DB_PASSWORD=dotenv-password\n",
+          );
 
-          const { layer, out, child, linkedProjectCache } = setup({
+          const childCalls: Array<{
+            readonly command: string;
+            readonly args: ReadonlyArray<string>;
+            readonly options: ChildProcess.CommandOptions;
+          }> = [];
+          const child = mockSequentialChildProcessSpawner(
+            [{}, {}, { stdout: ["export type Database = {};"], stderr: ["pg-meta warning"] }],
+            (record) => childCalls.push(record),
+          );
+          const { layer, out, linkedProjectCache } = setup({
             workdir,
-            childStdout: ["export type Database = {};"],
-            childStderr: ["pg-meta warning"],
-            onSpawn: docker.onSpawn,
+            childLayer: child.layer,
           });
+          const configProvider = ConfigProvider.fromEnvRecord({}, { preserveEmptyStrings: true });
+          const expectedSlimImage = toSlimImage("pgmeta", dockerfileServiceImageRaw("pgmeta"));
 
           await Effect.runPromise(
-            genTypes(defaultFlags({ local: true })).pipe(Effect.provide(layer)),
+            genTypes(defaultFlags({ local: true })).pipe(
+              Effect.provide(layer),
+              Effect.provideService(ConfigProvider.ConfigProvider, configProvider),
+            ),
           );
 
           expect(out.stderrText).toContain("Connecting to db 5432");
@@ -2589,11 +2625,31 @@ describe("gen types", () => {
           expect(child.spawned[2]?.command).toBe("docker");
           expect(child.spawned[2]?.args).toContain("--network");
           expect(child.spawned[2]?.args).toContain("supabase_network_demo");
-          expect(docker.env.has("PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=public,custom")).toBe(
-            true,
-          );
-          expect(child.spawned[2]?.args).toContain(resolvePgmetaImage());
+          expect(
+            dockerEnv(child.spawned[2]?.args ?? []).has(
+              "PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=public,custom",
+            ),
+          ).toBe(true);
+          expect(child.spawned[2]?.args).toContain(expectedSlimImage);
           expect(child.spawned[2]?.args.slice(-2)).toEqual(["node", "dist/server/server.js"]);
+          expect(childCalls[0]?.options.env).toEqual({
+            DOCKER_HOST: "project-daemon",
+            SUPABASE_INTERNAL_IMAGE_REGISTRY: "docker.io",
+            SUPABASE_USE_SLIM_IMAGES: "1",
+          });
+          expect(childCalls[0]?.options.extendEnv).toBe(true);
+          expect(childCalls[1]?.options.env).toEqual({
+            DOCKER_HOST: "project-daemon",
+            SUPABASE_INTERNAL_IMAGE_REGISTRY: "docker.io",
+            SUPABASE_USE_SLIM_IMAGES: "1",
+          });
+          expect(childCalls[1]?.options.extendEnv).toBe(true);
+          expect(childCalls[2]?.options.env).toEqual({
+            DOCKER_HOST: "project-daemon",
+            SUPABASE_INTERNAL_IMAGE_REGISTRY: "docker.io",
+            SUPABASE_USE_SLIM_IMAGES: "1",
+          });
+          expect(childCalls[2]?.options.extendEnv).toBe(true);
           expect(linkedProjectCache.cached).toBe(false);
         }),
       catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
@@ -2822,11 +2878,11 @@ describe("gen types", () => {
           });
           expect(child.spawned[2]).toEqual({
             command: "docker",
-            args: ["image", "inspect", resolvePgmetaImage()],
+            args: ["image", "inspect", Effect.runSync(resolvePgmetaImage())],
           });
           expect(child.spawned[3]).toEqual({
             command: "podman",
-            args: ["image", "inspect", resolvePgmetaImage()],
+            args: ["image", "inspect", Effect.runSync(resolvePgmetaImage())],
           });
           expect(child.spawned[4]?.command).toBe("docker");
           expect(child.spawned[4]?.args).toContain("run");
@@ -2858,46 +2914,32 @@ describe("gen types", () => {
             ].join("\n"),
           );
 
-          const previousPassword = process.env["SUPABASE_DB_PASSWORD"];
-          process.env["SUPABASE_DB_PASSWORD"] = "secret-password";
-          try {
-            const { layer, child } = setup({
-              workdir,
-              childStdout: ["generated"],
-              onSpawn: docker.onSpawn,
-              dbConfigResolve: () =>
-                Effect.succeed(
-                  localResolvedConfig({
-                    host: "127.0.0.1",
-                    port,
-                    user: "postgres",
-                    password: "secret-password",
-                    database: "postgres",
-                  }),
-                ),
-            });
+          const { layer, child } = setup({
+            workdir,
+            childStdout: ["generated"],
+            onSpawn: docker.onSpawn,
+          });
 
-            await Effect.runPromise(
-              genTypes(defaultFlags({ local: true })).pipe(Effect.provide(layer)),
-            );
-
-            expect(child.spawned[0]).toEqual({
-              command: "docker",
-              args: ["container", "inspect", "supabase_db_demo_project_with_spaces"],
-            });
-            expect(child.spawned[2]?.args).toContain("supabase_network_demo_project_with_spaces");
-            expect(
-              docker.env.has(
-                "PG_META_DB_URL=postgresql://postgres:secret-password@db:5432/postgres?connect_timeout=10",
+          await Effect.runPromise(
+            genTypes(defaultFlags({ local: true })).pipe(
+              Effect.provide(layer),
+              Effect.provideService(
+                ConfigProvider.ConfigProvider,
+                ConfigProvider.fromEnvRecord({ SUPABASE_DB_PASSWORD: "secret-password" }),
               ),
-            ).toBe(true);
-          } finally {
-            if (previousPassword === undefined) {
-              delete process.env["SUPABASE_DB_PASSWORD"];
-            } else {
-              process.env["SUPABASE_DB_PASSWORD"] = previousPassword;
-            }
-          }
+            ),
+          );
+
+          expect(child.spawned[0]).toEqual({
+            command: "docker",
+            args: ["container", "inspect", "supabase_db_demo_project_with_spaces"],
+          });
+          expect(child.spawned[2]?.args).toContain("supabase_network_demo_project_with_spaces");
+          expect(
+            docker.env.has(
+              "PG_META_DB_URL=postgresql://postgres:secret-password@db:5432/postgres?connect_timeout=10",
+            ),
+          ).toBe(true);
         }),
       catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
     }),
@@ -3011,7 +3053,7 @@ describe("gen types", () => {
             genTypes(defaultFlags({ local: true })).pipe(Effect.provide(layer)),
           );
 
-          expect(child.spawned[2]?.args).toContain(resolvePgmetaImage("0.99.0"));
+          expect(child.spawned[2]?.args).toContain(Effect.runSync(resolvePgmetaImage("0.99.0")));
         }),
       catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
     }),
@@ -3602,30 +3644,26 @@ describe("gen types", () => {
     Effect.tryPromise({
       try: () =>
         withSslProbeServer(async (port) => {
-          const previous = process.env["SUPABASE_CA_SKIP_VERIFY"];
-          process.env["SUPABASE_CA_SKIP_VERIFY"] = "true";
-          try {
-            const { layer, out } = setup({ childStdout: ["generated"] });
+          const { layer, out } = setup({ childStdout: ["generated"] });
 
-            await Effect.runPromise(
-              genTypes(
-                defaultFlags({
-                  dbUrl: Option.some(`postgresql://postgres:postgres@127.0.0.1:${port}/postgres`),
-                  schema: ["public"],
-                }),
-              ).pipe(Effect.provide(layer)),
-            );
+          await Effect.runPromise(
+            genTypes(
+              defaultFlags({
+                dbUrl: Option.some(`postgresql://postgres:postgres@127.0.0.1:${port}/postgres`),
+                schema: ["public"],
+              }),
+            ).pipe(
+              Effect.provide(layer),
+              Effect.provideService(
+                ConfigProvider.ConfigProvider,
+                ConfigProvider.fromEnvRecord({ SUPABASE_CA_SKIP_VERIFY: "true" }),
+              ),
+            ),
+          );
 
-            expect(out.stderrText).toContain(
-              "WARNING: TLS certificate verification disabled for SSL probe (SUPABASE_CA_SKIP_VERIFY=true)",
-            );
-          } finally {
-            if (previous === undefined) {
-              delete process.env["SUPABASE_CA_SKIP_VERIFY"];
-            } else {
-              process.env["SUPABASE_CA_SKIP_VERIFY"] = previous;
-            }
-          }
+          expect(out.stderrText).toContain(
+            "WARNING: TLS certificate verification disabled for SSL probe (SUPABASE_CA_SKIP_VERIFY=true)",
+          );
         }),
       catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
     }),

@@ -1,6 +1,6 @@
 import * as net from "node:net";
 import { BunServices } from "@effect/platform-bun";
-import { Crypto, Duration, Effect, FileSystem, Layer, Option, Path } from "effect";
+import { Config, Crypto, Duration, Effect, FileSystem, Layer, Option, Path } from "effect";
 
 import { CommandPlatformApiFactory } from "../auth/command-platform-api-factory.service.ts";
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
@@ -198,9 +198,10 @@ const resolveDbPassword = Effect.fnUntraced(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const projectEnv = yield* loadProjectEnv(fs, path, workdir);
+  const ambientPassword = yield* Config.option(Config.string("SUPABASE_DB_PASSWORD"));
   return (
     Option.getOrUndefined(passwordFlag) ??
-    process.env["SUPABASE_DB_PASSWORD"] ??
+    Option.getOrUndefined(ambientPassword) ??
     projectEnv["SUPABASE_DB_PASSWORD"] ??
     ""
   );

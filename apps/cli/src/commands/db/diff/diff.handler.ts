@@ -14,7 +14,6 @@ import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { aqua, yellow } from "../../../command-internal/colors.ts";
 import {
-  applyProjectEnv,
   readDbToml,
   resolveDeclarativeDir,
   type DbTomlValues,
@@ -491,10 +490,6 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
       linkedRefForCache = linkedRef;
     }
     const cfg = yield* readDbToml(fs, path, cliSettings.workdir, linkedRef);
-    // Make an allowlisted `supabase/.env` registry override visible to the
-    // synchronous `process.env` reader the pgAdmin differ's (and the migra/pg-delta
-    // shadow's) own image resolver falls back to, reverted when this scope closes.
-    yield* applyProjectEnv(cfg.projectEnv);
     if (cfg.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${cfg.appliedRemote}]\n`, "stderr");
     }
@@ -656,6 +651,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
               // `SUPABASE_SERVICES_HOSTNAME`/`[db] password` by design, not a bug to fix.
               target: `postgresql://postgres:postgres@127.0.0.1:${shadowBase.shadowPort}/postgres`,
               schema: flags.schema,
+              projectEnvValues: cfg.projectEnv,
               projectId: shadowBase.projectId,
               networkId: shadowBase.networkId,
               extraHosts: shadowBase.extraHosts,
@@ -860,8 +856,5 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
       ),
     ),
     Effect.ensuring(telemetryState.flush),
-    // Scope the `SUPABASE_INTERNAL_IMAGE_REGISTRY`-from-`.env` apply above to this
-    // command run: `applyProjectEnv` registers a finalizer that reverts it.
-    Effect.scoped,
   );
 });

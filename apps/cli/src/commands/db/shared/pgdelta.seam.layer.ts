@@ -246,13 +246,23 @@ export const declarativeSeamLayer = Layer.effect(
                 );
               }
               const actual = resolveContainerInspectImageName(stdout);
-              const expected = getRegistryImageUrl(image).trim();
+              const expected = yield* getRegistryImageUrl(image, toml.projectEnv).pipe(
+                Effect.mapError(
+                  (error) =>
+                    new DeclarativeShadowDbError({
+                      message: `failed to resolve local Postgres image registry: ${error.message}`,
+                    }),
+                ),
+                Effect.map((value) => value.trim()),
+              );
               const actualTag = dockerImageTag(actual);
               const expectedTag = dockerImageTag(expected);
               if (actual.length === 0 || actualTag.length === 0 || expectedTag.length === 0) {
                 return;
               }
-              // Slim images skip the registry mirror, so slim vs docker.io is stale even with matching tags.
+              // Slim refs never go through a registry mirror, so a family mismatch
+              // (e.g. a docker.io container satisfying a ghcr.io/supabase/cli
+              // expectation) is stale even when the tags happen to match.
               const familyMismatch = isSlimImageRef(expected) !== isSlimImageRef(actual);
               if (!familyMismatch && actualTag === expectedTag) {
                 return;

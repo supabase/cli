@@ -6,6 +6,7 @@ BackupRestoreNetworkError
 BackupRestoreUnexpectedStatusError
 BootstrapHealthError
 BootstrapInvalidTemplateError
+BootstrapOperationError
 BootstrapOverwriteDeclinedError
 BootstrapTemplateDownloadError
 BootstrapTemplateListError
