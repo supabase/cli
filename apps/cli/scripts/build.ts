@@ -14,7 +14,7 @@ const MUSL_TARGETS = [
     nfpmArch: "arm64",
   },
   {
-    bunTarget: "bun-linux-x64-musl-baseline",
+    bunTarget: "bun-linux-x64-baseline-musl",
     pkg: "cli-linux-x64-musl",
     nfpmArch: "amd64",
   },
@@ -86,13 +86,11 @@ const TARGETS = [
 const entrypoint = path.join(root, "apps/cli/src/main.ts");
 const distDir = path.join(root, "dist");
 const goSource = path.resolve(root, "apps/cli-go");
-const serveMainTemplateDefine = `--define=SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE=${JSON.stringify(
-  await bundleServeMainTemplate(),
-)}`;
-const posthogBuildDefines = [
-  `--define=process.env.SUPABASE_CLI_POSTHOG_KEY=${JSON.stringify(process.env.POSTHOG_API_KEY ?? "")}`,
-  `--define=process.env.SUPABASE_CLI_POSTHOG_HOST=${JSON.stringify(process.env.POSTHOG_ENDPOINT ?? "")}`,
-] as const;
+const buildDefines = {
+  SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE: JSON.stringify(await bundleServeMainTemplate()),
+  "process.env.SUPABASE_CLI_POSTHOG_KEY": JSON.stringify(process.env.POSTHOG_API_KEY ?? ""),
+  "process.env.SUPABASE_CLI_POSTHOG_HOST": JSON.stringify(process.env.POSTHOG_ENDPOINT ?? ""),
+};
 
 type BunTarget = (typeof TARGETS)[number]["bunTarget"];
 
@@ -114,15 +112,10 @@ function libcForBunTarget(target: string): "glibc" | "musl" | "" {
   return target.includes("-musl") ? "musl" : "glibc";
 }
 
-async function runBunBuild(args: ReadonlyArray<string>) {
-  const child = Bun.spawn({
-    cmd: ["bun", ...args],
-    stdout: "inherit",
-    stderr: "inherit",
-  });
-  const exitCode = await child.exited;
-  if (exitCode !== 0) {
-    throw new Error(`bun build failed with exit code ${exitCode}`);
+async function runBunBuild(config: Bun.BuildConfig) {
+  const result = await Bun.build(config);
+  for (const log of result.logs) {
+    console.warn(log);
   }
 }
 
@@ -134,18 +127,16 @@ async function buildTarget(target: (typeof TARGETS)[number]) {
   const libc = libcForBunTarget(target.bunTarget);
 
   console.log(`[${target.pkg}] Compiling Bun CLI...`);
-  await runBunBuild([
-    "build",
-    entrypoint,
-    "--compile",
-    "--minify",
-    `--target=${target.bunTarget}`,
-    `--define=SUPABASE_CLI_VERSION=${JSON.stringify(version)}`,
-    `--define=SUPABASE_LIBC=${JSON.stringify(libc)}`,
-    serveMainTemplateDefine,
-    ...posthogBuildDefines,
-    `--outfile=${outfile}`,
-  ]);
+  await runBunBuild({
+    entrypoints: [entrypoint],
+    compile: { target: target.bunTarget, outfile },
+    minify: true,
+    define: {
+      ...buildDefines,
+      SUPABASE_CLI_VERSION: JSON.stringify(version),
+      SUPABASE_LIBC: JSON.stringify(libc),
+    },
+  });
   console.log(`[${target.pkg}] Done.`);
 }
 
@@ -275,18 +266,16 @@ async function buildMuslBinaries() {
       const outfile = path.join(binDir, "supabase");
       const libc = libcForBunTarget(target.bunTarget);
       console.log(`[${target.pkg}] Compiling Bun CLI (musl)...`);
-      await runBunBuild([
-        "build",
-        entrypoint,
-        "--compile",
-        "--minify",
-        `--target=${target.bunTarget}`,
-        `--define=SUPABASE_CLI_VERSION=${JSON.stringify(version)}`,
-        `--define=SUPABASE_LIBC=${JSON.stringify(libc)}`,
-        serveMainTemplateDefine,
-        ...posthogBuildDefines,
-        `--outfile=${outfile}`,
-      ]);
+      await runBunBuild({
+        entrypoints: [entrypoint],
+        compile: { target: target.bunTarget, outfile },
+        minify: true,
+        define: {
+          ...buildDefines,
+          SUPABASE_CLI_VERSION: JSON.stringify(version),
+          SUPABASE_LIBC: JSON.stringify(libc),
+        },
+      });
 
       // The Go binary is fully static (CGO_ENABLED=0), so the glibc build works on musl too;
       // copy it into the musl package so GoProxy finds supabase-go there.
