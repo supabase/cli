@@ -22,6 +22,8 @@
     "!apps/cli/src/commands/orgs/**",
     "!apps/cli/src/commands/postgres-config/**",
     "!apps/cli/src/commands/projects/**",
+    "!apps/cli/src/commands/pull/**",
+    "!apps/cli/src/commands/secrets/**",
     "!apps/cli/src/commands/services/**",
     "!apps/cli/src/commands/snippets/**",
     "!apps/cli/src/commands/ssl-enforcement/**",
@@ -35,6 +37,7 @@
     "apps/cli/src/shared/compute/stacks/**",
     "!apps/cli/tests/helpers/compute.ts",
     "!apps/cli/tests/helpers/postgres-config-live.ts",
+    "!apps/cli/tests/helpers/secrets-live.ts",
     "!apps/cli/src/command-internal/experimental-feature.ts"
   ]
 }
