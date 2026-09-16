@@ -12,6 +12,7 @@ import {
   Queue,
   Redacted,
   Ref,
+  Scheduler,
   Scope,
 } from "effect";
 import * as TestClock from "effect/testing/TestClock";
@@ -78,6 +79,11 @@ const invokeCredentials = (
     return value;
   });
 
+type ReadGate = {
+  readonly started: Deferred.Deferred<void>;
+  readonly gate: Deferred.Deferred<void>;
+};
+
 const makeFixture = (
   fixtureOptions: {
     readonly ingress?: SupervisorIngress;
@@ -124,6 +130,7 @@ const makeFixture = (
     readonly shutdownReadArmed?: Ref.Ref<boolean>;
     readonly shutdownReadStarted?: Deferred.Deferred<void>;
     readonly shutdownReadGate?: Deferred.Deferred<void>;
+    readonly readGateQueue?: Ref.Ref<ReadonlyArray<ReadGate>>;
     readonly readCalls?: Ref.Ref<number>;
     readonly prefetchStarted?: Deferred.Deferred<void>;
     readonly prefetchFinished?: Deferred.Deferred<void>;
@@ -175,25 +182,42 @@ const makeFixture = (
               }),
           };
     const runtimeStore =
-      fixtureOptions.shutdownReadArmed === undefined ||
-      fixtureOptions.shutdownReadStarted === undefined ||
-      fixtureOptions.shutdownReadGate === undefined
-        ? persistedStore
-        : {
+      fixtureOptions.readGateQueue !== undefined
+        ? {
             ...persistedStore,
             read: (stackId: string) =>
               Effect.gen(function* () {
-                const armed = yield* Ref.modify(fixtureOptions.shutdownReadArmed!, (value) => [
-                  value,
-                  false,
+                const state = yield* persistedStore.read(stackId);
+                const gate = yield* Ref.modify(fixtureOptions.readGateQueue!, (gates) => [
+                  gates[0],
+                  gates.slice(1),
                 ]);
-                if (armed) {
-                  yield* Deferred.succeed(fixtureOptions.shutdownReadStarted!, undefined);
-                  yield* Deferred.await(fixtureOptions.shutdownReadGate!);
+                if (gate !== undefined) {
+                  yield* Deferred.succeed(gate.started, undefined);
+                  yield* Deferred.await(gate.gate);
                 }
-                return yield* persistedStore.read(stackId);
+                return state;
               }),
-          };
+          }
+        : fixtureOptions.shutdownReadArmed === undefined ||
+            fixtureOptions.shutdownReadStarted === undefined ||
+            fixtureOptions.shutdownReadGate === undefined
+          ? persistedStore
+          : {
+              ...persistedStore,
+              read: (stackId: string) =>
+                Effect.gen(function* () {
+                  const armed = yield* Ref.modify(fixtureOptions.shutdownReadArmed!, (value) => [
+                    value,
+                    false,
+                  ]);
+                  if (armed) {
+                    yield* Deferred.succeed(fixtureOptions.shutdownReadStarted!, undefined);
+                    yield* Deferred.await(fixtureOptions.shutdownReadGate!);
+                  }
+                  return yield* persistedStore.read(stackId);
+                }),
+            };
     const store =
       fixtureOptions.readCalls === undefined
         ? runtimeStore
@@ -1819,6 +1843,84 @@ describe("Supervisor composition", () => {
           }),
         );
         expect(Exit.isFailure(restExit)).toBe(true);
+      }),
+    ),
+  );
+
+  it.live("settles lazy activation interrupted while waiting for admission", () =>
+    run(
+      Effect.gen(function* () {
+        const ownerScope = yield* Scope.make();
+        const readGateQueue = yield* Ref.make<ReadonlyArray<ReadGate>>([]);
+        const activationReadStarted = yield* Deferred.make<void>();
+        const activationReadGate = yield* Deferred.make<void>();
+        const shutdownReadStarted = yield* Deferred.make<void>();
+        const shutdownReadGate = yield* Deferred.make<void>();
+        const activationStarted = yield* Deferred.make<void>();
+        const fixture = yield* makeFixture({
+          readGateQueue,
+          supervisorScope: ownerScope,
+          activationStarted,
+        });
+        yield* fixture.supervisor.start({
+          config: { capabilities: { rest: { activation: "lazy" } } },
+        });
+        yield* Ref.set(readGateQueue, [
+          { started: activationReadStarted, gate: activationReadGate },
+        ]);
+
+        const activation = yield* Effect.forkChild(
+          fixture.supervisor
+            .activate("rest")
+            .pipe(Effect.provideService(Scheduler.PreventSchedulerYield, true)),
+          { startImmediately: true },
+        );
+        yield* Deferred.await(activationReadStarted).pipe(
+          Effect.timeout("5 seconds"),
+          Effect.orDie,
+        );
+        yield* Ref.update(readGateQueue, (gates) => [
+          ...gates,
+          { started: shutdownReadStarted, gate: shutdownReadGate },
+        ]);
+        const shutdown = yield* Effect.forkChild(fixture.supervisor.shutdownIfIdle, {
+          startImmediately: true,
+        });
+        yield* Deferred.await(shutdownReadStarted).pipe(Effect.timeout("5 seconds"), Effect.orDie);
+
+        // Deferred resumption reaches the masked admission wait synchronously; its wake-up is
+        // scheduled.
+        // Only the FiberSet finalizer is live here, so closing the scope installs interruption
+        // first.
+        yield* Deferred.succeed(activationReadGate, undefined);
+        const closing = yield* Effect.forkChild(
+          Scope.close(ownerScope, Exit.void).pipe(
+            Effect.provideService(Scheduler.PreventSchedulerYield, true),
+          ),
+          { startImmediately: true },
+        );
+        yield* Deferred.succeed(shutdownReadGate, undefined);
+
+        yield* Fiber.join(closing).pipe(
+          Effect.timeoutOrElse({
+            duration: "5 seconds",
+            orElse: () => Effect.die("owner scope did not close"),
+          }),
+        );
+        const activationExit = yield* Fiber.await(activation).pipe(
+          Effect.timeoutOrElse({
+            duration: "5 seconds",
+            orElse: () => Effect.die("activation remained pending after owner scope close"),
+          }),
+        );
+        yield* Fiber.join(shutdown);
+        expect(Exit.isFailure(activationExit)).toBe(true);
+        if (Exit.isFailure(activationExit))
+          expect(Cause.hasInterrupts(activationExit.cause)).toBe(true);
+        expect(yield* Deferred.isDone(activationStarted)).toBe(false);
+
+        const status = yield* fixture.supervisor.status;
+        expect(status.recovery?.operation).toBe("stop");
       }),
     ),
   );

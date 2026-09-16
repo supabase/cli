@@ -94,6 +94,7 @@ import { makeGatewayActivity } from "../gateway/ActivityTracker.ts";
 import {
   admitLifecycle,
   admitActivation,
+  activeLifecycle,
   activationGate,
   beginTraffic as transitionBeginTraffic,
   beginRetirement as transitionBeginRetirement,
@@ -280,29 +281,8 @@ export const makeSupervisor = (
     });
     const currentPhase = (): Effect.Effect<ActualPhase> =>
       Ref.get(machine).pipe(Effect.map((snapshot) => publicPhase(snapshot.stack)));
-    type LifecycleResult = Deferred.Deferred<Exit.Exit<void, StackError>, never>;
-    type ActiveLifecycle = Readonly<{ kind: LifecycleKind; result: LifecycleResult }>;
-    const activeCommand = (): Effect.Effect<ActiveLifecycle | undefined> =>
-      Ref.get(machine).pipe(
-        Effect.map(({ stack }) =>
-          Match.value(stack).pipe(
-            Match.tag("starting", "start-recovery", (state) => ({
-              kind: "start" as const,
-              result: state.completion,
-            })),
-            Match.when({ _tag: "stopping" }, (state) => ({
-              kind: "stop" as const,
-              result: state.completion,
-            })),
-            Match.when({ _tag: "destroying" }, (state) => ({
-              kind: "destroy" as const,
-              result: state.completion,
-            })),
-            Match.tag("stopped", "running", "stop-required", "destroy-required", () => undefined),
-            Match.exhaustive,
-          ),
-        ),
-      );
+    const activeCommand = (): Effect.Effect<ReturnType<typeof activeLifecycle>> =>
+      Ref.get(machine).pipe(Effect.map(({ stack }) => activeLifecycle(stack)));
     type ActivationHandler = (
       capability: CapabilityName,
     ) => Effect.Effect<ActivationResult, GatewayActivationError | StackError>;

@@ -111,6 +111,23 @@ export const publicPhase = (
   );
 };
 
+export type ActiveLifecycle = Readonly<{
+  readonly kind: LifecycleKind;
+  readonly result: Deferred.Deferred<Exit.Exit<void, StackError>, never>;
+}>;
+
+export const activeLifecycle = (state: StackControlState): ActiveLifecycle | undefined =>
+  Match.value(state).pipe(
+    Match.tag("starting", "start-recovery", (value) => ({
+      kind: "start" as const,
+      result: value.completion,
+    })),
+    Match.tag("stopping", (value) => ({ kind: "stop" as const, result: value.completion })),
+    Match.tag("destroying", (value) => ({ kind: "destroy" as const, result: value.completion })),
+    Match.tag("stopped", "running", "stop-required", "destroy-required", () => undefined),
+    Match.exhaustive,
+  );
+
 /** Decides lifecycle admission once while the supervisor admission permit is held. */
 export const admitLifecycle = (
   snapshot: SupervisorSnapshot,
@@ -119,13 +136,7 @@ export const admitLifecycle = (
   attempt: symbol,
 ): LifecycleAdmission => {
   const state = snapshot.stack;
-  const activeKind = Match.value(state).pipe(
-    Match.tag("starting", "start-recovery", () => "start" as const),
-    Match.tag("stopping", () => "stop" as const),
-    Match.tag("destroying", () => "destroy" as const),
-    Match.tag("stopped", "running", "stop-required", "destroy-required", () => undefined),
-    Match.exhaustive,
-  );
+  const activeKind = activeLifecycle(state)?.kind;
   const rejected = (reason: LifecycleAdmissionReason): LifecycleAdmission => ({
     _tag: "rejected",
     reason,
