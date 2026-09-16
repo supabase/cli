@@ -29,6 +29,7 @@
     "!apps/cli/src/commands/snippets/**",
     "!apps/cli/src/commands/ssl-enforcement/**",
     "!apps/cli/src/commands/stop/**",
+    "!apps/cli/src/commands/storage/**",
     "!apps/cli/src/commands/telemetry/**",
     "!apps/cli/src/commands/test/**",
     "!apps/cli/src/commands/vanity-subdomains/**",

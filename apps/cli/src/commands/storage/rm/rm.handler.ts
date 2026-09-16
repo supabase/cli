@@ -67,12 +67,10 @@ export const storageRm = Effect.fn("storage.rm")(function* (flags: StorageRmFlag
     // Resolving the project ref before loading the project `.env` ensures an unlinked
     // workdir fails with the not-linked message instead of an env-parse error.
     if (Option.isSome(flags.projectRef) && flags.local) {
-      return yield* Effect.fail(
-        new StorageMutuallyExclusiveFlagsError({
-          message:
-            "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
-        }),
-      );
+      return yield* new StorageMutuallyExclusiveFlagsError({
+        message:
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
+      });
     }
 
     const projectRef = flags.local ? "" : yield* resolver.loadProjectRef(flags.projectRef);
