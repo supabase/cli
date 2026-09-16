@@ -1,6 +1,7 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Option, Path, Stream } from "effect";
+import { Effect, FileSystem, Layer, Option, Path, Redacted, Stream } from "effect";
+import { runtimeInfoLayer } from "../../../../shared/runtime/runtime-info.layer.ts";
 import {
   StackIdSchema,
   StackPreparationError,
@@ -11,16 +12,26 @@ import {
   type StackStatus,
   type StackConfig,
 } from "@supabase/stack/effect";
-import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockTty } from "../../../../../tests/helpers/mocks.ts";
 import {
   mockCommandSettings,
   mockTelemetryStateTracked,
 } from "../../../../../tests/helpers/command-mocks.ts";
+import * as HttpClient from "effect/unstable/http/HttpClient";
 import { StackApi, StackTargetResolver } from "../stack.shared.ts";
 import { stackRestart } from "./restart.handler.ts";
 import { stackStart } from "../start/start.handler.ts";
 import { stackStop } from "../stop/stop.handler.ts";
-import { OutputFlag } from "../../../../command-internal/global-flags.ts";
+import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
+import {
+  ExperimentalFlag,
+  OutputFlag,
+  YesFlag,
+} from "../../../../command-internal/global-flags.ts";
+import { DbConnection } from "../../../../command-internal/db-connection.service.ts";
+import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
+import { CommandPlatformApiFactory } from "../../../../auth/command-platform-api-factory.service.ts";
+import { noopStackCatalogSetupLayer } from "../../../../command-internal/stack-catalog-setup.ts";
 
 const id = StackIdSchema.make("a".repeat(64));
 const project = () =>
@@ -82,6 +93,7 @@ const fixture = (options: {
       status: Effect.sync(() => ({ ...status(), lifecycle })),
       credentials: Effect.die("unused"),
       prepare: () => Effect.die("restart must not prepare explicitly"),
+      resetDatabase: Effect.die("unused"),
       stop: Effect.gen(function* () {
         calls.push("stop");
         if (options.stop === "fail")
@@ -154,6 +166,7 @@ const fixture = (options: {
         discoverStacks: () => Effect.succeed({ stacks: [], errors: [] }),
       }),
       BunServices.layer,
+      runtimeInfoLayer,
     );
     return {
       root,
@@ -410,8 +423,14 @@ describe("stack restart", () => {
           const stack: EffectStack = {
             id,
             status: Effect.sync(state),
-            credentials: Effect.die("unused"),
+            credentials: Effect.succeed({
+              database: {
+                url: Redacted.make("postgresql://postgres:secret@127.0.0.1:54329/postgres"),
+                password: Redacted.make("secret"),
+              },
+            }),
             prepare: () => Effect.die("restart must not prepare explicitly"),
+            resetDatabase: Effect.die("unused"),
             stop: Effect.sync(() => {
               calls.push("stop");
               lifecycle = "stopped";
@@ -439,6 +458,16 @@ describe("stack restart", () => {
             output.layer,
             telemetry.layer,
             mockCommandSettings({ workdir: root }),
+            // `stackStart`'s bucket-seeding path statically requires these even though this
+            // fixture always resumes an existing stack, so seeding never runs.
+            Layer.succeed(
+              HttpClient.HttpClient,
+              HttpClient.make(() => Effect.die("unused")),
+            ),
+            Layer.succeed(CommandPlatformApiFactory, { make: Effect.die("unused") }),
+            stdinLayer.pipe(Layer.provide(mockTty({ stdinIsTty: false, stdoutIsTty: false }))),
+            mockTty({ stdinIsTty: false, stdoutIsTty: false }),
+            Layer.succeed(YesFlag, false),
             Layer.succeed(StackTargetResolver, {
               resolve: ({ id: targetId }) =>
                 Effect.succeed({
@@ -454,6 +483,21 @@ describe("stack restart", () => {
               discoverStacks: () => Effect.succeed({ stacks: [], errors: [] }),
             }),
             BunServices.layer,
+            runtimeInfoLayer,
+            noopStackCatalogSetupLayer,
+            Layer.succeed(ExperimentalFlag, false),
+            Layer.succeed(CliArgs, { args: ["stack", "start"] }),
+            Layer.succeed(DbConnection, {
+              connect: () =>
+                Effect.succeed({
+                  exec: () => Effect.void,
+                  query: () => Effect.succeed([]),
+                  execBatch: () => Effect.void,
+                  extensionExists: () => Effect.succeed(false),
+                  copyToCsv: () => Effect.succeed(new Uint8Array()),
+                  queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
+                }),
+            }),
           );
           const initialStart = {
             exclude: ["studio"],

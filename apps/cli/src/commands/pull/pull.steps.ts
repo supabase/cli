@@ -1,5 +1,4 @@
-import { join } from "node:path";
-import { Effect, Option, Stdio } from "effect";
+import { Effect, Option, Path, Stdio } from "effect";
 
 import { CommandPlatformApi } from "../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../config/command-settings.service.ts";
@@ -127,10 +126,11 @@ export const pullDbStep = Effect.fnUntraced(function* (context: PullStepContext)
 export const pullFunctionsStep = Effect.fnUntraced(function* (context: PullStepContext) {
   const api = yield* CommandPlatformApi;
   const cliSettings = yield* CommandSettings;
+  const path = yield* Path.Path;
   const stdio = yield* Stdio.Stdio;
   const rawArgs = yield* stdio.args;
   const edgeRuntimeVersion = yield* resolveEdgeRuntimeVersionPin(
-    join(cliSettings.workdir, "supabase"),
+    path.join(cliSettings.workdir, "supabase"),
   );
 
   const result: DownloadFunctionsResult = yield* downloadFunctions(

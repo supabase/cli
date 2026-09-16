@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { basename, join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Fiber, Layer, Option } from "effect";
+import { Cause, Effect, Exit, Fiber, Layer, Option } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
@@ -63,6 +63,8 @@ import {
 } from "../shared/pgdelta-engine.service.ts";
 import type { DbDiffFlags } from "./diff.command.ts";
 import { dbDiff } from "./diff.handler.ts";
+import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
+import { StackNativeEngineError } from "../../../command-internal/stack-local-database.ts";
 import { PGADMIN_DESKTOP_NOTE_PREFIX, PGADMIN_DIFF_HEADER } from "./pgadmin-diff.ts";
 
 interface SetupOpts {
@@ -282,8 +284,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   // `differCalls`; stays `undefined` since the differ's stderr is never teed to
   // the parent terminal.
   const differCaptureOpts: Array<{ readonly teeStderr?: boolean } | undefined> = [];
-  // Snapshots `process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]` at each differ
-  // `runCapture` call, standing in for the real image resolver's own read of it.
+  // Snapshots the project registry value at each differ `runCapture` call.
   const differRegistryEnvAtCall: Array<string | undefined> = [];
   const shadowSetupJobCalls: Array<{ readonly env: Readonly<Record<string, string>> }> = [];
   const docker = Layer.succeed(DockerRun, {
@@ -292,7 +293,9 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       if (dockerOpts.image.includes("pgadmin-schema-diff")) {
         differCalls.push(dockerOpts);
         differCaptureOpts.push(captureOpts);
-        differRegistryEnvAtCall.push(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]);
+        differRegistryEnvAtCall.push(
+          dockerOpts.projectEnvValues?.["SUPABASE_INTERNAL_IMAGE_REGISTRY"],
+        );
         if (opts.pgadminDockerFail !== undefined) {
           return Effect.fail(
             new DockerRunError({
@@ -1432,6 +1435,23 @@ describe("db diff", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.effect("resolves both explicit local refs before completing the diff", () => {
+    const s = setup(tmp.current, { isLocal: false, diffSql: "create table local ( );\n" });
+    return Effect.gen(function* () {
+      yield* dbDiff(flags({ from: Option.some("local"), to: Option.some("local") }));
+      expect(s.explicitDiffCalls[0]?.source).toMatchObject({
+        kind: "database",
+        connection: { host: "127.0.0.1", port: 54322 },
+        connectOptions: { isLocal: true, dnsResolver: "native" },
+      });
+      expect(s.explicitDiffCalls[0]?.desired).toMatchObject({
+        kind: "database",
+        connection: { host: "127.0.0.1", port: 54322 },
+        connectOptions: { isLocal: true, dnsResolver: "native" },
+      });
+    }).pipe(Effect.provide(s.layer));
+  });
+
   it.effect("explicit URL endpoints retain the raw ref and remote connection options", () => {
     const s = setup(tmp.current, { diffSql: "create table u ();\n" });
     return Effect.gen(function* () {
@@ -1717,6 +1737,34 @@ describe("db diff", () => {
       ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
     }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("rejects --use-migra on the stack backend", () => {
+    const s = setup(tmp.current);
+    return Effect.gen(function* () {
+      const exit = yield* dbDiff(flags({ useMigra: Option.some(true) })).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (!Exit.isFailure(exit)) return;
+      const error = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
+      expect(error).toBeInstanceOf(StackNativeEngineError);
+      if (!(error instanceof StackNativeEngineError)) return;
+      expect(error.message).toContain("The stack backend only supports the pg-delta engine.");
+      expect(error.message).toContain("--use-migra");
+    }).pipe(Effect.provide(Layer.mergeAll(s.layer, stackBackendLayer("stack"))));
+  });
+
+  it.effect("rejects --use-migra=false on the stack backend", () => {
+    const s = setup(tmp.current);
+    return Effect.gen(function* () {
+      const exit = yield* dbDiff(flags({ useMigra: Option.some(false) })).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (!Exit.isFailure(exit)) return;
+      const error = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
+      expect(error).toBeInstanceOf(StackNativeEngineError);
+      if (!(error instanceof StackNativeEngineError)) return;
+      expect(error.message).toContain("The stack backend only supports the pg-delta engine.");
+      expect(error.message).toContain("--use-migra");
+    }).pipe(Effect.provide(Layer.mergeAll(s.layer, stackBackendLayer("stack"))));
   });
 
   it.effect("fails on target mutex (--linked with --local)", () => {
@@ -2010,11 +2058,10 @@ describe("db diff", () => {
     );
 
     it.effect(
-      "a supabase/.env-only SUPABASE_INTERNAL_IMAGE_REGISTRY reaches the differ's image resolver during the run, and reverts after",
+      "a supabase/.env-only SUPABASE_INTERNAL_IMAGE_REGISTRY reaches the differ's image resolver without global mutation",
       () => {
-        // The image resolver reads `process.env` directly at call time (no
-        // `projectEnvValues` in scope); this mock records that same read since it
-        // replaces the resolver wholesale.
+        // The project environment is passed to the differ explicitly, so a dotenv-only
+        // registry override reaches image resolution without mutating the ambient environment.
         const prev = process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
         delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
         mkdirSync(join(tmp.current, "supabase"), { recursive: true });

@@ -305,10 +305,9 @@ ephemeral resources. Refactors update the package facade and its real consumers
 together. The private document format may change with the current build, while
 destructive cleanup and ownership remain explicit safeguards.
 
-Terminal owner settlement is a pure decision step: it computes the next state,
-whether all-ready timers need reconciliation, and the typed completion
-notification. The Supervisor applies those decisions in that order while
-holding admission, so observers cannot receive completion before state and
-retirement timer decisions are settled. Intermediate workload readiness,
-rollback, and cleanup notifications remain separate because dependents can need
-those results before the owning operation completes.
+Supervisor state transitions return `{snapshot, notifications, reconcile}`.
+The Supervisor commits the snapshot, performs any requested reconciliation,
+and then delivers notifications while holding admission. Every transition,
+including intermediate workload readiness, rollback, and cleanup, follows this
+commit → reconcile → notify contract, so observers cannot receive completion
+before state and retirement timer decisions are settled.

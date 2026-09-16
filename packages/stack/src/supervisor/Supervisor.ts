@@ -50,6 +50,7 @@ import {
   type ObservedWorkload,
   type RuntimeDriver,
 } from "../runtime/RuntimeDriver.ts";
+import { withLeftoverPersistentDataGuidance } from "../runtime/Diagnostics.ts";
 import type { PersistedStackState } from "../state/StackState.ts";
 import { isMissingStateRemnantError, type StackStateStore } from "../state/StackStateStore.ts";
 import {
@@ -77,25 +78,10 @@ import {
 import type { MaintenanceResponse } from "../control/MaintenanceProtocol.ts";
 import { statusForSnapshot, type ActualPhase, type ObservedStatus } from "./StatusProjection.ts";
 import {
-  publicPhase,
-  command,
-  isTransitioning,
   recoveryForState,
   type LifecycleKind,
   type SupervisorSnapshot,
 } from "./SupervisorState.ts";
-import {
-  beginStarting,
-  beginStopping,
-  cleanupFailed,
-  completeStarting,
-  dormant,
-  dormantFromReady,
-  promoteStartingPrior,
-  ready,
-  restoreStarting,
-  type CapabilityState,
-} from "./CapabilityState.ts";
 import {
   AUTH_ANON_KEY_SLOT,
   AUTH_PUBLISHABLE_KEY_SLOT,
@@ -107,17 +93,44 @@ import {
 import type { ActivationResult } from "../gateway/Gateway.ts";
 import { makeGatewayActivity } from "../gateway/ActivityTracker.ts";
 import {
-  settleActivationOwner,
+  admitLifecycle,
+  admitActivation,
+  activeLifecycle,
+  activationGate,
+  beginTraffic as transitionBeginTraffic,
+  beginRetirement as transitionBeginRetirement,
+  armRetirement as transitionArmRetirement,
+  claimWorkloads as transitionClaimWorkloads,
+  completeDormantCleanup as transitionCompleteDormantCleanup,
+  endTraffic as transitionEndTraffic,
+  enterCapabilityCleanup as transitionEnterCapabilityCleanup,
+  initializeSession,
+  promoteActivationSet as transitionPromoteActivationSet,
+  publicPhase,
+  planIdleTimer as transitionPlanIdleTimer,
   settleLifecycleOwner,
   settleRetirementOwner,
-  stopRecoverySnapshot,
+  settleActivationTerminal as transitionSettleActivationTerminal,
+  readySet as transitionReadySet,
+  setRootSet as transitionSetRootSet,
+  settleCapabilityCleanup as transitionSettleCapabilityCleanup,
+  disarmAllRetirements as transitionDisarmAllRetirements,
   type ActivationOwner,
+  type ActivationToken,
+  type ActivationClaims,
+  type ActivationTerminalOutcome,
   type ActivationExit,
+  type ClaimedWorkload,
   type CommandResult,
+  type CleanupHandle,
   type EndpointExit,
+  isCleanupCandidate,
   matchesActivationOwner,
+  type StartupHandle,
   type SettlementOwner,
-} from "./OperationSettlement.ts";
+  type SnapshotTransition,
+  type TransitionNotification,
+} from "./SupervisorTransitions.ts";
 
 /** Runtime construction is injected so catalog/artifact resolution can evolve independently. */
 export interface SupervisorRuntime {
@@ -147,6 +160,8 @@ export interface Supervisor {
     readonly config?: StackConfig;
   }) => Effect.Effect<StackStatus, StackError>;
   readonly destroy: Effect.Effect<void, StackError>;
+  /** Wipes Postgres data for the running stack and bootstraps a fresh cluster. */
+  readonly resetDatabase: Effect.Effect<StackStatus, StackError>;
   /** Completes after a successful stop or destroy shutdown signal. */
   readonly shutdown: Effect.Effect<void>;
   /** Shuts down only when durable state is absent or cleanly non-running. */
@@ -169,6 +184,14 @@ export type SupervisorOptions = {
   readonly context: Context.Context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>;
   readonly runtime: SupervisorRuntime;
 };
+
+const RESET_DATABASE_BOUNCE_CAPABILITIES: ReadonlySet<CapabilityName> = new Set([
+  "auth",
+  "storage",
+  "realtime",
+  "pooler",
+  "analytics",
+]);
 
 const rpcError = (tag: StackRpcError["tag"], message: string): StackRpcError => ({ tag, message });
 const credentialsUnavailable = rpcError(
@@ -204,7 +227,9 @@ const mapRuntimeError = (error: unknown): StackError => {
   if (error instanceof SessionCleanupError)
     return new StackCleanupError({ message: sessionCleanupMessage(error), cause: error });
   return new StackRuntimeError({
-    message: error instanceof Error ? error.message : String(error),
+    message: withLeftoverPersistentDataGuidance(
+      error instanceof Error ? error.message : String(error),
+    ),
     cause: error,
   });
 };
@@ -270,29 +295,8 @@ export const makeSupervisor = (
     });
     const currentPhase = (): Effect.Effect<ActualPhase> =>
       Ref.get(machine).pipe(Effect.map((snapshot) => publicPhase(snapshot.stack)));
-    type LifecycleResult = Deferred.Deferred<Exit.Exit<void, StackError>, never>;
-    type ActiveLifecycle = Readonly<{ kind: LifecycleKind; result: LifecycleResult }>;
-    const activeCommand = (): Effect.Effect<ActiveLifecycle | undefined> =>
-      Ref.get(machine).pipe(
-        Effect.map(({ stack }) =>
-          Match.value(stack).pipe(
-            Match.tag("starting", "start-recovery", (state) => ({
-              kind: "start" as const,
-              result: state.completion,
-            })),
-            Match.when({ _tag: "stopping" }, (state) => ({
-              kind: "stop" as const,
-              result: state.completion,
-            })),
-            Match.when({ _tag: "destroying" }, (state) => ({
-              kind: "destroy" as const,
-              result: state.completion,
-            })),
-            Match.tag("stopped", "running", "stop-required", "destroy-required", () => undefined),
-            Match.exhaustive,
-          ),
-        ),
-      );
+    const activeCommand = (): Effect.Effect<ReturnType<typeof activeLifecycle>> =>
+      Ref.get(machine).pipe(Effect.map(({ stack }) => activeLifecycle(stack)));
     type ActivationHandler = (
       capability: CapabilityName,
     ) => Effect.Effect<ActivationResult, GatewayActivationError | StackError>;
@@ -301,43 +305,16 @@ export const makeSupervisor = (
     const activationHandler = yield* Deferred.make<ActivationHandler, never>();
     const initializeActivationInAdmission = (input: LifecycleInput) =>
       Effect.gen(function* () {
-        const { plan } = input;
-        const roots = new Set(
-          CAPABILITY_NAMES.filter(
-            (name) =>
-              input.definition.capabilities[name].enabled && plan.activation[name] === "eager",
-          ),
-        );
-        const eager = eagerCapabilities(plan);
-        const startupCompletions = new Map<
-          CapabilityName,
-          Deferred.Deferred<Exit.Exit<void, StackError>, never>
-        >();
+        const eager = eagerCapabilities(input.plan);
+        const startup = new Map<CapabilityName, StartupHandle>();
         for (const name of eager)
-          startupCompletions.set(name, yield* Deferred.make<Exit.Exit<void, StackError>, never>());
-        yield* Ref.update(machine, (snapshot) => {
-          const sessionId = Symbol("stack-session");
-          const capabilities = new Map<CapabilityName, CapabilityState>();
-          for (const name of CAPABILITY_NAMES) {
-            const configured = input.definition.capabilities[name];
-            if (!configured.enabled) capabilities.set(name, { _tag: "disabled" });
-            else if (eager.has(name)) {
-              const completion = startupCompletions.get(name);
-              if (completion === undefined) capabilities.set(name, dormant(sessionId));
-              else
-                capabilities.set(
-                  name,
-                  beginStarting(
-                    dormant(sessionId),
-                    Symbol("startup"),
-                    { _tag: "workload", deferred: completion },
-                    roots.has(name),
-                  ),
-                );
-            } else capabilities.set(name, dormant(sessionId));
-          }
-          return { ...snapshot, sessionId, plan, capabilities };
-        });
+          startup.set(name, {
+            completion: yield* Deferred.make<Exit.Exit<void, StackError>, never>(),
+            operation: Symbol("startup"),
+          });
+        const sessionId = Symbol("stack-session");
+        const transition = initializeSession(yield* Ref.get(machine), input, sessionId, startup);
+        yield* applyTransitionInAdmission(transition);
         yield* Ref.set(
           idleTimeouts,
           new Map(
@@ -417,6 +394,15 @@ export const makeSupervisor = (
       });
     const joinExit = <A, E>(result: Exit.Exit<A, E>): Effect.Effect<A, E> =>
       Exit.isSuccess(result) ? Effect.succeed(result.value) : Effect.failCause(result.cause);
+    const notify = (notification: TransitionNotification): Effect.Effect<boolean> =>
+      Match.value(notification).pipe(
+        Match.tag("endpoint", (value) => Deferred.succeed(value.completion, value.result)),
+        Match.tag("activation", (value) => Deferred.succeed(value.completion, value.result)),
+        Match.tag("stopping", (value) => Deferred.succeed(value.completion, value.result)),
+        Match.tag("lifecycle", (value) => Deferred.succeed(value.completion, value.result)),
+        Match.tag("workload", (value) => Deferred.succeed(value.completion, value.result)),
+        Match.exhaustive,
+      );
     const idleTimeouts = yield* Ref.make<ReadonlyMap<CapabilityName, number | false>>(new Map());
 
     const readySet = (): Effect.Effect<ReadonlySet<CapabilityName>> =>
@@ -443,324 +429,108 @@ export const makeSupervisor = (
             ),
         ),
       );
-    const rootSet = (): Effect.Effect<ReadonlySet<CapabilityName>> =>
-      Ref.get(machine).pipe(
-        Effect.map(
-          (snapshot) =>
-            new Set(
-              [...snapshot.capabilities].flatMap(([name, state]) =>
-                "root" in state && state.root ? [name] : [],
-              ),
-            ),
-        ),
-      );
-    const planValue = (): Effect.Effect<ExecutionPlan | undefined> =>
-      Ref.get(machine).pipe(Effect.map((snapshot) => snapshot.plan));
     const setReadySetInAdmission = (names: ReadonlySet<CapabilityName>): Effect.Effect<void> =>
       Effect.gen(function* () {
-        const snapshot = yield* Ref.get(machine);
-        const capabilities = new Map(snapshot.capabilities);
-        const completions: Array<Deferred.Deferred<Exit.Exit<void, StackError>, never>> = [];
-        for (const [name, state] of capabilities) {
-          if (Predicate.isTagged(state, "dormant") && names.has(name))
-            capabilities.set(name, ready(state.sessionId, state.traffic, state.root));
-          else if (
-            Predicate.isTagged(state, "starting") &&
-            Predicate.isTagged(state.completion, "workload") &&
-            names.has(name)
-          ) {
-            completions.push(state.completion.deferred);
-            capabilities.set(name, completeStarting(state));
-          }
-        }
-        yield* Ref.set(machine, { ...snapshot, capabilities });
-        yield* Effect.forEach(
-          completions,
-          (completion) => Deferred.succeed(completion, Exit.void),
-          {
-            discard: true,
-          },
-        );
+        const transition = transitionReadySet(yield* Ref.get(machine), names);
+        yield* applyTransitionInAdmission(transition);
       });
     const setReadySet = (names: ReadonlySet<CapabilityName>): Effect.Effect<void> =>
-      admission.withPermit(setReadySetInAdmission(names));
+      admission.withPermit(Effect.uninterruptible(setReadySetInAdmission(names)));
     const promoteActivationSet = (
       names: ReadonlySet<CapabilityName>,
       activationOwner: CapabilityName,
+      plan: ExecutionPlan,
     ): Effect.Effect<void> =>
       admission.withPermit(
-        Effect.gen(function* () {
-          const snapshot = yield* Ref.get(machine);
-          const capabilities = new Map(snapshot.capabilities);
-          for (const name of names) {
-            const state = capabilities.get(name);
-            if (
-              name !== activationOwner &&
-              Predicate.isTagged(state, "starting") &&
-              Predicate.isTagged(state.completion, "activation")
-            )
-              capabilities.set(name, promoteStartingPrior(state));
-          }
-          yield* Ref.set(machine, { ...snapshot, capabilities });
-        }),
-      );
-    type ClaimedWorkload = Readonly<{
-      readonly name: CapabilityName;
-      readonly completion: Deferred.Deferred<Exit.Exit<void, StackError>, never>;
-      readonly prior: Extract<CapabilityState, { readonly _tag: "dormant" }>;
-    }>;
-    const claimWorkloads = (
-      names: ReadonlySet<CapabilityName>,
-    ): Effect.Effect<ReadonlyArray<ClaimedWorkload>> =>
-      admission.withPermit(
-        Effect.gen(function* () {
-          const snapshot = yield* Ref.get(machine);
-          const capabilities = new Map(snapshot.capabilities);
-          const claimed: Array<ClaimedWorkload> = [];
-          for (const name of names) {
-            const current = capabilities.get(name);
-            if (!Predicate.isTagged(current, "dormant")) continue;
-            const completion = yield* Deferred.make<Exit.Exit<void, StackError>, never>();
-            claimed.push({ name, completion, prior: current });
-            capabilities.set(
-              name,
-              beginStarting(current, Symbol("dependency-startup"), {
-                _tag: "workload",
-                deferred: completion,
-              }),
+        Effect.uninterruptible(
+          Effect.gen(function* () {
+            const transition = transitionPromoteActivationSet(
+              yield* Ref.get(machine),
+              names,
+              activationOwner,
+              plan,
             );
-          }
-          yield* Ref.set(machine, { ...snapshot, capabilities });
-          return claimed;
-        }),
-      );
-    const restoreActivationFailureInAdmission = (
-      capability: CapabilityName,
-      claimed: ReadonlyArray<ClaimedWorkload>,
-      affected: ReadonlySet<CapabilityName>,
-      result: Exit.Exit<void, StackError>,
-      cleanup: CleanupOutcome,
-      activationPriorRoot?: boolean,
-    ): Effect.Effect<void, never> =>
-      Effect.gen(function* () {
-        const snapshot = yield* Ref.get(machine);
-        const capabilities = new Map(snapshot.capabilities);
-        const completions: Array<Deferred.Deferred<Exit.Exit<void, StackError>, never>> = [];
-        const activationCompletions: Array<Effect.Effect<void>> = [];
-        for (const entry of claimed) {
-          const current = capabilities.get(entry.name);
-          if (
-            Predicate.isTagged(current, "starting") &&
-            Predicate.isTagged(current.completion, "workload") &&
-            current.completion.deferred === entry.completion
-          ) {
-            capabilities.set(
-              entry.name,
-              Predicate.isTagged(cleanup, "unproven")
-                ? cleanupFailed(current, cleanup.cause)
-                : dormant(entry.prior.sessionId, current.traffic, entry.prior.root),
-            );
-            completions.push(entry.completion);
-          } else if (Predicate.isTagged(current, "ready")) {
-            capabilities.set(
-              entry.name,
-              Predicate.isTagged(cleanup, "unproven")
-                ? cleanupFailed(current, cleanup.cause)
-                : dormantFromReady(current),
-            );
-          }
-        }
-        if (Predicate.isTagged(cleanup, "unproven"))
-          for (const name of affected) {
-            if (name === capability) continue;
-            const current = capabilities.get(name);
-            if (
-              !Predicate.isTagged(current, "starting") ||
-              !Predicate.isTagged(current.completion, "activation")
-            )
-              continue;
-            capabilities.set(name, cleanupFailed(current, cleanup.cause));
-            activationCompletions.push(
-              Deferred.succeed(current.completion.deferred, Exit.failCause(cleanup.cause)),
-            );
-          }
-        const currentRoot = capabilities.get(capability);
-        const savedActivationRoot =
-          Predicate.isTagged(currentRoot, "starting") &&
-          Predicate.isTagged(currentRoot.completion, "activation")
-            ? currentRoot.prior.root
-            : activationPriorRoot;
-        if (
-          Predicate.isTagged(currentRoot, "starting") &&
-          Predicate.isTagged(currentRoot.completion, "activation")
-        )
-          capabilities.set(
-            capability,
-            Predicate.isTagged(cleanup, "unproven")
-              ? cleanupFailed(currentRoot, cleanup.cause)
-              : restoreStarting(currentRoot),
-          );
-        if (Predicate.isTagged(currentRoot, "ready") && savedActivationRoot !== undefined)
-          capabilities.set(capability, { ...currentRoot, root: savedActivationRoot });
-        const next = Predicate.isTagged(cleanup, "unproven")
-          ? stopRecoverySnapshot({ ...snapshot, capabilities }, cleanup.cause)
-          : { ...snapshot, capabilities };
-        yield* Ref.set(machine, next);
-        yield* Effect.forEach(completions, (completion) => Deferred.succeed(completion, result), {
-          discard: true,
-        });
-        yield* Effect.forEach(activationCompletions, (completion) => completion, {
-          discard: true,
-        });
-      });
-    const restoreActivationFailure = (
-      capability: CapabilityName,
-      claimed: ReadonlyArray<ClaimedWorkload>,
-      affected: ReadonlySet<CapabilityName>,
-      result: Exit.Exit<void, StackError>,
-      cleanup: CleanupOutcome,
-      activationPriorRoot?: boolean,
-    ): Effect.Effect<void, never> =>
-      admission.withPermit(
-        restoreActivationFailureInAdmission(
-          capability,
-          claimed,
-          affected,
-          result,
-          cleanup,
-          activationPriorRoot,
+            yield* applyTransitionInAdmission(transition);
+          }),
         ),
       );
-    const setRootSetInAdmission = (names: ReadonlySet<CapabilityName>): Effect.Effect<void> =>
-      Ref.update(machine, (snapshot) => {
-        const capabilities = new Map(snapshot.capabilities);
-        for (const [name, state] of capabilities) {
-          capabilities.set(
-            name,
-            Match.value(state).pipe(
-              Match.tag("disabled", "stopped", (value) => value),
-              Match.tag("dormant", "starting", "ready", "stopping", "cleanup-failed", (value) => ({
-                ...value,
-                root: names.has(name),
-              })),
-              Match.exhaustive,
-            ),
-          );
+    const claimWorkloadsInAdmission = (
+      names: ReadonlySet<CapabilityName>,
+    ): Effect.Effect<ReadonlyArray<ClaimedWorkload>> =>
+      Effect.gen(function* () {
+        const handles = new Map<CapabilityName, StartupHandle>();
+        for (const name of names) {
+          handles.set(name, {
+            completion: yield* Deferred.make<Exit.Exit<void, StackError>, never>(),
+            operation: Symbol("dependency-startup"),
+          });
         }
-        return { ...snapshot, capabilities };
+        const transition = transitionClaimWorkloads(yield* Ref.get(machine), names, handles);
+        yield* applyTransitionInAdmission(transition);
+        return transition.claimed;
+      });
+    const settleActivationTerminalInAdmission = (
+      owner: ActivationOwner,
+      claims: ActivationClaims,
+      outcome: ActivationTerminalOutcome,
+    ): Effect.Effect<void, never> =>
+      Effect.gen(function* () {
+        const transition = transitionSettleActivationTerminal(
+          yield* Ref.get(machine),
+          owner,
+          claims,
+          outcome,
+        );
+        yield* applyTransitionInAdmission(transition);
+      });
+    const settleActivationTerminal = (
+      owner: ActivationOwner,
+      claims: ActivationClaims,
+      outcome: ActivationTerminalOutcome,
+    ): Effect.Effect<void, never> =>
+      admission.withPermit(settleActivationTerminalInAdmission(owner, claims, outcome));
+    const setRootSetInAdmission = (names: ReadonlySet<CapabilityName>): Effect.Effect<void> =>
+      Effect.gen(function* () {
+        yield* applyTransitionInAdmission(transitionSetRootSet(yield* Ref.get(machine), names));
       });
     const setRootSet = (names: ReadonlySet<CapabilityName>): Effect.Effect<void> =>
       admission.withPermit(setRootSetInAdmission(names));
-    const updateCapability = (
-      name: CapabilityName,
-      update: (
-        state: CapabilityState | undefined,
-        sessionId: symbol,
-      ) => CapabilityState | undefined,
-    ): Effect.Effect<void> =>
-      Ref.update(machine, (snapshot) => {
-        const capabilities = new Map(snapshot.capabilities);
-        const next = update(capabilities.get(name), snapshot.sessionId);
-        if (next === undefined) capabilities.delete(name);
-        else capabilities.set(name, next);
-        return { ...snapshot, capabilities };
-      });
-    const enterCapabilityCleanupInAdmission = (): Effect.Effect<void> =>
+    const enterCapabilityCleanupInAdmission = (): Effect.Effect<
+      ReadonlyMap<CapabilityName, CleanupHandle>
+    > =>
       Effect.gen(function* () {
         const snapshot = yield* Ref.get(machine);
-        const capabilities = new Map(snapshot.capabilities);
-        for (const [name, state] of capabilities) {
-          if (!Predicate.isTagged(state, "ready") && !Predicate.isTagged(state, "cleanup-failed"))
-            continue;
-          const completion = yield* Deferred.make<Exit.Exit<void, StackError>, never>();
-          capabilities.set(name, beginStopping(state, Symbol("cleanup"), completion));
-        }
-        yield* Ref.set(machine, { ...snapshot, capabilities });
+        const handles = new Map<CapabilityName, CleanupHandle>();
+        for (const [name, state] of snapshot.capabilities)
+          if (isCleanupCandidate(state))
+            handles.set(name, {
+              operation: Symbol("cleanup"),
+              completion: yield* Deferred.make<Exit.Exit<void, StackError>, never>(),
+            });
+        const transition = transitionEnterCapabilityCleanup(snapshot, handles);
+        yield* applyTransitionInAdmission(transition);
+        return handles;
       });
     const settleCapabilityCleanupInAdmission = (
+      handles: ReadonlyMap<CapabilityName, CleanupHandle>,
       result: Exit.Exit<void, StackError>,
     ): Effect.Effect<void> =>
       Effect.gen(function* () {
-        const snapshot = yield* Ref.get(machine);
-        const capabilities = new Map(snapshot.capabilities);
-        const completions: Array<Deferred.Deferred<Exit.Exit<void, StackError>, never>> = [];
-        for (const [name, state] of capabilities) {
-          if (!Predicate.isTagged(state, "stopping")) continue;
-          const next: CapabilityState = Exit.isSuccess(result)
-            ? { _tag: "stopped" }
-            : cleanupFailed(state, result.cause);
-          capabilities.set(name, next);
-          completions.push(state.completion);
-        }
-        yield* Ref.set(machine, { ...snapshot, capabilities });
-        yield* Effect.forEach(completions, (completion) => Deferred.succeed(completion, result), {
-          discard: true,
-        });
+        const transition = transitionSettleCapabilityCleanup(
+          yield* Ref.get(machine),
+          result,
+          handles,
+        );
+        yield* applyTransitionInAdmission(transition);
       });
-    const enterCapabilityCleanup = (): Effect.Effect<void> =>
-      admission.withPermit(enterCapabilityCleanupInAdmission());
-    const settleCapabilityCleanup = (result: Exit.Exit<void, StackError>): Effect.Effect<void> =>
-      admission.withPermit(settleCapabilityCleanupInAdmission(result));
     const completeDormantCleanupInAdmission = (): Effect.Effect<void> =>
-      Ref.update(machine, (snapshot) => {
-        const capabilities = new Map(snapshot.capabilities);
-        for (const [name, state] of capabilities)
-          if (Predicate.isTagged(state, "dormant")) capabilities.set(name, { _tag: "stopped" });
-        return { ...snapshot, capabilities };
+      Effect.gen(function* () {
+        yield* applyTransitionInAdmission(
+          transitionCompleteDormantCleanup(yield* Ref.get(machine)),
+        );
       });
     const completeDormantCleanup = (): Effect.Effect<void> =>
       admission.withPermit(completeDormantCleanupInAdmission());
-    const settleStartupFailures = (
-      cause: Cause.Cause<StackError>,
-      cleanup: CleanupOutcome,
-      durable: "stopped" | "unsafe",
-    ): Effect.Effect<void> =>
-      admission.withPermit(
-        Effect.gen(function* () {
-          const snapshot = yield* Ref.get(machine);
-          const capabilities = new Map(snapshot.capabilities);
-          const completions: Array<Deferred.Deferred<Exit.Exit<void, StackError>, never>> = [];
-          for (const [name, state] of capabilities) {
-            if (
-              !Predicate.isTagged(state, "starting") ||
-              !Predicate.isTagged(state.completion, "workload")
-            )
-              continue;
-            completions.push(state.completion.deferred);
-            capabilities.set(
-              name,
-              Predicate.isTagged(cleanup, "proven")
-                ? durable === "stopped"
-                  ? { _tag: "stopped" }
-                  : state.prior
-                : cleanupFailed(state, cause),
-            );
-          }
-          yield* Ref.set(machine, { ...snapshot, capabilities });
-          const result = Exit.failCause(cause);
-          yield* Effect.forEach(completions, (completion) => Deferred.succeed(completion, result), {
-            discard: true,
-          });
-        }),
-      );
-    const idleTimeout = (
-      timeouts: ReadonlyMap<CapabilityName, number | false>,
-      plan: ExecutionPlan,
-      capability: CapabilityName,
-    ): number | false => {
-      if (plan.activation[capability] !== "lazy") return false;
-      return timeouts.get(capability) ?? false;
-    };
-
-    const canRetire = (
-      plan: ExecutionPlan,
-      roots: ReadonlySet<CapabilityName>,
-      capability: CapabilityName,
-    ): boolean =>
-      ![...roots].some(
-        (root) => root !== capability && dependencyClosure(plan, [root]).has(capability),
-      );
-
     const appendIdleLog = (message: string): Effect.Effect<void> =>
       options.runtime.logStore
         .append({
@@ -785,49 +555,15 @@ export const makeSupervisor = (
             const fenced = yield* admission.withPermit(
               Effect.gen(function* () {
                 const snapshot = yield* Ref.get(machine);
-                const currentControl = snapshot.capabilities.get(capability);
-                const count =
-                  currentControl !== undefined && "traffic" in currentControl
-                    ? currentControl.traffic
-                    : 0;
-                const plan = snapshot.plan;
-                const roots = new Set(
-                  [...snapshot.capabilities].flatMap(([name, state]) =>
-                    "root" in state && state.root ? [name] : [],
-                  ),
+                const transition = transitionBeginRetirement(
+                  snapshot,
+                  capability,
+                  operation,
+                  completion,
+                  epoch,
                 );
-                const eligible =
-                  count === 0 &&
-                  plan !== undefined &&
-                  publicPhase(snapshot.stack) === "running" &&
-                  !isTransitioning(snapshot.stack) &&
-                  Predicate.isTagged(currentControl, "ready") &&
-                  Predicate.isTagged(currentControl.retirement, "armed") &&
-                  currentControl.retirement.epoch === epoch &&
-                  canRetire(plan, roots, capability);
-                if (!eligible) {
-                  if (
-                    Predicate.isTagged(currentControl, "ready") &&
-                    Predicate.isTagged(currentControl.retirement, "armed") &&
-                    currentControl.retirement.epoch === epoch
-                  )
-                    yield* Ref.set(machine, {
-                      ...snapshot,
-                      capabilities: new Map(snapshot.capabilities).set(capability, {
-                        ...currentControl,
-                        retirement: { _tag: "disarmed" },
-                      }),
-                    });
-                  return false;
-                }
-                const current = snapshot.capabilities.get(capability);
-                if (!Predicate.isTagged(current, "ready")) return false;
-                const stopping = beginStopping(current, operation, completion, false);
-                yield* Ref.set(machine, {
-                  ...snapshot,
-                  capabilities: new Map(snapshot.capabilities).set(capability, stopping),
-                });
-                return true;
+                yield* applyTransitionInAdmission(transition);
+                return transition.admitted;
               }),
             );
             if (!fenced) return false;
@@ -867,20 +603,10 @@ export const makeSupervisor = (
 
     function armIdleTimerInAdmission(capability: CapabilityName): Effect.Effect<void> {
       return Effect.gen(function* () {
-        const plan = yield* planValue();
-        if (plan === undefined) return;
-        const timeout = idleTimeout(yield* Ref.get(idleTimeouts), plan, capability);
-        if (timeout === false) return;
         const snapshot = yield* Ref.get(machine);
-        if (!Predicate.isTagged(snapshot.stack, "running")) return;
-        const current = snapshot.capabilities.get(capability);
-        if (
-          !Predicate.isTagged(current, "ready") ||
-          current.traffic !== 0 ||
-          Predicate.isTagged(current.retirement, "armed") ||
-          !canRetire(plan, yield* rootSet(), capability)
-        )
-          return;
+        const timeouts = yield* Ref.get(idleTimeouts);
+        const plan = transitionPlanIdleTimer(snapshot, timeouts, capability);
+        if (plan === undefined) return;
         const token = Symbol();
         yield* Effect.uninterruptibleMask(() =>
           Effect.gen(function* () {
@@ -888,7 +614,7 @@ export const makeSupervisor = (
             const fiber = yield* Effect.forkIn(
               Deferred.await(started).pipe(
                 Effect.andThen(
-                  Effect.sleep(Duration.seconds(timeout)).pipe(
+                  Effect.sleep(Duration.seconds(plan.timeout)).pipe(
                     Effect.andThen(
                       FiberSet.run(ownedFibers, retireIdle(capability, token), {
                         startImmediately: true,
@@ -900,16 +626,8 @@ export const makeSupervisor = (
               supervisorScope,
               { startImmediately: true },
             );
-            const latest = yield* Ref.get(machine);
-            const current = latest.capabilities.get(capability);
-            if (Predicate.isTagged(current, "ready"))
-              yield* Ref.set(machine, {
-                ...latest,
-                capabilities: new Map(latest.capabilities).set(capability, {
-                  ...current,
-                  retirement: { _tag: "armed", epoch: token, fiber },
-                }),
-              });
+            const transition = transitionArmRetirement(snapshot, plan, token, fiber);
+            yield* applyTransitionInAdmission(transition);
             yield* Deferred.succeed(started, undefined);
           }),
         );
@@ -934,19 +652,9 @@ export const makeSupervisor = (
       const timers = yield* admission.withPermit(
         Effect.gen(function* () {
           const snapshot = yield* Ref.get(machine);
-          const timers: Array<Fiber.Fiber<void, unknown>> = [];
-          const capabilities = new Map(snapshot.capabilities);
-          for (const [name, state] of capabilities) {
-            if (
-              Predicate.isTagged(state, "ready") &&
-              Predicate.isTagged(state.retirement, "armed")
-            ) {
-              timers.push(state.retirement.fiber);
-              capabilities.set(name, { ...state, retirement: { _tag: "disarmed" } });
-            }
-          }
-          yield* Ref.set(machine, { ...snapshot, capabilities });
-          return timers;
+          const transition = transitionDisarmAllRetirements(snapshot);
+          yield* applyTransitionInAdmission(transition);
+          return transition.timers;
         }),
       );
       yield* Effect.forEach(timers, (fiber) => Fiber.interrupt(fiber), {
@@ -961,50 +669,9 @@ export const makeSupervisor = (
         const acquired = yield* admission.withPermit(
           Effect.gen(function* () {
             const snapshot = yield* Ref.get(machine);
-            const current = snapshot.capabilities.get(capability);
-            const entry =
-              Predicate.isTagged(current, "ready") &&
-              Predicate.isTagged(current.retirement, "armed")
-                ? current.retirement.fiber
-                : undefined;
-            if (
-              Predicate.isTagged(current, "ready") &&
-              Predicate.isTagged(current.retirement, "armed")
-            )
-              yield* Ref.set(machine, {
-                ...snapshot,
-                capabilities: new Map(snapshot.capabilities).set(capability, {
-                  ...current,
-                  traffic: current.traffic + 1,
-                  retirement: { _tag: "disarmed" },
-                }),
-              });
-            else if (Predicate.isTagged(current, "ready"))
-              yield* Ref.set(machine, {
-                ...snapshot,
-                capabilities: new Map(snapshot.capabilities).set(
-                  capability,
-                  ready(current.sessionId, current.traffic + 1, current.root, current.endpoint),
-                ),
-              });
-            else if (
-              Predicate.isTagged(current, "dormant") ||
-              Predicate.isTagged(current, "starting") ||
-              Predicate.isTagged(current, "stopping") ||
-              Predicate.isTagged(current, "cleanup-failed")
-            )
-              yield* updateCapability(capability, (state) => {
-                if (state === undefined) return state;
-                return Match.value(state).pipe(
-                  Match.tag("dormant", "starting", "stopping", "cleanup-failed", (value) => ({
-                    ...value,
-                    traffic: value.traffic + 1,
-                  })),
-                  Match.tag("disabled", "stopped", "ready", (value) => value),
-                  Match.exhaustive,
-                );
-              });
-            return { fiber: entry, lease: { sessionId: snapshot.sessionId } };
+            const transition = transitionBeginTraffic(snapshot, capability);
+            yield* applyTransitionInAdmission(transition);
+            return { fiber: transition.timer, lease: { sessionId: snapshot.sessionId } };
           }),
         );
         if (acquired.fiber !== undefined) yield* Fiber.interrupt(acquired.fiber);
@@ -1014,29 +681,10 @@ export const makeSupervisor = (
       Effect.gen(function* () {
         const shouldArm = yield* admission.withPermit(
           Effect.gen(function* () {
-            const sessionId = (yield* Ref.get(machine)).sessionId;
-            if (lease.sessionId !== sessionId) return false;
-            const current = (yield* Ref.get(machine)).capabilities.get(capability);
-            const count = current !== undefined && "traffic" in current ? current.traffic : 0;
-            yield* updateCapability(capability, (state) => {
-              if (state === undefined) return state;
-              return Match.value(state).pipe(
-                Match.tag(
-                  "dormant",
-                  "starting",
-                  "ready",
-                  "stopping",
-                  "cleanup-failed",
-                  (value) => ({
-                    ...value,
-                    traffic: Math.max(0, count - 1),
-                  }),
-                ),
-                Match.tag("disabled", "stopped", (value) => value),
-                Match.exhaustive,
-              );
-            });
-            return count <= 1;
+            const snapshot = yield* Ref.get(machine);
+            const transition = transitionEndTraffic(snapshot, capability, lease.sessionId);
+            yield* applyTransitionInAdmission(transition);
+            return transition.shouldArm;
           }),
         );
         if (shouldArm) yield* armIdleTimer(capability);
@@ -1058,78 +706,6 @@ export const makeSupervisor = (
         const handler = yield* Deferred.await(activationHandler);
         return yield* handler(capability);
       });
-    const ensureActivationPhaseAllowed = (): Effect.Effect<
-      void,
-      GatewayActivationError | StackError
-    > =>
-      Effect.gen(function* () {
-        const lifecycle = yield* activeCommand();
-        if (lifecycle !== undefined)
-          return yield* new StackLifecycleConflictError({
-            stackId: options.stackId,
-            message: `Cannot activate while ${lifecycle.kind} is in progress`,
-          });
-        const stack = (yield* Ref.get(machine)).stack;
-        return yield* Match.value(stack).pipe(
-          Match.when({ _tag: "running" }, () => Effect.void),
-          Match.when({ _tag: "stopped" }, () =>
-            Effect.fail(
-              new StackNotRunningError({ message: "Stack must be running before activation" }),
-            ),
-          ),
-          Match.when({ _tag: "starting" }, () =>
-            Effect.fail(
-              new StackLifecycleConflictError({
-                stackId: options.stackId,
-                message: "Cannot activate while start is in progress",
-              }),
-            ),
-          ),
-          Match.when({ _tag: "stopping" }, () =>
-            Effect.fail(
-              new StackLifecycleConflictError({
-                stackId: options.stackId,
-                message: "Cannot activate while exact cleanup is pending; stop the stack first",
-              }),
-            ),
-          ),
-          Match.when({ _tag: "destroying" }, () =>
-            Effect.fail(
-              new StackLifecycleConflictError({
-                stackId: options.stackId,
-                message: "Cannot activate while destroy is in progress",
-              }),
-            ),
-          ),
-          Match.when({ _tag: "stop-required" }, (stack) =>
-            Effect.fail(
-              new StackLifecycleConflictError({
-                stackId: options.stackId,
-                message: "Exact runtime cleanup is required; retry stop before activating",
-                recovery: recoveryForState(stack),
-              }),
-            ),
-          ),
-          Match.when({ _tag: "start-recovery" }, () =>
-            Effect.fail(
-              new StackLifecycleConflictError({
-                stackId: options.stackId,
-                message: "Start recovery requires exact cleanup; retry stop before activating",
-              }),
-            ),
-          ),
-          Match.when({ _tag: "destroy-required" }, (stack) =>
-            Effect.fail(
-              new StackLifecycleConflictError({
-                stackId: options.stackId,
-                message: "Destructive cleanup is required; retry destroy before activating",
-                recovery: recoveryForState(stack),
-              }),
-            ),
-          ),
-          Match.exhaustive,
-        );
-      });
     const ensureActivationStateAllowed = (): Effect.Effect<
       PersistedStackState,
       GatewayActivationError | StackError
@@ -1144,10 +720,6 @@ export const makeSupervisor = (
           });
         return state;
       });
-    const ensureActivationAllowed = (): Effect.Effect<
-      PersistedStackState,
-      GatewayActivationError | StackError
-    > => ensureActivationPhaseAllowed().pipe(Effect.andThen(ensureActivationStateAllowed()));
     const shutdownSignal = yield* Deferred.make<void, never>();
     const signalShutdown = Deferred.succeed(shutdownSignal, undefined).pipe(Effect.asVoid);
     const ensureAcceptingOperations = Deferred.poll(shutdownSignal).pipe(
@@ -1172,16 +744,9 @@ export const makeSupervisor = (
           Effect.uninterruptible(
             Effect.gen(function* () {
               yield* ensureAcceptingOperations;
-              const current = yield* activeCommand();
-              if (current !== undefined) {
-                return yield* new StackLifecycleConflictError({
-                  stackId: options.stackId,
-                  message: `Lifecycle operation ${current.kind} is already active`,
-                });
-              }
               const deferred = yield* Deferred.make<Exit.Exit<void, StackError>, never>();
               const snapshot = yield* Ref.get(machine);
-              const admitted = command(snapshot.stack, kind, deferred);
+              const admitted = admitLifecycle(snapshot, kind, deferred, Symbol(kind));
               if (Predicate.isTagged(admitted, "rejected"))
                 return yield* new StackLifecycleConflictError({
                   stackId: options.stackId,
@@ -1190,43 +755,58 @@ export const makeSupervisor = (
                       ? "Exact runtime cleanup is required; retry stop before starting"
                       : admitted.reason === "destroy-required"
                         ? "Destructive cleanup is required; retry destroy before proceeding"
-                        : `Lifecycle operation ${kind} is already in progress`,
+                        : `Lifecycle operation ${admitted.activeKind ?? kind} is already active`,
                   recovery:
                     admitted.reason === "stop-required" || admitted.reason === "destroy-required"
                       ? recoveryForState(snapshot.stack)
                       : undefined,
                 });
-              yield* Ref.set(machine, { ...snapshot, stack: admitted.state });
-              const owner = cancelIdleTimers.pipe(
-                Effect.andThen(execution.withPermit(effect)),
-                Effect.onExit((result) =>
-                  Effect.gen(function* () {
-                    const operation = Exit.isSuccess(result)
-                      ? result.value
-                      : {
-                          _tag: "failed" as const,
-                          cause: result.cause,
-                          cleanup: { _tag: "unproven" as const, cause: result.cause },
-                          durable: "unsafe" as const,
-                        };
-                    if (kind === "start" && Predicate.isTagged(operation, "failed"))
-                      yield* settleStartupFailures(
-                        operation.cause,
-                        operation.cleanup,
-                        operation.durable,
-                      );
-                    if (
-                      Predicate.isTagged(operation, "failed") &&
-                      (kind === "stop" || kind === "destroy")
-                    )
-                      yield* settleCapabilityCleanup(Exit.failCause(operation.cause));
-                    yield* settleOwner({
-                      _tag: "lifecycle",
-                      completion: deferred,
-                      result: operation,
-                    });
-                  }),
-                ),
+              yield* applyTransitionInAdmission(admitted);
+              const finish = (result: Exit.Exit<CommandResult, StackError>) =>
+                Effect.gen(function* () {
+                  const operation = Exit.isSuccess(result)
+                    ? result.value
+                    : {
+                        _tag: "failed" as const,
+                        cause: result.cause,
+                        cleanup: { _tag: "unproven" as const, cause: result.cause },
+                        durable: "unsafe" as const,
+                      };
+                  yield* settleOwner({
+                    _tag: "lifecycle",
+                    completion: deferred,
+                    result: operation,
+                  });
+                  return operation;
+                });
+              let entered = false;
+              const owner = Effect.uninterruptibleMask((restore) =>
+                Effect.gen(function* () {
+                  const cancelled = yield* restore(cancelIdleTimers).pipe(Effect.exit);
+                  if (Exit.isFailure(cancelled)) {
+                    yield* finish(Exit.failCause(cancelled.cause));
+                    return yield* Effect.failCause(cancelled.cause);
+                  }
+                  const result = yield* restore(
+                    execution.withPermit(
+                      Effect.uninterruptibleMask((inner) =>
+                        Effect.gen(function* () {
+                          entered = true;
+                          const result = yield* inner(effect).pipe(Effect.exit);
+                          const operation = yield* finish(result);
+                          return yield* joinExit(
+                            Predicate.isTagged(operation, "failed")
+                              ? Exit.failCause(operation.cause)
+                              : Exit.succeed(operation),
+                          );
+                        }),
+                      ),
+                    ),
+                  ).pipe(Effect.exit);
+                  if (!entered && Exit.isFailure(result))
+                    yield* finish(Exit.failCause(result.cause));
+                  return yield* joinExit(result);
+                }),
               );
               const ownerFiber = yield* FiberSet.run(ownedFibers, owner, {
                 startImmediately: true,
@@ -1400,37 +980,45 @@ export const makeSupervisor = (
       });
 
     const cleanupRuntime = (destroy: boolean): Effect.Effect<void, StackError> =>
-      Effect.gen(function* () {
-        yield* enterCapabilityCleanup();
-        const background = yield* Ref.get(backgroundPreparation);
-        if (background !== undefined) yield* Fiber.interrupt(background);
-        yield* Ref.set(backgroundPreparation, undefined);
-        const ingress = yield* runtime.ingress.close.pipe(
-          Effect.mapError(mapCleanupError),
-          Effect.exit,
-        );
-        const launched = destroy
-          ? Exit.succeed(undefined)
-          : yield* launcher.stop.pipe(Effect.mapError(mapCleanupError), Effect.exit);
-        const driver = yield* runtime.driver
-          .cleanup({ stackId: options.stackId, destroy })
-          .pipe(Effect.mapError(mapCleanupError), Effect.exit);
-        let cause: Cause.Cause<StackError> = Cause.empty;
-        for (const result of [ingress, launched, driver])
-          if (Exit.isFailure(result)) cause = Cause.combine(cause, result.cause);
-        if (cause.reasons.length > 0) {
-          yield* settleCapabilityCleanup(Exit.failCause(cause));
-          return yield* Effect.failCause(cause);
-        }
-        yield* settleCapabilityCleanup(Exit.void);
-        yield* completeDormantCleanup();
-        if (!destroy) {
+      Effect.uninterruptibleMask((restore) =>
+        Effect.gen(function* () {
+          let handles: ReadonlyMap<CapabilityName, CleanupHandle> | undefined;
+          const result = yield* restore(
+            Effect.gen(function* () {
+              yield* admission.withPermit(
+                Effect.uninterruptible(
+                  Effect.gen(function* () {
+                    handles = yield* enterCapabilityCleanupInAdmission();
+                  }),
+                ),
+              );
+              const background = yield* Ref.get(backgroundPreparation);
+              if (background !== undefined) yield* Fiber.interrupt(background);
+              yield* Ref.set(backgroundPreparation, undefined);
+              const ingress = yield* runtime.ingress.close.pipe(
+                Effect.mapError(mapCleanupError),
+                Effect.exit,
+              );
+              const launched = destroy
+                ? Exit.succeed(undefined)
+                : yield* launcher.stop.pipe(Effect.mapError(mapCleanupError), Effect.exit);
+              const driver = yield* runtime.driver
+                .cleanup({ stackId: options.stackId, destroy })
+                .pipe(Effect.mapError(mapCleanupError), Effect.exit);
+              let cause: Cause.Cause<StackError> = Cause.empty;
+              for (const outcome of [ingress, launched, driver])
+                if (Exit.isFailure(outcome)) cause = Cause.combine(cause, outcome.cause);
+              if (cause.reasons.length > 0) return yield* Effect.failCause(cause);
+            }),
+          ).pipe(Effect.exit);
+          if (handles !== undefined)
+            yield* admission.withPermit(settleCapabilityCleanupInAdmission(handles, result));
+          if (Exit.isFailure(result)) return yield* Effect.failCause(result.cause);
+          yield* completeDormantCleanup();
+          if (destroy) yield* launcher.clear;
           yield* setRootSet(new Set());
-        } else {
-          yield* launcher.clear;
-          yield* setRootSet(new Set());
-        }
-      });
+        }),
+      );
     const backend: LifecycleBackend = {
       preflight: runtime.preflight,
       launch: launchBackend,
@@ -1445,16 +1033,19 @@ export const makeSupervisor = (
     }).pipe(Effect.provideContext(options.context));
     const status = snapshot();
 
-    const activateOperation = (
-      capability: CapabilityName,
-      activationPriorRoot?: boolean,
-    ): Effect.Effect<ActivationResult, GatewayActivationError | StackError> =>
+    type PreparedActivation = Readonly<{
+      readonly input: LifecycleInput;
+      readonly selected: ReadonlySet<CapabilityName>;
+    }>;
+    const prepareActivation = (
+      owner: ActivationOwner,
+    ): Effect.Effect<PreparedActivation, GatewayActivationError | StackError> =>
       Effect.gen(function* () {
-        const state = yield* ensureActivationAllowed();
+        const state = yield* ensureActivationStateAllowed();
         const definition = state.definition;
-        if (definition === undefined || !definition.capabilities[capability].enabled)
+        if (definition === undefined || !definition.capabilities[owner.capability].enabled)
           return yield* new GatewayActivationError({
-            message: `Capability ${capability} is not enabled`,
+            message: `Capability ${owner.capability} is not enabled`,
           });
         const plan = yield* rebuildExecutionPlan(state.runtime, definition).pipe(
           Effect.provideContext(options.context),
@@ -1462,174 +1053,126 @@ export const makeSupervisor = (
             (error) => new StackStateInvalidError({ message: error.message, cause: error }),
           ),
         );
-        const next = new Set([...(yield* readySet()), ...dependencyClosure(plan, [capability])]);
-        const input: LifecycleInput = {
-          stackId: options.stackId,
-          state,
-          definition,
-          secrets: state.secrets,
-          plan,
-        };
-        type ActivationAttempt =
-          | { readonly _tag: "succeeded"; readonly value: ActivationResult }
-          | {
-              readonly _tag: "failed";
-              readonly cause: Cause.Cause<StackError>;
-              readonly cleanup: CleanupOutcome;
-            };
-        const attempt = yield* Effect.acquireUseRelease(
-          claimWorkloads(next),
-          () =>
-            Effect.gen(function* () {
-              const launched = yield* launchBackend(input, "current", next).pipe(Effect.exit);
-              if (Exit.isFailure(launched))
-                return {
-                  _tag: "failed",
-                  cause: launched.cause,
-                  cleanup: { _tag: "unproven", cause: launched.cause },
-                } satisfies ActivationAttempt;
-              const launchResult = launched.value;
-              if (Predicate.isTagged(launchResult, "failed"))
-                return {
-                  _tag: "failed",
-                  cause: launchResult.cause,
-                  cleanup: launchResult.cleanup,
-                } satisfies ActivationAttempt;
-              yield* setReadySet(next);
-              const activated = yield* runtime.activate(capability, input).pipe(Effect.exit);
-              if (Exit.isFailure(activated)) {
-                const rolledBack = yield* launchResult.rollback;
-                const cause = Predicate.isTagged(rolledBack, "unproven")
-                  ? Cause.combine(activated.cause, rolledBack.cause)
-                  : activated.cause;
-                return {
-                  _tag: "failed",
-                  cause,
-                  cleanup: rolledBack,
-                } satisfies ActivationAttempt;
-              }
-              const endpoint = activated.value;
-              yield* promoteActivationSet(next, capability);
-              yield* admission.withPermit(
-                Ref.update(machine, (snapshot) => ({ ...snapshot, plan })),
-              );
-              return {
-                _tag: "succeeded",
-                value: { capability, endpoint },
-              } satisfies ActivationAttempt;
-            }),
-          (claimed, result) => {
-            const outcome: ActivationAttempt = Exit.isSuccess(result)
-              ? result.value
-              : {
-                  _tag: "failed",
-                  cause: result.cause,
-                  cleanup: { _tag: "unproven", cause: result.cause },
-                };
-            return Predicate.isTagged(outcome, "failed")
-              ? restoreActivationFailure(
-                  capability,
-                  claimed,
-                  next,
-                  Exit.failCause(outcome.cause),
-                  outcome.cleanup,
-                  activationPriorRoot,
-                )
-              : Effect.void;
+        return {
+          input: {
+            stackId: options.stackId,
+            state,
+            definition,
+            secrets: state.secrets,
+            plan,
           },
-        );
-        if (Predicate.isTagged(attempt, "failed")) return yield* Effect.failCause(attempt.cause);
-        return attempt.value;
+          selected: new Set([
+            ...(yield* readySet()),
+            ...dependencyClosure(plan, [owner.capability]),
+          ]),
+        };
       });
 
-    type ActivationToken =
-      | { readonly _tag: "exit"; readonly result: ActivationExit }
-      | {
-          readonly _tag: "deferred";
-          readonly result: Deferred.Deferred<ActivationExit, never>;
-        }
-      | {
-          readonly _tag: "endpoint";
-          readonly capability: CapabilityName;
-          readonly result: Deferred.Deferred<EndpointExit, never>;
-        }
-      | {
-          readonly _tag: "await";
-          readonly result: Deferred.Deferred<Exit.Exit<void, StackError>, never>;
-        };
-    const settleOwnerInAdmission = (owner: SettlementOwner): Effect.Effect<void> =>
-      Effect.gen(function* () {
-        const snapshot = yield* Ref.get(machine);
-        const settlement = Match.value(owner).pipe(
-          Match.when({ _tag: "lifecycle" }, (event) => settleLifecycleOwner(snapshot, event)),
-          Match.when({ _tag: "retirement" }, (event) => settleRetirementOwner(snapshot, event)),
-          Match.when({ _tag: "endpoint" }, (event) => settleActivationOwner(snapshot, event)),
-          Match.when({ _tag: "activation" }, (event) => settleActivationOwner(snapshot, event)),
-          Match.exhaustive,
-        );
-        yield* Ref.set(machine, settlement.snapshot);
-        if (settlement.reconcile === "all-ready") yield* reevaluateIdleTimersInAdmission();
-        yield* Match.value(settlement.notification).pipe(
-          Match.when({ _tag: "endpoint" }, (notification) =>
-            Deferred.succeed(notification.completion, notification.result),
-          ),
-          Match.when({ _tag: "activation" }, (notification) =>
-            Deferred.succeed(notification.completion, notification.result),
-          ),
-          Match.when({ _tag: "retirement" }, (notification) =>
-            Deferred.succeed(notification.completion, notification.result),
-          ),
-          Match.when({ _tag: "lifecycle" }, (notification) =>
-            Deferred.succeed(notification.completion, notification.result),
-          ),
-          Match.exhaustive,
-        );
-      });
-    const settleOwner = (owner: SettlementOwner): Effect.Effect<void> =>
-      admission.withPermit(settleOwnerInAdmission(owner));
     const runActivationOwner = (owner: ActivationOwner): Effect.Effect<void> =>
       Effect.gen(function* () {
-        const operation = activateOperation(
-          owner.capability,
-          Predicate.isTagged(owner, "endpoint") ? owner.priorRoot : undefined,
-        );
+        let entered = false;
+        let claims: ActivationClaims = { _tag: "none" };
+        const activation = Effect.gen(function* () {
+          const fence = yield* admission.withPermit(
+            Effect.gen(function* () {
+              const snapshot = yield* Ref.get(machine);
+              return {
+                ownerMatches: matchesActivationOwner(snapshot, owner),
+                gate: activationGate(snapshot, options.stackId),
+              };
+            }),
+          );
+          if (!fence.ownerMatches)
+            return yield* new StackLifecycleConflictError({
+              stackId: options.stackId,
+              message: Predicate.isTagged(owner, "endpoint")
+                ? "Endpoint activation was superseded by a lifecycle transition"
+                : "Lazy activation was superseded by a lifecycle transition",
+            });
+          if (Predicate.isTagged(fence.gate, "rejected")) return yield* fence.gate.error;
+
+          const prepared = yield* prepareActivation(owner);
+          yield* admission.withPermit(
+            Effect.uninterruptible(
+              Effect.gen(function* () {
+                const claimed = yield* claimWorkloadsInAdmission(prepared.selected);
+                claims = {
+                  _tag: "claimed",
+                  claimed,
+                  affected: prepared.selected,
+                };
+                return claimed;
+              }),
+            ),
+          );
+          const launched = yield* launchBackend(prepared.input, "current", prepared.selected).pipe(
+            Effect.exit,
+          );
+          if (Exit.isFailure(launched))
+            return {
+              _tag: "failed" as const,
+              cause: launched.cause,
+              cleanup: { _tag: "unproven" as const, cause: launched.cause },
+            } satisfies ActivationTerminalOutcome;
+          if (Predicate.isTagged(launched.value, "failed"))
+            return {
+              _tag: "failed" as const,
+              cause: launched.value.cause,
+              cleanup: launched.value.cleanup,
+            } satisfies ActivationTerminalOutcome;
+          yield* setReadySet(prepared.selected);
+          const activated = yield* runtime
+            .activate(owner.capability, prepared.input)
+            .pipe(Effect.exit);
+          if (Exit.isFailure(activated)) {
+            const rolledBack = yield* launched.value.rollback;
+            const cause = Predicate.isTagged(rolledBack, "unproven")
+              ? Cause.combine(activated.cause, rolledBack.cause)
+              : activated.cause;
+            return {
+              _tag: "failed" as const,
+              cause,
+              cleanup: rolledBack,
+            } satisfies ActivationTerminalOutcome;
+          }
+          yield* promoteActivationSet(prepared.selected, owner.capability, prepared.input.plan);
+          return {
+            _tag: "succeeded" as const,
+            value: { capability: owner.capability, endpoint: activated.value },
+          } satisfies ActivationTerminalOutcome;
+        });
         const fiber = Effect.uninterruptibleMask((restore) =>
           Effect.gen(function* () {
-            const acquired = yield* restore(execution.take(1)).pipe(Effect.exit);
-            if (Exit.isFailure(acquired)) {
-              yield* settleOwner({ ...owner, result: Exit.failCause(acquired.cause) });
-              return yield* Effect.failCause(acquired.cause);
-            }
-            const guarded = admission
-              .withPermit(
-                Ref.get(machine).pipe(
-                  Effect.map((snapshot) => matchesActivationOwner(snapshot, owner)),
-                ),
-              )
-              .pipe(
-                Effect.flatMap((admitted) =>
-                  admitted
-                    ? operation
-                    : Effect.fail(
-                        new StackLifecycleConflictError({
-                          stackId: options.stackId,
-                          message: Predicate.isTagged(owner, "endpoint")
-                            ? "Endpoint activation was superseded by a lifecycle transition"
-                            : "Lazy activation was superseded by a lifecycle transition",
-                        }),
-                      ),
-                ),
-              );
-            yield* restore(guarded).pipe(
-              Effect.onExit((result) =>
-                settleOwner(
-                  Predicate.isTagged(owner, "endpoint")
-                    ? { ...owner, result: Exit.map(result, (value) => value.endpoint) }
-                    : { ...owner, result },
+            const result = yield* restore(
+              execution.withPermit(
+                Effect.uninterruptibleMask((inner) =>
+                  Effect.gen(function* () {
+                    entered = true;
+                    const result = yield* inner(activation).pipe(Effect.exit);
+                    const outcome: ActivationTerminalOutcome = Exit.isSuccess(result)
+                      ? result.value
+                      : {
+                          _tag: "failed",
+                          cause: result.cause,
+                          cleanup: Predicate.isTagged(claims, "none")
+                            ? { _tag: "proven" }
+                            : { _tag: "unproven", cause: result.cause },
+                        };
+                    yield* settleActivationTerminal(owner, claims, outcome);
+                    return yield* Predicate.isTagged(outcome, "failed")
+                      ? Effect.failCause(outcome.cause)
+                      : Effect.succeed(outcome.value);
+                  }),
                 ),
               ),
-              Effect.ensuring(execution.release(1)),
-            );
+            ).pipe(Effect.exit);
+            if (!entered && Exit.isFailure(result))
+              yield* settleActivationTerminal(
+                owner,
+                { _tag: "none" },
+                { _tag: "failed", cause: result.cause, cleanup: { _tag: "proven" } },
+              );
+            return yield* joinExit(result);
           }),
         );
         const ownerFiber = yield* FiberSet.run(ownedFibers, fiber, { startImmediately: true });
@@ -1639,145 +1182,78 @@ export const makeSupervisor = (
           Exit.isFailure(ownerExit) &&
           Cause.hasInterruptsOnly(ownerExit.cause)
         )
-          yield* settleOwnerInAdmission({
-            ...owner,
-            result: Exit.fail(
-              new StackLifecycleConflictError({
-                stackId: options.stackId,
-                message: "Stack owner scope is closed",
-              }),
-            ),
-          });
+          yield* settleActivationTerminalInAdmission(
+            owner,
+            { _tag: "none" },
+            {
+              _tag: "failed",
+              cause: Cause.fail(
+                new StackLifecycleConflictError({
+                  stackId: options.stackId,
+                  message: "Stack owner scope is closed",
+                }),
+              ),
+              cleanup: { _tag: "proven" },
+            },
+          );
       });
+    const applyTransitionInAdmission = (transition: SnapshotTransition): Effect.Effect<void> =>
+      Effect.gen(function* () {
+        yield* Ref.set(machine, transition.snapshot);
+        if (transition.reconcile === "all-ready") yield* reevaluateIdleTimersInAdmission();
+        yield* Effect.forEach(transition.notifications, notify, { discard: true });
+      });
+    const settleOwnerInAdmission = (owner: SettlementOwner): Effect.Effect<void> =>
+      Effect.gen(function* () {
+        const snapshot = yield* Ref.get(machine);
+        const settlement = Match.value(owner).pipe(
+          Match.when({ _tag: "lifecycle" }, (event) => settleLifecycleOwner(snapshot, event)),
+          Match.when({ _tag: "retirement" }, (event) => settleRetirementOwner(snapshot, event)),
+          Match.exhaustive,
+        );
+        yield* applyTransitionInAdmission(settlement);
+      });
+    const settleOwner = (owner: SettlementOwner): Effect.Effect<void> =>
+      admission.withPermit(settleOwnerInAdmission(owner));
     const activate: Supervisor["activate"] = (capability) =>
       Effect.gen(function* () {
         const token = yield* admission.withPermit(
           Effect.uninterruptible(
             Effect.gen(function* () {
-              yield* ensureActivationPhaseAllowed();
-              const current = (yield* Ref.get(machine)).capabilities.get(capability);
-              const reject = (message: string) =>
-                Effect.fail(
-                  new StackLifecycleConflictError({
-                    stackId: options.stackId,
-                    message,
-                  }),
-                );
-              const admitted = Match.value(current).pipe(
-                Match.when(undefined, () =>
-                  Effect.fail(
-                    new GatewayActivationError({
-                      message: `Capability ${capability} is unavailable in this session`,
-                    }),
-                  ),
-                ),
-                Match.when({ _tag: "disabled" }, () =>
-                  Effect.fail(
-                    new GatewayActivationError({
-                      message: `Capability ${capability} is not enabled`,
-                    }),
-                  ),
-                ),
-                Match.when({ _tag: "stopped" }, () =>
-                  Effect.fail(
-                    new StackNotRunningError({
-                      message: "Stack must be running before activation",
-                    }),
-                  ),
-                ),
-                Match.when({ _tag: "cleanup-failed" }, () =>
-                  reject(`Capability ${capability} cleanup failed; retry stop before activating`),
-                ),
-                Match.when({ _tag: "ready" }, (state) =>
-                  Match.value(state.endpoint).pipe(
-                    Match.when({ _tag: "resolved" }, (endpoint) =>
-                      Effect.succeed({
-                        _tag: "exit",
-                        result: Exit.succeed({ capability, endpoint: endpoint.endpoint }),
-                      } satisfies ActivationToken),
-                    ),
-                    Match.when({ _tag: "resolving" }, (endpoint) =>
-                      Effect.succeed({
-                        _tag: "endpoint",
-                        capability,
-                        result: endpoint.deferred,
-                      } satisfies ActivationToken),
-                    ),
-                    Match.when({ _tag: "unresolved" }, () =>
-                      Effect.gen(function* () {
-                        const endpoint = yield* Deferred.make<EndpointExit, never>();
-                        yield* updateCapability(capability, () => ({
-                          ...state,
-                          root: true,
-                          endpoint: { _tag: "resolving", deferred: endpoint },
-                        }));
-                        const owner: ActivationOwner = {
-                          _tag: "endpoint",
-                          capability,
-                          endpoint,
-                          priorRoot: state.root,
-                        };
-                        yield* runActivationOwner(owner);
-                        return {
-                          _tag: "endpoint",
-                          capability,
-                          result: endpoint,
-                        } satisfies ActivationToken;
-                      }),
-                    ),
-                    Match.exhaustive,
-                  ),
-                ),
-                Match.when({ _tag: "starting" }, (state) =>
-                  Match.value(state.completion).pipe(
-                    Match.when({ _tag: "activation" }, (completion) =>
-                      Effect.succeed({
-                        _tag: "deferred",
-                        result: completion.deferred,
-                      } satisfies ActivationToken),
-                    ),
-                    Match.when({ _tag: "workload" }, (completion) =>
-                      Effect.succeed({
-                        _tag: "await",
-                        result: completion.deferred,
-                      } satisfies ActivationToken),
-                    ),
-                    Match.exhaustive,
-                  ),
-                ),
-                Match.when({ _tag: "stopping" }, (state) =>
-                  Effect.succeed({
-                    _tag: "await",
-                    result: state.completion,
-                  } satisfies ActivationToken),
-                ),
-                Match.when({ _tag: "dormant" }, (prior) =>
-                  Effect.gen(function* () {
-                    const deferred = yield* Deferred.make<
-                      Exit.Exit<ActivationResult, GatewayActivationError | StackError>,
-                      never
-                    >();
-                    const activationOperation = Symbol("activation");
-                    yield* updateCapability(capability, () =>
-                      beginStarting(
-                        prior,
-                        activationOperation,
-                        { _tag: "activation", deferred },
-                        true,
-                      ),
-                    );
-                    const owner: ActivationOwner = {
-                      _tag: "activation",
-                      capability,
-                      completion: deferred,
-                    };
-                    yield* runActivationOwner(owner);
-                    return { _tag: "deferred", result: deferred } satisfies ActivationToken;
-                  }),
-                ),
-                Match.exhaustive,
+              const decision = admitActivation(
+                yield* Ref.get(machine),
+                capability,
+                options.stackId,
               );
-              return yield* admitted;
+              if (Predicate.isTagged(decision, "rejected")) return yield* decision.error;
+              if (Predicate.isTagged(decision, "respond")) return decision.token;
+              if (Predicate.isTagged(decision, "endpoint-owner")) {
+                const endpoint = yield* Deferred.make<EndpointExit, never>();
+                const owner: ActivationOwner = {
+                  _tag: "endpoint",
+                  capability: decision.capability,
+                  endpoint,
+                  priorRoot: decision.priorRoot,
+                };
+                yield* applyTransitionInAdmission(decision.transition(endpoint));
+                yield* runActivationOwner(owner);
+                return {
+                  _tag: "endpoint",
+                  capability,
+                  result: endpoint,
+                } satisfies ActivationToken;
+              }
+              const activation = yield* Deferred.make<ActivationExit, never>();
+              const owner: ActivationOwner = {
+                _tag: "activation",
+                capability: decision.capability,
+                completion: activation,
+              };
+              yield* applyTransitionInAdmission(
+                decision.transition(Symbol("activation"), activation),
+              );
+              yield* runActivationOwner(owner);
+              return { _tag: "deferred", result: activation } satisfies ActivationToken;
             }),
           ),
         );
@@ -1841,11 +1317,6 @@ export const makeSupervisor = (
           } satisfies CommandResult;
         }
         if (Predicate.isTagged(started.value, "failed")) {
-          yield* settleStartupFailures(
-            started.value.cause,
-            started.value.cleanup,
-            started.value.durable,
-          );
           return {
             _tag: "failed",
             cause: started.value.cause,
@@ -1862,6 +1333,122 @@ export const makeSupervisor = (
         yield* submitLifecycle("start", startOperation(startOptions));
         return yield* snapshot();
       });
+    const resetDatabaseOperation = (): Effect.Effect<CommandResult, StackError> =>
+      Effect.gen(function* () {
+        const notRunning = new StackNotRunningError({
+          stackId: options.stackId,
+          message: "Stack is not running",
+        });
+        const rejectNotRunning = {
+          _tag: "failed" as const,
+          cause: Cause.fail(notRunning),
+          cleanup: { _tag: "proven" as const },
+          durable: "stopped" as const,
+        } satisfies CommandResult;
+        const failedWithoutMutation = (cause: Cause.Cause<StackError>): CommandResult => ({
+          _tag: "failed",
+          cause,
+          cleanup: { _tag: "proven" },
+          durable: "unsafe",
+        });
+        const failedAfterMutation = (cause: Cause.Cause<StackError>): CommandResult => ({
+          _tag: "failed",
+          cause,
+          cleanup: { _tag: "unproven", cause },
+          durable: "unsafe",
+        });
+        const control = (yield* Ref.get(machine)).stack;
+        if (
+          !Predicate.isTagged(control, "starting") ||
+          !Predicate.isTagged(control.prior, "running")
+        )
+          return rejectNotRunning;
+        const state = yield* read();
+        if (state === undefined || state.definition === undefined)
+          return failedWithoutMutation(
+            Cause.fail(new StackStateInvalidError({ message: "Stack state is missing" })),
+          );
+        const status = yield* snapshot();
+        const database = status.capabilities.find((capability) => capability.name === "database");
+        if (database?.state !== "ready")
+          return {
+            ...rejectNotRunning,
+            cause: Cause.fail(
+              new StackNotRunningError({
+                stackId: options.stackId,
+                message: "Database is not running",
+              }),
+            ),
+          };
+        const plan =
+          (yield* Ref.get(machine)).plan ??
+          (yield* rebuildExecutionPlan(state.runtime, state.definition).pipe(
+            Effect.mapError(
+              (error) => new StackStateInvalidError({ message: error.message, cause: error }),
+            ),
+          ));
+        const bounceNames = new Set<CapabilityName>(
+          status.capabilities.flatMap((capability) =>
+            capability.state === "ready" && RESET_DATABASE_BOUNCE_CAPABILITIES.has(capability.name)
+              ? [capability.name]
+              : [],
+          ),
+        );
+        const bounce = plan.workloads.filter((workload) => bounceNames.has(workload.capability));
+        const databaseWorkload = plan.workloads.find(
+          (workload) => workload.id === "database:database",
+        );
+        if (databaseWorkload === undefined)
+          return failedWithoutMutation(
+            Cause.fail(new StackStateInvalidError({ message: "Database workload is missing" })),
+          );
+        const stopped = yield* launcher
+          .stopCapabilities(new Set(["database", ...bounceNames]))
+          .pipe(Effect.mapError(mapRuntimeError), Effect.exit);
+        if (Exit.isFailure(stopped)) return failedAfterMutation(stopped.cause);
+        const wiped = yield* runtime.driver
+          .wipePersistentData({ stackId: options.stackId, workloadId: databaseWorkload.id })
+          .pipe(Effect.mapError(mapRuntimeError), Effect.exit);
+        if (Exit.isFailure(wiped)) return failedAfterMutation(wiped.cause);
+        const launched = yield* launcher.launch({
+          ...plan,
+          workloads: [databaseWorkload, ...bounce],
+        });
+        if (Predicate.isTagged(launched, "failed")) {
+          // Wipe emptied PGDATA; persist first-create so stop → start does not skip schema init.
+          const launchCause = Cause.map(launched.cause, mapRuntimeError);
+          const current = yield* read().pipe(Effect.exit);
+          let cause = launchCause;
+          if (Exit.isFailure(current)) {
+            cause = Cause.combine(cause, current.cause);
+          } else if (current.value === undefined) {
+            cause = Cause.combine(
+              cause,
+              Cause.fail(new StackStateInvalidError({ message: "Stack state is missing" })),
+            );
+          } else {
+            const persisted = yield* options.stateStore
+              .replace(options.stackId, {
+                ...current.value,
+                desiredLifecycle: "unconfigured",
+              })
+              .pipe(Effect.provideContext(options.context), Effect.exit);
+            if (Exit.isFailure(persisted)) cause = Cause.combine(cause, persisted.cause);
+          }
+          return failedAfterMutation(cause);
+        }
+        return { _tag: "succeeded" } satisfies CommandResult;
+      });
+    const resetDatabase = Effect.gen(function* () {
+      const control = (yield* Ref.get(machine)).stack;
+      if (!Predicate.isTagged(control, "running"))
+        return yield* new StackNotRunningError({
+          stackId: options.stackId,
+          message: "Stack is not running",
+        });
+      yield* submitLifecycle("start", resetDatabaseOperation());
+      return yield* snapshot();
+    });
     const stopOperation = (): Effect.Effect<CommandResult, StackError> =>
       Effect.gen(function* () {
         const result = yield* controller.stop.pipe(
@@ -2084,11 +1671,13 @@ export const makeSupervisor = (
       credentials: () => credentials,
       start: ({ config }: { readonly config?: StackConfig }) => operation(start({ config })),
       destroy: () => operation(destroy),
+      resetDatabase: () => operation(resetDatabase),
       logs: (query: LogQuery) => operation(logs(query)),
     });
     return {
       status,
       start,
+      resetDatabase,
       destroy,
       shutdown: Deferred.await(shutdownSignal),
       shutdownIfIdle,

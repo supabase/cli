@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { Effect, Redacted } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
-import serviceImagesDockerfile from "../../../../cli-go/pkg/config/templates/Dockerfile" with { type: "text" };
+import serviceImagesDockerfile from "./Dockerfile" with { type: "text" };
 import {
   fetchLinkedServiceVersions,
   listLocalServiceVersions,
@@ -50,7 +50,7 @@ describe("services shared", () => {
     ).toThrow("Missing service image alias 'gotrue' in Dockerfile manifest.");
   });
 
-  test("derives local service versions from the Go Dockerfile manifest", () => {
+  test("derives local service versions from the Dockerfile manifest", () => {
     const rows = listLocalServiceVersions();
     const dockerfileImages = localServiceImagesFromDockerfile(serviceImagesDockerfile);
     const expectedRows = dockerfileImages.map((service) => {

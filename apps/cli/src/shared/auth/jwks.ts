@@ -1,3 +1,11 @@
+import { Data, Effect, Schema } from "effect";
+import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import {
+  actionability,
+  ErrorActionabilityId,
+  type CliErrorActionabilityDeclaration,
+} from "../telemetry/error-actionability.ts";
+
 const remoteJwksTimeoutMs = 10_000;
 
 /**
@@ -204,40 +212,77 @@ export function thirdPartyIssuerUrlUnchecked(
   return undefined;
 }
 
-/**
- * Resolves `<issuerUrl>/.well-known/openid-configuration`'s `jwks_uri`, then fetches that
- * URI's `keys` array. Rejects on any failure rather than swallowing it; any leniency (e.g.
- * continuing with zero remote keys) is a caller-side choice, not part of this function's
- * contract.
- */
-export async function resolveRemoteJwks(issuerUrl: string): Promise<ReadonlyArray<unknown>> {
-  const discoveryResponse = await fetch(`${issuerUrl}/.well-known/openid-configuration`, {
-    signal: AbortSignal.timeout(remoteJwksTimeoutMs),
-  });
-  if (!discoveryResponse.ok) {
-    throw new Error(`Failed to fetch ${issuerUrl}/.well-known/openid-configuration`);
+/** Failure to discover or retrieve a provider's public signing keys. */
+class RemoteJwksError extends Data.TaggedError("RemoteJwksError")<{
+  readonly message: string;
+  readonly reason: "network" | "response" | "timeout";
+  readonly cause?: unknown;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return this.reason === "response" ? actionability.apiStatus : actionability.externalNetwork;
   }
-
-  const discovery = (await discoveryResponse.json()) as { jwks_uri?: string };
-  if (typeof discovery.jwks_uri !== "string" || discovery.jwks_uri.length === 0) {
-    throw new Error(
-      `auth.third_party: OIDC configuration at URL "${issuerUrl}/.well-known/openid-configuration" does not expose a jwks_uri property`,
-    );
-  }
-
-  const jwksResponse = await fetch(discovery.jwks_uri, {
-    signal: AbortSignal.timeout(remoteJwksTimeoutMs),
-  });
-  if (!jwksResponse.ok) {
-    throw new Error(`Failed to fetch ${discovery.jwks_uri}`);
-  }
-
-  const jwks = (await jwksResponse.json()) as { keys?: ReadonlyArray<unknown> };
-  if (!Array.isArray(jwks.keys) || jwks.keys.length === 0) {
-    throw new Error(
-      `auth.third_party: JWKS at URL "${discovery.jwks_uri}" as discovered from "${issuerUrl}/.well-known/openid-configuration" does not contain any JWK keys`,
-    );
-  }
-
-  return jwks.keys;
 }
+
+const discoverySchema = Schema.Struct({ jwks_uri: Schema.NonEmptyString });
+const jwksSchema = Schema.Struct({ keys: Schema.NonEmptyArray(Schema.Unknown) });
+
+const readRemoteDocument = Effect.fnUntraced(function* <A>(
+  url: string,
+  schema: Schema.Decoder<A>,
+  invalidMessage: string,
+) {
+  return yield* Effect.gen(function* () {
+    const client = HttpClient.withScope(yield* HttpClient.HttpClient);
+    const response = yield* client.get(url).pipe(
+      Effect.mapError(
+        (cause) =>
+          new RemoteJwksError({
+            message: `Failed to fetch ${url}`,
+            reason: "network",
+            cause,
+          }),
+      ),
+    );
+    if (response.status < 200 || response.status >= 300) {
+      return yield* new RemoteJwksError({ message: `Failed to fetch ${url}`, reason: "response" });
+    }
+    return yield* HttpClientResponse.schemaBodyJson(schema)(response).pipe(
+      Effect.mapError(
+        (cause) =>
+          new RemoteJwksError({
+            message: invalidMessage,
+            reason: "response",
+            cause,
+          }),
+      ),
+    );
+  }).pipe(
+    Effect.scoped,
+    Effect.timeoutOrElse({
+      duration: remoteJwksTimeoutMs,
+      orElse: () =>
+        Effect.fail(
+          new RemoteJwksError({
+            message: `Timed out fetching ${url}`,
+            reason: "timeout",
+          }),
+        ),
+    }),
+  );
+});
+
+/** Resolves remote signing keys through OIDC discovery, bounding each complete response read. */
+export const resolveRemoteJwks = Effect.fnUntraced(function* (issuerUrl: string) {
+  const discoveryUrl = `${issuerUrl}/.well-known/openid-configuration`;
+  const discovery = yield* readRemoteDocument(
+    discoveryUrl,
+    discoverySchema,
+    `auth.third_party: OIDC configuration at URL "${discoveryUrl}" does not expose a jwks_uri property`,
+  );
+  const jwks = yield* readRemoteDocument(
+    discovery.jwks_uri,
+    jwksSchema,
+    `auth.third_party: JWKS at URL "${discovery.jwks_uri}" as discovered from "${discoveryUrl}" does not contain any JWK keys`,
+  );
+  return jwks.keys;
+});

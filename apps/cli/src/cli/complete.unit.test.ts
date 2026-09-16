@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { Cause } from "effect";
 
 import { rootCommand } from "./root.ts";
-import { StackRoutingError } from "../commands/experimental/stack/stack-backend.ts";
+import { StackRoutingError } from "../command-internal/stack-backend.ts";
 import {
   CompletionDirective,
   type ClassifyCompletionInput,

@@ -1,4 +1,4 @@
-import { Effect, Option } from "effect";
+import { Effect, Option, Schema } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
@@ -117,21 +117,18 @@ function mapTransportMessage<E>(
   return wrap({ message: message(String(cause)) });
 }
 
+const decodeJsonObject = Schema.decodeEffect(
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
+);
+
 function parseJsonObject<E>(
   rawBody: string,
   errorMessage: (description: string) => string,
   wrap: (args: { readonly message: string }) => E,
 ): Effect.Effect<PostgresConfigMap, E> {
-  return Effect.try({
-    try: () => {
-      const parsed = JSON.parse(rawBody) as unknown;
-      if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-        throw new Error("unexpected non-object JSON response");
-      }
-      return parsed as PostgresConfigMap;
-    },
-    catch: (cause) => wrap({ message: errorMessage(String(cause)) }),
-  });
+  return decodeJsonObject(rawBody).pipe(
+    Effect.mapError((error) => wrap({ message: errorMessage(error.message) })),
+  );
 }
 
 export const fetchCurrentPostgresConfig = Effect.fn("postgres-config.fetch-current")(function* (
@@ -160,13 +157,11 @@ export const fetchCurrentPostgresConfig = Effect.fn("postgres-config.fetch-curre
   if (response.status !== 200) {
     const rawBody = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
     const body = sanitizeErrorBody(rawBody);
-    return yield* Effect.fail(
-      new PostgresConfigGetUnexpectedStatusError({
-        status: response.status,
-        body,
-        message: `unexpected config overrides status ${response.status}: ${body}`,
-      }),
-    );
+    return yield* new PostgresConfigGetUnexpectedStatusError({
+      status: response.status,
+      body,
+      message: `unexpected config overrides status ${response.status}: ${body}`,
+    });
   }
 
   const rawBody = yield* response.text;
@@ -196,57 +191,61 @@ export interface PutPostgresConfigErrors<SerErr, NetErr, StatErr, UnmErr> {
   readonly unmarshalMessage: (description: string) => string;
 }
 
-export const putPostgresConfig = <SerErr, NetErr, StatErr, UnmErr>(
+export const putPostgresConfig = Effect.fn("postgres-config.put")(function* <
+  SerErr,
+  NetErr,
+  StatErr,
+  UnmErr,
+>(
   ref: string,
   config: PostgresConfigMap,
   errors: PutPostgresConfigErrors<SerErr, NetErr, StatErr, UnmErr>,
-) =>
-  Effect.gen(function* () {
-    const httpClient = yield* HttpClient.HttpClient;
-    const cliSettings = yield* CommandSettings;
-    const tokenOpt = yield* resolveAccessToken;
+) {
+  const httpClient = yield* HttpClient.HttpClient;
+  const cliSettings = yield* CommandSettings;
+  const tokenOpt = yield* resolveAccessToken;
 
-    // Uses raw HTTP instead of the generated input schema, since --config accepts arbitrary
-    // keys the typed client's OpenAPI-modeled fields don't cover.
-    const encodedBody = yield* Effect.try({
-      try: () => encodeGoStructJsonBody(config),
-      catch: (cause) =>
-        errors.serializeError({
-          message: `failed to serialize config overrides: ${String(cause)}`,
-        }),
-    });
+  // Uses raw HTTP instead of the generated input schema, since --config accepts arbitrary
+  // keys the typed client's OpenAPI-modeled fields don't cover.
+  const encodedBody = yield* Effect.try({
+    try: () => encodeGoStructJsonBody(config),
+    catch: (cause) =>
+      errors.serializeError({
+        message: `failed to serialize config overrides: ${String(cause)}`,
+      }),
+  });
 
-    const request = requestWithAuth(
-      HttpClientRequest.put(
-        `${cliSettings.apiUrl}/v1/projects/${ref}/config/database/postgres`,
-      ).pipe(HttpClientRequest.bodyText(encodedBody, "application/json")),
-      tokenOpt,
-      cliSettings.userAgent,
+  const request = requestWithAuth(
+    HttpClientRequest.put(`${cliSettings.apiUrl}/v1/projects/${ref}/config/database/postgres`).pipe(
+      HttpClientRequest.bodyText(encodedBody, "application/json"),
+    ),
+    tokenOpt,
+    cliSettings.userAgent,
+  );
+
+  const response = yield* httpClient
+    .execute(request)
+    .pipe(
+      Effect.mapError((cause) =>
+        mapTransportMessage(cause, errors.networkMessage, errors.networkError),
+      ),
     );
 
-    const response = yield* httpClient
-      .execute(request)
-      .pipe(
-        Effect.mapError((cause) =>
-          mapTransportMessage(cause, errors.networkMessage, errors.networkError),
-        ),
-      );
+  if (response.status !== 200) {
+    const rawBody = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
+    const body = sanitizeErrorBody(rawBody);
+    return yield* Effect.fail(
+      errors.statusError({
+        status: response.status,
+        body,
+        message: errors.statusMessage(response.status, body),
+      }),
+    );
+  }
 
-    if (response.status !== 200) {
-      const rawBody = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
-      const body = sanitizeErrorBody(rawBody);
-      return yield* Effect.fail(
-        errors.statusError({
-          status: response.status,
-          body,
-          message: errors.statusMessage(response.status, body),
-        }),
-      );
-    }
-
-    const rawBody = yield* response.text;
-    return yield* parseJsonObject(rawBody, errors.unmarshalMessage, errors.unmarshalError);
-  }).pipe(Effect.withSpan("postgres-config.put"));
+  const rawBody = yield* response.text;
+  return yield* parseJsonObject(rawBody, errors.unmarshalMessage, errors.unmarshalError);
+});
 
 export const writePostgresConfigOutput = Effect.fn("postgres-config.write-output")(function* (
   config: PostgresConfigMap,

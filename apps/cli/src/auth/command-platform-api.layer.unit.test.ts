@@ -33,6 +33,9 @@ function mockCliSettings(opts: {
   projectHost?: string;
 }) {
   return Layer.succeed(CommandSettings, {
+    dbPassword: Option.none(),
+    githubToken: Option.none(),
+    workdirEnvValue: Option.none(),
     profile: opts.profile ?? "supabase",
     profileEnvValue: Option.none(),
     supabaseHome: "/tmp/.supabase",

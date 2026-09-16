@@ -8,7 +8,7 @@ import {
   defaultPublishableKey,
   defaultSecretKey,
 } from "../shared/stack-constants.ts";
-import { Schema } from "effect";
+import { Effect, Encoding, Option, Schema } from "effect";
 
 import {
   resolveRemoteJwks,
@@ -2928,198 +2928,179 @@ export function resolveLocalConfigValues(
   };
 }
 
-/**
- * Resolves the local JWKS document for the future native `start` port; a fetch failure fails
- * the whole `start` command. Kept separate from {@link resolveLocalConfigValues} — synchronous
- * and run on every `stop`/`status` — so this function's network round-trip doesn't tax those
- * two commands.
- *
- * `jwtSecret` is accepted as a parameter (the same value {@link resolveLocalConfigValues}
- * already resolves) rather than recomputed, so the two functions never disagree on it.
- * `authEnabled`/`signingKeysPath` are recomputed here, keeping this function self-contained.
- *
- * The oct-JWT-secret fallback below is gated on `signingKeysPath` emptiness, not `authEnabled`:
- * a configured path with auth disabled still resolves the signing keys to the default (never
- * reads the file), but `signingKeysPath` stays non-empty, so the fallback stays skipped.
- *
- * @throws {ConfigValidateError} when more than one `auth.third_party.*` provider is enabled,
- * an enabled provider is missing a required field, or the remote JWKS fetch fails.
- *
- * `remoteOverrideKeys` lets a matched remote block's `auth.signing_keys_path`/
- * `auth.third_party.*` value win over a conflicting `SUPABASE_AUTH_*` override, same as
- * {@link resolveLocalConfigValues}'s parameter of the same name.
- */
-export async function resolveLocalJwks(
+/** Resolves local and remote signing keys for services that consume the local JWKS document. */
+export const resolveLocalJwks = Effect.fnUntraced(function* (
   config: CliConfig,
   workdir: string,
   jwtSecret: string,
   projectEnvValues?: Readonly<Record<string, string>>,
   remoteOverrideKeys: ReadonlySet<string> = new Set(),
-): Promise<string> {
-  const remoteWins = makeRemoteWins(remoteOverrideKeys);
-  const signingKeysPath = remoteWins("auth.signing_keys_path")
-    ? config.auth.signing_keys_path
-    : envOverride(
-        "SUPABASE_AUTH_SIGNING_KEYS_PATH",
-        config.auth.signing_keys_path,
+) {
+  const { issuerUrl, signingKeys, signingKeysPath } = yield* Effect.try({
+    try: () => {
+      const remoteWins = makeRemoteWins(remoteOverrideKeys);
+      const signingKeysPath = remoteWins("auth.signing_keys_path")
+        ? config.auth.signing_keys_path
+        : envOverride(
+            "SUPABASE_AUTH_SIGNING_KEYS_PATH",
+            config.auth.signing_keys_path,
+            projectEnvValues,
+          );
+      // Every resolved config carries the default ES256 key, regardless of `auth.enabled`. It's
+      // only ever replaced by a configured `signing_keys_path` file, and only when that file is
+      // actually read (gated on `auth.enabled` — see {@link resolveConfiguredSigningKeys}). So JWKS
+      // resolution always publishes either the file's keys or this default, never neither —
+      // `GOTRUE_JWT_KEYS` signs with the same default, so the two must never disagree.
+      const signingKeys: ReadonlyArray<Jwk> = resolveConfiguredSigningKeys(
+        config,
+        workdir,
         projectEnvValues,
-      );
-  // Every resolved config carries the default ES256 key, regardless of `auth.enabled`. It's
-  // only ever replaced by a configured `signing_keys_path` file, and only when that file is
-  // actually read (gated on `auth.enabled` — see {@link resolveConfiguredSigningKeys}). So JWKS
-  // resolution always publishes either the file's keys or this default, never neither —
-  // `GOTRUE_JWT_KEYS` signs with the same default, so the two must never disagree.
-  const signingKeys: ReadonlyArray<Jwk> = resolveConfiguredSigningKeys(
-    config,
-    workdir,
-    projectEnvValues,
-    remoteOverrideKeys,
-  ) ?? [DEFAULT_SIGNING_KEY];
+        remoteOverrideKeys,
+      ) ?? [DEFAULT_SIGNING_KEY];
 
-  // Built as a `ThirdPartyProvidersLike` (every provider's full field set, including auth0's
-  // `tenant_region`) rather than the validation-only `ThirdPartyInput`, since
-  // {@link resolveThirdPartyIssuerUrl} needs the full set to build the issuer URL.
-  const thirdParty: ThirdPartyProvidersLike = {
-    firebase: {
-      enabled: remoteWins("auth.third_party.firebase.enabled")
-        ? config.auth.third_party.firebase.enabled
-        : envOverrideBool(
-            "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED",
-            config.auth.third_party.firebase.enabled,
-            "auth.third_party.firebase.enabled",
-            projectEnvValues,
-          ),
-      project_id: remoteWins("auth.third_party.firebase.project_id")
-        ? config.auth.third_party.firebase.project_id
-        : envOverride(
-            "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_PROJECT_ID",
-            config.auth.third_party.firebase.project_id,
-            projectEnvValues,
-          ),
-    },
-    auth0: {
-      enabled: remoteWins("auth.third_party.auth0.enabled")
-        ? config.auth.third_party.auth0.enabled
-        : envOverrideBool(
-            "SUPABASE_AUTH_THIRD_PARTY_AUTH0_ENABLED",
-            config.auth.third_party.auth0.enabled,
-            "auth.third_party.auth0.enabled",
-            projectEnvValues,
-          ),
-      tenant: remoteWins("auth.third_party.auth0.tenant")
-        ? config.auth.third_party.auth0.tenant
-        : envOverride(
-            "SUPABASE_AUTH_THIRD_PARTY_AUTH0_TENANT",
-            config.auth.third_party.auth0.tenant,
-            projectEnvValues,
-          ),
-      tenant_region: remoteWins("auth.third_party.auth0.tenant_region")
-        ? config.auth.third_party.auth0.tenant_region
-        : envOverride(
-            "SUPABASE_AUTH_THIRD_PARTY_AUTH0_TENANT_REGION",
-            config.auth.third_party.auth0.tenant_region,
-            projectEnvValues,
-          ),
-    },
-    aws_cognito: {
-      enabled: remoteWins("auth.third_party.aws_cognito.enabled")
-        ? config.auth.third_party.aws_cognito.enabled
-        : envOverrideBool(
-            "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_ENABLED",
-            config.auth.third_party.aws_cognito.enabled,
-            "auth.third_party.aws_cognito.enabled",
-            projectEnvValues,
-          ),
-      user_pool_id: remoteWins("auth.third_party.aws_cognito.user_pool_id")
-        ? config.auth.third_party.aws_cognito.user_pool_id
-        : envOverride(
-            "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_ID",
-            config.auth.third_party.aws_cognito.user_pool_id,
-            projectEnvValues,
-          ),
-      user_pool_region: remoteWins("auth.third_party.aws_cognito.user_pool_region")
-        ? config.auth.third_party.aws_cognito.user_pool_region
-        : envOverride(
-            "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_REGION",
-            config.auth.third_party.aws_cognito.user_pool_region,
-            projectEnvValues,
-          ),
-    },
-    clerk: {
-      enabled: remoteWins("auth.third_party.clerk.enabled")
-        ? config.auth.third_party.clerk.enabled
-        : envOverrideBool(
-            "SUPABASE_AUTH_THIRD_PARTY_CLERK_ENABLED",
-            config.auth.third_party.clerk.enabled,
-            "auth.third_party.clerk.enabled",
-            projectEnvValues,
-          ),
-      domain: remoteWins("auth.third_party.clerk.domain")
-        ? config.auth.third_party.clerk.domain
-        : envOverride(
-            "SUPABASE_AUTH_THIRD_PARTY_CLERK_DOMAIN",
-            config.auth.third_party.clerk.domain,
-            projectEnvValues,
-          ),
-    },
-    workos: {
-      enabled: remoteWins("auth.third_party.workos.enabled")
-        ? config.auth.third_party.workos.enabled
-        : envOverrideBool(
-            "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ENABLED",
-            config.auth.third_party.workos.enabled,
-            "auth.third_party.workos.enabled",
-            projectEnvValues,
-          ),
-      issuer_url: remoteWins("auth.third_party.workos.issuer_url")
-        ? config.auth.third_party.workos.issuer_url
-        : envOverride(
-            "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ISSUER_URL",
-            config.auth.third_party.workos.issuer_url,
-            projectEnvValues,
-          ),
-    },
-  };
+      // Built as a `ThirdPartyProvidersLike` (every provider's full field set, including auth0's
+      // `tenant_region`) rather than the validation-only `ThirdPartyInput`, since
+      // {@link resolveThirdPartyIssuerUrl} needs the full set to build the issuer URL.
+      const thirdParty: ThirdPartyProvidersLike = {
+        firebase: {
+          enabled: remoteWins("auth.third_party.firebase.enabled")
+            ? config.auth.third_party.firebase.enabled
+            : envOverrideBool(
+                "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED",
+                config.auth.third_party.firebase.enabled,
+                "auth.third_party.firebase.enabled",
+                projectEnvValues,
+              ),
+          project_id: remoteWins("auth.third_party.firebase.project_id")
+            ? config.auth.third_party.firebase.project_id
+            : envOverride(
+                "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_PROJECT_ID",
+                config.auth.third_party.firebase.project_id,
+                projectEnvValues,
+              ),
+        },
+        auth0: {
+          enabled: remoteWins("auth.third_party.auth0.enabled")
+            ? config.auth.third_party.auth0.enabled
+            : envOverrideBool(
+                "SUPABASE_AUTH_THIRD_PARTY_AUTH0_ENABLED",
+                config.auth.third_party.auth0.enabled,
+                "auth.third_party.auth0.enabled",
+                projectEnvValues,
+              ),
+          tenant: remoteWins("auth.third_party.auth0.tenant")
+            ? config.auth.third_party.auth0.tenant
+            : envOverride(
+                "SUPABASE_AUTH_THIRD_PARTY_AUTH0_TENANT",
+                config.auth.third_party.auth0.tenant,
+                projectEnvValues,
+              ),
+          tenant_region: remoteWins("auth.third_party.auth0.tenant_region")
+            ? config.auth.third_party.auth0.tenant_region
+            : envOverride(
+                "SUPABASE_AUTH_THIRD_PARTY_AUTH0_TENANT_REGION",
+                config.auth.third_party.auth0.tenant_region,
+                projectEnvValues,
+              ),
+        },
+        aws_cognito: {
+          enabled: remoteWins("auth.third_party.aws_cognito.enabled")
+            ? config.auth.third_party.aws_cognito.enabled
+            : envOverrideBool(
+                "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_ENABLED",
+                config.auth.third_party.aws_cognito.enabled,
+                "auth.third_party.aws_cognito.enabled",
+                projectEnvValues,
+              ),
+          user_pool_id: remoteWins("auth.third_party.aws_cognito.user_pool_id")
+            ? config.auth.third_party.aws_cognito.user_pool_id
+            : envOverride(
+                "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_ID",
+                config.auth.third_party.aws_cognito.user_pool_id,
+                projectEnvValues,
+              ),
+          user_pool_region: remoteWins("auth.third_party.aws_cognito.user_pool_region")
+            ? config.auth.third_party.aws_cognito.user_pool_region
+            : envOverride(
+                "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_REGION",
+                config.auth.third_party.aws_cognito.user_pool_region,
+                projectEnvValues,
+              ),
+        },
+        clerk: {
+          enabled: remoteWins("auth.third_party.clerk.enabled")
+            ? config.auth.third_party.clerk.enabled
+            : envOverrideBool(
+                "SUPABASE_AUTH_THIRD_PARTY_CLERK_ENABLED",
+                config.auth.third_party.clerk.enabled,
+                "auth.third_party.clerk.enabled",
+                projectEnvValues,
+              ),
+          domain: remoteWins("auth.third_party.clerk.domain")
+            ? config.auth.third_party.clerk.domain
+            : envOverride(
+                "SUPABASE_AUTH_THIRD_PARTY_CLERK_DOMAIN",
+                config.auth.third_party.clerk.domain,
+                projectEnvValues,
+              ),
+        },
+        workos: {
+          enabled: remoteWins("auth.third_party.workos.enabled")
+            ? config.auth.third_party.workos.enabled
+            : envOverrideBool(
+                "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ENABLED",
+                config.auth.third_party.workos.enabled,
+                "auth.third_party.workos.enabled",
+                projectEnvValues,
+              ),
+          issuer_url: remoteWins("auth.third_party.workos.issuer_url")
+            ? config.auth.third_party.workos.issuer_url
+            : envOverride(
+                "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ISSUER_URL",
+                config.auth.third_party.workos.issuer_url,
+                projectEnvValues,
+              ),
+        },
+      };
 
-  // This function is called unconditionally, regardless of `auth.enabled`, but
-  // `resolveThirdPartyIssuerUrl`'s "at most one enabled" + required-field checks are only
-  // meaningful while auth is enabled — `resolveLocalConfigValues` already ran the equivalent
-  // check in that case. When auth is disabled, that validation is (correctly) skipped, so this
-  // uses the unchecked, no-throw issuer-url builder instead.
-  const authEnabled = remoteWins("auth.enabled")
-    ? config.auth.enabled
-    : envOverrideBool(
-        "SUPABASE_AUTH_ENABLED",
-        config.auth.enabled,
-        "auth.enabled",
-        projectEnvValues,
-      );
-  let issuerUrl: string | undefined;
-  if (authEnabled) {
-    try {
-      issuerUrl = resolveThirdPartyIssuerUrl(thirdParty);
-    } catch (cause) {
-      throw new ConfigValidateError(cause instanceof Error ? cause.message : String(cause));
-    }
-  } else {
-    issuerUrl = thirdPartyIssuerUrlUnchecked(thirdParty);
-  }
-
+      // This function is called unconditionally, regardless of `auth.enabled`, but
+      // `resolveThirdPartyIssuerUrl`'s "at most one enabled" + required-field checks are only
+      // meaningful while auth is enabled — `resolveLocalConfigValues` already ran the equivalent
+      // check in that case. When auth is disabled, that validation is (correctly) skipped, so this
+      // uses the unchecked, no-throw issuer-url builder instead.
+      const authEnabled = remoteWins("auth.enabled")
+        ? config.auth.enabled
+        : envOverrideBool(
+            "SUPABASE_AUTH_ENABLED",
+            config.auth.enabled,
+            "auth.enabled",
+            projectEnvValues,
+          );
+      const issuerUrl = Option.fromNullishOr(
+        authEnabled
+          ? resolveThirdPartyIssuerUrl(thirdParty)
+          : thirdPartyIssuerUrlUnchecked(thirdParty),
+      ).pipe(Option.filter((value) => value.length > 0));
+      return { issuerUrl, signingKeys, signingKeysPath };
+    },
+    catch: (cause) =>
+      cause instanceof ConfigValidateError
+        ? cause
+        : new ConfigValidateError(cause instanceof Error ? cause.message : String(cause)),
+  });
   const keys: unknown[] = [];
-  // A provider's own issuer-url resolution can return the empty string with no validation
-  // (e.g. workos's is a raw field read), so an enabled-but-unconfigured provider must be
-  // tolerated, not fetched.
-  if (issuerUrl !== undefined && issuerUrl.length > 0) {
-    try {
-      keys.push(...(await resolveRemoteJwks(issuerUrl)));
-    } catch (cause) {
-      throw new ConfigValidateError(cause instanceof Error ? cause.message : String(cause));
-    }
+  if (Option.isSome(issuerUrl)) {
+    keys.push(
+      ...(yield* resolveRemoteJwks(issuerUrl.value).pipe(
+        Effect.mapError((cause) => new ConfigValidateError(cause.message)),
+      )),
+    );
   }
   keys.push(...signingKeys.map(toPublicJwk));
   if (signingKeysPath === undefined || signingKeysPath.length === 0) {
-    keys.push({ kty: "oct", k: Buffer.from(jwtSecret).toString("base64url") });
+    keys.push({ kty: "oct", k: Encoding.encodeBase64Url(jwtSecret) });
   }
-
-  return JSON.stringify({ keys });
-}
+  return yield* Schema.encodeEffect(
+    Schema.fromJsonString(Schema.Struct({ keys: Schema.Array(Schema.Unknown) })),
+  )({ keys }).pipe(Effect.mapError((cause) => new ConfigValidateError(cause.message)));
+});

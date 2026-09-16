@@ -3,7 +3,18 @@ import { dockerfileServiceImage } from "../../../shared/services/dockerfile-imag
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { Deferred, Effect, Exit, Layer, Option, PlatformError, Sink, Stdio, Stream } from "effect";
+import {
+  ConfigProvider,
+  Deferred,
+  Effect,
+  Exit,
+  Layer,
+  Option,
+  PlatformError,
+  Sink,
+  Stdio,
+  Stream,
+} from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
@@ -592,7 +603,7 @@ describe("functions download", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("omits the named Deno cache volume bind on Bitbucket", () => {
+  it.live("omits named cache volumes when the Bitbucket marker is explicitly empty", () => {
     // The bind is dropped entirely, not just its explicit creation step:
     // `docker run -v <name>:...` would otherwise still implicitly create the
     // volume, which Bitbucket's restricted Docker environment disallows.
@@ -621,9 +632,6 @@ describe("functions download", () => {
       }),
     );
 
-    const previousBitbucketCloneDir = process.env["BITBUCKET_CLONE_DIR"];
-    process.env["BITBUCKET_CLONE_DIR"] = "/opt/atlassian/pipelines/agent/build";
-
     return Effect.gen(function* () {
       yield* functionsDownload({ ...baseFlags, useDocker: true });
 
@@ -640,19 +648,14 @@ describe("functions download", () => {
       expect(runCommand?.args).toContain(
         `${hostEszipPath}:/root/eszips/output_hello-world.eszip:ro`,
       );
-    })
-      .pipe(Effect.provide(layer))
-      .pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (previousBitbucketCloneDir === undefined) {
-              delete process.env["BITBUCKET_CLONE_DIR"];
-            } else {
-              process.env["BITBUCKET_CLONE_DIR"] = previousBitbucketCloneDir;
-            }
-          }),
-        ),
-      );
+      expect(child.spawned.some((spawned) => spawned.args[0] === "volume")).toBe(false);
+    }).pipe(
+      Effect.provide(layer),
+      Effect.provideService(
+        ConfigProvider.ConfigProvider,
+        ConfigProvider.fromEnvRecord({ BITBUCKET_CLONE_DIR: "" }, { preserveEmptyStrings: true }),
+      ),
+    );
   });
 
   it.live("requests the raw eszip body instead of a negotiated JSON response", () => {

@@ -1,13 +1,16 @@
 import { BunPath, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, FileSystem, Exit, Option, Path, Redacted } from "effect";
+import { Cause, Effect, FileSystem, Exit, Layer, Option, Path, Redacted } from "effect";
+import { runtimeInfoLayer } from "../../../shared/runtime/runtime-info.layer.ts";
 import { renderCliConfigTemplate } from "../../../shared/init/project-init.templates.ts";
 
-import { StackConfigError, loadStackConfig } from "./stack-config.ts";
+import { StackConfigError, loadStackConfig } from "../../../command-internal/stack-config.ts";
 import { createStackConfigProject } from "../../../../tests/helpers/stack-config.ts";
 
 const load = (projectRoot: string) =>
-  loadStackConfig(projectRoot).pipe(Effect.provide(BunServices.layer));
+  loadStackConfig(projectRoot).pipe(
+    Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
+  );
 const project = (contents: string) =>
   createStackConfigProject(contents, {
     sharedFunctionEnvironment: 'SHARED=shared\nOVERRIDE=shared\nQUOTED="hello # world" # comment\n',
@@ -17,7 +20,7 @@ const project = (contents: string) =>
       world: "WORLD=yes\n",
     },
     functionNames: ["hello", "world", "plain", "old.backup", "_shared"],
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)));
 
 describe("loadStackConfig", () => {
   it.effect("maps service settings, secrets, function files, and explicit ports", () => {
@@ -252,6 +255,7 @@ signing_keys_path = 'C:\\keys\\signing.json'
       const winPath = yield* Path.Path.pipe(Effect.provide(BunPath.layerWin32));
       const config = yield* loadStackConfig(root).pipe(
         Effect.provideService(Path.Path, { ...nativePath, isAbsolute: winPath.isAbsolute }),
+        Effect.provide(runtimeInfoLayer),
       );
       expect(config.security?.jwt?.signing).toEqual({
         kind: "jwks-file",
@@ -415,7 +419,7 @@ enabled = true
     });
   });
 
-  it.effect("keeps disabled functions capability free of settings", () => {
+  it.effect("keeps nested settings on a disabled functions capability", () => {
     return Effect.gen(function* () {
       const root = yield* project(`project_id = "stack-config-disabled-functions"
 [edge_runtime]
@@ -535,6 +539,6 @@ enabled = false
       const config = yield* loadStackConfig(root);
       expect(config.listeners).toEqual({});
       expect(config.capabilities?.database).toMatchObject({ settings: { health_timeout: "2m" } });
-    }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)));
   });
 });

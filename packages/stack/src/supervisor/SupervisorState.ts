@@ -34,7 +34,6 @@ type StartRecoveryState = {
 
 export type LifecycleKind = "start" | "stop" | "destroy";
 type LifecycleCompletion = Deferred.Deferred<Exit.Exit<void, StackError>, never>;
-type CommandRejectionReason = "lifecycle-transition" | "stop-required" | "destroy-required";
 
 const causeMessage = (cause: Cause.Cause<StackError>, fallback: string): string => {
   const error = Cause.findErrorOption(cause);
@@ -91,18 +90,6 @@ export type StackControlState =
       readonly prior: StableStackState | RecoveryState;
     };
 
-type TransitionState =
-  | Extract<StackControlState, { readonly _tag: "starting" }>
-  | Extract<StackControlState, { readonly _tag: "stopping" }>
-  | Extract<StackControlState, { readonly _tag: "destroying" }>;
-
-type CommandAdmission =
-  | { readonly _tag: "accepted"; readonly state: TransitionState }
-  | {
-      readonly _tag: "rejected";
-      readonly reason: CommandRejectionReason;
-    };
-
 export type SupervisorSnapshot = Readonly<{
   readonly stack: StackControlState;
   readonly sessionId: symbol;
@@ -117,92 +104,3 @@ export const isTransitioning = (
   Predicate.isTagged("stopping")(state) ||
   Predicate.isTagged("destroying")(state) ||
   Predicate.isTagged("start-recovery")(state);
-
-export const publicPhase = (
-  state: StackControlState,
-): "stopped" | "starting" | "running" | "stopping" | "destroying" =>
-  Match.value(state).pipe(
-    Match.when({ _tag: "stopped" }, () => "stopped" as const),
-    Match.when({ _tag: "running" }, () => "running" as const),
-    Match.when({ _tag: "starting", prior: { _tag: "running" } }, () => "running" as const),
-    Match.when({ _tag: "starting" }, () => "starting" as const),
-    Match.when({ _tag: "stopping" }, () => "stopping" as const),
-    Match.when({ _tag: "destroying" }, () => "destroying" as const),
-    Match.when({ _tag: "stop-required" }, () => "stopping" as const),
-    Match.when({ _tag: "start-recovery" }, () => "stopping" as const),
-    Match.when({ _tag: "destroy-required" }, () => "destroying" as const),
-    Match.exhaustive,
-  );
-
-export const command = (
-  state: StackControlState,
-  kind: LifecycleKind,
-  completion: LifecycleCompletion,
-): CommandAdmission => {
-  const attempt = Symbol(kind);
-  const rejected = (reason: CommandRejectionReason): CommandAdmission => ({
-    _tag: "rejected",
-    reason,
-  });
-  const accepted = (next: TransitionState): CommandAdmission => ({
-    _tag: "accepted",
-    state: next,
-  });
-  const start = Match.value(state).pipe(
-    Match.when({ _tag: "stopped" }, (prior) =>
-      accepted({ _tag: "starting", attempt, completion, prior }),
-    ),
-    Match.when({ _tag: "running" }, (prior) =>
-      accepted({ _tag: "starting", attempt, completion, prior }),
-    ),
-    Match.when({ _tag: "stop-required" }, () => rejected("stop-required")),
-    Match.when({ _tag: "destroy-required" }, () => rejected("destroy-required")),
-    Match.when({ _tag: "starting" }, () => rejected("lifecycle-transition")),
-    Match.when({ _tag: "start-recovery" }, () => rejected("lifecycle-transition")),
-    Match.when({ _tag: "stopping" }, () => rejected("lifecycle-transition")),
-    Match.when({ _tag: "destroying" }, () => rejected("lifecycle-transition")),
-    Match.exhaustive,
-  );
-  const stop = Match.value(state).pipe(
-    Match.when({ _tag: "stopped" }, (prior) =>
-      accepted({ _tag: "stopping", attempt, completion, prior }),
-    ),
-    Match.when({ _tag: "running" }, (prior) =>
-      accepted({ _tag: "stopping", attempt, completion, prior }),
-    ),
-    Match.when({ _tag: "stop-required" }, (prior) =>
-      accepted({ _tag: "stopping", attempt, completion, prior }),
-    ),
-    Match.when({ _tag: "destroy-required" }, () => rejected("destroy-required")),
-    Match.when({ _tag: "starting" }, () => rejected("lifecycle-transition")),
-    Match.when({ _tag: "start-recovery" }, () => rejected("lifecycle-transition")),
-    Match.when({ _tag: "stopping" }, () => rejected("lifecycle-transition")),
-    Match.when({ _tag: "destroying" }, () => rejected("lifecycle-transition")),
-    Match.exhaustive,
-  );
-  const destroy = Match.value(state).pipe(
-    Match.when({ _tag: "stopped" }, (prior) =>
-      accepted({ _tag: "destroying", attempt, completion, prior }),
-    ),
-    Match.when({ _tag: "running" }, (prior) =>
-      accepted({ _tag: "destroying", attempt, completion, prior }),
-    ),
-    Match.when({ _tag: "stop-required" }, (prior) =>
-      accepted({ _tag: "destroying", attempt, completion, prior }),
-    ),
-    Match.when({ _tag: "destroy-required" }, (prior) =>
-      accepted({ _tag: "destroying", attempt, completion, prior }),
-    ),
-    Match.when({ _tag: "starting" }, () => rejected("lifecycle-transition")),
-    Match.when({ _tag: "start-recovery" }, () => rejected("lifecycle-transition")),
-    Match.when({ _tag: "stopping" }, () => rejected("lifecycle-transition")),
-    Match.when({ _tag: "destroying" }, () => rejected("lifecycle-transition")),
-    Match.exhaustive,
-  );
-  return Match.value(kind).pipe(
-    Match.when("start", () => start),
-    Match.when("stop", () => stop),
-    Match.when("destroy", () => destroy),
-    Match.exhaustive,
-  );
-};

@@ -1,4 +1,4 @@
-// Detects images pinned in apps/cli-go/pkg/config/templates/Dockerfile that are missing from
+// Detects images pinned in apps/cli/src/shared/services/Dockerfile that are missing from
 // any mirror registry and emits them as JSON, for the mirror-template-images workflow's backfill
 // matrix.
 import { spawnSync } from "node:child_process";

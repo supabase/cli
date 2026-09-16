@@ -23,18 +23,20 @@ import {
   StorageConfigError,
   StorageMissingApiKeyError,
 } from "./storage-credentials.errors.ts";
+import { currentStackBackend } from "./stack-backend.ts";
+import { stackStorageEndpoint } from "./stack-storage.ts";
 
 /**
  * Resolves Storage gateway credentials (base URL, service-role key, and local
  * CA) for `seed buckets` and `storage ls/cp/mv/rm`.
  *
- * Local (`projectRef === ""`): URL from `api.external_url` or
- * `<scheme>://<host>:<api.port>`, and key from
- * `auth.service_role_key`/`auth.jwt_secret`, both after
- * `SUPABASE_API_*`/`SUPABASE_AUTH_*` overrides (see
- * {@link resolveLocalApiConfig} and {@link resolveLocalServiceRoleKey}).
- * Remote: URL is `https://<ref>.<projectHost>`; key from
+ * Linked (`projectRef !== ""`): URL is `https://<ref>.<projectHost>`; key from
  * `SUPABASE_AUTH_SERVICE_ROLE_KEY` or the project's api-keys endpoint.
+ * Stack backend (`experimental.stack`): endpoint and service-role JWT come from the managed
+ * stack (see {@link stackStorageEndpoint}); never a legacy fallback.
+ * Legacy local: URL from `api.external_url` or `<scheme>://<host>:<api.port>`, and key from
+ * `auth.service_role_key`/`auth.jwt_secret`, both after `SUPABASE_API_*`/`SUPABASE_AUTH_*`
+ * overrides (see {@link resolveLocalApiConfig} and {@link resolveLocalServiceRoleKey}).
  */
 
 /** Structural subset of `@supabase/config`'s CliConfig used here. */
@@ -55,7 +57,7 @@ export interface StorageConfigView {
   };
 }
 
-interface StorageCredentials {
+export interface StorageCredentials {
   readonly baseUrl: string;
   readonly apiKey: string;
   /** The CA PEM to trust for a local https gateway; `undefined` otherwise. */
@@ -102,6 +104,11 @@ export const resolveStorageCredentials = Effect.fnUntraced(function* (opts: {
     } satisfies StorageCredentials;
   }
 
+  // Stack backend: endpoint and JWT come from the stack; no `[api]`/SUPABASE_API_*/jwt_secret/
+  // Kong CA, and no legacy fallback.
+  const backend = yield* currentStackBackend;
+  if (backend.kind === "stack") return yield* stackStorageEndpoint;
+
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const projectEnvValues =
@@ -110,7 +117,12 @@ export const resolveStorageCredentials = Effect.fnUntraced(function* (opts: {
       Effect.mapError((cause) => new StorageConfigError({ message: cause.message })),
     ));
   const api = yield* resolveLocalApiConfig(opts.config.api, projectEnvValues);
-  const baseUrl = resolveApiExternalUrl(api, getHostname());
+  const baseUrl = resolveApiExternalUrl(
+    api,
+    yield* getHostname(projectEnvValues).pipe(
+      Effect.mapError((cause) => new StorageConfigError({ message: cause.message })),
+    ),
+  );
   const apiKey = yield* resolveLocalServiceRoleKey(opts.config.auth, projectEnvValues);
 
   // Validate the cert/key pairing only when the API and TLS are both enabled;
