@@ -8,7 +8,11 @@ import { configCommand } from "../commands/config/config.command.ts";
 import { dbCommand } from "../commands/db/db.command.ts";
 import { domainsCommand } from "../commands/domains/domains.command.ts";
 import { encryptionCommand } from "../commands/encryption/encryption.command.ts";
-import { stackRuntimeLayer, stackCommand } from "../commands/experimental/stack/stack.command.ts";
+import {
+  stackRuntimeLayer,
+  stackStartRuntimeLayer,
+  stackCommand,
+} from "../commands/experimental/stack/stack.command.ts";
 import { stackStartCommand } from "../commands/experimental/stack/start/start.command.ts";
 import { stackStopCommand } from "../commands/experimental/stack/stop/stop.command.ts";
 import { stackStatusCommand } from "../commands/experimental/stack/status/status.command.ts";
@@ -73,6 +77,7 @@ import {
 const stackStartAliasCommand = stackStartCommand.pipe(
   Command.provide(commandRuntimeLayer(["start"])),
   Command.provide(stackRuntimeLayer),
+  Command.provide(stackStartRuntimeLayer),
 );
 export const stackStopAliasCommand = stackStopCommand.pipe(
   Command.provide(commandRuntimeLayer(["stop"])),

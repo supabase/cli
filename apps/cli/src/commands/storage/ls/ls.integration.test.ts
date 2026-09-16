@@ -1,10 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Option } from "effect";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { VALID_REF, useTempWorkdir, withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
 import { setupStorage } from "../../../../tests/helpers/storage.ts";
+import { StackStorageCapabilityError } from "../../../command-internal/stack-storage.ts";
 import { storageLs } from "./ls.handler.ts";
 import type { StorageLsFlags } from "./ls.command.ts";
 
@@ -410,6 +411,371 @@ describe("storage ls", () => {
       });
     },
   );
+});
+
+describe("stack backend", () => {
+  const tmp = useTempWorkdir("supabase-storage-ls-stack-");
+
+  it.live("routes local requests through the stack's api endpoint and JWT", () => {
+    const { layer, requests } = setupStorage(tmp.current, {
+      toml: 'project_id = "test"\n[api]\nport = 65000\n',
+      local: true,
+      stackBackend: true,
+      stackApi: { apiEndpoint: "http://127.0.0.1:59999", serviceRoleJwt: "stack-jwt" },
+      routes: [{ method: "GET", match: BUCKET, body: [{ name: "test", id: "test" }] }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.url.startsWith("http://127.0.0.1:59999")).toBe(true);
+      expect(requests[0]?.headers["apikey"]).toBe("stack-jwt");
+      expect(requests[0]?.headers["authorization"]).toBe("Bearer stack-jwt");
+    });
+  });
+
+  it.live(
+    "ignores every legacy config/env input (port, external_url, jwt secret, hostname)",
+    () => {
+      const { layer, requests } = setupStorage(tmp.current, {
+        toml: 'project_id = "test"\n[api]\nport = 65000\n',
+        local: true,
+        stackBackend: true,
+        stackApi: { apiEndpoint: "http://127.0.0.1:59999", serviceRoleJwt: "stack-jwt" },
+        files: {
+          "supabase/.env":
+            "SUPABASE_API_PORT=65001\n" +
+            "SUPABASE_API_EXTERNAL_URL=http://legacy.invalid:1\n" +
+            "SUPABASE_AUTH_JWT_SECRET=abcdefghijklmnopqrstuvwxyzabcdef\n" +
+            "SUPABASE_SERVICES_HOSTNAME=legacy.invalid\n",
+        },
+        routes: [{ method: "GET", match: BUCKET, body: [{ name: "test", id: "test" }] }],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(requests).toHaveLength(1);
+        const url = requests[0]?.url ?? "";
+        expect(url).not.toContain("65001");
+        expect(url).not.toContain("legacy.invalid");
+        expect(url.startsWith("http://127.0.0.1:59999")).toBe(true);
+        expect(requests[0]?.headers["apikey"]).toBe("stack-jwt");
+      });
+    },
+  );
+
+  it.live(
+    "fails with StackStorageCapabilityError when Storage is disabled, before any request",
+    () => {
+      const { layer, requests } = setupStorage(tmp.current, {
+        toml: 'project_id = "test"\n',
+        local: true,
+        stackBackend: true,
+        stackApi: { storageState: "disabled" },
+      });
+      return Effect.gen(function* () {
+        const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        const json = JSON.stringify(exit);
+        expect(json).toContain("StackStorageCapabilityError");
+        expect(json).toContain("-x storage");
+        expect(requests).toHaveLength(0);
+      });
+    },
+  );
+
+  it.live(
+    "fails with StackStorageUnavailableError when no stack is registered for the project",
+    () => {
+      const { layer, requests } = setupStorage(tmp.current, {
+        toml: 'project_id = "test"\n',
+        local: true,
+        stackBackend: true,
+        stackApi: { found: false },
+      });
+      return Effect.gen(function* () {
+        const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        const json = JSON.stringify(exit);
+        expect(json).toContain("StackStorageUnavailableError");
+        expect(json).toContain("supabase start");
+        expect(requests).toHaveLength(0);
+      });
+    },
+  );
+
+  it.live("fails with StackStorageUnavailableError when the stack is stopped", () => {
+    const { layer, requests } = setupStorage(tmp.current, {
+      toml: 'project_id = "test"\n',
+      local: true,
+      stackBackend: true,
+      stackApi: { lifecycle: "stopped" },
+    });
+    return Effect.gen(function* () {
+      const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      const json = JSON.stringify(exit);
+      expect(json).toContain("StackStorageUnavailableError");
+      expect(json).toContain("supabase start");
+      expect(requests).toHaveLength(0);
+    });
+  });
+
+  it.live(
+    "fails with StackStorageUnavailableError when the StackApi service is unavailable",
+    () => {
+      const { layer, requests } = setupStorage(tmp.current, {
+        toml: 'project_id = "test"\n',
+        local: true,
+        stackBackend: true,
+        stackApi: { present: false },
+      });
+      return Effect.gen(function* () {
+        const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(JSON.stringify(exit)).toContain("StackStorageUnavailableError");
+        expect(requests).toHaveLength(0);
+      });
+    },
+  );
+
+  it.live(
+    "fails with StackStorageUnavailableError when the stack exposes no API credentials",
+    () => {
+      const { layer, requests } = setupStorage(tmp.current, {
+        toml: 'project_id = "test"\n',
+        local: true,
+        stackBackend: true,
+        stackApi: { omitApiCredentials: true },
+      });
+      return Effect.gen(function* () {
+        const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(JSON.stringify(exit)).toContain("StackStorageUnavailableError");
+        expect(requests).toHaveLength(0);
+      });
+    },
+  );
+
+  it.live("fails with StackStorageUnavailableError when the stack exposes no api endpoint", () => {
+    const { layer, requests } = setupStorage(tmp.current, {
+      toml: 'project_id = "test"\n',
+      local: true,
+      stackBackend: true,
+      stackApi: { apiEndpoint: null },
+    });
+    return Effect.gen(function* () {
+      const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain("StackStorageUnavailableError");
+      expect(requests).toHaveLength(0);
+    });
+  });
+
+  it.live("surfaces the capability error message when Storage failed to start", () => {
+    const { layer } = setupStorage(tmp.current, {
+      toml: 'project_id = "test"\n',
+      local: true,
+      stackBackend: true,
+      stackApi: { storageState: "failed", storageError: "boom" },
+    });
+    return Effect.gen(function* () {
+      const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      const json = JSON.stringify(exit);
+      expect(json).toContain("StackStorageCapabilityError");
+      expect(json).toContain("boom");
+    });
+  });
+
+  it.live("proceeds to the gateway when Storage is dormant (lazy-activated)", () => {
+    const { layer, out } = setupStorage(tmp.current, {
+      toml: 'project_id = "test"\n',
+      local: true,
+      stackBackend: true,
+      stackApi: { storageState: "dormant" },
+      routes: [{ method: "GET", match: BUCKET, body: [{ name: "test", id: "test" }] }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(out.stdoutText).toBe("test/\n");
+    });
+  });
+
+  it.live(
+    "maps a gateway 503 (Storage still activating) to StackStorageCapabilityError under the stack backend",
+    () => {
+      const { layer } = setupStorage(tmp.current, {
+        toml: 'project_id = "test"\n',
+        local: true,
+        stackBackend: true,
+        routes: [{ method: "GET", match: BUCKET, status: 503, body: { message: "unavailable" } }],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(JSON.stringify(exit)).toContain("StackStorageCapabilityError");
+      });
+    },
+  );
+
+  it.live("leaves a gateway 503 as StorageGatewayStatusError under the legacy backend", () => {
+    const { layer } = setupStorage(tmp.current, {
+      toml: 'project_id = "test"\n',
+      local: true,
+      routes: [{ method: "GET", match: BUCKET, status: 503, body: { message: "unavailable" } }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain("StorageGatewayStatusError");
+    });
+  });
+
+  it.live(
+    "uses the api-keys path for --linked and never calls findStack, even with the stack backend enabled",
+    () => {
+      const { layer, requests, stackCalls } = setupStorage(tmp.current, {
+        stackBackend: true,
+        routes: [{ method: "GET", match: BUCKET, body: [{ name: "remote", id: "remote" }] }],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* storageLs(lsFlags({ local: false })).pipe(
+          Effect.provide(layer),
+          Effect.exit,
+        );
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(requests.some((r) => r.url.startsWith(`https://${VALID_REF}.supabase.co`))).toBe(
+          true,
+        );
+        expect(stackCalls.findStack).toHaveLength(0);
+      });
+    },
+  );
+
+  it.live(
+    "leaves a --linked gateway 503 as StorageGatewayStatusError even under the stack backend",
+    () => {
+      const { layer, stackCalls } = setupStorage(tmp.current, {
+        stackBackend: true,
+        routes: [{ method: "GET", match: BUCKET, status: 503, body: { message: "unavailable" } }],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* storageLs(lsFlags({ local: false })).pipe(
+          Effect.provide(layer),
+          Effect.exit,
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        const json = JSON.stringify(exit);
+        expect(json).toContain("StorageGatewayStatusError");
+        expect(json).not.toContain("StackStorageCapabilityError");
+        expect(stackCalls.findStack).toHaveLength(0);
+      });
+    },
+  );
+
+  it.live(
+    "sanitizes a failed capability's error message, stripping control characters from the stack",
+    () => {
+      const { layer } = setupStorage(tmp.current, {
+        toml: 'project_id = "test"\n',
+        local: true,
+        stackBackend: true,
+        stackApi: { storageState: "failed", storageError: "\u001b[31mboom\u001b[0m" },
+      });
+      return Effect.gen(function* () {
+        const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (!Exit.isFailure(exit)) return;
+        const error = Cause.squash(exit.cause);
+        expect(error).toBeInstanceOf(StackStorageCapabilityError);
+        if (!(error instanceof StackStorageCapabilityError)) return;
+        expect(error.message).toContain("Storage failed to start for this stack");
+        expect(error.message).toContain("boom");
+        expect(error.message).not.toContain("\u001b");
+      });
+    },
+  );
+
+  it.live("suggests stopping and starting the stack when Storage is disabled", () => {
+    const { layer } = setupStorage(tmp.current, {
+      toml: 'project_id = "test"\n',
+      local: true,
+      stackBackend: true,
+      stackApi: { storageState: "disabled" },
+    });
+    return Effect.gen(function* () {
+      const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      const serialized = JSON.stringify(exit);
+      expect(serialized).toContain("supabase stack stop");
+      expect(serialized).toContain("supabase stack start without -x storage");
+      expect(serialized).not.toContain("supabase stack restart");
+    });
+  });
+
+  it.live("suggests waiting for the stack to finish stopping", () => {
+    const { layer } = setupStorage(tmp.current, {
+      toml: 'project_id = "test"\n',
+      local: true,
+      stackBackend: true,
+      stackApi: { lifecycle: "stopping" },
+    });
+    return Effect.gen(function* () {
+      const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain("run supabase start once it has stopped");
+    });
+  });
+
+  it.live(
+    "surfaces the gateway's status and body on a local 503, without suggesting reactivation",
+    () => {
+      const { layer } = setupStorage(tmp.current, {
+        toml: 'project_id = "test"\n',
+        local: true,
+        stackBackend: true,
+        routes: [{ method: "GET", match: BUCKET, status: 503, body: { message: "upstream down" } }],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        const json = JSON.stringify(exit);
+        expect(json).toContain("StackStorageCapabilityError");
+        expect(json).toContain("HTTP 503");
+        expect(json).toContain("upstream down");
+        expect(json).not.toContain("activate");
+      });
+    },
+  );
+
+  it.live("suggests retrying shortly while the stack lifecycle is starting", () => {
+    const { layer } = setupStorage(tmp.current, {
+      toml: 'project_id = "test"\n',
+      local: true,
+      stackBackend: true,
+      stackApi: { lifecycle: "starting" },
+    });
+    return Effect.gen(function* () {
+      const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain("retry shortly");
+    });
+  });
+
+  it.live("legacy default still derives the gateway URL from [api] port", () => {
+    const { layer, requests } = setupStorage(tmp.current, {
+      toml: 'project_id = "test"\n[api]\nport = 65432\n',
+      local: true,
+      routes: [{ method: "GET", match: BUCKET, body: [{ name: "test", id: "test" }] }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(requests[0]?.url.includes(":65432")).toBe(true);
+    });
+  });
 });
 
 function hasOffset(body: unknown): boolean {

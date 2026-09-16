@@ -68,6 +68,7 @@ const CLI_SUGGESTED_COMMANDS = [
   "supabase branches create",
   "supabase link",
   "supabase login",
+  "supabase seed buckets",
   "supabase start",
   "supabase stop",
 ] as const;
@@ -178,7 +179,11 @@ type CliErrorSuggestion =
   | {
       readonly has_suggestion: true;
       readonly suggestion_type: typeof CliSuggestionType.RunCommand;
-      readonly suggested_command?: "supabase branches create" | "supabase start" | "supabase stop";
+      readonly suggested_command?:
+        | "supabase branches create"
+        | "supabase seed buckets"
+        | "supabase start"
+        | "supabase stop";
     }
   | {
       readonly has_suggestion: true;
@@ -353,6 +358,14 @@ export const actionability = {
     has_suggestion: true,
     suggestion_type: CliSuggestionType.RunCommand,
     suggested_command: "supabase stop",
+  },
+  /** The stack is up but bucket seeding failed; re-running the seed step recovers. */
+  seedBuckets: {
+    error_kind: CliErrorKind.UserActionable,
+    error_category: CliErrorCategory.InvalidConfig,
+    has_suggestion: true,
+    suggestion_type: CliSuggestionType.RunCommand,
+    suggested_command: "supabase seed buckets",
   },
   externalNetwork: {
     error_kind: CliErrorKind.ExternalService,
@@ -568,6 +581,7 @@ function sanitizeSuggestion(
   if (
     suggestionType === CliSuggestionType.RunCommand &&
     (suggestedCommand === "supabase branches create" ||
+      suggestedCommand === "supabase seed buckets" ||
       suggestedCommand === "supabase start" ||
       suggestedCommand === "supabase stop")
   ) {

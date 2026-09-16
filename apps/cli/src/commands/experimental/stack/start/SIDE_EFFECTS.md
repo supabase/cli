@@ -88,5 +88,29 @@ accepted by the project config model but are not implemented by the local
 runtime and are not forwarded. They do not enforce database security for this
 command.
 
+## Bucket seeding on stack creation
+
+When this invocation runs the stack's first configured start (`desiredLifecycle` was
+`unconfigured`, including after `stack prepare`) and Storage is not `disabled`, the
+command seeds `[storage.buckets]` — creating or updating buckets and uploading their
+`objects_path` files, non-interactively with auto-confirm — against the stack's gateway
+using its service-role JWT, before printing the resulting status. Auto-confirm is safe
+here because a first-start stack has no pre-existing buckets to overwrite or prune. This
+reuses the same seeding core as `supabase seed buckets` and `db reset --local`. Files
+read: `supabase/config.toml` `[storage.buckets]`, the configured `objects_path` files,
+and the project dotenv files used for config resolution. Network calls:
+`POST`/`GET /storage/v1/bucket` and `POST /storage/v1/object/...` against the stack's
+API URL.
+
+A project with no `[storage.buckets]` or `[storage.vector.buckets]` configured resolves
+no credentials and prints nothing — there is nothing to seed.
+
+A resumed stack is never re-seeded by `start`. Storage `disabled` skips seeding
+silently; any other unusable capability state, a missing capability/credentials, or a
+stack-gateway activation failure prints a stderr warning and skips seeding without
+failing the command. Any other seeding failure (e.g. an invalid bucket entry) fails the
+command with exit code `1`, but the stack itself is left running — a seeding failure
+never stops or destroys it.
+
 Telemetry state is flushed to `<SUPABASE_HOME or ~/.supabase>/telemetry.json`
 after both successful and failed command runs.

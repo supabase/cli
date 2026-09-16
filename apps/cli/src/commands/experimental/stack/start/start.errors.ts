@@ -14,6 +14,7 @@ export class StackCommandStartError extends Data.TaggedError("ExperimentalStackS
     | "port"
     | "artifact"
     | "lifecycle"
+    | "seed"
     | "unknown";
   readonly message: string;
   readonly detail?: string;
@@ -35,6 +36,8 @@ export class StackCommandStartError extends Data.TaggedError("ExperimentalStackS
         return actionability.invalidConfig;
       case "lifecycle":
         return actionability.invalidConfig;
+      case "seed":
+        return actionability.seedBuckets;
       case "unknown":
         return actionability.unknown;
     }
