@@ -13,16 +13,17 @@ import { decodeBody, mapRequestError, unexpectedStatus } from "./compute-api-sta
 import {
   ComputeBuildTimeoutError,
   ComputeProjectNotFoundError,
+  ComputeRouteNotFoundError,
   ComputeUnavailableError,
   ComputeUploadFailedError,
 } from "./compute.errors.ts";
 
 /**
  * The seam every compute command talks to: `/v2/projects/{ref}/compute` on the Management API. A
- * 404 here is overloaded — a project outside the alpha's allow-list, an unknown project ref, and
- * an undeployed compute all answer the same way. A named-compute 404 is reported as "not deployed";
- * a collection-endpoint 404, where no compute name could be wrong, is split by its body instead —
- * see {@link projectScoped404}.
+ * 404 here is overloaded — a project outside the alpha's allow-list, an unknown project ref, an
+ * undeployed compute, and a route the API has since renamed all answer the same way. A
+ * named-compute 404 is reported as "not deployed"; a collection-endpoint 404, where no compute
+ * name could be wrong, is split by its body instead — see {@link projectScoped404}.
  */
 
 /** The compute shape the API returns, flattened out of its JSON:API envelope. */
@@ -86,18 +87,37 @@ const computeSuggestion =
   "Compute is in private alpha. Ask in the Supabase dashboard to have this project enrolled.";
 
 /**
- * The `error.code` a 404 carries — the only way to tell an unenrolled project from one that
- * doesn't exist, since both answer 404 on the same routes:
+ * The `error.code` a 404 carries, and the `message` needed where the code alone is ambiguous.
+ * Three unrelated failures answer 404 on these routes:
  *
  * - not enrolled -> `{"error":{"code":"generic_not_found","message":"Compute is not available for this project"}}`
  * - no such project -> `{"error":{"code":"not_found","message":"Not Found"}}`
+ * - no such route -> `{"error":{"code":"not_found","message":"Cannot GET /v2/projects/{ref}/compute"}}`
+ *
+ * The last two share a code, so the message is the only thing separating them.
  */
 const NotFoundBody = Schema.Struct({
-  error: Schema.Struct({ code: Schema.String }),
+  error: Schema.Struct({
+    code: Schema.String,
+    message: Schema.optionalKey(Schema.String),
+  }),
 });
 
 /**
- * Which of the two a project-scoped 404 was. Only `not_found` is read as a missing project — an
+ * The router's own 404 text rather than the project handler's: the API answers an unrouted path
+ * with Express's default `Cannot <METHOD> <path>`. Anchored so a detail merely containing the
+ * phrase cannot match.
+ */
+const ROUTE_NOT_FOUND_MESSAGE = /^Cannot [A-Z]+ \//;
+
+/** The CLI-side fix for a route the API no longer serves. */
+const outdatedClientSuggestion =
+  "This CLI build is out of step with the Management API. Update it: " +
+  "https://supabase.com/docs/guides/cli/getting-started#updating-the-supabase-cli";
+
+/**
+ * Which of the three a project-scoped 404 was. `not_found` carrying the router's message means
+ * the API does not serve the route; `not_found` otherwise means the project is missing. An
  * unrecognized body defaults to the enrolment answer, since guessing the other way would send
  * someone to check a ref that's actually fine.
  */
@@ -110,6 +130,17 @@ const projectScoped404 = Effect.fnUntraced(function* (options: {
   );
 
   if (Option.isSome(parsed) && parsed.value.error.code === "not_found") {
+    const message = parsed.value.error.message ?? "";
+
+    if (ROUTE_NOT_FOUND_MESSAGE.test(message)) {
+      // `Cannot GET /v2/projects/{ref}/compute` -> `GET /v2/projects/{ref}/compute`
+      const route = message.slice("Cannot ".length);
+      return new ComputeRouteNotFoundError({
+        detail: `The Management API does not serve ${route}, so this CLI cannot reach compute for project ${options.projectRef}.`,
+        suggestion: outdatedClientSuggestion,
+      });
+    }
+
     return new ComputeProjectNotFoundError({
       detail: `No project ${options.projectRef} was found for this account.`,
       suggestion:

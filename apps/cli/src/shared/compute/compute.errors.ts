@@ -232,6 +232,20 @@ export class ComputeProjectNotFoundError extends Data.TaggedError("ComputeProjec
 }
 
 /**
+ * The Management API serves no such route. Separated from {@link ComputeProjectNotFoundError}
+ * because the router answers an unrouted path under the same `not_found` code a missing project
+ * does, and blaming the project ref sends someone whose project is fine nowhere useful.
+ */
+export class ComputeRouteNotFoundError extends Data.TaggedError("ComputeRouteNotFoundError")<{
+  readonly detail: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return { ...actionability.apiStatus, fingerprint_suffix: "not_found" };
+  }
+}
+
+/**
  * Any other status the Compute routes answered with. Classified from the status it carries rather
  * than bucketed as a generic service failure — a 401 is the user's to fix by logging in, a 403 by
  * getting access, and reporting either as `api_status` would blur the actionability signal.

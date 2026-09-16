@@ -19,6 +19,7 @@ import {
   ComputeBuildFailedError,
   ComputeBuildTimeoutError,
   ComputeProjectNotFoundError,
+  ComputeRouteNotFoundError,
   ComputeUnavailableError,
   ComputeSourceEscapingLinkError,
   ComputeSourceMissingError,
@@ -1080,6 +1081,34 @@ describe("compute push", () => {
         expect(error).toBeInstanceOf(ComputeProjectNotFoundError);
         expect((error as ComputeProjectNotFoundError).suggestion).not.toContain("private alpha");
         expect((error as ComputeProjectNotFoundError).suggestion).toContain("supabase link");
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live("blames the CLI, not the project, when the API has no such route", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer } = setupCompute({
+        workdir: repo.dir,
+        routes: routes({
+          [`POST ${computeRoute("/api/uploads")}`]: {
+            status: 404,
+            body: {
+              error: {
+                code: "not_found",
+                message: `Cannot POST /v2/projects/${COMPUTE_PROJECT_REF}/compute/api/uploads`,
+              },
+            },
+          },
+        }),
+      });
+
+      return yield* Effect.gen(function* () {
+        const error = yield* push().pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(ComputeRouteNotFoundError);
+        expect((error as ComputeRouteNotFoundError).suggestion).not.toContain("supabase link");
+        expect((error as ComputeRouteNotFoundError).suggestion).not.toContain("private alpha");
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
