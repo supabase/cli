@@ -3,7 +3,7 @@ import { BunServices } from "@effect/platform-bun";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { Config, ConfigProvider, Effect, Layer } from "effect";
+import { Config, ConfigProvider, Effect, Layer, PlatformError } from "effect";
 import { cliSettingsLayer } from "../config/cli-settings.layer.ts";
 import { TelemetryRuntime } from "./runtime.service.ts";
 import { telemetryRuntimeLayer } from "./runtime.layer.ts";
@@ -22,7 +22,7 @@ function buildLayer(opts: {
   homeDir: string;
   env?: Record<string, string>;
   stdoutIsTty?: boolean;
-}): Layer.Layer<TelemetryRuntime, Config.ConfigError> {
+}): Layer.Layer<TelemetryRuntime, Config.ConfigError | PlatformError.PlatformError> {
   const runtimeInfoLayer = mockRuntimeInfo({ homeDir: opts.homeDir });
   const cliProjectContextLayer = mockCliProjectContext();
   const envLayer = processEnvLayer({
