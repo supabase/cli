@@ -649,7 +649,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
         }),
         host: "db",
         port: 5432,
-        probeHost: yield* getHostname(),
+        probeHost: yield* getHostname(config.projectEnv),
         probePort: config.port,
         networkMode: localNetworkId(projectId),
         includedSchemas,

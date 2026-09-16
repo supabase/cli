@@ -112,7 +112,7 @@ export const resolveStorageCredentials = Effect.fnUntraced(function* (opts: {
   const api = yield* resolveLocalApiConfig(opts.config.api, projectEnvValues);
   const baseUrl = resolveApiExternalUrl(
     api,
-    yield* getHostname().pipe(
+    yield* getHostname(projectEnvValues).pipe(
       Effect.mapError((cause) => new StorageConfigError({ message: cause.message })),
     ),
   );
