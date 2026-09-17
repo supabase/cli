@@ -86,9 +86,8 @@ The candidate baseline is computed from linked versions in `.supabase/project.js
 3. the managed document's `launch.versions` baseline;
 4. catalog defaults for values not supplied by the preceding sources.
 
-`supabase stack update` refreshes the linked cache when possible and updates `launch` through the
-managed lifecycle (directly when stopped, or through the owner control route when running). It does
-not write a second project-level pinned-version file.
+`launch` is recorded by `supabase start` through the managed lifecycle; there is no separate
+command that rewrites it, and no second project-level pinned-version file is written.
 
 ## Port intents
 
