@@ -542,6 +542,31 @@ describe("instance engine", () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.live("fences a pure restore defect until destroy recovery", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const first = instance(id("00000000-0000-4000-8000-000000000075"), "defect-restore");
+        const second = instance(id("00000000-0000-4000-8000-000000000076"), "healthy");
+        const f = yield* makeFixture(first, second, undefined, {
+          restoreSnapshot: () => Effect.die("restore driver crashed"),
+        });
+
+        const failed = yield* f.engine.restoreSnapshot(first.id, "snapshot.tar").pipe(Effect.exit);
+        expect(Exit.isFailure(failed)).toBe(true);
+        if (Exit.isFailure(failed)) expect(Cause.hasDies(failed.cause)).toBe(true);
+        expect(
+          (yield* f.read())?.registry.instances.find((entry) => entry.id === first.id)
+            ?.pendingOperation,
+        ).toMatchObject({ kind: "restoreSnapshot", phase: "running" });
+        expect((yield* f.engine.status(first.id)).phase).toBe("recovery");
+        expect((yield* f.engine.status(first.id)).recovery?.operation).toBe("destroy");
+
+        yield* f.engine.destroy(first.id);
+        expect((yield* f.engine.list).map(({ id: instanceId }) => instanceId)).toEqual([second.id]);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.live("preserves secrets owned by existing instances when registering a new one", () =>
     Effect.scoped(
       Effect.gen(function* () {
