@@ -202,9 +202,6 @@ export class ContainerEngineError extends Data.TaggedError("ContainerEngineError
 export class StackDestructionError extends Data.TaggedError("StackDestructionError")<
   ErrorFields & { readonly outcome?: LifecycleOutcome }
 > {}
-export class RequiresActivatedProcessError extends Data.TaggedError(
-  "RequiresActivatedProcessError",
-)<ErrorFields & { readonly capability: string }> {}
 export class PostgresClientError extends Data.TaggedError("PostgresClientError")<
   ErrorFields & {
     readonly reason?: "missing-bin" | "spawn";
@@ -250,7 +247,6 @@ export const STACK_ERROR_TAGS = [
   "StackCleanupError",
   "ContainerEngineError",
   "StackDestructionError",
-  "RequiresActivatedProcessError",
   "PostgresClientError",
 ] as const;
 
@@ -295,7 +291,6 @@ export type StackError =
   | StackCleanupError
   | ContainerEngineError
   | StackDestructionError
-  | RequiresActivatedProcessError
   | PostgresClientError;
 
 export const isStackError = (value: unknown): value is StackError =>
@@ -436,12 +431,6 @@ export const DESTROY_STACK_ERROR_TAGS = [
 ] as const satisfies ReadonlyArray<StackErrorTag>;
 export type DestroyStackError = ErrorByTag<(typeof DESTROY_STACK_ERROR_TAGS)[number]>;
 
-export const RESET_DATABASE_ERROR_TAGS = [
-  "StackNotFoundError",
-  ...STACK_START_ERROR_TAGS,
-] as const satisfies ReadonlyArray<StackErrorTag>;
-export type ResetDatabaseError = ErrorByTag<(typeof RESET_DATABASE_ERROR_TAGS)[number]>;
-
 export const POSTGRES_CLIENT_ERROR_TAGS = [
   "PostgresClientError",
   "StackVersionUnsupportedError",
@@ -451,22 +440,3 @@ export const POSTGRES_CLIENT_ERROR_TAGS = [
   "ContainerEngineError",
 ] as const satisfies ReadonlyArray<StackErrorTag>;
 export type PostgresClientRunError = ErrorByTag<(typeof POSTGRES_CLIENT_ERROR_TAGS)[number]>;
-
-export const SCHEMA_INIT_ERROR_TAGS = [
-  "RequiresActivatedProcessError",
-  "InvalidStackConfigError",
-  "StackVersionUnsupportedError",
-  "InvalidProjectRootError",
-  "InvalidStackIdentityError",
-  "StackPreparationError",
-  "ArtifactIntegrityError",
-  "ContainerPullError",
-  "ContainerEngineError",
-  "StackSecretMismatchError",
-  "InvalidJwtSigningMaterialError",
-  "StackRuntimeError",
-  "StackMustBeStoppedError",
-  "StackStateInvalidError",
-  "StackStateFormatUnsupportedError",
-] as const satisfies ReadonlyArray<StackErrorTag>;
-export type SchemaInitError = ErrorByTag<(typeof SCHEMA_INIT_ERROR_TAGS)[number]>;
