@@ -41,9 +41,9 @@ concurrency:
 jobs:
   mirror:
     runs-on: ubuntu-latest
-    # The sender's poll times out after 15 minutes; fail fast instead of
-    # hanging past that window.
-    timeout-minutes: 10
+    # The sender's poll times out after 15 minutes; native copies run after the
+    # image copy and must still finish inside that window.
+    timeout-minutes: 13
     permissions:
       contents: read
       packages: read
@@ -91,6 +91,7 @@ jobs:
             echo "source=$SOURCE"
             echo "destination=$DESTINATION"
             echo "digest=$DIGEST"
+            echo "version=$VERSION"
           } >> "$GITHUB_OUTPUT"
 
       - name: Install regctl
@@ -185,3 +186,70 @@ jobs:
             exit 1
           fi
           echo "$DESTINATION resolves to $DIGEST"
+
+      - name: Mirror native artifacts
+        continue-on-error: true
+        env:
+          SERVICE: ${{ steps.validate.outputs.service }}
+          VERSION: ${{ steps.validate.outputs.version }}
+          EVENT_NAME: ${{ github.event_name }}
+        # Native tags are copied without --referrers. Failure must not fail the
+        # image digest the sender polls; daily audit reports native drift.
+        run: |
+          set -euo pipefail
+          natives_json='[]'
+          if [ "$EVENT_NAME" = "repository_dispatch" ]; then
+            natives_json="$(python3 -c 'import json, os; event=json.load(open(os.environ["GITHUB_EVENT_PATH"])); print(json.dumps(event.get("client_payload", {}).get("natives") or []))')"
+          fi
+          python3 - "$SERVICE" "$VERSION" "$natives_json" <<'PY'
+          import json
+          import re
+          import sys
+
+          service, version, raw = sys.argv[1:]
+          natives = json.loads(raw)
+          if not isinstance(natives, list):
+              raise SystemExit("natives must be a JSON array")
+          tag_re = re.compile(
+              rf"^{re.escape(version)}-native-(linux-arm64|linux-amd64|darwin-arm64)$"
+          )
+          digest_re = re.compile(r"^sha256:[0-9a-f]{64}$")
+          rows = []
+          for item in natives:
+              if not isinstance(item, dict) or "tag" not in item or "digest" not in item:
+                  raise SystemExit(f"invalid native entry: {item!r}")
+              if not tag_re.fullmatch(item["tag"]):
+                  raise SystemExit(f"invalid native tag: {item['tag']}")
+              if not digest_re.fullmatch(item["digest"]):
+                  raise SystemExit(f"invalid native digest: {item['digest']}")
+              rows.append((item["tag"], item["digest"]))
+          with open("natives.tsv", "w", encoding="utf-8") as fh:
+              for tag, digest in rows:
+                  fh.write(f"{tag}\t{digest}\n")
+          PY
+          if [[ ! -s natives.tsv ]]; then
+            echo "no native artifacts in payload"
+            exit 0
+          fi
+          failed=0
+          while IFS=$'\t' read -r tag digest; do
+            source="ghcr.io/supabase/cli/${SERVICE}:${tag}"
+            destination="public.ecr.aws/supabase/cli/${SERVICE}:${tag}"
+            source_digest="$(regctl manifest head "$source" | tr -d '[:space:]')" || {
+              echo "::warning::native source $source is missing"
+              failed=1
+              continue
+            }
+            if [ "$source_digest" != "$digest" ]; then
+              echo "::warning::native source $source resolves to $source_digest, expected $digest"
+              failed=1
+              continue
+            fi
+            if ! regctl image copy "${source%:*}@${digest}" "$destination"; then
+              echo "::warning::native copy failed: $source -> $destination"
+              failed=1
+              continue
+            fi
+            echo "mirrored $destination@$digest"
+          done < natives.tsv
+          exit "$failed"

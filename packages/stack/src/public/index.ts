@@ -66,3 +66,13 @@ export type {
   SchemaInitServices,
   SchemaInitTarget,
 } from "./SchemaInit.ts";
+export {
+  detectArtifactHostHint,
+  isSlimCatalogImage,
+  nativeArtifactCandidates,
+  rewriteSlimImageHost,
+  slimImagePullCandidates,
+  SLIM_ECR_PREFIX,
+  SLIM_GHCR_PREFIX,
+} from "../model/SlimArtifactMirrors.ts";
+export type { ArtifactHostHint, NativeFetchCandidate } from "../model/SlimArtifactMirrors.ts";

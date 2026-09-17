@@ -3,12 +3,12 @@
  * overrides the default ECR mirror; `docker.io` returns the image unchanged, and any other value
  * rewrites it to `<registry>/supabase/<last-path-segment>`. Callers that can retry pulls should
  * use {@link getRegistryImageUrlCandidates} instead, which falls back through GHCR and the
- * source image. Slim images ({@link isSlimImageRef}) skip every rewrite — there's no mirror to
- * redirect them to.
+ * source image. Slim images (`ghcr.io/supabase/cli` / `public.ecr.aws/supabase/cli`) use a
+ * host-prefix swap that keeps `@sha256` pins; env-hint reordering then fail-through.
  */
 import { Config, ConfigProvider, Effect, Option } from "effect";
 
-import { isSlimImageRef } from "../shared/services/slim-images.ts";
+import { isSlimCatalogImage, slimImagePullCandidates } from "@supabase/stack/effect";
 
 const INTERNAL_IMAGE_REGISTRY_ENV = "SUPABASE_INTERNAL_IMAGE_REGISTRY";
 const DEFAULT_REGISTRY = "public.ecr.aws";
@@ -50,12 +50,32 @@ const registryOverride = Effect.fnUntraced(function* (
   );
 });
 
+const mergedEnv = (
+  projectEnvValues?: Readonly<Record<string, string>>,
+): Readonly<Record<string, string | undefined>> =>
+  projectEnvValues === undefined ? process.env : { ...process.env, ...projectEnvValues };
+
+const overrideValue = (override: Option.Option<string>): string | undefined => {
+  if (Option.isNone(override) || override.value.length === 0) return undefined;
+  return override.value;
+};
+
 export function getRegistryImageUrl(
   imageName: string,
   projectEnvValues?: Readonly<Record<string, string>>,
 ): Effect.Effect<string, Config.ConfigError> {
-  if (isSlimImageRef(imageName)) {
-    return Effect.succeed(imageName);
+  if (isSlimCatalogImage(imageName)) {
+    return registryOverride(projectEnvValues).pipe(
+      Effect.map((override) => {
+        const candidates = slimImagePullCandidates(imageName, {
+          env: mergedEnv(projectEnvValues),
+          ...(overrideValue(override) === undefined
+            ? {}
+            : { registryOverride: overrideValue(override) }),
+        });
+        return candidates[0] ?? imageName;
+      }),
+    );
   }
   return registryOverride(projectEnvValues).pipe(
     Effect.map((override) => rewriteRegistryImage(imageName, override)),
@@ -66,8 +86,17 @@ export function getRegistryImageUrlCandidates(
   imageName: string,
   projectEnvValues?: Readonly<Record<string, string>>,
 ): Effect.Effect<ReadonlyArray<string>, Config.ConfigError> {
-  if (isSlimImageRef(imageName)) {
-    return Effect.succeed([imageName]);
+  if (isSlimCatalogImage(imageName)) {
+    return registryOverride(projectEnvValues).pipe(
+      Effect.map((override) =>
+        slimImagePullCandidates(imageName, {
+          env: mergedEnv(projectEnvValues),
+          ...(overrideValue(override) === undefined
+            ? {}
+            : { registryOverride: overrideValue(override) }),
+        }),
+      ),
+    );
   }
 
   return registryOverride(projectEnvValues).pipe(

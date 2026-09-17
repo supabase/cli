@@ -66,6 +66,7 @@ When an ADR becomes outdated, mark it as `deprecated` or reference the supersedi
 | 0023 | [Config Pull Write Strategy and Scope Resolution](0023-config-pull-write-strategy-and-scope-resolution.md)     | accepted   |
 | 0024 | [Top-Level `pull` Orchestration](0024-top-level-pull-orchestration.md)                                         | accepted   |
 | 0025 | [Ephemeral Postgres for Schema Tooling](0025-ephemeral-postgres-for-schema-tooling.md)                         | proposed   |
+| 0026 | [Slim Image and Native Artifact Mirrors](0026-slim-artifact-mirrors.md)                                        | proposed   |
 
 ## Template
 

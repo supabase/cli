@@ -54,6 +54,7 @@ export type CatalogUpdatePlan =
 
 export class InvalidPayloadError extends Error {}
 
+/** `service` / `version` / `digest` are the image fields. Extra dispatch keys such as `natives[]` are ignored. */
 export function validatePayload(input: {
   readonly service: string;
   readonly version: string;

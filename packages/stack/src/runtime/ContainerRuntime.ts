@@ -31,6 +31,7 @@ import {
   type ContainerWorkloadLabels,
   type ContainerLogOptions,
 } from "./ContainerEngine.ts";
+import { resolveAvailableContainerImage } from "./resolve-container-image.ts";
 import {
   RuntimeDriverError,
   type RuntimeCleanupRequest,
@@ -671,13 +672,10 @@ export const makeContainerRuntime = (
               yield* withEngine(key, options.engine.stopContainer(existingExact.id));
             yield* withEngine(key, options.engine.removeContainer(existingExact.id));
           }
-          yield* withEngine(key, options.engine.inspectImage(artifact.image)).pipe(
-            Effect.flatMap((inspected) =>
-              inspected.present
-                ? Effect.void
-                : withEngine(key, options.engine.pullImage(artifact.image)),
-            ),
-          );
+          const image = (yield* withEngine(
+            key,
+            resolveAvailableContainerImage(options.engine, artifact.image),
+          )).image;
           yield* guard;
 
           const networkResource = yield* setup.withPermit(
@@ -776,7 +774,7 @@ export const makeContainerRuntime = (
 
           for (const startup of resolution.startup ?? [])
             yield* runStartupProcess(key, workload, startup, {
-              artifact,
+              artifact: { ...artifact, image },
               network: networkResource,
               resolution,
               ...(volumeRequest === undefined ? {} : { volumeRequest }),
@@ -787,7 +785,7 @@ export const makeContainerRuntime = (
             key,
             options.engine.createContainer({
               name: nameFor(key, "workload"),
-              image: artifact.image,
+              image,
               labels,
               network: networkResource.id,
               mounts: resolution.mounts ?? [],
