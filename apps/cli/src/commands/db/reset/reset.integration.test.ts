@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option, PlatformError, Sink, Stream } from "effect";
+import { Cause, Effect, Exit, Layer, Option, PlatformError, Sink, Stream, Redacted } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -17,6 +17,8 @@ import {
 } from "../../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
+  jsonResponse,
+  withEnvVar,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockLocalDockerEngineUnavailableLayer,
@@ -24,6 +26,7 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
   sequentialExecBatch,
+  transportFailure,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
@@ -42,6 +45,15 @@ import {
 } from "../../../command-internal/global-flags.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
 import { dockerRunLayer } from "../../../command-internal/docker-run.layer.ts";
+import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
+import { StackApi } from "../../../command-internal/stack-api.ts";
+import { recordingStackCatalogSetup } from "../../../command-internal/stack-catalog-setup.ts";
+import {
+  CAPABILITY_NAMES,
+  StackIdSchema,
+  type CapabilityState,
+  type EffectStack,
+} from "@supabase/stack/effect";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
 import { DbConfigConnectTempRoleError } from "../../../command-internal/db-config.errors.ts";
@@ -389,6 +401,194 @@ const alwaysReadyHttpClientLayer = Layer.succeed(
   ),
 );
 
+/** Records every request the reset's bucket-seeding gateway client issues, responding 200 to all. */
+function recordingStackStorageHttpClient() {
+  const requests: Array<{
+    readonly method: string;
+    readonly url: string;
+    readonly authorization: string;
+  }> = [];
+  const layer = Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) => {
+      requests.push({
+        method: request.method,
+        url: request.url,
+        authorization: request.headers["authorization"] ?? "",
+      });
+      const body = request.method === "GET" ? "[]" : JSON.stringify({ name: "bucket" });
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(body, { status: 200, headers: { "content-type": "application/json" } }),
+        ),
+      );
+    }),
+  );
+  return { layer, requests };
+}
+
+/** Like `recordingStackStorageHttpClient`, but a bucket-create POST fails with the given status. */
+function recordingStackStorageHttpClientBucketCreateFails(status: number) {
+  const requests: Array<{ readonly method: string; readonly url: string }> = [];
+  const layer = Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) => {
+      requests.push({ method: request.method, url: request.url });
+      if (request.method === "POST" && request.url.includes("/storage/v1/bucket")) {
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(request, new Response("server error", { status })),
+        );
+      }
+      const body = request.method === "GET" ? "[]" : JSON.stringify({ name: "bucket" });
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(body, { status: 200, headers: { "content-type": "application/json" } }),
+        ),
+      );
+    }),
+  );
+  return { layer, requests };
+}
+
+/** Like `recordingStackStorageHttpClient`, but the bucket-list GET fails at the transport level. */
+function recordingStackStorageHttpClientBucketListTransportFails() {
+  const requests: Array<{ readonly method: string; readonly url: string }> = [];
+  const layer = Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) => {
+      requests.push({ method: request.method, url: request.url });
+      if (request.method === "GET" && request.url.includes("/storage/v1/bucket")) {
+        return Effect.fail(transportFailure(request, "ECONNREFUSED"));
+      }
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(JSON.stringify({ name: "bucket" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        ),
+      );
+    }),
+  );
+  return { layer, requests };
+}
+
+const RESET_STACK_ID = StackIdSchema.make("c".repeat(64));
+
+function mockResetStackApi(opts: {
+  readonly workdir: string;
+  readonly ready: boolean;
+  readonly storageReady?: boolean;
+  /** Overrides the derived storage capability state (default: `ready` when `storageReady`, else `stopped`). */
+  readonly storageState?: CapabilityState;
+  readonly storageError?: string;
+  readonly apiEndpoint?: { readonly url: string; readonly port: number };
+  readonly serviceRoleJwt?: string;
+  readonly capabilityStates?: Partial<Record<(typeof CAPABILITY_NAMES)[number], CapabilityState>>;
+}) {
+  let resetCalls = 0;
+  const unused = Effect.die("unused");
+  const unusedFn = () => unused;
+  const stack: EffectStack = {
+    id: RESET_STACK_ID,
+    status: Effect.succeed({
+      id: RESET_STACK_ID,
+      lifecycle: opts.ready ? "running" : "stopped",
+      desiredLifecycle: opts.ready ? "running" : "stopped",
+      runtime: { kind: "native" },
+      endpoints:
+        opts.apiEndpoint === undefined
+          ? {}
+          : {
+              api: {
+                protocol: "http" as const,
+                address: "127.0.0.1",
+                port: opts.apiEndpoint.port,
+                url: opts.apiEndpoint.url,
+              },
+            },
+      versions: {},
+      capabilities: CAPABILITY_NAMES.map((name) => ({
+        name,
+        activation: name === "database" ? "eager" : "lazy",
+        state:
+          opts.capabilityStates?.[name] ??
+          (name === "database"
+            ? opts.ready
+              ? "ready"
+              : "stopped"
+            : name === "storage"
+              ? (opts.storageState ?? (opts.storageReady === true ? "ready" : "stopped"))
+              : "stopped"),
+        ...(name === "storage" && opts.storageError !== undefined
+          ? { error: opts.storageError }
+          : {}),
+      })),
+      artifacts: [],
+    }),
+    credentials: Effect.succeed({
+      database: {
+        url: Redacted.make("postgresql://postgres:postgres@127.0.0.1:54329/postgres"),
+        password: Redacted.make("postgres"),
+      },
+      api: {
+        publishableKey: "anon",
+        secretKey: Redacted.make("service"),
+        anonJwt: "anon",
+        serviceRoleJwt: Redacted.make(opts.serviceRoleJwt ?? "service"),
+      },
+    }),
+    prepare: unusedFn,
+    start: unusedFn,
+    stop: unused,
+    destroy: unused,
+    resetDatabase: Effect.sync(() => {
+      resetCalls++;
+      return {
+        id: RESET_STACK_ID,
+        lifecycle: "running" as const,
+        desiredLifecycle: "running" as const,
+        runtime: { kind: "native" as const },
+        endpoints: {},
+        versions: {},
+        capabilities: CAPABILITY_NAMES.map((name) => ({
+          name,
+          activation: name === "database" ? ("eager" as const) : ("lazy" as const),
+          state: name === "database" ? ("ready" as const) : ("dormant" as const),
+        })),
+        artifacts: [],
+      };
+    }),
+    logs: unusedFn,
+    followLogs: () => Stream.empty,
+  };
+  return {
+    layer: Layer.succeed(StackApi, {
+      createStack: unusedFn,
+      findStack: () =>
+        Effect.succeed(
+          Option.some({
+            id: RESET_STACK_ID,
+            projectRoot: opts.workdir,
+            name: "default",
+            branchContext: "main",
+            runtime: { kind: "native" as const },
+            desiredLifecycle: "running" as const,
+          }),
+        ),
+      discoverStacks: unusedFn,
+      openStack: () => Effect.succeed(stack),
+      inspectStack: unusedFn,
+    }),
+    get resetCalls() {
+      return resetCalls;
+    },
+  };
+}
+
 function setup(
   workdir: string,
   opts: {
@@ -411,12 +611,35 @@ function setup(
     // Local-reset-only knobs.
     route?: (args: ReadonlyArray<string>) => RouteResult;
     routeOpts?: DefaultRouteOpts;
+    /**
+     * Storage-gateway routes (method + URL substring → JSON body) for the bucket-seed step;
+     * replaces the always-200 HTTP client with a recording one, 404 on no match.
+     */
+    storageRoutes?: ReadonlyArray<{
+      readonly method: string;
+      readonly match: string;
+      readonly status?: number;
+      readonly body?: unknown;
+    }>;
+    /** Piped (non-TTY) stdin content, one line consumed per confirmation prompt. */
+    pipedStdin?: string;
+    /** Whether stdin is a TTY. Defaults to `true`. */
+    stdinIsTty?: boolean;
     replicationSlotCounts?: ReadonlyArray<number>;
     replicationSlotQueryFails?: boolean;
     failStatement?: { readonly sql: string; readonly code?: string; readonly message: string };
     // Simulates an unlinked workdir: `loadProjectRef` fails with `ProjectRefNotLinkedError`
     // absent an explicit `--project-ref` flag, instead of falling back to `opts.ref`.
     linkedFails?: boolean;
+    stackBackend?: boolean;
+    stackDatabaseReady?: boolean;
+    stackStorageReady?: boolean;
+    stackStorageState?: CapabilityState;
+    stackStorageError?: string;
+    stackApiEndpoint?: { readonly url: string; readonly port: number };
+    stackServiceRoleJwt?: string;
+    stackCapabilityStates?: Partial<Record<(typeof CAPABILITY_NAMES)[number], CapabilityState>>;
+    httpClient?: Layer.Layer<HttpClient.HttpClient>;
   },
 ) {
   if (opts.toml !== undefined) {
@@ -444,6 +667,49 @@ function setup(
   });
   const route = opts.route ?? defaultLocalResetRoute(opts.routeOpts);
   const child = mockContainerCliSpawner(route);
+  const stackApi = mockResetStackApi({
+    workdir,
+    ready: opts.stackDatabaseReady !== false,
+    storageReady: opts.stackStorageReady,
+    storageState: opts.stackStorageState,
+    storageError: opts.stackStorageError,
+    apiEndpoint: opts.stackApiEndpoint,
+    serviceRoleJwt: opts.stackServiceRoleJwt,
+    capabilityStates: opts.stackCapabilityStates,
+  });
+  const catalog =
+    opts.stackBackend === true
+      ? recordingStackCatalogSetup((input) => ({
+          kind: input.target.kind,
+          analytics: input.optionalConfig?.capabilities?.analytics?.enabled,
+        }))
+      : undefined;
+  const requests: Array<{ method: string; url: string; body: unknown }> = [];
+  const storageRoutes = opts.storageRoutes;
+  const httpLayer =
+    storageRoutes === undefined
+      ? alwaysReadyHttpClientLayer
+      : Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make((request) => {
+            const reqBody = request.body;
+            let body: unknown;
+            if (reqBody._tag === "Uint8Array") {
+              try {
+                body = JSON.parse(new TextDecoder().decode(reqBody.body));
+              } catch {
+                body = undefined;
+              }
+            }
+            requests.push({ method: request.method, url: request.url, body });
+            const matched = storageRoutes.find(
+              (r) => r.method === request.method && request.url.includes(r.match),
+            );
+            return matched === undefined
+              ? Effect.succeed(jsonResponse(request, 404, { message: "no mock route" }))
+              : Effect.succeed(jsonResponse(request, matched.status ?? 200, matched.body ?? {}));
+          }),
+        );
   const layer = Layer.mergeAll(
     out.layer,
     conn.layer,
@@ -454,13 +720,14 @@ function setup(
     mockLocalDockerEngineUnavailableLayer,
     mockRuntimeInfo({ platform: "linux" }),
     mockProcessControl().layer,
-    alwaysReadyHttpClientLayer,
+    opts.httpClient ?? httpLayer,
     dockerRunLayer.pipe(Layer.provide(child.layer), Layer.provide(mockProcessControl().layer)),
     Layer.succeed(NetworkIdFlag, Option.none()),
-    // The remote-reset confirmation is answered through mockOutput's `promptConfirmResponses`
-    // (the TTY/clack path); stdin is only required to satisfy the effect's service dependency.
-    mockTty({ stdinIsTty: true }),
-    mockStdin(true),
+    // Default: a TTY whose remote-reset confirmation is answered through mockOutput's
+    // `promptConfirmResponses` (the clack path); `stdinIsTty: false` + `pipedStdin` model a
+    // real pipe for the non-interactive bucket-seed prompts instead.
+    mockTty({ stdinIsTty: opts.stdinIsTty ?? true }),
+    mockStdin(opts.stdinIsTty ?? true, opts.pipedStdin),
     // `loadProjectRef` gives an explicit `--project-ref` flag top precedence, mirrored here so a
     // test can prove the flag (not just `opts.ref`) drives the linked ref.
     Layer.succeed(ProjectRefResolver, {
@@ -485,6 +752,9 @@ function setup(
     Layer.succeed(DebugFlag, opts.debug ?? false),
     telemetry.layer,
     linkedCache.layer,
+    ...(opts.stackBackend === true && catalog !== undefined
+      ? [stackBackendLayer("stack"), stackApi.layer, catalog.layer]
+      : []),
   );
   return {
     layer,
@@ -494,6 +764,9 @@ function setup(
     linkedCache,
     resolver,
     child,
+    stackApi,
+    catalogApplied: catalog?.applied ?? [],
+    requests,
   };
 }
 
@@ -666,6 +939,413 @@ describe("db reset", () => {
       },
     );
 
+    it.live("resets the stack database without Compose volume recreate", () => {
+      const { layer, child, stackApi, catalogApplied, out } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        stackBackend: true,
+      });
+      return Effect.gen(function* () {
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(stackApi.resetCalls).toBe(1);
+        expect(catalogApplied).toEqual([{ kind: "live", analytics: undefined }]);
+        expect(child.spawned.some((s) => s.args[0] === "container" && s.args[1] === "rm")).toBe(
+          false,
+        );
+        // No `[storage.buckets]`/`[storage.vector.buckets]` configured, so there is nothing to
+        // skip even though this fixture's storage capability defaults to "stopped".
+        expect(out.stderrText).not.toContain("skipped seeding storage buckets");
+      });
+    });
+
+    it.live("skips optional analytics catalog when the running stack has it disabled", () => {
+      const { layer, catalogApplied } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        stackBackend: true,
+        stackCapabilityStates: { analytics: "disabled" },
+      });
+      return Effect.gen(function* () {
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(catalogApplied).toEqual([{ kind: "live", analytics: false }]);
+      });
+    });
+
+    it.live("re-inits optional analytics catalog when the running stack has it ready", () => {
+      const { layer, catalogApplied } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        stackBackend: true,
+        stackCapabilityStates: { analytics: "ready" },
+      });
+      return Effect.gen(function* () {
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(catalogApplied).toEqual([{ kind: "live", analytics: undefined }]);
+      });
+    });
+
+    it.live("seeds stack buckets through the stack API listener with stack JWTs", () => {
+      const requests: Array<{ readonly url: string; readonly authorization: string }> = [];
+      const { layer } = setup(tmp.current, {
+        toml: [
+          'project_id = "test"',
+          "[api]",
+          "port = 54321",
+          "[storage.buckets.dogfood]",
+          "public = true",
+          "[auth]",
+          'jwt_secret = "super-secret-jwt-token-with-at-least-32-characters-long"',
+        ].join("\n"),
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        yes: true,
+        stackBackend: true,
+        stackStorageReady: true,
+        stackApiEndpoint: { url: "http://127.0.0.1:55421", port: 55421 },
+        stackServiceRoleJwt: "stack-service-role-jwt-not-from-config",
+        httpClient: Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make((request) => {
+            requests.push({
+              url: request.url,
+              authorization: request.headers["authorization"] ?? "",
+            });
+            const body = request.method === "GET" ? "[]" : JSON.stringify({ name: "dogfood" });
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                new Response(body, {
+                  status: 200,
+                  headers: { "content-type": "application/json" },
+                }),
+              ),
+            );
+          }),
+        ),
+      });
+      return Effect.gen(function* () {
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(requests.some((request) => request.url.includes("127.0.0.1:55421/storage/v1"))).toBe(
+          true,
+        );
+        expect(requests.some((request) => request.url.includes("127.0.0.1:54321"))).toBe(false);
+        expect(
+          requests.some((request) =>
+            request.authorization.includes("stack-service-role-jwt-not-from-config"),
+          ),
+        ).toBe(true);
+      });
+    });
+
+    it.live("fails --local reset when the stack database is not running", () => {
+      const { layer, stackApi } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        stackBackend: true,
+        stackDatabaseReady: false,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) expect(JSON.stringify(exit.cause)).toContain("is not running.");
+        expect(stackApi.resetCalls).toBe(0);
+      });
+    });
+
+    const BUCKET_TOML = ['project_id = "test"', "[storage.buckets.dogfood]", "public = true"].join(
+      "\n",
+    );
+
+    it.live("seeds stack buckets through the gateway when storage is dormant", () => {
+      const client = recordingStackStorageHttpClient();
+      const { layer } = setup(tmp.current, {
+        toml: BUCKET_TOML,
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        yes: true,
+        stackBackend: true,
+        stackStorageState: "dormant",
+        stackApiEndpoint: { url: "http://127.0.0.1:55422", port: 55422 },
+        stackServiceRoleJwt: "dormant-stack-jwt",
+        httpClient: client.layer,
+      });
+      return Effect.gen(function* () {
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(client.requests.some((r) => r.url.includes("127.0.0.1:55422/storage/v1"))).toBe(
+          true,
+        );
+        expect(client.requests.some((r) => r.authorization.includes("dormant-stack-jwt"))).toBe(
+          true,
+        );
+      });
+    });
+
+    it.live("skips seeding storage buckets and issues no requests when storage is disabled", () => {
+      const client = recordingStackStorageHttpClient();
+      const { layer, out } = setup(tmp.current, {
+        toml: BUCKET_TOML,
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        stackBackend: true,
+        stackStorageState: "disabled",
+        stackApiEndpoint: { url: "http://127.0.0.1:55423", port: 55423 },
+        httpClient: client.layer,
+      });
+      return Effect.gen(function* () {
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(out.stderrText).toContain(
+          "WARNING: skipped seeding storage buckets: Storage is disabled for this stack.",
+        );
+        expect(out.stderrText).toContain(
+          "Set [storage] enabled = true in supabase/config.toml, run supabase stack stop " +
+            "followed by supabase stack start without -x storage, then supabase seed buckets --local.",
+        );
+        expect(out.stderrText).not.toContain(
+          "Run supabase seed buckets --local once Storage is available.",
+        );
+        expect(client.requests).toHaveLength(0);
+      });
+    });
+
+    it.live(
+      "skips seeding storage buckets silently when storage is disabled and no buckets are configured",
+      () => {
+        const client = recordingStackStorageHttpClient();
+        const { layer, out } = setup(tmp.current, {
+          toml: 'project_id = "test"\n',
+          args: ["db", "reset", "--local"],
+          isLocal: true,
+          stackBackend: true,
+          stackStorageState: "disabled",
+          stackApiEndpoint: { url: "http://127.0.0.1:55429", port: 55429 },
+          httpClient: client.layer,
+        });
+        return Effect.gen(function* () {
+          yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+          expect(out.stderrText).not.toContain("skipped seeding storage buckets");
+          expect(client.requests).toHaveLength(0);
+        });
+      },
+    );
+
+    it.live("skips seeding storage buckets and issues no requests when storage is stopped", () => {
+      const client = recordingStackStorageHttpClient();
+      const { layer, out } = setup(tmp.current, {
+        toml: BUCKET_TOML,
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        stackBackend: true,
+        stackStorageState: "stopped",
+        stackApiEndpoint: { url: "http://127.0.0.1:55424", port: 55424 },
+        httpClient: client.layer,
+      });
+      return Effect.gen(function* () {
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(out.stderrText).toContain(
+          "WARNING: skipped seeding storage buckets: Storage is stopped for this stack.",
+        );
+        expect(out.stderrText).toContain(
+          "Run supabase seed buckets --local once Storage is available.",
+        );
+        expect(client.requests).toHaveLength(0);
+      });
+    });
+
+    it.live(
+      "seeds immediately when storage is starting, without waiting for it to become ready",
+      () => {
+        const client = recordingStackStorageHttpClient();
+        const { layer } = setup(tmp.current, {
+          toml: BUCKET_TOML,
+          args: ["db", "reset", "--local"],
+          isLocal: true,
+          yes: true,
+          stackBackend: true,
+          stackStorageState: "starting",
+          stackApiEndpoint: { url: "http://127.0.0.1:55425", port: 55425 },
+          stackServiceRoleJwt: "starting-stack-jwt",
+          httpClient: client.layer,
+        });
+        return Effect.gen(function* () {
+          yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+          expect(client.requests.some((r) => r.url.includes("127.0.0.1:55425/storage/v1"))).toBe(
+            true,
+          );
+          expect(client.requests.some((r) => r.authorization.includes("starting-stack-jwt"))).toBe(
+            true,
+          );
+        });
+      },
+    );
+
+    it.live("seeds immediately when storage is stopping, letting the gateway wake it", () => {
+      const client = recordingStackStorageHttpClient();
+      const { layer, out } = setup(tmp.current, {
+        toml: BUCKET_TOML,
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        yes: true,
+        stackBackend: true,
+        stackStorageState: "stopping",
+        stackApiEndpoint: { url: "http://127.0.0.1:55430", port: 55430 },
+        stackServiceRoleJwt: "stopping-stack-jwt",
+        httpClient: client.layer,
+      });
+      return Effect.gen(function* () {
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(client.requests.some((r) => r.url.includes("127.0.0.1:55430/storage/v1"))).toBe(
+          true,
+        );
+        expect(client.requests.some((r) => r.authorization.includes("stopping-stack-jwt"))).toBe(
+          true,
+        );
+        expect(out.stderrText).not.toContain("skipped seeding storage buckets");
+      });
+    });
+
+    it.live(
+      "warns and completes the reset when the bucket-create gateway request fails (500)",
+      () => {
+        const client = recordingStackStorageHttpClientBucketCreateFails(500);
+        const { layer, out } = setup(tmp.current, {
+          toml: BUCKET_TOML,
+          args: ["db", "reset", "--local"],
+          isLocal: true,
+          yes: true,
+          stackBackend: true,
+          stackStorageState: "dormant",
+          stackApiEndpoint: { url: "http://127.0.0.1:55426", port: 55426 },
+          httpClient: client.layer,
+        });
+        return Effect.gen(function* () {
+          const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+          expect(Exit.isSuccess(exit)).toBe(true);
+          expect(out.stderrText).toContain("WARNING: skipped seeding storage buckets:");
+          expect(out.stderrText).toContain(
+            "Run supabase seed buckets --local once Storage is available.",
+          );
+          expect(out.stderrText).toContain("Finished ");
+        });
+      },
+    );
+
+    it.live(
+      "warns and completes the reset when the bucket-list gateway request fails at the transport level",
+      () => {
+        const client = recordingStackStorageHttpClientBucketListTransportFails();
+        const { layer, out } = setup(tmp.current, {
+          toml: BUCKET_TOML,
+          args: ["db", "reset", "--local"],
+          isLocal: true,
+          yes: true,
+          stackBackend: true,
+          stackStorageState: "dormant",
+          stackApiEndpoint: { url: "http://127.0.0.1:55427", port: 55427 },
+          httpClient: client.layer,
+        });
+        return Effect.gen(function* () {
+          const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+          expect(Exit.isSuccess(exit)).toBe(true);
+          expect(out.stderrText).toContain("WARNING: skipped seeding storage buckets:");
+          expect(out.stderrText).toContain(
+            "Run supabase seed buckets --local once Storage is available.",
+          );
+          expect(out.stderrText).toContain("Finished ");
+        });
+      },
+    );
+
+    it.live(
+      "reports the specific failed-storage reason (with underlying error) in the pre-check warning",
+      () => {
+        const { layer, out } = setup(tmp.current, {
+          toml: BUCKET_TOML,
+          args: ["db", "reset", "--local"],
+          isLocal: true,
+          stackBackend: true,
+          stackStorageState: "failed",
+          stackStorageError: "boom",
+          stackApiEndpoint: { url: "http://127.0.0.1:55428", port: 55428 },
+        });
+        return Effect.gen(function* () {
+          yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+          expect(out.stderrText).toContain(
+            "WARNING: skipped seeding storage buckets: Storage failed to start for this stack: boom. Run supabase seed buckets --local once Storage is available.",
+          );
+          expect(out.stderrText).not.toContain("Storage is failed");
+        });
+      },
+    );
+
+    it.live(
+      "warns and completes the reset when storage is seedable but the stack has no API gateway endpoint",
+      () => {
+        const { layer, out } = setup(tmp.current, {
+          toml: BUCKET_TOML,
+          args: ["db", "reset", "--local"],
+          isLocal: true,
+          stackBackend: true,
+          stackStorageState: "dormant",
+          // `stackApiEndpoint` intentionally omitted so `status.endpoints.api` is undefined.
+        });
+        return Effect.gen(function* () {
+          const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+          expect(Exit.isSuccess(exit)).toBe(true);
+          expect(out.stderrText).toContain(
+            "WARNING: skipped seeding storage buckets: The stack exposes no API gateway endpoint.",
+          );
+          expect(out.stderrText).toContain(
+            "Run supabase stack status to inspect the stack, or supabase stack restart.",
+          );
+          expect(out.stderrText).not.toContain(
+            "Run supabase seed buckets --local once Storage is available.",
+          );
+        });
+      },
+    );
+
+    it.live(
+      "skips seeding silently when no buckets are configured even without an API gateway endpoint",
+      () => {
+        const client = recordingStackStorageHttpClient();
+        const { layer, out } = setup(tmp.current, {
+          toml: 'project_id = "test"\n',
+          args: ["db", "reset", "--local"],
+          isLocal: true,
+          stackBackend: true,
+          stackStorageState: "dormant",
+          // `stackApiEndpoint` intentionally omitted so `status.endpoints.api` is undefined.
+          httpClient: client.layer,
+        });
+        return Effect.gen(function* () {
+          const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+          expect(Exit.isSuccess(exit)).toBe(true);
+          expect(out.stderrText).not.toContain("skipped seeding storage buckets");
+          expect(client.requests).toHaveLength(0);
+        });
+      },
+    );
+
+    it.live("fails stack reset on a bad functions/.env before wiping", () => {
+      const { layer, stackApi } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        files: { "supabase/functions/.env": "lowercase=value\nSECRET=value\n" },
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        stackBackend: true,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) expect(JSON.stringify(exit.cause)).toContain("functions/.env");
+        expect(stackApi.resetCalls).toBe(0);
+      });
+    });
+
     it.live(
       "fails a local reset before the destructive recreate on a malformed config.toml",
       () => {
@@ -716,6 +1396,151 @@ describe("db reset", () => {
         yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         expect(out.stderrText).toContain("Finished ");
       });
+    });
+
+    it.live(
+      "confirms overwriting an existing bucket non-interactively and applies the yes default",
+      () => {
+        const { layer, out, requests } = setup(tmp.current, {
+          toml: 'project_id = "test"\n[storage.buckets.images]\n',
+          args: ["db", "reset", "--local"],
+          isLocal: true,
+          storageRoutes: [
+            {
+              method: "GET",
+              match: "/storage/v1/bucket",
+              body: [{ name: "images", id: "images" }],
+            },
+            { method: "PUT", match: "/storage/v1/bucket/images", body: {} },
+          ],
+        });
+        // Ambient `SUPABASE_YES` would take the auto-confirm branch and echo a trailing `y`.
+        return withEnvVar(
+          "SUPABASE_YES",
+          undefined,
+          Effect.gen(function* () {
+            yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+            expect(out.stderrText).toContain(
+              "already exists. Do you want to overwrite its properties? [Y/n]",
+            );
+            expect(out.stderrText).not.toContain("overwrite its properties? [Y/n] y");
+            expect(out.stderrText).toContain("Updating Storage bucket: images");
+            expect(
+              requests.some((r) => r.method === "PUT" && r.url.includes("/bucket/images")),
+            ).toBe(true);
+            expect(out.stderrText).toContain("Finished ");
+          }),
+        );
+      },
+    );
+
+    it.live(
+      "keeps a vector bucket that is missing from config.toml (prune declines by default)",
+      () => {
+        const { layer, out, requests } = setup(tmp.current, {
+          toml: 'project_id = "test"\n[storage.vector]\nenabled = true\n[storage.vector.buckets.embeddings]\n',
+          args: ["db", "reset", "--local"],
+          isLocal: true,
+          storageRoutes: [
+            { method: "GET", match: "/storage/v1/bucket", body: [] },
+            {
+              method: "POST",
+              match: "/storage/v1/vector/ListVectorBuckets",
+              body: {
+                vectorBuckets: [
+                  { vectorBucketName: "embeddings" },
+                  { vectorBucketName: "stale-vec" },
+                ],
+              },
+            },
+          ],
+        });
+        return withEnvVar(
+          "SUPABASE_YES",
+          undefined,
+          Effect.gen(function* () {
+            yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+            expect(out.stderrText).toContain("Do you want to prune it? [y/N]");
+            expect(out.stderrText).not.toContain("Pruning vector bucket");
+            expect(requests.some((r) => r.url.includes("DeleteVectorBucket"))).toBe(false);
+            expect(out.stderrText).toContain("Finished ");
+          }),
+        );
+      },
+    );
+
+    it.live("prunes a stale vector bucket when SUPABASE_YES is set in the project dotenv", () => {
+      const { layer, out, requests } = setup(tmp.current, {
+        toml: 'project_id = "test"\n[storage.vector]\nenabled = true\n[storage.vector.buckets.embeddings]\n',
+        files: { "supabase/.env": "SUPABASE_YES=true\n" },
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        storageRoutes: [
+          { method: "GET", match: "/storage/v1/bucket", body: [] },
+          {
+            method: "POST",
+            match: "/storage/v1/vector/ListVectorBuckets",
+            body: {
+              vectorBuckets: [
+                { vectorBucketName: "embeddings" },
+                { vectorBucketName: "stale-vec" },
+              ],
+            },
+          },
+          { method: "POST", match: "/storage/v1/vector/DeleteVectorBucket", body: {} },
+        ],
+      });
+      // Shell `SUPABASE_YES` (any value) would shadow the project dotenv under test.
+      return withEnvVar(
+        "SUPABASE_YES",
+        undefined,
+        Effect.gen(function* () {
+          yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+          expect(out.stderrText).toContain("Do you want to prune it? [y/N] y");
+          expect(out.stderrText).toContain("Pruning vector bucket: stale-vec");
+          expect(
+            requests.some(
+              (r) =>
+                r.url.includes("DeleteVectorBucket") &&
+                JSON.stringify(r.body ?? "").includes("stale-vec"),
+            ),
+          ).toBe(true);
+        }),
+      );
+    });
+
+    it.live("prunes a stale vector bucket when a piped y answers the confirmation", () => {
+      const { layer, out, requests } = setup(tmp.current, {
+        toml: 'project_id = "test"\n[storage.vector]\nenabled = true\n[storage.vector.buckets.embeddings]\n',
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        pipedStdin: "y\n",
+        stdinIsTty: false,
+        storageRoutes: [
+          { method: "GET", match: "/storage/v1/bucket", body: [] },
+          {
+            method: "POST",
+            match: "/storage/v1/vector/ListVectorBuckets",
+            body: {
+              vectorBuckets: [
+                { vectorBucketName: "embeddings" },
+                { vectorBucketName: "stale-vec" },
+              ],
+            },
+          },
+          { method: "POST", match: "/storage/v1/vector/DeleteVectorBucket", body: {} },
+        ],
+      });
+      return withEnvVar(
+        "SUPABASE_YES",
+        undefined,
+        Effect.gen(function* () {
+          yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+          expect(out.stderrText).toContain("Do you want to prune it? [y/N] y");
+          expect(out.stderrText).toContain("Pruning vector bucket: stale-vec");
+          expect(requests.some((r) => r.url.includes("DeleteVectorBucket"))).toBe(true);
+        }),
+      );
     });
 
     it.live("uses the detected git branch in the Finished line", () => {

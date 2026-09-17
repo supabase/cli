@@ -3,11 +3,12 @@ import { Buffer } from "node:buffer";
 import { encrypt, PrivateKey } from "eciesjs";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option, Redacted } from "effect";
+import { Cause, Effect, Exit, Layer, Option, Redacted } from "effect";
+import { runtimeInfoLayer } from "../../../shared/runtime/runtime-info.layer.ts";
 import { compileStack } from "../../../../../../packages/stack/src/model/Compiler.ts";
 
 import { withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
-import { StackConfigError, loadStackConfig } from "./stack-config.ts";
+import { StackConfigError, loadStackConfig } from "../../../command-internal/stack-config.ts";
 import { createStackConfigProject } from "../../../../tests/helpers/stack-config.ts";
 
 function withEnvironment<A, E, R>(
@@ -35,7 +36,9 @@ const project = (
   }).pipe(Effect.provide(BunServices.layer));
 
 const load = (projectRoot: string) =>
-  loadStackConfig(projectRoot).pipe(Effect.provide(BunServices.layer));
+  loadStackConfig(projectRoot).pipe(
+    Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
+  );
 
 const encrypted = (privateKey: string, plaintext: string): string =>
   `encrypted:${Buffer.from(
@@ -186,14 +189,16 @@ enabled = false
         undefined,
         Effect.gen(function* () {
           const config = yield* load(root);
-          expect(config.capabilities?.auth).toEqual({ enabled: false });
+          expect(config.capabilities?.auth).toEqual(expect.objectContaining({ enabled: false }));
           expect(config.security?.jwt?.issuer).toBe("https://issuer.example.test");
           const signing = config.security?.jwt?.signing;
           expect(signing?.kind).toBe("symmetric");
           if (signing?.kind !== "symmetric") throw new Error("symmetric signing missing");
           expect(Redacted.value(signing.secret)).toBe("01234567890123456789012345678901");
           const signingPath = yield* load(signingPathRoot);
-          expect(signingPath.capabilities?.auth).toEqual({ enabled: false });
+          expect(signingPath.capabilities?.auth).toEqual(
+            expect.objectContaining({ enabled: false }),
+          );
           expect(signingPath.security?.jwt?.signing).toEqual({
             kind: "jwks-file",
             path: "supabase/keys.json",
@@ -242,7 +247,7 @@ secret = "encrypted:not-a-real-ciphertext"
           undefined,
           Effect.gen(function* () {
             const config = yield* load(root);
-            expect(config.capabilities?.auth).toEqual({ enabled: false });
+            expect(config.capabilities?.auth).toEqual(expect.objectContaining({ enabled: false }));
           }),
         ),
       ),
@@ -435,7 +440,7 @@ enabled = false
       if (Exit.isFailure(enabled)) expect(String(enabled.cause)).toContain("auth.external.github");
 
       const disabled = yield* withEnvVar("SUPABASE_AUTH_ENABLED", "false", load(root));
-      expect(disabled.capabilities?.auth).toEqual({ enabled: false });
+      expect(disabled.capabilities?.auth).toEqual(expect.objectContaining({ enabled: false }));
     });
   });
 
@@ -727,7 +732,7 @@ openai_api_key = "config-studio-key"
         projectRoot: root,
         runtime: { kind: "native" },
         config,
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)));
       expect(compiled.definition.capabilities.pooler.enabled).toBe(true);
       expect(compiled.definition.capabilities.pooler.activation).toBe("lazy");
       expect(compiled.definition.capabilities.storage.settings.image_transformation?.enabled).toBe(
@@ -753,7 +758,7 @@ openai_api_key = "config-studio-key"
         projectRoot: root,
         runtime: { kind: "native" },
         config,
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)));
       expect(compiled.definition.capabilities.pooler.enabled).toBe(true);
       expect(compiled.definition.capabilities.pooler.settings.default_pool_size).toBe(37);
       expect(compiled.definition.listeners.pooler.enabled).toBe(true);
@@ -783,7 +788,7 @@ enabled = false
         projectRoot: enabled,
         runtime: { kind: "native" },
         config: enabledConfig,
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)));
       expect(enabledCompiled.definition.capabilities.pooler.enabled).toBe(true);
       expect(
         enabledCompiled.definition.capabilities.storage.settings.image_transformation?.enabled,
@@ -797,7 +802,7 @@ enabled = false
         projectRoot: disabled,
         runtime: { kind: "native" },
         config: disabledConfig,
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)));
       expect(disabledCompiled.definition.capabilities.pooler.enabled).toBe(false);
       expect(
         disabledCompiled.definition.capabilities.storage.settings.image_transformation?.enabled,
@@ -815,7 +820,9 @@ enabled = false
           { SUPABASE_STUDIO_ENABLED: "false", SUPABASE_STUDIO_PORT: "55451" },
           Effect.gen(function* () {
             const config = yield* load(root);
-            expect(config.capabilities?.studio).toEqual({ enabled: false });
+            expect(config.capabilities?.studio).toEqual(
+              expect.objectContaining({ enabled: false }),
+            );
             expect(config.listeners?.studio).toEqual({ enabled: false });
           }),
         ),

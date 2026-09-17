@@ -7,7 +7,7 @@
 **/package.json
 **/go.mod
 **/go.sum
-/apps/cli-go/pkg/config/templates/Dockerfile
+/apps/cli/src/shared/services/Dockerfile
 /pnpm-lock.yaml
 /pnpm-workspace.yaml
 

@@ -21,12 +21,10 @@ export class MigrationSquashMissingVersionError extends Data.TaggedError(
   }
 }
 
-/**
- * One of squash's three `pg_dump` containers exited non-zero. Matches the
- * established `"error running container: exit " + code` text.
- */
+/** A squash `pg_dump` run exited non-zero. Message text comes from `pgDumpClientExitMessage`. */
 export class MigrationSquashDumpError extends Data.TaggedError("MigrationSquashDumpError")<{
   readonly message: string;
+  readonly suggestion?: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.dbConnection;

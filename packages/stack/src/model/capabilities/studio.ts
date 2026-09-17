@@ -18,11 +18,11 @@ export const StudioModule: CapabilityModule<StudioSettings> = {
   defaultActivation: "lazy",
   defaultIdleTimeoutSeconds: 60,
   defaultVersion: version,
-  dependencies: ["rest", "analytics"],
+  dependencies: ["rest"],
   releases: {
     [version]: release(version, [
       workload("studio", "studio", {
-        dependencies: ["studio:pgmeta", "analytics:analytics"],
+        dependencies: ["studio:pgmeta"],
         readiness: { portField: "studio" },
       }),
       workload("pgmeta", "studio", {

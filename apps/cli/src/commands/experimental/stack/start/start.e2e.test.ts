@@ -123,6 +123,8 @@ const StackInspectionSchema = Schema.Struct({
   runtime: Schema.Struct({ kind: Schema.String }),
   lifecycle: Schema.String,
   database: Schema.optionalKey(Schema.String),
+  databaseUrl: Schema.optionalKey(Schema.String),
+  hasApi: Schema.Boolean,
 });
 
 const LogDataSchema = Schema.Struct({
@@ -186,12 +188,16 @@ const inspectStackState = (home: string, stackId: string) => {
     const inspection = await inspectStack(id);
     const stack = await openStack(id);
     const status = await stack.status();
+    const credentials =
+      status.lifecycle === "running" ? await stack.credentials() : undefined;
     console.log(JSON.stringify({
       owner: inspection.owner,
       projectRoot: inspection.descriptor.projectRoot,
       runtime: status.runtime,
       lifecycle: status.lifecycle,
       database: status.capabilities.find(({ name }) => name === "database")?.state,
+      databaseUrl: credentials?.database.url,
+      hasApi: credentials?.api !== undefined,
     }));
   `;
   return Effect.gen(function* () {
@@ -318,6 +324,10 @@ describe("stack start (compiled e2e)", () => {
           expect(running.runtime).toEqual({ kind: "native" });
           expect(running.lifecycle).toBe("running");
           expect(running.database).toBe("ready");
+          expect(running.hasApi).toBe(false);
+          expect(running.databaseUrl).toMatch(
+            /^postgresql:\/\/postgres:.+@127\.0\.0\.1:\d+\/postgres$/,
+          );
           const databasePath = join(homeDir.dir, "managed", "stacks", idText, "data", "database");
           yield* access(join(databasePath, "PG_VERSION"));
 

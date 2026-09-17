@@ -17,6 +17,7 @@ import { telemetryStateLayer } from "../telemetry/telemetry-state.layer.ts";
 import { TelemetryState } from "../telemetry/telemetry-state.service.ts";
 import { commandRuntimeLayer } from "../shared/runtime/command-runtime.layer.ts";
 import { CommandRuntime } from "../shared/runtime/command-runtime.service.ts";
+import { StackApi, stackApiLayer } from "./stack-api.ts";
 
 /**
  * Runtime layer for the commands that talk to the Storage gateway directly:
@@ -56,6 +57,8 @@ export function storageGatewayRuntimeLayer(subcommand: ReadonlyArray<string>) {
     telemetryStateLayer,
     identityStitchLayer,
     commandRuntimeLayer([...subcommand]),
+    // Backs `storage`/`seed buckets`'s stack-backend Storage endpoint resolution.
+    stackApiLayer,
   );
 
   const _serviceCoverageCheck: Layer.Layer<StorageGatewayServices, unknown, unknown> = built;
@@ -72,4 +75,5 @@ type StorageGatewayServices =
   | TelemetryState
   | IdentityStitch
   | CommandRuntime
-  | HttpClient.HttpClient;
+  | HttpClient.HttpClient
+  | StackApi;

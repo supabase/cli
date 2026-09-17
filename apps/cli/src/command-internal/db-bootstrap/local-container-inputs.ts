@@ -8,12 +8,13 @@
  * separately-resolved `--experimental` gate (needed earlier, before `cfg.isLocal` is known).
  */
 
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Crypto, Effect, FileSystem, Option, Path } from "effect";
 import { HttpClient } from "effect/unstable/http";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 import type { GlobalFlag } from "effect/unstable/cli";
 
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
+import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import { resolveExperimentalWithProjectEnv } from "../global-flags.ts";
 import { DbConfigLoadError } from "../db-config.errors.ts";
 import { localDbContainerId } from "../docker-ids.ts";
@@ -94,6 +95,8 @@ export const buildLocalDbContainerInputs = (
   DbConfigLoadError,
   | FileSystem.FileSystem
   | Path.Path
+  | RuntimeInfo
+  | Crypto.Crypto
   | GlobalFlag.Setting.Identifier<"experimental">
   | CliArgs
   | HttpClient.HttpClient

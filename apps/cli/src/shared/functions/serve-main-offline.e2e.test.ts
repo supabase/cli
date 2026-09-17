@@ -1,7 +1,8 @@
-import { execSync, spawnSync } from "node:child_process";
+import { execFile, execSync, spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 
 import { describe, expect, test } from "vitest";
 
@@ -34,6 +35,8 @@ function hasDocker(): boolean {
 
 const dockerAvailable = hasDocker();
 const SERVE_OFFLINE_STARTUP_TIMEOUT_MS = 60_000;
+const SERVE_OFFLINE_ATTEMPT_TIMEOUT_MS = 10_000;
+const DOCKER_COMMAND_TIMEOUT_MS = 5_000;
 // Cold-cache image resolution (up to a shared 90s budget) runs ahead of the
 // 60s startup wait; the test timeout must cover both stacked.
 const SERVE_OFFLINE_TEST_TIMEOUT_MS = 180_000;
@@ -145,8 +148,47 @@ const authFailureCases = [
 ];
 
 function containerLogs(container: string): string {
-  const result = spawnSync("docker", ["logs", container], { encoding: "utf8" });
-  return `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+  const result = spawnSync("docker", ["logs", container], {
+    encoding: "utf8",
+    timeout: DOCKER_COMMAND_TIMEOUT_MS,
+  });
+  const failure = result.error ? `\n<docker logs failed: ${result.error.message}>` : "";
+  return `${result.stdout ?? ""}\n${result.stderr ?? ""}${failure}`;
+}
+
+const execFileAsync = promisify(execFile);
+
+async function containerState(container: string): Promise<string> {
+  try {
+    const { stdout } = await execFileAsync(
+      "docker",
+      [
+        "inspect",
+        "--format",
+        '{{.State.Status}}{{if ne .State.Status "running"}} (exit code {{.State.ExitCode}}{{if .State.OOMKilled}}, OOM-killed{{end}}){{end}}',
+        container,
+      ],
+      { encoding: "utf8", timeout: DOCKER_COMMAND_TIMEOUT_MS },
+    );
+    return stdout.trim();
+  } catch (error) {
+    const stderr = error instanceof Error && "stderr" in error ? String(error.stderr) : "";
+    return `not inspectable (${stderr.trim() || String(error)})`;
+  }
+}
+
+function isTerminalContainerState(state: string): boolean {
+  return /^(exited|dead)\b/u.test(state);
+}
+
+async function containerDiagnostics(containers: readonly string[]): Promise<string> {
+  const blocks = await Promise.all(
+    containers.map(
+      async (container) =>
+        `${container} (${await containerState(container)}) logs:\n${containerLogs(container)}`,
+    ),
+  );
+  return blocks.join("\n");
 }
 
 async function fetchFunctionWithDiagnostics(
@@ -157,10 +199,10 @@ async function fetchFunctionWithDiagnostics(
   try {
     return await fetch(url, init);
   } catch (cause) {
-    const diagnostics = diagnosticContainers
-      .map((container) => `${container} logs:\n${containerLogs(container)}`)
-      .join("\n");
-    throw new Error(`Function request to ${url} failed.\n${diagnostics}`, { cause });
+    throw new Error(
+      `Function request to ${url} failed.\n${await containerDiagnostics(diagnosticContainers)}`,
+      { cause },
+    );
   }
 }
 
@@ -171,7 +213,9 @@ async function fetchColdFunction(
 ): Promise<Response> {
   // Runtime health does not start user workers, and Edge Runtime exposes no
   // per-worker readiness signal. A cold worker can briefly disconnect or
-  // return 502/503, so retry only those transient outcomes.
+  // return 502/503, so retry only those transient outcomes, each bounded so
+  // one hung request cannot eat the budget. A container that exited or died
+  // ends the wait: nothing will answer.
   const deadline = Date.now() + SERVE_OFFLINE_STARTUP_TIMEOUT_MS;
   let lastError: unknown;
 
@@ -179,7 +223,9 @@ async function fetchColdFunction(
     try {
       const response = await fetch(url, {
         ...init,
-        signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())),
+        signal: AbortSignal.timeout(
+          Math.max(1, Math.min(SERVE_OFFLINE_ATTEMPT_TIMEOUT_MS, deadline - Date.now())),
+        ),
       });
       if (response.status !== 502 && response.status !== 503) {
         return response;
@@ -190,14 +236,23 @@ async function fetchColdFunction(
       lastError = error;
     }
 
+    const states = await Promise.all(
+      diagnosticContainers.map(async (container) => ({
+        container,
+        state: await containerState(container),
+      })),
+    );
+    const dead = states.filter(({ state }) => isTerminalContainerState(state));
     const remainingMs = deadline - Date.now();
-    if (remainingMs <= 0) {
-      const diagnostics = diagnosticContainers
-        .map((container) => `${container} logs:\n${containerLogs(container)}`)
-        .join("\n");
-      throw new Error(`Function at ${url} did not become ready.\n${diagnostics}`, {
-        cause: lastError,
-      });
+    if (dead.length > 0 || remainingMs <= 0) {
+      const reason =
+        dead.length > 0
+          ? `: ${dead.map(({ container, state }) => `${container} is ${state}`).join(", ")}`
+          : "";
+      throw new Error(
+        `Function at ${url} did not become ready${reason}.\n${await containerDiagnostics(diagnosticContainers)}`,
+        { cause: lastError },
+      );
     }
 
     await Bun.sleep(Math.min(250, remainingMs));
@@ -331,17 +386,28 @@ describe("functions serve runtime template (offline)", () => {
 
         const deadline = Date.now() + SERVE_OFFLINE_STARTUP_TIMEOUT_MS;
         let ready = false;
+        let lastError: unknown;
         while (Date.now() < deadline) {
           try {
-            const response = await fetch(url);
+            const response = await fetch(url, {
+              signal: AbortSignal.timeout(SERVE_OFFLINE_ATTEMPT_TIMEOUT_MS),
+            });
             if (response.status === 401) {
               ready = true;
               break;
             }
-          } catch {}
+            lastError = new Error(`Received ${response.status} from ${url}`);
+          } catch (error) {
+            lastError = error;
+          }
           await new Promise((resolve) => setTimeout(resolve, 250));
         }
-        expect(ready, containerLogs(container)).toBe(true);
+        if (!ready) {
+          throw new Error(
+            `Runtime at ${url} did not become ready.\n${await containerDiagnostics([container])}`,
+            { cause: lastError },
+          );
+        }
 
         for (const { name, authorization, code, message } of authFailureCases) {
           const response = await fetch(url, {
@@ -473,23 +539,32 @@ describe("functions serve runtime template (offline)", () => {
         const functionsUrl = `http://127.0.0.1:${port}/functions/v1`;
         const authUrl = `${functionsUrl}/test`;
 
+        const diagnosticContainers = [kongContainer, runtimeContainer] as const;
         const deadline = Date.now() + SERVE_OFFLINE_STARTUP_TIMEOUT_MS;
         let ready = false;
+        let lastError: unknown;
         while (Date.now() < deadline) {
           try {
-            const response = await fetch(authUrl);
+            const response = await fetch(authUrl, {
+              signal: AbortSignal.timeout(SERVE_OFFLINE_ATTEMPT_TIMEOUT_MS),
+            });
             if (response.status === 401) {
               ready = true;
               break;
             }
-          } catch {}
+            lastError = new Error(`Received ${response.status} from ${authUrl}`);
+          } catch (error) {
+            lastError = error;
+          }
           await new Promise((resolve) => setTimeout(resolve, 250));
         }
-        expect(ready, `${containerLogs(kongContainer)}\n${containerLogs(runtimeContainer)}`).toBe(
-          true,
-        );
+        if (!ready) {
+          throw new Error(
+            `Runtime at ${authUrl} did not become ready.\n${await containerDiagnostics(diagnosticContainers)}`,
+            { cause: lastError },
+          );
+        }
 
-        const diagnosticContainers = [kongContainer, runtimeContainer] as const;
         const [customResponse, aliasResponse, nestedResponse] = await Promise.all([
           fetchColdFunction(`${functionsUrl}/custom`, diagnosticContainers, {
             headers: { Origin: "http://localhost:3000" },

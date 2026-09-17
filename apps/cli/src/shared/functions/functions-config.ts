@@ -1,5 +1,6 @@
 import { basename } from "node:path";
-import { Effect, type FileSystem, type Path } from "effect";
+import { Crypto, Effect, type FileSystem, type Path } from "effect";
+import type { RuntimeInfo } from "../runtime/runtime-info.service.ts";
 import type { LoadedCliConfig } from "@supabase/config/effect";
 import { loadCliConfig } from "@supabase/config/effect";
 import { normalizeProjectId } from "./functions-docker.ts";
@@ -37,7 +38,7 @@ export interface FunctionsGoConfigCompat {
       readonly denoVersion: number;
     },
     Error,
-    FileSystem.FileSystem | Path.Path
+    FileSystem.FileSystem | Path.Path | RuntimeInfo | Crypto.Crypto
   >;
 }
 

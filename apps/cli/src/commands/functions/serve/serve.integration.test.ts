@@ -130,7 +130,7 @@ vi.mock("../../../shared/functions/functions-docker.ts", async () => {
     resolveFunctionsDockerImage: (
       image: string,
       projectEnvValues?: Readonly<Record<string, string>>,
-    ) => Effect.sync(() => getRegistryImageUrl(image, projectEnvValues)),
+    ) => getRegistryImageUrl(image, projectEnvValues),
     runChildProcess: (command: string, args: ReadonlyArray<string>, options?: unknown) =>
       Effect.suspend(() => {
         const envFile = args.flatMap((value, index) =>
@@ -930,7 +930,9 @@ describe("functions serve integration", () => {
         throw new Error("expected docker create call");
       }
 
-      expect(dockerRun.args).toContain(getRegistryImageUrl(dockerfileServiceImage("edgeruntime")));
+      expect(dockerRun.args).toContain(
+        Effect.runSync(getRegistryImageUrl(dockerfileServiceImage("edgeruntime"))),
+      );
       expect(dockerRun.args.join(" ")).not.toContain(multilineValue);
       expect(dockerRun.args.join(" ")).not.toContain("EOF_ENV_0");
 

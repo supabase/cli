@@ -1,81 +1,67 @@
 import { randomUUID } from "node:crypto";
+
+import { Cause, Effect, Exit, Schema } from "effect";
 import { expect } from "vitest";
 
-import {
-  removeLiveBranch,
-  requireLiveSuccess,
-  test,
-  throwWithCleanup,
-} from "../../../../tests/helpers/live.ts";
+import { requireLiveSuccess, test, throwWithCleanup } from "../../../../tests/helpers/live.ts";
+import { awaitBranch, removeBranch } from "../../../../tests/helpers/branches-live.ts";
 
-test("renames a preview branch", async ({ cli, project }) => {
-  const name = `cli-e2e-update-${randomUUID().slice(0, 8)}`;
-  const renamed = `${name}-renamed`;
-  let branchRef: string | undefined;
-  let targetError: unknown;
-  let cleanupError: unknown;
-  try {
-    const created = await cli([
-      "branches",
-      "create",
-      name,
-      "--project-ref",
-      project.ref,
-      "--output-format",
-      "json",
-    ]);
-    requireLiveSuccess(created, "branches create");
-    branchRef = (JSON.parse(created.stdout) as { project_ref: string }).project_ref;
-    expect(branchRef, created.stdout).toBeTruthy();
+const CreatedBranch = Schema.Struct({ project_ref: Schema.String });
 
-    // `--output json` keeps stdout payload-only and sends the confirmation to stderr.
-    const updated = await cli([
-      "branches",
-      "update",
-      name,
-      "--project-ref",
-      project.ref,
-      "--name",
-      renamed,
-      "--output",
-      "json",
-    ]);
-    expect(updated.exitCode, updated.stderr).toBe(0);
-    expect(updated.stderr).toContain("Updated preview branch");
-    expect(JSON.parse(updated.stdout)).toMatchObject({ name: renamed });
+// Not wired to the test `signal`: cleanup runs through the plain-promise `cli` path, so an
+// interrupt would abandon an in-flight `branches delete` rather than stop it, leaving the
+// branch behind. Its own exit timeout bounds the wait instead.
+test("renames a preview branch", ({ cli, cliEffect, project }) =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const name = `cli-e2e-update-${randomUUID().slice(0, 8)}`;
+      const renamed = `${name}-renamed`;
+      let branchRef: string | undefined;
 
-    // The platform can still 404 the rename right after it completes, so this polls (2s apart,
-    // 60s deadline) until it resolves, aborting immediately on anything but a 404. Checks stderr
-    // only since `get` prints secrets on stdout.
-    const prove = async (): Promise<string> => {
-      const proof = await cli(["branches", "get", renamed, "--project-ref", project.ref], {
-        exitTimeoutMs: 20_000,
-      });
-      if (proof.exitCode === 0) return "found";
-      if (!/status 404\b/u.test(proof.stderr)) {
-        throw new Error(
-          `branches get ${renamed} failed (exit ${proof.exitCode})\nstderr:\n${proof.stderr}`,
+      const target = Effect.gen(function* () {
+        const created = yield* cliEffect([
+          "branches",
+          "create",
+          name,
+          "--project-ref",
+          project.ref,
+          "--output-format",
+          "json",
+        ]);
+        requireLiveSuccess(created, "branches create");
+        const ref = (yield* Schema.decodeEffect(Schema.fromJsonString(CreatedBranch))(
+          created.stdout,
+        )).project_ref;
+        branchRef = ref;
+        expect(ref, created.stdout).toBeTruthy();
+        yield* awaitBranch(cli, project, name);
+
+        // `--output json` keeps stdout payload-only and sends the confirmation to stderr.
+        const updated = yield* cliEffect([
+          "branches",
+          "update",
+          name,
+          "--project-ref",
+          project.ref,
+          "--name",
+          renamed,
+          "--output",
+          "json",
+        ]);
+        expect(updated.exitCode, updated.stderr).toBe(0);
+        expect(updated.stderr).toContain("Updated preview branch");
+        const payload = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
+          updated.stdout,
         );
-      }
-      return `not found (exit ${proof.exitCode})\nstderr:\n${proof.stderr}`;
-    };
-    if ((await prove()) !== "found") {
-      await expect
-        .poll(prove, {
-          interval: 2_000,
-          timeout: 60_000,
-          message: `branches get ${renamed} still does not find the renamed branch`,
-        })
-        .toBe("found");
-    }
-  } catch (error) {
-    targetError = error;
-  } finally {
-    try {
-      await removeLiveBranch(cli, project, branchRef ?? name);
-    } catch (error) {
-      cleanupError = error;
-    }
-  }
-  throwWithCleanup(targetError, cleanupError === undefined ? [] : [cleanupError]);
-});
+        expect(payload).toMatchObject({ name: renamed });
+        yield* awaitBranch(cli, project, renamed);
+      });
+
+      const targetExit = yield* Effect.exit(target);
+      const cleanupExit = yield* Effect.exit(removeBranch(cli, project, branchRef ?? name));
+      return {
+        targetError: Exit.isFailure(targetExit) ? Cause.squash(targetExit.cause) : undefined,
+        cleanupErrors: Exit.isFailure(cleanupExit) ? [Cause.squash(cleanupExit.cause)] : [],
+      };
+    }),
+  ).then(({ targetError, cleanupErrors }) => throwWithCleanup(targetError, cleanupErrors)));

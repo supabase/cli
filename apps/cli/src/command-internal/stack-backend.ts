@@ -1,16 +1,31 @@
-import { Data, Effect, FileSystem, Path } from "effect";
+import { Context, Data, Effect, FileSystem, Layer, Option, Path } from "effect";
+import { extractCommandPath, hasRootVersionFlag } from "../shared/cli/run.ts";
 import {
   readExperimentalFeatureConfig,
   resolveExperimentalFeature,
-} from "../../../command-internal/experimental-feature.ts";
-import { extractCommandPath, hasRootVersionFlag } from "../../../shared/cli/run.ts";
+} from "./experimental-feature.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
-} from "../../../shared/telemetry/error-actionability.ts";
+} from "../shared/telemetry/error-actionability.ts";
 
 export type StackBackend = "legacy" | "stack";
+
+/** Commands that consult experimental.stack for local database, shadow, and storage routing. */
+const STACK_BACKEND_COMMANDS = new Set([
+  "start",
+  "stop",
+  "status",
+  "db",
+  "migration",
+  "test",
+  "gen",
+  "inspect",
+  "pull",
+  "storage",
+  "seed",
+]);
 
 export class StackRoutingError extends Data.TaggedError("StackRoutingError")<{
   readonly message: string;
@@ -24,6 +39,21 @@ export class StackRoutingError extends Data.TaggedError("StackRoutingError")<{
     return actionability.invalidConfig;
   }
 }
+
+/** In-process backend selected before parse; handlers must not re-read argv. */
+export class StackBackendContext extends Context.Service<
+  StackBackendContext,
+  { readonly kind: StackBackend }
+>()("supabase/stack/Backend") {}
+
+export const stackBackendLayer = (kind: StackBackend) =>
+  Layer.succeed(StackBackendContext, { kind });
+
+/** Handlers default to legacy when tests omit the root-provided backend service. */
+export const currentStackBackend: Effect.Effect<{ readonly kind: StackBackend }, never, never> =
+  Effect.serviceOption(StackBackendContext).pipe(
+    Effect.map((value) => Option.getOrElse(value, () => ({ kind: "legacy" as const }))),
+  );
 
 export const resolveStackBackend = (input: {
   readonly args: ReadonlyArray<string>;
@@ -45,13 +75,7 @@ export const resolveStackBackend = (input: {
         ? commandPath.slice(1)
         : commandPath;
     const command = completePath[0] === "help" ? completePath[1] : completePath[0];
-    if (
-      command !== undefined &&
-      command !== "stack" &&
-      command !== "start" &&
-      command !== "stop" &&
-      command !== "status"
-    ) {
+    if (command !== undefined && command !== "stack" && !STACK_BACKEND_COMMANDS.has(command)) {
       return "legacy";
     }
 

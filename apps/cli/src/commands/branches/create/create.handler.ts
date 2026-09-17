@@ -108,14 +108,12 @@ export const branchesCreate = Effect.fn("branches.create")(function* (flags: Bra
               Effect.gen(function* () {
                 const mapped = yield* Effect.flip(mapCreateErrorRaw(cause));
                 if (mapped._tag === "BranchesCreateUnexpectedStatusError") {
-                  return yield* Effect.fail(
-                    new BranchesCreateUnexpectedStatusError({
-                      status: mapped.status,
-                      body: mapped.body,
-                      message: mapped.message,
-                      upgradeSuggested,
-                    }),
-                  );
+                  return yield* new BranchesCreateUnexpectedStatusError({
+                    status: mapped.status,
+                    body: mapped.body,
+                    message: mapped.message,
+                    upgradeSuggested,
+                  });
                 }
                 return yield* Effect.fail(mapped);
               }),

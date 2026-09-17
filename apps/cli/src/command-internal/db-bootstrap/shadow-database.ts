@@ -43,6 +43,7 @@ import {
 import type { StartContainerSpec } from "./docker-create-args.ts";
 import type { ImagePrepullError } from "./image-prepull.ts";
 import type { LocalDbContainerInputs } from "./local-container-inputs.ts";
+import type { LocalProjectContext } from "../local-project-context.ts";
 import { listLocalMigrationPaths } from "../migration-history.ts";
 import { toPostgresURL } from "../postgres-url.ts";
 import {
@@ -305,6 +306,8 @@ interface ShadowConnectionInput extends CreateShadowDatabaseInput {
  */
 export interface ShadowSetupInput<E> extends ShadowConnectionInput {
   readonly setup: ShadowDbSetupInput<E>;
+  /** Remotes-merged project context from local container inputs, reused for catalog pins. */
+  readonly context?: LocalProjectContext;
 }
 
 /**
@@ -368,6 +371,7 @@ export function shadowRunInputFromLocalContainerInputs(
     projectId: localInputs.context.projectId,
     isBitbucketPipeline: localInputs.containerOpts.isBitbucketPipeline,
     workdir: localInputs.containerOpts.workdir,
+    context: localInputs.context,
     extraHosts: localInputs.containerOpts.extraHosts,
     fs,
     path,

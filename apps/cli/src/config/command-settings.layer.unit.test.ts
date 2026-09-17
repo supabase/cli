@@ -144,6 +144,53 @@ describe("commandSettingsLayer", () => {
     ),
   );
 
+  it.effect("captures SUPABASE_WORKDIR verbatim, preserving an empty string", () =>
+    Effect.gen(function* () {
+      const config = yield* CommandSettings;
+      expect(config.workdirEnvValue).toEqual(Option.some(""));
+    }).pipe(Effect.provide(makeLayer({ env: { SUPABASE_WORKDIR: "" }, cwd: tempRoot }))),
+  );
+
+  it.effect("captures an absent SUPABASE_WORKDIR as none", () =>
+    Effect.gen(function* () {
+      const config = yield* CommandSettings;
+      expect(Option.isNone(config.workdirEnvValue)).toBe(true);
+    }).pipe(Effect.provide(makeLayer({ env: {}, cwd: tempRoot }))),
+  );
+
+  it.effect("captures SUPABASE_DB_PASSWORD and GITHUB_TOKEN as redacted options", () =>
+    Effect.gen(function* () {
+      const config = yield* CommandSettings;
+      expect(Option.isSome(config.dbPassword)).toBe(true);
+      if (Option.isSome(config.dbPassword)) {
+        expect(Redacted.value(config.dbPassword.value)).toBe("db-pw");
+      }
+      expect(Option.isSome(config.githubToken)).toBe(true);
+      if (Option.isSome(config.githubToken)) {
+        expect(Redacted.value(config.githubToken.value)).toBe("gh-tok");
+      }
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          env: { SUPABASE_DB_PASSWORD: "db-pw", GITHUB_TOKEN: "gh-tok" },
+          cwd: tempRoot,
+        }),
+      ),
+    ),
+  );
+
+  it.effect("captures empty SUPABASE_DB_PASSWORD and GITHUB_TOKEN as none", () =>
+    Effect.gen(function* () {
+      const config = yield* CommandSettings;
+      expect(Option.isNone(config.dbPassword)).toBe(true);
+      expect(Option.isNone(config.githubToken)).toBe(true);
+    }).pipe(
+      Effect.provide(
+        makeLayer({ env: { SUPABASE_DB_PASSWORD: "", GITHUB_TOKEN: "" }, cwd: tempRoot }),
+      ),
+    ),
+  );
+
   it.effect("preserves an empty SUPABASE_PROFILE without selecting a profile", () =>
     Effect.gen(function* () {
       const config = yield* CommandSettings;

@@ -17,6 +17,10 @@ The `@supabase/stack` Effect API owns persistent state, the detached
 Supervisor, runtime resources, readiness, and cleanup. The CLI only resolves
 the project configuration and renders the resulting status.
 
+Durable stack state lives under `$SUPABASE_HOME/managed/stacks/<stackId>/`
+(`~/.supabase/managed/stacks/<stackId>/` by default). Ephemeral shadows use
+`$SUPABASE_HOME/managed/ephemeral-postgres/<identity>/`.
+
 `SUPABASE_HOME` controls the package's durable stack state through its normal
 runtime composition boundary. The stack owner is deliberately detached from
 the command waiter, so returning from a successful start leaves the stack
@@ -52,9 +56,11 @@ credentials and function/provider secrets to pass them to the stack runtime, but
 never emits those values.
 
 `--stack` and `--stack-id` are mutually exclusive. For a new stack, `--runtime auto`
-selects Docker when a Docker executable is available on `PATH` and native otherwise;
-a stopped Docker daemon still selects Docker. Existing stacks reuse their persisted
-runtime. `docker` and `native` select the requested runtime without fallback.
+selects Docker when the daemon is reachable and native otherwise; a present Docker
+client with a dead daemon persists native and prints a notice that destroy-and-recreate
+(or a new `--stack` name) is required to use Docker later. Existing stacks reuse their
+persisted runtime. `docker` and `native` select the requested runtime without fallback.
+Native start is refused as uid 0 because `initdb` refuses root.
 `--preparation` controls background versus
 on-demand artifact preparation, and `--eager` requests enabled capabilities be
 activated before the command returns. Eager capabilities do not receive automatic
@@ -65,7 +71,9 @@ configuration settings.
 `storage`, `functions`, `studio`, `mail`, `analytics`, and `pooler`) and disables those services
 in the effective start configuration. The database cannot be excluded. Exclusions are applied in
 memory and persisted with the stack state; the project configuration file is unchanged. A capability
-and its dependents are disabled together, so excluding `rest` or `analytics` also disables `studio`.
+and its dependents are disabled together, so excluding `rest` also disables `studio`. Excluding
+`analytics` does not. Analytics and pooler catalog downloads follow the excluded start config;
+the platform trio still fail-closes against the full enabled config.
 Listeners are derived by the runtime from enabled capability routes; route-less listeners are therefore omitted.
 Eager activation never re-enables an excluded capability.
 
@@ -79,6 +87,30 @@ Database `network_restrictions`, `ssl_enforcement`, and `vault` settings are
 accepted by the project config model but are not implemented by the local
 runtime and are not forwarded. They do not enforce database security for this
 command.
+
+## Bucket seeding on stack creation
+
+When this invocation runs the stack's first configured start (`desiredLifecycle` was
+`unconfigured`, including after `stack prepare`) and Storage is not `disabled`, the
+command seeds `[storage.buckets]` — creating or updating buckets and uploading their
+`objects_path` files, non-interactively with auto-confirm — against the stack's gateway
+using its service-role JWT, before printing the resulting status. Auto-confirm is safe
+here because a first-start stack has no pre-existing buckets to overwrite or prune. This
+reuses the same seeding core as `supabase seed buckets` and `db reset --local`. Files
+read: `supabase/config.toml` `[storage.buckets]`, the configured `objects_path` files,
+and the project dotenv files used for config resolution. Network calls:
+`POST`/`GET /storage/v1/bucket` and `POST /storage/v1/object/...` against the stack's
+API URL.
+
+A project with no `[storage.buckets]` or `[storage.vector.buckets]` configured resolves
+no credentials and prints nothing — there is nothing to seed.
+
+A resumed stack is never re-seeded by `start`. Storage `disabled` skips seeding
+silently; any other unusable capability state, a missing capability/credentials, or a
+stack-gateway activation failure prints a stderr warning and skips seeding without
+failing the command. Any other seeding failure (e.g. an invalid bucket entry) fails the
+command with exit code `1`, but the stack itself is left running — a seeding failure
+never stops or destroys it.
 
 Telemetry state is flushed to `<SUPABASE_HOME or ~/.supabase>/telemetry.json`
 after both successful and failed command runs.

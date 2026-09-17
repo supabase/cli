@@ -67,8 +67,8 @@ Participating capability failure states describe incomplete cleanup, including s
 cleanup; they do not imply that each workload process failed.
 
 The Effect API's `excludeStackCapabilities` helper disables requested optional capabilities and
-their dependents in an in-memory config. Excluding `rest` or `analytics` also disables `studio`,
-while the database remains required. The project config is unchanged, and runtime listeners are
+their dependents in an in-memory config. Excluding `rest` also disables `studio`; excluding
+`analytics` does not. The database remains required. The project config is unchanged, and runtime listeners are
 created only for enabled capability routes.
 
 Native workloads have a two-minute readiness budget to allow cold starts to load shared libraries;
@@ -155,7 +155,15 @@ Each capability may opt into eager activation in `StackConfig`; omitted settings
 non-PostgreSQL capability lazy. Prepared artifacts are not automatically pruned. `followLogs(...)`
 provides filterable live entries through a stateless client-polled cursor.
 
-Database reset is intentionally outside the current API. Applying migrations, declarative schemas,
-and seeds remains the caller's responsibility. The runtime bootstrap only reconciles the `_realtime`
-schema owner, closed database role passwords, and JWT settings in one transaction; the slim database
-artifact owns its initialization and migrations.
+`resetDatabase()` wipes Postgres data only: identity, ports, secrets, logs, and storage volumes
+stay. The database is started and bootstrapped before return. Applying migrations, declarative
+schemas, and seeds remains the caller's responsibility. The runtime bootstrap only reconciles the
+`_realtime` schema owner, closed database role passwords, and JWT settings in one transaction; the
+slim database artifact owns its initialization and migrations.
+
+`createEphemeralPostgres` is a scoped, Supervisor-free Postgres cluster for schema tooling. It uses
+the same catalog artifact and bootstrap as a stack database, is not registered in `listStacks` /
+`discoverStacks`, and destroys its data directory or volume when the Effect scope closes. The
+Promise facade returns a handle with explicit `destroy()`. Callers own migrations and PGDATA
+cache keys. `exportPgData` is valid only while the cluster is stopped; native and container snapshots
+are not interchangeable.

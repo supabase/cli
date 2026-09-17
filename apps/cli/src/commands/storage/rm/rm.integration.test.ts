@@ -749,3 +749,87 @@ describe("storage rm", () => {
     });
   });
 });
+
+describe("stack backend", () => {
+  const tmp = useTempWorkdir("supabase-storage-rm-stack-");
+
+  afterEach(() => {
+    delete process.env["SUPABASE_YES"];
+  });
+
+  it.live("deletes through the stack's api endpoint and JWT after confirmation", () => {
+    const { layer, requests } = setupStorage(tmp.current, {
+      toml: 'project_id = "test"\n',
+      local: true,
+      stackBackend: true,
+      stackApi: { apiEndpoint: "http://127.0.0.1:59999", serviceRoleJwt: "stack-jwt" },
+      confirm: [true],
+      routes: [{ method: "DELETE", match: DELETE_OBJECT("private"), body: [{ name: "a.pdf" }] }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* storageRm({
+        files: ["ss:///private/a.pdf"],
+        recursive: false,
+        linked: true,
+        local: true,
+        projectRef: Option.none(),
+      }).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      const del = requests.find(
+        (r) => r.method === "DELETE" && r.url.includes(DELETE_OBJECT("private")),
+      );
+      expect(del?.url.startsWith("http://127.0.0.1:59999")).toBe(true);
+      expect(del?.headers["apikey"]).toBe("stack-jwt");
+    });
+  });
+
+  it.live("skips deletion when the confirmation is declined, still under the stack backend", () => {
+    const { layer, requests } = setupStorage(tmp.current, {
+      toml: 'project_id = "test"\n',
+      local: true,
+      stackBackend: true,
+      confirm: [false],
+      routes: [{ method: "DELETE", match: DELETE_OBJECT("private"), body: [] }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* storageRm({
+        files: ["ss:///private/a.pdf"],
+        recursive: false,
+        linked: true,
+        local: true,
+        projectRef: Option.none(),
+      }).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(requests.some((r) => r.method === "DELETE")).toBe(false);
+    });
+  });
+
+  it.live(
+    "fails with StackStorageCapabilityError when Storage is disabled, before any prompt",
+    () => {
+      const { layer, out, requests } = setupStorage(tmp.current, {
+        toml: 'project_id = "test"\n',
+        local: true,
+        stackBackend: true,
+        stackApi: { storageState: "disabled" },
+      });
+      return Effect.gen(function* () {
+        const exit = yield* storageRm({
+          files: ["ss:///private/a.pdf"],
+          recursive: false,
+          linked: true,
+          local: true,
+          projectRef: Option.none(),
+        }).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        const json = JSON.stringify(exit);
+        expect(json).toContain("StackStorageCapabilityError");
+        expect(json).toContain("-x storage");
+        expect(requests).toHaveLength(0);
+        // The confirm prompt is a `--yes`-only bucket-deletion notice; disabled storage
+        // fails before credential resolution reaches the confirmation flow at all.
+        expect(out.stderrText).not.toContain("[y/N]");
+      });
+    },
+  );
+});
