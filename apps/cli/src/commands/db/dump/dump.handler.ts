@@ -37,15 +37,15 @@ import {
 } from "../../../command-internal/pg-dump.run.ts";
 import {
   dumpConnForHostClient,
-  nativeHostClientPathPrepend,
   rewriteDumpHostForToolContainer,
   toolContainerUsesHostNetwork,
 } from "../../../command-internal/postgres-client.run.ts";
 import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
 import {
-  stackProjectDatabaseMajor,
+  stackProjectDatabaseVersion,
   stackRequireProjectRuntime,
 } from "../../../command-internal/stack-local-database.ts";
+import { resolveBundledPostgresRuntime } from "../../../command-internal/bundled-postgres-client.ts";
 import { viperEnvStringWithProjectFallback } from "../../../command-internal/viper-env.ts";
 import { DockerRunError } from "../../../command-internal/docker-run.errors.ts";
 import { runWithPoolerFallback } from "../shared/pooler-fallback.ts";
@@ -198,7 +198,11 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
       backend.kind === "stack" && connType === "local"
         ? yield* stackRequireProjectRuntime
         : undefined;
-    const useHostClient = stackRuntime?.kind === "native" && runtimeInfo.platform !== "win32";
+    const bundledRuntime =
+      backend.kind === "stack"
+        ? yield* resolveBundledPostgresRuntime(stackRuntime, runtimeInfo.platform, runtimeInfo.arch)
+        : undefined;
+    const useNativeClient = bundledRuntime?.kind === "native";
     const networkId = Option.getOrUndefined(networkIdFlag);
     const envNetworkId = viperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", projectEnv);
     const dumpUsesHostNetwork =
@@ -212,8 +216,10 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
                 : envNetworkId,
           );
     const stackPublishedTarget = backend.kind === "stack" && isLocal;
-    const dumpConn = useHostClient
-      ? dumpConnForHostClient(conn)
+    const dumpConn = useNativeClient
+      ? connType === "local"
+        ? dumpConnForHostClient(conn)
+        : conn
       : stackPublishedTarget
         ? {
             ...conn,
@@ -223,23 +229,20 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
             }),
           }
         : conn;
-    const serverMajor =
+    const catalogVersion =
       backend.kind === "stack" && connType === "local"
-        ? yield* stackProjectDatabaseMajor
-        : undefined;
-    const dumpMajor = serverMajor ?? tomlValues.majorVersion;
-    const dumpCommand = roleOnly ? ("pg_dumpall" as const) : ("pg_dump" as const);
-    const pathPrepend = useHostClient
-      ? yield* nativeHostClientPathPrepend(dumpCommand, { major: dumpMajor })
-      : undefined;
-    const dumpClient = useHostClient
-      ? {
-          kind: "host" as const,
-          command: dumpCommand,
-          expectedMajor: dumpMajor,
-          ...(pathPrepend === undefined ? {} : { pathPrepend }),
-        }
-      : { kind: "container" as const };
+        ? ((yield* stackProjectDatabaseVersion) ?? String(tomlValues.majorVersion))
+        : String(tomlValues.majorVersion);
+    const dumpMajor = tomlValues.majorVersion;
+    const dumpClient =
+      backend.kind === "stack"
+        ? {
+            kind: "bundled" as const,
+            command: roleOnly ? ("pg_dumpall" as const) : ("pg_dump" as const),
+            version: catalogVersion,
+            runtime: bundledRuntime,
+          }
+        : { kind: "container" as const };
 
     // 4. Pick the mode-specific script + env. --schema/-s and --exclude/-x arrive here
     //    already CSV-parsed by `parseSchemaFlags`.
@@ -285,13 +288,16 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
     }
 
     // Resolved before opening `--file`; the dry-run path above never reaches here.
-    const { image } = yield* resolveDbImage(
-      fs,
-      path,
-      cliSettings.workdir,
-      dumpMajor,
-      Option.getOrUndefined(tomlValues.orioledbVersion),
-    );
+    const image =
+      dumpClient.kind === "container"
+        ? (yield* resolveDbImage(
+            fs,
+            path,
+            cliSettings.workdir,
+            dumpMajor,
+            Option.getOrUndefined(tomlValues.orioledbVersion),
+          )).image
+        : "";
 
     // Resolves a relative `--file` against the workdir (e.g. --workdir /repo -f
     // out.sql → /repo/out.sql).
@@ -406,7 +412,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
           Effect.fail(
             new DbDumpRunError({
               message: error.message,
-              suggestion: "Install Docker Desktop (or Git Bash) to dump a native stack on Windows.",
+              suggestion: "Install Docker Desktop to dump a native stack on Windows.",
             }),
           ),
       ),

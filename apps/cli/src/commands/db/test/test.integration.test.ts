@@ -47,6 +47,7 @@ import {
   type DbSession,
   type PgConnInput,
 } from "../../../command-internal/db-connection.service.ts";
+import { BundledPostgresClient } from "../../../command-internal/bundled-postgres-client.ts";
 import { DockerRun, type DockerRunOpts } from "../../../command-internal/docker-run.service.ts";
 import { EdgeRuntimeScript } from "../../../command-internal/edge-runtime-script.service.ts";
 import { PgDeltaSslProbe } from "../../../command-internal/pgdelta-ssl-probe.service.ts";
@@ -171,6 +172,9 @@ function setup(opts: SetupOpts = {}) {
     mockResolver(),
     connection.layer,
     docker.layer,
+    Layer.succeed(BundledPostgresClient, {
+      run: () => Effect.die("bundled postgres client unused"),
+    }),
     mockCommandSettings({ workdir: "/work/project", projectId: Option.none() }),
     runtimeInfoLayer,
     Layer.succeed(DebugFlag, false),

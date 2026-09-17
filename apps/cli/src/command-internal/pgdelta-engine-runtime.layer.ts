@@ -15,6 +15,7 @@ import { pgDeltaNextShadowLayer } from "../commands/db/shared/pgdelta-next-shado
 import { declarativeSeamLayer } from "../commands/db/shared/pgdelta.seam.layer.ts";
 import { localDockerEngineLayer } from "./db-bootstrap/local-db-running.ts";
 import { stackApiLayer } from "./stack-api.ts";
+import { bundledPostgresClientLayer } from "./bundled-postgres-client.ts";
 import { ephemeralPostgresLayer } from "./stack-shadow.ts";
 import { stackCatalogSetupLayer } from "./stack-catalog-setup.ts";
 
@@ -82,6 +83,7 @@ export const pgDeltaCommandRuntimeLayer = Layer.mergeAll(
   // Exposed for handlers' own direct `isLocalDbRunning` calls (`db diff --use-pgadmin`).
   localDockerEngine,
   stackApiLayer,
+  bundledPostgresClientLayer,
   ephemeralPostgresLayer,
   stackCatalogSetupLayer,
 );

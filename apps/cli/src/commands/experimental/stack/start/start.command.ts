@@ -42,7 +42,7 @@ export const stackStartCommand = Command.make("start", config).pipe(
   Command.withDescription(
     "Create or resume a managed local Supabase stack using supabase/config.toml when present. " +
       "Without a config file, default settings are used and no file is created. " +
-      "For a new stack, auto selects Docker when its client is installed and native otherwise; a stopped daemon still selects Docker. " +
+      "For a new stack, auto selects Docker when its daemon is reachable and native otherwise; the choice is persisted for that stack. " +
       "Explicit runtime choices are honored. Values support explicit env(NAME) references and automatic SUPABASE_* overrides.",
   ),
   Command.withShortDescription("Start a managed local stack"),
