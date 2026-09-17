@@ -4,6 +4,7 @@ import { gunzipSync } from "node:zlib";
 import { Cause, DateTime, Effect, Exit, FileSystem, Option, Path } from "effect";
 import { describe, expect, test } from "vitest";
 import { ComputeSourceEscapingLinkError } from "./compute.errors.ts";
+import { compileComputeExclude } from "./compute-exclude.ts";
 import { formatBytes, packageComputeDirectory } from "./compute-package.ts";
 import { TarFieldOutOfRangeError, TarPathTooLongError } from "./tar.ts";
 
@@ -178,6 +179,111 @@ describe("packageComputeDirectory", () => {
       }),
     ),
   );
+
+  describe("with [compute.<name>] exclude patterns", () => {
+    const packExcluding = (root: string, patterns: ReadonlyArray<string>) =>
+      Effect.gen(function* () {
+        const exclude = yield* compileComputeExclude({ name: "api", patterns });
+        return yield* packageComputeDirectory(root, exclude);
+      }).pipe(Effect.provide(BunServices.layer));
+
+    it.live("leaves a matched file out of the archive", () =>
+      withTemp("supabase-compute-package-", (dir, fs, path) =>
+        Effect.gen(function* () {
+          yield* fs.writeFileString(path.join(dir, "index.js"), "x");
+          yield* fs.writeFileString(path.join(dir, ".env"), "SECRET=1");
+
+          const result = yield* packExcluding(dir, [".env"]);
+
+          expect(readEntries(result.archive).map((entry) => entry.path)).toEqual(["index.js"]);
+          expect(result.fileCount).toBe(1);
+          expect(result.excludedCount).toBe(1);
+        }),
+      ),
+    );
+
+    // The walk turns back at the directory, so nothing underneath is read at all — which is
+    // the point for a dependency tree, and is also why the count is one rather than three.
+    it.live("leaves an excluded directory's whole subtree out, counted once", () =>
+      withTemp("supabase-compute-package-", (dir, fs, path) =>
+        Effect.gen(function* () {
+          yield* fs.writeFileString(path.join(dir, "index.js"), "x");
+          yield* fs.makeDirectory(path.join(dir, "node_modules", "left-pad"), { recursive: true });
+          yield* fs.writeFileString(path.join(dir, "node_modules", "left-pad", "index.js"), "p");
+          yield* fs.writeFileString(path.join(dir, "node_modules", ".package-lock.json"), "{}");
+
+          const result = yield* packExcluding(dir, ["node_modules"]);
+
+          expect(readEntries(result.archive).map((entry) => entry.path)).toEqual(["index.js"]);
+          expect(result.excludedCount).toBe(1);
+        }),
+      ),
+    );
+
+    it.live("matches an unanchored pattern at every depth", () =>
+      withTemp("supabase-compute-package-", (dir, fs, path) =>
+        Effect.gen(function* () {
+          yield* fs.makeDirectory(path.join(dir, "packages", "api"), { recursive: true });
+          yield* fs.writeFileString(path.join(dir, "packages", "api", ".env"), "SECRET=1");
+          yield* fs.writeFileString(path.join(dir, "packages", "api", "index.js"), "x");
+
+          const result = yield* packExcluding(dir, [".env"]);
+
+          expect(readEntries(result.archive).map((entry) => entry.path)).toEqual([
+            "packages/",
+            "packages/api/",
+            "packages/api/index.js",
+          ]);
+        }),
+      ),
+    );
+
+    it.live("keeps a file an anchored pattern only matches elsewhere", () =>
+      withTemp("supabase-compute-package-", (dir, fs, path) =>
+        Effect.gen(function* () {
+          yield* fs.makeDirectory(path.join(dir, "nested"));
+          yield* fs.writeFileString(path.join(dir, "keep.txt"), "k");
+          yield* fs.writeFileString(path.join(dir, "nested", "keep.txt"), "n");
+
+          const result = yield* packExcluding(dir, ["/keep.txt"]);
+
+          expect(readEntries(result.archive).map((entry) => entry.path)).toEqual([
+            "nested/",
+            "nested/keep.txt",
+          ]);
+        }),
+      ),
+    );
+
+    // The link is excluded before it is vetted, so excluding it is a real answer to the
+    // hoisted-dependency failure rather than something that failure pre-empts.
+    it.live("excludes a symlink that would otherwise escape the build context", () =>
+      withTemp("supabase-compute-package-", (dir, fs, path) =>
+        Effect.gen(function* () {
+          yield* fs.writeFileString(path.join(dir, "index.js"), "x");
+          yield* fs.symlink("../../elsewhere", path.join(dir, "node_modules"));
+
+          const result = yield* packExcluding(dir, ["node_modules"]);
+
+          expect(readEntries(result.archive).map((entry) => entry.path)).toEqual(["index.js"]);
+          expect(result.excludedCount).toBe(1);
+        }),
+      ),
+    );
+
+    it.live("reports nothing excluded when no pattern matches", () =>
+      withTemp("supabase-compute-package-", (dir, fs, path) =>
+        Effect.gen(function* () {
+          yield* fs.writeFileString(path.join(dir, "index.js"), "x");
+
+          const result = yield* packExcluding(dir, ["node_modules"]);
+
+          expect(result.fileCount).toBe(1);
+          expect(result.excludedCount).toBe(0);
+        }),
+      ),
+    );
+  });
 
   // A pre-1970 mtime is negative, and a negative number is not representable in
   // a USTAR octal field: `(-1).toString(8)` renders to exactly the field width,

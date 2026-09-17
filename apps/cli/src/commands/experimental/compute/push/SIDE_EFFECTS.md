@@ -20,7 +20,7 @@ and the command handler does not run. See the [Compute command guide](../../../.
 | ---------------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `<workdir>/supabase/config.json`         | JSON       | always when present — preferred over `config.toml`; each compute's runtime, size, exposure, instances, source. An explicit `--workdir`/`SUPABASE_WORKDIR` is read exactly as given, with no ancestor search; with a DEFAULTED workdir the loader may resolve an ancestor project's `config.json` from a subdirectory (CLI-2285), and the resolved compute `source` below resolves against that SAME ancestor root |
 | `<workdir>/supabase/config.toml`         | TOML       | always when no `config.json` exists — the same compute fields, with the same explicit-vs-default workdir rule                                                                                                                                                                                                                                                                                                     |
-| `<compute source>/**`                    | any        | always — packaged into the build context                                                                                                                                                                                                                                                                                                                                                                          |
+| `<compute source>/**`                    | any        | always — packaged into the build context, minus whatever `[compute.<name>] exclude` matches. An excluded directory is not descended into, so nothing under it is read at all                                                                                                                                                                                                                                      |
 | `<SUPABASE_HOME or ~/.supabase>/profile` | plain text | when neither `--profile` nor `SUPABASE_PROFILE` is set — names the profile, defaulting to `supabase`                                                                                                                                                                                                                                                                                                              |
 | `<SUPABASE_PROFILE>` (YAML)              | YAML       | when `SUPABASE_PROFILE` is a filesystem path rather than a built-in name; a read failure aborts the command                                                                                                                                                                                                                                                                                                       |
 
@@ -54,6 +54,8 @@ run reports the accepted spec the deploy response returned.
 | `1`  | no compute named and none found in the project                                                        |
 | `1`  | a selected unconfigured source directory has no explicit `--exposure` (`MissingComputeExposureError`) |
 | `1`  | config records a runtime, size or exposure the CLI does not know                                      |
+| `1`  | `[compute.<name>] exclude` records a pattern the CLI cannot act on (`InvalidComputeExcludeError`)     |
+| `1`  | `[compute.<name>] exclude` matches every file in the source (`ComputeSourceMissingError`)             |
 | `1`  | a compute's source is missing, not a directory, or empty                                              |
 | `1`  | a compute's source directory cannot be read                                                           |
 | `1`  | a compute's source links to a path outside itself                                                     |
@@ -124,6 +126,40 @@ Under `--no-wait` the `Image` row and the payload's `image_version` are omitted
 while `build_state` is `building`. The deploy response may carry an
 `image_version` — a re-push of a compute that is already serving echoes the image
 it is serving now — and that is the previous build's, not this one's.
+
+## `[compute.<name>] exclude`
+
+Patterns are read the way `.gitignore` reads them: one without `/` matches that name at any
+depth, one with `/` is anchored at the compute's source directory, a trailing `/` matches
+directories only, `**` spans directories, and within a single segment the syntax is the CLI's
+existing glob matcher (`*`, `?`, `[a-z]`). An excluded directory is not descended into, so
+everything beneath it is out too — which is also why the reported count counts the path the
+walk turned back at rather than what sat underneath it.
+
+Re-inclusion (`!`) is **not** supported and is refused rather than read as a literal filename:
+excluding a directory stops the walk there, so a pattern re-admitting something beneath it could
+never be reached. An empty pattern, an empty path segment (`src//dist`), and a malformed
+character class are refused the same way. Every refusal names the compute and the pattern.
+
+All of it is refused **before** anything is packaged or uploaded, beside the runtime, size and
+exposure checks: a pattern the CLI cannot read is knowable from `config.toml` alone.
+
+`push` applies only the patterns the project recorded — there are no built-in defaults, so a
+compute with no `exclude` key uploads its source directory whole, including one scaffolded by a
+CLI that predates the setting. `compute new` is what writes a runtime's default list, into
+`config.toml` where it can be read and edited.
+
+When patterns are configured, the packaged line carries the count: `Packaged
+supabase/compute/api (3 files, 1.2 KiB, excluded 2 paths).` The clause is omitted entirely when
+the compute records no patterns, so an unconfigured compute's output is unchanged.
+
+A source directory whose every file is excluded fails with `ComputeSourceMissingError` before
+the upload, naming the patterns rather than reporting the "only empty directories" case that a
+genuinely empty tree gets.
+
+An excluded symlink is excluded **before** it is vetted for escaping the build context, so
+adding a hoisted `node_modules` link to `exclude` is a real answer to
+`ComputeSourceEscapingLinkError` rather than something that failure pre-empts.
 
 The presigned `PUT` above is the one request whose URL is itself a credential.
 `--debug` logs every request URL, so `httpClientLayer` redacts query

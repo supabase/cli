@@ -17,6 +17,7 @@ import {
   formatBytes,
   packageComputeDirectory,
 } from "../../../../shared/compute/compute-package.ts";
+import { compileComputeExclude } from "../../../../shared/compute/compute-exclude.ts";
 import { displayPath } from "../../../../shared/compute/compute-paths.ts";
 import type { ComputeEntry } from "../../../../shared/compute/compute-config.ts";
 import {
@@ -319,26 +320,42 @@ const deployOneCompute = Effect.fnUntraced(function* (input: {
     override: input.exposure,
   });
 
+  // Same reason, and the same place: a pattern the CLI cannot read is a config mistake, and
+  // finding it out mid-walk would mean reporting it after the packaging step announced itself.
+  const exclude = yield* compileComputeExclude({ name, patterns: compute.entry?.exclude });
+
   let contextUploadId: string;
   {
     const packaging = yield* output.task("Packaging compute...");
-    const packaged = yield* packageComputeDirectory(compute.sourceDir).pipe(
+    const packaged = yield* packageComputeDirectory(compute.sourceDir, exclude).pipe(
       Effect.tapError(() => packaging.fail()),
     );
     yield* packaging.clear();
+    // The excluded count rides along on the same line, and only when patterns are configured:
+    // an over-broad pattern is otherwise visible only as a file count nobody had a number to
+    // compare against, and by then the archive is already uploaded.
+    const excludedNote = exclude.active
+      ? `, excluded ${packaged.excludedCount} ${packaged.excludedCount === 1 ? "path" : "paths"}`
+      : "";
     yield* output.raw(
       `Packaged ${sourceDisplay} (${packaged.fileCount} files, ${formatBytes(
         packaged.archive.length,
-      )}).\n`,
+      )}${excludedNote}).\n`,
       "stderr",
     );
 
     // The guard above only counts directory entries, so a tree of nothing but
-    // empty subdirectories still reaches here and packages to zero files.
+    // empty subdirectories still reaches here and packages to zero files — as
+    // does a directory whose every file the exclude patterns matched, which is
+    // the same outcome for a different reason and needs its own recovery.
     if (packaged.fileCount === 0) {
       return yield* new ComputeSourceMissingError({
-        detail: `${sourceDisplay} holds no files to deploy, only empty directories.`,
-        suggestion: addYourCode(sourceDisplay),
+        detail: exclude.active
+          ? `Every file in ${sourceDisplay} is matched by [compute.${name}] exclude, so there is nothing to deploy.`
+          : `${sourceDisplay} holds no files to deploy, only empty directories.`,
+        suggestion: exclude.active
+          ? `Narrow [compute.${name}] exclude in supabase/config.toml so the files the build needs are packaged.`
+          : addYourCode(sourceDisplay),
       });
     }
 
