@@ -98,7 +98,7 @@ describe("project init templates", () => {
   it("opts the experimental stack template into stack=true without default listener ports", () => {
     const rendered = renderCliConfigTemplate("demo-project", false, true);
     expect(rendered).toMatch(
-      /\[experimental\]\n# Use the new local stack backend for top-level start, stop, and status.\nstack = true\n/,
+      /\[experimental\]\n# Use the new local stack backend for start, stop, and status, and for --local targets of db, migration, test db, gen types, inspect, and pull.\nstack = true\n/,
     );
     expect(rendered).toContain("# smtp_port = 54325");
     expect(rendered).toContain("[experimental.pgdelta]\nenabled = true");

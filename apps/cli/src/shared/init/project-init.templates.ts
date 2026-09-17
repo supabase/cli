@@ -466,7 +466,7 @@ export const INTELLIJ_DENO_TEMPLATE = `<?xml version="1.0" encoding="UTF-8"?>
 
 const ORIOLE_DB_VERSION = "15.1.0.150";
 
-const EXPERIMENTAL_STACK_INIT_FLAG = `# Use the new local stack backend for top-level start, stop, and status.
+const EXPERIMENTAL_STACK_INIT_FLAG = `# Use the new local stack backend for start, stop, and status, and for --local targets of db, migration, test db, gen types, inspect, and pull.
 stack = true
 `;
 

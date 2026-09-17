@@ -130,6 +130,15 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
       starter = allTemplates.find((t) => t.name === choice) ?? SCRATCH_TEMPLATE;
     }
 
+    const experimentalStack =
+      starter.url.length === 0
+        ? yield* resolveExperimentalFeature({
+            feature: "stack",
+            configValue: Effect.succeed(false),
+            env: yield* experimentalFeatureEnv("stack"),
+          })
+        : false;
+
     yield* fs.makeDirectory(workdir, { recursive: true });
     const entries = yield* fs
       .readDirectory(workdir)
@@ -171,11 +180,7 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
         useOrioledb: false,
         withVscodeSettings: false,
         withIntellijSettings: false,
-        experimentalStack: yield* resolveExperimentalFeature({
-          feature: "stack",
-          configValue: Effect.succeed(false),
-          env: yield* experimentalFeatureEnv("stack"),
-        }),
+        experimentalStack,
       });
     }
 

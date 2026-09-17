@@ -28,9 +28,10 @@
 
 ## Environment Variables
 
-| Variable                      | Purpose                                                                                                                                                          | Required? |
-| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
-| `SUPABASE_EXPERIMENTAL_STACK` | when `1`, persist `[experimental] stack = true` and omit Docker-era default ports from `supabase/config.toml`; when `0` or unset, write the established template | no        |
+| Variable                      | Purpose                                                                                                                                 | Required? |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| `SUPABASE_YES`                | auto-accepts `-i` IDE prompts with the established stderr echo, same as `--yes`                                                         | no        |
+| `SUPABASE_EXPERIMENTAL_STACK` | when `1`, persist `[experimental] stack = true` and omit Docker-era default ports; `0`, unset, or empty writes the established template | no        |
 
 ## Exit Codes
 
@@ -38,7 +39,7 @@
 | ---- | ------------------------------------------------------------------------------------ |
 | `0`  | success - prints "Finished supabase init."                                           |
 | `1`  | `supabase/config.toml` already exists and `--force` was not provided                 |
-| `1`  | `SUPABASE_EXPERIMENTAL_STACK` is set to a value other than `0` or `1`                |
+| `1`  | `SUPABASE_EXPERIMENTAL_STACK` is a non-empty value other than `0` or `1`             |
 | `1`  | permission denied writing config file                                                |
 | `1`  | an existing `.vscode/settings.json` / `.vscode/extensions.json` is not valid JSON(C) |
 
@@ -79,7 +80,7 @@ required flag(s) "experimental" not set
 Try rerunning the command with --debug to troubleshoot the error.
 ```
 
-When `SUPABASE_EXPERIMENTAL_STACK` is set to a value other than `0` or `1` (stderr; the second line is the generic debug hint appended on error):
+When `SUPABASE_EXPERIMENTAL_STACK` is a non-empty value other than `0` or `1` (stderr; the second line is the generic debug hint appended on error):
 
 ```
 SUPABASE_EXPERIMENTAL_STACK must be 0 or 1 when set
@@ -94,7 +95,8 @@ Try rerunning the command with --debug to troubleshoot the error.
 - `SUPABASE_EXPERIMENTAL_STACK=1` opts the new project into the experimental stack backend: the
   written config includes `[experimental] stack = true` and omits the Docker-era default ports
   (API, database, shadow, pooler, Studio, mail UI, Functions inspector, and Analytics).
-  Invalid values fail closed. `0` or unset keeps the established template.
+  A non-empty value other than `0` or `1` fails closed. `0`, unset, or empty keeps the
+  established template.
 - The `--interactive` / `-i` flag enables IDE settings prompts (only effective in TTY).
 - The `--with-vscode-settings` and `--with-vscode-workspace` flags are hidden backward-compat aliases for the same VS Code helper and both write `.vscode/settings.json` and `.vscode/extensions.json`.
 - The `--with-intellij-settings` flag is a hidden backward-compat alias for generating `.idea/deno.xml`.
