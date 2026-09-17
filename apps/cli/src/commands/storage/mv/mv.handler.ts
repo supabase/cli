@@ -1,6 +1,5 @@
-import * as nodePath from "node:path";
-
-import { Effect, Option } from "effect";
+import { BunPath } from "@effect/platform-bun";
+import { Effect, Option, Path } from "effect";
 
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
@@ -37,6 +36,7 @@ export const storageMv = Effect.fn("storage.mv")(function* (flags: StorageMvFlag
   const telemetryState = yield* TelemetryState;
   const linkedProjectCache = yield* LinkedProjectCache;
   const resolver = yield* ProjectRefResolver;
+  const posixPath = yield* Effect.provide(Path.Path, BunPath.layerPosix);
 
   let linkedRef = "";
 
@@ -45,12 +45,10 @@ export const storageMv = Effect.fn("storage.mv")(function* (flags: StorageMvFlag
 
     // `--project-ref` only applies to the linked project; it never implies `--linked`.
     if (Option.isSome(flags.projectRef) && flags.local) {
-      return yield* Effect.fail(
-        new StorageMutuallyExclusiveFlagsError({
-          message:
-            "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
-        }),
-      );
+      return yield* new StorageMutuallyExclusiveFlagsError({
+        message:
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
+      });
     }
 
     const projectRef = flags.local ? "" : yield* resolver.loadProjectRef(flags.projectRef);
@@ -98,7 +96,13 @@ export const storageMv = Effect.fn("storage.mv")(function* (flags: StorageMvFlag
           }
 
           // Recursive fallback on `not_found`.
-          const moved = yield* moveStorageObjectAll(gateway, output, `${srcParsed}/`, dstParsed);
+          const moved = yield* moveStorageObjectAll(
+            gateway,
+            output,
+            posixPath,
+            `${srcParsed}/`,
+            dstParsed,
+          );
           if (output.format !== "text") {
             yield* output.success("", { message: "", moved });
           }
@@ -119,6 +123,7 @@ export const storageMv = Effect.fn("storage.mv")(function* (flags: StorageMvFlag
 const moveStorageObjectAll = (
   gateway: StorageGateway,
   output: typeof Output.Service,
+  posixPath: Path.Path,
   srcPath: string,
   dstPath: string,
 ) =>
@@ -141,9 +146,9 @@ const moveStorageObjectAll = (
           ? objectPath.slice(srcPath.length)
           : objectPath;
         const [srcBucket, srcPrefix] = splitBucketPrefix(objectPath);
-        const absPath = nodePath.posix.join(dstPrefix, relPath);
+        const absPath = posixPath.join(dstPrefix, relPath);
         yield* output.raw(
-          `Moving object: ${objectPath} => ${nodePath.posix.join(dstPath, relPath)}\n`,
+          `Moving object: ${objectPath} => ${posixPath.join(dstPath, relPath)}\n`,
           "stderr",
         );
         yield* gateway.moveObject(srcBucket, srcPrefix, absPath);
