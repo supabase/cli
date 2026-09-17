@@ -33,7 +33,10 @@ import { projectCreateCore } from "../../command-internal/project-create-core.ts
 import { tempPaths } from "../../command-internal/temp-paths.ts";
 import { extractServiceKeys } from "../../command-internal/tenant-keys.ts";
 import { parseDotEnv } from "../../command-internal/dotenv.ts";
-import { resolveExperimentalFeature } from "../../command-internal/experimental-feature.ts";
+import {
+  experimentalFeatureEnv,
+  resolveExperimentalFeature,
+} from "../../command-internal/experimental-feature.ts";
 import { initProject } from "../../shared/init/project-init.ts";
 import { buildDotEnv, marshalDotEnv } from "./bootstrap.dotenv.ts";
 import {
@@ -171,7 +174,7 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
         experimentalStack: yield* resolveExperimentalFeature({
           feature: "stack",
           configValue: Effect.succeed(false),
-          env: process.env,
+          env: yield* experimentalFeatureEnv("stack"),
         }),
       });
     }

@@ -1,6 +1,16 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
-import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Stdio } from "effect";
+import {
+  Cause,
+  ConfigProvider,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Stdio,
+} from "effect";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { ExperimentalFlag, WorkdirFlag, YesFlag } from "../../command-internal/global-flags.ts";
 import { normalizeCause } from "../../shared/output/normalize-error.ts";
@@ -31,6 +41,7 @@ function setup(
     /** Piped stdin lines consumed by the non-TTY IDE-settings confirm reads. */
     stdinInput?: string;
     platform?: NodeJS.Platform;
+    env?: Readonly<Record<string, string | undefined>>;
   } = {},
 ) {
   const out = mockOutput({ format: "text", interactive: opts.interactive ?? false });
@@ -49,6 +60,9 @@ function setup(
       Layer.succeed(WorkdirFlag, opts.workdir ?? Option.none()),
       Layer.succeed(YesFlag, opts.yes ?? false),
       Layer.succeed(CliArgs, { args: [] }),
+      ConfigProvider.layer(
+        ConfigProvider.fromEnvRecord(opts.env ?? {}, { preserveEmptyStrings: true }),
+      ),
     ),
   };
 }
@@ -332,65 +346,53 @@ describe("init", () => {
   it.live("writes the stack-opt-in template when SUPABASE_EXPERIMENTAL_STACK=1", () => {
     const tempDir = tempRoot.current;
 
-    return withEnvVar(
-      "SUPABASE_EXPERIMENTAL_STACK",
-      "1",
-      Effect.gen(function* () {
-        const { layer, out } = setup(tempDir);
+    return Effect.gen(function* () {
+      const { layer, out } = setup(tempDir, { env: { SUPABASE_EXPERIMENTAL_STACK: "1" } });
 
-        yield* init({ ...BASE_INIT_FLAGS, interactive: false }).pipe(Effect.provide(layer));
+      yield* init({ ...BASE_INIT_FLAGS, interactive: false }).pipe(Effect.provide(layer));
 
-        const content = yield* readTextFile(tempDir, "supabase", "config.toml");
-        expect(content).toContain("stack = true");
-        expect(content).not.toMatch(/^shadow_port = 54320$/m);
-        expect(content).not.toMatch(/^port = 54321$/m);
-        expect(content).not.toMatch(/^inspector_port = 8083$/m);
-        expect(out.stdoutText).toBe("Finished supabase init.\n");
-      }),
-    );
+      const content = yield* readTextFile(tempDir, "supabase", "config.toml");
+      expect(content).toContain("stack = true");
+      expect(content).not.toMatch(/^shadow_port = 54320$/m);
+      expect(content).not.toMatch(/^port = 54321$/m);
+      expect(content).not.toMatch(/^inspector_port = 8083$/m);
+      expect(out.stdoutText).toBe("Finished supabase init.\n");
+    });
   });
 
   it.live("keeps the established template when SUPABASE_EXPERIMENTAL_STACK=0", () => {
     const tempDir = tempRoot.current;
 
-    return withEnvVar(
-      "SUPABASE_EXPERIMENTAL_STACK",
-      "0",
-      Effect.gen(function* () {
-        const { layer } = setup(tempDir);
+    return Effect.gen(function* () {
+      const { layer } = setup(tempDir, { env: { SUPABASE_EXPERIMENTAL_STACK: "0" } });
 
-        yield* init({ ...BASE_INIT_FLAGS, interactive: false }).pipe(Effect.provide(layer));
+      yield* init({ ...BASE_INIT_FLAGS, interactive: false }).pipe(Effect.provide(layer));
 
-        const content = yield* readTextFile(tempDir, "supabase", "config.toml");
-        expect(content).not.toContain("stack = true");
-        expect(content).toContain("port = 54321");
-      }),
-    );
+      const content = yield* readTextFile(tempDir, "supabase", "config.toml");
+      expect(content).not.toContain("stack = true");
+      expect(content).toContain("port = 54321");
+    });
   });
 
   it.live("fails closed when SUPABASE_EXPERIMENTAL_STACK is not 0 or 1", () => {
     const tempDir = tempRoot.current;
 
-    return withEnvVar(
-      "SUPABASE_EXPERIMENTAL_STACK",
-      "yes",
-      Effect.gen(function* () {
-        const { layer } = setup(tempDir);
+    return Effect.gen(function* () {
+      const { layer } = setup(tempDir, { env: { SUPABASE_EXPERIMENTAL_STACK: "yes" } });
 
-        const exit = yield* init({ ...BASE_INIT_FLAGS, interactive: false }).pipe(
-          Effect.provide(layer),
-          Effect.exit,
-        );
+      const exit = yield* init({ ...BASE_INIT_FLAGS, interactive: false }).pipe(
+        Effect.provide(layer),
+        Effect.exit,
+      );
 
-        const error = findFailure(exit);
-        expect(error["_tag"]).toBe("ExperimentalFeatureFlagError");
-        expect(error["message"]).toBe("SUPABASE_EXPERIMENTAL_STACK must be 0 or 1 when set");
+      const error = findFailure(exit);
+      expect(error["_tag"]).toBe("ExperimentalFeatureFlagError");
+      expect(error["message"]).toBe("SUPABASE_EXPERIMENTAL_STACK must be 0 or 1 when set");
 
-        expect(yield* renderFailureToStderr(exit)).toEqual([
-          "SUPABASE_EXPERIMENTAL_STACK must be 0 or 1 when set\n",
-          "Try rerunning the command with --debug to troubleshoot the error.\n",
-        ]);
-      }),
-    );
+      expect(yield* renderFailureToStderr(exit)).toEqual([
+        "SUPABASE_EXPERIMENTAL_STACK must be 0 or 1 when set\n",
+        "Try rerunning the command with --debug to troubleshoot the error.\n",
+      ]);
+    });
   });
 });
