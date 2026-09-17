@@ -31,9 +31,8 @@ import { BundledPostgresClient, resolveBundledPostgresRuntime } from "./bundled-
 
 const ENABLE_PGTAP = "create extension if not exists pgtap with schema extensions";
 const DISABLE_PGTAP = "drop extension if exists pgtap";
-// Fixed here: the config schema has no `[images]` override for this. Re-verify
-// `NO_TESTS_VERDICT` still matches pg_prove's summary format when bumping this tag.
-// Catalog postgres images do not ship pg_prove until the slim-services republish.
+// Compose pin: the config schema has no `[images]` override. Stack prove uses
+// catalog `pg_prove` instead. Re-verify `NO_TESTS_VERDICT` when bumping this tag.
 const PG_PROVE_IMAGE = "supabase/pg_prove:3.36";
 const MAX_PROJECT_ID_LENGTH = 40;
 /**
@@ -219,7 +218,7 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
             }
             return output.rawBytes(chunk, "stdout");
           });
-        if (useNativeProve) {
+        if (backend.kind === "stack") {
           const bundled = yield* BundledPostgresClient;
           const toml = yield* readDbToml(fs, path, cliSettings.workdir);
           const version =
@@ -237,12 +236,13 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
           return yield* bundled.run({
             version,
             runtime: proveRuntime,
-            argv: nativeArgs,
+            argv: useNativeProve ? nativeArgs : args.cmd,
             env: runEnv,
-            cwd: hostWorkingDir,
+            cwd: useNativeProve ? hostWorkingDir : Option.getOrUndefined(args.workingDir),
             network: network._tag === "named" ? { name: network.name } : "host",
-            extraHosts: [],
-            securityOpt: [],
+            extraHosts: useNativeProve ? [] : extraHosts,
+            securityOpt: useNativeProve || inBitbucket ? [] : ["label:disable"],
+            ...(useNativeProve ? {} : { mounts: args.mounts }),
             onStdout,
             teeStderr: true,
             captureStderr: false,

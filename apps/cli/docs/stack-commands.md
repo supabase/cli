@@ -113,14 +113,13 @@ seed on stack credentials.
 `gen types --local` and `inspect db … --local` resolve the project stack through the same
 `--local` database target as `db dump`. They do not start a stack.
 
-`db dump --local` and `migration squash` use bundled `pg_dump` from the catalog Postgres
-artifact (native `PATH` prepend) or a one-shot container of the same image. `db test` /
-`test db` use bundled `pg_prove` only on a native stack; stack+container prove stays on
-`supabase/pg_prove:3.36` until the catalog image ships `pg_prove`. Native `--linked` /
-`--db-url` keep the resolved host. Windows native stacks have no postgres artifact and keep a
-one-shot Docker client against published credentials. Install Docker Desktop when that Windows
-path cannot spawn Docker. The Docker/Podman engine keeps the one-shot tool container and targets
-published stack credentials, never `PGHOST=db`.
+On the stack backend, `db dump --local`, `migration squash`, and `test db` always run catalog
+`pg_dump` / `pg_dumpall` / `pg_prove` — native stacks prepend `artifact/bin`, and container
+stacks (or platforms with no native artifact: Windows, Intel Mac) run a one-shot of the **same**
+catalog Postgres image. There is no host PATH fallback and stack `--local` never uses
+`PGHOST=db`. Native `--linked` / `--db-url` keep the resolved host; `--local` native rewrites
+loopback to `127.0.0.1`. Missing `pg_prove` fails closed. Install Docker Desktop when a
+no-native-artifact platform cannot spawn the one-shot client.
 
 ## Reading stack logs
 

@@ -419,11 +419,12 @@ describe("test db integration", () => {
           dbUrl: Option.some("postgresql://postgres:postgres@127.0.0.1:54322/postgres"),
         }),
       );
-      expect(bundled.lastOpts).toBeUndefined();
-      expect(docker.lastOpts?.network).toEqual({ _tag: "host" });
-      expect(docker.lastOpts?.env["PGHOST"]).toBe("127.0.0.1");
-      expect(docker.lastOpts?.env["PGPORT"]).toBe("54322");
-      expect(docker.lastOpts?.image).toContain("pg_prove");
+      expect(docker.lastOpts).toBeUndefined();
+      expect(bundled.lastOpts?.runtime).toEqual({ kind: "container", engine: "docker" });
+      expect(bundled.lastOpts?.network).toBe("host");
+      expect(bundled.lastOpts?.env?.["PGHOST"]).toBe("127.0.0.1");
+      expect(bundled.lastOpts?.env?.["PGPORT"]).toBe("54322");
+      expect(bundled.lastOpts?.argv[0]).toBe("pg_prove");
     }).pipe(Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))));
   });
 
@@ -494,13 +495,30 @@ describe("test db integration", () => {
     );
   });
 
-  it.live("stack --local docker uses supabase/pg_prove, not the catalog postgres image", () => {
+  it.live("stack --local docker uses catalog pg_prove, not supabase/pg_prove", () => {
     const { layer, docker, bundled } = setup({ isLocal: true });
     return Effect.gen(function* () {
       yield* testDb(flags({ local: true }));
-      expect(bundled.lastOpts).toBeUndefined();
-      expect(docker.lastOpts?.image).toContain("pg_prove");
-      expect(docker.lastOpts?.env["PGHOST"]).toBe("127.0.0.1");
+      expect(docker.lastOpts).toBeUndefined();
+      expect(bundled.lastOpts?.runtime).toEqual({ kind: "container", engine: "docker" });
+      expect(bundled.lastOpts?.argv.slice(0, 5)).toEqual([
+        "pg_prove",
+        "--ext",
+        ".pg",
+        "--ext",
+        ".sql",
+      ]);
+      expect(bundled.lastOpts?.env?.["PGHOST"]).toBe("127.0.0.1");
+      expect(bundled.lastOpts?.mounts).toEqual([
+        {
+          source: "/work/project/supabase/tests",
+          target: "/work/project/supabase/tests",
+          readOnly: true,
+        },
+      ]);
+      expect(bundled.lastOpts?.cwd).toBe("/work/project/supabase/tests");
+      expect(bundled.lastOpts?.extraHosts).toEqual(["host.docker.internal:host-gateway"]);
+      expect(bundled.lastOpts?.securityOpt).toEqual(["label:disable"]);
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
@@ -508,6 +526,22 @@ describe("test db integration", () => {
           stackBackendLayer("stack"),
           proveStackApi({ kind: "container", engine: "docker" }),
         ),
+      ),
+    );
+  });
+
+  it.live("stack --local on Windows uses catalog container pg_prove against host.docker.internal", () => {
+    const { layer, docker, bundled } = setup({ isLocal: true, platform: "win32" });
+    return Effect.gen(function* () {
+      yield* testDb(flags({ local: true }));
+      expect(docker.lastOpts).toBeUndefined();
+      expect(bundled.lastOpts?.runtime).toEqual({ kind: "container", engine: "docker" });
+      expect(bundled.lastOpts?.env?.["PGHOST"]).toBe("host.docker.internal");
+      expect(bundled.lastOpts?.network).toBe("host");
+      expect(bundled.lastOpts?.extraHosts).toEqual([]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(layer, stackBackendLayer("stack"), proveStackApi({ kind: "native" })),
       ),
     );
   });

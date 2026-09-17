@@ -64,13 +64,13 @@ const workloadCatalog = {
   "database:database": native(
     "postgres",
     "17.6.1.168",
-    "ghcr.io/supabase/cli/postgres:17.6.1.168@sha256:936536bb1f97bcab0e30f58613545f8a75676c185c5eb5b86d8f8b33ca3063a1",
+    "ghcr.io/supabase/cli/postgres:17.6.1.168@sha256:0ad32960ba2cb95167e1be115c6f84b303f39361772eb137c6fdae6cf0093fc3",
     "bin/supabase-postgres-start",
     ["bin/supabase-postgres-start", "bin/pg_dump", "bin/pg_dumpall", "bin/psql"],
     {
       additionalReleases: {
         "15.14.1.168":
-          "ghcr.io/supabase/cli/postgres:15.14.1.168@sha256:f8cd66cf9d464374fe8932a319c6bb0ab03520643ee038b4e84bbdb8ad03bd8f",
+          "ghcr.io/supabase/cli/postgres:15.14.1.168@sha256:da2cae5bba640d819a70718522a6270544f12ab846e64b36d899144de1096899",
       },
       containerAlias: "supabase-database",
     },
