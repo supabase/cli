@@ -54,12 +54,10 @@ export const seedBuckets = Effect.fn("seed.buckets")(function* (
     // discarded on the local target — see push.handler.ts's identical guard
     // (db push) for the rationale.
     if (Option.isSome(flags.projectRef) && !isLinked) {
-      return yield* Effect.fail(
-        new SeedMutuallyExclusiveFlagsError({
-          message:
-            "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
-        }),
-      );
+      return yield* new SeedMutuallyExclusiveFlagsError({
+        message:
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
+      });
     }
 
     // An explicit `--workdir`/`SUPABASE_WORKDIR` with no project config fails

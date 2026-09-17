@@ -1,4 +1,4 @@
-import * as nodePath from "node:path";
+import { type Path } from "effect";
 
 /**
  * Pure path helper for `seed buckets` object upload. Content-type resolution
@@ -12,14 +12,21 @@ import * as nodePath from "node:path";
  *   - single-file `objects_path` (the file is the path itself) → `<bucket>/<basename>`
  *   - otherwise → `<bucket>/<relative-posix-path>`
  *
- * `objectsPath` and `filePath` are OS paths; the relative segment is normalized
- * to forward slashes for the remote key.
+ * `objectsPath` and `filePath` are OS paths read through the platform `path`
+ * service; the relative segment is normalized to forward slashes for the remote
+ * key, so `posixPath` must be a POSIX `Path` service.
  */
-export function bucketObjectKey(bucketName: string, objectsPath: string, filePath: string): string {
-  const relPath = nodePath.relative(objectsPath, filePath);
+export function bucketObjectKey(
+  path: Path.Path,
+  posixPath: Path.Path,
+  bucketName: string,
+  objectsPath: string,
+  filePath: string,
+): string {
+  const relPath = path.relative(objectsPath, filePath);
   if (relPath === "") {
-    return nodePath.posix.join(bucketName, nodePath.basename(filePath));
+    return posixPath.join(bucketName, path.basename(filePath));
   }
-  const relPosix = relPath.split(nodePath.sep).join(nodePath.posix.sep);
-  return nodePath.posix.join(bucketName, relPosix);
+  const relPosix = relPath.split(path.sep).join(posixPath.sep);
+  return posixPath.join(bucketName, relPosix);
 }

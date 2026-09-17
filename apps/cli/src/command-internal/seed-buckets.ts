@@ -1,5 +1,6 @@
 import { type CliConfig, CliConfigSchema } from "@supabase/config/effect";
 import { loadCliConfig, type InternalLoadCliConfigOptions } from "@supabase/config/internal";
+import { BunPath } from "@effect/platform-bun";
 import { Effect, FileSystem, Path, Schema } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import type { PlatformError } from "effect/PlatformError";
@@ -481,6 +482,7 @@ const uploadObjects = Effect.fnUntraced(function* (
   bucketsConfig: BucketsConfig,
   summary: SeedSummary,
 ) {
+  const posixPath = yield* Effect.provide(Path.Path, BunPath.layerPosix);
   for (const [name, bucket] of Object.entries(bucketsConfig)) {
     const objectsPath = bucket.objects_path;
     if (objectsPath.length === 0) {
@@ -500,7 +502,7 @@ const uploadObjects = Effect.fnUntraced(function* (
       files,
       (file) =>
         Effect.gen(function* () {
-          const dstPath = bucketObjectKey(name, displayRoot, file.displayPath);
+          const dstPath = bucketObjectKey(path, posixPath, name, displayRoot, file.displayPath);
           yield* output.raw(`Uploading: ${file.displayPath} => ${dstPath}\n`, "stderr");
           // Content type is sniffed from the first 512 bytes, refining only a generic
           // text/plain by file extension.
