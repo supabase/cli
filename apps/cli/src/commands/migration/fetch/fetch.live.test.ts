@@ -1,18 +1,18 @@
-import { MigrationLiveError } from "../../../../tests/helpers/migration-live.ts";
-
 import { BunServices } from "@effect/platform-bun";
-import { Cause, DateTime, Effect, Exit, FileSystem, Path } from "effect";
+import { Cause, Effect, Exit, FileSystem, Path } from "effect";
 import { expect } from "vitest";
 
-import { requireLiveSuccess, test, throwWithCleanup } from "../../../../tests/helpers/live.ts";
+import {
+  liveMigrationVersion,
+  requireLiveSuccess,
+  test,
+  throwWithCleanup,
+} from "../../../../tests/helpers/live.ts";
+import { MigrationLiveError } from "../../../../tests/helpers/migration-live.ts";
 
 const LIVE_TIMEOUT_MS = 120_000;
 
 const NAME = "cli_live_fetch";
-
-const liveMigrationVersion = Effect.map(DateTime.now, (now) =>
-  DateTime.formatIso(now).replace(/\D/gu, "").slice(0, 14),
-);
 
 // Destructive: repairs remote migration history in setup and reverts that row in
 // teardown.
@@ -30,7 +30,7 @@ test(
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const targetArgs = ["--db-url", project.dbUrl];
-        const version = yield* liveMigrationVersion;
+        const version = liveMigrationVersion();
         const migrationFile = `${version}_${NAME}.sql`;
         const seedDir = yield* fs.makeTempDirectoryScoped({ prefix: "sb-migration-seed-live-" });
         const fetchDir = yield* fs.makeTempDirectoryScoped({ prefix: "sb-migration-fetch-live-" });
@@ -83,8 +83,6 @@ test(
             const targetExit = yield* Effect.exit(restore(target));
             const cleanupExits: ReadonlyArray<Exit.Exit<unknown, unknown>> = [
               yield* Effect.exit(revert),
-              yield* Effect.exit(fs.remove(seedDir, { recursive: true, force: true })),
-              yield* Effect.exit(fs.remove(fetchDir, { recursive: true, force: true })),
             ];
             return {
               targetError: Exit.isFailure(targetExit) ? Cause.squash(targetExit.cause) : undefined,

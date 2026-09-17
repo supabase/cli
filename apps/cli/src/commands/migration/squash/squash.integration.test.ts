@@ -832,7 +832,12 @@ describe("migration squash", () => {
           // the same process.
           const ambient = yield* Config.option(
             Config.string("SUPABASE_INTERNAL_IMAGE_REGISTRY"),
-          ).pipe(Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromEnv()));
+          ).pipe(
+            Effect.provideService(
+              ConfigProvider.ConfigProvider,
+              ConfigProvider.fromEnv({ preserveEmptyStrings: true }),
+            ),
+          );
           expect(Option.isNone(ambient)).toBe(true);
         }).pipe(Effect.provide(s.layer), (body) =>
           withEnvVar("SUPABASE_INTERNAL_IMAGE_REGISTRY", undefined, body),

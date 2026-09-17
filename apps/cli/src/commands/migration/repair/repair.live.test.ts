@@ -1,5 +1,3 @@
-import { queryMigrationDb } from "../../../../tests/helpers/migration-live.ts";
-
 import { BunServices } from "@effect/platform-bun";
 import { Cause, Effect, Exit, FileSystem, Path } from "effect";
 import { expect } from "vitest";
@@ -10,6 +8,7 @@ import {
   test,
   throwWithCleanup,
 } from "../../../../tests/helpers/live.ts";
+import { queryMigrationDb } from "../../../../tests/helpers/migration-live.ts";
 
 test("amends the migration history status on the remote database", ({
   cliEffect,

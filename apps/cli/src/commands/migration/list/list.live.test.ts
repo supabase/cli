@@ -1,5 +1,3 @@
-import { removeMigration } from "../../../../tests/helpers/migration-live.ts";
-
 import { BunServices } from "@effect/platform-bun";
 import { Cause, Effect, Exit, FileSystem, Path } from "effect";
 import { expect } from "vitest";
@@ -10,6 +8,7 @@ import {
   test,
   throwWithCleanup,
 } from "../../../../tests/helpers/live.ts";
+import { removeMigration } from "../../../../tests/helpers/migration-live.ts";
 
 test("lists a seeded remote migration", ({ cli, cliEffect, project, signal }) =>
   Effect.runPromise(
@@ -43,7 +42,6 @@ test("lists a seeded remote migration", ({ cli, cliEffect, project, signal }) =>
           const targetExit = yield* Effect.exit(restore(target));
           const cleanupExits: ReadonlyArray<Exit.Exit<unknown, unknown>> = [
             yield* Effect.exit(removeMigration(cli, project, version)),
-            yield* Effect.exit(fs.remove(seedDir, { recursive: true, force: true })),
           ];
           return {
             targetError: Exit.isFailure(targetExit) ? Cause.squash(targetExit.cause) : undefined,
