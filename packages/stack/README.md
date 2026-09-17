@@ -130,8 +130,9 @@ CLI is not involved in these runtime tests.
 
 When `runtime` is omitted for a new stack, the package selects Docker when the Docker client is
 installed and its daemon is reachable, and native otherwise. An installed client with an
-unreachable daemon selects native and reports a `dockerFallbackNotice` explaining that the choice is
-persisted; switching to Docker later requires destroying the stack or choosing a new stack name.
+unreachable daemon selects native, and the Effect handle carries a `dockerFallbackNotice` explaining
+that the choice is persisted; switching to Docker later requires destroying the stack or choosing a
+new stack name. The Promise facade does not expose the notice.
 Native is refused when the process runs as uid 0. Existing stacks reuse their persisted runtime
 without probing; native, Docker, and Podman preferences remain explicit when supplied, and an
 explicit Docker runtime does not fall back. Podman is supported only on local Linux hosts.

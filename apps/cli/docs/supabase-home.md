@@ -67,8 +67,9 @@ Managed stack documents and runtime artifacts are shared through the global CLI 
 
 `state.json` is the single durable managed record. It contains the canonical project root, branch
 context, and stack name that make up stack identity, together with sticky port intents and
-assignments, lifecycle, and launch metadata (mode, versions,
-exclusions, and update-notification fingerprint). Runtime-only service ports are allocated for the
+assignments, the desired lifecycle, the runtime selection, and the materialized stack definition
+(enabled capabilities with their pinned versions, listeners, and security settings). Runtime-only
+service ports are allocated for the
 supervisor run and are not persisted as sticky intents. `control.json` contains runtime owner
 metadata for the deterministic loopback control endpoint; the ownership protocol is the liveness
 authority, and a stale document is reclaimed by a subsequent managed lifecycle operation.
@@ -83,11 +84,11 @@ The candidate baseline is computed from linked versions in `.supabase/project.js
 
 1. `supabase start --service-version service=version` for one invocation;
 2. checkout-local values in `.supabase/local-versions.json`;
-3. the managed document's `launch.versions` baseline;
+3. the capability version pins in the managed document's materialized definition;
 4. catalog defaults for values not supplied by the preceding sources.
 
-`launch` is recorded by `supabase start` through the managed lifecycle; there is no separate
-command that rewrites it, and no second project-level pinned-version file is written.
+The materialized definition is recorded by `supabase start` through the managed lifecycle; there is
+no separate command that rewrites it, and no second project-level pinned-version file is written.
 
 ## Port intents
 
