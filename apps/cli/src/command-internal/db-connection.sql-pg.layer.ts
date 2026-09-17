@@ -397,13 +397,22 @@ export interface ClientCert {
 }
 
 /**
- * Whether the DSN itself asked for TLS behavior: `--db-url`'s `sslmode`/`sslrootcert` are honored
- * even against a target classified local (e.g. a TLS tunnel on the loopback stack), so `isLocal`
- * alone must not force plaintext when one of these is set.
+ * `sslmode` values that demand TLS. `prefer` and `allow` describe a fallback libpq would perform
+ * and {@link sslConfigsFor} does not, so neither counts as a demand; treating them as one would
+ * turn a plaintext-capable target into a handshake failure.
+ */
+const TLS_DEMANDING_SSLMODES = new Set(["require", "verify-ca", "verify-full"]);
+
+/**
+ * Whether the connection demands TLS, which keeps `--db-url`'s `sslmode`/`sslrootcert` honored
+ * against a target classified local (e.g. a TLS tunnel on the loopback stack) instead of being
+ * forced to plaintext by `isLocal` alone. An unset, `prefer`, `allow` or `disable` mode is not a
+ * demand: `sslmode` is also filled from `PGSSLMODE` and libpq service files, so a merely present
+ * value cannot be read as the DSN asking for TLS.
  */
 export function tlsExplicitlyRequested(cfg: PgConnInput): boolean {
   return (
-    cfg.sslmode !== undefined ||
+    (cfg.sslmode !== undefined && TLS_DEMANDING_SSLMODES.has(cfg.sslmode)) ||
     (cfg.sslrootcert?.length ?? 0) > 0 ||
     (cfg.sslrootcertInline?.length ?? 0) > 0
   );

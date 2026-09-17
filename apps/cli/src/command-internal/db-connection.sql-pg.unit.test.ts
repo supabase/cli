@@ -25,6 +25,7 @@ import {
   toConnectError,
   toExecError,
 } from "./db-connection.sql-pg.layer.ts";
+import { parseConnectionString } from "./db-config.parse.ts";
 import type { PgConnInput } from "./db-connection.service.ts";
 
 describe("buildConnectionUrl", () => {
@@ -273,10 +274,38 @@ describe("tlsExplicitlyRequested (CLI-2366: --db-url TLS against a local target)
     expect(tlsExplicitlyRequested(base)).toBe(false);
   });
 
-  it("is true for any sslmode, including disable (still resolved by sslConfigsFor)", () => {
+  it("is true for require/verify-ca/verify-full, the modes sslConfigsFor cannot fall back from", () => {
     expect(tlsExplicitlyRequested({ ...base, sslmode: "require" })).toBe(true);
+    expect(tlsExplicitlyRequested({ ...base, sslmode: "verify-ca" })).toBe(true);
     expect(tlsExplicitlyRequested({ ...base, sslmode: "verify-full" })).toBe(true);
-    expect(tlsExplicitlyRequested({ ...base, sslmode: "disable" })).toBe(true);
+  });
+
+  it("is false for prefer/allow/disable, whose libpq fallback sslConfigsFor does not implement", () => {
+    // `prefer` and `allow` describe a TLS-then-plaintext (or reverse) fallback that
+    // `sslConfigsFor` never performs, so reading either as a demand would turn a
+    // plaintext-capable local target into a handshake failure (the CLI-2366 regression).
+    expect(tlsExplicitlyRequested({ ...base, sslmode: "prefer" })).toBe(false);
+    expect(tlsExplicitlyRequested({ ...base, sslmode: "allow" })).toBe(false);
+    expect(tlsExplicitlyRequested({ ...base, sslmode: "disable" })).toBe(false);
+  });
+
+  it("leaves a loopback DSN plaintext when PGSSLMODE filled sslmode the URL never set", () => {
+    // The real trigger: `sslmode` is also filled from `PGSSLMODE` and libpq service files, so an
+    // ambient `PGSSLMODE=prefer` must not make a bare loopback `--db-url` demand TLS.
+    const conn = parseConnectionString(
+      "postgresql://postgres:postgres@127.0.0.1:54322/postgres",
+      (name) => (name === "PGSSLMODE" ? "prefer" : undefined),
+    );
+    expect(conn?.sslmode).toBe("prefer");
+    expect(tlsExplicitlyRequested(conn!)).toBe(false);
+  });
+
+  it("still demands TLS when PGSSLMODE asks for verification", () => {
+    const conn = parseConnectionString(
+      "postgresql://postgres:postgres@127.0.0.1:54322/postgres",
+      (name) => (name === "PGSSLMODE" ? "verify-full" : undefined),
+    );
+    expect(tlsExplicitlyRequested(conn!)).toBe(true);
   });
 
   it("is true when a root cert (file path or inline PEM) is set", () => {

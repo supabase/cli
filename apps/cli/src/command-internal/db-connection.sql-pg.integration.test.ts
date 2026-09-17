@@ -886,6 +886,54 @@ describe("a local target's explicit TLS request (CLI-2366: honor --db-url's own 
   );
 
   it.live(
+    "stays plaintext for a local target with sslmode=prefer (CLI-2366 regression guard: " +
+      "libpq's TLS-then-plaintext fallback is not implemented by sslConfigsFor)",
+    () =>
+      Effect.gen(function* () {
+        const server = yield* Effect.promise(fakeStartupServer);
+        yield* Effect.gen(function* () {
+          const pool = yield* acquirePgPool(
+            {
+              host: "127.0.0.1",
+              port: server.port,
+              user: "postgres",
+              password: "postgres",
+              database: "postgres",
+              sslmode: "prefer",
+            },
+            { isLocal: true, dnsResolver: "native" },
+          );
+          yield* Effect.tryPromise(() => pool.query("select 1"));
+        }).pipe(Effect.scoped, Effect.ensuring(Effect.sync(server.close)));
+        expect(server.sawSslRequest()).toBe(false);
+      }),
+  );
+
+  it.live(
+    "stays plaintext for a local target with sslmode=allow (libpq's plaintext-then-TLS fallback " +
+      "is not implemented by sslConfigsFor)",
+    () =>
+      Effect.gen(function* () {
+        const server = yield* Effect.promise(fakeStartupServer);
+        yield* Effect.gen(function* () {
+          const pool = yield* acquirePgPool(
+            {
+              host: "127.0.0.1",
+              port: server.port,
+              user: "postgres",
+              password: "postgres",
+              database: "postgres",
+              sslmode: "allow",
+            },
+            { isLocal: true, dnsResolver: "native" },
+          );
+          yield* Effect.tryPromise(() => pool.query("select 1"));
+        }).pipe(Effect.scoped, Effect.ensuring(Effect.sync(server.close)));
+        expect(server.sawSslRequest()).toBe(false);
+      }),
+  );
+
+  it.live(
     "stays plaintext for a local target with no sslmode/sslrootcert set (the default must not regress)",
     () =>
       Effect.gen(function* () {
