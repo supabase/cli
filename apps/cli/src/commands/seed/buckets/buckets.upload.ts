@@ -14,11 +14,10 @@ import { type Path } from "effect";
  *
  * `objectsPath` and `filePath` are OS paths read through the platform `path`
  * service; the relative segment is normalized to forward slashes for the remote
- * key, so `posixPath` must be a POSIX `Path` service.
+ * key through `posixPath`, which must be a POSIX `Path` service.
  */
 export function bucketObjectKey(
-  path: Path.Path,
-  posixPath: Path.Path,
+  { path, posixPath }: { readonly path: Path.Path; readonly posixPath: Path.Path },
   bucketName: string,
   objectsPath: string,
   filePath: string,
