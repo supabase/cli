@@ -77,6 +77,7 @@ export const defaultContainerEngineResolver: ContainerEngineResolverShape = {
       if (result.exitCode !== 0)
         return yield* new ContainerCommandError({
           operation: "version",
+          exitCode: result.exitCode,
           message: `${kind} --version exited (${String(result.exitCode)})`,
         });
       return true;

@@ -131,6 +131,7 @@ describe("stack list", () => {
             projectRoot: project,
             name: "healthy",
             runtime: { kind: "native" },
+            initialConfig: {},
           });
           const registry = path.join(home, "managed", "stacks");
           const corrupt = "b".repeat(64);
@@ -149,7 +150,7 @@ describe("stack list", () => {
           expect(entries.map(({ id }) => id)).toEqual([healthy.id, corrupt, unsupported]);
           expect(text.stdoutText).toContain("NAME");
           expect(text.stdoutText).toContain("healthy");
-          expect(text.stdoutText).toContain("unconfigured");
+          expect(text.stdoutText).toContain("stopped");
           expect(text.stdoutText).toContain(healthy.id.slice(0, 8));
           expect(text.stdoutText).not.toContain(healthy.id);
           expect(text.stdoutText).toContain("Unreadable stacks:");
@@ -165,7 +166,7 @@ describe("stack list", () => {
               readable: true,
               name: "healthy",
               runtime: { kind: "native" },
-              desired_lifecycle: "unconfigured",
+              desired_lifecycle: "stopped",
             }),
             {
               id: corrupt,

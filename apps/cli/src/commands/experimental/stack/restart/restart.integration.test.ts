@@ -55,6 +55,7 @@ const status = (): StackStatus => ({
   versions: {},
   capabilities: [],
   artifacts: [],
+  instances: [],
 });
 
 const flags = (overrides: Partial<Parameters<typeof stackRestart>[0]> = {}) => ({
@@ -84,7 +85,6 @@ const fixture = (options: {
       );
     const calls: string[] = [];
     let lifecycle: StackStatus["lifecycle"] = "running";
-    let startedConfig: unknown;
     let selectedName: string | undefined;
     const output = mockOutput({ format: options.format });
     const telemetry = mockTelemetryStateTracked();
@@ -93,20 +93,22 @@ const fixture = (options: {
       status: Effect.sync(() => ({ ...status(), lifecycle })),
       credentials: Effect.die("unused"),
       prepare: () => Effect.die("restart must not prepare explicitly"),
-      resetDatabase: Effect.die("unused"),
-      stop: Effect.gen(function* () {
-        calls.push("stop");
-        if (options.stop === "fail")
-          return yield* new StackCleanupError({ message: "stop failed" });
-        lifecycle = "stopped";
-      }),
-      start: (input) =>
+      services: {
+        create: () => Effect.die("services.create not used"),
+        get: () => Effect.die("services.get not used"),
+        list: Effect.succeed([]),
+      },
+      sleep: () => Effect.die("sleep not used"),
+      stop: () =>
+        Effect.gen(function* () {
+          calls.push("stop");
+          if (options.stop === "fail")
+            return yield* new StackCleanupError({ message: "stop failed" });
+          lifecycle = "stopped";
+          return status();
+        }),
+      start: () =>
         Effect.sync(() => calls.push("start")).pipe(
-          Effect.tap(() =>
-            Effect.sync(() => {
-              startedConfig = input?.config;
-            }),
-          ),
           Effect.flatMap(() =>
             options.start === "fail"
               ? Effect.fail(
@@ -120,8 +122,14 @@ const fixture = (options: {
                 }),
           ),
         ),
-      destroy: Effect.die("unused"),
+      restart: () =>
+        Effect.gen(function* () {
+          yield* stack.stop();
+          return yield* stack.start();
+        }),
+      destroy: () => Effect.die("unused"),
       logs: () => Effect.die("unused"),
+      followStatus: Stream.empty,
       followLogs: () => Stream.empty,
     };
     const layer = Layer.mergeAll(
@@ -178,7 +186,7 @@ const fixture = (options: {
         return lifecycle;
       },
       get startedConfig() {
-        return startedConfig;
+        return undefined;
       },
       get selectedName() {
         return selectedName;
@@ -419,6 +427,7 @@ describe("stack restart", () => {
             versions: {},
             capabilities: [],
             artifacts: [],
+            instances: [],
           });
           const stack: EffectStack = {
             id,
@@ -430,20 +439,32 @@ describe("stack restart", () => {
               },
             }),
             prepare: () => Effect.die("restart must not prepare explicitly"),
-            resetDatabase: Effect.die("unused"),
-            stop: Effect.sync(() => {
-              calls.push("stop");
-              lifecycle = "stopped";
-            }),
-            start: (input) =>
+            services: {
+              create: () => Effect.die("services.create not used"),
+              get: () => Effect.die("services.get not used"),
+              list: Effect.succeed([]),
+            },
+            sleep: () => Effect.die("sleep not used"),
+            stop: () =>
+              Effect.sync(() => {
+                calls.push("stop");
+                lifecycle = "stopped";
+                return state();
+              }),
+            start: () =>
               Effect.sync(() => {
                 calls.push("start");
-                if (input?.config !== undefined) persisted.config = input.config;
                 lifecycle = "running";
                 return state();
               }),
-            destroy: Effect.die("unused"),
+            restart: () =>
+              Effect.gen(function* () {
+                yield* stack.stop();
+                return yield* stack.start();
+              }),
+            destroy: () => Effect.die("unused"),
             logs: () => Effect.die("unused"),
+            followStatus: Stream.empty,
             followLogs: () => Stream.empty,
           };
           const descriptor = {
@@ -477,7 +498,11 @@ describe("stack restart", () => {
             }),
             Layer.succeed(StackApi, {
               findStack: () => Effect.succeed(Option.some(descriptor)),
-              createStack: () => Effect.succeed(stack),
+              createStack: (options) =>
+                Effect.sync(() => {
+                  persisted.config = options.initialConfig;
+                  return stack;
+                }),
               openStack: () => Effect.succeed(stack),
               inspectStack: () => Effect.die("inspect unused"),
               discoverStacks: () => Effect.succeed({ stacks: [], errors: [] }),

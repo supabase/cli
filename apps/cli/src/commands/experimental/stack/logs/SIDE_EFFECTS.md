@@ -78,7 +78,7 @@ emits no follow events, and a stopped stack exits successfully. A missing named 
 status `1`. The legacy `-o`/`--output` flag is rejected; use
 `--output-format`.
 
-`--service` accepts one capability name and excludes supervisor and gateway entries, including
+`--service` accepts one registered service instance ID and excludes supervisor and gateway entries, including
 their startup diagnostics. Omit it to include all sources. Retained logs are bounded to the
 newest 1000 entries or 1 MiB, whichever is reached first; `--tail` further limits the returned
 entries.

@@ -50,3 +50,12 @@ export class FunctionImportNotDirectoryError extends Data.TaggedError(
     return actionability.invalidConfig;
   }
 }
+
+export class FunctionDeployError extends Data.TaggedError("FunctionDeployError")<{
+  readonly message: string;
+  readonly cause?: unknown;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.unknown;
+  }
+}

@@ -39,15 +39,23 @@ import {
 import { CommandPlatformApi } from "../../../../../auth/command-platform-api.service.ts";
 import { CommandPlatformApiFactory } from "../../../../../auth/command-platform-api-factory.service.ts";
 import { dockerRunLayer } from "../../../../../command-internal/docker-run.layer.ts";
+import { DockerRun } from "../../../../../command-internal/docker-run.service.ts";
 import { stackBackendLayer } from "../../../../../command-internal/stack-backend.ts";
-import { StackApi } from "../../../../../command-internal/stack-api.ts";
-import { CAPABILITY_NAMES, StackIdSchema, type EffectStack } from "@supabase/stack/effect";
+import { StackApi, stackApiLayer } from "../../../../../command-internal/stack-api.ts";
+import {
+  CAPABILITY_NAMES,
+  StackIdSchema,
+  type EffectStack,
+  type EffectServiceCollection,
+  type StackStatus,
+} from "@supabase/stack/effect";
 import { DbConfigResolver } from "../../../../../command-internal/db-config.service.ts";
 import {
   type DbBatchStatement,
   DbConnection,
   type PgConnInput,
 } from "../../../../../command-internal/db-connection.service.ts";
+import { DbExecError } from "../../../../../command-internal/db-connection.errors.ts";
 import {
   PgDeltaEngine,
   PgDeltaEngineError,
@@ -91,22 +99,29 @@ const unusedSyncFn = () => unusedSync;
 const STACK_APPLY_PORT = 54329;
 
 function syncStackApi(workdir: string, port: number) {
+  const initialStatus: StackStatus = {
+    id: SYNC_STACK_ID,
+    lifecycle: "running",
+    desiredLifecycle: "running",
+    runtime: { kind: "native" },
+    endpoints: {},
+    versions: {},
+    capabilities: CAPABILITY_NAMES.map((name) => ({
+      name,
+      activation: name === "database" ? "eager" : "lazy",
+      state: name === "database" ? "ready" : "dormant",
+    })),
+    artifacts: [],
+    instances: [],
+  };
   const stack: EffectStack = {
     id: SYNC_STACK_ID,
-    status: Effect.succeed({
-      id: SYNC_STACK_ID,
-      lifecycle: "running",
-      desiredLifecycle: "running",
-      runtime: { kind: "native" },
-      endpoints: {},
-      versions: {},
-      capabilities: CAPABILITY_NAMES.map((name) => ({
-        name,
-        activation: name === "database" ? "eager" : "lazy",
-        state: name === "database" ? "ready" : "dormant",
-      })),
-      artifacts: [],
-    }),
+    services: {
+      create: () => Effect.die("service creation is unused by declarative sync"),
+      get: () => Effect.die("service lookup is unused by declarative sync"),
+      list: Effect.succeed([]),
+    } satisfies EffectServiceCollection,
+    status: Effect.succeed(initialStatus),
     credentials: Effect.succeed({
       database: {
         url: Redacted.make(`postgresql://postgres:postgres@127.0.0.1:${port}/postgres`),
@@ -120,10 +135,12 @@ function syncStackApi(workdir: string, port: number) {
       },
     }),
     prepare: unusedSyncFn,
+    followStatus: Stream.empty,
     start: unusedSyncFn,
-    stop: unusedSync,
-    destroy: unusedSync,
-    resetDatabase: unusedSync,
+    sleep: unusedSyncFn,
+    restart: unusedSyncFn,
+    stop: () => unusedSync,
+    destroy: () => unusedSync,
     logs: unusedSyncFn,
     followLogs: () => Stream.empty,
   };
@@ -191,7 +208,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       return Effect.succeed({
         exec: (sql: string) =>
           opts.applyFails === true && sql.startsWith("ALTER")
-            ? Effect.fail({ _tag: "DbExecError", message: "boom" } as never)
+            ? Effect.fail(new DbExecError({ message: "boom" }))
             : Effect.sync(() => {
                 if (cfg.port !== SHADOW_PORT) dbExec.push(sql);
               }),
@@ -202,11 +219,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
               ? sql.findIndex((statement) => statement.startsWith("ALTER"))
               : -1;
           return failureIndex >= 0
-            ? Effect.fail({
-                _tag: "DbExecError",
-                message: "boom",
-                statementIndex: failureIndex,
-              } as never)
+            ? Effect.fail(new DbExecError({ message: "boom", statementIndex: failureIndex }))
             : Effect.sync(() => {
                 if (cfg.port !== SHADOW_PORT) {
                   dbBatches.push(sql);
@@ -252,7 +265,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     opts.networkId === undefined ? Option.none() : Option.some(opts.networkId),
   );
   const debugFlag = Layer.succeed(DebugFlag, false);
-  const dockerRun = dockerRunLayer.pipe(
+  const dockerRun: Layer.Layer<DockerRun, never, never> = dockerRunLayer.pipe(
     Layer.provide(child.layer),
     Layer.provide(processControl.layer),
   );
@@ -301,6 +314,10 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       },
     }),
   );
+  const backendLayer = Layer.merge(
+    stackBackendLayer(opts.stackBackend === true ? "stack" : "legacy"),
+    syncStackApi(workdir, STACK_APPLY_PORT),
+  );
   const layer = Layer.mergeAll(
     out.layer,
     telemetry.layer,
@@ -333,9 +350,8 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     processControl.layer,
     alwaysReadyHttpClientLayer,
     dockerRun,
-    ...(opts.stackBackend === true
-      ? [stackBackendLayer("stack"), syncStackApi(workdir, STACK_APPLY_PORT)]
-      : []),
+    stackApiLayer.pipe(Layer.provide(BunServices.layer)),
+    backendLayer,
   );
   return {
     layer,

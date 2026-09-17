@@ -77,6 +77,8 @@ export const MaintenanceResponseSchema = Schema.Union([
       tag: MaintenanceErrorCodeSchema,
       message: Schema.String,
       stackErrorTag: Schema.optionalKey(MaintenanceStackErrorTagSchema),
+      stackId: Schema.optionalKey(StackIdSchema),
+      ownerSessionId: Schema.optionalKey(OwnerSessionIdSchema),
     }),
   }),
 ]);

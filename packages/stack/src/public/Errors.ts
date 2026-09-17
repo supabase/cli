@@ -1,12 +1,24 @@
 import { Data, Predicate } from "effect";
 import type { StackId } from "./StackId.ts";
 import type { ContainerEngineKind } from "../runtime/ContainerEngine.ts";
-import type { StackRecovery } from "./Status.ts";
+import type { ServiceStatus, StackRecovery } from "./Status.ts";
 
 /** Common context present on every public stack error. */
 interface ErrorFields {
   readonly message: string;
   readonly cause?: unknown;
+}
+
+/** Durable result details for a partial lifecycle batch. */
+export interface LifecycleOutcome {
+  readonly requested: ReadonlyArray<string>;
+  readonly affected: ReadonlyArray<string>;
+  readonly succeeded: ReadonlyArray<string>;
+  readonly failed: ReadonlyArray<string>;
+  readonly statuses?: ReadonlyArray<ServiceStatus>;
+  readonly recovery?: StackRecovery;
+  readonly removed?: ReadonlyArray<string>;
+  readonly retained?: ReadonlyArray<string>;
 }
 
 export interface IdentityErrorFields extends ErrorFields {
@@ -54,6 +66,27 @@ export class StackNotFoundError extends Data.TaggedError("StackNotFoundError")<
 export class StackOwnershipConflictError extends Data.TaggedError("StackOwnershipConflictError")<
   ErrorFields & { readonly stackId?: StackId }
 > {}
+export class UncertainOperationError extends Data.TaggedError("UncertainOperationError")<
+  ErrorFields & {
+    readonly stackId: StackId;
+    readonly instanceId?: string;
+    readonly operationId?: string;
+    /** Creation requests use this pre-dispatch digest for safe reconciliation. */
+    readonly expectedCreationInputsId?: string;
+    readonly mutation:
+      | "create"
+      | "restore"
+      | "start"
+      | "sleep"
+      | "stop"
+      | "restart"
+      | "destroy"
+      | "exportSnapshot";
+  }
+> {}
+export class OwnerRetiringError extends Data.TaggedError("OwnerRetiringError")<
+  ErrorFields & { readonly stackId: StackId; readonly ownerSessionId: string }
+> {}
 export class StackRuntimeMismatchError extends Data.TaggedError(
   "StackRuntimeMismatchError",
 )<ErrorFields> {}
@@ -65,7 +98,33 @@ export class StackMustBeStoppedError extends Data.TaggedError("StackMustBeStoppe
   ErrorFields & { readonly slot?: string; readonly stackId?: StackId; readonly guidance?: string }
 > {}
 export class StackLifecycleConflictError extends Data.TaggedError("StackLifecycleConflictError")<
-  ErrorFields & { readonly stackId?: StackId; readonly recovery?: StackRecovery }
+  ErrorFields & {
+    readonly stackId?: StackId;
+    readonly instanceId?: string;
+    readonly recovery?: StackRecovery;
+    readonly outcome?: LifecycleOutcome;
+  }
+> {}
+export class ServiceNotFoundError extends Data.TaggedError("ServiceNotFoundError")<
+  ErrorFields & { readonly instanceId?: string }
+> {}
+export class ServiceNameConflictError extends Data.TaggedError("ServiceNameConflictError")<
+  ErrorFields & { readonly name?: string }
+> {}
+export class ServiceDependencyError extends Data.TaggedError("ServiceDependencyError")<
+  ErrorFields & { readonly service?: string; readonly dependency?: string }
+> {}
+export class InitializationMismatchError extends Data.TaggedError("InitializationMismatchError")<
+  ErrorFields & { readonly instanceId?: string; readonly profileId?: string }
+> {}
+export class UnsupportedSnapshotError extends Data.TaggedError("UnsupportedSnapshotError")<
+  ErrorFields & { readonly instanceId?: string; readonly service?: string }
+> {}
+export class NoSnapshotDataError extends Data.TaggedError("NoSnapshotDataError")<
+  ErrorFields & { readonly instanceId?: string }
+> {}
+export class SnapshotTargetInvalidError extends Data.TaggedError("SnapshotTargetInvalidError")<
+  ErrorFields & { readonly path?: string }
 > {}
 
 export class StackStateInvalidError extends Data.TaggedError("StackStateInvalidError")<
@@ -140,19 +199,8 @@ export class StackCleanupError extends Data.TaggedError("StackCleanupError")<Err
 export class ContainerEngineError extends Data.TaggedError("ContainerEngineError")<
   ErrorFields & { readonly engine?: ContainerEngineKind }
 > {}
-export class StackDestructionError extends Data.TaggedError("StackDestructionError")<ErrorFields> {}
-export class EphemeralPostgresError extends Data.TaggedError("EphemeralPostgresError")<
-  ErrorFields & {
-    readonly reason?:
-      | "not-stopped"
-      | "not-running"
-      | "snapshot"
-      | "restore-mismatch"
-      | "bootstrap"
-      | "destroy";
-    readonly path?: string;
-    readonly version?: string;
-  }
+export class StackDestructionError extends Data.TaggedError("StackDestructionError")<
+  ErrorFields & { readonly outcome?: LifecycleOutcome }
 > {}
 export class RequiresActivatedProcessError extends Data.TaggedError(
   "RequiresActivatedProcessError",
@@ -173,10 +221,19 @@ export const STACK_ERROR_TAGS = [
   "StackVersionUnsupportedError",
   "StackNotFoundError",
   "StackOwnershipConflictError",
+  "UncertainOperationError",
+  "OwnerRetiringError",
   "StackRuntimeMismatchError",
   "StackNotRunningError",
   "StackMustBeStoppedError",
   "StackLifecycleConflictError",
+  "ServiceNotFoundError",
+  "ServiceNameConflictError",
+  "ServiceDependencyError",
+  "InitializationMismatchError",
+  "UnsupportedSnapshotError",
+  "NoSnapshotDataError",
+  "SnapshotTargetInvalidError",
   "StackStateInvalidError",
   "InvalidLogCursorError",
   "StackStateFormatUnsupportedError",
@@ -193,7 +250,6 @@ export const STACK_ERROR_TAGS = [
   "StackCleanupError",
   "ContainerEngineError",
   "StackDestructionError",
-  "EphemeralPostgresError",
   "RequiresActivatedProcessError",
   "PostgresClientError",
 ] as const;
@@ -210,10 +266,19 @@ export type StackError =
   | StackVersionUnsupportedError
   | StackNotFoundError
   | StackOwnershipConflictError
+  | UncertainOperationError
+  | OwnerRetiringError
   | StackRuntimeMismatchError
   | StackNotRunningError
   | StackMustBeStoppedError
   | StackLifecycleConflictError
+  | ServiceNotFoundError
+  | ServiceNameConflictError
+  | ServiceDependencyError
+  | InitializationMismatchError
+  | UnsupportedSnapshotError
+  | NoSnapshotDataError
+  | SnapshotTargetInvalidError
   | StackStateInvalidError
   | InvalidLogCursorError
   | StackStateFormatUnsupportedError
@@ -230,7 +295,6 @@ export type StackError =
   | StackCleanupError
   | ContainerEngineError
   | StackDestructionError
-  | EphemeralPostgresError
   | RequiresActivatedProcessError
   | PostgresClientError;
 
@@ -245,6 +309,7 @@ export const CREATE_STACK_ERROR_TAGS = [
   "InvalidStackIdentityError",
   "InvalidProjectRootError",
   "StackOwnershipConflictError",
+  "OwnerRetiringError",
   "StackRuntimeMismatchError",
   "ContainerEngineError",
   "StackRuntimeError",
@@ -256,6 +321,7 @@ export type CreateStackError = ErrorByTag<(typeof CREATE_STACK_ERROR_TAGS)[numbe
 export const OPEN_STACK_ERROR_TAGS = [
   "StackNotFoundError",
   "StackOwnershipConflictError",
+  "OwnerRetiringError",
   "StackRuntimeMismatchError",
   "InvalidProjectRootError",
   "StackStateInvalidError",
@@ -275,6 +341,7 @@ export type StackDiscoveryError = ErrorByTag<(typeof STACK_DISCOVERY_ERROR_TAGS)
 export const STACK_STATUS_ERROR_TAGS = [
   "StackNotFoundError",
   "StackOwnershipConflictError",
+  "OwnerRetiringError",
   "StackLifecycleConflictError",
   "StackStateInvalidError",
   "StackStateFormatUnsupportedError",
@@ -287,6 +354,7 @@ export const STACK_CREDENTIALS_ERROR_TAGS = [
   "StackNotFoundError",
   "StackNotRunningError",
   "StackOwnershipConflictError",
+  "OwnerRetiringError",
   "StackLifecycleConflictError",
   "StackSecretMismatchError",
   "InvalidJwtSigningMaterialError",
@@ -311,6 +379,7 @@ export const STACK_START_ERROR_TAGS = [
   "InvalidStackConfigError",
   "StackVersionUnsupportedError",
   "StackOwnershipConflictError",
+  "OwnerRetiringError",
   "StackNotRunningError",
   "StackMustBeStoppedError",
   "StackLifecycleConflictError",
@@ -327,15 +396,18 @@ export const STACK_START_ERROR_TAGS = [
   "StackRuntimeError",
   "StackCleanupError",
   "ContainerEngineError",
+  "UncertainOperationError",
 ] as const satisfies ReadonlyArray<StackErrorTag>;
 export type StackStartError = ErrorByTag<(typeof STACK_START_ERROR_TAGS)[number]>;
 
 /** Stable maintenance stop reports cleanup failures as lifecycle conflicts with their message. */
 export const STACK_STOP_ERROR_TAGS = [
   "StackOwnershipConflictError",
+  "OwnerRetiringError",
   "StackLifecycleConflictError",
   "StackStateInvalidError",
   "StackCleanupError",
+  "UncertainOperationError",
 ] as const satisfies ReadonlyArray<StackErrorTag>;
 export type StackStopError = ErrorByTag<(typeof STACK_STOP_ERROR_TAGS)[number]>;
 
@@ -345,6 +417,7 @@ export const STACK_LOGS_ERROR_TAGS = [
   "StackStateInvalidError",
   "InvalidLogCursorError",
   "StackOwnershipConflictError",
+  "OwnerRetiringError",
   "StackLifecycleConflictError",
   "StackUpgradeRequiredError",
 ] as const satisfies ReadonlyArray<StackErrorTag>;
@@ -354,10 +427,12 @@ export const DESTROY_STACK_ERROR_TAGS = [
   "StackDestructionError",
   "StackNotFoundError",
   "StackOwnershipConflictError",
+  "OwnerRetiringError",
   "StackLifecycleConflictError",
   "ContainerEngineError",
   "StackCleanupError",
   "StackUpgradeRequiredError",
+  "UncertainOperationError",
 ] as const satisfies ReadonlyArray<StackErrorTag>;
 export type DestroyStackError = ErrorByTag<(typeof DESTROY_STACK_ERROR_TAGS)[number]>;
 
@@ -366,20 +441,6 @@ export const RESET_DATABASE_ERROR_TAGS = [
   ...STACK_START_ERROR_TAGS,
 ] as const satisfies ReadonlyArray<StackErrorTag>;
 export type ResetDatabaseError = ErrorByTag<(typeof RESET_DATABASE_ERROR_TAGS)[number]>;
-
-export const EPHEMERAL_POSTGRES_ERROR_TAGS = [
-  "EphemeralPostgresError",
-  "StackVersionUnsupportedError",
-  "PortUnavailableError",
-  "StackPreparationError",
-  "ArtifactIntegrityError",
-  "ContainerPullError",
-  "ContainerEngineError",
-  "StackRuntimeError",
-] as const satisfies ReadonlyArray<StackErrorTag>;
-export type EphemeralPostgresCreateError = ErrorByTag<
-  (typeof EPHEMERAL_POSTGRES_ERROR_TAGS)[number]
->;
 
 export const POSTGRES_CLIENT_ERROR_TAGS = [
   "PostgresClientError",

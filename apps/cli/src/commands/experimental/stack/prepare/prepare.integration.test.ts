@@ -21,6 +21,7 @@ import { runtimeInfoLayer } from "../../../../shared/runtime/runtime-info.layer.
 import {
   InvalidStackConfigError,
   StackIdSchema,
+  ServiceInstanceIdSchema,
   StackPreparationError,
   StackRuntimeMismatchError,
   type EffectStack,
@@ -62,18 +63,24 @@ const makeStack = (
   status: Effect.die("unused"),
   credentials: Effect.die("unused"),
   prepare,
+  services: {
+    create: () => Effect.die("services.create not used in prepare test"),
+    get: () => Effect.die("services.get not used in prepare test"),
+    list: Effect.succeed([]),
+  },
   start: () =>
     Effect.sync(() => {
       calls.start += 1;
     }).pipe(Effect.flatMap(() => Effect.die("start should not be called"))),
-  stop: Effect.sync(() => {
-    calls.stop += 1;
-  }),
-  destroy: Effect.sync(() => {
-    calls.destroy += 1;
-  }),
-  resetDatabase: Effect.die("unused"),
+  sleep: () => Effect.die("sleep not used in prepare test"),
+  stop: () => Effect.die("stop not used in prepare test"),
+  restart: () => Effect.die("restart not used in prepare test"),
+  destroy: () =>
+    Effect.sync(() => {
+      calls.destroy += 1;
+    }),
   logs: () => Effect.die("unused"),
+  followStatus: Stream.empty,
   followLogs: () => Stream.empty,
 });
 
@@ -111,7 +118,7 @@ const handlerLayer = (opts: {
         }),
       opts.api ??
         Layer.succeed(StackApi, {
-          findStack: () => Effect.die("unused"),
+          findStack: () => Effect.succeed(Option.none()),
           discoverStacks: () => Effect.die("unused"),
           inspectStack: () => Effect.die("unused"),
           openStack: () => Effect.die("unused"),
@@ -205,9 +212,17 @@ describe("stack prepare", () => {
           Effect.sync(() => {
             options = value;
             return {
-              capabilities: [
-                { capability: "database", version: "1", outcome: "cached" as const },
-                { capability: "rest", version: "1", outcome: "cached" as const },
+              instances: [
+                {
+                  id: ServiceInstanceIdSchema.make("1".repeat(64)),
+                  service: "database" as const,
+                  artifacts: [{ identity: "1", outcome: "cached" as const }],
+                },
+                {
+                  id: ServiceInstanceIdSchema.make("2".repeat(64)),
+                  service: "rest" as const,
+                  artifacts: [{ identity: "1", outcome: "cached" as const }],
+                },
               ],
             };
           }),
@@ -217,10 +232,9 @@ describe("stack prepare", () => {
           Effect.provide(fixture.layer),
           Effect.tap(() =>
             Effect.sync(() => {
-              expect(options).toMatchObject({ config: expect.anything() });
-              expect(options).not.toHaveProperty("capabilities");
+              expect(options).not.toHaveProperty("config");
               expect(fixture.output.stdoutText).toContain(`Stack ${id} prepared.`);
-              expect(fixture.output.stdoutText).toContain("database 1 (cached)");
+              expect(fixture.output.stdoutText).toContain("database (1 artifacts)");
               expect(fixture.telemetry.flushed).toBe(true);
             }),
           ),
@@ -256,7 +270,7 @@ describe("stack prepare", () => {
           stack,
           telemetry,
           api: Layer.succeed(StackApi, {
-            findStack: () => Effect.die("unused"),
+            findStack: () => Effect.succeed(Option.none()),
             discoverStacks: () => Effect.die("unused"),
             inspectStack: () => Effect.die("unused"),
             openStack: () => Effect.die("unused"),
@@ -276,9 +290,7 @@ describe("stack prepare", () => {
               expect(error[ErrorActionabilityId]).toEqual(actionability.invalidConfig);
               expect(error.message).toContain("Capability studio is disabled");
               expect(error.suggestion).toBeUndefined();
-              expect(receivedConfig).toMatchObject({
-                capabilities: { studio: { enabled: false } },
-              });
+              expect(receivedConfig).toBeUndefined();
               expect(created).toBe(true);
               expect(prepared).toBe(true);
               expect(calls).toEqual({ start: 0, stop: 0, destroy: 0 });
@@ -302,9 +314,17 @@ describe("stack prepare", () => {
             Effect.sync(() => {
               options = value;
               return {
-                capabilities: [
-                  { capability: "rest", version: "1", outcome: "downloaded" as const },
-                  { capability: "auth", version: "2", outcome: "cached" as const },
+                instances: [
+                  {
+                    id: ServiceInstanceIdSchema.make("3".repeat(64)),
+                    service: "rest" as const,
+                    artifacts: [{ identity: "1", outcome: "downloaded" as const }],
+                  },
+                  {
+                    id: ServiceInstanceIdSchema.make("4".repeat(64)),
+                    service: "auth" as const,
+                    artifacts: [{ identity: "2", outcome: "cached" as const }],
+                  },
                 ],
               };
             }),
@@ -328,7 +348,7 @@ describe("stack prepare", () => {
               resolve: () => Effect.succeed({ projectRoot: root }),
             }),
             Layer.succeed(StackApi, {
-              findStack: () => Effect.die("unused"),
+              findStack: () => Effect.succeed(Option.none()),
               discoverStacks: () => Effect.die("unused"),
               inspectStack: () => Effect.die("unused"),
               openStack: () => Effect.die("unused"),
@@ -344,7 +364,7 @@ describe("stack prepare", () => {
             Effect.provide(layer),
             Effect.tap(() =>
               Effect.sync(() => {
-                expect(options).toMatchObject({ capabilities: ["rest", "auth"] });
+                expect(options).not.toHaveProperty("capabilities");
                 expect(telemetry.flushed).toBe(true);
               }),
             ),
@@ -361,9 +381,17 @@ describe("stack prepare", () => {
               Effect.sync(() => {
                 const data = {
                   id,
-                  capabilities: [
-                    { capability: "rest", version: "1", outcome: "downloaded" },
-                    { capability: "auth", version: "2", outcome: "cached" },
+                  instances: [
+                    {
+                      id: ServiceInstanceIdSchema.make("3".repeat(64)),
+                      service: "rest",
+                      artifacts: [{ identity: "1", outcome: "downloaded" }],
+                    },
+                    {
+                      id: ServiceInstanceIdSchema.make("4".repeat(64)),
+                      service: "auth",
+                      artifacts: [{ identity: "2", outcome: "cached" }],
+                    },
                   ],
                 };
                 expect(result).toEqual(
@@ -390,11 +418,9 @@ describe("stack prepare", () => {
       const id = "c".repeat(64);
       let inspected = false;
       let opened: string | undefined;
-      let preparedConfig: unknown;
-      const stack = makeStack(id, (value) =>
+      const stack = makeStack(id, () =>
         Effect.sync(() => {
-          preparedConfig = value?.config;
-          return { capabilities: [] };
+          return { instances: [] };
         }),
       );
       const api = Layer.succeed(StackApi, {
@@ -434,7 +460,6 @@ describe("stack prepare", () => {
           Effect.sync(() => {
             expect(inspected).toBe(true);
             expect(opened).toBe(id);
-            expect(preparedConfig).toMatchObject({ listeners: { api: { port: 55432 } } });
           }),
         ),
       );
@@ -450,7 +475,7 @@ describe("stack prepare", () => {
           root,
           stack,
           api: Layer.succeed(StackApi, {
-            findStack: () => Effect.die("unused"),
+            findStack: () => Effect.succeed(Option.none()),
             discoverStacks: () => Effect.die("unused"),
             inspectStack: () => Effect.die("unused"),
             openStack: () => Effect.die("unused"),
@@ -559,7 +584,7 @@ describe("stack prepare", () => {
               Effect.succeed({ projectRoot: root, name: "feature", runtime: { kind: "native" } }),
           }),
           api: Layer.succeed(StackApi, {
-            findStack: () => Effect.die("unused"),
+            findStack: () => Effect.succeed(Option.none()),
             discoverStacks: () => Effect.die("unused"),
             inspectStack: () => Effect.die("unused"),
             openStack: () => Effect.die("unused"),
@@ -598,7 +623,7 @@ describe("stack prepare", () => {
             () =>
               Effect.gen(function* () {
                 yield* Deferred.succeed(started, undefined);
-                return yield* Effect.never.pipe(Effect.as({ capabilities: [] }));
+                return yield* Effect.never.pipe(Effect.as({ instances: [] }));
               }).pipe(Effect.ensuring(Effect.sync(() => (canceled = true)))),
             calls,
           );

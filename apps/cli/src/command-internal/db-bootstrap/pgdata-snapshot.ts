@@ -12,6 +12,7 @@
  * can't afford downtime.
  */
 
+import { randomUUID } from "node:crypto";
 import { Effect, Option, Stream, type FileSystem } from "effect";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
@@ -137,8 +138,7 @@ export const stampPgDataBaselineMarker = (
  * Streams `docker cp <containerId>:${PGDATA_PATH} -` to a temp file next to `tarPath` and
  * `rename`s it into place, so a partially written tar is never visible under the final name;
  * any failure removes the temp file. The container must already be stopped (callers own the
- * stop/start), and the temp name is scoped by pid alone, so concurrent exports to the same
- * `tarPath` must be externally serialized (`shadow-cache.ts` holds `shadowExportMutex`).
+ * stop/start), and each invocation gets its own UUID-scoped temp name.
  */
 export const exportPgDataTar = (
   spawner: Spawner,
@@ -146,11 +146,10 @@ export const exportPgDataTar = (
   fs: FileSystem.FileSystem,
   tarPath: string,
 ): Effect.Effect<void, PgDataSnapshotUnavailable> => {
-  const tempPath = `${tarPath}.${process.pid}.partial`;
+  const tempPath = `${tarPath}.${randomUUID()}.partial`;
   return Effect.gen(function* () {
-    // Clears a leftover temp file (crashed predecessor or pre-created by another process) so the
-    // exclusive-create below starts from a fresh inode.
-    yield* fs.remove(tempPath).pipe(Effect.orElseSucceed(() => undefined));
+    // The UUID path is absent by construction; O_EXCL below also protects against the vanishingly
+    // unlikely collision without removing another export's in-flight file.
     yield* Effect.scoped(
       Effect.gen(function* () {
         const child = yield* spawnContainerCli(

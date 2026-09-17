@@ -1,16 +1,27 @@
-import { Crypto, Effect, FileSystem, Path, PlatformError, Schema } from "effect";
+import {
+  Crypto,
+  Deferred,
+  Effect,
+  FileSystem,
+  Fiber,
+  Path,
+  PlatformError,
+  Schema,
+  Scope,
+} from "effect";
 import type { PersistedStackState } from "../state/StackState.ts";
 import type { StackId } from "../public/StackId.ts";
+import type { ServiceInstanceId } from "../public/ServiceInstanceId.ts";
 import { StackPreparationError } from "../public/Errors.ts";
-import { resolveStackPaths } from "../state/Paths.ts";
-import { isRecord, settingValue, settingsFor } from "../state/MaterializedSettings.ts";
+import { resolveServiceInstancePaths, resolveStackPaths } from "../state/Paths.ts";
+import { isRecord, settingValue, settingsForInstance } from "../state/MaterializedSettings.ts";
 import {
   base64UrlEncode,
   resolveSigningKeyMaterial,
   type ResolvedSigningKeyMaterial,
 } from "../state/SecretStore.ts";
 import { resolveThirdPartyIssuer } from "../model/capabilities/auth-third-party.ts";
-import { canonicalize } from "../model/Compiler.ts";
+import { canonical } from "../model/Compiler.ts";
 
 /** A parsed JSON document fetched by the owner for OIDC discovery. */
 export type RuntimeJsonFetcher = (url: string) => Effect.Effect<unknown, StackPreparationError>;
@@ -44,12 +55,12 @@ export interface RuntimeInputOwner {
   /**
    * Resolves stack-owned inputs needed before a workload is created.
    *
-   * The Supervisor serializes workload startup and runtime cleanup. This owner therefore keeps
-   * only completed material in its caches; the caller owns an in-progress resolution and its
-   * interruption.
+   * Completed material is cached by state and workload identity. In-progress resolutions are
+   * shared by callers and are interrupted by cleanupAll.
    */
   readonly resolve: (
     state: PersistedStackState,
+    instanceId: ServiceInstanceId,
     workloadId: string,
   ) => Effect.Effect<RuntimeInputMaterial, StackPreparationError>;
   /** Resolves one configured project-relative regular file without copying it. */
@@ -124,11 +135,33 @@ const symmetricJwk = (secret: string): Readonly<Record<string, unknown>> => ({
   k: base64UrlEncode(new TextEncoder().encode(secret)),
 });
 
+const settingsForService = (state: PersistedStackState, service: string): unknown => {
+  const instanceId = state.registry.defaultInstanceIds[service];
+  return state.registry.instances.find(
+    (instance) => instance.id === instanceId && instance.service === service,
+  )?.config.settings;
+};
+
+const authInstanceIdFor = (
+  state: PersistedStackState,
+  requestedInstanceId?: ServiceInstanceId,
+): string | undefined => {
+  if (
+    requestedInstanceId !== undefined &&
+    state.registry.instances.some(
+      (instance) => instance.id === requestedInstanceId && instance.service === "auth",
+    )
+  )
+    return requestedInstanceId;
+  return state.registry.defaultInstanceIds.auth;
+};
+
 /** Resolves materialized Edge Runtime secrets to their caller-visible names. */
 const resolveFunctionsEdgeRuntimeSecrets = (
   state: PersistedStackState,
+  instanceId: ServiceInstanceId,
 ): Effect.Effect<Readonly<Record<string, string>>, StackPreparationError> => {
-  const settings = settingsFor(state, "functions");
+  const settings = settingsForInstance(state, instanceId, "functions");
   const edgeRuntime =
     isRecord(settings) && isRecord(settings.edge_runtime) ? settings.edge_runtime : {};
   const configured = isRecord(edgeRuntime.secrets) ? edgeRuntime.secrets : {};
@@ -200,16 +233,17 @@ export const makeRuntimeInputOwner = (
 ): Effect.Effect<
   RuntimeInputOwner,
   StackPreparationError,
-  FileSystem.FileSystem | Path.Path | Crypto.Crypto
+  FileSystem.FileSystem | Path.Path | Crypto.Crypto | Scope.Scope
 > =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const crypto = yield* Crypto.Crypto;
+    const ownerScope = yield* Effect.scope;
     const stackPaths = yield* resolveStackPaths(options).pipe(
       Effect.mapError((cause) => failure("Unable to resolve runtime input paths", { cause })),
     );
-    const vectorRoot = path.join(stackPaths.runtime, "inputs", "vector");
+    const vectorRoot = path.join(stackPaths.runtime, "instances");
 
     const resolveProjectFile = (
       state: PersistedStackState,
@@ -243,8 +277,9 @@ export const makeRuntimeInputOwner = (
 
     const ensureFunctionsRoot = (
       state: PersistedStackState,
+      instanceId: ServiceInstanceId,
     ): Effect.Effect<void, StackPreparationError> => {
-      const settings = settingsFor(state, "functions");
+      const settings = settingsForInstance(state, instanceId, "functions");
       const root = isRecord(settings) ? settingValue(state, settings.functions_root) : "";
       if (root.length === 0) return Effect.fail(failure("Persisted Functions root is missing"));
       return mapFile(
@@ -254,11 +289,15 @@ export const makeRuntimeInputOwner = (
       ).pipe(Effect.asVoid);
     };
 
-    const resolveAuthTemplates = (
+    const resolveAuthTemplatesForInstance = (
       state: PersistedStackState,
+      authInstanceId: string | undefined,
     ): Effect.Effect<ReadonlyArray<RuntimeAuthTemplate>, StackPreparationError> =>
       Effect.gen(function* () {
-        const auth = settingsFor(state, "auth");
+        const auth =
+          authInstanceId === undefined
+            ? settingsForService(state, "auth")
+            : settingsForInstance(state, authInstanceId, "auth");
         const email = isRecord(auth) && isRecord(auth.email) ? auth.email : {};
         const result: RuntimeAuthTemplate[] = [];
         const ids = new Set<string>();
@@ -295,6 +334,11 @@ export const makeRuntimeInputOwner = (
               yield* add(`${name}_notification`, value);
         return result;
       });
+
+    const resolveAuthTemplates = (
+      state: PersistedStackState,
+    ): Effect.Effect<ReadonlyArray<RuntimeAuthTemplate>, StackPreparationError> =>
+      resolveAuthTemplatesForInstance(state, authInstanceIdFor(state));
 
     const resolveRemoteKeys = (
       issuer: string,
@@ -362,9 +406,10 @@ export const makeRuntimeInputOwner = (
 
     const resolveAuth = (
       state: PersistedStackState,
+      authInstanceId: string | undefined,
     ): Effect.Effect<NonNullable<RuntimeInputMaterial["auth"]>, StackPreparationError> =>
       Effect.gen(function* () {
-        const signing = state.definition?.security.jwt.signing;
+        const signing = state.security.jwt?.signing;
         let local: ResolvedSigningKeyMaterial | undefined;
         if (signing?.kind === "jwks-file") {
           local = yield* resolveSigningKeyMaterial({
@@ -379,7 +424,11 @@ export const makeRuntimeInputOwner = (
             ),
           );
         }
-        const thirdParty = resolveThirdPartyIssuer(settingsFor(state, "auth"));
+        const authSettings =
+          authInstanceId === undefined
+            ? settingsForService(state, "auth")
+            : settingsForInstance(state, authInstanceId, "auth");
+        const thirdParty = resolveThirdPartyIssuer(authSettings);
         if (!thirdParty.ok)
           return yield* failure("Unable to resolve Auth third-party issuer", {
             provider: thirdParty.provider,
@@ -391,16 +440,19 @@ export const makeRuntimeInputOwner = (
           signing?.kind === "jwks-file"
             ? []
             : (() => {
-                const secret = state.secrets["secret:auth.settings.jwt_secret"]?.value ?? "";
+                const slot = signing?.kind === "symmetric" ? signing.secret.slot : undefined;
+                const secret = slot === undefined ? "" : (state.secrets[slot]?.value ?? "");
                 return secret.length === 0 ? [] : [symmetricJwk(secret)];
               })();
         if (signing?.kind !== "jwks-file" && symmetric.length === 0)
           return yield* failure("Persisted Auth JWT secret is missing");
         const publicKeys = [...remote, ...localPublic, ...symmetric];
         const templates =
-          state.definition?.capabilities.auth.enabled !== true
+          state.registry.instances.some(
+            (instance) => instance.service === "auth" && instance.config.enabled,
+          ) !== true
             ? []
-            : yield* resolveAuthTemplates(state);
+            : yield* resolveAuthTemplatesForInstance(state, authInstanceId);
         return {
           ...(local === undefined ? {} : { jwtKeys: local.privateKeysJson }),
           jwks: yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
@@ -412,24 +464,33 @@ export const makeRuntimeInputOwner = (
 
     const writeVectorConfig = (
       state: PersistedStackState,
+      instanceId: ServiceInstanceId,
     ): Effect.Effect<string, StackPreparationError> => {
       const assignment = state.privatePorts.find(
-        (entry) => entry.workloadId === "analytics:vector" && entry.binding === "primary",
+        (entry) =>
+          entry.instanceId === instanceId &&
+          entry.workloadId.endsWith(":vector") &&
+          entry.binding === "primary",
       );
       if (state.runtime.kind === "native" && assignment === undefined)
         return Effect.fail(failure("Persisted native Vector assignment is missing"));
-      const target = path.join(vectorRoot, "vector.yaml");
       return Effect.gen(function* () {
-        yield* mapFile(
-          vectorRoot,
-          "create Vector config directory",
-          fs.makeDirectory(vectorRoot, { recursive: true, mode: 0o700 }),
+        const instancePaths = yield* resolveServiceInstancePaths(stackPaths, instanceId).pipe(
+          Effect.provideService(Path.Path, path),
+          Effect.mapError((cause) => failure("Unable to resolve Vector input path", { cause })),
         );
-        yield* mapFile(vectorRoot, "secure Vector config directory", fs.chmod(vectorRoot, 0o700));
+        const targetRoot = path.join(instancePaths.runtime, "inputs", "vector");
+        const target = path.join(targetRoot, "vector.yaml");
+        yield* mapFile(
+          targetRoot,
+          "create Vector config directory",
+          fs.makeDirectory(targetRoot, { recursive: true, mode: 0o700 }),
+        );
+        yield* mapFile(targetRoot, "secure Vector config directory", fs.chmod(targetRoot, 0o700));
         const token = yield* crypto.randomUUIDv4.pipe(
           Effect.mapError(() => failure("Unable to allocate Vector config file")),
         );
-        const temporary = path.join(vectorRoot, `.vector.yaml.${token}.tmp`);
+        const temporary = path.join(targetRoot, `.vector.yaml.${token}.tmp`);
         yield* Effect.ensuring(
           Effect.scoped(
             Effect.gen(function* () {
@@ -461,36 +522,49 @@ export const makeRuntimeInputOwner = (
     const commonCompleted = new Map<string, RuntimeInputMaterial>();
     const authCompleted = new Map<string, NonNullable<RuntimeInputMaterial["auth"]>>();
     const keyFor = (state: PersistedStackState): string =>
-      `${options.stackId}\u0000${canonicalize(state.runtime)}\u0000${canonicalize(state.definition ?? {})}`;
-    const needsAuthMaterial = (state: PersistedStackState, workloadId: string): boolean =>
-      (["rest", "auth", "realtime", "storage", "functions"] as const).some(
-        (capability) =>
-          state.definition?.capabilities[capability].enabled === true &&
-          (workloadId === `${capability}:${capability}` ||
-            (capability === "functions" && workloadId === "functions:edge-runtime")),
+      `${options.stackId}\u0000${canonical(state.runtime)}\u0000${canonical(state.registry)}`;
+    const needsAuthMaterial = (
+      state: PersistedStackState,
+      instanceId: ServiceInstanceId,
+    ): boolean => {
+      const instance = state.registry.instances.find((entry) => entry.id === instanceId);
+      return (
+        instance !== undefined &&
+        instance.config.enabled &&
+        (instance.service === "rest" ||
+          instance.service === "auth" ||
+          instance.service === "realtime" ||
+          instance.service === "storage")
       );
+    };
 
     const materializeCommon = (
       state: PersistedStackState,
+      instanceId: ServiceInstanceId,
       workloadId: string,
       authMaterial: NonNullable<RuntimeInputMaterial["auth"]> | undefined,
     ): Effect.Effect<RuntimeInputMaterial, StackPreparationError> =>
       Effect.gen(function* () {
-        if (workloadId === "studio:studio" || workloadId === "functions:edge-runtime")
-          yield* ensureFunctionsRoot(state);
-        const auth = needsAuthMaterial(state, workloadId) ? authMaterial : undefined;
+        if (workloadId.endsWith(":studio") || workloadId.endsWith(":edge-runtime"))
+          yield* ensureFunctionsRoot(state, instanceId);
+        const auth = needsAuthMaterial(state, instanceId) ? authMaterial : undefined;
         const resolvesAnalyticsMaterial =
-          state.definition?.capabilities.analytics.enabled === true &&
-          workloadId.startsWith("analytics:");
+          state.registry.instances.some(
+            (instance) =>
+              instance.id === instanceId &&
+              instance.service === "analytics" &&
+              instance.config.enabled,
+          ) && workloadId.includes(":vector");
         const analytics = !resolvesAnalyticsMaterial
           ? undefined
           : yield* Effect.gen(function* () {
-              const analyticsSettings = settingsFor(state, "analytics");
+              const analyticsSettings = settingsForInstance(state, instanceId, "analytics");
               const gcpPath = isRecord(analyticsSettings)
                 ? settingValue(state, analyticsSettings.gcp_jwt_path)
                 : "";
-              const vectorConfigPath =
-                workloadId === "analytics:vector" ? yield* writeVectorConfig(state) : undefined;
+              const vectorConfigPath = workloadId.endsWith(":vector")
+                ? yield* writeVectorConfig(state, instanceId)
+                : undefined;
               return gcpPath.length === 0 && vectorConfigPath === undefined
                 ? undefined
                 : {
@@ -501,10 +575,15 @@ export const makeRuntimeInputOwner = (
                   };
             });
         const resolvesFunctionsMaterial =
-          workloadId === "functions:edge-runtime" &&
-          state.definition?.capabilities.functions.enabled === true;
+          workloadId.endsWith(":edge-runtime") &&
+          state.registry.instances.some(
+            (instance) =>
+              instance.id === instanceId &&
+              instance.service === "functions" &&
+              instance.config.enabled,
+          );
         const functions = resolvesFunctionsMaterial
-          ? { secrets: yield* resolveFunctionsEdgeRuntimeSecrets(state) }
+          ? { secrets: yield* resolveFunctionsEdgeRuntimeSecrets(state, instanceId) }
           : undefined;
         return {
           ...(auth === undefined ? {} : { auth }),
@@ -513,35 +592,79 @@ export const makeRuntimeInputOwner = (
         };
       });
 
+    const commonInFlight = new Map<
+      string,
+      Fiber.Fiber<RuntimeInputMaterial, StackPreparationError>
+    >();
+    const authInFlight = new Map<
+      string,
+      Fiber.Fiber<NonNullable<RuntimeInputMaterial["auth"]>, StackPreparationError>
+    >();
     const resolveCached = <A>(
       key: string,
       completed: Map<string, A>,
+      inFlight: Map<string, Fiber.Fiber<A, StackPreparationError>>,
       materialize: Effect.Effect<A, StackPreparationError>,
     ): Effect.Effect<A, StackPreparationError> =>
-      Effect.suspend(() => {
-        const ready = completed.get(key);
-        return ready === undefined
-          ? materialize.pipe(Effect.tap((value) => Effect.sync(() => completed.set(key, value))))
-          : Effect.succeed(ready);
-      });
+      Effect.uninterruptibleMask((restore) =>
+        Effect.gen(function* () {
+          const ready = completed.get(key);
+          if (ready !== undefined) return ready;
+          const current = inFlight.get(key);
+          if (current !== undefined) return yield* restore(Fiber.join(current));
+          const start = yield* Deferred.make<void>();
+          const owned = Effect.gen(function* () {
+            yield* Deferred.await(start);
+            return yield* materialize;
+          }).pipe(
+            Effect.tap((value) => Effect.sync(() => completed.set(key, value))),
+            Effect.ensuring(Effect.sync(() => inFlight.delete(key))),
+          );
+          const fiber = yield* Effect.forkIn(owned, ownerScope, {
+            startImmediately: true,
+            uninterruptible: false,
+          });
+          inFlight.set(key, fiber);
+          yield* Deferred.succeed(start, undefined);
+          return yield* restore(Fiber.join(fiber));
+        }),
+      );
 
     const resolve = (
       state: PersistedStackState,
+      instanceId: ServiceInstanceId,
       workloadId: string,
     ): Effect.Effect<RuntimeInputMaterial, StackPreparationError> =>
       Effect.gen(function* () {
-        const key = `${keyFor(state)}\u0000${workloadId}`;
-        const auth = needsAuthMaterial(state, workloadId)
-          ? yield* resolveCached(keyFor(state), authCompleted, resolveAuth(state))
+        const key = `${keyFor(state)}\u0000${instanceId}\u0000${workloadId}`;
+        const authInstanceId = authInstanceIdFor(state, instanceId);
+        const auth = needsAuthMaterial(state, instanceId)
+          ? yield* resolveCached(
+              `${keyFor(state)}\u0000auth\u0000${authInstanceId ?? "default"}`,
+              authCompleted,
+              authInFlight,
+              resolveAuth(state, authInstanceId),
+            )
           : undefined;
         const common = yield* resolveCached(
           key,
           commonCompleted,
-          materializeCommon(state, workloadId, auth),
+          commonInFlight,
+          materializeCommon(state, instanceId, workloadId, auth),
         );
         return common;
       });
     const cleanupAll = Effect.gen(function* () {
+      const interruptAndJoin = <A>(fibers: ReadonlyArray<Fiber.Fiber<A, StackPreparationError>>) =>
+        Effect.gen(function* () {
+          for (const fiber of fibers) yield* Fiber.interrupt(fiber);
+          for (const fiber of fibers)
+            yield* Fiber.join(fiber).pipe(Effect.catchCause(() => Effect.void));
+        });
+      yield* interruptAndJoin([...commonInFlight.values()]);
+      yield* interruptAndJoin([...authInFlight.values()]);
+      commonInFlight.clear();
+      authInFlight.clear();
       commonCompleted.clear();
       authCompleted.clear();
       yield* mapFile(

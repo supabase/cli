@@ -112,13 +112,22 @@ const identity: StackIdentity = {
 };
 
 const stateFor = (): PersistedStackState => ({
-  format: "supabase-stack-state-v1",
+  format: "supabase-stack-state-v2",
   identity,
   runtime: { kind: "native" },
-  desiredLifecycle: "unconfigured",
+  preparation: "on-demand",
+  security: {
+    jwt: {
+      issuer: null,
+      expirySeconds: 3600,
+      signing: { kind: "symmetric", secret: { slot: "ownership-test-jwt" } },
+    },
+  },
+  listeners: {},
+  registry: { initialized: true, instances: [], defaultInstanceIds: {} },
   ports: [],
   privatePorts: [],
-  secrets: {},
+  secrets: { "ownership-test-jwt": { policy: "managed", value: "ownership-test-secret" } },
 });
 
 const errorOf = <E>(exit: Exit.Exit<unknown, E>): E | undefined =>

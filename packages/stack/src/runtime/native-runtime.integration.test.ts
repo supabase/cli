@@ -20,6 +20,7 @@ import { fileURLToPath } from "node:url";
 import { LogStoreError, makeLogStore, type LogStore } from "../supervisor/LogStore.ts";
 import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
 import { StackIdSchema } from "../public/StackId.ts";
+import { ServiceInstanceIdSchema } from "../public/ServiceInstanceId.ts";
 import type { RuntimeWorkloadKey } from "./RuntimeDriver.ts";
 import { RuntimeDriverError } from "./RuntimeDriver.ts";
 import { makeNativeRuntime } from "./NativeRuntime.ts";
@@ -32,6 +33,7 @@ import {
 } from "./NativeProcess.ts";
 
 const stackId = StackIdSchema.make("d".repeat(64));
+const instanceId = ServiceInstanceIdSchema.make("primary");
 const encodeJson = (value: unknown): string =>
   Schema.encodeSync(Schema.fromJsonString(Schema.Unknown))(value);
 
@@ -41,6 +43,8 @@ class ProcessTreeTestError extends Data.TaggedError("ProcessTreeTestError")<{
 
 const workload = (id: string, bootstrap?: "database"): PlannedWorkload => ({
   id,
+  instanceId,
+  recipeId: id,
   capability: "database",
   ...(bootstrap === undefined ? {} : { bootstrap }),
   dependencies: [],
@@ -54,6 +58,7 @@ const workload = (id: string, bootstrap?: "database"): PlannedWorkload => ({
 
 const keyFor = (id: string): RuntimeWorkloadKey => ({
   stackId,
+  instanceId,
   workloadId: `database:${id}`,
 });
 
@@ -167,6 +172,31 @@ describe("native runtime", { timeout: 15_000 }, () => {
         expect((yield* logStore.read()).map((entry) => entry.message)).toContain("[REDACTED]");
         yield* runtime.remove(key);
         expect(yield* runtime.observe(stackId)).toEqual([]);
+      }),
+    ),
+  );
+
+  it.live("runs a startup publication after spawn and before readiness", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const published = yield* Deferred.make<void>();
+        let readinessObservedPublication = false;
+        const runtime = yield* makeNativeRuntime({
+          resolveProcess: () => Effect.succeed(processPlan(fixtureProcess("ready"))),
+          waitForReadiness: () =>
+            Deferred.isDone(published).pipe(
+              Effect.tap((done) => Effect.sync(() => (readinessObservedPublication = done))),
+              Effect.asVoid,
+            ),
+        });
+        const key = keyFor("publication");
+        const ready = yield* runtime.start(key, workload("publication"), {
+          onStarted: Deferred.succeed(published, undefined),
+        });
+        expect(ready.state).toBe("ready");
+        expect(readinessObservedPublication).toBe(true);
+        yield* runtime.stop(key);
+        yield* runtime.remove(key);
       }),
     ),
   );
@@ -826,6 +856,76 @@ describe("native runtime", { timeout: 15_000 }, () => {
           .pipe(Effect.exit);
         expect(Exit.isFailure(result)).toBe(true);
         expect(yield* runtime.observe(stackId)).toEqual([]);
+      }),
+    ),
+  );
+
+  it.live("starts another workload while a native process is stopping gracefully", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-native-stop-gate-" });
+        const releasePath = path.join(root, "release");
+        const firstReady = yield* Deferred.make<void>();
+        const stopEntered = yield* Deferred.make<void>();
+        const stopFinished = yield* Deferred.make<void>();
+        const secondReady = yield* Deferred.make<void>();
+        const logStore = yield* makeLogStore({ path: path.join(root, "logs.json") });
+        const signals = signalOnLog(
+          signalOnLog(signalOnLog(logStore, "first-ready", firstReady), "stopping", stopEntered),
+          "second-ready",
+          secondReady,
+        );
+        const first = keyFor("graceful-gate");
+        const second = keyFor("independent-start");
+        const runtime = yield* makeNativeRuntime({
+          logStore: signals,
+          resolveProcess: (key) =>
+            Effect.succeed(
+              processPlan(
+                key.workloadId === first.workloadId
+                  ? {
+                      executable: process.execPath,
+                      args: [
+                        "-e",
+                        `const fs = require("node:fs");
+const release = ${JSON.stringify(releasePath)};
+const watcher = fs.watch(${JSON.stringify(root)}, () => {
+  if (fs.existsSync(release)) process.exit(0);
+});
+process.on("SIGTERM", () => process.stdout.write("stopping\\n"));
+process.stdout.write("first-ready\\n");`,
+                      ],
+                      gracefulStopSignal: "SIGTERM" as const,
+                      gracefulStopTimeout: "1 minute" as const,
+                    }
+                  : fixtureProcess("second-ready"),
+              ),
+            ),
+          waitForReadiness: (key) =>
+            Deferred.await(key.workloadId === first.workloadId ? firstReady : secondReady),
+        });
+        yield* runtime.start(first, workload("graceful-gate"));
+        const stopping = yield* Effect.forkChild(
+          runtime.stop(first).pipe(Effect.tap(() => Deferred.succeed(stopFinished, undefined))),
+        );
+        yield* Effect.gen(function* () {
+          yield* Deferred.await(stopEntered);
+          const ready = yield* runtime.start(second, workload("independent-start"));
+          expect(ready.state).toBe("ready");
+          expect(yield* Deferred.isDone(stopFinished)).toBe(false);
+        }).pipe(Effect.ensuring(fs.writeFileString(releasePath, "release").pipe(Effect.orDie)));
+        yield* Fiber.join(stopping);
+        expect(yield* runtime.observe(stackId)).toEqual(
+          expect.arrayContaining([
+            { ...first, state: "stopped" },
+            { ...second, state: "ready" },
+          ]),
+        );
+        yield* runtime.remove(first);
+        yield* runtime.stop(second);
+        yield* runtime.remove(second);
       }),
     ),
   );

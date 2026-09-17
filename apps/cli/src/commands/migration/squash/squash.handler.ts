@@ -1,8 +1,6 @@
 import { Effect, FileSystem, Option, Path, Predicate } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type { ChildProcessSpawner as ChildProcessSpawnerType } from "effect/unstable/process/ChildProcessSpawner";
-import { resolveEphemeralPostgresRelease } from "@supabase/stack/effect";
-
 import { cobraMutuallyExclusiveErrorMessage } from "../../../shared/cli/cobra-flag-groups.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import {
@@ -100,9 +98,7 @@ const squashMigrations = Effect.fnUntraced(function* (
   toml: DbTomlValues,
 ) {
   const stackBackend = (yield* currentStackBackend).kind === "stack";
-  const resolvedShadowImage = stackBackend
-    ? "stack-ephemeral"
-    : yield* localInputs.resolvePostgresImage;
+  const resolvedShadowImage = stackBackend ? "stack" : yield* localInputs.resolvePostgresImage;
   const shadowInput = shadowRunInputFromLocalContainerInputs(
     localInputs,
     resolvedShadowImage,
@@ -126,27 +122,36 @@ const squashMigrations = Effect.fnUntraced(function* (
     return yield* stackWithShadowDatabase(shadowInput, (handle) =>
       Effect.scoped(
         Effect.gen(function* () {
+          const credentials = yield* handle.service.credentials;
+          if (credentials === undefined)
+            return yield* new MigrationSquashDumpError({
+              message: "stack shadow database credentials are unavailable",
+            });
           const stackConn: PgConnInput = {
             host: handle.host,
             port: handle.port,
             user: "postgres",
-            password: toml.password,
+            password: credentials.password,
             database: "postgres",
           };
           const networkIdFlag = yield* NetworkIdFlag;
           const networkId = Option.getOrUndefined(networkIdFlag);
           const dumpUsesHostNetwork = toolContainerUsesHostNetwork(networkId);
+          const descriptor = yield* handle.service.describe;
           const dumpRuntime =
             bundledPostgresClientRuntime(handle.runtime, runtimeInfo.platform, runtimeInfo.arch) ??
             handle.runtime;
-          const release = yield* resolveEphemeralPostgresRelease(handle.ephemeral.version).pipe(
-            Effect.orElseSucceed(() => undefined),
-          );
-          const image = release?.image ?? localInputs.bootstrapConfig.postgresImage;
+          const containerArtifactPrefix =
+            handle.runtime.kind === "container" ? `container:${handle.runtime.engine}:` : "";
+          const image =
+            containerArtifactPrefix.length > 0 &&
+            handle.artifactIdentity.startsWith(containerArtifactPrefix)
+              ? handle.artifactIdentity.slice(containerArtifactPrefix.length)
+              : localInputs.bootstrapConfig.postgresImage;
           const dumpClient = {
             kind: "bundled" as const,
             command: "pg_dump" as const,
-            version: handle.ephemeral.version,
+            version: descriptor.config.version,
             runtime: dumpRuntime,
           };
           const dumpConn: PgConnInput =

@@ -38,6 +38,10 @@ export interface PreparedWorkloadArtifact {
 }
 
 export type RuntimeArtifactPreparationProgress = ArtifactPreparationStatus;
+export type RuntimeArtifactInput = Pick<
+  PlannedWorkload,
+  "id" | "recipeId" | "capability" | "artifacts" | "selected"
+>;
 type RuntimeArtifactPreparationProgressListener = (
   progress: RuntimeArtifactPreparationProgress,
 ) => void;
@@ -45,7 +49,7 @@ type RuntimeArtifactPreparationProgressListener = (
 export interface RuntimeArtifactPreparer {
   readonly prepare: (
     runtime: StackRuntime,
-    workload: PlannedWorkload,
+    workload: RuntimeArtifactInput,
     onProgress?: RuntimeArtifactPreparationProgressListener,
   ) => Effect.Effect<PreparedWorkloadArtifact, RuntimeArtifactPreparationError>;
 }
@@ -86,7 +90,7 @@ export const makeRuntimeArtifactPreparer = (
 ): RuntimeArtifactPreparer => {
   const prepare = (
     runtime: StackRuntime,
-    workload: PlannedWorkload,
+    workload: RuntimeArtifactInput,
     onProgress?: RuntimeArtifactPreparationProgressListener,
   ): Effect.Effect<PreparedWorkloadArtifact, RuntimeArtifactPreparationError> =>
     Effect.suspend<PreparedWorkloadArtifact, RuntimeArtifactPreparationError, never>(() => {
@@ -204,7 +208,7 @@ export const makeRuntimeArtifactPreparer = (
 };
 
 const nativeResult = (
-  workload: PlannedWorkload,
+  workload: RuntimeArtifactInput,
   artifact: NativeWorkloadArtifact,
   prepared: PreparedArtifact,
 ): PreparedWorkloadArtifact => ({

@@ -30,9 +30,14 @@ import { tmpdir } from "node:os";
 
 import { WebSocket } from "ws";
 import { afterAll, describe, expect, test } from "vitest";
-import { createStack, listStacks, type PromiseStack } from "../index.ts";
+import {
+  createStack,
+  createTestStack,
+  listStacks,
+  type PromiseStack,
+  type PromiseTestStack,
+} from "../index.ts";
 import { defaultRuntimeEnvironment } from "../supervisor/Launcher.ts";
-import { createTestStack, type TestStack } from "../testing.ts";
 import { catalogEntryFor } from "../model/WorkloadCatalog.ts";
 import { CAPABILITY_NAMES } from "./Capability.ts";
 import type { PromiseStackCredentials } from "./Credentials.ts";
@@ -286,17 +291,33 @@ const ownedWorkloadIds = (
 
 const expectOwnedWorkloads = (
   mode: (typeof RUNTIME_CASES)[number],
-  stackId: string,
-  expected: ReadonlyArray<string>,
+  stack: Pick<PromiseTestStack, "id" | "services"> | string,
+  expectedRecipes: ReadonlyArray<string>,
 ): Effect.Effect<
   void,
   E2ERequestError | PlatformError.PlatformError,
   ChildProcessSpawner.ChildProcessSpawner
 > =>
-  ownedWorkloadIds(mode, stackId).pipe(
-    Effect.tap((actual) => Effect.sync(() => expect(actual).toEqual([...expected].sort()))),
-    Effect.asVoid,
-  );
+  Effect.gen(function* () {
+    const stackId = typeof stack === "string" ? stack : stack.id;
+    const instances =
+      typeof stack === "string" || expectedRecipes.length === 0
+        ? []
+        : yield* Effect.tryPromise({
+            try: () => stack.services.list(),
+            catch: (cause) =>
+              new E2ERequestError({ message: "Unable to list stack service instances", cause }),
+          });
+    const expected = yield* Effect.forEach(expectedRecipes, (recipe) => {
+      const [name, workload] = recipe.split(":");
+      const instance = instances.find((entry) => entry.name === name && entry.service === name);
+      return instance === undefined || workload === undefined
+        ? Effect.fail(new E2ERequestError({ message: `No default instance for ${recipe}` }))
+        : Effect.succeed(`${instance.id}:${workload}`);
+    });
+    const actual = yield* ownedWorkloadIds(mode, stackId);
+    expect(actual).toEqual(expected.sort());
+  });
 
 const supervisorPids = (
   stackId: string,
@@ -430,6 +451,11 @@ const endpoint = (status: StackStatus, name: keyof StackStatus["endpoints"]): St
   return value;
 };
 
+const databaseCredentials = (credentials: PromiseStackCredentials) => {
+  if (credentials.database === undefined) throw new Error("Expected default database credentials");
+  return credentials.database;
+};
+
 const capabilityState = (status: StackStatus, name: string): string | undefined =>
   status.capabilities.find((capability) => capability.name === name)?.state;
 
@@ -438,7 +464,7 @@ const expectDefaultLazyState = (status: StackStatus): void => {
   expect(capabilityState(status, "database")).toBe("ready");
   expect(status.artifacts).toContainEqual(
     expect.objectContaining({
-      workloadId: "database:database",
+      instanceId: status.instances.find(({ name }) => name === "database")?.id,
       capability: "database",
       state: "ready",
     }),
@@ -449,9 +475,9 @@ const expectDefaultLazyState = (status: StackStatus): void => {
   }
 };
 /** Wait for one capability transition while subscribing before sending traffic. */
-// oxlint-disable-next-line effecttsgo/async-function -- TestStack status and action use the public Promise contract.
+// oxlint-disable-next-line effecttsgo/async-function -- PromiseTestStack status and action use the public Promise contract.
 const activate = async <A>(
-  stack: TestStack,
+  stack: PromiseTestStack,
   name: string,
   action: () => Promise<A>,
 ): Promise<A> => {
@@ -737,7 +763,7 @@ const waitForSocketClose = (socket: Socket | WebSocket): Effect.Effect<void, E2E
   );
 
 const waitForLogEntry = (
-  stack: Pick<TestStack, "logs" | "status">,
+  stack: Pick<PromiseTestStack, "logs" | "status">,
   iterator: AsyncIterator<StackLogEntry>,
   predicate: (entry: StackLogEntry) => boolean,
 ): Effect.Effect<StackLogEntry, E2ERequestError> => {
@@ -764,7 +790,7 @@ const waitForLogEntry = (
     }),
     Effect.catchCause((cause) =>
       Effect.tryPromise({
-        // oxlint-disable-next-line effecttsgo/async-function -- Diagnostics read the public TestStack Promise API.
+        // oxlint-disable-next-line effecttsgo/async-function -- Diagnostics read the public PromiseTestStack Promise API.
         try: async () => {
           const [status, logs] = await Promise.all([stack.status(), stack.logs({ tail: 20 })]);
           const rest = status.capabilities.find(({ name }) => name === "rest");
@@ -810,7 +836,7 @@ const expectEndpointsRefused = (endpoints: ReadonlyArray<StackEndpoint>): Effect
   );
 
 const expectRuntimeInputsAbsent = (
-  stack: Pick<TestStack, "stateRoot" | "id">,
+  stack: Pick<PromiseTestStack, "stateRoot" | "id">,
 ): Effect.Effect<void, PlatformError.PlatformError, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -836,9 +862,9 @@ const expectRuntimeInputsAbsent = (
     }
   });
 
-// oxlint-disable-next-line effecttsgo/async-function -- diagnostics consume the public TestStack Promise API.
+// oxlint-disable-next-line effecttsgo/async-function -- diagnostics consume the public PromiseTestStack Promise API.
 const throwCapabilityDiagnostics = async (
-  stack: TestStack,
+  stack: PromiseTestStack,
   capabilityName: string,
   operation: string,
   cause: unknown,
@@ -1157,7 +1183,7 @@ type WholeStackMarkers = Readonly<{
 }>;
 type WholeStackScenario = Readonly<{
   mode: RuntimeCase;
-  stack: TestStack;
+  stack: PromiseTestStack;
   identity: string;
   projectRoot: string;
   table: string;
@@ -1179,19 +1205,19 @@ const arrangeWholeStackDatabase = (
   const { credentials, markers, table } = scenario;
   return Effect.gen(function* () {
     yield* databaseQuery(
-      credentials.database.url,
+      databaseCredentials(credentials).url,
       `CREATE TABLE public."${table}" (id integer PRIMARY KEY, payload text NOT NULL)`,
     );
     yield* databaseQuery(
-      credentials.database.url,
+      databaseCredentials(credentials).url,
       `GRANT SELECT, INSERT, UPDATE, DELETE ON public."${table}" TO anon, authenticated, service_role`,
     );
     yield* databaseQuery(
-      credentials.database.url,
+      databaseCredentials(credentials).url,
       `ALTER PUBLICATION supabase_realtime ADD TABLE public."${table}"`,
     );
     const directRows = yield* databaseQuery(
-      credentials.database.url,
+      databaseCredentials(credentials).url,
       `INSERT INTO public."${table}" (id, payload) VALUES (1, $1) RETURNING id, payload`,
       [markers.first],
     );
@@ -1200,7 +1226,7 @@ const arrangeWholeStackDatabase = (
 };
 
 // oxlint-disable-next-line effecttsgo/async-function -- this verifies the public async log iterator contract.
-const verifyWholeStackDatabaseLogs = async (stack: TestStack): Promise<void> => {
+const verifyWholeStackDatabaseLogs = async (stack: PromiseTestStack): Promise<void> => {
   expect((await stack.logs({ capabilities: ["database"], tail: 1 })).entries).not.toHaveLength(0);
   const logIterator = stack
     .followLogs({ capabilities: ["database"], tail: 1 })
@@ -1214,7 +1240,7 @@ const verifyWholeStackDatabaseLogs = async (stack: TestStack): Promise<void> => 
   }
 };
 
-// oxlint-disable-next-line effecttsgo/async-function -- this scenario consumes the public TestStack Promise contract.
+// oxlint-disable-next-line effecttsgo/async-function -- this scenario consumes the public PromiseTestStack Promise contract.
 const exerciseWholeStackRestAndAuth = async (
   scenario: WholeStackScenario,
 ): Promise<{
@@ -1260,7 +1286,7 @@ const exerciseWholeStackRestAndAuth = async (
   return { restPath, accessToken };
 };
 
-// oxlint-disable-next-line effecttsgo/async-function -- this scenario consumes the public TestStack Promise contract.
+// oxlint-disable-next-line effecttsgo/async-function -- this scenario consumes the public PromiseTestStack Promise contract.
 const exerciseWholeStackRealtime = async (
   scenario: WholeStackScenario,
   accessToken: string,
@@ -1339,7 +1365,7 @@ const exerciseWholeStackRealtime = async (
   }
 };
 
-// oxlint-disable-next-line effecttsgo/async-function -- this scenario consumes the public TestStack Promise contract.
+// oxlint-disable-next-line effecttsgo/async-function -- this scenario consumes the public PromiseTestStack Promise contract.
 const exerciseWholeStackStorage = async (scenario: WholeStackScenario): Promise<void> => {
   const { api, bucket, credentials, stack } = scenario;
   await activate(stack, "storage", () =>
@@ -1367,7 +1393,7 @@ const exerciseWholeStackStorage = async (scenario: WholeStackScenario): Promise<
   );
 };
 
-// oxlint-disable-next-line effecttsgo/async-function -- this scenario consumes public TestStack Promise and async log iterator contracts.
+// oxlint-disable-next-line effecttsgo/async-function -- this scenario consumes public PromiseTestStack Promise and async log iterator contracts.
 const exerciseWholeStackFunctions = async (scenario: WholeStackScenario): Promise<void> => {
   const { api, credentials, functionSlug, markers, projectRoot, stack, table } = scenario;
   const functionPath = `/functions/v1/${functionSlug}`;
@@ -1463,7 +1489,7 @@ const exerciseWholeStackFunctions = async (scenario: WholeStackScenario): Promis
   }
 };
 
-// oxlint-disable-next-line effecttsgo/async-function -- this scenario consumes the public TestStack Promise contract.
+// oxlint-disable-next-line effecttsgo/async-function -- this scenario consumes the public PromiseTestStack Promise contract.
 const exerciseWholeStackAuxiliary = async (scenario: WholeStackScenario): Promise<URL> => {
   const { api, credentials, mailUi, pooler, stack, studio } = scenario;
   await activate(stack, "mail", () => runNode(request(mailUi.url, "/api/v1/messages?limit=100")));
@@ -1480,7 +1506,7 @@ const exerciseWholeStackAuxiliary = async (scenario: WholeStackScenario): Promis
   } catch (cause) {
     await throwCapabilityDiagnostics(stack, "studio", "Studio profile request", cause);
   }
-  const poolerUrl = new URL(credentials.database.url);
+  const poolerUrl = new URL(databaseCredentials(credentials).url);
   poolerUrl.port = String(pooler.port);
   poolerUrl.username = "postgres.pooler-dev";
   const poolerRows = await activate(stack, "pooler", () =>
@@ -1507,16 +1533,19 @@ const assertWholeStackReady = (
       expect(status.capabilities.map(({ name, state }) => ({ name, state }))).toEqual(
         CAPABILITY_NAMES.map((name) => ({ name, state: "ready" })),
       );
-      for (const workloadId of ["studio:pgmeta", "studio:studio"] as const) {
+      const studio = status.instances.find(({ name }) => name === "studio");
+      expect(studio).toBeDefined();
+      for (const workload of ["pgmeta", "studio"]) {
+        const workloadId = `${studio?.id}:${workload}`;
         expect(status.artifacts).toContainEqual(
           expect.objectContaining({ workloadId, capability: "studio", state: "ready" }),
         );
       }
     });
-    yield* expectOwnedWorkloads(scenario.mode, scenario.stack.id, BASE_WORKLOAD_IDS);
+    yield* expectOwnedWorkloads(scenario.mode, scenario.stack, BASE_WORKLOAD_IDS);
   });
 
-// oxlint-disable-next-line effecttsgo/async-function -- this helper consumes the public TestStack Promise contract.
+// oxlint-disable-next-line effecttsgo/async-function -- this helper consumes the public PromiseTestStack Promise contract.
 const reactivateWholeStackCapabilities = async (
   scenario: WholeStackScenario,
   restPath: string,
@@ -1563,7 +1592,7 @@ const reactivateWholeStackCapabilities = async (
   );
 };
 
-// oxlint-disable-next-line effecttsgo/async-function -- restart flow consumes the public TestStack Promise API.
+// oxlint-disable-next-line effecttsgo/async-function -- restart flow consumes the public PromiseTestStack Promise API.
 const restartWholeStackFromPersistedData = async (
   scenario: WholeStackScenario,
   endpointSnapshot: Readonly<Record<string, number | undefined>>,
@@ -1574,7 +1603,7 @@ const restartWholeStackFromPersistedData = async (
   const { credentials, markers, mode, stack, table } = scenario;
   const restarted = await stack.start();
   expectDefaultLazyState(restarted);
-  await runNode(expectOwnedWorkloads(mode, stack.id, ["database:database"]));
+  await runNode(expectOwnedWorkloads(mode, stack, ["database:database"]));
   expect(
     Object.fromEntries(
       Object.entries(restarted.endpoints).map(([name, value]) => [name, value?.port]),
@@ -1582,7 +1611,10 @@ const restartWholeStackFromPersistedData = async (
   ).toEqual(endpointSnapshot);
   expect(
     await runNode(
-      databaseQuery(credentials.database.url, `SELECT payload FROM public."${table}" WHERE id = 1`),
+      databaseQuery(
+        databaseCredentials(credentials).url,
+        `SELECT payload FROM public."${table}" WHERE id = 1`,
+      ),
     ),
   ).toEqual([{ payload: markers.first }]);
   await reactivateWholeStackCapabilities(scenario, restPath, functionPath, poolerUrl);
@@ -1602,7 +1634,7 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
     live: `live-${identity}`,
   };
   let projectRoot = "";
-  await using stack: TestStack = await createTestStack({
+  await using stack: PromiseTestStack = await createTestStack({
     name: `stack-e2e-${identity}`,
     runtime: mode.runtime,
     config: {
@@ -1629,15 +1661,16 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
   expect(initialRunning.runtime).toEqual(mode.runtime);
   expect(projectRoot.length).toBeGreaterThan(0);
   expectDefaultLazyState(initialRunning);
-  await runNode(expectOwnedWorkloads(mode, stack.id, ["database:database"]));
+  await runNode(expectOwnedWorkloads(mode, stack, ["database:database"]));
   // Preparation is an explicit cache-only operation. It runs after the helper's
   // initial session is stopped, so the test proves it creates no owner, listener,
   // or workload.
   const initialSupervisorPid = await runNode(supervisorPid(stack.id));
   await stack.stop();
-  const warmed = await stack.prepare({ capabilities: ["rest"] });
-  expect(warmed.capabilities).toEqual(
-    expect.arrayContaining([expect.objectContaining({ capability: "rest" })]),
+  const rest = await stack.services.get({ name: "rest" });
+  const warmed = await stack.prepare({ services: [rest.id] });
+  expect(warmed.instances).toEqual(
+    expect.arrayContaining([expect.objectContaining({ id: rest.id, service: "rest" })]),
   );
   expect((await stack.status()).lifecycle).toBe("stopped");
   await runNode(
@@ -1653,7 +1686,7 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
   expect(await runNode(supervisorPids(stack.id))).toHaveLength(0);
   const initial = await stack.start();
   expectDefaultLazyState(initial);
-  await runNode(expectOwnedWorkloads(mode, stack.id, ["database:database"]));
+  await runNode(expectOwnedWorkloads(mode, stack, ["database:database"]));
   const credentials = await stack.credentials();
   const api = endpoint(initial, "api");
   const pooler = endpoint(initial, "pooler");
@@ -1698,7 +1731,10 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
     Object.entries(ready.endpoints).map(([name, value]) => [name, value?.port]),
   );
   const persistedMarker = await runNode(
-    databaseQuery(credentials.database.url, `SELECT payload FROM public."${table}" WHERE id = 1`),
+    databaseQuery(
+      databaseCredentials(credentials).url,
+      `SELECT payload FROM public."${table}" WHERE id = 1`,
+    ),
   );
   expect(persistedMarker).toEqual([{ payload: markers.first }]);
   const volumesBeforeStop =
@@ -1735,7 +1771,7 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
   expect(stopped.lifecycle).toBe("stopped");
   expect(stopped.capabilities.every(({ state }) => state === "stopped")).toBe(true);
   expect(stopped.artifacts).toEqual([]);
-  await runNode(expectOwnedWorkloads(mode, stack.id, []));
+  await runNode(expectOwnedWorkloads(mode, stack, []));
   const retainedLogs: StackLogEntry[] = (await stack.logs()).entries.slice();
   expect(retainedLogs.length).toBeGreaterThan(0);
   await runNode(expectRuntimeInputsAbsent(stack));
@@ -1763,8 +1799,8 @@ const runWholeStackScenario = async (mode: (typeof RUNTIME_CASES)[number]): Prom
   const final = await stack.status();
   await runNode(assertWholeStackReady(scenario, final));
   await stack.stop();
-  await runNode(expectOwnedWorkloads(mode, stack.id, []));
-  const reconfigured = await stack.start({
+  await runNode(expectOwnedWorkloads(mode, stack, []));
+  const reconfigured = await stack.restart({
     config: {
       capabilities: { studio: { enabled: false } },
       listeners: {
@@ -1783,15 +1819,24 @@ describe("managed Supabase stack whole-stack E2E", () => {
   test.skipIf(SELECTED_RUNTIME === "container")(
     "recovers the native database after abrupt Supervisor termination",
     { timeout: E2E_TIMEOUT_MS },
-    // oxlint-disable-next-line effecttsgo/async-function -- Vitest callback consumes the public TestStack Promise contract.
+    // oxlint-disable-next-line effecttsgo/async-function -- Vitest callback consumes the public PromiseTestStack Promise contract.
     async () => {
-      await using stack: TestStack = await createTestStack({
+      await using stack: PromiseTestStack = await createTestStack({
         name: `stack-crash-recovery-${randomId().replaceAll("-", "").slice(0, 16)}`,
         runtime: { kind: "native" },
       });
       const before = await stack.status();
       const database = endpoint(before, "database");
-      const lockPath = join(stack.stateRoot, stack.id, "data", "database", "postmaster.pid");
+      const primary = await stack.services.get({ name: "database" });
+      const lockPath = join(
+        stack.stateRoot,
+        stack.id,
+        "data",
+        "instances",
+        primary.id,
+        "postgres",
+        "postmaster.pid",
+      );
       const databasePid = Number((await runNode(readText(lockPath))).split("\n", 1)[0]);
       if (!Number.isSafeInteger(databasePid) || databasePid <= 0)
         throw new Error("Native database lock did not contain a valid PID");
@@ -1807,7 +1852,9 @@ describe("managed Supabase stack whole-stack E2E", () => {
       const recovered = await stack.start();
       expectDefaultLazyState(recovered);
       expect(
-        await runNode(databaseQuery((await stack.credentials()).database.url, "SELECT 1 AS value")),
+        await runNode(
+          databaseQuery(databaseCredentials(await stack.credentials()).url, "SELECT 1 AS value"),
+        ),
       ).toEqual([{ value: 1 }]);
     },
   );
@@ -1817,16 +1864,16 @@ describe("managed Supabase stack whole-stack E2E", () => {
       test(
         `starts PostgreSQL ${major} in ${mode.name} mode`,
         { timeout: E2E_TIMEOUT_MS },
-        // oxlint-disable-next-line effecttsgo/async-function -- Vitest callback consumes the public TestStack Promise and AsyncDisposable contracts.
+        // oxlint-disable-next-line effecttsgo/async-function -- Vitest callback consumes the public PromiseTestStack Promise contract.
         async () => {
-          await using stack: TestStack = await createTestStack({
+          await using stack: PromiseTestStack = await createTestStack({
             name: `stack-postgres-${major}-${randomId().replaceAll("-", "").slice(0, 16)}`,
             runtime: mode.runtime,
             config: { capabilities: { database: { version: major } } },
           });
           const rows = await runNode(
             databaseQuery(
-              (await stack.credentials()).database.url,
+              databaseCredentials(await stack.credentials()).url,
               "SELECT current_setting('server_version') AS version",
             ),
           );
@@ -1866,8 +1913,8 @@ describe("managed Supabase stack whole-stack E2E", () => {
         }
         const firstStack = firstResult.value;
         const secondStack = secondResult.value;
-        await using first: TestStack = firstStack;
-        await using second: TestStack = secondStack;
+        await using first: PromiseTestStack = firstStack;
+        await using second: PromiseTestStack = secondStack;
         const [firstStatus, secondStatus] = await Promise.all([first.status(), second.status()]);
         expect(firstStatus.lifecycle).toBe("running");
         expect(secondStatus.lifecycle).toBe("running");
@@ -1885,13 +1932,13 @@ describe("managed Supabase stack whole-stack E2E", () => {
         await Promise.all([
           runNode(
             databaseQuery(
-              firstCredentials.database.url,
+              databaseCredentials(firstCredentials).url,
               `CREATE TABLE public."${firstTable}" (payload text NOT NULL)`,
             ),
           ),
           runNode(
             databaseQuery(
-              secondCredentials.database.url,
+              databaseCredentials(secondCredentials).url,
               `CREATE TABLE public."${secondTable}" (payload text NOT NULL)`,
             ),
           ),
@@ -1899,14 +1946,14 @@ describe("managed Supabase stack whole-stack E2E", () => {
         await Promise.all([
           runNode(
             databaseQuery(
-              firstCredentials.database.url,
+              databaseCredentials(firstCredentials).url,
               `INSERT INTO public."${firstTable}" (payload) VALUES ($1)`,
               [firstMarker],
             ),
           ),
           runNode(
             databaseQuery(
-              secondCredentials.database.url,
+              databaseCredentials(secondCredentials).url,
               `INSERT INTO public."${secondTable}" (payload) VALUES ($1)`,
               [secondMarker],
             ),
@@ -1915,13 +1962,13 @@ describe("managed Supabase stack whole-stack E2E", () => {
         const [firstRows, secondRows] = await Promise.all([
           runNode(
             databaseQuery(
-              firstCredentials.database.url,
+              databaseCredentials(firstCredentials).url,
               `SELECT payload FROM public."${firstTable}"`,
             ),
           ),
           runNode(
             databaseQuery(
-              secondCredentials.database.url,
+              databaseCredentials(secondCredentials).url,
               `SELECT payload FROM public."${secondTable}"`,
             ),
           ),
@@ -1938,13 +1985,14 @@ describe("managed Supabase stack whole-stack E2E", () => {
         const identity = randomId().replaceAll("-", "").slice(0, 16);
         const ordinaryRoot = await runNode(mkdtemp(join(tmpdir(), "supabase-stack-cli-consumer-")));
         let ordinary: PromiseStack | undefined;
-        let helper: TestStack | undefined;
+        let helper: PromiseTestStack | undefined;
         let primary: unknown;
         try {
           ordinary = await createStack({
             projectRoot: ordinaryRoot,
             name: `stack-cli-consumer-${identity}`,
             runtime: mode.runtime,
+            initialConfig: {},
           });
           const ordinaryStack = ordinary;
           await ordinaryStack.start();
@@ -1992,12 +2040,12 @@ describe("managed Supabase stack whole-stack E2E", () => {
     test(
       `stops and wakes idle REST in ${mode.name} mode`,
       { timeout: E2E_TIMEOUT_MS },
-      // oxlint-disable-next-line effecttsgo/async-function -- E2E scenario consumes the public TestStack Promise contract.
+      // oxlint-disable-next-line effecttsgo/async-function -- E2E scenario consumes the public PromiseTestStack Promise contract.
       async () => {
         const identity = randomId().replaceAll("-", "").slice(0, 16).toLowerCase();
         const table = `idle_${identity}`;
         const marker = `idle-${identity}`;
-        await using stack: TestStack = await createTestStack({
+        await using stack: PromiseTestStack = await createTestStack({
           name: `stack-idle-rest-${identity}`,
           runtime: mode.runtime,
           config: {
@@ -2020,25 +2068,25 @@ describe("managed Supabase stack whole-stack E2E", () => {
         expect(initial.lifecycle).toBe("running");
         const api = endpoint(initial, "api");
         const initialSupervisorPid = await runNode(supervisorPid(stack.id));
-        await runNode(expectOwnedWorkloads(mode, stack.id, ["database:database"]));
+        await runNode(expectOwnedWorkloads(mode, stack, ["database:database"]));
 
         const credentials = await stack.credentials();
         await runNode(
           databaseQuery(
-            credentials.database.url,
+            databaseCredentials(credentials).url,
             `CREATE TABLE public."${table}" (id integer PRIMARY KEY, payload text NOT NULL)`,
           ),
         );
         await runNode(
           databaseQuery(
-            credentials.database.url,
+            databaseCredentials(credentials).url,
             `GRANT SELECT ON public."${table}" TO anon, authenticated, service_role`,
           ),
         );
         expect(
           await runNode(
             databaseQuery(
-              credentials.database.url,
+              databaseCredentials(credentials).url,
               `INSERT INTO public."${table}" (id, payload) VALUES (1, $1) RETURNING id, payload`,
               [marker],
             ),
@@ -2068,7 +2116,7 @@ describe("managed Supabase stack whole-stack E2E", () => {
           await logIterator.return?.();
         }
 
-        await runNode(expectOwnedWorkloads(mode, stack.id, ["database:database"]));
+        await runNode(expectOwnedWorkloads(mode, stack, ["database:database"]));
         const stoppedRest = await stack.status();
         expect(capabilityState(stoppedRest, "rest")).toBe("dormant");
         expect(endpoint(stoppedRest, "api").port).toBe(api.port);
@@ -2076,7 +2124,7 @@ describe("managed Supabase stack whole-stack E2E", () => {
         expect(
           await runNode(
             databaseQuery(
-              credentials.database.url,
+              databaseCredentials(credentials).url,
               `SELECT payload FROM public."${table}" WHERE id = 1`,
             ),
           ),
@@ -2088,7 +2136,7 @@ describe("managed Supabase stack whole-stack E2E", () => {
           }).pipe(Effect.flatMap(jsonValue)),
         );
         expect(secondRows).toEqual([{ id: 1, payload: marker }]);
-        await runNode(expectOwnedWorkloads(mode, stack.id, ["database:database", "rest:rest"]));
+        await runNode(expectOwnedWorkloads(mode, stack, ["database:database", "rest:rest"]));
         const restartedRest = await stack.status();
         expect(capabilityState(restartedRest, "rest")).toBe("ready");
         expect(endpoint(restartedRest, "api").port).toBe(api.port);
@@ -2098,11 +2146,11 @@ describe("managed Supabase stack whole-stack E2E", () => {
     test(
       `settles live HTTP, WebSocket, and TCP transports on stop in ${mode.name} mode`,
       { timeout: E2E_TIMEOUT_MS },
-      // oxlint-disable-next-line effecttsgo/async-function -- E2E scenario consumes the public TestStack Promise contract.
+      // oxlint-disable-next-line effecttsgo/async-function -- E2E scenario consumes the public PromiseTestStack Promise contract.
       async () => {
         const identity = randomId().replaceAll("-", "").slice(0, 16).toLowerCase();
         const table = `transport_stop_${identity}`;
-        await using stack: TestStack = await createTestStack({
+        await using stack: PromiseTestStack = await createTestStack({
           name: `stack-transport-stop-${identity}`,
           runtime: mode.runtime,
           config: {
@@ -2127,13 +2175,13 @@ describe("managed Supabase stack whole-stack E2E", () => {
         const credentials = await stack.credentials();
         await runNode(
           databaseQuery(
-            credentials.database.url,
+            databaseCredentials(credentials).url,
             `CREATE TABLE public."${table}" (id integer PRIMARY KEY)`,
           ),
         );
         await runNode(
           databaseQuery(
-            credentials.database.url,
+            databaseCredentials(credentials).url,
             `GRANT INSERT ON public."${table}" TO anon, authenticated, service_role`,
           ),
         );
@@ -2148,7 +2196,7 @@ describe("managed Supabase stack whole-stack E2E", () => {
             runNode(openSocket(makeRealtimeUrl(api, apiCredentials(credentials).publishableKey))),
           );
           await activate(stack, "pooler", () => {
-            const poolerUrl = new URL(credentials.database.url);
+            const poolerUrl = new URL(databaseCredentials(credentials).url);
             poolerUrl.port = String(pooler.port);
             poolerUrl.username = "postgres.pooler-dev";
             return runNode(
@@ -2177,7 +2225,7 @@ describe("managed Supabase stack whole-stack E2E", () => {
               .every(({ state }) => state === "stopped"),
           ).toBe(true);
           expect(stopped.artifacts).toEqual([]);
-          await runNode(expectOwnedWorkloads(mode, stack.id, []));
+          await runNode(expectOwnedWorkloads(mode, stack, []));
           await runNode(expectRuntimeInputsAbsent(stack));
           await runNode(
             expectEndpointsRefused(
@@ -2203,7 +2251,7 @@ describe("managed Supabase stack whole-stack E2E", () => {
       // oxlint-disable-next-line effecttsgo/async-function -- Vitest callback consumes public PromiseStack contracts.
       async () => {
         const analyticsApiKey = `analytics-key-${randomId()}`;
-        await using stack: TestStack = await createTestStack({
+        await using stack: PromiseTestStack = await createTestStack({
           name: `stack-eager-${randomId().replaceAll("-", "").slice(0, 16)}`,
           runtime: mode.runtime,
           config: allEagerConfig(analyticsApiKey),
@@ -2216,16 +2264,16 @@ describe("managed Supabase stack whole-stack E2E", () => {
         expect(
           status.capabilities.map(({ name, state, activation }) => ({ name, state, activation })),
         ).toEqual(CAPABILITY_NAMES.map((name) => ({ name, state: "ready", activation: "eager" })));
-        await runNode(expectOwnedWorkloads(mode, stack.id, ALL_EAGER_WORKLOAD_IDS));
+        await runNode(expectOwnedWorkloads(mode, stack, ALL_EAGER_WORKLOAD_IDS));
         const credentials = await stack.credentials();
-        expect(await runNode(databaseQuery(credentials.database.url, "SELECT 1 AS value"))).toEqual(
-          [{ value: 1 }],
-        );
+        expect(
+          await runNode(databaseQuery(databaseCredentials(credentials).url, "SELECT 1 AS value")),
+        ).toEqual([{ value: 1 }]);
         await stack.stop();
         const stopped = await stack.status();
         expect(stopped.lifecycle).toBe("stopped");
         expect(stopped.capabilities.every(({ state }) => state === "stopped")).toBe(true);
-        await runNode(expectOwnedWorkloads(mode, stack.id, []));
+        await runNode(expectOwnedWorkloads(mode, stack, []));
       },
     );
     test(
@@ -2239,7 +2287,7 @@ describe("managed Supabase stack whole-stack E2E", () => {
         const analyticsApiKey = `analytics-key-${identity}`;
         const email = `${identity}@example.test`;
         const password = "SupabaseStackE2e!123";
-        await using stack: TestStack = await createTestStack({
+        await using stack: PromiseTestStack = await createTestStack({
           name: `stack-optional-${identity}`,
           runtime: mode.runtime,
           config: optionalWorkloadConfig(functionSlug, analyticsApiKey),
@@ -2309,7 +2357,7 @@ describe("managed Supabase stack whole-stack E2E", () => {
                 expect(count).toBeGreaterThan(0);
                 expect(vectorCount).toBeGreaterThan(0);
               });
-              yield* expectOwnedWorkloads(mode, stack.id, OPTIONAL_STORAGE_ANALYTICS_WORKLOAD_IDS);
+              yield* expectOwnedWorkloads(mode, stack, OPTIONAL_STORAGE_ANALYTICS_WORKLOAD_IDS);
             }),
           ),
         );
@@ -2369,7 +2417,7 @@ describe("managed Supabase stack whole-stack E2E", () => {
         > = [];
         let endpointSnapshot: ReadonlyArray<StackEndpoint> = [];
         {
-          await using stack: TestStack = await createTestStack({
+          await using stack: PromiseTestStack = await createTestStack({
             name: `stack-resource-audit-${randomId().replaceAll("-", "").slice(0, 16)}`,
             runtime: mode.runtime,
             setupProject: (root) => {
@@ -2389,7 +2437,7 @@ describe("managed Supabase stack whole-stack E2E", () => {
             const stopped = await stack.status();
             expect(stopped.lifecycle).toBe("stopped");
             expect(stopped.capabilities.every(({ state }) => state === "stopped")).toBe(true);
-            await runNode(expectOwnedWorkloads(mode, stack.id, []));
+            await runNode(expectOwnedWorkloads(mode, stack, []));
             await runNode(expectRuntimeInputsAbsent(stack));
             await runNode(expectEndpointsRefused(endpointSnapshot));
             // The stop contract waits for lease/resource release. Detached supervisor exit can
@@ -2408,7 +2456,7 @@ describe("managed Supabase stack whole-stack E2E", () => {
             await stack.start();
             const restarted = await stack.status();
             expectDefaultLazyState(restarted);
-            await runNode(expectOwnedWorkloads(mode, stack.id, ["database:database"]));
+            await runNode(expectOwnedWorkloads(mode, stack, ["database:database"]));
             expect(
               Object.values(restarted.endpoints).filter(
                 (value): value is StackEndpoint => value !== undefined,

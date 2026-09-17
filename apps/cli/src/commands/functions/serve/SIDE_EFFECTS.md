@@ -2,129 +2,75 @@
 
 ## Files Read
 
-| Path                                                                                                                       | Format     | When                                                                                                                                                                                                                                                                                                                                                                |
-| -------------------------------------------------------------------------------------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml`                                                                                           | TOML       | on every startup / restart when the project config exists                                                                                                                                                                                                                                                                                                           |
-| `<workdir>/supabase/{.env,.env.local,.env.<SUPABASE_ENV>,.env.<SUPABASE_ENV>.local}` and the same four at the project root | dotenv     | on every startup / restart, a SECOND, independent read from the `env()`-interpolation one below — project dotenv (`resolveProjectEnvironmentValues`) feeding the `SUPABASE_*` overrides (network-id, deno-version, registry) and the `Config.Validate` pipeline, same one `start`/`stop`/`status` already use                                                       |
-| `<workdir>/supabase/<auth.signing_keys_path>`, `[api.tls]` cert/key paths, email template `content_path` — when configured | varies     | on every startup / restart, as part of the `Config.Validate` pipeline above, unconditionally — read even though `serve` doesn't otherwise use their contents; a `content_path` resolved path is CONFINED to the project root (symlinks dereferenced with `realpathSync`) before it is read, aborting with `resolves outside the project root` before any other work |
-| `<workdir>/supabase/.temp/edge-runtime-version`                                                                            | plain text | when present, to override the bundled edge-runtime image tag                                                                                                                                                                                                                                                                                                        |
-| `<workdir>/supabase/functions/.env`                                                                                        | dotenv     | when `--env-file` is unset and the fallback env file exists                                                                                                                                                                                                                                                                                                         |
-| `<workdir>/supabase/functions/<function-name>/.env`                                                                        | dotenv     | for each enabled Function when `--env-file` is unset; values override the shared fallback for that Function only                                                                                                                                                                                                                                                    |
-| `<env-file>`                                                                                                               | dotenv     | when `--env-file` is set; relative paths resolve from the caller cwd                                                                                                                                                                                                                                                                                                |
-| `<workdir>/supabase/functions/*/index.ts`                                                                                  | TypeScript | to discover filesystem-backed functions                                                                                                                                                                                                                                                                                                                             |
-| config-declared entrypoints / import maps / static files and imports                                                       | mixed      | for each enabled function while resolving Docker bind mounts                                                                                                                                                                                                                                                                                                        |
-| `<signing_keys_path>`                                                                                                      | JSON       | when `auth.signing_keys_path` is configured                                                                                                                                                                                                                                                                                                                         |
-| `apps/cli/src/shared/functions/serve.main.ts` (+ `serve-main-deps.ts`)                                                     | TypeScript | only when running from source (`bun src/supabase.ts`), bundled on demand; compiled binaries embed the pre-bundled template and read nothing                                                                                                                                                                                                                         |
+| Path                                                                | Format     | When                                                                                                              |
+| ------------------------------------------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml`                                    | TOML       | On every startup and watch restart.                                                                               |
+| Project dotenv files and `<workdir>/supabase/functions/.env`        | dotenv     | On every startup and watch restart; the explicit `--env-file` takes precedence.                                   |
+| `<workdir>/supabase/functions/<function-name>/.env`                 | dotenv     | On every startup and watch restart when `--env-file` is unset; values override the shared file for that Function. |
+| `<env-file>`                                                        | dotenv     | When `--env-file` is set; relative paths resolve from the caller cwd.                                             |
+| `<workdir>/supabase/functions/*/index.ts`                           | TypeScript | To discover filesystem-backed Functions.                                                                          |
+| Config-declared entrypoints, import maps, static files, and imports | mixed      | To build the effective service configuration and watch roots.                                                     |
 
 ## Files Written
 
-| Path                                                                                     | Format      | When                                                                                                                                |
-| ---------------------------------------------------------------------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `~/.supabase/telemetry.json`                                                             | JSON        | always, at command exit via `Effect.ensuring`                                                                                       |
-| `<workdir>/supabase/.temp/start-secrets/supabase_edge_runtime_<project>/env/docker.env`  | dotenv      | per start, when single-line container env exists; passed via `--env-file`; mode `0600`; removed after the run                       |
-| `<workdir>/supabase/.temp/start-secrets/supabase_edge_runtime_<project>/multiline-env/…` | shell + raw | per start, only when an env value contains a newline; bind-mounted read-only into the container; mode `0600`; removed after the run |
+| Path                         | Format            | When                                                                                         |
+| ---------------------------- | ----------------- | -------------------------------------------------------------------------------------------- |
+| `~/.supabase/telemetry.json` | JSON              | At command exit through `Effect.ensuring`.                                                   |
+| Managed stack service state  | typed stack state | The stack owner persists service configuration, intent, endpoint plans, and operation state. |
 
-The env files hold secrets (JWT secret, anon/service-role keys, JWKS), so they are
-written owner-only (`0600`, in `0700` directories) under the project's own
-`supabase/.temp/` (gitignored) — a deterministic, persistent path rather than
-`os.tmpdir()`, so `supabase stop` and a failed-start rollback can reclaim it via
-`cleanupStartSecrets` even when this command's own cleanup was bypassed
-(e.g. `SIGKILL`).
+Secret values stay redacted in the service configuration and are materialized only by the stack
+owner during runtime startup.
 
 ## API Routes
 
-Management API: none. When a third-party auth provider (`auth.third_party.*`) is
-enabled, two outbound HTTPS GETs are made per start to build `SUPABASE_JWKS`:
-
-| Method | Path                                            | Auth | Request body | Response (used fields) |
-| ------ | ----------------------------------------------- | ---- | ------------ | ---------------------- |
-| `GET`  | `<issuer_url>/.well-known/openid-configuration` | none | `—`          | `jwks_uri`             |
-| `GET`  | `<jwks_uri>` (from discovery)                   | none | `—`          | `keys`                 |
-
-Both fetches use a 10s timeout and are best-effort: failure logs nothing and falls
-back to local keys. No scheme/host validation is performed on the discovered URLs.
+The CLI opens or creates the project stack through `StackApi`, resolves the registered `functions`
+service, and observes that service's logs and status. The service uses the shared stack gateway for
+its routes. Functions can start while PostgreSQL, Auth, and REST are disabled or absent.
 
 ## Environment Variables
 
-| Variable                                      | Purpose                                                                                                                                                                                                                                                           | Required?                            |
-| --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
-| `SUPABASE_PROFILE`                            | resolves the profile / API base URL                                                                                                                                                                                                                               | no (defaults to `supabase`)          |
-| `SUPABASE_WORKDIR`                            | overrides the project workdir                                                                                                                                                                                                                                     | no (falls back to CLI cwd discovery) |
-| `SUPABASE_PROJECT_ID`                         | config-service override for project identity                                                                                                                                                                                                                      | no                                   |
-| `SUPABASE_ENV`                                | selects environment-specific dotenv files (`.env.<env>.local`, `.env.<env>`)                                                                                                                                                                                      | no (defaults to `development`)       |
-| env vars referenced by `supabase/config.toml` | config interpolation; the full ambient `process.env` is layered under the project `.env*` files and passed to config loading                                                                                                                                      | no                                   |
-| `SUPABASE_INTERNAL_IMAGE_REGISTRY`            | overrides the edge-runtime Docker registry mirror; read from the ambient shell **or** project dotenv; unset resolves ECR->GHCR->Docker-Hub candidates in order instead of a single URL                                                                            | no (defaults to `public.ecr.aws`)    |
-| `SUPABASE_USE_SLIM_IMAGES`                    | resolves the edge-runtime image from the slim `ghcr.io/supabase/cli/edge-runtime` build (`true`/`1` enable); `deno_version = 1` and historical `.temp/edge-runtime-version` pins stay on docker.io                                                                | no                                   |
-| `SUPABASE_NETWORK_ID`                         | overrides the generated `supabase_network_<project>` Docker network name when `--network-id` isn't passed; read from the ambient shell or project dotenv                                                                                                          | no                                   |
-| `SUPABASE_EDGE_RUNTIME_DENO_VERSION`          | overrides `edge_runtime.deno_version` (which image tag to pull) when set, from the ambient shell or project dotenv — takes effect even with no `config.toml` on disk                                                                                              | no                                   |
-| `BITBUCKET_CLONE_DIR`                         | when defined (including an empty value), skips creating the named Deno-cache volume and omits its bind mount from the edge-runtime `docker create` (Bitbucket's restricted Docker environment rejects both); project values are passed explicitly to Docker setup | no                                   |
+| Variable                              | Purpose                                                                       | Required? |
+| ------------------------------------- | ----------------------------------------------------------------------------- | --------- |
+| `SUPABASE_PROFILE`                    | Resolves the profile and API base URL.                                        | no        |
+| `SUPABASE_WORKDIR`                    | Overrides the project workdir.                                                | no        |
+| `SUPABASE_PROJECT_ID`                 | Config-service override for project identity.                                 | no        |
+| `SUPABASE_ENV`                        | Selects environment-specific dotenv files.                                    | no        |
+| Variables referenced by `config.toml` | Config interpolation; ambient values are layered under project dotenv values. | no        |
+| `SUPABASE_NETWORK_ID`                 | Retained for project environment compatibility.                               | no        |
+| `BITBUCKET_CLONE_DIR`                 | Retained for project environment compatibility.                               | no        |
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                   |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | clean shutdown after `SIGINT` or `SIGTERM`                                                                                                                                                  |
-| `0`  | the edge-runtime container stops on its own with exit code `0`                                                                                                                              |
-| `0`  | the edge-runtime container is torn down by an external supervisor — exit `129`/`130`/`131`/`143` (`SIGHUP`/`SIGINT`/`SIGQUIT`/`SIGTERM`), e.g. `supabase stop` run in another terminal      |
-| `0`  | the edge-runtime container is already gone by the time a follow-up `docker container inspect` runs after the log stream ended                                                               |
-| `0`  | an edge-runtime startup failure or log-stream failure lands within the shutdown grace period (~50ms) of a `SIGINT`/`SIGTERM`                                                                |
-| `1`  | local DB container is not running, or the Docker daemon is unreachable (surfaces from the DB inspect as `failed to inspect service: …` plus the Docker Desktop install suggestion)          |
-| `1`  | invalid inspect flag combination, or a `Config.Validate` failure anywhere in `config.toml` (not just project/auth config)                                                                   |
-| `1`  | env file, signing key, import map, or function bind resolution failure                                                                                                                      |
-| `1`  | edge-runtime container startup, log streaming, or restart loop failure — including the edge-runtime container crashing with any exit code other than `0`, `137`, or `129`/`130`/`131`/`143` |
+| Code | Condition                                                                                                                                |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | Clean shutdown after `SIGINT` or `SIGTERM`.                                                                                              |
+| `0`  | The managed Functions service exits normally or is retired by another stack owner.                                                       |
+| `1`  | Invalid inspect flags, config, environment file, import map, Function input, service preparation, startup, log stream, or watch restart. |
 
 ## Telemetry Events Fired
 
-| Event                  | When                                       | Notable properties / groups         |
-| ---------------------- | ------------------------------------------ | ----------------------------------- |
-| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` |
+| Event                  | When                                                       | Notable properties / groups         |
+| ---------------------- | ---------------------------------------------------------- | ----------------------------------- |
+| `cli_command_executed` | Post-run, success or failure, through the command wrapper. | `exit_code`, `duration_ms`, `flags` |
 
 ## Output
 
-### `--output-format text`
+`--output-format text` writes lifecycle text to the established streams:
 
-Writes lifecycle text to stderr / stdout while the command is running:
+- `Setting up Edge Functions runtime...` before startup.
+- `Skipped serving Function: <slug>` for disabled Functions.
+- `File change detected: <path> (<op>)` when a watched file triggers a restart.
+- Live logs attributed to the registered Functions service.
+- `Stopped serving supabase/functions` on a user-initiated shutdown.
+- `Edge Runtime exited ...` when the service exits on its own.
 
-- `Setting up Edge Functions runtime...` before each container start
-- `Skipped serving Function: <slug>` for disabled functions
-- `File change detected: <path> (<op>)` when a watched file triggers a restart
-- live `docker logs -f --timestamps` output from the edge-runtime container
-- `Stopped serving supabase/functions` on a user-initiated shutdown (`SIGINT`/`SIGTERM`)
-- `Edge Runtime exited (code 0). Stopped serving supabase/functions` when the container stops on its own with exit code `0`
-- `Edge Runtime container stopped (exit <code>). Stopped serving supabase/functions` when an external supervisor tears the container down (exit `129`/`130`/`131`/`143`)
-- `Edge Runtime container is no longer available. Stopped serving supabase/functions` when the container is already gone by the time a follow-up inspect runs
-
-### `--output-format json`
-
-Long-running raw log / error output only; there is no final success payload object for this command.
-
-### `--output-format stream-json`
-
-Long-running raw log / error events only; there is no terminal `result` event on success.
+Machine-readable modes carry the service log and error stream; there is no final success payload.
 
 ## Notes
 
-- Any legacy Function name positional arguments are accepted and ignored. The command always
-  serves every discovered Function, preserving invocations such as
-  `supabase functions serve <Function name>`.
-- Environment precedence is `--env-file` over automatic discovery. Without the flag,
-  `supabase/functions/.env` supplies values shared by every Function and each
-  `supabase/functions/<function-name>/.env` overrides matching values for that Function only.
-- The hidden `--all` flag is still parsed but ignored; the native port always serves every discovered function.
-- Each restart re-reads config, rebuilds per-function bind mounts, recreates the `supabase_edge_runtime_<project>` container, and best-effort reloads Kong afterwards.
-- The command creates or reuses Docker resources derived from the resolved project id:
-  - container: `supabase_edge_runtime_<project>`
-  - named volume: `supabase_edge_runtime_<project>` (mounted at `/root/.cache/deno`)
-  - network: `supabase_network_<project>` unless `--network-id` overrides it
-- Inspector mode exposes the configured `edge_runtime.inspector_port` on the host and sets `SUPABASE_INTERNAL_WALLCLOCK_LIMIT_SEC=0`.
-- Config `env()` interpolation uses a project environment resolved by the command itself (ambient `process.env` layered under `.env.<env>.local` / `.env.local` / `.env.<env>` / `.env`) and passed into `loadCliConfig`. The command does not move/hide any project files. The resolved `BITBUCKET_CLONE_DIR` value is passed explicitly to Docker setup without changing the process environment.
-- Config, project dotenv discovery, and function discovery all resolve from `<workdir>` with no ancestor search (CLI-2285), so they can never disagree.
-- Before each container (re)start, resolves the edge-runtime image through the same registry-candidate pull-with-retry every native `functions` Docker path uses: `docker image inspect <candidate>` (ECR, then GHCR, then Docker Hub) to check the local cache, then `docker pull <candidate>` with 2 retries (4s/8s backoff) on a miss, after `assertLocalDbRunning` — resolving it earlier would hijack the down-daemon error message that DB-inspect step is responsible for producing.
-- Runs the full `Config.Validate` pipeline (`resolveLocalConfigValues`, same one `start`/`stop`/`status` use) on every startup/restart, before `assertLocalDbRunning` — an invalid config now fails `serve` up front even for fields this command never otherwise reads (e.g. a bad `db.major_version` or malformed auth hook).
-- A container that stops on its own with exit code `0`, or that is torn down by an external supervisor (exit `129`/`130`/`131`/`143`, e.g. `supabase stop` in another terminal), or that is already gone by the time a follow-up inspect runs, all end the command successfully — each prints its own distinct line (see Output above) rather than the user-initiated `Stopped serving …` line, so scrollback can tell "I stopped it" from "the runtime walked out" or "a supervisor tore it down". In a `functions serve &` CI step this means a runtime that exits on its own does not fail the step; the distinct message is the only signal, and a downstream failure otherwise only surfaces later as connection-refused. Exit `137` (SIGKILL, e.g. an OOM kill) is retried by re-attaching to the log stream rather than failing the command. Any other non-zero container exit fails the command; the error message includes the container id. Only a watched-file change restarts the container itself — none of these outcomes ever restart it.
-- A `docker logs -f` re-attach (the daemon can close the stream while the container keeps running) resumes with `--since <last forwarded log timestamp>` instead of replaying the full log history, and is capped at 5 consecutive re-attaches that forward no new output; exceeding the cap fails the command with a tagged error instead of looping forever.
-- On the log-stream path, the Docker-daemon-unreachable classification comes from a follow-up `docker container inspect` failure, not from `docker logs -f`'s own stderr text.
-- The worker bootstrap template (`serve.main.ts`) is bundled into a single self-contained module with `jose` and the local path/status helpers inlined, so the edge-runtime worker boots without any network access (supabase/supabase#45570). The bundle is embedded at build time for shipped binaries and produced on demand (esbuild) when running from source. It is delivered into the created (not yet started) container as a `docker cp` stdin tar archive at `/root/index.ts` — never a single-file host bind mount, which materializes as an empty directory on daemons that cannot see the client's filesystem (remote `DOCKER_HOST`/Docker-context daemons, podman machines) and breaks bring-up with edge-runtime's "failed to determine entrypoint" (supabase/cli#6254). Only this bootstrap template is daemon-independent: user function sources, import maps, static files, and the multiline-env script directory (present only when an env value contains a newline) still arrive by host bind mounts, so they require a daemon that can see the project directory.
-- The aggregated bind mount list is pruned before `docker create`: a bind is dropped when another bind of the same mode already supplies the same content at the same container path — a file bind nested inside an already-bound read-only package directory would otherwise make the bootstrap `docker cp` fail with `destination "<container>:/" must be a directory` (supabase/supabase#50088). Pruned paths remain visible in the container through their covering parent mounts; the `--workdir` gate and the file-watch set are computed from the unpruned aggregate.
-- Existing local values declared under an import map's `scopes` are explicit read-only Docker mounts and may resolve outside the nearest Git root; each distinct out-of-root host path prints one `WARN` during bring-up, deduplicated across Functions sharing an import map. Such out-of-root mounts are excluded from the file-watch set per Function, so a scope target contributes no watch root of its own and cannot enlarge or destabilise the watcher; a path that another Function reaches through its ordinary binds is still watched. Other file-valued binds are watched through their immediate parent non-recursively, while directory binds remain recursive. Missing targets retain serve's existing skip behavior.
-- **Intentional divergence from Go — spec-strict import-map key matching (CLI-2179, ruled 2026-08-12):** bind mounts are computed by the functions import scanner (`walkImportPaths`/`substituteImportMapValue`, shared with `functions deploy` and `start`'s Edge Runtime bring-up), which matches import-map keys per the import-maps spec Deno/edge-runtime implement — exact match, or prefix match only for a `/`-suffixed key — instead of Go's any-key `strings.HasPrefix` (`pkg/function/deno.go:150-155`). Bind mounts may shrink vs the Go CLI for maps that relied on bare-key prefix matching; an unwalkable target (`ENOTDIR` — a value routed through a file) is skipped with a `WARN`.
+- Legacy Function name positional arguments are accepted and ignored. The command serves every discovered Function.
+- `--all` remains parsed but hidden; all discovered and config-declared Functions, including disabled entries, are preserved in the candidate configuration.
+- Every startup resolves flags, dotenv precedence, entrypoints, import maps, static files, reserved environment names, inspector mode, and debugger wallclock behavior into one effective Functions service configuration.
+- The command compares a non-mutating stack preparation fingerprint with the registered service descriptor. An unchanged compatible service is joined; a changed configuration explicitly restarts the same instance ID.
+- A watched source change re-resolves all inputs, restarts the same registered instance with the full candidate configuration, and rebuilds watcher roots. Import-map scope targets outside the project are warned once and excluded from watch roots; redundant mounts are pruned while covering mounts remain visible.
+- The command closes log and watch subscriptions on exit. It does not stop, sleep, destroy, or restore the service when the CLI client exits.

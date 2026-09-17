@@ -3,6 +3,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import type * as ChildProcessSpawnerService from "effect/unstable/process/ChildProcessSpawner";
 import type { ContainerArtifact } from "../model/CapabilityModule.ts";
 import { StackIdSchema, type StackId } from "../public/StackId.ts";
+import { ServiceInstanceIdSchema, type ServiceInstanceId } from "../public/ServiceInstanceId.ts";
 import { NetworkPortSchema } from "../public/Status.ts";
 
 export type ContainerEngineKind = "docker" | "podman";
@@ -30,6 +31,7 @@ export class ContainerEngineProtocolError extends Data.TaggedError("ContainerEng
 }> {}
 export class ContainerCommandError extends Data.TaggedError("ContainerCommandError")<{
   readonly operation: string;
+  readonly exitCode: number;
   readonly message: string;
 }> {}
 export type ContainerEngineFailure =
@@ -47,12 +49,15 @@ export interface ContainerNetworkLabels extends ContainerIdentityLabels {
   readonly role: "network";
 }
 export interface ContainerWorkloadLabels extends ContainerIdentityLabels {
+  readonly instanceId: ServiceInstanceId;
   readonly workloadId: string;
+  readonly recipeId: string;
   readonly startup?: boolean;
   readonly role: "workload";
 }
 export interface ContainerVolumeLabels {
   readonly stackId: StackId;
+  readonly instanceId: ServiceInstanceId;
   readonly workloadId: string;
   readonly role: "volume";
 }
@@ -71,7 +76,9 @@ const mountField = (key: string, value: string): string => {
 export const CONTAINER_LABEL_KEYS = {
   stackId: `${CONTAINER_LABEL_PREFIX}.stackId`,
   ownerSessionId: `${CONTAINER_LABEL_PREFIX}.ownerSessionId`,
+  instanceId: `${CONTAINER_LABEL_PREFIX}.instanceId`,
   workloadId: `${CONTAINER_LABEL_PREFIX}.workloadId`,
+  recipeId: `${CONTAINER_LABEL_PREFIX}.recipeId`,
   startup: `${CONTAINER_LABEL_PREFIX}.startup`,
   role: `${CONTAINER_LABEL_PREFIX}.role`,
 };
@@ -88,13 +95,16 @@ const containerLabels = (value: ContainerLabels): ReadonlyArray<string> => {
       : value.role === "volume"
         ? [
             ["stackId", value.stackId],
+            ["instanceId", value.instanceId],
             ["workloadId", value.workloadId],
             ["role", value.role],
           ]
         : [
             ["stackId", value.stackId],
             ["ownerSessionId", value.ownerSessionId],
+            ["instanceId", value.instanceId],
             ["workloadId", value.workloadId],
+            ["recipeId", value.recipeId],
             ["startup", value.startup === true ? "true" : "false"],
             ["role", value.role],
           ];
@@ -172,6 +182,18 @@ export type ContainerCommand =
       readonly source: string;
       readonly destination: string;
     }
+  | {
+      readonly operation: "copy-from-container";
+      readonly id: string;
+      readonly source: string;
+      readonly destination: string;
+    }
+  | {
+      readonly operation: "exec-container";
+      readonly id: string;
+      readonly command: ReadonlyArray<string>;
+      readonly stdin?: string;
+    }
   | { readonly operation: "start-container"; readonly id: string }
   | { readonly operation: "wait-container"; readonly id: string }
   | { readonly operation: "stop-container"; readonly id: string }
@@ -185,6 +207,8 @@ type CommonContainerCommand = Extract<
   | { readonly operation: "remove-volume" }
   | { readonly operation: "create-container" }
   | { readonly operation: "copy-container" }
+  | { readonly operation: "copy-from-container" }
+  | { readonly operation: "exec-container" }
   | { readonly operation: "start-container" }
   | { readonly operation: "wait-container" }
   | { readonly operation: "stop-container" }
@@ -251,6 +275,20 @@ export const serializeCommonContainerCommand = (
     }
     case "copy-container":
       return { args: ["cp", command.source, `${command.id}:${command.destination}`] };
+    case "copy-from-container":
+      return { args: ["cp", `${command.id}:${command.source}`, command.destination] };
+    case "exec-container":
+      return {
+        args: [
+          "exec",
+          ...(command.stdin === undefined ? [] : ["--interactive"]),
+          "--user",
+          "postgres",
+          command.id,
+          ...command.command,
+        ],
+        ...(command.stdin === undefined ? {} : { stdin: command.stdin }),
+      };
     case "start-container":
       return { args: ["start", command.id] };
     case "wait-container":
@@ -454,6 +492,7 @@ export const makeProcessCommandRunner = (
                       : Effect.fail(
                           new ContainerCommandError({
                             operation: request.args[0] ?? "stream",
+                            exitCode: Number(code),
                             message: `Container engine log follower exited (${String(code)})`,
                           }),
                         ),
@@ -555,14 +594,27 @@ export const makeContainerEngineCodecs = (options: {
     );
   };
   const workloadLabels = (operation: string, values: ReadonlyArray<string>) => {
-    const [stack, owner, workload, startup, role] = values;
-    if (owner === undefined || workload === undefined || role !== "workload")
+    const [stack, owner, instance, workload, recipe, startup, role] = values;
+    if (
+      owner === undefined ||
+      instance === undefined ||
+      workload === undefined ||
+      recipe === undefined ||
+      role !== "workload"
+    )
       return Effect.fail(protocol(operation));
-    return decodeIdentity(operation, stack).pipe(
-      Effect.map((stackId) => ({
+    return Effect.all({
+      stackId: decodeIdentity(operation, stack),
+      instanceId: Schema.decodeEffect(ServiceInstanceIdSchema)(instance).pipe(
+        Effect.mapError((error) => protocol(operation, error)),
+      ),
+    }).pipe(
+      Effect.map(({ stackId, instanceId }) => ({
         stackId,
         ownerSessionId: owner,
+        instanceId,
         workloadId: workload,
+        recipeId: recipe,
         ...(startup === "true" ? { startup: true } : {}),
         role: "workload" as const,
       })),
@@ -578,14 +630,16 @@ export const makeContainerEngineCodecs = (options: {
       fields(operation, line, count).pipe(Effect.flatMap(decode)),
     );
   const decodeContainers: ContainerEngineCodecs["decodeContainers"] = (result) =>
-    decodeRows("inspect-containers", result.stdout, 8, (values) => {
-      const [id, name, stack, owner, workload, startup, role, state] = values;
+    decodeRows("inspect-containers", result.stdout, 10, (values) => {
+      const [id, name, stack, owner, instance, workload, recipe, startup, role, state] = values;
       if (
         id === undefined ||
         name === undefined ||
         stack === undefined ||
         owner === undefined ||
+        instance === undefined ||
         workload === undefined ||
+        recipe === undefined ||
         role !== "workload" ||
         state === undefined
       )
@@ -593,7 +647,9 @@ export const makeContainerEngineCodecs = (options: {
       return workloadLabels("inspect-containers", [
         stack,
         owner,
+        instance,
         workload,
+        recipe,
         startup ?? "",
         role,
       ]).pipe(
@@ -635,16 +691,27 @@ export const makeContainerEngineCodecs = (options: {
       }),
     );
   const decodeVolumes: ContainerEngineCodecs["decodeVolumes"] = (result) =>
-    decodeRows("inspect-volumes", result.stdout, 4, (values) => {
-      const [name, stack, workload, role] = values;
-      if (name === undefined || stack === undefined || workload === undefined || role !== "volume")
+    decodeRows("inspect-volumes", result.stdout, 5, (values) => {
+      const [name, stack, instance, workload, role] = values;
+      if (
+        name === undefined ||
+        stack === undefined ||
+        instance === undefined ||
+        workload === undefined ||
+        role !== "volume"
+      )
         return Effect.fail(protocol("inspect-volumes"));
-      return decodeIdentity("inspect-volumes", stack).pipe(
-        Effect.map((stackId): ContainerResource => ({
+      return Effect.all({
+        stackId: decodeIdentity("inspect-volumes", stack),
+        instanceId: Schema.decodeEffect(ServiceInstanceIdSchema)(instance).pipe(
+          Effect.mapError((error) => protocol("inspect-volumes", error)),
+        ),
+      }).pipe(
+        Effect.map(({ stackId, instanceId }): ContainerResource => ({
           id: name,
           name,
           kind: "volume",
-          labels: { stackId, workloadId: workload, role: "volume" },
+          labels: { stackId, instanceId, workloadId: workload, role: "volume" },
         })),
       );
     });
@@ -715,6 +782,18 @@ export interface ContainerEngine {
     source: string,
     destination: string,
   ) => Effect.Effect<void, ContainerEngineFailure>;
+  /** Copies an exact path from an owner-created container to the host. */
+  readonly copyFromContainer?: (
+    id: string,
+    source: string,
+    destination: string,
+  ) => Effect.Effect<void, ContainerEngineFailure>;
+  /** Runs one owner-controlled command as the image's PostgreSQL account. */
+  readonly execContainer: (
+    id: string,
+    command: ReadonlyArray<string>,
+    stdin?: string,
+  ) => Effect.Effect<void, ContainerEngineFailure>;
   readonly startContainer: (id: string) => Effect.Effect<void, ContainerEngineFailure>;
   /** Waits for one exact container and returns its process exit code. */
   readonly waitContainer: (id: string) => Effect.Effect<number, ContainerEngineFailure>;
@@ -736,6 +815,7 @@ export const makeContainerEngineCore = (options: ContainerEngineOptions): Contai
           : Effect.fail(
               new ContainerCommandError({
                 operation,
+                exitCode: result.exitCode,
                 message:
                   result.stderr.trim().length > 0
                     ? `Container engine command failed (${result.exitCode}): ${result.stderr.trim()}`
@@ -881,6 +961,20 @@ export const makeContainerEngineCore = (options: ContainerEngineOptions): Contai
     },
     copyToContainer: (id, source, destination) =>
       noResult("copy-container", { operation: "copy-container", id, source, destination }),
+    copyFromContainer: (id, source, destination) =>
+      noResult("copy-from-container", {
+        operation: "copy-from-container",
+        id,
+        source,
+        destination,
+      }),
+    execContainer: (id, command, stdin) =>
+      noResult("exec-container", {
+        operation: "exec-container",
+        id,
+        command,
+        ...(stdin === undefined ? {} : { stdin }),
+      }),
     startContainer: (id) => noResult("start-container", { operation: "start-container", id }),
     waitContainer: (id) =>
       check("wait-container", { operation: "wait-container", id }).pipe(

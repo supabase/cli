@@ -41,7 +41,9 @@ import { GoProxy } from "../../../../../command-internal/go-proxy.service.ts";
 import { CommandPlatformApi } from "../../../../../auth/command-platform-api.service.ts";
 import { CommandPlatformApiFactory } from "../../../../../auth/command-platform-api-factory.service.ts";
 import { dockerRunLayer } from "../../../../../command-internal/docker-run.layer.ts";
+import { DockerRun } from "../../../../../command-internal/docker-run.service.ts";
 import { stackBackendLayer } from "../../../../../command-internal/stack-backend.ts";
+import { stackApiLayer } from "../../../../../command-internal/stack-api.ts";
 import { DbConfigResolver } from "../../../../../command-internal/db-config.service.ts";
 import {
   type DbSession,
@@ -211,10 +213,11 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   });
   const networkIdFlag = Layer.succeed(NetworkIdFlag, opts.networkId ?? Option.none());
   const debugFlag = Layer.succeed(DebugFlag, false);
-  const dockerRun = dockerRunLayer.pipe(
+  const dockerRun: Layer.Layer<DockerRun, never, never> = dockerRunLayer.pipe(
     Layer.provide(child.layer),
     Layer.provide(processControl.layer),
   );
+  const backendLayer = stackBackendLayer(opts.stackBackend === true ? "stack" : "legacy");
   const layer = Layer.mergeAll(
     out.layer,
     telemetry.layer,
@@ -248,7 +251,8 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     processControl.layer,
     alwaysReadyHttpClientLayer,
     dockerRun,
-    ...(opts.stackBackend === true ? [stackBackendLayer("stack")] : []),
+    stackApiLayer.pipe(Layer.provide(BunServices.layer)),
+    backendLayer,
   );
   return {
     layer,

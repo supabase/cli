@@ -38,7 +38,11 @@ import type { DbDumpFlags } from "./dump.command.ts";
 import { dbDump } from "./dump.handler.ts";
 import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
 import { StackApi } from "../../../command-internal/stack-api.ts";
-import { StackIdSchema, type EffectStack } from "@supabase/stack/effect";
+import {
+  StackIdSchema,
+  type EffectServiceCollection,
+  type EffectStack,
+} from "@supabase/stack/effect";
 
 const LOCAL_CONN: PgConnInput = {
   host: "127.0.0.1",
@@ -1038,6 +1042,11 @@ describe("db dump integration", () => {
   ) => {
     const stack: EffectStack = {
       id: DUMP_STACK_ID,
+      services: {
+        create: () => Effect.die("service creation is unused by db dump"),
+        get: () => Effect.die("service lookup is unused by db dump"),
+        list: Effect.succeed([]),
+      } satisfies EffectServiceCollection,
       status: Effect.succeed({
         id: DUMP_STACK_ID,
         lifecycle: "running",
@@ -1047,13 +1056,16 @@ describe("db dump integration", () => {
         versions: { database: databaseVersion },
         capabilities: [],
         artifacts: [],
+        instances: [],
       }),
+      followStatus: Stream.empty,
       credentials: unusedDumpEffect,
       prepare: unusedDump,
       start: unusedDump,
-      stop: unusedDumpEffect,
-      destroy: unusedDumpEffect,
-      resetDatabase: unusedDumpEffect,
+      sleep: unusedDump,
+      restart: unusedDump,
+      stop: () => unusedDumpEffect,
+      destroy: () => unusedDumpEffect,
       logs: unusedDump,
       followLogs: () => Stream.empty,
     };

@@ -46,6 +46,7 @@ const status = (id: string): StackStatus => ({
   versions: {},
   capabilities: [],
   artifacts: [],
+  instances: [],
 });
 
 const flags = (
@@ -61,7 +62,7 @@ function setup(opts: {
   root: string;
   format?: "text" | "json" | "stream-json";
   found?: { id: string; name?: string };
-  stop?: Effect.Effect<void, ApiStackStopError>;
+  stop?: Effect.Effect<StackStatus, ApiStackStopError>;
   openFailure?: OpenStackError;
   findFailure?: StackDiscoveryError;
   discoveryFailure?: StackDiscoveryError;
@@ -87,17 +88,26 @@ function setup(opts: {
     status: Effect.succeed(status(id)),
     credentials: Effect.die("unused"),
     prepare: () => Effect.die("unused"),
+    services: {
+      create: () => Effect.die("services.create not used"),
+      get: () => Effect.die("services.get not used"),
+      list: Effect.succeed([]),
+    },
     start: () => Effect.die("unused"),
-    stop:
+    sleep: () => Effect.die("sleep not used"),
+    stop: () =>
       opts.stop ??
       Effect.sync(() => {
         state.stopCalls += 1;
+        return status(id);
       }),
-    destroy: Effect.sync(() => {
-      state.destroyCalled = true;
-    }),
-    resetDatabase: Effect.die("unused"),
+    restart: () => Effect.die("restart not used"),
+    destroy: () =>
+      Effect.sync(() => {
+        state.destroyCalled = true;
+      }),
     logs: () => Effect.die("unused"),
+    followStatus: Stream.empty,
     followLogs: () => Stream.empty,
   } satisfies EffectStack;
   const descriptor = opts.found

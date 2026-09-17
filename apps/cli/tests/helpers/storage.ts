@@ -171,6 +171,7 @@ export function buildStorageStackApi(
               error: name === "storage" ? options.storageError : undefined,
             })),
             artifacts: [],
+            instances: [],
           }),
     credentials: Effect.succeed({
       database: {
@@ -189,9 +190,16 @@ export function buildStorageStackApi(
     }),
     prepare: unusedFn,
     start: unusedFn,
-    stop: unused,
-    destroy: unused,
-    resetDatabase: unused,
+    services: {
+      create: () => unused,
+      get: () => unused,
+      list: unused,
+    },
+    followStatus: Stream.empty,
+    sleep: () => unused,
+    restart: () => unused,
+    stop: () => unused,
+    destroy: () => unused,
     logs: unusedFn,
     followLogs: () => Stream.empty,
   };

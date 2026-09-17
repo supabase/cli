@@ -17,8 +17,8 @@ const STATUS_CAPABILITIES = [
 
 const STATUS_FIXTURE = {
   id: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-  lifecycle: "stopped",
-  desiredLifecycle: "stopped",
+  lifecycle: "running",
+  desiredLifecycle: "running",
   runtime: { kind: "native" },
   endpoints: {
     api: {
@@ -36,6 +36,17 @@ const STATUS_FIXTURE = {
     activation: "lazy",
     state: name === "rest" ? "dormant" : "disabled",
   })),
+  instances: [
+    {
+      id: "rest-instance",
+      service: "rest",
+      enabled: true,
+      intent: "started",
+      phase: "dormant",
+      activation: "lazy",
+      endpoints: [],
+    },
+  ],
   artifacts: [
     {
       workloadId: "rest:rest",
@@ -51,6 +62,7 @@ describe("public stack model", () => {
       Effect.map((status) => {
         expect(status.capabilities.map(({ name }) => name)).toEqual([...STATUS_CAPABILITIES]);
         expect(status.capabilities.find(({ name }) => name === "rest")?.state).toBe("dormant");
+        expect(status.instances).toEqual(STATUS_FIXTURE.instances);
         expect(status.artifacts).toEqual([
           { workloadId: "rest:rest", capability: "rest", state: "downloading" },
         ]);

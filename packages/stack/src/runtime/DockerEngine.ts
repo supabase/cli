@@ -18,7 +18,9 @@ const containerFormat = [
   "{{json .Names}}",
   jsonLabel(CONTAINER_LABEL_KEYS.stackId),
   jsonLabel(CONTAINER_LABEL_KEYS.ownerSessionId),
+  jsonLabel(CONTAINER_LABEL_KEYS.instanceId),
   jsonLabel(CONTAINER_LABEL_KEYS.workloadId),
+  jsonLabel(CONTAINER_LABEL_KEYS.recipeId),
   jsonLabel(CONTAINER_LABEL_KEYS.startup),
   jsonLabel(CONTAINER_LABEL_KEYS.role),
   "{{json .State}}",
@@ -33,6 +35,7 @@ const networkFormat = [
 const volumeFormat = [
   "{{json .Name}}",
   jsonLabel(CONTAINER_LABEL_KEYS.stackId),
+  jsonLabel(CONTAINER_LABEL_KEYS.instanceId),
   jsonLabel(CONTAINER_LABEL_KEYS.workloadId),
   jsonLabel(CONTAINER_LABEL_KEYS.role),
 ].join("\\t");

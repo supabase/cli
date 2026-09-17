@@ -1,11 +1,13 @@
 import { Crypto, Effect, FileSystem, Path, PlatformError } from "effect";
 import { StackPreparationError } from "../public/Errors.ts";
-import { resolveStackPaths } from "../state/Paths.ts";
+import { resolveServiceInstancePaths, resolveStackPaths } from "../state/Paths.ts";
 import type { StackId } from "../public/StackId.ts";
+import type { ServiceInstanceId } from "../public/ServiceInstanceId.ts";
 
 export interface RuntimeEnvFileOwner {
   /** Writes one workload file and returns its exact owned path. */
   readonly write: (input: {
+    readonly instanceId: ServiceInstanceId;
     readonly workloadId: string;
     readonly values: Readonly<Record<string, string>>;
   }) => Effect.Effect<string, StackPreparationError>;
@@ -55,7 +57,7 @@ export const encodeRuntimeEnvFile = (
 };
 
 /**
- * Owns container env files under `<stack>/runtime/env`. Native workloads use
+ * Owns container env files under `<stack>/runtime/instances/<instance>/env`. Native workloads use
  * their fd4 environment and never pass through this owner.
  */
 export const makeRuntimeEnvFileOwner = (
@@ -72,15 +74,22 @@ export const makeRuntimeEnvFileOwner = (
     const paths = yield* resolveStackPaths(options).pipe(
       Effect.mapError((cause) => error("Unable to resolve runtime environment path", { cause })),
     );
-    const envRoot = path.join(paths.runtime, "env");
-
+    const envRoot = path.join(paths.runtime, "instances");
     const write = (input: {
+      readonly instanceId: ServiceInstanceId;
       readonly workloadId: string;
       readonly values: Readonly<Record<string, string>>;
     }): Effect.Effect<string, StackPreparationError> => {
       if (!validWorkloadId(input.workloadId))
         return Effect.fail(error("Invalid runtime environment workload identity"));
       return Effect.gen(function* () {
+        const instancePaths = yield* resolveServiceInstancePaths(paths, input.instanceId).pipe(
+          Effect.provideService(Path.Path, path),
+          Effect.mapError((cause) =>
+            error("Unable to resolve runtime environment path", { cause }),
+          ),
+        );
+        const envRoot = path.join(instancePaths.runtime, "env");
         const text = yield* encodeRuntimeEnvFile(input.values);
         const target = path.join(envRoot, `${encodeWorkloadId(input.workloadId)}.env`);
         const token = yield* crypto.randomUUIDv4.pipe(

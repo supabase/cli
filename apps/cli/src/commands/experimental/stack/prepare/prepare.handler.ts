@@ -1,5 +1,9 @@
 import { Cause, Effect, Exit, Option } from "effect";
-import type { PrepareStackResult, StackRuntimePreference } from "@supabase/stack/effect";
+import type {
+  PrepareStackResult,
+  ServiceInstanceId,
+  StackRuntimePreference,
+} from "@supabase/stack/effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { OutputFlag } from "../../../../command-internal/global-flags.ts";
 import { CommandSettings } from "../../../../config/command-settings.service.ts";
@@ -17,14 +21,14 @@ import { StackCommandPrepareError, stackPrepareError } from "./prepare.errors.ts
 
 const payload = (id: string, result: PrepareStackResult) => ({
   id,
-  capabilities: result.capabilities,
+  instances: result.instances,
 });
 const render = (id: string, result: PrepareStackResult) => {
   const lines = [`Stack ${id} prepared.`];
-  if (result.capabilities.length > 0) {
-    lines.push("Capabilities:");
-    for (const capability of result.capabilities)
-      lines.push(`  ${capability.capability} ${capability.version} (${capability.outcome})`);
+  if (result.instances.length > 0) {
+    lines.push("Instances:");
+    for (const instance of result.instances)
+      lines.push(`  ${instance.id} ${instance.service} (${instance.artifacts.length} artifacts)`);
   }
   return `${lines.join("\n")}\n`;
 };
@@ -71,22 +75,35 @@ export const stackPrepare = Effect.fn("experimental.stack.prepare")(function* (
       ),
     );
     const runtime: StackRuntimePreference | undefined = target.runtime;
-    const stack =
-      target.id !== undefined
-        ? yield* api.openStack(target.id).pipe(Effect.mapError(stackPrepareError))
-        : yield* api
-            .createStack({
+    const existing =
+      target.id === undefined
+        ? yield* api
+            .findStack({
               projectRoot: target.projectRoot,
               ...(target.name === undefined ? {} : { name: target.name }),
-              ...(runtime === undefined ? {} : { runtime }),
             })
-            .pipe(Effect.mapError(stackPrepareError));
+            .pipe(Effect.mapError(stackPrepareError))
+        : Option.some({ id: target.id });
+    const stack = Option.isSome(existing)
+      ? yield* api.openStack(existing.value.id).pipe(Effect.mapError(stackPrepareError))
+      : yield* api
+          .createStack({
+            projectRoot: target.projectRoot,
+            ...(target.name === undefined ? {} : { name: target.name }),
+            ...(runtime === undefined ? {} : { runtime }),
+            initialConfig: config,
+          })
+          .pipe(Effect.mapError(stackPrepareError));
+    const descriptors = yield* stack.services.list.pipe(Effect.mapError(stackPrepareError));
+    const selectedIds: ReadonlyArray<ServiceInstanceId> =
+      flags.capability.length === 0
+        ? descriptors.filter((descriptor) => descriptor.enabled).map((descriptor) => descriptor.id)
+        : descriptors
+            .filter((descriptor) => flags.capability.includes(descriptor.service))
+            .map((descriptor) => descriptor.id);
     const task = yield* output.task("Preparing local Supabase stack...");
     const result = yield* stack
-      .prepare({
-        config,
-        ...(flags.capability.length === 0 ? {} : { capabilities: flags.capability }),
-      })
+      .prepare(selectedIds.length === 0 ? {} : { services: selectedIds })
       .pipe(
         Effect.onExit((exit) =>
           Exit.isSuccess(exit)

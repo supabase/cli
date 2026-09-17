@@ -1,5 +1,5 @@
 import { Crypto, Effect, Exit, FileSystem, Path, Scope, Schema } from "effect";
-import { NetworkPortSchema, PORT_FIELDS, type PortField } from "../public/Status.ts";
+import { NetworkPortSchema, type PortField } from "../public/Status.ts";
 import {
   InvalidProjectRootError,
   PortAllocationError,
@@ -20,21 +20,33 @@ import {
 } from "./StackStateStore.ts";
 import type { HeldPort, HostListener } from "../supervisor/HostListener.ts";
 
-interface ListenerIntent {
-  readonly enabled: boolean;
-  readonly address: string;
-  readonly port: "automatic" | number;
-}
-
-export type ListenerIntents = Readonly<Record<PortField, ListenerIntent>>;
-
-interface PrivatePortIntent {
+export interface PrivatePortIntent {
+  readonly instanceId: string;
   readonly workloadId: string;
   readonly binding: string;
 }
 
+/** One durable host binding requested by a stack-owned or instance-owned listener. */
+export type PublicPortIntent =
+  | {
+      readonly owner: "stack";
+      readonly binding: "api" | "api:internal";
+      readonly listenerField?: PortField;
+      readonly address: string;
+      readonly port: "automatic" | number;
+    }
+  | {
+      readonly owner: "instance";
+      readonly instanceId: string;
+      readonly binding: string;
+      readonly listenerField?: PortField;
+      readonly address: string;
+      readonly port: "automatic" | number;
+    };
+
 export interface PortReservation {
-  readonly assignments: Readonly<Partial<Record<PortField, HostPortAssignment>>>;
+  /** Keys are persisted binding keys; listener fields are retained as gateway lookup aliases. */
+  readonly assignments: Readonly<Record<string, HostPortAssignment | undefined>>;
   readonly privateAssignments: ReadonlyArray<PrivatePortAssignment>;
   readonly hostListeners: ReadonlyArray<HostListener>;
 }
@@ -57,7 +69,7 @@ export interface PortCoordinatorOptions {
 export interface PortCoordinator {
   readonly acquire: (
     stackId: string,
-    listenerIntents: ListenerIntents,
+    publicBindings: ReadonlyArray<PublicPortIntent>,
     privateBindings: ReadonlyArray<PrivatePortIntent>,
   ) => Effect.Effect<
     PortReservation,
@@ -70,7 +82,6 @@ export interface PortCoordinator {
   >;
 }
 
-const fields: ReadonlyArray<PortField> = PORT_FIELDS;
 const PORT_MIN = 20_000;
 const PORT_MAX = 32_767;
 const PORT_POOL_SIZE = PORT_MAX - PORT_MIN + 1;
@@ -79,7 +90,56 @@ const MAX_FRESH_BIND_FAILURES = 64;
 const idPattern = /^[0-9a-f]{64}$/;
 
 const assignmentMap = (assignments: ReadonlyArray<HostPortAssignment>) =>
-  new Map(assignments.map((assignment) => [assignment.field, assignment]));
+  new Map(
+    assignments.map((assignment) => [
+      assignment.owner === "stack"
+        ? `stack:${assignment.binding}`
+        : `instance:${assignment.instanceId}:${assignment.binding}`,
+      assignment,
+    ]),
+  );
+const bindingKey = (intent: PublicPortIntent): string =>
+  intent.owner === "stack"
+    ? `stack:${intent.binding}`
+    : `instance:${intent.instanceId}:${intent.binding}`;
+
+const assignmentFor = (
+  intent: PublicPortIntent,
+  port: number,
+  allocationIntent: "automatic" | "exact",
+): HostPortAssignment =>
+  intent.owner === "stack"
+    ? {
+        owner: "stack",
+        binding: intent.binding,
+        address: intent.address,
+        port,
+        intent: allocationIntent,
+      }
+    : {
+        owner: "instance",
+        instanceId: intent.instanceId,
+        binding: intent.binding,
+        address: intent.address,
+        port,
+        intent: allocationIntent,
+      };
+
+const listenerFieldFor = (intent: PublicPortIntent): PortField =>
+  intent.listenerField ??
+  (intent.owner === "stack"
+    ? "api"
+    : intent.binding === "sql"
+      ? "database"
+      : intent.binding === "pooler"
+        ? "pooler"
+        : intent.binding === "studio"
+          ? "studio"
+          : intent.binding === "smtp"
+            ? "smtp"
+            : intent.binding === "pop3"
+              ? "pop3"
+              : "functionsInspector");
 const validPort = (port: number): boolean => Schema.is(NetworkPortSchema)(port);
 const unavailable = (
   port: number,
@@ -132,7 +192,6 @@ type ForeignPublicOwner = {
   readonly stackId: string;
   readonly field: string;
   readonly intent: "automatic" | "exact";
-  readonly lifecycle: PersistedStackState["desiredLifecycle"];
 };
 type ForeignPrivateOwner = {
   readonly stackId: string;
@@ -152,7 +211,7 @@ const retryable = (error: PortUnavailableError): boolean => {
 };
 
 export const makePortCoordinator = (options: PortCoordinatorOptions): PortCoordinator => ({
-  acquire: (stackId, listenerIntents, privateBindings) =>
+  acquire: (stackId, publicBindings, privateBindings) =>
     withRegistryLock(
       options.stateRoot,
       Effect.gen(function* () {
@@ -161,11 +220,6 @@ export const makePortCoordinator = (options: PortCoordinatorOptions): PortCoordi
           return yield* new StackStateInvalidError({
             message: "Cannot acquire ports for an unconfigured stack",
           });
-        if (current.desiredLifecycle !== "running")
-          return yield* new StackStateInvalidError({
-            message: "Port acquisition requires desiredLifecycle=running",
-          });
-
         const publicOwners = new Map<number, ReadonlyArray<ForeignPublicOwner>>();
         const privateOwners = new Map<number, ForeignPrivateOwner>();
         for (const entry of yield* readAuthoritativeStates(options)) {
@@ -173,9 +227,11 @@ export const makePortCoordinator = (options: PortCoordinatorOptions): PortCoordi
           for (const assignment of entry.state.ports) {
             const owner: ForeignPublicOwner = {
               stackId: entry.stackId,
-              field: assignment.field,
+              field:
+                assignment.owner === "stack"
+                  ? assignment.binding
+                  : `${assignment.instanceId}:${assignment.binding}`,
               intent: assignment.intent,
-              lifecycle: entry.state.desiredLifecycle,
             };
             publicOwners.set(assignment.port, [
               ...(publicOwners.get(assignment.port) ?? []),
@@ -185,7 +241,7 @@ export const makePortCoordinator = (options: PortCoordinatorOptions): PortCoordi
           for (const assignment of entry.state.privatePorts)
             privateOwners.set(assignment.port, {
               stackId: entry.stackId,
-              field: `${assignment.workloadId}:${assignment.binding}`,
+              field: `${assignment.instanceId}:${assignment.workloadId}:${assignment.binding}`,
             });
         }
 
@@ -193,7 +249,14 @@ export const makePortCoordinator = (options: PortCoordinatorOptions): PortCoordi
         const existingPrivate = new Map(
           current.privatePorts.map((entry) => [privateBindingKey(entry), entry]),
         );
-        const retainedPublic = new Map<PortField, HostPortAssignment>();
+        const requestedPublic = new Map<string, PublicPortIntent>();
+        for (const intent of publicBindings) {
+          const key = bindingKey(intent);
+          if (requestedPublic.has(key))
+            return yield* allocation(intent.binding, "Duplicate public listener binding");
+          requestedPublic.set(key, intent);
+        }
+        const retainedPublic = new Map<string, HostPortAssignment>();
         const retainedPrivate = new Map<string, PrivatePortAssignment>();
         const hardClaims = new Map<number, string>();
         const occupied = new Set<number>();
@@ -214,9 +277,7 @@ export const makePortCoordinator = (options: PortCoordinatorOptions): PortCoordi
               `Port ${port} for ${field} is reserved by ${ownerText(privateOwner)}`,
             );
           const owners = publicOwners.get(port);
-          const conflict = owners?.find(
-            (owner) => owner.intent === "automatic" || owner.lifecycle === "running",
-          );
+          const conflict = owners?.find(() => true);
           if (conflict !== undefined)
             return unavailable(
               port,
@@ -227,35 +288,39 @@ export const makePortCoordinator = (options: PortCoordinatorOptions): PortCoordi
         };
 
         // Preseed every own retained assignment before allocating any fresh field.
-        for (const field of fields) {
-          const intent = listenerIntents[field];
-          const prior = existingPublic.get(field);
-          if (!intent.enabled || intent.port !== "automatic" || prior?.intent !== "automatic")
-            continue;
-          if (!validPort(prior.port)) return yield* unavailable(prior.port, field);
-          const foreign = foreignConflict(prior.port, field);
+        for (const intent of publicBindings) {
+          if (intent.port !== "automatic") continue;
+          const key = bindingKey(intent);
+          const prior = existingPublic.get(key);
+          if (prior?.intent !== "automatic") continue;
+          if (!validPort(prior.port)) return yield* unavailable(prior.port, intent.binding);
+          const foreign = foreignConflict(prior.port, intent.binding);
           if (foreign !== undefined) return yield* foreign;
-          const duplicate = claim(prior.port, field);
+          const duplicate = claim(prior.port, intent.binding);
           if (duplicate !== undefined) return yield* duplicate;
-          retainedPublic.set(field, prior);
+          retainedPublic.set(key, assignmentFor(intent, prior.port, "automatic"));
         }
         const requestedPrivate = new Map<string, PrivatePortIntent>();
         for (const intent of privateBindings) {
           const key = privateBindingKey(intent);
-          if (intent.workloadId.length === 0 || intent.binding.length === 0)
+          if (
+            intent.instanceId.length === 0 ||
+            intent.workloadId.length === 0 ||
+            intent.binding.length === 0
+          )
             return yield* allocation(
-              `${intent.workloadId}:${intent.binding}`,
+              `${intent.instanceId}:${intent.workloadId}:${intent.binding}`,
               "Private workload binding is invalid",
             );
           if (requestedPrivate.has(key))
             return yield* allocation(
-              `${intent.workloadId}:${intent.binding}`,
+              `${intent.instanceId}:${intent.workloadId}:${intent.binding}`,
               "Duplicate private workload binding",
             );
           requestedPrivate.set(key, intent);
           const prior = existingPrivate.get(key);
           if (prior === undefined) continue;
-          const label = `${intent.workloadId}:${intent.binding}`;
+          const label = `${intent.instanceId}:${intent.workloadId}:${intent.binding}`;
           if (!validPort(prior.port)) return yield* unavailable(prior.port, label);
           const foreign = foreignConflict(prior.port, label);
           if (foreign !== undefined) return yield* foreign;
@@ -263,16 +328,16 @@ export const makePortCoordinator = (options: PortCoordinatorOptions): PortCoordi
           if (duplicate !== undefined) return yield* duplicate;
           retainedPrivate.set(key, prior);
         }
-        const exactAssignments = new Map<PortField, HostPortAssignment>();
-        for (const field of fields) {
-          const intent = listenerIntents[field];
-          if (!intent.enabled || intent.port === "automatic") continue;
-          if (!validPort(intent.port)) return yield* unavailable(intent.port, field);
-          const foreign = foreignConflict(intent.port, field);
+        const exactAssignments = new Map<string, HostPortAssignment>();
+        for (const intent of publicBindings) {
+          if (intent.port === "automatic") continue;
+          const key = bindingKey(intent);
+          if (!validPort(intent.port)) return yield* unavailable(intent.port, intent.binding);
+          const foreign = foreignConflict(intent.port, intent.binding);
           if (foreign !== undefined) return yield* foreign;
-          const duplicate = claim(intent.port, field);
+          const duplicate = claim(intent.port, intent.binding);
           if (duplicate !== undefined) return yield* duplicate;
-          exactAssignments.set(field, { field, port: intent.port, intent: "exact" });
+          exactAssignments.set(key, assignmentFor(intent, intent.port, "exact"));
         }
         for (const port of publicOwners.keys()) occupied.add(port);
         for (const port of privateOwners.keys()) occupied.add(port);
@@ -330,43 +395,38 @@ export const makePortCoordinator = (options: PortCoordinatorOptions): PortCoordi
                 Effect.gen(function* () {
                   const privateScope = yield* Scope.fork(attemptScope, "sequential");
                   const assignments: HostPortAssignment[] = [];
-                  const byField: Partial<Record<PortField, HostPortAssignment>> = {};
+                  const byBinding: Record<string, HostPortAssignment> = {};
                   const listeners: HostListener[] = [];
-                  for (const field of fields) {
-                    const intent = listenerIntents[field];
-                    if (!intent.enabled) continue;
-                    const retained = retainedPublic.get(field);
-                    const exact = exactAssignments.get(field);
+                  for (const intent of publicBindings) {
+                    const key = bindingKey(intent);
+                    const retained = retainedPublic.get(key);
+                    const exact = exactAssignments.get(key);
                     const assignment = retained ?? exact;
                     if (assignment !== undefined) {
                       const listener = yield* options
-                        .bindHost(intent.address, assignment.port, field)
+                        .bindHost(intent.address, assignment.port, listenerFieldFor(intent))
                         .pipe(Effect.provideService(Scope.Scope, attemptScope));
                       assignments.push(assignment);
-                      byField[field] = assignment;
-                      listeners.push(listener);
+                      byBinding[key] = assignment;
+                      listeners.push({ ...listener, routeKey: key });
                       occupied.add(assignment.port);
                       continue;
                     }
-                    const fresh = yield* allocateFresh(field, (port) =>
+                    const fresh = yield* allocateFresh(intent.binding, (port) =>
                       options
-                        .bindHost(intent.address, port, field)
+                        .bindHost(intent.address, port, listenerFieldFor(intent))
                         .pipe(Effect.provideService(Scope.Scope, attemptScope)),
                     );
-                    const assignmentFresh: HostPortAssignment = {
-                      field,
-                      port: fresh.port,
-                      intent: "automatic",
-                    };
+                    const assignmentFresh = assignmentFor(intent, fresh.port, "automatic");
                     assignments.push(assignmentFresh);
-                    byField[field] = assignmentFresh;
-                    listeners.push(fresh.value);
+                    byBinding[key] = assignmentFresh;
+                    listeners.push({ ...fresh.value, routeKey: key });
                   }
 
                   const privateAssignments: PrivatePortAssignment[] = [];
                   for (const intent of requestedPrivate.values()) {
                     const key = privateBindingKey(intent);
-                    const label = `${intent.workloadId}:${intent.binding}`;
+                    const label = `${intent.instanceId}:${intent.workloadId}:${intent.binding}`;
                     const retained = retainedPrivate.get(key);
                     if (retained !== undefined) {
                       const held = yield* options
@@ -382,6 +442,7 @@ export const makePortCoordinator = (options: PortCoordinatorOptions): PortCoordi
                         .pipe(Effect.provideService(Scope.Scope, privateScope)),
                     );
                     privateAssignments.push({
+                      instanceId: intent.instanceId,
                       workloadId: intent.workloadId,
                       binding: intent.binding,
                       port: fresh.port,
@@ -396,7 +457,22 @@ export const makePortCoordinator = (options: PortCoordinatorOptions): PortCoordi
                     privateScope,
                     next,
                     reservation: {
-                      assignments: byField,
+                      assignments: {
+                        ...byBinding,
+                        ...Object.fromEntries(
+                          assignments.flatMap((assignment) => {
+                            const field =
+                              assignment.owner === "stack"
+                                ? assignment.binding
+                                : assignment.binding === "sql"
+                                  ? "database"
+                                  : assignment.binding === "inspector"
+                                    ? "functionsInspector"
+                                    : undefined;
+                            return field === undefined ? [] : [[field, assignment]];
+                          }),
+                        ),
+                      },
                       privateAssignments,
                       hostListeners: listeners,
                     },

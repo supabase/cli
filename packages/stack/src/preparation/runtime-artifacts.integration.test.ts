@@ -22,12 +22,15 @@ import {
 import { ContainerEngineError, StackPreparationError } from "../public/Errors.ts";
 import { ContainerEngineProtocolError } from "../runtime/ContainerEngine.ts";
 import { catalogReleaseFor } from "../model/WorkloadCatalog.ts";
+import { ServiceInstanceIdSchema } from "../public/ServiceInstanceId.ts";
 
 const databaseRelease = catalogReleaseFor("database:database");
 if (databaseRelease === undefined) throw new Error("Missing default database release");
 
 const nativeWorkload = (selected: PlannedWorkload["selected"]): PlannedWorkload => ({
   id: "database:database",
+  instanceId: ServiceInstanceIdSchema.make("primary"),
+  recipeId: "database:database",
   capability: "database",
   dependencies: [],
   readiness: {},
@@ -101,6 +104,7 @@ const containerEngine = (
   removeVolume: () => Effect.void,
   createContainer: (_spec: ContainerContainerSpec) => Effect.die("unused"),
   copyToContainer: () => Effect.die("unused"),
+  execContainer: () => Effect.die("unused"),
   startContainer: () => Effect.void,
   waitContainer: () => Effect.succeed(0),
   stopContainer: () => Effect.void,

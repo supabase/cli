@@ -303,7 +303,7 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
           Effect.mapError(
             (error) =>
               new DeclarativeApplyError({
-                message: `database reset failed: ${error.message}`,
+                message: `database reset failed: ${error instanceof Error ? error.message : String(error)}`,
                 suggestion: readErrorSuggestion(error),
               }),
           ),
@@ -651,7 +651,8 @@ export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(f
           // real typed failure and reuse that one value for message, suggestion, and bundle.
           const rawResetFailure = resetFailure.success.error;
           const resetError = new DeclarativeApplyError({
-            message: rawResetFailure.message,
+            message:
+              rawResetFailure instanceof Error ? rawResetFailure.message : String(rawResetFailure),
             suggestion: readErrorSuggestion(rawResetFailure),
           });
           yield* output.raw(

@@ -206,7 +206,7 @@ export const resolveSmartTargetEndpoint = Effect.fnUntraced(function* (
       Effect.mapError(
         (error) =>
           new DeclarativeApplyError({
-            message: `database reset failed: ${error.message}`,
+            message: `database reset failed: ${error instanceof Error ? error.message : String(error)}`,
             suggestion: readErrorSuggestion(error),
           }),
       ),

@@ -40,7 +40,14 @@ import {
   noopStackCatalogSetupLayer,
   recordingStackCatalogSetup,
 } from "../../../command-internal/stack-catalog-setup.ts";
-import { CAPABILITY_NAMES, StackIdSchema, type EffectStack } from "@supabase/stack/effect";
+import {
+  CAPABILITY_NAMES,
+  StackIdSchema,
+  type EffectCreateServiceOptions,
+  type EffectServiceCollection,
+  type EffectStack,
+  type ServiceKind,
+} from "@supabase/stack/effect";
 
 const DEFAULT_FLAGS: DbStartFlags = { fromBackup: Option.none() };
 const PG_NET_CREATE_FINGERPRINT = "create extension if not exists pg_net schema extensions";
@@ -1550,6 +1557,12 @@ describe("db start stack backend", () => {
     const startConfigs: Array<unknown> = [];
     const stack: EffectStack = {
       id: STACK_ID,
+      services: {
+        create: <K extends ServiceKind>(_options: EffectCreateServiceOptions<K>) =>
+          Effect.die("unused"),
+        get: () => Effect.die("unused"),
+        list: Effect.succeed([]),
+      } satisfies EffectServiceCollection,
       status: Effect.succeed({
         id: STACK_ID,
         lifecycle: opts.databaseReady === true ? "running" : "stopped",
@@ -1563,6 +1576,7 @@ describe("db start stack backend", () => {
           state: name === "database" && opts.databaseReady === true ? "ready" : "stopped",
         })),
         artifacts: [],
+        instances: [],
       }),
       credentials: Effect.succeed({
         database: {
@@ -1577,9 +1591,9 @@ describe("db start stack backend", () => {
         },
       }),
       prepare: unusedFn,
-      start: (startOpts) =>
+      followStatus: Stream.empty,
+      start: () =>
         Effect.sync(() => {
-          startConfigs.push(startOpts?.config);
           return {
             id: STACK_ID,
             lifecycle: "running" as const,
@@ -1593,16 +1607,21 @@ describe("db start stack backend", () => {
               state: name === "database" ? ("ready" as const) : ("dormant" as const),
             })),
             artifacts: [],
+            instances: [],
           };
         }),
-      stop: unused,
-      destroy: unused,
-      resetDatabase: unused,
+      sleep: () => Effect.die("unused"),
+      stop: () => Effect.die("unused"),
+      restart: () => Effect.die("unused"),
+      destroy: () => Effect.die("unused"),
       logs: unusedFn,
       followLogs: () => Stream.empty,
     };
     const api = Layer.succeed(StackApi, {
-      createStack: () => Effect.succeed(stack),
+      createStack: (options) => {
+        startConfigs.push(options.initialConfig);
+        return Effect.succeed(stack);
+      },
       findStack: () =>
         Effect.succeed(
           opts.existing === true
@@ -1687,7 +1706,7 @@ describe("db start stack backend", () => {
       yield* dbStart(DEFAULT_FLAGS).pipe(
         Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"), stack.api)),
       );
-      expect(stack.startConfigs).toEqual([undefined]);
+      expect(stack.startConfigs).toEqual([]);
       expect(catalogApplied).toEqual([]);
       expect(out.stderrText).not.toContain("Applying migration");
     });
@@ -1705,12 +1724,7 @@ describe("db start stack backend", () => {
       yield* dbStart(DEFAULT_FLAGS).pipe(
         Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"), stack.api)),
       );
-      expect(stack.startConfigs).toHaveLength(1);
-      expect(stack.startConfigs[0]).toMatchObject({
-        capabilities: {
-          rest: { enabled: false },
-        },
-      });
+      expect(stack.startConfigs).toEqual([]);
       expect(catalogApplied).toEqual([{ kind: "live", analytics: false }]);
       expect(out.stderrText).toContain("Applying migration 20240101000000_dogfood.sql");
     });

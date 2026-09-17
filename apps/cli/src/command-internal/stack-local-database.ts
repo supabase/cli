@@ -29,6 +29,8 @@ import { migrateAndSeed } from "./migrate-and-seed.ts";
 const stackDatabaseConn = (stack: EffectStack) =>
   Effect.gen(function* () {
     const credentials = yield* stack.credentials;
+    if (credentials.database === undefined)
+      return yield* Effect.fail({ message: "stack database credentials are unavailable" });
     const conn = parseConnectionString(Redacted.value(credentials.database.url));
     if (conn === undefined)
       return yield* Effect.fail({ message: "failed to parse stack database URL" });
@@ -178,20 +180,6 @@ export const stackOpenReadyProject = stackOpenProjectBy((cause) => notRunning(ca
   ),
 );
 
-export const stackProjectRuntime: Effect.Effect<StackRuntime | undefined, never, CommandSettings> =
-  Effect.gen(function* () {
-    const api = yield* Effect.serviceOption(StackApi);
-    if (Option.isNone(api)) return undefined;
-    const cliSettings = yield* CommandSettings;
-    const descriptor = yield* api.value
-      .findStack({ projectRoot: cliSettings.workdir })
-      .pipe(Effect.orElseSucceed(() => Option.none()));
-    return Option.match(descriptor, {
-      onNone: () => undefined,
-      onSome: (value) => value.runtime,
-    });
-  });
-
 export class StackRuntimeUnavailableError extends Data.TaggedError("StackRuntimeUnavailableError")<{
   readonly message: string;
   readonly suggestion?: string;
@@ -279,6 +267,7 @@ const stackLocalDatabaseUrl: Effect.Effect<string, LocalDbRunningError, CommandS
     const credentials = yield* opened.value.stack.credentials.pipe(
       Effect.mapError((cause) => notRunning(cause.message)),
     );
+    if (credentials.database === undefined) return yield* notRunning();
     return Redacted.value(credentials.database.url);
   });
 
@@ -336,14 +325,15 @@ export const stackEnsurePostgresOnlyStarted = Effect.gen(function* () {
   if (Option.isNone(existing) || existing.value.desiredLifecycle === "unconfigured") {
     const stack = Option.isNone(existing)
       ? yield* api.value
-          .createStack({ projectRoot: cliSettings.workdir })
+          .createStack({
+            projectRoot: cliSettings.workdir,
+            initialConfig: postgresOnlyStackStartConfig(config),
+          })
           .pipe(Effect.mapError(startFailed))
       : yield* api.value.openStack(existing.value.id).pipe(Effect.mapError(startFailed));
     if (stack.dockerFallbackNotice !== undefined)
       yield* output.raw(`${stack.dockerFallbackNotice}\n`, "stderr");
-    yield* stack
-      .start({ config: postgresOnlyStackStartConfig(config) })
-      .pipe(Effect.mapError(startFailed));
+    yield* stack.start().pipe(Effect.mapError(startFailed));
     yield* applyCatalog(stack);
     yield* applyStackMigrateAndSeed(stack, cliSettings.workdir, toml, experimental).pipe(
       Effect.mapError(startFailedAfterEngine),

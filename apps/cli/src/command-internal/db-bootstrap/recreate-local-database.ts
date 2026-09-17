@@ -221,7 +221,8 @@ const RESET_RECREATE_DATABASES_STATEMENTS = [
  * statements. Roles are not dropped here since they are cluster-level entities — use stop then
  * start instead.
  */
-const resetRecreateDatabases = Effect.fnUntraced(function* (session: DbSession) {
+/** Recreates the two project databases in an existing managed Postgres instance. */
+export const resetRecreateDatabases = Effect.fnUntraced(function* (session: DbSession) {
   yield* resetDisconnectClients(session);
   for (const [index, statement] of RESET_RECREATE_DATABASES_STATEMENTS.entries()) {
     yield* session.exec(statement).pipe(

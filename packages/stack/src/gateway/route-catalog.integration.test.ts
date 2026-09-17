@@ -1,7 +1,8 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect } from "effect";
-import { compileStack } from "../model/Compiler.ts";
+import { Effect, Path } from "effect";
+import { compileStack, seedServiceRegistry } from "../model/Compiler.ts";
+import { createExecutionPlan } from "../model/ExecutionPlan.ts";
 import { routeCatalogFor, type GatewayRouteCatalog } from "./RouteCatalog.ts";
 
 const material = {
@@ -18,7 +19,18 @@ const catalogFixture = () =>
       runtime: { kind: "native" },
       config: { capabilities: { pooler: { enabled: true } } },
     });
-    return routeCatalogFor(compiled.executionPlan, material);
+    const seeded = yield* seedServiceRegistry(
+      compiled.definition,
+      {
+        projectRoot: "/tmp/route-catalog",
+        runtime: { kind: "native" },
+        path: yield* Path.Path,
+      },
+      compiled.sourceConfig,
+      compiled.secrets,
+    );
+    const plan = yield* createExecutionPlan({ kind: "native" }, seeded.registry);
+    return routeCatalogFor(plan, material);
   });
 
 const routeFor = (

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { Effect } from "effect";
 
 import { bundleServeMainTemplate } from "./serve-main-bundler.ts";
 import { buildServeEntrypointCommand } from "./serve.ts";
@@ -16,7 +17,7 @@ describe("buildServeEntrypointCommand", () => {
   });
 
   it("keeps the spawned command short even with the real bundled template", async () => {
-    const bundled = await bundleServeMainTemplate();
+    const bundled = await Effect.runPromise(bundleServeMainTemplate);
     const script = buildServeEntrypointCommand(["edge-runtime", "start"]);
     expect(bundled.length).toBeGreaterThan(20_000);
     expect(script.length).toBeLessThan(128);

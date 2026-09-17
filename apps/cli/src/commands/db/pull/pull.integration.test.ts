@@ -56,6 +56,7 @@ import type { DbRemoteCommitFlags } from "../remote/commit/commit.command.ts";
 import type { DbPullFlags } from "./pull.command.ts";
 import { dbPull } from "./pull.handler.ts";
 import { runDbPull } from "../../../command-internal/db-pull-run.ts";
+import { stackApiLayer } from "../../../command-internal/stack-api.ts";
 
 const alwaysReadyHttpClientLayer = Layer.succeed(
   HttpClient.HttpClient,
@@ -456,6 +457,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     }),
     Layer.succeed(CliArgs, { args: opts.args ?? [] }),
     mockRuntimeInfo(),
+    stackApiLayer.pipe(Layer.provideMerge(BunServices.layer)),
   );
   return {
     layer: baseLayer,

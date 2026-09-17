@@ -16,6 +16,7 @@ import { CliError, CliOutput, Command } from "effect/unstable/cli";
 import {
   InvalidProjectRootError,
   StackIdSchema,
+  ServiceInstanceIdSchema,
   StackNotFoundError,
   StackOwnershipConflictError,
   StackUpgradeRequiredError,
@@ -46,6 +47,7 @@ import { textCliOutputFormatter } from "../../../../shared/output/text-formatter
 import { streamJsonOutputLayer } from "../../../../shared/output/output.layer.ts";
 
 const id = StackIdSchema.make("a".repeat(64));
+const serviceId = ServiceInstanceIdSchema.make("b".repeat(64));
 const streamResultSchema = Schema.Struct({
   type: Schema.Literal("result"),
   data: Schema.Unknown,
@@ -84,12 +86,13 @@ const status: StackStatus = {
   versions: {},
   capabilities: [],
   artifacts: [],
+  instances: [],
 };
 
 const flags = (overrides: Partial<Parameters<typeof stackLogs>[0]> = {}) => ({
   stack: Option.none<string>(),
   stackId: Option.none<string>(),
-  service: Option.none<"database" | "functions">(),
+  service: Option.none<string>(),
   tail: 100,
   follow: false,
   ...overrides,
@@ -123,15 +126,22 @@ function setup(opts: {
       credentials: Effect.die("unused"),
       prepare: () => Effect.die("unused"),
       start: () => Effect.die("must not start"),
-      stop: Effect.sync(() => void calls.stopCalls++),
-      destroy: Effect.sync(() => void calls.destroyCalls++),
-      resetDatabase: Effect.die("unused"),
+      services: {
+        create: () => Effect.die("services.create not used"),
+        get: () => Effect.die("services.get not used"),
+        list: Effect.succeed([]),
+      },
+      sleep: () => Effect.die("sleep not used"),
+      stop: () => Effect.succeed(status),
+      restart: () => Effect.die("restart not used"),
+      destroy: () => Effect.sync(() => void calls.destroyCalls++),
       logs: (query?: unknown) => {
         calls.queries.push(query);
         return (
           opts.logs?.(query) ?? Effect.succeed({ entries, cursor: { opaque: "2" }, running: false })
         );
       },
+      followStatus: Stream.empty,
       followLogs: (query?: unknown) => {
         calls.queries.push(query);
         return opts.followLogs?.(query) ?? Stream.fromIterable(entries);
@@ -260,8 +270,8 @@ describe("experimental stack logs", () => {
     return setup({}).pipe(
       Effect.flatMap((setupResult) =>
         Effect.gen(function* () {
-          yield* stackLogs(flags({ service: Option.some("database"), tail: 2 }));
-          expect(setupResult.calls.queries).toEqual([{ capabilities: ["database"], tail: 2 }]);
+          yield* stackLogs(flags({ service: Option.some(serviceId), tail: 2 }));
+          expect(setupResult.calls.queries).toEqual([{ services: [serviceId], tail: 2 }]);
           expect(setupResult.calls.opened).toEqual([id]);
           expect(setupResult.out.stdoutText).toContain("database ready");
           expect(setupResult.out.stdoutText).toContain("function failed");

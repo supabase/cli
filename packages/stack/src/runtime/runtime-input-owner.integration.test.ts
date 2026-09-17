@@ -1,819 +1,380 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Option, Path, Redacted, Schema } from "effect";
-import { generateKeyPairSync } from "node:crypto";
-import { compileStack, type CompiledStack } from "../model/Compiler.ts";
-import { StackPreparationError } from "../public/Errors.ts";
+import { Cause, Deferred, Effect, Exit, Fiber, FileSystem, Option, Path, Schema } from "effect";
+import { AuthModule } from "../model/capabilities/auth.ts";
 import { StackIdSchema } from "../public/StackId.ts";
-import type { StackRuntime } from "../public/Runtime.ts";
+import { ServiceInstanceIdSchema } from "../public/ServiceInstanceId.ts";
+import { StackPreparationError } from "../public/Errors.ts";
+import { PersistedServiceInstanceSchema } from "../model/ServiceRegistry.ts";
+import type { PersistedServiceInstance } from "../model/ServiceRegistry.ts";
 import type { PersistedStackState } from "../state/StackState.ts";
-import { resolveSecrets } from "../state/SecretStore.ts";
 import { makeRuntimeInputOwner } from "./RuntimeInputOwner.ts";
-import { resolveContainerResolutionFor } from "./WorkloadRuntimeSpec.ts";
 
 const stackId = StackIdSchema.make("f".repeat(64));
-const jsonSchema = Schema.fromJsonString(Schema.Unknown);
 
-const encodeJson = (value: unknown): string => Schema.encodeSync(jsonSchema)(value);
-const decodeJson = (value: string): unknown => Schema.decodeSync(jsonSchema)(value);
-const decodeJwks = (value: string): { readonly keys: ReadonlyArray<unknown> } =>
-  Schema.decodeUnknownSync(Schema.Struct({ keys: Schema.Array(Schema.Unknown) }))(
-    decodeJson(value),
-  );
-
-const withPlatform = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  Effect.scoped(effect).pipe(Effect.provide(NodeServices.layer));
-
-const identityFor = (projectRoot: string): PersistedStackState["identity"] => ({
-  projectRoot,
-  branchContext: "ordinary-workspace",
-  stackName: "runtime-input-owner",
-});
-
-const stateFor = (
-  root: string,
-  compiled: CompiledStack,
-  secrets: PersistedStackState["secrets"],
-  runtime: StackRuntime = { kind: "native" },
-): PersistedStackState => ({
-  format: "supabase-stack-state-v1",
-  identity: identityFor(root),
-  runtime,
-  desiredLifecycle: "stopped",
-  definition: compiled.definition,
+const stateFor = (root: string): PersistedStackState => ({
+  format: "supabase-stack-state-v2",
+  identity: { projectRoot: root, branchContext: "test", stackName: "runtime-input-owner" },
+  runtime: { kind: "native" },
+  preparation: "on-demand",
+  security: {
+    jwt: {
+      issuer: null,
+      expirySeconds: 3600,
+      signing: { kind: "symmetric", secret: { slot: "secret:auth.jwt" } },
+    },
+  },
+  listeners: {},
+  registry: { initialized: true, instances: [], defaultInstanceIds: {} },
   ports: [],
   privatePorts: [],
-  secrets,
+  secrets: { "secret:auth.jwt": { policy: "managed", value: "auth-jwt" } },
 });
-
-const compiledState = (root: string, config: Parameters<typeof compileStack>[0]["config"] = {}) =>
-  Effect.gen(function* () {
-    const compiled = yield* compileStack({
-      projectRoot: root,
-      runtime: { kind: "native" },
-      config,
-    });
-    const resolved = yield* resolveSecrets(
-      { declarations: compiled.secrets },
-      undefined,
-      "stopped",
-    );
-    return stateFor(root, compiled, resolved.persisted);
-  });
-
-const vectorFixture = () =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const root = yield* fs.makeTempDirectoryScoped({ prefix: "runtime-input-vector-" });
-    const base = yield* compiledState(root, {
-      capabilities: { analytics: { settings: {} } },
-    });
-    const state: PersistedStackState = {
-      ...base,
-      privatePorts: [{ workloadId: "analytics:vector", binding: "primary", port: 30_008 }],
-    };
-    const owner = yield* makeRuntimeInputOwner({ stateRoot: root, stackId });
-    const resolveConfigPath = () =>
-      Effect.gen(function* () {
-        const material = yield* owner.resolve(state, "analytics:vector");
-        const configPath = material.analytics?.vectorConfigPath;
-        if (configPath === undefined) return yield* Effect.die("Vector config path is missing");
-        return configPath;
-      });
-    return { fs, owner, resolveConfigPath };
-  });
 
 const errorOf = <E>(exit: Exit.Exit<unknown, E>): E | undefined =>
   Exit.isFailure(exit) ? Option.getOrUndefined(Cause.findErrorOption(exit.cause)) : undefined;
 
+const authInstance = (id: string, settings: unknown): PersistedServiceInstance =>
+  Schema.decodeUnknownSync(PersistedServiceInstanceSchema)({
+    id: ServiceInstanceIdSchema.make(id),
+    service: "auth",
+    intent: "stopped",
+    dependencies: { database: ServiceInstanceIdSchema.make("database") },
+    resources: {},
+    revisions: { config: 0, intent: 0 },
+    pendingOperation: null,
+    initialization: null,
+    initializationInputs: null,
+    data: { origin: "absent" },
+    config: {
+      enabled: true,
+      activation: "eager",
+      idleTimeoutSeconds: false,
+      version: "test",
+      settings,
+      endpoints: {},
+    },
+  });
+
+const authSettings = (issuer: string, templatePath?: string) =>
+  nullify({
+    ...AuthModule.defaultSettings,
+    email: {
+      ...AuthModule.defaultSettings.email,
+      template:
+        templatePath === undefined
+          ? {}
+          : { confirm: { subject: "Confirm", content_path: templatePath } },
+    },
+    third_party: {
+      ...AuthModule.defaultSettings.third_party,
+      workos: { enabled: true, issuer_url: issuer },
+    },
+  });
+
+const nullify = (value: unknown): unknown => {
+  if (value === undefined) return null;
+  if (Array.isArray(value)) return value.map(nullify);
+  if (typeof value === "object" && value !== null)
+    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, nullify(entry)]));
+  return value;
+};
+
+const analyticsBackend = "postgres" as const;
+const analyticsSettings = {
+  backend: analyticsBackend,
+  gcp_project_id: "local",
+  gcp_project_number: "0",
+  gcp_jwt_path: "",
+  api_key: { slot: "secret:analytics.api_key" },
+};
+
 describe("runtime input owner", () => {
-  it.live("resolves contained regular files and rejects escapes, symlinks, and directories", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "runtime-input-files-" });
-        const outside = yield* fs.makeTempDirectoryScoped({ prefix: "runtime-input-outside-" });
-        yield* fs.makeDirectory(path.join(root, "nested"), { recursive: true });
-        yield* fs.writeFileString(path.join(root, "nested", "config.json"), "{}");
-        yield* fs.writeFileString(path.join(outside, "secret.json"), "secret");
-        yield* fs.symlink(path.join(outside, "secret.json"), path.join(root, "linked.json"));
-        const owner = yield* makeRuntimeInputOwner({ stateRoot: root, stackId });
-        const state = yield* compiledState(root);
-        const canonicalRoot = yield* fs.realPath(root);
-        expect(yield* owner.resolveProjectFile(state, "nested/config.json")).toBe(
-          path.join(canonicalRoot, "nested", "config.json"),
-        );
-        for (const configured of ["/etc/passwd", "../outside.json", "linked.json"] as const) {
-          const failed = yield* owner.resolveProjectFile(state, configured).pipe(Effect.exit);
-          expect(Exit.isFailure(failed)).toBe(true);
-        }
-        const directory = yield* owner.resolveProjectFile(state, "nested").pipe(Effect.exit);
-        expect(Exit.isFailure(directory)).toBe(true);
-      }),
-    ),
+  it.live("resolves a contained regular file and rejects escapes, symlinks, and directories", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "runtime-input-files-" });
+      const outside = yield* fs.makeTempDirectoryScoped({ prefix: "runtime-input-outside-" });
+      yield* fs.makeDirectory(path.join(root, "nested"), { recursive: true });
+      yield* fs.writeFileString(path.join(root, "nested", "config.json"), "{}");
+      yield* fs.writeFileString(path.join(outside, "secret.json"), "secret");
+      yield* fs.symlink(path.join(outside, "secret.json"), path.join(root, "linked.json"));
+      const owner = yield* makeRuntimeInputOwner({ stateRoot: root, stackId });
+      const state = stateFor(root);
+      const canonicalRoot = yield* fs.realPath(root);
+      expect(yield* owner.resolveProjectFile(state, "nested/config.json")).toBe(
+        path.join(canonicalRoot, "nested", "config.json"),
+      );
+      for (const configured of ["/etc/passwd", "../outside.json", "linked.json"] as const) {
+        const result = yield* owner.resolveProjectFile(state, configured).pipe(Effect.exit);
+        expect(Exit.isFailure(result)).toBe(true);
+      }
+      const directory = yield* owner.resolveProjectFile(state, "nested").pipe(Effect.exit);
+      expect(Exit.isFailure(directory)).toBe(true);
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.live("returns all private local keys and a public-only JWKS", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "runtime-input-jwks-" });
-        const first = generateKeyPairSync("ec", { namedCurve: "prime256v1" }).privateKey.export({
-          format: "jwk",
-        });
-        const second = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({
-          format: "jwk",
-        });
-        yield* fs.writeFileString(
-          path.join(root, "keys.json"),
-          encodeJson([
-            { ...first, alg: "ES256", kid: "ec-key" },
-            { ...second, alg: "RS256", kid: "rsa-key" },
-          ]),
-        );
-        const base = yield* compiledState(root, {
-          capabilities: {
-            auth: {
-              settings: {
-                third_party: {
-                  workos: { enabled: true, issuer_url: "https://issuer.example" },
-                },
-              },
-            },
-          },
-        });
-        if (base.definition === undefined) return yield* Effect.die("compiled definition missing");
-        const state: PersistedStackState = {
-          ...base,
-          definition: {
-            ...base.definition,
-            security: {
-              ...base.definition.security,
-              jwt: {
-                ...base.definition.security.jwt,
-                signing: { kind: "jwks-file", path: "keys.json" },
-              },
-            },
-          },
-        };
-        const owner = yield* makeRuntimeInputOwner({
-          stateRoot: root,
-          stackId,
-          fetchJson: (url) =>
-            Effect.succeed(
-              url.endsWith("openid-configuration")
-                ? { jwks_uri: "https://issuer.example/keys" }
-                : { keys: [{ kty: "RSA", n: "n", e: "AQAB" }] },
-            ),
-        });
-        const material = yield* owner.resolve(state, "auth:auth");
-        expect(decodeJson(material.auth?.jwtKeys ?? "[]")).toHaveLength(2);
-        const jwks = decodeJwks(material.auth?.jwks ?? '{"keys":[]}');
-        expect(jwks.keys).toHaveLength(3);
-        expect(
-          jwks.keys.every(
-            (key) => typeof key === "object" && key !== null && !Object.hasOwn(key, "d"),
-          ),
-        ).toBe(true);
-      }),
-    ),
+  it.live("rejects a missing configured project file with a typed preparation error", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "runtime-input-missing-" });
+      const owner = yield* makeRuntimeInputOwner({ stateRoot: root, stackId });
+      const result = yield* owner
+        .resolveProjectFile(stateFor(root), "missing.json")
+        .pipe(Effect.exit);
+      const error = errorOf(result);
+      expect(error).toMatchObject({ _tag: "StackPreparationError" });
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.live("rejects a JWKS file when any configured key is invalid", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "runtime-input-jwks-invalid-" });
-        const valid = generateKeyPairSync("ec", { namedCurve: "prime256v1" }).privateKey.export({
-          format: "jwk",
-        });
-        yield* fs.writeFileString(
-          path.join(root, "keys.json"),
-          encodeJson([
-            { ...valid, alg: "ES256" },
-            { kty: "EC", alg: "ES256", d: "bad" },
-          ]),
-        );
-        const base = yield* compiledState(root);
-        if (base.definition === undefined) return yield* Effect.die("compiled definition missing");
-        const state: PersistedStackState = {
-          ...base,
-          definition: {
-            ...base.definition,
-            security: {
-              ...base.definition.security,
-              jwt: {
-                ...base.definition.security.jwt,
-                signing: { kind: "jwks-file", path: "keys.json" },
-              },
-            },
-          },
-        };
-        const owner = yield* makeRuntimeInputOwner({ stateRoot: root, stackId });
-        const failed = yield* owner.resolve(state, "auth:auth").pipe(Effect.exit);
-        expect(Exit.isFailure(failed)).toBe(true);
-      }),
-    ),
-  );
-
-  it.live("merges injected third-party keys with the canonical symmetric key", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "runtime-input-oidc-" });
-        const state = yield* compiledState(root, {
-          capabilities: {
-            auth: {
-              settings: {
-                third_party: { firebase: { enabled: true, project_id: "demo" } },
-              },
-            },
-          },
-        });
-        const requested: string[] = [];
-        const owner = yield* makeRuntimeInputOwner({
-          stateRoot: root,
-          stackId,
-          fetchJson: (url) =>
-            Effect.sync(() => {
-              requested.push(url);
-              return url.endsWith("openid-configuration")
-                ? { jwks_uri: "https://issuer.example/keys" }
-                : { keys: [{ kty: "RSA", n: "n", e: "AQAB" }] };
-            }),
-        });
-        const material = yield* owner.resolve(state, "auth:auth");
-        expect(requested).toEqual([
-          "https://securetoken.google.com/demo/.well-known/openid-configuration",
-          "https://issuer.example/keys",
-        ]);
-        expect(decodeJwks(material.auth?.jwks ?? '{"keys":[]}').keys).toHaveLength(2);
-      }),
-    ),
-  );
-
-  it.live("publishes the persisted symmetric JWT secret as an oct JWK", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const root = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped({
-          prefix: "runtime-input-symmetric-",
-        });
-        const state = yield* compiledState(root, {
-          capabilities: {
-            auth: { settings: { jwt_secret: Redacted.make("symmetric-secret") } },
-          },
-        });
-        const owner = yield* makeRuntimeInputOwner({ stateRoot: root, stackId });
-        const jwks = decodeJwks(
-          (yield* owner.resolve(state, "auth:auth")).auth?.jwks ?? '{"keys":[]}',
-        );
-        expect(jwks.keys).toEqual([
-          {
-            kty: "oct",
-            alg: "HS256",
-            use: "sig",
-            key_ops: ["verify"],
-            k: "c3ltbWV0cmljLXNlY3JldA",
-          },
-        ]);
-      }),
-    ),
-  );
-
-  it.live("skips JWT file and OIDC resolution when every JWT consumer is disabled", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "runtime-input-no-jwt-" });
-        const base = yield* compiledState(root);
-        if (base.definition === undefined) return yield* Effect.die("compiled definition missing");
-        const definition = base.definition;
-        const state: PersistedStackState = {
-          ...base,
-          definition: {
-            ...definition,
-            capabilities: {
-              ...definition.capabilities,
-              rest: { ...definition.capabilities.rest, enabled: false },
-              auth: { ...definition.capabilities.auth, enabled: false },
-              realtime: { ...definition.capabilities.realtime, enabled: false },
-              storage: { ...definition.capabilities.storage, enabled: false },
-              functions: { ...definition.capabilities.functions, enabled: false },
-            },
-            security: {
-              ...definition.security,
-              jwt: {
-                ...definition.security.jwt,
-                signing: { kind: "jwks-file", path: "missing.json" },
-              },
-            },
-          },
-        };
-        const owner = yield* makeRuntimeInputOwner({
-          stateRoot: root,
-          stackId,
-          fetchJson: () => Effect.die("OIDC fetch should not run"),
-        });
-        const material = yield* owner.resolve(state, "auth:auth");
-        expect(material.auth).toBeUndefined();
-      }),
-    ),
-  );
-
-  it.live("resolves only material needed by the requested workload", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const root = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped({
-          prefix: "runtime-input-workload-scope-",
-        });
-        const state = yield* compiledState(root, {
-          capabilities: {
-            auth: {
-              settings: {
-                third_party: {
-                  workos: { enabled: true, issuer_url: "https://issuer.example" },
-                },
-              },
-            },
-          },
-        });
-        const owner = yield* makeRuntimeInputOwner({
-          stateRoot: root,
-          stackId,
-          fetchJson: () => Effect.fail(new StackPreparationError({ message: "OIDC unavailable" })),
-        });
-        const database = yield* owner.resolve(state, "database:database");
-        expect(database.auth).toBeUndefined();
-        const auth = yield* owner.resolve(state, "auth:auth").pipe(Effect.exit);
-        expect(Exit.isFailure(auth)).toBe(true);
-      }),
-    ),
-  );
-
-  it.live("creates the configured Functions root only for mounted workloads", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "runtime-input-functions-root-" });
-        const compiled = yield* compileStack({
-          projectRoot: root,
-          runtime: { kind: "container", engine: "docker" },
-          config: {
-            capabilities: {
-              functions: { enabled: true },
-              studio: { enabled: true },
-            },
-          },
-        });
-        const resolved = yield* resolveSecrets(
-          { declarations: compiled.secrets },
-          undefined,
-          "stopped",
-        );
-        const state = stateFor(root, compiled, resolved.persisted, {
-          kind: "container",
-          engine: "docker",
-        });
-        const withPrivatePorts: PersistedStackState = {
-          ...state,
-          privatePorts: [
-            { workloadId: "database:database", binding: "primary", port: 30_001 },
-            { workloadId: "functions:edge-runtime", binding: "primary", port: 30_002 },
-            { workloadId: "functions:edge-runtime", binding: "inspector", port: 30_004 },
-            { workloadId: "studio:studio", binding: "primary", port: 30_003 },
-          ],
-        };
-        const functionsRoot = compiled.definition?.capabilities.functions.settings.functions_root;
-        if (functionsRoot === undefined || functionsRoot === null)
-          return yield* Effect.die("Compiled Functions root is missing");
-        const owner = yield* makeRuntimeInputOwner({ stateRoot: root, stackId });
-        yield* owner.resolve(withPrivatePorts, "database:database");
-        expect(yield* fs.exists(functionsRoot)).toBe(false);
-
-        const functionsMaterial = yield* owner.resolve(withPrivatePorts, "functions:edge-runtime");
-        const functions = compiled.executionPlan.workloads.find(
-          ({ id }) => id === "functions:edge-runtime",
-        );
-        if (functions === undefined) return yield* Effect.die("Functions workload is missing");
-        const functionsResolution = yield* resolveContainerResolutionFor(
-          withPrivatePorts,
-          functions,
-          functionsMaterial,
-        );
-        expect(yield* fs.exists(functionsRoot)).toBe(true);
-        expect(functionsResolution?.mounts[0]?.source).toBe(functionsRoot);
-
-        yield* fs.remove(functionsRoot, { recursive: true, force: true });
-        expect(yield* fs.exists(functionsRoot)).toBe(false);
-        const studioMaterial = yield* owner.resolve(withPrivatePorts, "studio:studio");
-        const studio = compiled.executionPlan.workloads.find(({ id }) => id === "studio:studio");
-        if (studio === undefined) return yield* Effect.die("Studio workload is missing");
-        const studioResolution = yield* resolveContainerResolutionFor(
-          withPrivatePorts,
-          studio,
-          studioMaterial,
-        );
-        expect(yield* fs.exists(functionsRoot)).toBe(true);
-        expect(studioResolution?.mounts[0]?.source).toBe(functionsRoot);
-      }),
-    ),
-  );
-
-  it.live("resolves JWT material when Auth is disabled but Rest remains enabled", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const root = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped({
-          prefix: "runtime-input-rest-jwt-",
-        });
-        const base = yield* compiledState(root);
-        if (base.definition === undefined) return yield* Effect.die("compiled definition missing");
-        const state: PersistedStackState = {
-          ...base,
-          definition: {
-            ...base.definition,
-            capabilities: {
-              ...base.definition.capabilities,
-              auth: { ...base.definition.capabilities.auth, enabled: false },
-            },
-          },
-        };
-        const owner = yield* makeRuntimeInputOwner({ stateRoot: root, stackId });
-        const material = yield* owner.resolve(state, "rest:rest");
-        expect(material.auth?.jwks).toContain('"kty":"oct"');
-      }),
-    ),
-  );
-
-  it.live("fails when REST needs signing keys from a missing JWKS file", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const root = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped({
-          prefix: "runtime-input-rest-jwt-missing-",
-        });
-        const base = yield* compiledState(root, {
-          capabilities: {
-            auth: { enabled: false },
-            rest: { enabled: true },
-          },
-          security: { jwt: { signing: { kind: "jwks-file", path: "missing.json" } } },
-        });
-        if (base.definition === undefined) return yield* Effect.die("compiled definition missing");
-        expect(base.definition.capabilities.auth.enabled).toBe(false);
-        expect(base.definition.capabilities.rest.enabled).toBe(true);
-        const owner = yield* makeRuntimeInputOwner({ stateRoot: root, stackId });
-        const failed = yield* owner.resolve(base, "rest:rest").pipe(Effect.exit);
-        expect(Exit.isFailure(failed)).toBe(true);
-        expect(errorOf(failed)).toBeInstanceOf(StackPreparationError);
-        expect(errorOf(failed)?.message).toContain("Unable to resolve Auth signing keys");
-      }),
-    ),
-  );
-
-  it.live("sanitizes OIDC URL labels in transport failures", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const root = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped({
-          prefix: "runtime-input-oidc-secret-",
-        });
-        const state = yield* compiledState(root, {
-          capabilities: {
-            auth: {
-              settings: {
-                third_party: {
-                  workos: {
-                    enabled: true,
-                    issuer_url: "https://issuer.example/tenant?token=secret-token#fragment",
-                  },
-                },
-              },
-            },
-          },
-        });
-        const owner = yield* makeRuntimeInputOwner({
-          stateRoot: root,
-          stackId,
-          fetchJson: () => Effect.fail(new StackPreparationError({ message: "transport failure" })),
-        });
-        const failed = yield* owner.resolve(state, "auth:auth").pipe(Effect.exit);
-        const error = errorOf(failed);
-        expect(error?.message).toContain("OIDC discovery request failed");
-        expect(encodeJson(error)).not.toContain("secret-token");
-        expect(encodeJson(error)).not.toContain("fragment");
-      }),
-    ),
-  );
-
-  it.live("fails closed on malformed or empty third-party OIDC responses", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "runtime-input-oidc-invalid-" });
-        const state = yield* compiledState(root, {
-          capabilities: {
-            auth: {
-              settings: {
-                third_party: { workos: { enabled: true, issuer_url: "https://issuer.example" } },
-              },
-            },
-          },
-        });
-        const owner = yield* makeRuntimeInputOwner({
-          stateRoot: root,
-          stackId,
-          fetchJson: (url) =>
-            Effect.succeed(
-              url.endsWith("openid-configuration")
-                ? { jwks_uri: "https://issuer.example/keys" }
-                : { keys: [] },
-            ),
-        });
-        const failed = yield* owner.resolve(state, "auth:auth").pipe(Effect.exit);
-        expect(errorOf(failed)?.message).toContain("contains no keys");
-      }),
-    ),
-  );
-
-  it.live("provides readable Vector config retaining runtime environment placeholders", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const { fs, resolveConfigPath } = yield* vectorFixture();
-
-        const configPath = yield* resolveConfigPath();
-
-        const configText = yield* fs.readFileString(configPath);
-        const config = yield* Effect.try(() => Bun.YAML.parse(configText));
-        expect(config).toMatchObject({
-          api: { address: "${VECTOR_API_ADDRESS}" },
-          sinks: {
-            analytics: {
-              uri: "${LOGFLARE_URL}/logs?source_name=postgres.logs",
-              request: { headers: { "x-api-key": "${LOGFLARE_PRIVATE_ACCESS_TOKEN}" } },
-            },
-          },
-        });
-      }),
-    ),
-  );
-
-  it.live("removes the returned Vector config file on cleanup", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const { fs, owner, resolveConfigPath } = yield* vectorFixture();
-        const configPath = yield* resolveConfigPath();
-
-        expect(yield* fs.exists(configPath)).toBe(true);
-
-        yield* owner.cleanupAll;
-
-        expect(yield* fs.exists(configPath)).toBe(false);
-      }),
-    ),
-  );
-
-  it.live("recreates readable Vector config after cleanup", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const { fs, owner, resolveConfigPath } = yield* vectorFixture();
-        const firstConfigPath = yield* resolveConfigPath();
-
-        yield* owner.cleanupAll;
-        expect(yield* fs.exists(firstConfigPath)).toBe(false);
-
-        const configPath = yield* resolveConfigPath();
-        const config = yield* fs.readFileString(configPath);
-
-        const parsed = yield* Effect.try(() => Bun.YAML.parse(config));
-        expect(parsed).toMatchObject({
-          api: { address: "${VECTOR_API_ADDRESS}" },
-          sinks: {
-            analytics: {
-              uri: "${LOGFLARE_URL}/logs?source_name=postgres.logs",
-            },
-          },
-        });
-      }),
-    ),
-  );
-
-  it.live("shares OIDC material across JWT-consuming workloads", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const root = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped({
-          prefix: "runtime-input-auth-shared-",
-        });
-        let fetches = 0;
-        const state = yield* compiledState(root, {
-          capabilities: {
-            auth: {
-              settings: {
-                third_party: { workos: { enabled: true, issuer_url: "https://issuer.example" } },
-              },
-            },
-          },
-        });
-        const owner = yield* makeRuntimeInputOwner({
-          stateRoot: root,
-          stackId,
-          fetchJson: (url) => {
-            fetches += 1;
-            return Effect.succeed(
-              url.endsWith("openid-configuration")
-                ? { jwks_uri: "https://issuer.example/keys" }
-                : { keys: [{ kty: "RSA", n: "n", e: "AQAB" }] },
-            );
-          },
-        });
-        const restMaterial = yield* owner.resolve(state, "rest:rest");
-        const cachedRestMaterial = yield* owner.resolve(state, "rest:rest");
-        const realtimeMaterial = yield* owner.resolve(state, "realtime:realtime");
-        expect(fetches).toBe(2);
-        expect(cachedRestMaterial.auth?.jwks).toBe(restMaterial.auth?.jwks);
-        expect(restMaterial.auth?.jwks).toBe(realtimeMaterial.auth?.jwks);
-        expect(restMaterial.analytics).toBeUndefined();
-        expect(realtimeMaterial.analytics).toBeUndefined();
-        const changedState = yield* compiledState(root, {
-          capabilities: {
-            auth: {
-              settings: {
-                third_party: { workos: { enabled: true, issuer_url: "https://other.example" } },
-              },
-            },
-          },
-        });
-        yield* owner.resolve(changedState, "rest:rest");
-        expect(fetches).toBe(4);
-      }),
-    ),
-  );
-
-  it.live("resolves the configured Analytics service-account file without copying it", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "runtime-input-analytics-" });
-        yield* fs.writeFileString(path.join(root, "gcp.json"), "{}");
-        const state = yield* compiledState(root, {
-          capabilities: { analytics: { settings: { gcp_jwt_path: "gcp.json" } } },
-        });
-        const owner = yield* makeRuntimeInputOwner({ stateRoot: root, stackId });
-        const material = yield* owner.resolve(state, "analytics:analytics");
-        expect(material.analytics?.gcpJwtPath).toBe(
-          path.join(yield* fs.realPath(root), "gcp.json"),
-        );
-      }),
-    ),
-  );
-
-  it.live("does not resolve disabled capability inputs", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const root = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped({
-          prefix: "runtime-input-disabled-",
-        });
-        const base = yield* compiledState(root);
-        if (base.definition === undefined) return yield* Effect.die("compiled definition missing");
-        const definition = base.definition;
-        const state: PersistedStackState = {
-          ...base,
-          definition: {
-            ...definition,
-            capabilities: {
-              ...definition.capabilities,
-              analytics: {
-                ...definition.capabilities.analytics,
-                enabled: false,
+  it.live("resolves Functions secrets for instance-qualified workloads", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "runtime-input-functions-" });
+      const owner = yield* makeRuntimeInputOwner({ stateRoot: root, stackId });
+      const base = stateFor(root);
+      const instanceId = ServiceInstanceIdSchema.make("functions-extra");
+      const state: PersistedStackState = {
+        ...base,
+        registry: {
+          initialized: true,
+          defaultInstanceIds: { functions: instanceId },
+          instances: [
+            {
+              id: instanceId,
+              service: "functions",
+              intent: "stopped",
+              dependencies: {},
+              resources: {},
+              revisions: { config: 0, intent: 0 },
+              pendingOperation: null,
+              initialization: null,
+              initializationInputs: null,
+              data: { origin: "absent" },
+              config: {
+                enabled: true,
+                activation: "eager",
+                idleTimeoutSeconds: false,
+                version: "test",
                 settings: {
-                  ...definition.capabilities.analytics.settings,
-                  gcp_jwt_path: "missing.json",
-                },
-              },
-              functions: {
-                ...definition.capabilities.functions,
-                enabled: false,
-                settings: {
-                  ...definition.capabilities.functions.settings,
+                  functions_root: root,
                   edge_runtime: {
                     policy: null,
                     deno_version: null,
                     verify_jwt_default: null,
                     import_map_default: null,
-                    secrets: { SUPABASE_RESERVED: { slot: "missing" } },
+                    secrets: { CUSTOM_TOKEN: { slot: "secret:functions.token" } },
                   },
+                  inspector: null,
+                  functions: null,
                 },
+                endpoints: {},
               },
             },
-          },
-        };
-        const owner = yield* makeRuntimeInputOwner({ stateRoot: root, stackId });
-        const material = yield* owner.resolve(state, "analytics:analytics");
-        expect(material.analytics).toBeUndefined();
-        expect(material.functions).toBeUndefined();
-      }),
-    ),
+          ],
+        },
+        secrets: {
+          "secret:functions.token": { policy: "managed", value: "token-value" },
+        },
+      };
+      const material = yield* owner.resolve(state, instanceId, `${instanceId}:edge-runtime`);
+      expect(material.functions?.secrets).toEqual({ CUSTOM_TOKEN: "token-value" });
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.live("returns live Auth template mappings and rejects URL id collisions", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "runtime-input-templates-" });
-        yield* fs.writeFileString(path.join(root, "confirm.html"), "confirm");
-        const state = yield* compiledState(root, {
-          capabilities: {
-            auth: {
-              settings: {
-                email: {
-                  template: { confirm: { content_path: "confirm.html" } },
-                },
+  it.live("resolves Auth issuer and templates for the requested instance", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "runtime-input-auth-" });
+      yield* fs.writeFileString(pathJoin(root, "one.html"), "one");
+      yield* fs.writeFileString(pathJoin(root, "two.html"), "two");
+      const first = authInstance("auth-one", authSettings("https://issuer.one.test", "one.html"));
+      const second = authInstance("auth-two", authSettings("https://issuer.two.test", "two.html"));
+      const base = stateFor(root);
+      const state: PersistedStackState = {
+        ...base,
+        registry: {
+          initialized: true,
+          defaultInstanceIds: { auth: first.id },
+          instances: [first, second],
+        },
+      };
+      const requestedUrls: string[] = [];
+      const fetchJson = (url: string) =>
+        Effect.sync(() => {
+          requestedUrls.push(url);
+          if (url.includes("issuer.one")) return { jwks_uri: "https://jwks.one.test/keys" };
+          if (url.includes("issuer.two")) return { jwks_uri: "https://jwks.two.test/keys" };
+          if (url.includes("jwks.one")) return { keys: [{ kid: "one" }] };
+          return { keys: [{ kid: "two" }] };
+        });
+      const owner = yield* makeRuntimeInputOwner({ stateRoot: root, stackId, fetchJson });
+      const secondMaterial = yield* owner.resolve(state, second.id, `${second.id}:auth`);
+      const firstMaterial = yield* owner.resolve(state, first.id, `${first.id}:auth`);
+      const secondJwks = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
+        secondMaterial.auth?.jwks ?? "{}",
+      );
+      const firstJwks = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
+        firstMaterial.auth?.jwks ?? "{}",
+      );
+      expect(secondJwks).toMatchObject({ keys: expect.arrayContaining([{ kid: "two" }]) });
+      expect(firstJwks).toMatchObject({ keys: expect.arrayContaining([{ kid: "one" }]) });
+      expect(secondMaterial.auth?.templates?.[0]?.path).toBe("two.html");
+      expect(firstMaterial.auth?.templates?.[0]?.path).toBe("one.html");
+      expect(requestedUrls.filter((url) => url.includes("issuer.one"))).toHaveLength(1);
+      expect(requestedUrls.filter((url) => url.includes("issuer.two"))).toHaveLength(1);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("keeps shared materialization alive when its creator waiter is interrupted", () =>
+    Effect.gen(function* () {
+      const root = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped({
+        prefix: "runtime-input-singleflight-",
+      });
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      let calls = 0;
+      const fetchJson = (url: string) =>
+        Effect.gen(function* () {
+          calls += 1;
+          if (url.includes("issuer.singleflight")) {
+            yield* Deferred.succeed(started, undefined);
+            yield* Deferred.await(release);
+            return { jwks_uri: "https://jwks.singleflight.test/keys" } as unknown;
+          }
+          return { keys: [{ kid: "singleflight" }] } as unknown;
+        });
+      const owner = yield* makeRuntimeInputOwner({ stateRoot: root, stackId, fetchJson });
+      const instance = authInstance(
+        "auth-singleflight",
+        authSettings("https://issuer.singleflight.test"),
+      );
+      const base = stateFor(root);
+      const state: PersistedStackState = {
+        ...base,
+        registry: {
+          initialized: true,
+          defaultInstanceIds: { auth: instance.id },
+          instances: [instance],
+        },
+      };
+      const creator = yield* Effect.forkChild(
+        owner.resolve(state, instance.id, `${instance.id}:auth`),
+        { startImmediately: true },
+      );
+      yield* Deferred.await(started);
+      const joiner = yield* Effect.forkChild(
+        owner.resolve(state, instance.id, `${instance.id}:auth`),
+        { startImmediately: true },
+      );
+      yield* Fiber.interrupt(creator);
+      yield* Deferred.succeed(release, undefined);
+      const joined = yield* Fiber.join(joiner);
+      expect(joined.auth?.jwks).toContain("singleflight");
+      expect(calls).toBe(2);
+      const cached = yield* owner.resolve(state, instance.id, `${instance.id}:auth`);
+      expect(cached.auth?.jwks).toBe(joined.auth?.jwks);
+      expect(calls).toBe(2);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("removes a synchronously failed materialization so the next resolve retries", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "runtime-input-retry-" });
+      const instance = authInstance("auth-retry", authSettings("https://issuer.retry.test"));
+      const base = stateFor(root);
+      const state: PersistedStackState = {
+        ...base,
+        registry: {
+          initialized: true,
+          defaultInstanceIds: { auth: instance.id },
+          instances: [instance],
+        },
+      };
+      let shouldFail = true;
+      const fetchJson = (url: string) => {
+        if (shouldFail) {
+          shouldFail = false;
+          return Effect.fail(new StackPreparationError({ message: "synthetic discovery failure" }));
+        }
+        return Effect.succeed(
+          url.includes("issuer.retry")
+            ? { jwks_uri: "https://jwks.retry.test/keys" }
+            : { keys: [{ kid: "retry" }] },
+        );
+      };
+      const owner = yield* makeRuntimeInputOwner({ stateRoot: root, stackId, fetchJson });
+      const first = yield* owner
+        .resolve(state, instance.id, `${instance.id}:auth`)
+        .pipe(Effect.exit);
+      expect(errorOf(first)).toMatchObject({ _tag: "StackPreparationError" });
+      const retried = yield* owner.resolve(state, instance.id, `${instance.id}:auth`);
+      expect(retried.auth?.jwks).toContain("retry");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("writes Vector config under the requested analytics instance", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "runtime-input-vector-" });
+      const owner = yield* makeRuntimeInputOwner({ stateRoot: root, stackId });
+      const base = stateFor(root);
+      const instanceId = ServiceInstanceIdSchema.make("analytics-extra");
+      const state: PersistedStackState = {
+        ...base,
+        registry: {
+          initialized: true,
+          defaultInstanceIds: { analytics: instanceId },
+          instances: [
+            {
+              id: instanceId,
+              service: "analytics",
+              intent: "stopped",
+              dependencies: { database: ServiceInstanceIdSchema.make("database") },
+              resources: {},
+              revisions: { config: 0, intent: 0 },
+              pendingOperation: null,
+              initialization: null,
+              initializationInputs: null,
+              data: { origin: "absent" },
+              config: {
+                enabled: true,
+                activation: "lazy",
+                idleTimeoutSeconds: false,
+                version: "test",
+                settings: analyticsSettings,
+                endpoints: {},
               },
             },
-          },
-        });
-        const owner = yield* makeRuntimeInputOwner({ stateRoot: root, stackId });
-        const canonicalRoot = yield* fs.realPath(root);
-        const templates = yield* owner.resolveAuthTemplates(state);
-        expect(templates).toEqual([
+          ],
+        },
+        privatePorts: [
           {
-            id: "confirm",
-            path: "confirm.html",
-            canonicalPath: path.join(canonicalRoot, "confirm.html"),
-            extension: ".html",
+            instanceId,
+            workloadId: `${instanceId}:vector`,
+            binding: "primary",
+            port: 18_000,
           },
-        ]);
-        const collisionState = yield* compiledState(root, {
-          capabilities: {
-            auth: {
-              settings: {
-                email: {
-                  template: { welcome_notification: { content_path: "confirm.html" } },
-                  notification: { welcome: { enabled: true, content_path: "confirm.html" } },
-                },
-              },
-            },
-          },
-        });
-        const failed = yield* owner.resolveAuthTemplates(collisionState).pipe(Effect.exit);
-        expect(errorOf(failed)?.message).toContain("Duplicate Auth email template id");
-        yield* fs.writeFileString(path.join(root, "welcome"), "welcome");
-        const extensionCollisionState = yield* compiledState(root, {
-          capabilities: {
-            auth: {
-              settings: {
-                email: {
-                  template: {
-                    welcome: { content_path: "confirm.html" },
-                    "welcome.html": { content_path: "welcome" },
-                  },
-                },
-              },
-            },
-          },
-        });
-        const extensionCollision = yield* owner
-          .resolveAuthTemplates(extensionCollisionState)
-          .pipe(Effect.exit);
-        expect(errorOf(extensionCollision)?.message).toContain("Duplicate Auth email URL");
-      }),
-    ),
-  );
-
-  it.live("validates Functions Edge Runtime secrets and returns real names", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const root = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped({
-          prefix: "runtime-input-functions-",
-        });
-        const state = yield* compiledState(root, {
-          capabilities: {
-            functions: {
-              enabled: true,
-              settings: {
-                edge_runtime: { secrets: { API_TOKEN: Redacted.make("actual-value") } },
-              },
-            },
-          },
-        });
-        const owner = yield* makeRuntimeInputOwner({ stateRoot: root, stackId });
-        const material = yield* owner.resolve(state, "functions:edge-runtime");
-        expect(material.functions?.secrets).toEqual({ API_TOKEN: "actual-value" });
-        const invalid = yield* compiledState(root, {
-          capabilities: {
-            functions: {
-              enabled: true,
-              settings: {
-                edge_runtime: { secrets: { SUPABASE_TOKEN: Redacted.make("value") } },
-              },
-            },
-          },
-        });
-        const failed = yield* owner.resolve(invalid, "functions:edge-runtime").pipe(Effect.exit);
-        expect(errorOf(failed)?.message).toContain("secret name is reserved");
-      }),
-    ),
+        ],
+      };
+      const material = yield* owner.resolve(state, instanceId, `${instanceId}:vector`);
+      const expected = path.join(
+        root,
+        stackId,
+        "runtime",
+        "instances",
+        instanceId,
+        "inputs",
+        "vector",
+        "vector.yaml",
+      );
+      expect(material.analytics?.vectorConfigPath).toBe(expected);
+      expect(yield* fs.readFileString(expected)).toContain("supabase-stack-vector");
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
+
+const pathJoin = (root: string, file: string): string => `${root}/${file}`;

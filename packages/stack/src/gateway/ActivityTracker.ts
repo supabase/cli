@@ -1,12 +1,13 @@
 import { Effect } from "effect";
 import type { CapabilityName } from "../public/Capability.ts";
+import { GatewayActivationError } from "../public/Errors.ts";
 
 /** Tracks gateway work that must keep a lazy capability running. */
 export interface GatewayActivity {
   readonly track: <A, E>(
     capability: CapabilityName,
     effect: Effect.Effect<A, E>,
-  ) => Effect.Effect<A, E>;
+  ) => Effect.Effect<A, E | GatewayActivationError>;
 }
 
 export interface GatewayActivityCallbacks<Lease> {

@@ -1,12 +1,9 @@
 import { Context, Crypto, Data, Effect, FileSystem, Layer, Path, Redacted } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import {
-  schemaInit,
+  type EffectServiceInstance,
   type EffectStack,
-  type SchemaInitCapabilityName,
-  type SchemaInitTarget,
   type StackConfig,
-  type StackRuntime,
 } from "@supabase/stack/effect";
 import { Output } from "../shared/output/output.service.ts";
 import {
@@ -23,16 +20,6 @@ import {
   type SetupDatabaseOptions,
 } from "./db-bootstrap/db-setup.ts";
 import type { VaultSecret } from "./vault.ts";
-
-const PLATFORM_TRIO = [
-  "auth",
-  "storage",
-  "realtime",
-] as const satisfies ReadonlyArray<SchemaInitCapabilityName>;
-const OPTIONAL_CAPS = [
-  "analytics",
-  "pooler",
-] as const satisfies ReadonlyArray<SchemaInitCapabilityName>;
 
 export class StackCatalogSetupError extends Data.TaggedError("StackCatalogSetupError")<{
   readonly message: string;
@@ -56,116 +43,54 @@ interface LiveStackCatalogInput {
   readonly kind: "live";
   readonly stack: EffectStack;
   readonly projectRoot: string;
-  readonly config: StackConfig;
+  readonly config?: StackConfig;
 }
 
-interface EphemeralStackCatalogInput {
-  readonly kind: "ephemeral";
+interface ServiceStackCatalogInput {
+  readonly kind: "service";
+  readonly stack: EffectStack;
+  readonly service: EffectServiceInstance<"database">;
   readonly projectRoot: string;
-  readonly runtime: StackRuntime;
-  readonly config: StackConfig;
-  readonly databaseUrl: string;
-  readonly databasePassword: Redacted.Redacted<string>;
-  readonly jwtSecret?: Redacted.Redacted<string>;
-  readonly networkId?: string;
+  readonly config?: StackConfig;
 }
 
 export interface StackCatalogSetupInput {
-  readonly target: LiveStackCatalogInput | EphemeralStackCatalogInput;
+  readonly target: LiveStackCatalogInput | ServiceStackCatalogInput;
   readonly overlay: StackCatalogOverlay;
-  /** Used only for analytics/pooler one-shots. Platform trio stays on `target.config`. */
+  readonly config?: StackConfig;
   readonly optionalConfig?: StackConfig;
 }
-
-const capabilityEnabled = (config: StackConfig, name: SchemaInitCapabilityName): boolean => {
-  const cap = config.capabilities?.[name];
-  return cap === undefined || cap.enabled !== false;
-};
-
-const jwtSecretFromConfig = (config: StackConfig): Redacted.Redacted<string> | undefined => {
-  const signing = config.security?.jwt?.signing;
-  return signing?.kind === "symmetric" ? signing.secret : undefined;
-};
 
 const catalogError = (error: { readonly message: string }): StackCatalogSetupError =>
   new StackCatalogSetupError({ message: error.message, cause: error });
 
-const runSchemaInit = (names: ReadonlyArray<SchemaInitCapabilityName>, target: SchemaInitTarget) =>
-  names.length === 0 ? Effect.void : schemaInit(names, target).pipe(Effect.mapError(catalogError));
+const credentialValue = (value: string | Redacted.Redacted<string>): string =>
+  typeof value === "string" ? value : Redacted.value(value);
 
-const targetConnection = (target: LiveStackCatalogInput | EphemeralStackCatalogInput) =>
-  target.kind === "ephemeral"
-    ? Effect.succeed({
-        databaseUrl: target.databaseUrl,
-        databasePassword: target.databasePassword,
-        jwtSecret: target.jwtSecret,
-        runtime: target.runtime,
-      })
-    : Effect.gen(function* () {
-        const credentials = yield* target.stack.credentials;
-        const status = yield* target.stack.status;
-        return {
-          databaseUrl: Redacted.value(credentials.database.url),
-          databasePassword: credentials.database.password,
-          jwtSecret: jwtSecretFromConfig(target.config),
-          runtime: status.runtime,
-        };
-      }).pipe(Effect.mapError(catalogError));
+const targetConnection = (target: LiveStackCatalogInput | ServiceStackCatalogInput) =>
+  Effect.gen(function* () {
+    if (target.kind === "service") {
+      const credentials = yield* target.service.credentials;
+      if (credentials === undefined)
+        return yield* new StackCatalogSetupError({
+          message: "stack database credentials are unavailable",
+        });
+      return { databaseUrl: credentialValue(credentials.url) };
+    }
+    const credentials = yield* target.stack.credentials;
+    if (credentials.database === undefined)
+      return yield* new StackCatalogSetupError({
+        message: "stack database credentials are unavailable",
+      });
+    return { databaseUrl: Redacted.value(credentials.database.url) };
+  }).pipe(Effect.mapError(catalogError));
 
 const applyCatalog = (input: StackCatalogSetupInput) =>
   Effect.gen(function* () {
-    const output = yield* Output;
     const dbConn = yield* DbConnection;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const connection = yield* targetConnection(input.target);
-    const schemaTarget: SchemaInitTarget =
-      input.target.kind === "live"
-        ? {
-            kind: "live",
-            stackId: input.target.stack.id,
-            projectRoot: input.target.projectRoot,
-            runtime: connection.runtime,
-            config: input.target.config,
-            databaseUrl: connection.databaseUrl,
-            secrets: {
-              databasePassword: connection.databasePassword,
-              ...(connection.jwtSecret === undefined ? {} : { jwtSecret: connection.jwtSecret }),
-            },
-          }
-        : {
-            kind: "ephemeral",
-            projectRoot: input.target.projectRoot,
-            runtime: connection.runtime,
-            config: input.target.config,
-            databaseUrl: connection.databaseUrl,
-            secrets: {
-              databasePassword: connection.databasePassword,
-              ...(connection.jwtSecret === undefined ? {} : { jwtSecret: connection.jwtSecret }),
-            },
-            ...(input.target.networkId === undefined ? {} : { networkId: input.target.networkId }),
-          };
-    const config = input.target.config;
-    const failClosed = PLATFORM_TRIO.filter((name) => capabilityEnabled(config, name));
-    yield* runSchemaInit(failClosed, schemaTarget);
-    if (input.target.kind === "live") {
-      const optionalSource = input.optionalConfig ?? config;
-      const optional = OPTIONAL_CAPS.filter((name) => capabilityEnabled(optionalSource, name));
-      yield* Effect.forEach(
-        optional,
-        (name) =>
-          schemaInit([name], schemaTarget).pipe(
-            Effect.catchTag("RequiresActivatedProcessError", (error) =>
-              output.raw(
-                `WARNING: skipped ${error.capability} schema init: ${error.message}\n`,
-                "stderr",
-              ),
-            ),
-            Effect.mapError(catalogError),
-          ),
-        { discard: true },
-      );
-    }
     const conn = parseConnectionString(connection.databaseUrl);
     if (conn === undefined) {
       return yield* new StackCatalogSetupError({

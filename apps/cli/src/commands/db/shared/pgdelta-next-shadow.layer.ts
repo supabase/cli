@@ -50,8 +50,10 @@ import {
 } from "./pgdelta-next-shadow.service.ts";
 import { DeclarativeShadowDbError } from "./pgdelta.errors.ts";
 import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
+import { stackApiLayer } from "../../../command-internal/stack-api.ts";
 import {
   stackAcquireShadowDatabase,
+  stackReleaseShadowDatabase,
   stackMigrateShadow,
 } from "../../../command-internal/stack-shadow.ts";
 import { stackCatalogSetupLayer } from "../../../command-internal/stack-catalog-setup.ts";
@@ -95,25 +97,30 @@ interface NativeShadowBase {
 }
 
 interface ProvisionedMigrationsShadow extends PgDeltaNextMigrationsShadow {
-  readonly snapshotKey: string | undefined;
+  readonly snapshotLineageId: string | undefined;
 }
 
 interface ProvisionedDeclarativeShadow {
   readonly declarativeUrl: string;
   readonly restoredFromPgDataSnapshot: boolean;
-  readonly snapshotKey: string | undefined;
+  readonly snapshotLineageId: string | undefined;
 }
 
 /**
- * Bypass pg-delta's same-database guard when both shadows share one snapshot key and the
- * declarative side was restored from that tar — a cold-exported migrations handle is still
- * that tar's lineage.
+ * Bypass pg-delta's same-database guard only when the declarative side restored a validated
+ * service snapshot and both handles report the same durable snapshot lineage. Cache keys are
+ * lookup metadata and never establish database identity.
  */
 export function allowSameDatabaseIdentityForPlanShadows(opts: {
   readonly declarativeRestoredFromPgDataSnapshot: boolean;
-  readonly sameSnapshotKey: boolean;
+  readonly migrationsSnapshotLineageId: string | undefined;
+  readonly declarativeSnapshotLineageId: string | undefined;
 }): boolean {
-  return opts.declarativeRestoredFromPgDataSnapshot && opts.sameSnapshotKey;
+  return (
+    opts.declarativeRestoredFromPgDataSnapshot &&
+    opts.migrationsSnapshotLineageId !== undefined &&
+    opts.migrationsSnapshotLineageId === opts.declarativeSnapshotLineageId
+  );
 }
 
 const setupRunInput = (input: NativeShadowInput, handle: ShadowAcquiredHandle) => ({
@@ -164,7 +171,11 @@ export const pgDeltaNextShadowLayer = Layer.effect(
         Layer.succeed(CommandSettings, cliSettings),
         Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
       );
-      return Layer.mergeAll(deps, stackCatalogSetupLayer.pipe(Layer.provide(deps)));
+      return Layer.mergeAll(
+        deps,
+        stackCatalogSetupLayer.pipe(Layer.provide(deps)),
+        stackApiLayer.pipe(Layer.provide(deps)),
+      );
     };
     const runtime = runtimeWith(output);
 
@@ -198,7 +209,7 @@ export const pgDeltaNextShadowLayer = Layer.effect(
         );
         const image =
           (yield* currentStackBackend).kind === "stack"
-            ? "stack-ephemeral"
+            ? "stack"
             : yield* localInputs.resolvePostgresImage;
         // One JWKS memo shared by every input built from this base: `provisionPlan`'s two
         // shadows must hash identical JWKS bytes or their snapshot keys can never match.
@@ -268,7 +279,7 @@ export const pgDeltaNextShadowLayer = Layer.effect(
         yield* migrateNextShadowDatabase(input.spawner, setup, seamHandle);
         return {
           migrationsUrl: toPostgresURL(setup.connConfig),
-          snapshotKey: seamHandle.snapshotKey,
+          snapshotLineageId: undefined,
         } satisfies ProvisionedMigrationsShadow;
       }).pipe(Effect.provide(runtime), Effect.mapError(nextShadowError));
 
@@ -285,36 +296,40 @@ export const pgDeltaNextShadowLayer = Layer.effect(
         return {
           declarativeUrl: toPostgresURL(setup.connConfig),
           restoredFromPgDataSnapshot: handle.baselinePresent,
-          snapshotKey: handle.snapshotKey,
+          snapshotLineageId: undefined,
         } satisfies ProvisionedDeclarativeShadow;
       }).pipe(Effect.provide(runtimeWith(outputService)), Effect.mapError(nextShadowError));
 
     const stackAcquire = (input: NativeShadowInput, opts: ShadowCacheOpts) =>
       stackAcquireShadowDatabase(input.base, {
         ...(opts.bypassCache === true ? { bypassCache: true } : {}),
-        port: input.base.shadowPort,
         ...(opts.webhooks === undefined ? {} : { webhooks: opts.webhooks }),
       });
 
     const stackProvisionMigrations = (input: NativeShadowInput, opts: ShadowCacheOpts) =>
-      Effect.gen(function* () {
-        const handle = yield* stackAcquire(input, opts);
-        yield* stackMigrateShadow(handle, input.base);
-        return {
-          migrationsUrl: handle.url,
-          snapshotKey: handle.snapshotKey,
-        } satisfies ProvisionedMigrationsShadow;
-      }).pipe(Effect.provide(runtime), Effect.mapError(nextShadowError));
+      Effect.acquireUseRelease(
+        stackAcquire(input, opts),
+        (handle) =>
+          stackMigrateShadow(handle, input.base).pipe(
+            Effect.as({
+              migrationsUrl: handle.url,
+              snapshotLineageId: handle.snapshotDescriptor?.lineageId,
+            } satisfies ProvisionedMigrationsShadow),
+          ),
+        (handle) => stackReleaseShadowDatabase(handle).pipe(Effect.mapError(nextShadowError)),
+      ).pipe(Effect.provide(runtime), Effect.mapError(nextShadowError));
 
     const stackProvisionDeclarative = (input: NativeShadowInput, opts: ShadowCacheOpts) =>
-      Effect.gen(function* () {
-        const handle = yield* stackAcquire(input, opts);
-        return {
-          declarativeUrl: handle.url,
-          restoredFromPgDataSnapshot: handle.baselinePresent,
-          snapshotKey: handle.snapshotKey,
-        } satisfies ProvisionedDeclarativeShadow;
-      }).pipe(Effect.provide(runtime), Effect.mapError(nextShadowError));
+      Effect.acquireUseRelease(
+        stackAcquire(input, opts),
+        (handle) =>
+          Effect.succeed({
+            declarativeUrl: handle.url,
+            restoredFromPgDataSnapshot: handle.baselinePresent,
+            snapshotLineageId: handle.snapshotDescriptor?.lineageId,
+          } satisfies ProvisionedDeclarativeShadow),
+        (handle) => stackReleaseShadowDatabase(handle).pipe(Effect.mapError(nextShadowError)),
+      ).pipe(Effect.provide(runtime), Effect.mapError(nextShadowError));
 
     const cacheOpts = (
       opts: PgDeltaNextShadowInput,
@@ -327,22 +342,24 @@ export const pgDeltaNextShadowLayer = Layer.effect(
     return PgDeltaNextShadow.of({
       provisionMigrations: (opts) =>
         Effect.gen(function* () {
-          const port = yield* nextPort();
+          const backend = yield* currentStackBackend;
+          const port = backend.kind === "stack" ? opts.toml.shadowPort : yield* nextPort();
           const built = yield* buildNativeBase(opts);
           const input = buildNativeInput(opts, built, port);
-          const backend = yield* currentStackBackend;
           return backend.kind === "stack"
             ? yield* stackProvisionMigrations(input, cacheOpts(opts, "config"))
             : yield* provisionMigrations(input, cacheOpts(opts, "config"));
         }).pipe(Effect.mapError(nextShadowError)),
       provisionPlan: (opts) =>
         Effect.gen(function* () {
-          const migrationsPort = yield* nextPort();
-          const declarativePort = yield* nextPort(migrationsPort);
+          const backend = yield* currentStackBackend;
+          const migrationsPort =
+            backend.kind === "stack" ? opts.toml.shadowPort : yield* nextPort();
+          const declarativePort =
+            backend.kind === "stack" ? opts.toml.shadowPort : yield* nextPort(migrationsPort);
           const built = yield* buildNativeBase(opts);
           const migrationsInput = buildNativeInput(opts, built, migrationsPort);
           const declarativeInput = buildNativeInput(opts, built, declarativePort);
-          const backend = yield* currentStackBackend;
           if (backend.kind === "stack") {
             const migrations = yield* stackProvisionMigrations(
               migrationsInput,
@@ -357,9 +374,8 @@ export const pgDeltaNextShadowLayer = Layer.effect(
               declarativeUrl: declarative.declarativeUrl,
               allowSameDatabaseIdentity: allowSameDatabaseIdentityForPlanShadows({
                 declarativeRestoredFromPgDataSnapshot: declarative.restoredFromPgDataSnapshot,
-                sameSnapshotKey:
-                  migrations.snapshotKey !== undefined &&
-                  migrations.snapshotKey === declarative.snapshotKey,
+                migrationsSnapshotLineageId: migrations.snapshotLineageId,
+                declarativeSnapshotLineageId: declarative.snapshotLineageId,
               }),
             } satisfies PgDeltaNextPlanShadows;
           }
@@ -401,9 +417,8 @@ export const pgDeltaNextShadowLayer = Layer.effect(
             declarativeUrl: declarative.declarativeUrl,
             allowSameDatabaseIdentity: allowSameDatabaseIdentityForPlanShadows({
               declarativeRestoredFromPgDataSnapshot: declarative.restoredFromPgDataSnapshot,
-              sameSnapshotKey:
-                migrations.snapshotKey !== undefined &&
-                migrations.snapshotKey === declarative.snapshotKey,
+              migrationsSnapshotLineageId: migrations.snapshotLineageId,
+              declarativeSnapshotLineageId: declarative.snapshotLineageId,
             }),
           } satisfies PgDeltaNextPlanShadows;
         }).pipe(Effect.mapError(nextShadowError)),

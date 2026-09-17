@@ -1,19 +1,14 @@
 import { Data, Effect } from "effect";
 import { dirname, join } from "./serve-main-deps.ts";
 
-interface FunctionOverride {
+export interface FunctionOverride {
   readonly enabled?: boolean;
   readonly verifyJWT?: boolean;
-  readonly verify_jwt?: boolean;
   readonly entrypointPath?: string;
-  readonly entrypoint?: string;
   readonly importMapPath?: string;
-  readonly import_map?: string;
   /** Reserved `$default` field: path relative to the shared functions root. */
   readonly importMapRoot?: string;
-  readonly import_map_root?: string;
   readonly staticFiles?: ReadonlyArray<string>;
-  readonly static_files?: ReadonlyArray<string>;
   readonly env?: Readonly<Record<string, string>>;
 }
 
@@ -26,6 +21,11 @@ export interface FunctionConfig {
   readonly staticFiles: ReadonlyArray<string>;
   readonly verifyJWT: boolean;
   readonly env?: Readonly<Record<string, string>>;
+}
+
+export interface ResolvedFunctionConfig {
+  readonly slug: string;
+  readonly config: FunctionConfig;
 }
 
 interface FunctionFileInfo {
@@ -69,6 +69,12 @@ const safeRealPath = (
     Effect.map(([canonicalRoot, canonicalCandidate]) =>
       contained(canonicalRoot, canonicalCandidate),
     ),
+    Effect.orElseSucceed(() => false),
+  );
+
+const existingRealPath = (fs: FunctionFileSystem, candidate: string): Effect.Effect<boolean> =>
+  Effect.all([fs.realPath(candidate), optionalInfo(fs, candidate)], { concurrency: 2 }).pipe(
+    Effect.map(([resolved, info]) => resolved.startsWith("/") && info !== undefined),
     Effect.orElseSucceed(() => false),
   );
 
@@ -125,24 +131,32 @@ export const resolveFunctionConfig = (options: {
     const rawEntrypoint =
       override?.entrypointPath && override.entrypointPath.length > 0
         ? override.entrypointPath
-        : override.entrypoint && override.entrypoint.length > 0
-          ? override.entrypoint
-          : "index.ts";
-    if (!rawEntrypoint.startsWith("/")) {
+        : "index.ts";
+    const configuredEntrypoint = functionOverride?.entrypointPath !== undefined;
+    if (!rawEntrypoint.startsWith("/") && !configuredEntrypoint) {
       const directoryInfo = yield* optionalInfo(fs, functionDirectory);
       if (directoryInfo === undefined || !directoryInfo.isDirectory) return undefined;
       if (!(yield* safeRealPath(fs, canonicalRoot, functionDirectory))) return undefined;
     }
     const entrypointPath = relativePath(functionDirectory, rawEntrypoint);
-    if (!(yield* safeRealPath(fs, canonicalRoot, entrypointPath))) return undefined;
+    if (
+      configuredEntrypoint
+        ? !(yield* existingRealPath(fs, entrypointPath))
+        : !(yield* safeRealPath(fs, canonicalRoot, entrypointPath))
+    )
+      return undefined;
     const entrypointInfo = yield* optionalInfo(fs, entrypointPath);
-    if (entrypointInfo === undefined || !entrypointInfo.isFile || entrypointInfo.isSymbolicLink)
+    if (
+      entrypointInfo === undefined ||
+      !entrypointInfo.isFile ||
+      (!configuredEntrypoint && entrypointInfo.isSymbolicLink)
+    )
       return undefined;
 
     // Per-function import maps are relative to that function's directory; the reserved global
     // default is root-relative, so one shared map is reused by every slug.
-    const functionImportMap = functionOverride?.importMapPath ?? functionOverride?.import_map;
-    const globalImportMap = globalDefaults?.importMapRoot ?? globalDefaults?.import_map_root;
+    const functionImportMap = functionOverride?.importMapPath;
+    const globalImportMap = globalDefaults?.importMapRoot;
     let importMapPath =
       functionImportMap !== undefined
         ? relativePath(functionDirectory, functionImportMap)
@@ -150,9 +164,16 @@ export const resolveFunctionConfig = (options: {
           ? relativePath(canonicalRoot, globalImportMap)
           : relativePath(functionDirectory, "");
     if (importMapPath.length > 0) {
-      if (!(yield* safeRealPath(fs, canonicalRoot, importMapPath))) return undefined;
+      const configuredImportMap = functionImportMap !== undefined || globalImportMap !== undefined;
+      if (
+        configuredImportMap
+          ? !(yield* existingRealPath(fs, importMapPath))
+          : !(yield* safeRealPath(fs, canonicalRoot, importMapPath))
+      )
+        return undefined;
       const info = yield* optionalInfo(fs, importMapPath);
-      if (info === undefined || !info.isFile || info.isSymbolicLink) return undefined;
+      if (info === undefined || !info.isFile || (!configuredImportMap && info.isSymbolicLink))
+        return undefined;
     } else {
       for (const candidate of ["deno.json", "deno.jsonc"]) {
         const path = join(functionDirectory, candidate);
@@ -170,23 +191,32 @@ export const resolveFunctionConfig = (options: {
       }
     }
 
-    const staticFiles = (override.staticFiles ?? override.static_files ?? []).map((pattern) =>
+    const staticFiles = (override.staticFiles ?? []).map((pattern) =>
       relativePath(functionDirectory, pattern),
     );
+    const configuredStaticFiles = functionOverride?.staticFiles !== undefined;
     for (const pattern of staticFiles) {
-      if (!contained(canonicalRoot, pattern)) return undefined;
+      if (!configuredStaticFiles && !contained(canonicalRoot, pattern)) return undefined;
       const wildcardIndex = pattern.search(globPattern);
       const prefix = wildcardIndex < 0 ? pattern : pattern.slice(0, wildcardIndex);
       const searchRoot =
         wildcardIndex < 0
           ? dirname(pattern)
           : prefix.slice(0, Math.max(0, prefix.lastIndexOf("/"))) || canonicalRoot;
-      if (!(yield* rejectSymlinkDescendants(fs, canonicalRoot, searchRoot))) return undefined;
+      const staticGuardRoot =
+        configuredStaticFiles && !contained(canonicalRoot, searchRoot)
+          ? yield* fs.realPath(searchRoot).pipe(Effect.orElseSucceed(() => ""))
+          : canonicalRoot;
+      if (
+        staticGuardRoot.length === 0 ||
+        !(yield* rejectSymlinkDescendants(fs, staticGuardRoot, searchRoot))
+      )
+        return undefined;
       if (!globPattern.test(pattern)) {
         const info = yield* optionalInfo(fs, pattern);
         if (
           info !== undefined &&
-          (!(yield* safeRealPath(fs, canonicalRoot, pattern)) || info.isSymbolicLink)
+          (!(yield* safeRealPath(fs, staticGuardRoot, pattern)) || info.isSymbolicLink)
         )
           return undefined;
       }
@@ -196,9 +226,33 @@ export const resolveFunctionConfig = (options: {
       entrypointPath,
       importMapPath,
       staticFiles,
-      verifyJWT: override.verifyJWT ?? override.verify_jwt ?? true,
+      verifyJWT: override.verifyJWT ?? true,
       env: override.env,
     };
+  });
+
+/** Resolves configured and discovered functions against the current filesystem tree. */
+export const resolveFunctionConfigs = (options: {
+  readonly root: string;
+  readonly overrides: FunctionOverrides;
+  readonly fs: FunctionFileSystem;
+}): Effect.Effect<ReadonlyArray<ResolvedFunctionConfig>> =>
+  Effect.gen(function* () {
+    const discovered = yield* options.fs
+      .readDirectory(options.root)
+      .pipe(
+        Effect.catchTag("FunctionFileSystemError", () => Effect.succeed<ReadonlyArray<string>>([])),
+      );
+    const slugs = new Set<string>([
+      ...discovered,
+      ...Object.keys(options.overrides).filter((slug) => slug !== "$default"),
+    ]);
+    const result: ResolvedFunctionConfig[] = [];
+    for (const slug of slugs) {
+      const config = yield* resolveFunctionConfig({ ...options, slug });
+      if (config !== undefined) result.push({ slug, config });
+    }
+    return result;
   });
 
 const packageJsonPathFor = (config: FunctionConfig): string =>

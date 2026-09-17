@@ -246,7 +246,9 @@ describe("containerArchiveBytes", () => {
   }
 
   it("strips leading slashes into root-relative tar entries with the contractual 0644 mode", async () => {
-    const archive = await containerArchiveBytes({ "/root/index.ts": "export const x = 1;\n" });
+    const archive = await Effect.runPromise(
+      containerArchiveBytes({ "/root/index.ts": "export const x = 1;\n" }),
+    );
     expect(tarRegularFileEntries(archive)).toEqual([["root/index.ts", 0o644]]);
     const files = await new Bun.Archive(archive).files();
     expect(await files.get("root/index.ts")?.text()).toBe("export const x = 1;\n");

@@ -5,6 +5,7 @@ import type {
   StackLogEntry,
   StackLogsError as ApiStackLogsError,
 } from "@supabase/stack/effect";
+import { isServiceInstanceId } from "@supabase/stack/effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { OutputFlag } from "../../../../command-internal/global-flags.ts";
 import { CommandSettings } from "../../../../config/command-settings.service.ts";
@@ -62,7 +63,7 @@ const logsError = (
       reason: "invalid-config" as const,
     })),
     Match.tag("InvalidProjectRootError", () => ({ reason: "invalid-config" as const })),
-    Match.exhaustive,
+    Match.orElse(() => ({ reason: "unknown" as const })),
   );
   return new StackCommandLogsError({
     ...classification,
@@ -72,12 +73,14 @@ const logsError = (
 };
 
 const renderEntry = (entry: StackLogEntry) =>
-  `${entry.timestamp} ${entry.source}/${entry.stream}: ${stripControlSequences(entry.message)}\n`;
+  `${entry.timestamp} ${entry.instanceName ?? entry.instanceId ?? entry.source}/${entry.stream}: ${stripControlSequences(entry.message)}\n`;
 
 const eventForEntry = (entry: StackLogEntry, source: "history" | "live") => ({
   type: "log-entry" as const,
   timestamp: entry.timestamp,
   service: entry.source,
+  ...(entry.instanceId === undefined ? {} : { instance_id: entry.instanceId }),
+  ...(entry.instanceName === undefined ? {} : { instance_name: entry.instanceName }),
   stream: entry.stream,
   line: entry.message,
   source,
@@ -129,8 +132,19 @@ export const stackLogs = Effect.fn("experimental.stack.logs")(function* (flags: 
       return;
     }
     const stack = yield* stackApi.openStack(targetOption.value.id).pipe(Effect.mapError(logsError));
+    const requestedServiceId = Option.getOrUndefined(flags.service);
+    const serviceId =
+      requestedServiceId === undefined
+        ? undefined
+        : isServiceInstanceId(requestedServiceId)
+          ? requestedServiceId
+          : yield* new StackCommandLogsError({
+              reason: "flags",
+              message: `Invalid service instance id: ${requestedServiceId}`,
+              suggestion: "Pass a registered service instance id from `supabase stack status`.",
+            });
     const query = {
-      ...(Option.isSome(flags.service) ? { capabilities: [flags.service.value] } : {}),
+      ...(serviceId === undefined ? {} : { services: [serviceId] }),
       tail: flags.tail,
     };
     const batch = yield* stack.logs(query).pipe(Effect.mapError(logsError));
@@ -151,7 +165,7 @@ export const stackLogs = Effect.fn("experimental.stack.logs")(function* (flags: 
     yield* emitEntries("history", batch.entries);
     if (!batch.running) return;
     const followQuery = {
-      ...(Option.isSome(flags.service) ? { capabilities: [flags.service.value] } : {}),
+      ...(serviceId === undefined ? {} : { services: [serviceId] }),
       cursor: batch.cursor,
     };
     yield* stack.followLogs(followQuery).pipe(

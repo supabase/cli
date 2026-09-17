@@ -13,6 +13,7 @@ import {
   runDatabaseBootstrap,
 } from "../model/DatabaseBootstrap.ts";
 import type { PersistedStackState } from "../state/StackState.ts";
+import type { PersistedServiceInstance } from "../model/ServiceRegistry.ts";
 import { StackPreparationError } from "../public/Errors.ts";
 import { databaseBootstrapPlan } from "./DatabaseBootstrapCatalog.ts";
 
@@ -184,12 +185,15 @@ export const ensureInternalDatabase = (
 /** Runs the initial bootstrap through the durable loopback database endpoint. */
 export const bootstrapDatabaseAt = (
   state: PersistedStackState,
+  instance: PersistedServiceInstance,
 ): Effect.Effect<void, DatabaseBootstrapError | StackPreparationError> =>
   Effect.gen(function* () {
-    const plan = yield* databaseBootstrapPlan(state);
+    const plan = yield* databaseBootstrapPlan(state, instance);
     const port = state.privatePorts.find(
       (assignment) =>
-        assignment.workloadId === "database:database" && assignment.binding === "primary",
+        assignment.instanceId === instance.id &&
+        assignment.workloadId.endsWith(":database") &&
+        assignment.binding === "sql:internal",
     )?.port;
     if (port === undefined)
       return yield* new StackPreparationError({

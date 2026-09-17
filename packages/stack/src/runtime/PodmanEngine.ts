@@ -19,7 +19,9 @@ const containerFormat = [
   "{{.Names}}",
   templateLabel(CONTAINER_LABEL_KEYS.stackId),
   templateLabel(CONTAINER_LABEL_KEYS.ownerSessionId),
+  templateLabel(CONTAINER_LABEL_KEYS.instanceId),
   templateLabel(CONTAINER_LABEL_KEYS.workloadId),
+  templateLabel(CONTAINER_LABEL_KEYS.recipeId),
   templateLabel(CONTAINER_LABEL_KEYS.startup),
   templateLabel(CONTAINER_LABEL_KEYS.role),
   "{{.State}}",
@@ -34,6 +36,7 @@ const networkFormat = [
 const volumeFormat = [
   "{{.Name}}",
   templateMapLabel(CONTAINER_LABEL_KEYS.stackId),
+  templateMapLabel(CONTAINER_LABEL_KEYS.instanceId),
   templateMapLabel(CONTAINER_LABEL_KEYS.workloadId),
   templateMapLabel(CONTAINER_LABEL_KEYS.role),
 ].join("\\t");

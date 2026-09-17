@@ -52,9 +52,9 @@ Unknown capability names are rejected by the flag parser; disabled capabilities 
 The legacy `-o/--output` flag is rejected; use
 `--output-format`.
 
-Text output lists the stack ID and each prepared capability, version, and outcome (`cached`,
-`downloaded`, or `pulled`). JSON output returns `{ id, capabilities, message: "" }`. Stream-JSON
-output returns `{ type: "result", data: { id, capabilities, message: "" }, timestamp }`. Errors
+Text output lists the stack ID and each prepared service instance with its artifact count. JSON
+output returns `{ id, instances, message: "" }`. Stream-JSON output returns
+`{ type: "result", data: { id, instances, message: "" }, timestamp }`. Errors
 use typed actionability and retain package diagnostics.
 
 ## Exit codes

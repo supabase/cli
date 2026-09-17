@@ -98,6 +98,7 @@ export const stackStatusPayload = (status: StackStatus) => ({
   versions: status.versions,
   capabilities: status.capabilities,
   artifacts: status.artifacts,
+  instances: status.instances,
   ...(status.recovery === undefined ? {} : { recovery: status.recovery }),
 });
 
@@ -140,6 +141,11 @@ export const renderStackStatus = (status: StackStatus): string => {
   const dormant = status.capabilities.filter(({ state }) => state === "dormant");
   if (dormant.length > 0)
     lines.push(`Dormant capabilities: ${dormant.map(({ name }) => name).join(", ")}`);
+  if (status.instances.length > 0) {
+    lines.push("Instances:");
+    for (const instance of status.instances)
+      lines.push(`  ${instance.id} ${instance.name ?? instance.service}: ${instance.phase}`);
+  }
   lines.push(...stackStatusIssueLines(status));
   return `${lines.join("\n")}\n`;
 };

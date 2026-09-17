@@ -1,5 +1,6 @@
 import { createContext, SourceTextModule } from "node:vm";
 import { describe, expect, it } from "@effect/vitest";
+import { Effect } from "effect";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { bundleServeMainTemplate } from "./serve-main-bundler.ts";
 
@@ -114,7 +115,7 @@ const baseEnv = (config: string) => ({
 
 describe("CLI functions bootstrap bundle", () => {
   it("fails startup for missing URL and malformed required config", async () => {
-    const bundle = await bundleServeMainTemplate();
+    const bundle = await Effect.runPromise(bundleServeMainTemplate);
     const config = JSON.stringify({
       hello: {
         entrypointPath: "hello/index.ts",
@@ -140,7 +141,7 @@ describe("CLI functions bootstrap bundle", () => {
   });
 
   it("authenticates and forwards request, environment, and worker options", async () => {
-    const bundle = await bundleServeMainTemplate();
+    const bundle = await Effect.runPromise(bundleServeMainTemplate);
     const config = JSON.stringify({
       hello: {
         entrypointPath: "hello/index.ts",
@@ -184,7 +185,7 @@ describe("CLI functions bootstrap bundle", () => {
   });
 
   it("rejects an invalid token", async () => {
-    const bundle = await bundleServeMainTemplate();
+    const bundle = await Effect.runPromise(bundleServeMainTemplate);
     const config = JSON.stringify({
       hello: {
         entrypointPath: "hello/index.ts",
@@ -204,7 +205,7 @@ describe("CLI functions bootstrap bundle", () => {
   });
 
   it("retains non-abort handler failures", async () => {
-    const bundle = await bundleServeMainTemplate();
+    const bundle = await Effect.runPromise(bundleServeMainTemplate);
     const metricError = new Error("metrics unavailable");
     const loaded = await load(
       bundle,
@@ -225,7 +226,7 @@ describe("CLI functions bootstrap bundle", () => {
     [InvalidWorkerResponse, 500, "WORKER_ERROR"],
     [WorkerRequestCancelled, 546, "WORKER_LIMIT"],
   ] as const)("maps %s worker failure to the runtime response", async (ErrorType, status, code) => {
-    const bundle = await bundleServeMainTemplate();
+    const bundle = await Effect.runPromise(bundleServeMainTemplate);
     const config = JSON.stringify({
       hello: {
         entrypointPath: "hello/index.ts",
@@ -254,7 +255,7 @@ describe("CLI functions bootstrap bundle", () => {
   });
 
   it("does not fetch after an aborted pending worker creation", async () => {
-    const bundle = await bundleServeMainTemplate();
+    const bundle = await Effect.runPromise(bundleServeMainTemplate);
     const config = JSON.stringify({
       hello: {
         entrypointPath: "hello/index.ts",
@@ -314,7 +315,7 @@ describe("CLI functions bootstrap bundle", () => {
         verifyJWT: true,
       },
     });
-    const bundle = await bundleServeMainTemplate();
+    const bundle = await Effect.runPromise(bundleServeMainTemplate);
     const worker = { fetch: async () => new Response("ok") };
     const injected = await load(
       bundle,
@@ -365,7 +366,7 @@ describe("CLI functions bootstrap bundle", () => {
   });
 
   it("uses package discovery when package.json is present or lstat reports NotFound", async () => {
-    const bundle = await bundleServeMainTemplate();
+    const bundle = await Effect.runPromise(bundleServeMainTemplate);
     const config = JSON.stringify({
       hello: {
         entrypointPath: "hello/index.ts",

@@ -8,6 +8,7 @@ import {
   Path,
   Predicate,
   Schema,
+  Schedule,
   Scope,
 } from "effect";
 import { NodeSocketServer } from "@effect/platform-node";
@@ -258,6 +259,38 @@ export const ownerLockExists = (
         Effect.mapError((error) => stateError(`Unable to inspect owner lock: ${error.message}`)),
       );
   });
+
+/** Waits for one owner session to release, accepting a successor publication. */
+export const waitForOwnerRelease = (
+  stateRoot: string,
+  stackId: StackId | string,
+  environment: Pick<StackRuntimeEnvironmentValue, "platform" | "tempRoot">,
+  ownerSessionId?: string,
+): Effect.Effect<
+  void,
+  StackOwnershipConflictError | StackStateInvalidError,
+  FileSystem.FileSystem | Path.Path
+> =>
+  Effect.gen(function* () {
+    const metadata = yield* readOwnerMetadata(stateRoot, stackId, environment);
+    // A successor may publish its session before the retiring owner disappears.
+    if (
+      metadata !== undefined &&
+      (ownerSessionId === undefined || metadata.ownerSessionId === ownerSessionId)
+    )
+      return yield* new StackOwnershipConflictError({
+        message: "Supervisor ownership lease is still held",
+      });
+    if (metadata === undefined && (yield* ownerLockExists(stateRoot, stackId)))
+      return yield* new StackOwnershipConflictError({
+        message: "Supervisor ownership lease is still held",
+      });
+  }).pipe(
+    Effect.retry({
+      schedule: Schedule.spaced("25 millis").pipe(Schedule.upTo({ times: 200 })),
+      while: (error) => Predicate.isTagged(error, "StackOwnershipConflictError"),
+    }),
+  );
 
 /**
  * Publishes metadata through a sibling temporary file and same-directory

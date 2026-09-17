@@ -8,8 +8,22 @@ export const isRecord = (value: unknown): value is Readonly<Record<string, unkno
   typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** Returns one capability's persisted settings without applying defaults. */
-export const settingsFor = (state: PersistedStackState, capability: CapabilityName): unknown =>
-  state.definition?.capabilities[capability].settings;
+const settingsFor = (state: PersistedStackState, capability: CapabilityName): unknown =>
+  state.registry.instances.find(
+    (instance) =>
+      instance.id === state.registry.defaultInstanceIds[capability] &&
+      instance.service === capability,
+  )?.config.settings;
+
+/** Returns one instance's materialized settings without substituting another instance. */
+export const settingsForInstance = (
+  state: PersistedStackState,
+  instanceId: string,
+  capability: CapabilityName,
+): unknown =>
+  state.registry.instances.find(
+    (instance) => instance.id === instanceId && instance.service === capability,
+  )?.config.settings;
 
 /** Resolves a persisted secret slot to the value supplied to a workload. */
 export const secret = (state: PersistedStackState, slot: string): string =>
@@ -100,7 +114,10 @@ export const validateMaterializedSecrets = (
   };
   const names = capability === undefined ? CAPABILITY_NAMES : [capability];
   for (const name of names) {
-    const settings = state.definition?.capabilities[name]?.settings;
+    const settings = state.registry.instances.find(
+      (instance) =>
+        instance.id === state.registry.defaultInstanceIds[name] && instance.service === name,
+    )?.config.settings;
     const failure = visit(settings, `${name}.settings`);
     if (failure !== undefined) return Effect.fail(failure);
   }

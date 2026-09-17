@@ -38,6 +38,9 @@
     "!apps/cli/src/commands/vanity-subdomains/**",
     "!apps/cli/src/commands/whoami/**",
     "!apps/cli/src/shared/compute/**",
+    "!apps/cli/src/shared/functions/deploy.ts",
+    "!apps/cli/src/shared/functions/serve.ts",
+    "!apps/cli/src/shared/functions/serve-main-bundler.ts",
     // Last match wins across the whole list: keep bare re-exclusions after every
     // `!` entry that would otherwise re-include them.
     "apps/cli/src/shared/compute/stacks/**",

@@ -9,7 +9,7 @@
  * invocation only, emitted by its own handler after calling this function.
  */
 
-import { Data, Effect, FileSystem, Option, Path } from "effect";
+import { Cause, Data, Effect, Exit, FileSystem, Option, Path, Redacted } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { detectGitBranch } from "../../shared/git/git-branch.ts";
@@ -28,22 +28,22 @@ import {
 } from "../../shared/telemetry/error-actionability.ts";
 import { aqua, yellow } from "../colors.ts";
 import { CommandSettings } from "../../config/command-settings.service.ts";
-import { checkDbToml, loadProjectEnv, readDbToml } from "../db-config.toml-read.ts";
-import { DbConnection } from "../db-connection.service.ts";
+import {
+  checkDbToml,
+  loadProjectEnv,
+  readDbToml,
+  type DbTomlValues,
+} from "../db-config.toml-read.ts";
+import { DbConnection, type PgConnInput } from "../db-connection.service.ts";
 import { loadLocalProjectContext } from "../local-project-context.ts";
 import { migrateAndSeed } from "../migrate-and-seed.ts";
 import { hasConfiguredBuckets, seedBucketsRun } from "../seed-buckets.ts";
 import { awaitStorageReady } from "./await-storage-ready.ts";
 import { resolveResetSeedConfig } from "./db-setup.ts";
-import { buildLocalDbContainerInputs } from "./local-container-inputs.ts";
 import { isLocalDbRunning } from "./local-db-running.ts";
-import { recreateLocalDatabase } from "./recreate-local-database.ts";
+import { recreateLocalDatabase, resetRecreateDatabases } from "./recreate-local-database.ts";
 import { currentStackBackend } from "../stack-backend.ts";
-import {
-  optionalCatalogConfigFromStatus,
-  stackLocalDatabaseConn,
-  stackOpenReadyProject,
-} from "../stack-local-database.ts";
+import { optionalCatalogConfigFromStatus, stackOpenReadyProject } from "../stack-local-database.ts";
 import {
   classifyStorageCapability,
   describeStorageCapability,
@@ -53,6 +53,173 @@ import {
 } from "../stack-storage.ts";
 import { loadStackConfig } from "../stack-config.ts";
 import { StackCatalogSetup } from "../stack-catalog-setup.ts";
+import {
+  buildLocalDbContainerInputs,
+  type LocalDbContainerInputs,
+} from "./local-container-inputs.ts";
+import { shadowRunInputFromLocalContainerInputs } from "./shadow-database.ts";
+import { stackWithShadowDatabase } from "../stack-shadow.ts";
+import type { EffectStack, ServiceInstanceId, StackRuntime } from "@supabase/stack/effect";
+import {
+  nativeHostClientPathPrepend,
+  requireHostPostgresClient,
+  rewriteDumpHostForToolContainer,
+  streamHostCommand,
+} from "../postgres-client.run.ts";
+import { DockerRun } from "../docker-run.service.ts";
+import { RESERVED_ROLES, toDumpEnv } from "../pg-dump.env.ts";
+import { parseConnectionString } from "../db-config.parse.ts";
+import { splitAndTrim } from "../sql-split.ts";
+
+const stackCredential = (value: string | Redacted.Redacted<string>): string =>
+  typeof value === "string" ? value : Redacted.value(value);
+
+const CREATE_ROLE_STATEMENT =
+  /^\s*(?:(?:--[^\r\n]*(?:\r\n|\r|\n|$))|(?:\/\*[\s\S]*?\*\/\s*))*CREATE\s+(?:ROLE|USER)\s+(?:"((?:[^"]|"")*)"|([A-Za-z_][A-Za-z0-9_$]*))/i;
+const managedRolePatterns = RESERVED_ROLES.map((pattern) => new RegExp(`^${pattern}$`));
+
+const roleNamesToReset = (sql: string): ReadonlyArray<string> => {
+  const names: Array<string> = [];
+  for (const statement of splitAndTrim(sql)) {
+    const match = CREATE_ROLE_STATEMENT.exec(statement);
+    const quoted = match?.[1];
+    const unquoted = match?.[2];
+    const name = quoted === undefined ? unquoted?.toLowerCase() : quoted.replaceAll('""', '"');
+    if (name !== undefined && !managedRolePatterns.some((pattern) => pattern.test(name)))
+      names.push(name);
+  }
+  return [...new Set(names)];
+};
+
+const readRoleNamesToReset = Effect.fnUntraced(function* (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  workdir: string,
+) {
+  const rolesPath = path.join(workdir, "supabase", "roles.sql");
+  const exists = yield* fs
+    .exists(rolesPath)
+    .pipe(Effect.mapError((cause) => resetFailed(`failed to check roles.sql: ${cause.message}`)));
+  if (!exists) return [];
+  const sql = yield* fs
+    .readFileString(rolesPath)
+    .pipe(Effect.mapError((cause) => resetFailed(`failed to read roles.sql: ${cause.message}`)));
+  return roleNamesToReset(sql);
+});
+
+const dropRole = (name: string): string => `DROP ROLE IF EXISTS "${name.replaceAll('"', '""')}"`;
+
+/** Shell script that streams a plain logical dump into the target database. */
+export const restoreStackLogicalBaselineScript = (): string =>
+  [
+    "set -euo pipefail",
+    'pg_dump --format=plain | PGPASSWORD="$TARGET_PASSWORD" PGHOST="$TARGET_HOST" PGPORT="$TARGET_PORT" PGUSER="$TARGET_USER" PGDATABASE="$TARGET_DATABASE" psql --no-password --no-psqlrc -v ON_ERROR_STOP=1',
+  ].join("\n");
+
+/** Runs a plain logical dump from the baseline instance directly into the primary endpoint. */
+const restoreStackLogicalBaseline = Effect.fnUntraced(function* (input: {
+  readonly source: PgConnInput;
+  readonly target: PgConnInput;
+  readonly image: string;
+  readonly majorVersion: number;
+  readonly runtime: StackRuntime;
+  readonly platform: string;
+  readonly extraHosts: ReadonlyArray<string>;
+  readonly projectEnvValues: Readonly<Record<string, string>>;
+}) {
+  const script = restoreStackLogicalBaselineScript();
+  const env = {
+    ...toDumpEnv(input.source),
+    TARGET_HOST: input.target.host,
+    TARGET_PORT: String(input.target.port),
+    TARGET_USER: input.target.user,
+    TARGET_PASSWORD: input.target.password,
+    TARGET_DATABASE: input.target.database,
+  };
+  if (input.runtime.kind === "native") {
+    const pathPrepend = yield* nativeHostClientPathPrepend("pg_dump", {
+      major: input.majorVersion,
+    });
+    yield* requireHostPostgresClient("pg_dump", input.majorVersion, pathPrepend).pipe(
+      Effect.mapError((cause) =>
+        resetFailed(`failed to prepare PostgreSQL client: ${cause.message}`),
+      ),
+    );
+    yield* requireHostPostgresClient("psql", input.majorVersion, pathPrepend).pipe(
+      Effect.mapError((cause) =>
+        resetFailed(`failed to prepare PostgreSQL client: ${cause.message}`),
+      ),
+    );
+    const result = yield* streamHostCommand({
+      command: "bash",
+      args: ["-c", script, "--"],
+      env,
+      pathPrepend,
+      onStdout: () => Effect.void,
+      teeStderr: true,
+    }).pipe(
+      Effect.mapError((cause) =>
+        resetFailed(`failed to restore stack database baseline: ${cause.message}`),
+      ),
+    );
+    if (result.exitCode !== 0)
+      return yield* Effect.fail(
+        new ResetLocalDbFailedError({
+          message: `failed to restore stack database baseline: exit ${result.exitCode}${result.stderr.trim().length > 0 ? `: ${result.stderr.trim()}` : ""}`,
+        }),
+      );
+    return;
+  }
+  const docker = yield* DockerRun;
+  const source = {
+    ...input.source,
+    host: rewriteDumpHostForToolContainer(input.source.host, {
+      platform: input.platform,
+      usesHostNetwork: true,
+    }),
+  };
+  const target = {
+    ...input.target,
+    host: rewriteDumpHostForToolContainer(input.target.host, {
+      platform: input.platform,
+      usesHostNetwork: true,
+    }),
+  };
+  const dockerEnv = {
+    ...toDumpEnv(source),
+    TARGET_HOST: target.host,
+    TARGET_PORT: String(target.port),
+    TARGET_USER: target.user,
+    TARGET_PASSWORD: target.password,
+    TARGET_DATABASE: target.database,
+  };
+  const result = yield* docker
+    .runStream(
+      {
+        image: input.image,
+        cmd: ["bash", "-c", script, "--"],
+        env: dockerEnv,
+        binds: [],
+        workingDir: Option.none(),
+        securityOpt: [],
+        extraHosts: input.extraHosts,
+        network: { _tag: "host" },
+        projectEnvValues: input.projectEnvValues,
+      },
+      { onStdout: () => Effect.void, teeStderr: true },
+    )
+    .pipe(
+      Effect.mapError((cause) =>
+        resetFailed(`failed to restore stack database baseline: ${cause.message}`),
+      ),
+    );
+  if (result.exitCode !== 0)
+    return yield* Effect.fail(
+      new ResetLocalDbFailedError({
+        message: `failed to restore stack database baseline: exit ${result.exitCode}${result.stderr.trim().length > 0 ? `: ${result.stderr.trim()}` : ""}`,
+      }),
+    );
+});
 
 /** The local database container is not running. */
 class ResetLocalDbNotRunningError extends Data.TaggedError("ResetLocalDbNotRunningError")<{
@@ -100,6 +267,239 @@ const suggestionOf = (error: unknown): string | undefined =>
     ? error.suggestion
     : undefined;
 
+const resumeDependents = (stack: EffectStack, ids: ReadonlyArray<ServiceInstanceId>) =>
+  stack.start({ services: ids }).pipe(
+    Effect.asVoid,
+    Effect.mapError((cause) =>
+      resetFailed(`failed to resume dependent instances [${ids.join(", ")}]: ${cause.message}`),
+    ),
+  );
+
+const resetStackDatabase = Effect.fnUntraced(function* (input: {
+  readonly stack: EffectStack;
+  readonly localInputs: LocalDbContainerInputs;
+  readonly image: string;
+  readonly toml: DbTomlValues;
+  readonly platform: string;
+}) {
+  const dbConn = yield* DbConnection;
+  const primary = yield* input.stack.services
+    .get({ name: "database" })
+    .pipe(
+      Effect.mapError((cause) =>
+        resetFailed(`failed to resolve primary database: ${cause.message}`),
+      ),
+    );
+  if (primary.service !== "database")
+    return yield* resetFailed("the designated primary service is not a database");
+  const primaryDescriptor = yield* primary.describe.pipe(
+    Effect.mapError((cause) => resetFailed(`failed to inspect primary database: ${cause.message}`)),
+  );
+  const primaryMajor = Number.parseInt(primaryDescriptor.config.version.split(".")[0] ?? "", 10);
+  if (!Number.isInteger(primaryMajor))
+    return yield* resetFailed("primary database has no valid resolved Postgres version");
+
+  const descriptors = yield* input.stack.services.list.pipe(
+    Effect.mapError((cause) => resetFailed(`failed to inspect stack services: ${cause.message}`)),
+  );
+  const byId = new Map<string, (typeof descriptors)[number]>();
+  for (const descriptor of descriptors) byId.set(descriptor.id, descriptor);
+  const dependentIds = new Set<ServiceInstanceId>();
+  const dependsOnPrimary = (id: string, visiting: Set<string>): boolean => {
+    if (visiting.has(id)) return false;
+    visiting.add(id);
+    const descriptor = byId.get(id);
+    if (descriptor === undefined) return false;
+    return Object.values(descriptor.dependencies).some(
+      (dependencyId) =>
+        dependencyId === primary.id || dependsOnPrimary(dependencyId, new Set(visiting)),
+    );
+  };
+  for (const descriptor of descriptors) {
+    if (descriptor.id !== primary.id && dependsOnPrimary(descriptor.id, new Set()))
+      dependentIds.add(descriptor.id);
+  }
+  const status = yield* input.stack.status.pipe(
+    Effect.mapError((cause) => resetFailed(`failed to inspect stack: ${cause.message}`)),
+  );
+  const resumeIds = status.instances
+    .filter((instance) => dependentIds.has(instance.id) && instance.intent === "started")
+    .map((instance) => instance.id);
+  const primaryCredentials = yield* primary.credentials.pipe(
+    Effect.mapError((cause) => resetFailed(`failed to read primary credentials: ${cause.message}`)),
+  );
+  if (primaryCredentials === undefined)
+    return yield* resetFailed("primary database credentials are unavailable");
+  const primaryConn = parseConnectionString(stackCredential(primaryCredentials.url));
+  if (primaryConn === undefined) return yield* resetFailed("failed to parse primary database URL");
+  const primaryConfig = {
+    version: primaryDescriptor.config.version,
+    activation: primaryDescriptor.config.activation,
+    settings: primaryDescriptor.config.settings,
+  };
+  // Disable background workers while DROP DATABASE tears down extensions such as pg_net.
+  const maintenanceConfig = {
+    ...primaryConfig,
+    settings: {
+      ...primaryConfig.settings,
+      settings: {
+        ...primaryConfig.settings.settings,
+        max_worker_processes: 0,
+      },
+    },
+  };
+  const baselineLocalInputs: LocalDbContainerInputs = {
+    ...input.localInputs,
+    postgresSpecBase: {
+      ...input.localInputs.postgresSpecBase,
+      db: {
+        ...input.localInputs.postgresSpecBase.db,
+        major_version: primaryMajor,
+        settings: primaryDescriptor.config.settings.settings,
+      },
+    },
+    setup: {
+      ...input.localInputs.setup,
+      majorVersion: primaryMajor,
+    },
+  };
+  const baselineInput = shadowRunInputFromLocalContainerInputs(
+    baselineLocalInputs,
+    input.image,
+    {
+      shadowPort: input.toml.shadowPort,
+      password: stackCredential(primaryCredentials.password),
+      webhooksEnabled: input.toml.webhooksEnabled,
+      baseline: input.toml.baseline,
+      vault: input.toml.vault,
+    },
+    yield* FileSystem.FileSystem,
+    yield* Path.Path,
+  );
+
+  const reset = stackWithShadowDatabase(
+    baselineInput,
+    (shadow) => {
+      const destructive = Effect.gen(function* () {
+        const baselineDescriptor = yield* shadow.service.describe.pipe(
+          Effect.mapError((cause) =>
+            resetFailed(`failed to inspect database baseline: ${cause.message}`),
+          ),
+        );
+        if (
+          baselineDescriptor.initializationProfileId !== primaryDescriptor.initializationProfileId
+        )
+          return yield* resetFailed(
+            "database baseline initialization does not match the primary instance",
+          );
+        const sourceCredentials = yield* shadow.service.credentials.pipe(
+          Effect.mapError((cause) =>
+            resetFailed(`failed to read baseline credentials: ${cause.message}`),
+          ),
+        );
+        if (sourceCredentials === undefined)
+          return yield* resetFailed("baseline database credentials are unavailable");
+        const sourceConn = parseConnectionString(stackCredential(sourceCredentials.url));
+        if (sourceConn === undefined)
+          return yield* resetFailed("failed to parse baseline database URL");
+        const rolesToReset = yield* readRoleNamesToReset(
+          yield* FileSystem.FileSystem,
+          yield* Path.Path,
+          input.localInputs.containerOpts.workdir,
+        );
+
+        if (resumeIds.length > 0) {
+          yield* input.stack
+            .stop({ services: resumeIds })
+            .pipe(
+              Effect.mapError((cause) =>
+                resetFailed(`failed to stop database dependents: ${cause.message}`),
+              ),
+            );
+        }
+        const restorePrimaryConfig = primary.restart({ config: primaryConfig }).pipe(
+          Effect.asVoid,
+          Effect.mapError((cause) =>
+            resetFailed(`failed to restore primary database settings: ${cause.message}`),
+          ),
+        );
+        const resetWithWorkersDisabled = Effect.gen(function* () {
+          yield* primary.restart({ config: maintenanceConfig }).pipe(
+            Effect.asVoid,
+            Effect.mapError((cause) =>
+              resetFailed(`failed to prepare primary database reset: ${cause.message}`),
+            ),
+          );
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              const maintenance = yield* dbConn.connect(
+                { ...primaryConn, user: "supabase_admin", database: "template1" },
+                { isLocal: true, dnsResolver: "native" },
+              );
+              yield* resetRecreateDatabases(maintenance).pipe(
+                Effect.mapError((cause) =>
+                  resetFailed(`failed to recreate primary databases: ${cause.message}`),
+                ),
+              );
+              for (const role of rolesToReset) {
+                yield* maintenance
+                  .exec(dropRole(role))
+                  .pipe(
+                    Effect.mapError((cause) =>
+                      resetFailed(`failed to reset role ${role}: ${cause.message}`),
+                    ),
+                  );
+              }
+            }),
+          );
+          for (const database of ["postgres", "_supabase"] as const) {
+            yield* restoreStackLogicalBaseline({
+              source: { ...sourceConn, database },
+              // The logical dump preserves managed object owners and ACLs. The database role
+              // cannot SET ROLE to supabase_admin, so restore through the managed superuser
+              // while retaining the primary database password.
+              target: { ...primaryConn, user: "supabase_admin", database },
+              image: input.image,
+              majorVersion: baselineLocalInputs.setup.majorVersion,
+              runtime: shadow.runtime,
+              platform: input.platform,
+              extraHosts: input.localInputs.containerOpts.extraHosts,
+              projectEnvValues: input.localInputs.context.projectEnvValues,
+            });
+          }
+        }).pipe(Effect.onExit(() => restorePrimaryConfig));
+        yield* resetWithWorkersDisabled;
+      });
+      return destructive;
+    },
+    {
+      bypassCache: true,
+      applyOverlay: false,
+      database: {
+        version: primaryDescriptor.config.version,
+        settings: primaryDescriptor.config.settings,
+        initialization: { from: primary.id },
+      },
+    },
+  );
+  yield* reset.pipe(
+    Effect.matchCauseEffect({
+      onFailure: (cause) =>
+        resumeIds.length === 0
+          ? Effect.failCause(cause)
+          : Effect.exit(resumeDependents(input.stack, resumeIds)).pipe(
+              Effect.flatMap((resumed) =>
+                Exit.isSuccess(resumed)
+                  ? Effect.failCause(cause)
+                  : Effect.failCause(Cause.combine(cause, resumed.cause)),
+              ),
+            ),
+      onSuccess: Effect.succeed,
+    }),
+  );
+  return resumeIds;
+});
+
 /** Resets the local database in-process. See this module's own header for the full design rationale. */
 export const resetLocalDatabase = Effect.fnUntraced(function* (
   input: ResetLocalDatabaseInput = PLAIN_FULL_RESET,
@@ -137,63 +537,106 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
     );
     const optionalConfig = optionalCatalogConfigFromStatus(stackConfig, runningStatus);
     yield* output.raw(`Resetting local database${toLogMessage(input.version)}\n`, "stderr");
-    yield* opened.value.stack.resetDatabase.pipe(
-      Effect.catchTag("StackNotRunningError", () =>
-        Effect.fail(
-          new ResetLocalDbNotRunningError({ message: "The local stack is not running." }),
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const runtimeInfo = yield* RuntimeInfo;
+    const networkIdFlag = yield* NetworkIdFlag;
+    const debug = yield* DebugFlag;
+    const localInputs = yield* buildLocalDbContainerInputs(
+      spawner,
+      workdir,
+      networkIdFlag,
+      runtimeInfo.platform,
+      debug,
+    );
+    const resolvedImage = yield* localInputs.resolvePostgresImage;
+    const resumeIds = yield* resetStackDatabase({
+      stack: opened.value.stack,
+      localInputs,
+      image: resolvedImage,
+      toml,
+      platform: runtimeInfo.platform,
+    });
+    const primary = yield* opened.value.stack.services
+      .get({ name: "database" })
+      .pipe(
+        Effect.mapError((cause) =>
+          resetFailed(`failed to resolve primary database: ${cause.message}`),
         ),
-      ),
-      Effect.mapError((cause) => resetFailed(`failed to reset local database: ${cause.message}`)),
-    );
-    yield* catalog.value
-      .apply({
-        target: {
-          kind: "live",
-          stack: opened.value.stack,
-          projectRoot: workdir,
-          config: stackConfig,
-        },
-        optionalConfig,
-        overlay: {
-          webhooks: "config",
-          webhooksEnabled: toml.webhooksEnabled,
-          apiAutoExposeNewTables: toml.baseline.apiAutoExposeNewTables,
-          vault: toml.vault,
-          workdir,
-        },
-      })
-      .pipe(Effect.mapError((cause) => resetFailed(cause.message)));
+      );
+    if (primary.service !== "database")
+      return yield* resetFailed("the designated primary service is not a database");
     const dbConn = yield* DbConnection;
-    const conn = yield* stackLocalDatabaseConn.pipe(
-      Effect.mapError((cause) => new ResetLocalDbNotRunningError({ message: cause.message })),
+    const credentials = yield* primary.credentials.pipe(
+      Effect.mapError((cause) =>
+        resetFailed(`failed to read primary credentials: ${cause.message}`),
+      ),
     );
-    yield* Effect.scoped(
-      Effect.gen(function* () {
-        const session = yield* dbConn
-          .connect(conn, { isLocal: true, dnsResolver: "native" })
-          .pipe(
-            Effect.mapError((cause) =>
-              resetFailed(`failed to connect after reset: ${cause.message}`),
-            ),
-          );
-        yield* migrateAndSeed(session, fs, path, workdir, input.version, {
-          migrationsEnabled: toml.migrationsEnabled,
-          seed: resolveResetSeedConfig(toml.seed, input.seedFlags, path),
-          experimental,
-          pgDeltaEnabled: toml.pgDelta.enabled,
-          schemaPaths: toml.schemaPaths,
-          localDatabaseWebhooksEnabled: toml.webhooksEnabled,
-        }).pipe(Effect.mapError((cause) => resetFailed(cause.message)));
+    if (credentials === undefined)
+      return yield* resetFailed("primary database credentials are unavailable");
+    const conn = parseConnectionString(stackCredential(credentials.url));
+    if (conn === undefined) return yield* resetFailed("failed to parse primary database URL");
+    const overlayAndMigrate = Effect.gen(function* () {
+      yield* catalog.value
+        .apply({
+          target: {
+            kind: "service",
+            stack: opened.value.stack,
+            service: primary,
+            projectRoot: workdir,
+            config: stackConfig,
+          },
+          optionalConfig,
+          overlay: {
+            webhooks: "config",
+            webhooksEnabled: toml.webhooksEnabled,
+            apiAutoExposeNewTables: toml.baseline.apiAutoExposeNewTables,
+            vault: toml.vault,
+            workdir,
+          },
+        })
+        .pipe(Effect.mapError((cause) => resetFailed(cause.message)));
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const session = yield* dbConn
+            .connect(conn, { isLocal: true, dnsResolver: "native" })
+            .pipe(
+              Effect.mapError((cause) =>
+                resetFailed(`failed to connect after reset: ${cause.message}`),
+              ),
+            );
+          yield* migrateAndSeed(session, fs, path, workdir, input.version, {
+            migrationsEnabled: toml.migrationsEnabled,
+            seed: resolveResetSeedConfig(toml.seed, input.seedFlags, path),
+            experimental,
+            pgDeltaEnabled: toml.pgDelta.enabled,
+            schemaPaths: toml.schemaPaths,
+            localDatabaseWebhooksEnabled: toml.webhooksEnabled,
+          }).pipe(Effect.mapError((cause) => resetFailed(cause.message)));
+        }),
+      );
+    });
+    yield* overlayAndMigrate.pipe(
+      Effect.matchCauseEffect({
+        onFailure: (cause) =>
+          resumeIds.length === 0
+            ? Effect.failCause(cause)
+            : Effect.exit(resumeDependents(opened.value.stack, resumeIds)).pipe(
+                Effect.flatMap((resumed) =>
+                  Exit.isSuccess(resumed)
+                    ? Effect.failCause(cause)
+                    : Effect.failCause(Cause.combine(cause, resumed.cause)),
+                ),
+              ),
+        onSuccess: Effect.succeed,
       }),
     );
-    const status = yield* opened.value.stack.status.pipe(
+    if (resumeIds.length > 0) yield* resumeDependents(opened.value.stack, resumeIds);
+    const inspectStatus = opened.value.stack.status.pipe(
       Effect.mapError((cause) =>
         resetFailed(`failed to inspect stack after reset: ${cause.message}`),
       ),
     );
-    // Bucket creation and object seeding are owned by the CLI, not the stack runtime; the
-    // gateway's lazy activation serves requests through `dormant`/`starting`, so seeding never
-    // waits for `ready`. See docs/stack-commands.md#storage-and-bucket-seeding.
+    const status = yield* inspectStatus;
     const skipSeeding = (
       reason: string,
       nextStep = "Run supabase seed buckets --local once Storage is available.",
@@ -203,8 +646,6 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
         "stderr",
       );
     const capability = status.capabilities.find((entry) => entry.name === "storage");
-    // The database is already rebuilt, so any typed seeding failure only warns; defects and
-    // interruption still propagate.
     yield* Effect.gen(function* () {
       const context = yield* loadLocalProjectContext(workdir, (message) => resetFailed(message));
       if (!hasConfiguredBuckets(context.config)) return;
@@ -303,7 +744,7 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
   });
 
   // Seed objects from supabase/buckets when storage is up; summary is suppressed since reset
-  // emits its own result. See docs/stack-commands.md#storage-and-bucket-seeding.
+  // emits its own result.
   const storageReady = yield* awaitStorageReady(spawner, projectId);
   if (storageReady) {
     // Non-interactive: overwrite/prune confirmations never open a TTY prompt. In text mode

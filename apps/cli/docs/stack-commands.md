@@ -44,7 +44,8 @@ regardless of automatic agent output detection; this is dotenv data, not a shell
 are quoted so that sourcing the file performs no shell expansion. Only this
 explicit export reveals credentials. Ordinary status remains free of secrets. `--override-name`
 accepts repeated or comma-separated `EXPORTED_VARIABLE=NAME` entries, requires `--env`, and rejects
-unknown variables, invalid names, and collisions. API credentials are omitted when Auth is disabled.
+unknown variables, invalid names, and collisions. API credentials belong to the stack and remain
+available when Auth is disabled; database credentials require a registered default database.
 
 The stack backend rejects every explicit legacy `-o/--output` value: `env`, `pretty`, `json`,
 `toml`, `yaml`, `table`, and `csv`. `--output-format text`, `json`, or `stream-json` replace them.
@@ -88,14 +89,17 @@ precedence over `experimental.stack`; an unset or empty value falls back to the 
 Other values are rejected. The override is applied before reading the project configuration.
 
 When the flag is on, `--local` targets of the `db`, `migration`, `test db`, `gen types`, and
-`inspect` families use the project stack and provision throwaway shadow Postgres through
-`@supabase/stack` (`EphemeralPostgres`). Top-level `supabase pull` uses the same stack shadow
+`inspect` families use the project stack and register independent shadow PostgreSQL instances
+through `@supabase/stack`. Top-level `supabase pull` uses the same stack shadow
 as `db pull`. Linked and `--db-url` targets stay on the Management API for engine selection.
 A `--db-url` that matches `config.toml` host and port is still rewritten like a published
 stack target for dump's tool container. Compose names (`supabase_db_*`, `supabase_network_*`,
 `db:5432`) are not used. The stack backend requires the in-process pg-delta engine;
 `--use-migra`, `--use-pgadmin`, `--use-pg-schema`, and `db pull --diff-engine migra` are
-rejected. The flag does not switch the `functions` command family.
+rejected. Functions serve uses the shared Functions instance and can start without PostgreSQL or
+Auth. It restarts that instance for changed configuration or watched source files and leaves it
+running when the CLI exits. Storage commands and bucket seeding use the same stack selection when
+the flag is enabled; see [Storage and bucket seeding](#storage-and-bucket-seeding) below.
 
 `storage ls`/`cp`/`mv`/`rm` and `seed buckets` (including bucket seeding inside `db reset
 --local`) also consult `experimental.stack`, with the same `SUPABASE_EXPERIMENTAL_STACK`
@@ -103,12 +107,18 @@ env-precedence rule as `start`/`stop`/`status`. See
 [Storage and bucket seeding](#storage-and-bucket-seeding) below. Explicit `--linked`/
 `--project-ref` remote targeting for these commands is unaffected by the flag either way.
 
+Functions paths declared in `config.toml` retain their `supabase/`-relative base, including
+configured entrypoints, import maps, and static files outside `supabase/functions`. The stack
+resolves their dependencies and mounts source files read-only for container runtimes. These inputs
+remain available after the serving CLI exits.
+
 `db start` brings up a postgres-only project stack on first create. An existing stack resumes
 its persisted services (webhooks setup only; no second overlay or migrate-and-seed).
-`supabase start` while that postgres-only stack is running stops it and starts the full
-configured stack, keeping data. `--from-backup` is not supported on the stack path. `db reset
---local` and declarative `--apply` wipe Postgres through `resetDatabase` and then migrate or
-seed on stack credentials.
+Whole-stack startup uses registered instances and preserves their IDs and planned endpoints.
+`--from-backup` is not supported on the stack path. `db reset --local` and declarative `--apply`
+rebuild the primary database through CLI SQL orchestration using a fresh registered baseline,
+then migrate or seed through managed stack credentials. The primary instance keeps its identity;
+unrelated service data is retained.
 
 `gen types --local` and `inspect db … --local` resolve the project stack through the same
 `--local` database target as `db dump`. They do not start a stack.

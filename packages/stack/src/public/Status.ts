@@ -10,7 +10,7 @@ import {
   type CapabilityStatus,
 } from "./Capability.ts";
 import { StackRuntimeSchema, type StackRuntime } from "./Runtime.ts";
-
+import { ServiceInstanceIdSchema, type ServiceInstanceId } from "./ServiceInstanceId.ts";
 /** Recovery guidance exposed when a failed cleanup blocks new workload activation. */
 export const StackRecoverySchema = Schema.Struct({
   operation: Schema.Literals(["stop", "destroy"] as const),
@@ -133,6 +133,70 @@ const CompleteCapabilityStatusesSchema = Schema.Array(CapabilityStatusSchema).pi
   }),
 );
 
+export const ServiceEndpointAvailabilitySchema = Schema.Literals([
+  "planned",
+  "listening",
+  "unavailable",
+] as const);
+export type ServiceEndpointAvailability = Schema.Schema.Type<
+  typeof ServiceEndpointAvailabilitySchema
+>;
+
+export const ServiceEndpointStatusSchema = Schema.Struct({
+  binding: Schema.String,
+  protocol: Schema.Literals(["http", "tcp"] as const),
+  address: Schema.String,
+  port: NetworkPortSchema,
+  url: Schema.String,
+  availability: ServiceEndpointAvailabilitySchema,
+});
+export type ServiceEndpointStatus = Schema.Schema.Type<typeof ServiceEndpointStatusSchema>;
+
+export const ServiceFailureSchema = Schema.Struct({
+  tag: Schema.String,
+  message: Schema.String,
+  instanceId: Schema.optionalKey(ServiceInstanceIdSchema),
+  operationId: Schema.optionalKey(Schema.String),
+});
+export type ServiceFailure = Schema.Schema.Type<typeof ServiceFailureSchema>;
+
+export const ServicePendingOperationSchema = Schema.Struct({
+  id: Schema.String,
+  kind: Schema.Literals([
+    "start",
+    "sleep",
+    "stop",
+    "restart",
+    "destroy",
+    "exportSnapshot",
+    "restoreSnapshot",
+  ] as const),
+});
+export type ServicePendingOperation = Schema.Schema.Type<typeof ServicePendingOperationSchema>;
+
+export const ServiceStatusSchema = Schema.Struct({
+  id: ServiceInstanceIdSchema,
+  service: CapabilityNameSchema,
+  name: Schema.optionalKey(Schema.String),
+  enabled: Schema.Boolean,
+  intent: Schema.Literals(["started", "stopped"] as const),
+  phase: Schema.Literals([
+    "stopped",
+    "dormant",
+    "starting",
+    "ready",
+    "stopping",
+    "failed",
+    "recovery",
+  ] as const),
+  activation: ActivationModeSchema,
+  pendingOperation: Schema.optionalKey(ServicePendingOperationSchema),
+  endpoints: Schema.Array(ServiceEndpointStatusSchema),
+  error: Schema.optionalKey(ServiceFailureSchema),
+  recovery: Schema.optionalKey(StackRecoverySchema),
+});
+export type ServiceStatus = Schema.Schema.Type<typeof ServiceStatusSchema>;
+
 export const StackStatusSchema = Schema.Struct({
   id: StackIdSchema,
   lifecycle: StackLifecycleSchema,
@@ -142,6 +206,7 @@ export const StackStatusSchema = Schema.Struct({
   versions: CapabilityVersionsSchema,
   capabilities: CompleteCapabilityStatusesSchema,
   artifacts: Schema.Array(ArtifactPreparationStatusSchema),
+  instances: Schema.Array(ServiceStatusSchema),
   recovery: Schema.optionalKey(StackRecoverySchema),
 });
 
@@ -154,7 +219,13 @@ export interface StackStatus {
   readonly versions: Readonly<Partial<Record<CapabilityName, string>>>;
   readonly capabilities: ReadonlyArray<CapabilityStatus>;
   readonly artifacts: ReadonlyArray<ArtifactPreparationStatus>;
+  readonly instances: ReadonlyArray<ServiceStatus>;
   readonly recovery?: StackRecovery;
+}
+
+export interface InstanceArtifactPreparationStatus extends ArtifactPreparationStatus {
+  readonly instanceId: ServiceInstanceId;
+  readonly artifactIdentity?: string;
 }
 
 export const StackDescriptorSchema = Schema.Struct({

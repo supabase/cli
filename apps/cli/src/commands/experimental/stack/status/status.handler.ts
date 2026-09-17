@@ -102,6 +102,7 @@ const payload = (inspection: StackInspection, configWarning?: string) => ({
   readiness: readiness(inspection.status),
   ...(inspection.status === undefined ? {} : { endpoints: inspection.status.endpoints }),
   ...(inspection.status === undefined ? {} : { capabilities: inspection.status.capabilities }),
+  ...(inspection.status === undefined ? {} : { instances: inspection.status.instances }),
   ...(inspection.status?.recovery === undefined ? {} : { recovery: inspection.status.recovery }),
   config_drift:
     inspection.configDrift ??
@@ -136,6 +137,11 @@ const render = (inspection: StackInspection, configWarning?: string): string => 
       lines.push("Endpoints:");
       for (const [name, endpoint] of endpoints)
         if (endpoint !== undefined) lines.push(`  ${name}: ${endpoint.url}`);
+    }
+    if (inspection.status.instances.length > 0) {
+      lines.push("Instances:");
+      for (const instance of inspection.status.instances)
+        lines.push(`  ${instance.id} ${instance.name ?? instance.service}: ${instance.phase}`);
     }
     lines.push(...stackStatusIssueLines(inspection.status));
   }

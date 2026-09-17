@@ -51,8 +51,16 @@ import { recordingStackCatalogSetup } from "../../../command-internal/stack-cata
 import {
   CAPABILITY_NAMES,
   StackIdSchema,
+  ServiceInstanceIdSchema,
+  StackLifecycleConflictError,
   type CapabilityState,
+  type AnyServiceDescriptor,
+  type EffectServiceCollection,
+  type EffectServiceInstance,
   type EffectStack,
+  type ServiceDescriptor,
+  type ServiceStatus,
+  type StackStatus,
 } from "@supabase/stack/effect";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
@@ -478,6 +486,132 @@ function recordingStackStorageHttpClientBucketListTransportFails() {
 
 const RESET_STACK_ID = StackIdSchema.make("c".repeat(64));
 
+const serviceStatus = (
+  id: ServiceStatus["id"],
+  service: ServiceStatus["service"],
+  name: string,
+  intent: ServiceStatus["intent"],
+): ServiceStatus => ({
+  id,
+  service,
+  name,
+  enabled: true,
+  intent,
+  phase: intent === "started" ? "ready" : "stopped",
+  activation: "eager",
+  endpoints: [],
+});
+
+const databaseDescriptor = (
+  id: ServiceStatus["id"],
+  name: string,
+  port: number,
+  version = "17.6.1",
+): ServiceDescriptor<"database"> => ({
+  id,
+  service: "database",
+  name,
+  enabled: true,
+  config: {
+    enabled: true,
+    activation: "eager",
+    idleTimeoutSeconds: false,
+    version,
+    settings: {},
+  },
+  dependencies: {},
+  snapshotSupport: "supported",
+  endpoints: { sql: { enabled: true, address: "127.0.0.1", port } },
+  artifactIdentity: `container:postgres:${version}`,
+  runtimeIdentity: `container:database:${version}`,
+  effectiveConfigFingerprint: `config:${name}`,
+  initializationProfileId: "profile:primary",
+  initialization: { profileId: "profile:primary", recipes: [] },
+  bootstrapRecipeId: "database-bootstrap-v1",
+  bootstrapInputsId: "inputs:primary",
+  data: { origin: "fresh", lineageId: `lineage:${name}` },
+});
+
+const dependentDescriptor = (
+  id: ServiceStatus["id"],
+  name: string,
+  service: "rest" | "storage",
+  databaseId: ServiceStatus["id"],
+): AnyServiceDescriptor => ({
+  id,
+  service,
+  name,
+  enabled: true,
+  config: {
+    enabled: true,
+    activation: "eager",
+    idleTimeoutSeconds: false,
+    version: "1.0.0",
+    settings: {},
+  },
+  dependencies: { database: databaseId },
+  snapshotSupport: "unsupported",
+  endpoints: {},
+  artifactIdentity: `container:${service}:1.0.0`,
+  runtimeIdentity: `container:${service}:1.0.0`,
+  effectiveConfigFingerprint: `config:${name}`,
+  initializationProfileId: null,
+  data: { origin: "absent" },
+});
+
+const makeDatabaseService = (input: {
+  readonly descriptor: ServiceDescriptor<"database">;
+  readonly password: string;
+  readonly onStart?: () => void;
+  readonly onStop?: () => void;
+  readonly onRestart?: (
+    config?: import("@supabase/stack/effect").EffectServiceConfig<"database">,
+  ) => void;
+  readonly onDestroy?: () => void;
+}): EffectServiceInstance<"database"> => {
+  const { descriptor } = input;
+  const credentials = {
+    url: `postgresql://postgres:${input.password}@127.0.0.1:${String(descriptor.endpoints.sql?.port ?? 54329)}/postgres`,
+    password: input.password,
+  };
+  const ready = serviceStatus(descriptor.id, "database", descriptor.name ?? "database", "started");
+  const stopped = serviceStatus(
+    descriptor.id,
+    "database",
+    descriptor.name ?? "database",
+    "stopped",
+  );
+  return {
+    id: descriptor.id,
+    service: "database",
+    name: descriptor.name,
+    describe: Effect.succeed(descriptor),
+    status: Effect.succeed(ready),
+    credentials: Effect.succeed(credentials),
+    prepare: Effect.succeed({ instances: [] }),
+    start: Effect.sync(() => {
+      input.onStart?.();
+      return ready;
+    }),
+    sleep: Effect.succeed(stopped),
+    stop: Effect.sync(() => {
+      input.onStop?.();
+      return stopped;
+    }),
+    restart: (options) =>
+      Effect.sync(() => {
+        input.onRestart?.(options?.config);
+        return ready;
+      }),
+    destroy: Effect.sync(() => input.onDestroy?.()),
+    exportSnapshot: () => Effect.die("snapshot export is not used by reset tests"),
+    restoreSnapshot: () => Effect.die("snapshot restore is not used by reset tests"),
+    logs: () => Effect.die("logs are not used by reset tests"),
+    followLogs: () => Stream.empty,
+    followStatus: Stream.fromEffect(Effect.suspend(() => Effect.succeed(ready))),
+  };
+};
+
 function mockResetStackApi(opts: {
   readonly workdir: string;
   readonly ready: boolean;
@@ -488,47 +622,121 @@ function mockResetStackApi(opts: {
   readonly apiEndpoint?: { readonly url: string; readonly port: number };
   readonly serviceRoleJwt?: string;
   readonly capabilityStates?: Partial<Record<(typeof CAPABILITY_NAMES)[number], CapabilityState>>;
+  readonly resumeFails?: boolean;
 }) {
-  let resetCalls = 0;
-  const unused = Effect.die("unused");
-  const unusedFn = () => unused;
+  const primaryId = ServiceInstanceIdSchema.make("database-primary");
+  const primaryDescriptor = databaseDescriptor(primaryId, "database", 54329);
+  const restId = ServiceInstanceIdSchema.make("rest-primary");
+  const storageId = ServiceInstanceIdSchema.make("storage-primary");
+  const unrelatedId = ServiceInstanceIdSchema.make("database-unrelated");
+  const descriptors: Array<AnyServiceDescriptor> = [
+    primaryDescriptor,
+    dependentDescriptor(restId, "rest", "rest", primaryDescriptor.id),
+    dependentDescriptor(storageId, "storage", "storage", primaryDescriptor.id),
+    databaseDescriptor(unrelatedId, "unrelated", 54331),
+  ];
+  const events = {
+    stopped: [] as Array<ServiceStatus["id"]>,
+    started: [] as Array<ServiceStatus["id"]>,
+    restarts: 0,
+    restartConfigs: [] as Array<
+      import("@supabase/stack/effect").EffectServiceConfig<"database"> | undefined
+    >,
+  };
+  const primary = makeDatabaseService({
+    descriptor: primaryDescriptor,
+    password: "postgres",
+    onRestart: (config) => {
+      events.restarts++;
+      events.restartConfigs.push(config);
+    },
+  });
+  function createService(
+    options: import("@supabase/stack/effect").EffectCreateServiceOptions<"database">,
+  ): Effect.Effect<EffectServiceInstance<"database">, never>;
+  function createService<K extends import("@supabase/stack/effect").ServiceKind>(
+    options: import("@supabase/stack/effect").EffectCreateServiceOptions<K>,
+  ): Effect.Effect<EffectServiceInstance<K>, never>;
+  function createService(options: import("@supabase/stack/effect").AnyEffectCreateServiceOptions) {
+    if (options.service !== "database") return Effect.die(`unsupported service ${options.service}`);
+    const id = ServiceInstanceIdSchema.make("shadow-database");
+    const descriptor = databaseDescriptor(
+      id,
+      options.name ?? "shadow",
+      54330,
+      options.config.version ?? "17.6.1",
+    );
+    descriptors.push(descriptor);
+    return Effect.succeed(
+      makeDatabaseService({
+        descriptor,
+        password: Redacted.value(options.config.password ?? Redacted.make("postgres")),
+        onDestroy: () => {
+          const index = descriptors.findIndex((item) => item.id === id);
+          if (index >= 0) descriptors.splice(index, 1);
+        },
+      }),
+    );
+  }
+  const services: EffectServiceCollection = {
+    create: createService,
+    get: (ref) =>
+      "name" in ref && ref.name === "database"
+        ? Effect.succeed(primary)
+        : Effect.die(`unknown service ${"name" in ref ? ref.name : ref.id}`),
+    list: Effect.succeed(descriptors),
+  };
+  const stackStatus = (): StackStatus => ({
+    id: RESET_STACK_ID,
+    lifecycle: opts.ready ? "running" : "stopped",
+    desiredLifecycle: opts.ready ? "running" : "stopped",
+    runtime: { kind: "container", engine: "docker" },
+    endpoints:
+      opts.apiEndpoint === undefined
+        ? {}
+        : {
+            api: {
+              protocol: "http",
+              address: "127.0.0.1",
+              port: opts.apiEndpoint.port,
+              url: opts.apiEndpoint.url,
+            },
+          },
+    versions: { database: "17.6.1" },
+    capabilities: CAPABILITY_NAMES.map((name) => ({
+      name,
+      activation: name === "database" ? "eager" : "lazy",
+      state:
+        opts.capabilityStates?.[name] ??
+        (name === "database" && opts.ready
+          ? "ready"
+          : name === "storage" && opts.storageReady === true
+            ? "ready"
+            : name === "storage" && opts.storageState !== undefined
+              ? opts.storageState
+              : "stopped"),
+      ...(name === "storage" && opts.storageError !== undefined
+        ? { error: opts.storageError }
+        : {}),
+    })),
+    artifacts: [],
+    instances: [
+      serviceStatus(
+        primaryDescriptor.id,
+        "database",
+        "database",
+        opts.ready ? "started" : "stopped",
+      ),
+      serviceStatus(restId, "rest", "rest", "started"),
+      serviceStatus(storageId, "storage", "storage", "stopped"),
+      serviceStatus(unrelatedId, "database", "unrelated", "started"),
+    ],
+  });
   const stack: EffectStack = {
     id: RESET_STACK_ID,
-    status: Effect.succeed({
-      id: RESET_STACK_ID,
-      lifecycle: opts.ready ? "running" : "stopped",
-      desiredLifecycle: opts.ready ? "running" : "stopped",
-      runtime: { kind: "native" },
-      endpoints:
-        opts.apiEndpoint === undefined
-          ? {}
-          : {
-              api: {
-                protocol: "http" as const,
-                address: "127.0.0.1",
-                port: opts.apiEndpoint.port,
-                url: opts.apiEndpoint.url,
-              },
-            },
-      versions: {},
-      capabilities: CAPABILITY_NAMES.map((name) => ({
-        name,
-        activation: name === "database" ? "eager" : "lazy",
-        state:
-          opts.capabilityStates?.[name] ??
-          (name === "database"
-            ? opts.ready
-              ? "ready"
-              : "stopped"
-            : name === "storage"
-              ? (opts.storageState ?? (opts.storageReady === true ? "ready" : "stopped"))
-              : "stopped"),
-        ...(name === "storage" && opts.storageError !== undefined
-          ? { error: opts.storageError }
-          : {}),
-      })),
-      artifacts: [],
-    }),
+    services,
+    status: Effect.sync(stackStatus),
+    followStatus: Stream.empty,
     credentials: Effect.succeed({
       database: {
         url: Redacted.make("postgresql://postgres:postgres@127.0.0.1:54329/postgres"),
@@ -541,33 +749,34 @@ function mockResetStackApi(opts: {
         serviceRoleJwt: Redacted.make(opts.serviceRoleJwt ?? "service"),
       },
     }),
-    prepare: unusedFn,
-    start: unusedFn,
-    stop: unused,
-    destroy: unused,
-    resetDatabase: Effect.sync(() => {
-      resetCalls++;
-      return {
-        id: RESET_STACK_ID,
-        lifecycle: "running" as const,
-        desiredLifecycle: "running" as const,
-        runtime: { kind: "native" as const },
-        endpoints: {},
-        versions: {},
-        capabilities: CAPABILITY_NAMES.map((name) => ({
-          name,
-          activation: name === "database" ? ("eager" as const) : ("lazy" as const),
-          state: name === "database" ? ("ready" as const) : ("dormant" as const),
-        })),
-        artifacts: [],
-      };
-    }),
-    logs: unusedFn,
+    prepare: () => Effect.succeed({ instances: [] }),
+    start: (options) => {
+      if (opts.resumeFails && (options?.services?.length ?? 0) > 0)
+        return Effect.fail(
+          new StackLifecycleConflictError({
+            message: "dependent resume failed",
+            stackId: RESET_STACK_ID,
+          }),
+        );
+      return Effect.sync(() => {
+        for (const id of options?.services ?? []) events.started.push(id);
+        return stackStatus();
+      });
+    },
+    stop: (options) =>
+      Effect.sync(() => {
+        for (const id of options?.services ?? []) events.stopped.push(id);
+        return stackStatus();
+      }),
+    sleep: () => Effect.succeed(stackStatus()),
+    restart: () => Effect.succeed(stackStatus()),
+    destroy: () => Effect.void,
+    logs: () => Effect.die("logs are not used by reset tests"),
     followLogs: () => Stream.empty,
   };
   return {
     layer: Layer.succeed(StackApi, {
-      createStack: unusedFn,
+      createStack: () => Effect.succeed(stack),
       findStack: () =>
         Effect.succeed(
           Option.some({
@@ -575,16 +784,30 @@ function mockResetStackApi(opts: {
             projectRoot: opts.workdir,
             name: "default",
             branchContext: "main",
-            runtime: { kind: "native" as const },
-            desiredLifecycle: "running" as const,
+            runtime: { kind: "container", engine: "docker" },
+            desiredLifecycle: "running",
           }),
         ),
-      discoverStacks: unusedFn,
+      discoverStacks: () => Effect.succeed({ stacks: [], errors: [] }),
       openStack: () => Effect.succeed(stack),
-      inspectStack: unusedFn,
+      inspectStack: () =>
+        Effect.succeed({
+          descriptor: {
+            id: RESET_STACK_ID,
+            projectRoot: opts.workdir,
+            name: "default",
+            branchContext: "main",
+            runtime: { kind: "container", engine: "docker" },
+            desiredLifecycle: "running",
+          },
+          owner: "running",
+        }),
     }),
-    get resetCalls() {
-      return resetCalls;
+    get events() {
+      return events;
+    },
+    get serviceIds() {
+      return descriptors.map((descriptor) => descriptor.id);
     },
   };
 }
@@ -639,6 +862,7 @@ function setup(
     stackApiEndpoint?: { readonly url: string; readonly port: number };
     stackServiceRoleJwt?: string;
     stackCapabilityStates?: Partial<Record<(typeof CAPABILITY_NAMES)[number], CapabilityState>>;
+    stackResumeFails?: boolean;
     httpClient?: Layer.Layer<HttpClient.HttpClient>;
   },
 ) {
@@ -676,6 +900,7 @@ function setup(
     apiEndpoint: opts.stackApiEndpoint,
     serviceRoleJwt: opts.stackServiceRoleJwt,
     capabilityStates: opts.stackCapabilityStates,
+    resumeFails: opts.stackResumeFails,
   });
   const catalog =
     opts.stackBackend === true
@@ -940,7 +1165,7 @@ describe("db reset", () => {
     );
 
     it.live("resets the stack database without Compose volume recreate", () => {
-      const { layer, child, stackApi, catalogApplied, out } = setup(tmp.current, {
+      const { layer, child, conn, stackApi, catalogApplied, out } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
         args: ["db", "reset", "--local"],
         isLocal: true,
@@ -948,8 +1173,31 @@ describe("db reset", () => {
       });
       return Effect.gen(function* () {
         yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-        expect(stackApi.resetCalls).toBe(1);
-        expect(catalogApplied).toEqual([{ kind: "live", analytics: undefined }]);
+        expect(stackApi.events.restarts).toBe(2);
+        expect(stackApi.events.restartConfigs[0]?.settings?.settings?.max_worker_processes).toBe(0);
+        expect(stackApi.events.restartConfigs[1]).toEqual({
+          version: "17.6.1",
+          activation: "eager",
+          settings: {},
+        });
+        expect(stackApi.serviceIds).toEqual(
+          expect.arrayContaining([
+            ServiceInstanceIdSchema.make("database-primary"),
+            ServiceInstanceIdSchema.make("database-unrelated"),
+          ]),
+        );
+        expect(catalogApplied).toEqual([{ kind: "service", analytics: undefined }]);
+        expect(stackApi.events.stopped).toEqual([ServiceInstanceIdSchema.make("rest-primary")]);
+        expect(stackApi.events.started).toEqual([ServiceInstanceIdSchema.make("rest-primary")]);
+        expect(conn.execs).toEqual(
+          expect.arrayContaining([
+            "DROP DATABASE IF EXISTS postgres WITH (FORCE)",
+            "CREATE DATABASE postgres WITH OWNER postgres",
+            "DROP DATABASE IF EXISTS _supabase WITH (FORCE)",
+            "CREATE DATABASE _supabase WITH OWNER postgres",
+          ]),
+        );
+        expect(dbSetupJobCalls(child.spawned)).toHaveLength(2);
         expect(child.spawned.some((s) => s.args[0] === "container" && s.args[1] === "rm")).toBe(
           false,
         );
@@ -969,7 +1217,7 @@ describe("db reset", () => {
       });
       return Effect.gen(function* () {
         yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-        expect(catalogApplied).toEqual([{ kind: "live", analytics: false }]);
+        expect(catalogApplied).toEqual([{ kind: "service", analytics: false }]);
       });
     });
 
@@ -983,7 +1231,64 @@ describe("db reset", () => {
       });
       return Effect.gen(function* () {
         yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-        expect(catalogApplied).toEqual([{ kind: "live", analytics: undefined }]);
+        expect(catalogApplied).toEqual([{ kind: "service", analytics: undefined }]);
+      });
+    });
+
+    it.live("repeats logical stack reset while reconciling declared custom roles", () => {
+      const { layer, conn, stackApi } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        files: {
+          "supabase/roles.sql": [
+            "-- Role declarations are parsed before the database is restored.",
+            "CREATE ROLE app_reader;",
+            'CREATE USER "AppWriter";',
+            "GRANT USAGE ON SCHEMA public TO app_reader;",
+          ].join("\n"),
+        },
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        stackBackend: true,
+      });
+      return Effect.gen(function* () {
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(conn.execs.filter((sql) => sql === 'DROP ROLE IF EXISTS "app_reader"')).toHaveLength(
+          2,
+        );
+        expect(conn.execs.filter((sql) => sql === 'DROP ROLE IF EXISTS "AppWriter"')).toHaveLength(
+          2,
+        );
+        expect(stackApi.events.restarts).toBe(4);
+      });
+    });
+
+    it.live("retains both reset and dependent resume failures", () => {
+      const { layer, stackApi } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        stackBackend: true,
+        execFailsOn: "CREATE DATABASE postgres",
+        stackResumeFails: true,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const causeText = JSON.stringify(exit.cause);
+          expect(causeText).toContain("failed to recreate primary databases");
+          expect(causeText).toContain("rest-primary");
+        }
+        expect(stackApi.events.stopped).toEqual([ServiceInstanceIdSchema.make("rest-primary")]);
+        expect(stackApi.events.started).toHaveLength(0);
+        expect(stackApi.events.restartConfigs).toHaveLength(2);
+        expect(stackApi.events.restartConfigs[0]?.settings?.settings?.max_worker_processes).toBe(0);
+        expect(stackApi.events.restartConfigs[1]).toEqual({
+          version: "17.6.1",
+          activation: "eager",
+          settings: {},
+        });
       });
     });
 
@@ -1052,7 +1357,7 @@ describe("db reset", () => {
         const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) expect(JSON.stringify(exit.cause)).toContain("is not running.");
-        expect(stackApi.resetCalls).toBe(0);
+        expect(stackApi.events.restarts).toBe(0);
       });
     });
 
@@ -1342,7 +1647,7 @@ describe("db reset", () => {
         const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) expect(JSON.stringify(exit.cause)).toContain("functions/.env");
-        expect(stackApi.resetCalls).toBe(0);
+        expect(stackApi.events.restarts).toBe(0);
       });
     });
 

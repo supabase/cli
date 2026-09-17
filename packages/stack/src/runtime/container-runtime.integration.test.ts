@@ -1,23 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
-import {
-  Cause,
-  Crypto,
-  Deferred,
-  Effect,
-  Exit,
-  Fiber,
-  FileSystem,
-  Option,
-  Path,
-  Stream,
-  Sink,
-} from "effect";
+import { Cause, Deferred, Effect, Exit, Fiber, Option, Stream, Sink } from "effect";
 import * as TestClock from "effect/testing/TestClock";
 import { NodeServices } from "@effect/platform-node";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
 import type { ContainerArtifact } from "../model/CapabilityModule.ts";
 import { StackIdSchema } from "../public/StackId.ts";
+import { ServiceInstanceIdSchema } from "../public/ServiceInstanceId.ts";
 import {
   ContainerCommandError,
   ContainerEngineProtocolError,
@@ -39,10 +28,6 @@ import { makeContainerRuntime } from "./ContainerRuntime.ts";
 import { RuntimeDriverError, type RuntimeWorkloadKey } from "./RuntimeDriver.ts";
 import { LogStoreError, type LogRecord, type LogStore } from "../supervisor/LogStore.ts";
 import { ContainerEngineError } from "../public/Errors.ts";
-import { makeStackStateStore } from "../state/StackStateStore.ts";
-import { makeSupervisor, type SupervisorRuntime } from "../supervisor/Supervisor.ts";
-import type { SupervisorIngress } from "../supervisor/Ingress.ts";
-import { deriveStackId } from "../identity/Identity.ts";
 
 const makeControlledCommandRunner = (
   options: Pick<ContainerCommandRunner, "run"> & Partial<Pick<ContainerCommandRunner, "stream">>,
@@ -52,8 +37,10 @@ const makeControlledCommandRunner = (
 });
 
 const stackId = StackIdSchema.make("a".repeat(64));
+const instanceId = ServiceInstanceIdSchema.make("primary");
 const key: RuntimeWorkloadKey = {
   stackId,
+  instanceId,
   workloadId: "database:database",
 };
 
@@ -64,6 +51,8 @@ const containerArtifact: ContainerArtifact = {
 
 const workload = (selected: PlannedWorkload["selected"] = containerArtifact): PlannedWorkload => ({
   id: key.workloadId,
+  instanceId,
+  recipeId: key.workloadId,
   capability: key.workloadId.startsWith("functions:") ? "functions" : "database",
   dependencies: [],
   readiness: {},
@@ -173,6 +162,10 @@ const fakeContainerEngine = (state: FakeContainerState): ContainerEngine => {
         : Effect.sync(() => {
             state.calls.push(`copy:${resourceId}:${source}:${destination}`);
           }),
+    execContainer: (resourceId: string, command: ReadonlyArray<string>) =>
+      Effect.sync(() => {
+        state.calls.push(`exec:${resourceId}:${command.join(" ")}`);
+      }),
     startContainer: (resourceId: string) =>
       Effect.sync(() => {
         state.calls.push(`start:${resourceId}`);
@@ -338,7 +331,9 @@ describe("container runtime", () => {
         labels: {
           stackId,
           ownerSessionId: "owner",
+          instanceId,
           workloadId: "auth:auth",
+          recipeId: "auth:auth",
           role: "workload",
         },
         network: "private",
@@ -535,6 +530,38 @@ describe("container runtime", () => {
       }
       yield* runtime.stop(functionsKey);
       yield* runtime.remove(functionsKey);
+    }),
+  );
+
+  it.live("runs a startup publication after the container starts and before readiness", () =>
+    Effect.gen(function* () {
+      const state: FakeContainerState = {
+        resources: [],
+        imagePresent: true,
+        calls: [],
+        createdSpecs: [],
+        nextId: 1,
+      };
+      const published = yield* Deferred.make<void>();
+      let readinessObservedPublication = false;
+      const runtime = yield* makeContainerRuntime({
+        engine: fakeContainerEngine(state),
+        ownerSessionId: "owner-session",
+        resolveWorkload: () => Effect.succeed({ publications: [] }),
+        waitForReadiness: () =>
+          Deferred.isDone(published).pipe(
+            Effect.tap((done) => Effect.sync(() => (readinessObservedPublication = done))),
+            Effect.asVoid,
+          ),
+      });
+      const ready = yield* runtime.start(key, workload(), {
+        onStarted: Effect.sync(() => {
+          expect(state.calls.some((call) => call.startsWith("start:"))).toBe(true);
+        }).pipe(Effect.andThen(Deferred.succeed(published, undefined))),
+      });
+      expect(ready.state).toBe("ready");
+      expect(readinessObservedPublication).toBe(true);
+      yield* runtime.cleanup({ stackId, destroy: true });
     }),
   );
 
@@ -1496,7 +1523,9 @@ describe("container runtime", () => {
         labels: {
           stackId,
           ownerSessionId: "owner-session",
+          instanceId,
           workloadId: key.workloadId,
+          recipeId: key.workloadId,
           role: "workload",
         },
       };
@@ -1526,13 +1555,15 @@ describe("container runtime", () => {
     Effect.gen(function* () {
       const stale: ContainerResource = {
         id: "stale-startup",
-        name: `supabase-${stackId.slice(0, 16)}-${key.workloadId.replace(/[^A-Za-z0-9_.-]/g, "-")}-workload`,
+        name: `supabase-${stackId.slice(0, 16)}-${key.instanceId}-${key.workloadId.replace(/[^A-Za-z0-9_.-]/g, "-")}-workload`,
         kind: "workload",
         state: "stopped",
         labels: {
           stackId,
           ownerSessionId: "owner-session",
+          instanceId,
           workloadId: key.workloadId,
+          recipeId: key.workloadId,
           startup: true,
           role: "workload",
         },
@@ -1900,7 +1931,9 @@ describe("container runtime", () => {
           labels: {
             stackId,
             ownerSessionId: "owner-session",
+            instanceId,
             workloadId: "database:database",
+            recipeId: "database:database",
             role: "workload",
           },
           network: "private",
@@ -1930,13 +1963,13 @@ describe("container runtime", () => {
                     ? "not-json\n"
                     : ""
                 : request.args[0] === "ps"
-                  ? `${dockerJsonRow(["container-id", "backend", stackId, "owner", key.workloadId, "false", "workload", "running"])}\n`
+                  ? `${dockerJsonRow(["container-id", "backend", stackId, "owner", key.instanceId, key.workloadId, key.workloadId, "false", "workload", "running"])}\n`
                   : request.args[0] === "network" && request.args[1] === "create"
                     ? "created-id\nsecond\n"
                     : request.args[0] === "network"
                       ? `${dockerJsonRow(["network-id", "private", stackId, "owner", "network"])}\n`
                       : request.args[0] === "volume"
-                        ? `${dockerJsonRow(["volume-name", stackId, key.workloadId, "volume"])}\n`
+                        ? `${dockerJsonRow(["volume-name", stackId, key.instanceId, key.workloadId, "volume"])}\n`
                         : request.args[0] === "version"
                           ? '"27.0.0"\n'
                           : "created-id\n",
@@ -1974,7 +2007,9 @@ describe("container runtime", () => {
     labels: {
       stackId,
       ownerSessionId: "owner",
+      instanceId,
       workloadId: "backend",
+      recipeId: "backend",
       role: "workload" as const,
     },
     network: "private",
@@ -2082,6 +2117,33 @@ describe("container runtime", () => {
     }),
   );
 
+  it.live("serializes owner credential reconciliation through the container socket", () =>
+    Effect.sync(() => {
+      expect(
+        serializeDockerCommand({
+          operation: "exec-container",
+          id: "container-id",
+          command: ["psql", "--host=/tmp", "--username=supabase_admin"],
+          stdin:
+            "SET standard_conforming_strings = on;\nALTER ROLE supabase_admin PASSWORD 'secret';\n",
+        }),
+      ).toEqual({
+        args: [
+          "exec",
+          "--interactive",
+          "--user",
+          "postgres",
+          "container-id",
+          "psql",
+          "--host=/tmp",
+          "--username=supabase_admin",
+        ],
+        stdin:
+          "SET standard_conforming_strings = on;\nALTER ROLE supabase_admin PASSWORD 'secret';\n",
+      });
+    }),
+  );
+
   it.live("serializes Podman network inspection templates", () =>
     Effect.sync(() => {
       expect(
@@ -2115,11 +2177,11 @@ describe("container runtime", () => {
                       ? "bad\trow\n"
                       : ""
                   : request.args[0] === "ps"
-                    ? `container-id\tbackend\t${stackId}\towner\t${key.workloadId}\tfalse\tworkload\trunning\n`
+                    ? `container-id\tbackend\t${stackId}\towner\t${key.instanceId}\t${key.workloadId}\t${key.workloadId}\tfalse\tworkload\trunning\n`
                     : request.args[0] === "network"
                       ? `network-id\tprivate\t${stackId}\towner\tnetwork\n`
                       : request.args[0] === "volume"
-                        ? `volume-name\t${stackId}\t${key.workloadId}\tvolume\n`
+                        ? `volume-name\t${stackId}\t${key.instanceId}\t${key.workloadId}\tvolume\n`
                         : "created-id\n",
             stderr: "",
             exitCode: 0,
@@ -2341,7 +2403,7 @@ describe("container runtime", () => {
     Effect.gen(function* () {
       const foreignStackId = StackIdSchema.make("c".repeat(64));
       const foreignKey = { ...key, stackId: foreignStackId, workloadId: "api:api" };
-      const foreignName = `supabase-${stackId.slice(0, 16)}-api-api-workload`;
+      const foreignName = `supabase-${stackId.slice(0, 16)}-${key.instanceId}-api-api-workload`;
       const state: FakeContainerState = {
         resources: [
           {
@@ -2352,7 +2414,9 @@ describe("container runtime", () => {
             labels: {
               stackId: foreignStackId,
               ownerSessionId: "other-session",
+              instanceId,
               workloadId: foreignKey.workloadId,
+              recipeId: foreignKey.workloadId,
               role: "workload",
             },
           },
@@ -2406,7 +2470,7 @@ describe("container runtime", () => {
           resolveWorkload: () => Effect.succeed({ volume }),
         });
         yield* runtime.start(key, workload());
-        const physicalVolumeName = `supabase-${key.stackId}-${key.workloadId.replace(/[^A-Za-z0-9_.-]/g, "-")}-volume`;
+        const physicalVolumeName = `supabase-${key.stackId}-${key.instanceId}-${key.workloadId.replace(/[^A-Za-z0-9_.-]/g, "-")}-volume`;
         expect(state.createdSpecs[0]?.volumeMounts).toEqual([
           { volume: physicalVolumeName, target: volume.target, readOnly: false },
         ]);
@@ -2495,7 +2559,7 @@ describe("container runtime", () => {
       yield* runtime.start(secondaryKey, secondaryWorkload);
       yield* runtime.start(ownerKey, ownerWorkload);
 
-      const expectedVolume = `supabase-${stackId}-${ownerWorkloadId.replace(/[^A-Za-z0-9_.-]/g, "-")}-volume`;
+      const expectedVolume = `supabase-${stackId}-${key.instanceId}-${ownerWorkloadId.replace(/[^A-Za-z0-9_.-]/g, "-")}-volume`;
       expect(state.resources.filter((resource) => resource.kind === "volume")).toHaveLength(1);
       expect(state.resources.find((resource) => resource.kind === "volume")?.name).toBe(
         expectedVolume,
@@ -2702,6 +2766,7 @@ describe("container runtime", () => {
         nextId: 1,
         copyFailure: new ContainerCommandError({
           operation: "copy-container",
+          exitCode: 1,
           message: "bootstrap copy failed",
         }),
       };
@@ -2747,6 +2812,7 @@ describe("container runtime", () => {
         nextId: 1,
         inspectImageFailure: new ContainerCommandError({
           operation: "inspect-image",
+          exitCode: 1,
           message: "registry unavailable",
         }),
       };
@@ -2772,6 +2838,7 @@ describe("container runtime", () => {
         nextId: 1,
         inspectImageFailure: new ContainerCommandError({
           operation: "inspect-image",
+          exitCode: 1,
           message: "daemon rejected image inspection",
         }),
       };
@@ -2788,99 +2855,120 @@ describe("container runtime", () => {
     }),
   );
 
-  it.live("reports container engine identity when a log follower fails before readiness", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-container-follower-" });
-        const testStackId = yield* deriveStackId({
-          projectRoot: root,
-          branchContext: "ordinary-workspace",
-          stackName: "container-follower",
-        });
-        const store = yield* makeStackStateStore({ stateRoot: root });
-        yield* store.initialize(testStackId, {
-          format: "supabase-stack-state-v1",
-          identity: {
-            projectRoot: root,
-            branchContext: "ordinary-workspace",
-            stackName: "container-follower",
-          },
-          runtime: { kind: "container", engine: "docker" },
-          desiredLifecycle: "unconfigured",
-          ports: [],
-          privatePorts: [],
-          secrets: {},
-        });
-        const state: FakeContainerState = {
-          resources: [],
-          imagePresent: true,
-          calls: [],
-          createdSpecs: [],
-          nextId: 1,
-        };
-        const engine: ContainerEngine = {
-          ...fakeContainerEngine(state),
-          waitContainer: () => Effect.never,
-          streamLogs: () =>
-            Stream.fail(
-              new ContainerEngineProtocolError({
-                operation: "logs",
-                message: "follower disconnected before readiness",
-              }),
-            ),
-        };
-        const logStore = memoryLogStore([]);
-        const driver = yield* makeContainerRuntime({
-          engine,
-          ownerSessionId: "owner-session",
-          logStore,
-          resolveWorkload: () => Effect.succeed({ waitForReadiness: () => Effect.never }),
-        });
-        const ingress: SupervisorIngress = {
-          acquire: () =>
-            Effect.succeed({
-              assignments: {},
-              privateAssignments: [],
-              hostListeners: [],
-              fresh: false,
-              ownershipToken: Symbol(),
+  it.live("starts an unrelated workload while container stop is held at a barrier", () =>
+    Effect.gen(function* () {
+      const state: FakeContainerState = {
+        resources: [],
+        imagePresent: true,
+        calls: [],
+        createdSpecs: [],
+        nextId: 1,
+      };
+      const stoppedEntered = yield* Deferred.make<void>();
+      const releaseStop = yield* Deferred.make<void>();
+      const firstKey = { ...key, workloadId: "database:first" };
+      const unrelatedKey = { ...key, workloadId: "functions:edge-runtime" };
+      const base = fakeContainerEngine(state);
+      const runtime = yield* makeContainerRuntime({
+        engine: {
+          ...base,
+          stopContainer: (id) =>
+            Effect.gen(function* () {
+              const entry = state.resources.find((resource) => resource.id === id);
+              if (
+                entry?.labels.role === "workload" &&
+                entry.labels.workloadId === firstKey.workloadId
+              ) {
+                yield* Deferred.succeed(stoppedEntered, undefined);
+                yield* Deferred.await(releaseStop);
+              }
+              yield* base.stopContainer(id);
             }),
-          open: () => Effect.void,
-          close: Effect.void,
-        };
-        const runtime: SupervisorRuntime = {
-          driver,
-          preflight: () => Effect.void,
-          prepare: () => Effect.void,
-          prefetch: () => Effect.void,
-          artifacts: Effect.succeed([]),
-          activate: () => Effect.succeed({ host: "127.0.0.1", port: 9999 }),
-          ingress,
-          logStore,
-        };
-        const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
-        const supervisor = yield* makeSupervisor({
-          stackId: testStackId,
-          ownerSessionId: "owner-session",
-          stateStore: store,
-          context,
-          runtime,
-        });
-        const result = yield* supervisor.start().pipe(Effect.exit);
-        expect(Exit.isFailure(result)).toBe(true);
-        if (Exit.isFailure(result)) {
-          const failure = Cause.findErrorOption(result.cause);
-          expect(Option.isSome(failure)).toBe(true);
-          if (Option.isSome(failure)) {
-            expect(failure.value).toBeInstanceOf(ContainerEngineError);
-            expect(failure.value.message).toContain("follower disconnected before readiness");
-          }
-        }
-        expect((yield* supervisor.status).lifecycle).toBe("unconfigured");
-        yield* supervisor.shutdownIfIdle;
-        yield* supervisor.shutdown;
-      }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+        },
+        ownerSessionId: "owner-session",
+      });
+      yield* runtime.start(firstKey, workload());
+      const stopping = yield* runtime
+        .stop(firstKey)
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(stoppedEntered);
+
+      const ready = yield* runtime.start(unrelatedKey, {
+        ...workload(),
+        id: unrelatedKey.workloadId,
+        capability: "functions",
+      });
+      expect(ready).toEqual({ ...unrelatedKey, state: "ready" });
+
+      yield* Deferred.succeed(releaseStop, undefined);
+      yield* Fiber.join(stopping);
+    }),
+  );
+
+  it.live("keeps same-recipe instance resources independently addressable", () =>
+    Effect.gen(function* () {
+      const state: FakeContainerState = {
+        resources: [],
+        imagePresent: true,
+        calls: [],
+        createdSpecs: [],
+        nextId: 1,
+      };
+      const primaryKey = {
+        ...key,
+        instanceId: ServiceInstanceIdSchema.make("primary-runtime"),
+        workloadId: "database:primary",
+      };
+      const shadowKey = {
+        ...key,
+        instanceId: ServiceInstanceIdSchema.make("shadow-runtime"),
+        workloadId: "database:shadow",
+      };
+      const runtime = yield* makeContainerRuntime({
+        engine: fakeContainerEngine(state),
+        ownerSessionId: "owner-session",
+      });
+      yield* runtime.start(primaryKey, {
+        ...workload(),
+        id: primaryKey.workloadId,
+        instanceId: primaryKey.instanceId,
+        recipeId: "database:database",
+      });
+      yield* runtime.start(shadowKey, {
+        ...workload(),
+        id: shadowKey.workloadId,
+        instanceId: shadowKey.instanceId,
+        recipeId: "database:database",
+      });
+
+      const workloads = state.resources.filter(
+        (resource) => resource.kind === "workload" && resource.labels.role === "workload",
+      );
+      expect(workloads).toHaveLength(2);
+      expect(new Set(workloads.map((resource) => resource.name)).size).toBe(2);
+      expect(
+        workloads.map((resource) =>
+          "instanceId" in resource.labels ? resource.labels.instanceId : undefined,
+        ),
+      ).toEqual([primaryKey.instanceId, shadowKey.instanceId]);
+
+      yield* runtime.remove(primaryKey);
+      expect(
+        state.resources.some(
+          (resource) =>
+            resource.kind === "workload" &&
+            resource.labels.role === "workload" &&
+            resource.labels.instanceId === primaryKey.instanceId,
+        ),
+      ).toBe(false);
+      expect(
+        state.resources.some(
+          (resource) =>
+            resource.kind === "workload" &&
+            resource.labels.role === "workload" &&
+            resource.labels.instanceId === shadowKey.instanceId,
+        ),
+      ).toBe(true);
+    }),
   );
 });

@@ -60,11 +60,11 @@ export const FunctionsModule: CapabilityModule<FunctionsSettings> = {
   defaultEnabled: true,
   defaultActivation: "lazy",
   defaultVersion: version,
-  dependencies: ["database"],
+  dependencies: [],
   releases: {
     [version]: release(version, [
       workload("edge-runtime", "functions", {
-        dependencies: ["database:database"],
+        dependencies: [],
         readiness: { portField: "functionsInspector" },
       }),
     ]),
@@ -82,11 +82,11 @@ export const FunctionsModule: CapabilityModule<FunctionsSettings> = {
         name,
         {
           enabled: fn.enabled ?? true,
-          verify_jwt: fn.verify_jwt ?? true,
-          import_map: fn.import_map ?? "",
-          entrypoint: fn.entrypoint ?? "",
-          static_files: fn.static_files ?? [],
           env: fn.env ?? {},
+          ...(fn.verify_jwt === undefined ? {} : { verify_jwt: fn.verify_jwt }),
+          ...(fn.import_map === undefined ? {} : { import_map: fn.import_map }),
+          ...(fn.entrypoint === undefined ? {} : { entrypoint: fn.entrypoint }),
+          ...(fn.static_files === undefined ? {} : { static_files: fn.static_files }),
         },
       ]),
     ),

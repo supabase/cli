@@ -8,6 +8,8 @@ export * from "./Credentials.ts";
 export * from "./Errors.ts";
 export * from "./Config.ts";
 export { targetForPlatform } from "../model/WorkloadCatalog.ts";
+export * from "./Service.ts";
+export * from "./ServiceInstanceId.ts";
 export { excludeStackCapabilities } from "../model/Exclusions.ts";
 export type { ExcludableCapabilityName } from "../model/Exclusions.ts";
 export {
@@ -30,24 +32,19 @@ export type {
   EffectStack,
   InspectStackOptions,
   StartStackOptions,
+  ServiceSelection,
+  ServiceConfigUpdate,
+  RestartStackOptions,
   PrepareStackOptions,
+  OpenStackOptions,
   CreateStackOptions,
   FindStackOptions,
   ListStacksOptions,
   StackDiscoveryIssue,
   StackDiscoveryResult,
-  PreparedCapability,
   PrepareStackResult,
 } from "./EffectStack.ts";
 export { databaseBootstrapIdentity } from "../model/DatabaseBootstrap.ts";
-export { createEphemeralPostgres, resolveEphemeralPostgresRelease } from "./EphemeralPostgres.ts";
-export type {
-  CreateEphemeralPostgresOptions,
-  EffectEphemeralPostgres,
-  EphemeralPostgresRelease,
-  EphemeralPostgresServices,
-  EphemeralPostgresSettings,
-} from "./EphemeralPostgres.ts";
 export { runPostgresClient } from "./PostgresClient.ts";
 export type {
   PostgresClientMount,
@@ -55,17 +52,3 @@ export type {
   PostgresClientServices,
   RunPostgresClientOptions,
 } from "./PostgresClient.ts";
-export {
-  schemaInit,
-  SCHEMA_INIT_CAPABILITY_NAMES,
-  schemaInitArtifactIdentity,
-} from "./SchemaInit.ts";
-export type {
-  SchemaInitCapabilityName,
-  SchemaInitEphemeralTarget,
-  SchemaInitLiveTarget,
-  SchemaInitOptions,
-  SchemaInitSecrets,
-  SchemaInitServices,
-  SchemaInitTarget,
-} from "./SchemaInit.ts";

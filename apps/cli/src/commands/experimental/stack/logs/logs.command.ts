@@ -1,6 +1,5 @@
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
-import { CAPABILITY_NAMES } from "@supabase/stack/effect";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { stackLogs } from "./logs.handler.ts";
@@ -18,7 +17,7 @@ const config = {
     Flag.withDescription("Read logs from an existing stack by id."),
     Flag.optional,
   ),
-  service: Flag.choice("service", CAPABILITY_NAMES).pipe(
+  service: Flag.string("service").pipe(
     Flag.withDescription(
       "Limit logs to one stack service; omit this flag to include supervisor and gateway diagnostics.",
     ),
@@ -48,7 +47,7 @@ export const stackLogsCommand = Command.make("logs", config).pipe(
   Command.withShortDescription("Read managed local stack logs"),
   Command.withExamples([
     {
-      command: "supabase stack logs --service database --tail 50",
+      command: "supabase stack logs --service <instance-id> --tail 50",
       description: "Print the latest database logs",
     },
     {

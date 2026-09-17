@@ -54,10 +54,12 @@ no custom telemetry event and does not emit configuration or credential values.
 
 ## Output
 
-- `--output-format text`: stack ID, runtime, lifecycle, configured endpoints, and
-  dormant capabilities. Progress is cleared after success or failed before propagation.
+- `--output-format text`: stack ID, runtime, lifecycle, configured endpoints, dormant
+  capabilities, and registered service instance IDs/names/phases. Progress is cleared after
+  success or failure before propagation.
 - `--output-format json`: one status object containing `id`, `lifecycle`,
-  `desired_lifecycle`, `runtime`, `endpoints`, `versions`, `capabilities`, and `artifacts`.
+  `desired_lifecycle`, `runtime`, `endpoints`, `versions`, `capabilities`, `artifacts`, and
+  `instances`.
 - `--output-format stream-json`: standard progress events, followed by a `result`
   event carrying the same status object, or an `error` event on failure.
 
@@ -66,8 +68,8 @@ Legacy `-o/--output` is rejected with guidance to use `--output-format`.
 ## Notes
 
 Targets one existing stack through `--stack`, `--stack-id`, or the current
-project. The command stops and starts without an explicit configuration. Stop failure prevents
-start; start failure leaves the same stack stopped and available for recovery. Interrupting
+project. The command invokes the package restart lifecycle without an explicit configuration. A
+restart failure leaves the same stack available for recovery. Interrupting
 the CLI waiter follows the package's owner lifecycle contract and does not invoke
 destroy from the command handler.
 An unconfigured stack must be initialized with `supabase stack start` before it can be restarted.

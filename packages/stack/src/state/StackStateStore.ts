@@ -23,6 +23,7 @@ import { StackIdSchema } from "../public/StackId.ts";
 import {
   PersistedStackStateSchema,
   STACK_STATE_FORMAT,
+  validatePortAssignments,
   type PersistedStackState,
 } from "./StackState.ts";
 import {
@@ -34,6 +35,7 @@ import {
   type OwnerLock,
   OWNER_LOCK_FORMAT,
 } from "./Ownership.ts";
+import { planStablePorts } from "./PortPlanner.ts";
 
 class RegistryBusyError extends Data.TaggedError("RegistryBusyError")<{}> {}
 
@@ -62,6 +64,15 @@ export interface StackStateStore {
   ) => Effect.Effect<
     void,
     InvalidProjectRootError | StackStateInvalidError | StackStateFormatUnsupportedError,
+    FileSystem.FileSystem | Path.Path | Crypto.Crypto
+  >;
+  /** Applies a pure current-state read-modify-write transaction under the registry lock. */
+  readonly update: <E = never>(
+    stackId: string,
+    transform: (current: PersistedStackState) => Effect.Effect<PersistedStackState, E>,
+  ) => Effect.Effect<
+    PersistedStackState,
+    E | InvalidProjectRootError | StackStateInvalidError | StackStateFormatUnsupportedError,
     FileSystem.FileSystem | Path.Path | Crypto.Crypto
   >;
   /** Internal transaction primitive for callers that already hold the registry lock. */
@@ -94,39 +105,6 @@ export interface StackStateStore {
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const withoutKeys = (
-  value: Readonly<Record<string, unknown>>,
-  keys: ReadonlyArray<string>,
-): Record<string, unknown> => {
-  const result = { ...value };
-  for (const key of keys) delete result[key];
-  return result;
-};
-
-/** Restores defaults and drops settings removed from the local model when reading older durable state. */
-const normalizeDurableState = (raw: Readonly<Record<string, unknown>>): unknown => {
-  const identity = isRecord(raw.identity) ? withoutKeys(raw.identity, ["stackId"]) : raw.identity;
-  const definition = raw.definition;
-  if (!isRecord(definition) || !isRecord(definition.capabilities)) return { ...raw, identity };
-  const capabilities: Record<string, unknown> = { ...definition.capabilities };
-  for (const [capability, value] of Object.entries(capabilities)) {
-    if (isRecord(value) && !Object.hasOwn(value, "idleTimeoutSeconds"))
-      capabilities[capability] = { ...value, idleTimeoutSeconds: false };
-  }
-  const obsolete: ReadonlyArray<readonly [string, ReadonlyArray<string>]> = [
-    ["database", ["network_restrictions", "ssl_enforcement", "vault"]],
-    ["rest", ["auto_expose_new_tables", "tls"]],
-    ["storage", ["analytics"]],
-    ["analytics", ["vector_port"]],
-  ];
-  for (const [capability, keys] of obsolete) {
-    const module = capabilities[capability];
-    if (!isRecord(module) || !isRecord(module.settings)) continue;
-    capabilities[capability] = { ...module, settings: withoutKeys(module.settings, keys) };
-  }
-  return { ...raw, identity, definition: { ...definition, capabilities } };
-};
-
 const stateError = (message: string, cause?: unknown) =>
   new StackStateInvalidError({ message, ...(cause === undefined ? {} : { cause }) });
 
@@ -155,23 +133,19 @@ const decodeState = (
   StackStateInvalidError | StackStateFormatUnsupportedError
 > => {
   if (!isRecord(raw)) return Effect.fail(stateError("Persisted stack state must be an object"));
-  if (typeof raw.format !== "string")
-    return Effect.fail(stateError("Persisted stack state format is missing or invalid"));
-  if (raw.format !== STACK_STATE_FORMAT) {
+  if (raw.format !== STACK_STATE_FORMAT)
     return Effect.fail(
       new StackStateFormatUnsupportedError({
-        format: raw.format,
+        format: typeof raw.format === "string" ? raw.format : undefined,
         message: `Unsupported stack state format; expected ${STACK_STATE_FORMAT}`,
       }),
     );
-  }
   if (!isRecord(raw.secrets))
     return Effect.fail(stateError("Persisted secret values must be a record"));
-  // Schema.Record doesn't enforce key-format checks while decoding JSON, so validate slot names here.
   for (const slot of Object.keys(raw.secrets))
     if (!/^[A-Za-z0-9_.:/-]+$/.test(slot))
       return Effect.fail(stateError(`Persisted secret slot key is invalid: ${slot}`));
-  return Schema.decodeUnknownEffect(PersistedStackStateSchema)(normalizeDurableState(raw), {
+  return Schema.decodeUnknownEffect(PersistedStackStateSchema)(raw, {
     onExcessProperty: "error",
   }).pipe(
     Effect.mapError((error) => stateError(`Invalid persisted stack state: ${String(error)}`)),
@@ -206,7 +180,10 @@ const validateStateSchema = (
     onExcessProperty: "error",
   }).pipe(
     Effect.mapError((error) => stateError(`Invalid persisted stack state: ${String(error)}`)),
-    Effect.asVoid,
+    Effect.flatMap(() => {
+      const portError = validatePortAssignments(state);
+      return portError === undefined ? Effect.void : Effect.fail(stateError(portError));
+    }),
   );
 
 const atomicWrite = (
@@ -218,13 +195,8 @@ const atomicWrite = (
   state: PersistedStackState,
 ): Effect.Effect<void, StackStateInvalidError> =>
   Effect.gen(function* () {
-    const encoded = yield* Schema.encodeEffect(PersistedStackStateSchema)(state).pipe(
-      Effect.mapError((error) =>
-        stateError(`Unable to encode persisted stack state: ${String(error)}`),
-      ),
-    );
     const serialized = yield* Schema.encodeEffect(Schema.fromJsonString(PersistedStackStateSchema))(
-      encoded,
+      state,
     ).pipe(
       Effect.mapError((error) =>
         stateError(`Unable to encode persisted stack state JSON: ${String(error)}`),
@@ -290,6 +262,8 @@ const validateState = (
   Effect.gen(function* () {
     yield* validateIdentityForStackId(state.identity, stackId);
     yield* validateStateSchema(state);
+    const portError = validatePortAssignments(state);
+    if (portError !== undefined) return yield* stateError(portError);
   });
 
 const persistValidatedState = (
@@ -496,8 +470,58 @@ export const makeStackStateStore = (options: {
         );
         const decoded = yield* decodeState(raw);
         yield* validateIdentityForStackId(decoded.identity, stackId);
+        yield* validateStateSchema(decoded);
         return decoded;
       });
+
+    const readSiblingStates = (
+      stackId: string,
+    ): Effect.Effect<
+      ReadonlyArray<{ readonly stackId: string; readonly state: PersistedStackState }>,
+      InvalidProjectRootError | StackStateInvalidError | StackStateFormatUnsupportedError,
+      FileSystem.FileSystem | Path.Path | Crypto.Crypto
+    > =>
+      Effect.gen(function* () {
+        const root = path.resolve(options.stateRoot);
+        const exists = yield* fs
+          .exists(root)
+          .pipe(
+            Effect.mapError((error) =>
+              stateError(`Unable to inspect stack state root: ${error.message}`),
+            ),
+          );
+        if (!exists) return [];
+        const entries = yield* fs
+          .readDirectory(root)
+          .pipe(
+            Effect.mapError((error) =>
+              stateError(`Unable to inspect stack state root: ${error.message}`),
+            ),
+          );
+        const siblings: Array<{ readonly stackId: string; readonly state: PersistedStackState }> =
+          [];
+        for (const siblingId of entries) {
+          if (siblingId === stackId || !/^[0-9a-f]{64}$/.test(siblingId)) continue;
+          const sibling = yield* read(siblingId).pipe(
+            Effect.catchIf(isMissingStateRemnantError, () => Effect.void),
+          );
+          if (sibling !== undefined) siblings.push({ stackId: siblingId, state: sibling });
+        }
+        return siblings;
+      });
+
+    const plan = (
+      stackId: string,
+      state: PersistedStackState,
+      previous?: PersistedStackState,
+    ): Effect.Effect<
+      PersistedStackState,
+      InvalidProjectRootError | StackStateInvalidError | StackStateFormatUnsupportedError,
+      FileSystem.FileSystem | Path.Path | Crypto.Crypto
+    > =>
+      readSiblingStates(stackId).pipe(
+        Effect.flatMap((siblings) => planStablePorts(stackId, state, siblings, previous)),
+      );
 
     const initialize = (
       stackId: string,
@@ -517,9 +541,10 @@ export const makeStackStateStore = (options: {
           );
           if (existing !== undefined) return existing;
           const paths = yield* pathsFor(stackId);
-          yield* validateState(stackId, candidate);
-          yield* persistValidatedState(fs, path, crypto, paths, candidate);
-          return candidate;
+          const planned = yield* plan(stackId, candidate);
+          yield* validateState(stackId, planned);
+          yield* persistValidatedState(fs, path, crypto, paths, planned);
+          return planned;
         }),
       );
 
@@ -536,8 +561,9 @@ export const makeStackStateStore = (options: {
         yield* validateIdentityForStackId(next.identity, stackId);
         const current = yield* read(stackId);
         if (current === undefined) return yield* stateError("Cannot replace missing stack state");
-        yield* validateStateSchema(next);
-        yield* persistValidatedState(fs, path, crypto, paths, next);
+        const planned = yield* plan(stackId, next, current);
+        yield* validateStateSchema(planned);
+        yield* persistValidatedState(fs, path, crypto, paths, planned);
       });
 
     const replace = (
@@ -548,6 +574,35 @@ export const makeStackStateStore = (options: {
       InvalidProjectRootError | StackStateInvalidError | StackStateFormatUnsupportedError,
       FileSystem.FileSystem | Path.Path | Crypto.Crypto
     > => withRegistryLock(options.stateRoot, replaceUnlocked(stackId, next));
+
+    const updateUnlocked = <E>(
+      stackId: string,
+      transform: (current: PersistedStackState) => Effect.Effect<PersistedStackState, E>,
+    ): Effect.Effect<
+      PersistedStackState,
+      E | InvalidProjectRootError | StackStateInvalidError | StackStateFormatUnsupportedError,
+      FileSystem.FileSystem | Path.Path | Crypto.Crypto
+    > =>
+      Effect.gen(function* () {
+        const current = yield* read(stackId);
+        if (current === undefined) return yield* stateError("Cannot update missing stack state");
+        const next = yield* transform(current);
+        const planned = yield* plan(stackId, next, current);
+        const paths = yield* pathsFor(stackId);
+        yield* validateIdentityForStackId(planned.identity, stackId);
+        yield* validateStateSchema(planned);
+        yield* persistValidatedState(fs, path, crypto, paths, planned);
+        return planned;
+      });
+
+    const update = <E>(
+      stackId: string,
+      transform: (current: PersistedStackState) => Effect.Effect<PersistedStackState, E>,
+    ): Effect.Effect<
+      PersistedStackState,
+      E | InvalidProjectRootError | StackStateInvalidError | StackStateFormatUnsupportedError,
+      FileSystem.FileSystem | Path.Path | Crypto.Crypto
+    > => withRegistryLock(options.stateRoot, updateUnlocked(stackId, transform));
 
     // fs.remove({ recursive: false }) maps to Node's fs.rm, which refuses to remove directories.
     // Native rmdir is used instead so a concurrent child creation fails with ENOTEMPTY rather
@@ -662,6 +717,7 @@ export const makeStackStateStore = (options: {
       read,
       initialize,
       replace,
+      update,
       replaceUnlocked,
       cleanup,
       recoverRuntimeRemnant,

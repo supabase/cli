@@ -7,6 +7,7 @@ import type {
   ExitCode,
   ProcessId,
 } from "effect/unstable/process/ChildProcessSpawner";
+import type { ServiceInstanceId } from "../public/ServiceInstanceId.ts";
 
 export interface NativeProcessSpec {
   readonly executable: string;
@@ -34,6 +35,7 @@ export interface NativeProcessLauncher {
 /** Stable command-line marker used by diagnostics to identify owned processes. */
 export interface NativeProcessIdentity {
   readonly stackId: string;
+  readonly instanceId: ServiceInstanceId;
   readonly workloadId: string;
 }
 
@@ -125,6 +127,7 @@ export const spawnNativeProcess = (
             ...launcher.args,
             "--",
             `supabase-stack-id=${identity.stackId}`,
+            `supabase-instance-id=${identity.instanceId}`,
             `supabase-workload-id=${identity.workloadId}`,
           ];
     const handle: ChildProcessHandle = yield* ChildProcess.make(launcher.command, launcherArgs, {

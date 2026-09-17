@@ -2,11 +2,10 @@ import {
   Cause,
   Context,
   Crypto,
-  Deferred,
+  Data,
   Effect,
   Exit,
   FileSystem,
-  Fiber,
   Match,
   Option,
   Path,
@@ -25,13 +24,24 @@ import type { StackIdentity } from "../identity/Identity.ts";
 import { resolveStackIdentity, deriveStackId } from "../identity/Identity.ts";
 import {
   compileStack,
-  rebuildExecutionPlan,
-  sameDefinition,
+  fingerprintCreationInputs,
+  fingerprintBootstrapInputs,
+  fingerprintEffectiveConfig,
+  createExecutionPlan,
+  canonical,
+  resolvedStateValue,
+  seedServiceRegistry,
   type SecretSlotInput,
+  type SeededServiceRegistry,
   type StackDefinition,
 } from "../model/Compiler.ts";
-import { dependencyClosure, type ExecutionPlan } from "../model/ExecutionPlan.ts";
-import type { PersistedStackState } from "../state/StackState.ts";
+import { makeProductionRuntimeArtifactPreparer } from "../preparation/RuntimeArtifacts.ts";
+import { dependencyClosure } from "../model/ExecutionPlan.ts";
+import { STACK_STATE_FORMAT, type PersistedStackState } from "../state/StackState.ts";
+import {
+  PersistedServiceRegistrySchema,
+  type PersistedServiceRegistry,
+} from "../model/ServiceRegistry.ts";
 import { toPersistedIdentity } from "../state/StackState.ts";
 import {
   isMissingStateRemnantError,
@@ -40,16 +50,35 @@ import {
   type StackStateStore,
 } from "../state/StackStateStore.ts";
 import { resolveStackPaths } from "../state/Paths.ts";
-import { StackIdSchema, type StackId } from "./StackId.ts";
+import { AUTH_JWT_SECRET_SLOT, resolveSecrets } from "../state/SecretStore.ts";
+import { plannedInstancePorts } from "../supervisor/InstanceEngine.ts";
+import { isStackId, StackIdSchema, type StackId } from "./StackId.ts";
 import type { StackRuntime, StackRuntimePreference } from "./Runtime.ts";
 import type { StackConfig } from "./Config.ts";
+import type { ServiceInstanceId } from "./ServiceInstanceId.ts";
+import type {
+  AnyEffectServiceInstance,
+  AnyServiceDescriptor,
+  EffectServiceCollection,
+  EffectServiceInstance,
+  ServiceDescriptor,
+  ServiceKind,
+  SnapshotDescriptor,
+  PrepareResult,
+  ServiceCredentials,
+} from "./Service.ts";
+import {
+  EffectCreateServiceOptionsSchema,
+  SnapshotDescriptorSchema,
+  ServiceRestartPayloadSchema,
+} from "./Service.ts";
 import {
   type ArtifactPreparationStatus,
   type StackStatus,
   type StackDescriptor,
   type StackInspection,
+  type StackRecovery,
 } from "./Status.ts";
-import { CAPABILITY_NAMES, type CapabilityName } from "./Capability.ts";
 import type { LogQuery, StackLogBatch, StackLogEntry } from "./Logs.ts";
 import type { EffectStackCredentials } from "./Credentials.ts";
 import {
@@ -61,6 +90,8 @@ import {
   StackNotFoundError,
   StackNotRunningError,
   StackOwnershipConflictError,
+  OwnerRetiringError,
+  UncertainOperationError,
   StackRuntimeMismatchError,
   StackLifecycleConflictError,
   StackPreparationError,
@@ -71,12 +102,17 @@ import {
   StackRuntimeError,
   StackCleanupError,
   ContainerEngineError,
-  EphemeralPostgresError,
-  RequiresActivatedProcessError,
   StackStateInvalidError,
   StackStateFormatUnsupportedError,
   StackUpgradeRequiredError,
   StackMustBeStoppedError,
+  ServiceNotFoundError,
+  ServiceNameConflictError,
+  ServiceDependencyError,
+  InitializationMismatchError,
+  UnsupportedSnapshotError,
+  NoSnapshotDataError,
+  SnapshotTargetInvalidError,
   PortAllocationError,
   PortUnavailableError,
   GatewayActivationError,
@@ -92,9 +128,9 @@ import {
   type StackStopError,
   type StackLogsError,
   type DestroyStackError,
-  type ResetDatabaseError,
   type StackError,
   type StackErrorTag,
+  type LifecycleOutcome,
   isStackError,
   isStackErrorTag,
   PREPARE_STACK_ERROR_TAGS,
@@ -104,11 +140,12 @@ import {
   STACK_STOP_ERROR_TAGS,
   STACK_LOGS_ERROR_TAGS,
   DESTROY_STACK_ERROR_TAGS,
-  RESET_DATABASE_ERROR_TAGS,
+  CREATE_STACK_ERROR_TAGS,
 } from "./Errors.ts";
 import {
   ownerLockExists,
   readOwnerMetadata,
+  waitForOwnerRelease,
   type OwnerMetadata,
   type StackRuntimeEnvironmentValue,
 } from "../state/Ownership.ts";
@@ -130,21 +167,26 @@ import {
   NATIVE_ROOT_UNSUPPORTED_MESSAGE,
   type ContainerEngineResolverShape,
 } from "../runtime/ContainerEngineResolver.ts";
-import { formatStopTimeoutMessage } from "../runtime/Diagnostics.ts";
-import { statusForSnapshot } from "../supervisor/StatusProjection.ts";
-import type { SupervisorSnapshot } from "../supervisor/SupervisorState.ts";
+import { statusForPersistedState } from "../supervisor/StatusProjection.ts";
 import { EMPTY_LOG_CURSOR, readRetainedLogs, selectLogBatch } from "../supervisor/LogStore.ts";
-import {
-  makeProductionRuntimeArtifactPreparer,
-  type PreparedWorkloadArtifact,
-} from "../preparation/RuntimeArtifacts.ts";
 
 export interface StartStackOptions {
-  readonly config?: StackConfig;
+  readonly services?: ReadonlyArray<ServiceInstanceId>;
 }
+export interface ServiceSelection {
+  readonly services?: ReadonlyArray<ServiceInstanceId>;
+}
+export type ServiceConfigUpdate = import("./Service.ts").ServiceRestartPayload;
+export type RestartStackOptions =
+  | { readonly services?: never; readonly config?: StackConfig }
+  | {
+      readonly services: ReadonlyArray<ServiceInstanceId>;
+      readonly updates?: ReadonlyArray<ServiceConfigUpdate>;
+      readonly config?: never;
+    };
 export interface PrepareStackOptions {
   readonly config?: StackConfig;
-  readonly capabilities?: ReadonlyArray<CapabilityName>;
+  readonly services?: ReadonlyArray<ServiceInstanceId>;
   /** Synchronous progress observer for this caller-owned preparation. */
   readonly onProgress?: (status: ArtifactPreparationStatus) => void;
 }
@@ -152,6 +194,10 @@ export interface CreateStackOptions {
   readonly projectRoot: string;
   readonly name?: string;
   readonly runtime?: StackRuntimePreference;
+  readonly initialConfig: StackConfig;
+}
+export interface OpenStackOptions {
+  readonly initialConfig?: StackConfig;
 }
 export interface FindStackOptions {
   readonly projectRoot: string;
@@ -164,27 +210,34 @@ export interface ListStacksOptions {
 export interface InspectStackOptions {
   readonly config?: StackConfig;
 }
-export interface PreparedCapability {
-  readonly capability: CapabilityName;
-  readonly version: string;
-  readonly outcome: "cached" | "downloaded" | "pulled";
+interface PrepareStackInstance {
+  readonly id: ServiceInstanceId;
+  readonly service: ServiceKind;
+  readonly artifacts: ReadonlyArray<{
+    readonly identity: string;
+    readonly outcome: "cached" | "downloaded" | "pulled";
+  }>;
+  readonly effectiveConfigFingerprint?: string;
 }
 
 export interface PrepareStackResult {
-  readonly capabilities: ReadonlyArray<PreparedCapability>;
+  readonly instances: ReadonlyArray<PrepareStackInstance>;
 }
 
 export interface EffectStack {
   readonly id: StackId;
+  readonly services: EffectServiceCollection;
   readonly status: Effect.Effect<StackStatus, StackStatusError>;
+  readonly followStatus: Stream.Stream<StackStatus, StackStatusError>;
   readonly credentials: Effect.Effect<EffectStackCredentials, StackCredentialsError>;
   readonly prepare: (
     options?: PrepareStackOptions,
   ) => Effect.Effect<PrepareStackResult, PrepareStackError>;
   readonly start: (options?: StartStackOptions) => Effect.Effect<StackStatus, StackStartError>;
-  readonly stop: Effect.Effect<void, StackStopError>;
-  readonly destroy: Effect.Effect<void, DestroyStackError>;
-  readonly resetDatabase: Effect.Effect<StackStatus, ResetDatabaseError>;
+  readonly sleep: (options?: ServiceSelection) => Effect.Effect<StackStatus, StackStartError>;
+  readonly stop: (options?: ServiceSelection) => Effect.Effect<StackStatus, StackStopError>;
+  readonly restart: (options?: RestartStackOptions) => Effect.Effect<StackStatus, StackStartError>;
+  readonly destroy: (options?: ServiceSelection) => Effect.Effect<void, DestroyStackError>;
   readonly logs: (query?: LogQuery) => Effect.Effect<StackLogBatch, StackLogsError>;
   readonly followLogs: (query?: LogQuery) => Stream.Stream<StackLogEntry, StackLogsError>;
   /** Present when auto-select persisted native because the Docker daemon was down. */
@@ -200,7 +253,9 @@ const descriptor = (state: PersistedStackState, id: StackId): StackDescriptor =>
   name: state.identity.stackName,
   branchContext: state.identity.branchContext,
   runtime: state.runtime,
-  desiredLifecycle: state.desiredLifecycle,
+  desiredLifecycle: state.registry.instances.some((instance) => instance.intent === "started")
+    ? "running"
+    : "stopped",
 });
 
 const environment = () =>
@@ -210,8 +265,82 @@ const environment = () =>
     ),
   );
 
-const isCapabilityName = (value: unknown): value is CapabilityName =>
-  typeof value === "string" && CAPABILITY_NAMES.some((name) => name === value);
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+
+const isLifecycleOutcome = (value: unknown): value is LifecycleOutcome =>
+  isRecord(value) &&
+  ["requested", "affected", "succeeded", "failed"].every((key) => Array.isArray(value[key]));
+
+const isStackRecovery = (value: unknown): value is StackRecovery =>
+  isRecord(value) &&
+  (value.operation === "stop" || value.operation === "destroy") &&
+  typeof value.message === "string";
+
+const isServiceDescriptor = (value: unknown): value is AnyServiceDescriptor =>
+  isRecord(value) &&
+  typeof value.id === "string" &&
+  typeof value.service === "string" &&
+  (value.name === undefined || typeof value.name === "string") &&
+  typeof value.enabled === "boolean" &&
+  isRecord(value.config) &&
+  isRecord(value.dependencies) &&
+  isRecord(value.endpoints);
+
+const isServiceDescriptorFor =
+  <K extends ServiceKind>(service: K) =>
+  (value: unknown): value is ServiceDescriptor<K> =>
+    isServiceDescriptor(value) && value.service === service;
+
+const isServiceStatus = (value: unknown): value is import("./Status.ts").ServiceStatus =>
+  isRecord(value) &&
+  typeof value.id === "string" &&
+  typeof value.service === "string" &&
+  (value.name === undefined || typeof value.name === "string") &&
+  typeof value.enabled === "boolean" &&
+  (value.intent === "started" || value.intent === "stopped") &&
+  typeof value.phase === "string" &&
+  typeof value.activation === "string" &&
+  Array.isArray(value.endpoints);
+
+const isStackStatus = (value: unknown): value is StackStatus =>
+  isRecord(value) &&
+  typeof value.id === "string" &&
+  typeof value.lifecycle === "string" &&
+  typeof value.desiredLifecycle === "string" &&
+  isRecord(value.runtime) &&
+  Array.isArray(value.capabilities) &&
+  Array.isArray(value.instances) &&
+  isRecord(value.endpoints);
+
+const isServiceCredentials = <K extends ServiceKind>(
+  service: K,
+  value: unknown,
+): value is ServiceCredentials<K> => {
+  if (value === undefined) return service === "database";
+  if (!isRecord(value)) return false;
+  if (service === "database")
+    return typeof value.url === "string" && typeof value.password === "string";
+  if (service === "functions" || service === "storage") return true;
+  return value.kind === "none";
+};
+
+const isServiceDescriptorList = (value: unknown): value is ReadonlyArray<AnyServiceDescriptor> =>
+  Array.isArray(value) && value.every(isServiceDescriptor);
+
+const isPrepareResult = (value: unknown): value is PrepareResult =>
+  isRecord(value) &&
+  Array.isArray(value.instances) &&
+  value.instances.every(
+    (entry) =>
+      isRecord(entry) &&
+      typeof entry.id === "string" &&
+      typeof entry.service === "string" &&
+      Array.isArray(entry.artifacts),
+  );
+
+const isStackLogBatch = (value: unknown): value is StackLogBatch =>
+  isRecord(value) && Array.isArray(value.entries) && isRecord(value.cursor);
 
 type ControlError =
   | StackRpcError
@@ -220,13 +349,31 @@ type ControlError =
   | MaintenanceProtocolError
   | StackError;
 
-const stackErrorFactories = {
+class PreAdmissionOwnerLoss extends Data.TaggedError("PreAdmissionOwnerLoss")<{
+  readonly ownerSessionId: string;
+  readonly cause: RpcClientError;
+}> {}
+
+const isPreAdmissionOwnerLoss = (value: unknown): value is PreAdmissionOwnerLoss =>
+  isRecord(value) &&
+  value._tag === "PreAdmissionOwnerLoss" &&
+  typeof value.ownerSessionId === "string" &&
+  Predicate.isTagged(value.cause, "RpcClientError");
+
+const stackErrorFactories: Partial<Record<StackErrorTag, (message: string) => StackError>> = {
   InvalidStackIdentityError: (message: string) => new InvalidStackIdentityError({ message }),
   InvalidProjectRootError: (message: string) => new InvalidProjectRootError({ message }),
   InvalidStackConfigError: (message: string) => new InvalidStackConfigError({ message }),
   StackVersionUnsupportedError: (message: string) => new StackVersionUnsupportedError({ message }),
   StackNotFoundError: (message: string) => new StackNotFoundError({ message }),
   StackOwnershipConflictError: (message: string) => new StackOwnershipConflictError({ message }),
+  ServiceNotFoundError: (message: string) => new ServiceNotFoundError({ message }),
+  ServiceNameConflictError: (message: string) => new ServiceNameConflictError({ message }),
+  ServiceDependencyError: (message: string) => new ServiceDependencyError({ message }),
+  InitializationMismatchError: (message: string) => new InitializationMismatchError({ message }),
+  UnsupportedSnapshotError: (message: string) => new UnsupportedSnapshotError({ message }),
+  NoSnapshotDataError: (message: string) => new NoSnapshotDataError({ message }),
+  SnapshotTargetInvalidError: (message: string) => new SnapshotTargetInvalidError({ message }),
   StackRuntimeMismatchError: (message: string) => new StackRuntimeMismatchError({ message }),
   StackNotRunningError: (message: string) => new StackNotRunningError({ message }),
   StackMustBeStoppedError: (message: string) => new StackMustBeStoppedError({ message }),
@@ -249,18 +396,27 @@ const stackErrorFactories = {
   StackCleanupError: (message: string) => new StackCleanupError({ message }),
   ContainerEngineError: (message: string) => new ContainerEngineError({ message }),
   StackDestructionError: (message: string) => new StackDestructionError({ message }),
-  EphemeralPostgresError: (message: string) => new EphemeralPostgresError({ message }),
-  RequiresActivatedProcessError: (message: string) =>
-    new RequiresActivatedProcessError({ message, capability: "unknown" }),
   PostgresClientError: (message: string) => new PostgresClientError({ message }),
-} satisfies Record<StackErrorTag, (message: string) => StackError>;
+};
 
 const isOwnerUnreachable = (error: unknown): boolean =>
   Predicate.isTagged(error, "RpcClientError") ||
   Predicate.isTagged(error, "SocketError") ||
-  isMaintenanceTransportFailure(error);
+  Predicate.isTagged(error, "SocketOpenError") ||
+  Predicate.isTagged(error, "SocketCloseError") ||
+  isMaintenanceTransportFailure(error) ||
+  (isRecord(error) && "reason" in error && isOwnerUnreachable(error.reason));
 
-const errorForRpc = (error: ControlError): StackError => {
+const isUncertainMutation = (value: unknown): value is UncertainOperationError["mutation"] =>
+  typeof value === "string" &&
+  ["create", "restore", "start", "sleep", "stop", "restart", "destroy", "exportSnapshot"].some(
+    (mutation) => mutation === value,
+  );
+
+const isOwnerRetiringControlError = (value: unknown): value is StackRpcError =>
+  isRecord(value) && value.tag === "OwnerRetiringError" && typeof value.ownerSessionId === "string";
+
+const errorForRpc = (error: ControlError, expectedCreationInputsId?: string): StackError => {
   if (isStackError(error)) return error;
   if (isOwnerUnreachable(error))
     return new StackOwnershipConflictError({
@@ -274,7 +430,77 @@ const errorForRpc = (error: ControlError): StackError => {
     typeof error.tag === "string" &&
     typeof error.message === "string"
   ) {
-    if (isStackErrorTag(error.tag)) return stackErrorFactories[error.tag](error.message);
+    if (
+      error.tag === "UncertainOperationError" &&
+      "stackId" in error &&
+      typeof error.stackId === "string" &&
+      isStackId(error.stackId) &&
+      "mutation" in error &&
+      isUncertainMutation(error.mutation)
+    ) {
+      return new UncertainOperationError({
+        message: error.message,
+        stackId: error.stackId,
+        mutation: error.mutation,
+        ...(typeof error.instanceId === "string" ? { instanceId: error.instanceId } : {}),
+        ...(typeof error === "object" &&
+        error !== null &&
+        "operationId" in error &&
+        typeof error.operationId === "string"
+          ? { operationId: error.operationId }
+          : {}),
+        ...(typeof error === "object" &&
+        error !== null &&
+        "expectedCreationInputsId" in error &&
+        typeof error.expectedCreationInputsId === "string"
+          ? { expectedCreationInputsId: error.expectedCreationInputsId }
+          : {}),
+        ...(expectedCreationInputsId === undefined ||
+        ("expectedCreationInputsId" in error && typeof error.expectedCreationInputsId === "string")
+          ? {}
+          : { expectedCreationInputsId }),
+      });
+    }
+    if (
+      error.tag === "OwnerRetiringError" &&
+      "stackId" in error &&
+      "ownerSessionId" in error &&
+      typeof error.stackId === "string" &&
+      isStackId(error.stackId) &&
+      typeof error.ownerSessionId === "string"
+    )
+      return new OwnerRetiringError({
+        message: error.message,
+        stackId: error.stackId,
+        ownerSessionId: error.ownerSessionId,
+      });
+    if (
+      error.tag === "StackLifecycleConflictError" &&
+      ("instanceId" in error || "outcome" in error || "recovery" in error)
+    )
+      return new StackLifecycleConflictError({
+        message: error.message,
+        ...(typeof error.stackId === "string" && isStackId(error.stackId)
+          ? { stackId: error.stackId }
+          : {}),
+        ...(typeof error.instanceId === "string" ? { instanceId: error.instanceId } : {}),
+        ...("outcome" in error && isLifecycleOutcome(error.outcome)
+          ? { outcome: error.outcome }
+          : {}),
+        ...("recovery" in error && isStackRecovery(error.recovery)
+          ? { recovery: error.recovery }
+          : {}),
+      });
+    if (
+      error.tag === "StackDestructionError" &&
+      "outcome" in error &&
+      isLifecycleOutcome(error.outcome)
+    )
+      return new StackDestructionError({ message: error.message, outcome: error.outcome });
+    if (isStackErrorTag(error.tag)) {
+      const factory = stackErrorFactories[error.tag];
+      if (factory !== undefined) return factory(error.message);
+    }
     return new StackStateInvalidError({ message: error.message });
   }
   return new StackStateInvalidError({ message: error.message });
@@ -314,12 +540,13 @@ const logsError = (error: ControlError): StackLogsError =>
   narrowError(error, STACK_LOGS_ERROR_TAGS, (message) => new StackStateInvalidError({ message }));
 const destroyError = (error: ControlError): DestroyStackError =>
   narrowError(error, DESTROY_STACK_ERROR_TAGS, (message) => new StackDestructionError({ message }));
-const resetDatabaseError = (error: ControlError): ResetDatabaseError =>
-  narrowError(
-    error,
-    RESET_DATABASE_ERROR_TAGS,
-    (message) => new StackStateInvalidError({ message }),
-  );
+const createError = (error: unknown): CreateStackError =>
+  isStackError(error) && isNarrowError(error, CREATE_STACK_ERROR_TAGS)
+    ? error
+    : new StackStateInvalidError({
+        message: error instanceof Error ? error.message : String(error),
+        cause: error,
+      });
 
 /** Internal control-transport seam used by public lifecycle integration tests. */
 export interface HandleDependencies {
@@ -329,14 +556,15 @@ export interface HandleDependencies {
   readonly readOfflineState: Effect.Effect<Option.Option<PersistedStackState>, StackError>;
   readonly readPersistedState: Effect.Effect<Option.Option<PersistedStackState>, StackError>;
   readonly readLogs: (query?: LogQuery) => Effect.Effect<StackLogBatch, StackLogsError>;
-  readonly waitForRelease: Effect.Effect<void, StackStopError>;
+  readonly waitForRelease: (ownerSessionId?: string) => Effect.Effect<void, StackStopError>;
   readonly prepare: (
     options?: PrepareStackOptions,
   ) => Effect.Effect<PrepareStackResult, PrepareStackError>;
+  readonly fingerprintCreationInputs?: (options: unknown) => Effect.Effect<string, StackError>;
 }
 
 /** @internal Owner metadata together with whether this handle launched the owner. */
-export interface OwnerResolution {
+interface OwnerResolution {
   readonly owner: OwnerMetadata;
   readonly launched: boolean;
 }
@@ -344,11 +572,15 @@ export interface OwnerResolution {
 export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Effect<EffectStack> =>
   Effect.sync(() => {
     const isStoppedState = (state: PersistedStackState): boolean =>
-      state.desiredLifecycle === "stopped" || state.desiredLifecycle === "unconfigured";
+      state.registry.instances.every(
+        (instance) => instance.intent === "stopped" && instance.pendingOperation === null,
+      );
     const stackNotFound = () => new StackNotFoundError({ message: "Stack state was not found" });
+    const serviceSelectionPayload = (selection: ServiceSelection | undefined) =>
+      selection?.services === undefined ? {} : { services: selection.services };
     type ResolvedClient = {
       readonly client: ReturnType<typeof makeControlClient>;
-      readonly resolution: OwnerResolution;
+      readonly ownerSessionId: string;
     };
     const resolveClient = (
       launch: boolean,
@@ -366,211 +598,101 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
                   }),
                 )
               : Effect.succeed({
-                  resolution: resolution.value,
                   client: makeControlClient(resolution.value.owner.endpoint, {
                     stackId: id,
                     ownerSessionId: resolution.value.owner.ownerSessionId,
                     rpcRelease:
                       protocol === "rpc" ? STACK_RPC_RELEASE : resolution.value.owner.rpcRelease,
                   }),
+                  ownerSessionId: resolution.value.owner.ownerSessionId,
                 })
             : Effect.fail(
                 new StackOwnershipConflictError({ message: "No Supervisor owns this stack" }),
               ),
         ),
       );
-    const stopExactOwner = (owner: OwnerMetadata): Effect.Effect<void, StackCleanupError> =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const client = makeControlClient(owner.endpoint, {
-            stackId: id,
-            ownerSessionId: owner.ownerSessionId,
-            rpcRelease: owner.rpcRelease,
-          });
-          const stop = yield* Effect.exit(client.stop);
-          if (
-            Exit.isSuccess(stop) &&
-            !stop.value.ok &&
-            stop.value.error.tag === "operation-failed" &&
-            stop.value.error.stackErrorTag === "StackLifecycleConflictError"
-          ) {
-            return;
-          }
-          const release = yield* Effect.exit(options.waitForRelease);
-          let cause: Cause.Cause<StackCleanupError> = Cause.empty;
-          if (Exit.isFailure(stop)) {
-            cause = Cause.combine(
-              cause,
-              Cause.fail(
-                new StackCleanupError({
-                  message: "Unable to stop freshly launched Supervisor",
-                  cause: stop.cause,
-                }),
-              ),
-            );
-          } else if (!stop.value.ok) {
-            cause = Cause.combine(
-              cause,
-              Cause.fail(
-                new StackCleanupError({
-                  message: stop.value.error.message,
-                  cause: stop.value.error,
-                }),
-              ),
-            );
-          }
-          if (Exit.isFailure(release)) {
-            cause = Cause.combine(
-              cause,
-              Cause.fail(
-                new StackCleanupError({
-                  message: "Freshly launched Supervisor did not release ownership",
-                  cause: release.cause,
-                }),
-              ),
-            );
-          }
-          if (cause.reasons.length > 0) return yield* Effect.failCause(cause);
-        }),
-      );
-    const shouldCleanupFreshOwner = (result: Exit.Exit<unknown, unknown>): boolean => {
-      if (Exit.isSuccess(result)) return false;
-      if (Cause.hasInterruptsOnly(result.cause)) return true;
-      const failure = Cause.findErrorOption(result.cause);
-      return Option.isSome(failure) && Predicate.isTagged(failure.value, "RpcClientError");
-    };
-    const cleanupLaunchedOwner = (
-      resolution: OwnerResolution,
-      result: Exit.Exit<unknown, unknown>,
-    ): Effect.Effect<void, StackCleanupError> =>
-      resolution.launched && shouldCleanupFreshOwner(result)
-        ? Effect.uninterruptible(
-            stopExactOwner(resolution.owner).pipe(
-              Effect.catchCause((cleanupCause) =>
-                Effect.fail(
-                  new StackCleanupError({
-                    message: "Unable to clean up freshly launched Supervisor",
-                    cause: Cause.combine(
-                      Exit.isFailure(result) ? result.cause : Cause.empty,
-                      cleanupCause,
-                    ),
-                  }),
-                ),
-              ),
-            ),
-          )
-        : Effect.void;
     const invoke = <A, E extends StackError>(
       call: (rpc: StackRpcClient) => Effect.Effect<A, StackRpcError | RpcClientError>,
       mapError: (error: ControlError) => E,
       launch = false,
     ): Effect.Effect<A, E> => {
-      const rpcCall: Effect.Effect<A, StackRpcError | RpcClientError | StackError> = resolveClient(
-        launch,
-      ).pipe(
-        Effect.flatMap(({ client, resolution }) =>
-          Effect.scoped(client.rpc.pipe(Effect.flatMap(call))).pipe(
-            Effect.onExit((result) =>
-              launch ? cleanupLaunchedOwner(resolution, result) : Effect.void,
+      const rawAttempt = (): Effect.Effect<A, ControlError | PreAdmissionOwnerLoss> =>
+        resolveClient(launch).pipe(
+          Effect.flatMap(({ client, ownerSessionId }) => {
+            // Opening the RPC channel precedes handler admission. A lost owner here is safe to
+            // retry once; errors after `call` starts may represent an already committed mutation.
+            return client.rpc.pipe(
+              Effect.catchIf(
+                (error): error is RpcClientError => isOwnerUnreachable(error),
+                (cause) =>
+                  Effect.fail(
+                    new PreAdmissionOwnerLoss({
+                      ownerSessionId,
+                      cause,
+                    }),
+                  ),
+              ),
+              Effect.flatMap((rpc) => Effect.suspend(() => call(rpc))),
+              Effect.scoped,
+            );
+          }),
+        );
+      // Retirement is reported before admission. Wait for that owner to release, then
+      // resolve a fresh owner once; an admitted or ambiguous operation is never replayed.
+      return rawAttempt().pipe(
+        Effect.catchIf(
+          (error): error is StackRpcError | PreAdmissionOwnerLoss =>
+            isOwnerRetiringControlError(error) || isPreAdmissionOwnerLoss(error),
+          (error) =>
+            options.waitForRelease(error.ownerSessionId).pipe(
+              Effect.mapError((waitError): ControlError => waitError),
+              Effect.andThen(rawAttempt()),
             ),
+        ),
+        Effect.mapError((error) =>
+          mapError(
+            isPreAdmissionOwnerLoss(error)
+              ? new StackOwnershipConflictError({
+                  message: `Stack owner ${error.ownerSessionId} became unreachable before admission`,
+                  cause: error.cause,
+                })
+              : error,
           ),
         ),
       );
-      const mapped: Effect.Effect<A, E> = rpcCall.pipe(Effect.mapError(mapError));
-      return mapped;
     };
     const destroyAndAwaitOwner: Effect.Effect<void, DestroyStackError> = resolveClient(true).pipe(
       Effect.mapError(destroyError),
-      Effect.flatMap(({ client, resolution }) =>
-        Effect.gen(function* () {
-          const ownerConnected = yield* Deferred.make<void>();
-          const ownerWatch = client.awaitClose(
-            Deferred.succeed(ownerConnected, undefined).pipe(Effect.asVoid),
-          );
-          const ownerFiber = yield* Effect.forkChild(ownerWatch, { startImmediately: true });
-          const ownerReady = Deferred.await(ownerConnected).pipe(
-            Effect.raceFirst(
-              Fiber.join(ownerFiber).pipe(
-                Effect.flatMap(() =>
-                  Effect.fail(
-                    new StackDestructionError({
-                      message: "Unable to observe Supervisor control connection",
-                    }),
-                  ),
-                ),
-                Effect.mapError(
-                  (cause) =>
-                    new StackDestructionError({
-                      message: "Unable to observe Supervisor control connection",
-                      cause,
-                    }),
-                ),
+      Effect.flatMap(({ client, ownerSessionId }) =>
+        Effect.scoped(client.rpc.pipe(Effect.flatMap((rpc) => rpc.destroy({})))).pipe(
+          Effect.mapError(destroyError),
+          Effect.andThen(
+            options.waitForRelease(ownerSessionId).pipe(
+              Effect.mapError(
+                (error) =>
+                  new StackDestructionError({
+                    message: error.message,
+                    cause: error,
+                  }),
               ),
             ),
-          );
-          const destroyAttempt = ownerReady.pipe(
-            Effect.andThen(
-              Effect.scoped(client.rpc.pipe(Effect.flatMap((rpc) => rpc.destroy(undefined)))),
-            ),
-            Effect.onExit((attempt) => cleanupLaunchedOwner(resolution, attempt)),
-            Effect.mapError(destroyError),
-          );
-          const result = yield* Effect.exit(
-            destroyAttempt.pipe(
-              // The owner closes its control server only after all workload cleanup has completed.
-              // Await the exact preface-only socket instead of decoding a terminal RPC stream Exit.
-              Effect.andThen(
-                Fiber.join(ownerFiber).pipe(
-                  Effect.mapError(
-                    (cause) =>
-                      new StackDestructionError({
-                        message: "Unable to observe Supervisor shutdown completion",
-                        cause,
-                      }),
-                  ),
-                ),
-              ),
-            ),
-          );
-          if (Exit.isFailure(result)) {
-            yield* Fiber.interrupt(ownerFiber);
-          }
-          return yield* result;
-        }),
-      ),
-    );
-    const destroy: Effect.Effect<void, DestroyStackError> = Effect.suspend(() =>
-      options.readPersistedState.pipe(
-        Effect.mapError(destroyError),
-        Effect.flatMap((state) =>
-          Option.isNone(state) ? Effect.fail(stackNotFound()) : destroyAndAwaitOwner,
+          ),
         ),
       ),
     );
-    const resetDatabase: Effect.Effect<StackStatus, ResetDatabaseError> = Effect.suspend(
-      (): Effect.Effect<StackStatus, ResetDatabaseError> =>
-        invoke((rpc) => rpc.resetDatabase(undefined), resetDatabaseError).pipe(
-          Effect.catchTag("StackOwnershipConflictError", (ownershipError) => {
-            const offline: Effect.Effect<never, ResetDatabaseError> = options.readOfflineState.pipe(
-              Effect.mapError(resetDatabaseError),
-              Effect.flatMap((state): Effect.Effect<never, ResetDatabaseError> =>
-                Option.isNone(state)
-                  ? Effect.fail(stackNotFound())
-                  : isStoppedState(state.value)
-                    ? Effect.fail(
-                        new StackNotRunningError({
-                          stackId: id,
-                          message: "Stack is not running",
-                        }),
-                      )
-                    : Effect.fail(ownershipError),
+    const destroy = (selection?: ServiceSelection): Effect.Effect<void, DestroyStackError> =>
+      selection?.services !== undefined && selection.services.length === 0
+        ? Effect.void
+        : selection?.services === undefined
+          ? Effect.suspend(() =>
+              options.readPersistedState.pipe(
+                Effect.mapError(destroyError),
+                Effect.flatMap((state) =>
+                  Option.isNone(state) ? Effect.fail(stackNotFound()) : destroyAndAwaitOwner,
+                ),
               ),
-              Effect.catchTag("StackOwnershipConflictError", () => Effect.fail(ownershipError)),
-            );
-            return offline;
-          }),
-        ),
-    );
+            )
+          : invoke((rpc) => rpc.destroy(serviceSelectionPayload(selection)), destroyError, true);
     const status: Effect.Effect<StackStatus, StackStatusError> = Effect.suspend(
       (): Effect.Effect<StackStatus, StackStatusError> => {
         const rpcStatus = invoke((rpc) => rpc.status(undefined), statusError);
@@ -581,13 +703,7 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
               Effect.flatMap((state): Effect.Effect<StackStatus, StackStatusError> => {
                 if (Option.isNone(state)) return Effect.fail(stackNotFound());
                 if (isStoppedState(state.value)) {
-                  const fallback: SupervisorSnapshot = {
-                    stack: { _tag: "stopped", session: "initialized" },
-                    sessionId: Symbol("offline-status"),
-                    plan: undefined,
-                    capabilities: new Map(),
-                  };
-                  return statusForSnapshot(id, state.value, { _tag: "unavailable" }, fallback);
+                  return statusForPersistedState(id, state.value);
                 }
                 return Effect.fail(
                   new StackOwnershipConflictError({ message: "No Supervisor owns this stack" }),
@@ -601,7 +717,7 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
     );
     const credentials: Effect.Effect<EffectStackCredentials, StackCredentialsError> =
       Effect.suspend((): Effect.Effect<EffectStackCredentials, StackCredentialsError> =>
-        invoke((rpc) => rpc.credentials(undefined), credentialsError).pipe(
+        invoke((rpc) => rpc.credentials(undefined), credentialsError, true).pipe(
           Effect.catchTag("StackOwnershipConflictError", (ownershipError) => {
             const offline: Effect.Effect<never, StackCredentialsError> =
               options.readOfflineState.pipe(
@@ -626,10 +742,7 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
       );
     const start = (startOptions?: StartStackOptions) => {
       return invoke(
-        (rpc) =>
-          startOptions?.config === undefined
-            ? rpc.start({})
-            : rpc.start({ config: startOptions.config }),
+        (rpc) => rpc.start(serviceSelectionPayload(startOptions)),
         startError,
         true,
       ).pipe(
@@ -637,7 +750,7 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
           options.readPersistedState.pipe(
             Effect.flatMap((state) =>
               Option.isSome(state) && isStoppedState(state.value)
-                ? options.waitForRelease.pipe(Effect.ignore)
+                ? options.waitForRelease().pipe(Effect.ignore)
                 : Effect.void,
             ),
             Effect.ignore,
@@ -649,87 +762,258 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
       isNarrowError(error, STACK_LOGS_ERROR_TAGS)
         ? error
         : new StackStateInvalidError({ message: error.message, cause: error });
-    const stopOwner = (owner: ReturnType<typeof makeControlClient>) =>
-      Effect.gen(function* () {
-        // Subscribe to the owner control connection before sending stop so a
-        // fast shutdown cannot race the close witness.
-        const closeFiber = yield* Effect.forkChild(owner.awaitClose(), { startImmediately: true });
-        const response = yield* owner.stop.pipe(Effect.exit);
-        if (Exit.isFailure(response)) {
-          yield* Fiber.interrupt(closeFiber);
-          return yield* Effect.failCause(response.cause);
-        }
-        if (!response.value.ok) {
-          yield* Fiber.interrupt(closeFiber);
-          if (
-            response.value.error.tag === "operation-failed" &&
-            response.value.error.stackErrorTag !== undefined &&
-            isStackErrorTag(response.value.error.stackErrorTag)
-          ) {
-            return yield* stackErrorFactories[response.value.error.stackErrorTag](
-              response.value.error.message,
-            );
-          }
-          return yield* new StackLifecycleConflictError({ message: response.value.error.message });
-        }
-        yield* Fiber.join(closeFiber).pipe(Effect.ignore);
-        yield* options.waitForRelease;
-      }).pipe(
-        Effect.mapError(stopError),
-        Effect.timeoutOrElse({
-          duration: "60 seconds",
-          orElse: () =>
-            status.pipe(
-              Effect.map((value) =>
-                value.capabilities
-                  .filter(
-                    (capability) =>
-                      capability.state === "ready" ||
-                      capability.state === "starting" ||
-                      capability.state === "stopping",
-                  )
-                  .map((capability) => capability.name),
-              ),
-              Effect.timeoutOrElse({
-                duration: "2 seconds",
-                orElse: () => Effect.succeed<ReadonlyArray<string>>([]),
-              }),
-              Effect.orElseSucceed(() => [] as ReadonlyArray<string>),
-              Effect.flatMap((running) =>
-                Effect.fail(
-                  new StackLifecycleConflictError({
-                    message: formatStopTimeoutMessage(running),
-                  }),
-                ),
-              ),
-            ),
-        }),
+    const sleep = (selection?: ServiceSelection) =>
+      invoke((rpc) => rpc.sleep(serviceSelectionPayload(selection)), startError, true);
+    const stop = (selection?: ServiceSelection) =>
+      invoke((rpc) => rpc.stop(serviceSelectionPayload(selection)), stopError, true);
+    const restart = (restartOptions?: RestartStackOptions) =>
+      invoke(
+        (rpc) => rpc.restart(restartOptions === undefined ? {} : restartOptions),
+        startError,
+        true,
       );
-    const launchAndStop = resolveClient(true, "maintenance").pipe(
-      Effect.mapError(stopError),
-      Effect.flatMap(({ client }) => stopOwner(client)),
-    );
-    const stop: Effect.Effect<void, StackStopError> = Effect.suspend(() =>
-      resolveClient(false, "maintenance").pipe(
-        Effect.mapError(stopError),
-        Effect.flatMap(({ client }) => stopOwner(client)),
-        Effect.catchTag("StackOwnershipConflictError", () =>
-          options.readOfflineState.pipe(
-            Effect.mapError(stopError),
-            Effect.flatMap((state) =>
-              Option.isSome(state) && isStoppedState(state.value) ? Effect.void : launchAndStop,
-            ),
-            // Ownership artifacts that block the offline fast path may be
-            // stale. Let ensureSupervisor arbitrate the lease; a live owner
-            // remains protected and returns a typed conflict.
-            Effect.catchTag("StackOwnershipConflictError", () => launchAndStop),
-          ),
-        ),
-      ),
-    );
     const prepare = (
       prepareOptions?: PrepareStackOptions,
     ): Effect.Effect<PrepareStackResult, PrepareStackError> => options.prepare(prepareOptions);
+    const decodeService = <A>(
+      value: unknown,
+      predicate: (value: unknown) => value is A,
+      label: string,
+    ): Effect.Effect<A, StackError> =>
+      predicate(value)
+        ? Effect.succeed(value)
+        : Effect.fail(new StackStateInvalidError({ message: `Invalid ${label} response` }));
+    const serviceCall = <A>(
+      call: (rpc: StackRpcClient) => Effect.Effect<A, StackRpcError | RpcClientError>,
+      expectedCreationInputsId?: string,
+    ): Effect.Effect<A, StackError> =>
+      invoke(call, (error) => errorForRpc(error, expectedCreationInputsId), true);
+    const serviceStream = <A>(
+      call: (rpc: StackRpcClient) => Stream.Stream<A, StackRpcError | RpcClientError>,
+    ): Stream.Stream<A, StackError> =>
+      Stream.unwrap(
+        resolveClient(true).pipe(
+          Effect.flatMap(({ client }) =>
+            client.rpc.pipe(
+              Effect.map((rpc) => call(rpc).pipe(Stream.mapError(errorForRpc))),
+              Effect.mapError(errorForRpc),
+            ),
+          ),
+          Effect.mapError(errorForRpc),
+        ),
+      );
+    const serviceStatus = (instanceId: ServiceInstanceId) =>
+      serviceCall((rpc) => rpc.serviceStatus({ id: instanceId })).pipe(
+        Effect.flatMap((value) => decodeService(value, isServiceStatus, "service status")),
+      );
+    const serviceDescribe = (instanceId: ServiceInstanceId) =>
+      serviceCall((rpc) => rpc.servicesGet({ id: instanceId })).pipe(
+        Effect.flatMap((value) => decodeService(value, isServiceDescriptor, "service descriptor")),
+      );
+    const serviceCredentials = <K extends ServiceKind>(
+      service: K,
+      instanceId: ServiceInstanceId,
+    ): Effect.Effect<ServiceCredentials<K>, StackError> =>
+      serviceCall((rpc) => rpc.serviceCredentials({ id: instanceId })).pipe(
+        Effect.flatMap((value) =>
+          isServiceCredentials(service, value)
+            ? Effect.succeed(value)
+            : Effect.fail(new StackStateInvalidError({ message: "Invalid service credentials" })),
+        ),
+      );
+    const serviceHandle = <K extends ServiceKind>(
+      initial: ServiceDescriptor<K>,
+    ): EffectServiceInstance<K> => ({
+      id: initial.id,
+      service: initial.service,
+      name: initial.name,
+      describe: serviceDescribe(initial.id).pipe(
+        Effect.flatMap((value) =>
+          decodeService(value, isServiceDescriptorFor(initial.service), "service descriptor"),
+        ),
+      ),
+      status: serviceStatus(initial.id),
+      credentials: serviceCredentials(initial.service, initial.id),
+      prepare: serviceCall((rpc) => rpc.servicePrepare({ id: initial.id })).pipe(
+        Effect.flatMap((value) => decodeService(value, isPrepareResult, "prepare result")),
+      ),
+      start: serviceCall((rpc) => rpc.serviceStart({ id: initial.id })).pipe(
+        Effect.flatMap((value) => decodeService(value, isServiceStatus, "service status")),
+      ),
+      sleep: serviceCall((rpc) => rpc.serviceSleep({ id: initial.id })).pipe(
+        Effect.flatMap((value) => decodeService(value, isServiceStatus, "service status")),
+      ),
+      stop: serviceCall((rpc) => rpc.serviceStop({ id: initial.id })).pipe(
+        Effect.flatMap((value) => decodeService(value, isServiceStatus, "service status")),
+      ),
+      restart: (restartOptions) =>
+        Effect.gen(function* () {
+          const payload = yield* Schema.decodeUnknownEffect(ServiceRestartPayloadSchema)({
+            id: initial.id,
+            service: initial.service,
+            ...(restartOptions?.config === undefined ? {} : { config: restartOptions.config }),
+          }).pipe(
+            Effect.mapError(
+              (error) =>
+                new StackStateInvalidError({
+                  message: `Invalid service restart request: ${String(error)}`,
+                  cause: error,
+                }),
+            ),
+          );
+          return yield* serviceCall((rpc) => rpc.serviceRestart(payload)).pipe(
+            Effect.flatMap((value) => decodeService(value, isServiceStatus, "service status")),
+          );
+        }),
+      destroy: serviceCall((rpc) => rpc.serviceDestroy({ id: initial.id })).pipe(Effect.asVoid),
+      exportSnapshot: (snapshotOptions) =>
+        serviceCall((rpc) =>
+          rpc.serviceExportSnapshot({ id: initial.id, destination: snapshotOptions.destination }),
+        ).pipe(
+          Effect.flatMap((value) =>
+            decodeService(
+              value,
+              (entry): entry is SnapshotDescriptor => Schema.is(SnapshotDescriptorSchema)(entry),
+              "snapshot descriptor",
+            ),
+          ),
+        ),
+      restoreSnapshot: (snapshotOptions) =>
+        serviceCall((rpc) =>
+          rpc.serviceRestoreSnapshot({ id: initial.id, source: snapshotOptions.source }),
+        ).pipe(
+          Effect.flatMap((value) =>
+            decodeService(
+              value,
+              (entry): entry is SnapshotDescriptor => Schema.is(SnapshotDescriptorSchema)(entry),
+              "snapshot descriptor",
+            ),
+          ),
+        ),
+      logs: (query) =>
+        serviceCall((rpc) =>
+          rpc.serviceLogs({ id: initial.id, ...(query === undefined ? {} : { query }) }),
+        ).pipe(Effect.flatMap((value) => decodeService(value, isStackLogBatch, "service logs"))),
+      followLogs: (query) =>
+        Stream.paginate({ cursor: query?.cursor, first: true }, ({ cursor, first }) => {
+          const { cursor: _initialCursor, tail: _tail, ...baseQuery } = query ?? {};
+          const request = serviceCall((rpc) =>
+            rpc.serviceLogs({
+              id: initial.id,
+              query: {
+                ...baseQuery,
+                ...(first && query?.tail !== undefined ? { tail: query.tail } : {}),
+                ...(cursor === undefined || cursor.opaque === EMPTY_LOG_CURSOR.opaque
+                  ? {}
+                  : { cursor }),
+              },
+            }),
+          ).pipe(Effect.flatMap((value) => decodeService(value, isStackLogBatch, "service logs")));
+          const delayed = first
+            ? request
+            : Effect.schedule(Effect.void, Schedule.duration("100 millis")).pipe(
+                Effect.andThen(request),
+              );
+          return delayed.pipe(
+            Effect.map(
+              (batch) =>
+                [
+                  batch.entries,
+                  batch.running
+                    ? Option.some({ cursor: batch.cursor, first: false })
+                    : Option.none(),
+                ] as const,
+            ),
+          );
+        }),
+      followStatus: serviceStream((rpc) => rpc.serviceFollowStatus({ id: initial.id })).pipe(
+        Stream.mapEffect((value) => decodeService(value, isServiceStatus, "service status")),
+      ),
+    });
+    const serviceHandleFor = (value: AnyServiceDescriptor): AnyEffectServiceInstance => {
+      switch (value.service) {
+        case "database":
+          return serviceHandle(value);
+        case "rest":
+          return serviceHandle(value);
+        case "auth":
+          return serviceHandle(value);
+        case "realtime":
+          return serviceHandle(value);
+        case "storage":
+          return serviceHandle(value);
+        case "functions":
+          return serviceHandle(value);
+        case "studio":
+          return serviceHandle(value);
+        case "mail":
+          return serviceHandle(value);
+        case "analytics":
+          return serviceHandle(value);
+        case "pooler":
+          return serviceHandle(value);
+      }
+    };
+    const services: EffectServiceCollection = {
+      create: (serviceOptions) =>
+        Effect.gen(function* () {
+          const decoded = yield* Schema.decodeUnknownEffect(EffectCreateServiceOptionsSchema)(
+            serviceOptions,
+          ).pipe(
+            Effect.mapError(
+              (cause) =>
+                new InvalidStackConfigError({
+                  message: `Invalid service creation options: ${String(cause)}`,
+                  cause,
+                }),
+            ),
+          );
+          const expectedCreationInputsId =
+            options.fingerprintCreationInputs === undefined
+              ? undefined
+              : yield* options.fingerprintCreationInputs(decoded);
+          const value = yield* (() => {
+            switch (decoded.service) {
+              case "database":
+                return serviceCall((rpc) => rpc.servicesCreate(decoded), expectedCreationInputsId);
+              case "rest":
+                return serviceCall((rpc) => rpc.servicesCreate(decoded), expectedCreationInputsId);
+              case "auth":
+                return serviceCall((rpc) => rpc.servicesCreate(decoded), expectedCreationInputsId);
+              case "realtime":
+                return serviceCall((rpc) => rpc.servicesCreate(decoded), expectedCreationInputsId);
+              case "storage":
+                return serviceCall((rpc) => rpc.servicesCreate(decoded), expectedCreationInputsId);
+              case "functions":
+                return serviceCall((rpc) => rpc.servicesCreate(decoded), expectedCreationInputsId);
+              case "studio":
+                return serviceCall((rpc) => rpc.servicesCreate(decoded), expectedCreationInputsId);
+              case "mail":
+                return serviceCall((rpc) => rpc.servicesCreate(decoded), expectedCreationInputsId);
+              case "analytics":
+                return serviceCall((rpc) => rpc.servicesCreate(decoded), expectedCreationInputsId);
+              case "pooler":
+                return serviceCall((rpc) => rpc.servicesCreate(decoded), expectedCreationInputsId);
+            }
+          })();
+          const descriptor = yield* decodeService(
+            value,
+            isServiceDescriptorFor(serviceOptions.service),
+            "service descriptor",
+          );
+          return serviceHandle(descriptor);
+        }),
+      get: (ref) =>
+        serviceCall((rpc) => rpc.servicesGet(ref)).pipe(
+          Effect.flatMap((value) =>
+            decodeService(value, isServiceDescriptor, "service descriptor"),
+          ),
+          Effect.map(serviceHandleFor),
+        ),
+      list: serviceCall((rpc) => rpc.servicesList()).pipe(
+        Effect.flatMap((value) => decodeService(value, isServiceDescriptorList, "service list")),
+      ),
+    };
     const logs = (query?: LogQuery): Effect.Effect<StackLogBatch, StackLogsError> =>
       invoke((rpc) => rpc.logs(query ?? {}), logsError).pipe(
         Effect.catchTag("StackOwnershipConflictError", (ownershipError) => {
@@ -756,13 +1040,19 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
       );
     return {
       id,
+      services,
       status,
+      followStatus: serviceStream((rpc) => rpc.followStatus(undefined)).pipe(
+        Stream.mapEffect((value) => decodeService(value, isStackStatus, "stack status")),
+        Stream.mapError(statusError),
+      ),
       credentials,
       prepare,
       start,
+      sleep,
       stop,
+      restart,
       destroy,
-      resetDatabase,
       logs,
       followLogs: (query) =>
         Stream.paginate({ cursor: query?.cursor, first: true }, ({ cursor, first }) => {
@@ -795,15 +1085,126 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
     } satisfies EffectStack;
   });
 
-const stateInitial = (identity: StackIdentity, runtime: StackRuntime): PersistedStackState => ({
-  format: "supabase-stack-state-v1",
-  identity: toPersistedIdentity(identity),
-  runtime,
-  desiredLifecycle: "unconfigured",
-  ports: [],
-  privatePorts: [],
-  secrets: {},
-});
+const stateInitial = (
+  identity: StackIdentity,
+  runtime: StackRuntime,
+  seeded?: {
+    readonly definition: StackDefinition;
+    readonly services: SeededServiceRegistry;
+  },
+  secrets: PersistedStackState["secrets"] = {},
+): PersistedStackState => {
+  const api = seeded?.definition.listeners.api;
+  const security = seeded?.definition.security;
+  const signing = security?.jwt.signing;
+  const persistedSecurity = {
+    jwt: {
+      issuer: security?.jwt.issuer ?? null,
+      expirySeconds: security?.jwt.expirySeconds ?? 3_600,
+      signing:
+        signing === null || signing === undefined
+          ? { kind: "symmetric" as const, secret: { slot: AUTH_JWT_SECRET_SLOT } }
+          : signing,
+    },
+  };
+  return {
+    format: STACK_STATE_FORMAT,
+    identity: toPersistedIdentity(identity),
+    runtime,
+    preparation: seeded?.definition.preparation ?? "background",
+    security: persistedSecurity,
+    listeners:
+      api === undefined
+        ? {}
+        : {
+            api: api.enabled
+              ? {
+                  enabled: true,
+                  address: api.address,
+                  ...(typeof api.port === "number" ? { port: api.port } : {}),
+                }
+              : { enabled: false },
+          },
+    registry: seeded?.services.registry ?? {
+      initialized: true,
+      instances: [],
+      defaultInstanceIds: {},
+    },
+    ports: [],
+    privatePorts: [],
+    secrets,
+  };
+};
+
+const listenerEndpoint = (
+  listener: StackDefinition["listeners"][keyof StackDefinition["listeners"]],
+):
+  | { readonly address: string; readonly port: "auto" | number }
+  | {
+      readonly enabled: false;
+    } =>
+  listener.enabled
+    ? {
+        address: listener.address,
+        port: listener.port === "automatic" ? "auto" : listener.port,
+      }
+    : { enabled: false };
+
+const candidateEndpoints = (
+  definition: StackDefinition,
+  service: ServiceKind,
+): Readonly<Record<string, unknown>> => {
+  switch (service) {
+    case "database":
+      return { sql: listenerEndpoint(definition.listeners.database) };
+    case "functions":
+      return { inspector: listenerEndpoint(definition.listeners.functionsInspector) };
+    case "studio":
+      return { studio: listenerEndpoint(definition.listeners.studio) };
+    case "mail":
+      return {
+        smtp: listenerEndpoint(definition.listeners.smtp),
+        pop3: listenerEndpoint(definition.listeners.pop3),
+        mailUi: listenerEndpoint(definition.listeners.mailUi),
+      };
+    case "pooler":
+      return { pooler: listenerEndpoint(definition.listeners.pooler) };
+    default:
+      return {};
+  }
+};
+
+/** Applies candidate defaults to their persisted identities while retaining dynamic services. */
+const prospectiveRegistry = (
+  state: PersistedStackState,
+  definition: StackDefinition,
+): Effect.Effect<PersistedServiceRegistry, InvalidStackConfigError> =>
+  Schema.decodeUnknownEffect(PersistedServiceRegistrySchema)({
+    ...state.registry,
+    instances: state.registry.instances.map((instance) => {
+      if (state.registry.defaultInstanceIds[instance.service] !== instance.id) return instance;
+      const capability = definition.capabilities[instance.service];
+      return {
+        ...instance,
+        config: {
+          ...instance.config,
+          ...capability,
+          endpoints: {
+            ...instance.config.endpoints,
+            ...candidateEndpoints(definition, instance.service),
+          },
+        },
+      };
+    }),
+  }).pipe(
+    Effect.mapError(
+      (error) =>
+        new InvalidStackConfigError({
+          message: `Candidate service registry failed validation: ${String(error)}`,
+          cause: error,
+        }),
+    ),
+  );
 
 type ChildProcessSpawnerValue = Context.Service.Shape<
   typeof ChildProcessSpawner.ChildProcessSpawner
@@ -894,55 +1295,65 @@ const handleDependencies = (options: {
             stackId: options.id,
             message: "Stack state is missing",
           });
-        let definition: StackDefinition;
-        let plan: ExecutionPlan;
-        if (prepareOptions?.config === undefined && state.definition !== undefined) {
-          definition = state.definition;
-          plan = yield* rebuildExecutionPlan(state.runtime, definition);
-        } else {
-          const compiled = yield* compileStack(
-            {
-              projectRoot: state.identity.projectRoot,
-              runtime: state.runtime,
-              config: prepareOptions?.config,
-            },
-            state.definition === undefined ? undefined : { definition: state.definition },
-          ).pipe(Effect.provideService(Path.Path, options.path));
-          definition = compiled.definition;
-          plan = compiled.executionPlan;
+
+        const requested =
+          prepareOptions?.services === undefined
+            ? state.registry.instances
+                .filter((instance) => instance.config.enabled)
+                .map((instance) => instance.id)
+            : [...prepareOptions.services];
+        const uniqueRequested = [...new Set(requested)];
+        for (const id of uniqueRequested) {
+          const instance = state.registry.instances.find((entry) => entry.id === id);
+          if (instance === undefined)
+            return yield* new ServiceNotFoundError({
+              instanceId: id,
+              message: `Service instance ${id} was not found`,
+            });
+          if (!instance.config.enabled)
+            return yield* new InvalidStackConfigError({
+              stackId: options.id,
+              capability: instance.service,
+              message: `Service instance ${id} is disabled`,
+            });
         }
-        const selected = new Set<CapabilityName>();
-        if (prepareOptions?.capabilities === undefined) {
-          for (const name of CAPABILITY_NAMES)
-            if (definition.capabilities[name].enabled) selected.add(name);
-        } else {
-          const requested: CapabilityName[] = [];
-          for (const name of prepareOptions.capabilities) {
-            if (!isCapabilityName(name))
-              return yield* new StackPreparationError({
-                stackId: options.id,
-                capability: String(name),
-                message: `Unknown capability ${String(name)}`,
-              });
-            requested.push(name);
-          }
-          for (const name of dependencyClosure(plan, requested)) {
-            if (!definition.capabilities[name].enabled)
-              return yield* new InvalidStackConfigError({
-                stackId: options.id,
-                capability: name,
-                message: `Capability ${name} is disabled`,
-              });
-            selected.add(name);
-          }
-        }
-        const workloads = plan.workloads.filter((workload) => selected.has(workload.capability));
+        if (uniqueRequested.length === 0) return { instances: [] };
+
+        // Compile candidate settings and secret declarations without writing state. The
+        // persisted registry remains the authority for identities and dynamic services.
+        const candidate =
+          prepareOptions?.config === undefined
+            ? undefined
+            : yield* compileStack({
+                projectRoot: state.identity.projectRoot,
+                runtime: state.runtime,
+                config: prepareOptions.config,
+                registry: state.registry,
+              }).pipe(
+                Effect.provideService(Path.Path, options.path),
+                Effect.mapError(directPrepareError),
+              );
+        const candidateRegistry =
+          candidate === undefined
+            ? state.registry
+            : yield* prospectiveRegistry(state, candidate.definition).pipe(
+                Effect.mapError(directPrepareError),
+              );
+        const plan = yield* createExecutionPlan(
+          state.runtime,
+          candidateRegistry,
+          undefined,
+          new Set(uniqueRequested),
+        ).pipe(Effect.mapError(directPrepareError));
+        const selected = dependencyClosure(plan, uniqueRequested);
+        const workloads = plan.workloads.filter((workload) => selected.has(workload.instanceId));
         for (const workload of workloads)
           prepareOptions?.onProgress?.({
             workloadId: workload.id,
             capability: workload.capability,
             state: "queued",
           });
+
         const preparer = yield* makeProductionRuntimeArtifactPreparer({
           stateRoot: options.environment.stateRoot,
           runtime: state.runtime,
@@ -957,32 +1368,66 @@ const handleDependencies = (options: {
           Effect.provideService(Path.Path, options.path),
           Effect.provideService(Crypto.Crypto, options.crypto),
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, options.spawner),
+          Effect.mapError(directPrepareError),
         );
         const artifacts = yield* Effect.forEach(
           workloads,
           (workload) => preparer.prepare(state.runtime, workload, prepareOptions?.onProgress),
           { concurrency: "unbounded" },
-        );
-        const byCapability = new Map<CapabilityName, ReadonlyArray<PreparedWorkloadArtifact>>();
+        ).pipe(Effect.mapError(directPrepareError));
+        const artifactsByInstance = new Map<ServiceInstanceId, typeof artifacts>();
         for (const artifact of artifacts) {
-          const existing = byCapability.get(artifact.capability) ?? [];
-          byCapability.set(artifact.capability, [...existing, artifact]);
+          const workload = workloads.find((entry) => entry.id === artifact.workloadId);
+          if (workload === undefined) continue;
+          const current = artifactsByInstance.get(workload.instanceId) ?? [];
+          artifactsByInstance.set(workload.instanceId, [...current, artifact]);
         }
-        return {
-          capabilities: plan.startOrder
-            .filter((name) => selected.has(name))
-            .map((name): PreparedCapability => {
-              const outcome: PreparedCapability["outcome"] =
-                state.runtime.kind === "native"
-                  ? byCapability.get(name)?.some((entry) => entry.outcome === "downloaded")
-                    ? "downloaded"
-                    : "cached"
-                  : byCapability.get(name)?.some((entry) => entry.outcome === "pulled")
-                    ? "pulled"
-                    : "cached";
-              return { capability: name, version: definition.capabilities[name].version, outcome };
-            }),
-        };
+        const candidateSecrets =
+          candidate === undefined
+            ? state.secrets
+            : Object.fromEntries([
+                ...Object.entries(state.secrets),
+                ...candidate.secrets.flatMap((slot) =>
+                  slot.value === undefined
+                    ? []
+                    : [
+                        [
+                          slot.slot,
+                          { policy: slot.policy, value: String(Redacted.value(slot.value)) },
+                        ] as const,
+                      ],
+                ),
+              ]);
+        const preparedInstances: PrepareStackInstance[] = [];
+        for (const id of uniqueRequested) {
+          const instance = candidateRegistry.instances.find((entry) => entry.id === id);
+          if (instance === undefined) continue;
+          const instanceArtifacts = artifactsByInstance.get(id) ?? [];
+          preparedInstances.push({
+            id,
+            service: instance.service,
+            artifacts: instanceArtifacts.map((artifact) => ({
+              identity: `${artifact.capability}:${artifact.version}`,
+              outcome: artifact.outcome,
+            })),
+            effectiveConfigFingerprint: yield* fingerprintEffectiveConfig(
+              instance,
+              candidate?.definition.security ?? state.security,
+              candidateSecrets,
+            ).pipe(
+              Effect.provideService(Crypto.Crypto, options.crypto),
+              Effect.mapError(
+                (error) =>
+                  new StackStateInvalidError({
+                    stackId: options.id,
+                    message: "Unable to fingerprint prepared service configuration",
+                    cause: error,
+                  }),
+              ),
+            ),
+          });
+        }
+        return { instances: preparedInstances };
       }),
     ).pipe(Effect.mapError(directPrepareError));
   const readLogs = (query?: LogQuery) =>
@@ -1014,25 +1459,46 @@ const handleDependencies = (options: {
           : new StackStateInvalidError({ message: error.message, cause: error }),
       ),
     );
-  const waitForRelease = Effect.gen(function* () {
-    if (
-      (yield* readOwnerMetadata(options.environment.stateRoot, options.id, options.environment)) !==
-      undefined
-    )
-      return yield* new StackOwnershipConflictError({
-        message: "Supervisor is still shutting down",
-      });
-    if (yield* ownerLockExists(options.environment.stateRoot, options.id))
-      return yield* new StackOwnershipConflictError({
-        message: "Supervisor ownership lease is still held",
-      });
-  }).pipe(
-    Effect.retry(Schedule.spaced("25 millis").pipe(Schedule.upTo({ times: 200 }))),
-    Effect.mapError((error) => new StackOwnershipConflictError({ message: error.message })),
-    Effect.provideService(FileSystem.FileSystem, options.fileSystem),
-    Effect.provideService(Path.Path, options.path),
-    Effect.provideService(Crypto.Crypto, options.crypto),
-  );
+  const waitForRelease = (ownerSessionId?: string) =>
+    waitForOwnerRelease(
+      options.environment.stateRoot,
+      options.id,
+      options.environment,
+      ownerSessionId,
+    ).pipe(
+      Effect.mapError(
+        (error) => new StackOwnershipConflictError({ message: error.message, cause: error }),
+      ),
+      Effect.provideService(FileSystem.FileSystem, options.fileSystem),
+      Effect.provideService(Path.Path, options.path),
+      Effect.provideService(Crypto.Crypto, options.crypto),
+    );
+  const fingerprintCreationInputsForRequest = (serviceOptions: unknown) =>
+    Schema.decodeUnknownEffect(EffectCreateServiceOptionsSchema)(serviceOptions, {
+      onExcessProperty: "error",
+    }).pipe(
+      Effect.mapError(
+        (error) =>
+          new InvalidStackConfigError({
+            stackId: options.id,
+            message: `Invalid service creation request: ${String(error)}`,
+            cause: error,
+          }),
+      ),
+      Effect.flatMap((normalized) =>
+        fingerprintCreationInputs(normalized).pipe(
+          Effect.provideService(Crypto.Crypto, options.crypto),
+          Effect.mapError(
+            (error) =>
+              new InvalidStackConfigError({
+                stackId: options.id,
+                message: `Unable to fingerprint service creation request: ${error.message}`,
+                cause: error,
+              }),
+          ),
+        ),
+      ),
+    );
   return {
     resolveOwner,
     readOfflineState,
@@ -1040,6 +1506,7 @@ const handleDependencies = (options: {
     readLogs,
     waitForRelease,
     prepare,
+    fingerprintCreationInputs: fingerprintCreationInputsForRequest,
   };
 };
 
@@ -1093,7 +1560,84 @@ export const createStack = (
       nativeRuntimeBlockedForUid()
     )
       return yield* new StackRuntimeError({ message: NATIVE_ROOT_UNSUPPORTED_MESSAGE });
-    const current = yield* store.initialize(stackId, stateInitial(identity, requestedRuntime));
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const crypto = yield* Crypto.Crypto;
+    const seeded =
+      persisted === undefined
+        ? yield* compileStack({
+            projectRoot: identity.projectRoot,
+            runtime: requestedRuntime,
+            config: options.initialConfig,
+          }).pipe(
+            Effect.flatMap((compiled) =>
+              seedServiceRegistry(
+                compiled.definition,
+                { projectRoot: identity.projectRoot, path, runtime: requestedRuntime },
+                compiled.sourceConfig,
+                compiled.secrets,
+              ).pipe(Effect.map((services) => ({ definition: compiled.definition, services }))),
+            ),
+            Effect.provideService(Path.Path, path),
+            Effect.provideService(Crypto.Crypto, crypto),
+          )
+        : undefined;
+    const initialSecrets =
+      seeded === undefined
+        ? undefined
+        : yield* resolveSecrets(
+            { declarations: seeded.services.secretSlots },
+            {},
+            "unconfigured",
+          ).pipe(
+            Effect.provideService(FileSystem.FileSystem, fs),
+            Effect.provideService(Path.Path, path),
+            Effect.provideService(Crypto.Crypto, crypto),
+          );
+    const seededWithFingerprints =
+      seeded === undefined || initialSecrets === undefined
+        ? seeded
+        : {
+            ...seeded,
+            services: {
+              ...seeded.services,
+              registry: {
+                ...seeded.services.registry,
+                instances: yield* Effect.forEach(seeded.services.registry.instances, (instance) =>
+                  fingerprintBootstrapInputs(
+                    instance,
+                    seeded.definition.security,
+                    initialSecrets.persisted,
+                  ).pipe(
+                    Effect.provideService(Crypto.Crypto, crypto),
+                    Effect.map((bootstrapInputsId) =>
+                      bootstrapInputsId === undefined
+                        ? instance
+                        : { ...instance, bootstrapInputsId },
+                    ),
+                  ),
+                ),
+              },
+            },
+          };
+    const initialState = stateInitial(
+      identity,
+      requestedRuntime,
+      seededWithFingerprints,
+      initialSecrets?.persisted,
+    );
+    const plannedInitialState =
+      seededWithFingerprints === undefined
+        ? initialState
+        : yield* Effect.reduce(
+            initialState.registry.instances,
+            () => initialState,
+            (state, instance) =>
+              plannedInstancePorts(state, instance).pipe(
+                Effect.map((ports) => ({ ...state, ...ports })),
+              ),
+          );
+    const current = yield* store.initialize(stackId, plannedInitialState);
     const runtimeMismatch =
       options.runtime !== undefined &&
       (current.runtime.kind !== requestedRuntime.kind ||
@@ -1104,9 +1648,6 @@ export const createStack = (
       return yield* new StackRuntimeMismatchError({
         message: "Stack runtime is immutable for an existing identity",
       });
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const crypto = yield* Crypto.Crypto;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const dependencies = handleDependencies({
       environment: env,
@@ -1120,10 +1661,11 @@ export const createStack = (
     });
     const handle = yield* makeHandle(stackId, dependencies);
     return dockerFallbackNotice === undefined ? handle : { ...handle, dockerFallbackNotice };
-  });
+  }).pipe(Effect.mapError(createError));
 
 export const openStack = (
   id: StackId,
+  _options?: OpenStackOptions,
 ): Effect.Effect<
   EffectStack,
   OpenStackError,
@@ -1260,41 +1802,6 @@ export const discoverStacks = (
 
 type ConfigDrift = NonNullable<StackInspection["configDrift"]>;
 
-const isPlainRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
-const definitionDiffPaths = (
-  left: unknown,
-  right: unknown,
-  prefix: string,
-  paths: string[],
-): void => {
-  if (Object.is(left, right)) return;
-  if ((left === undefined || left === null) && (right === undefined || right === null)) return;
-  if (Array.isArray(left) && Array.isArray(right)) {
-    if (left.length !== right.length) {
-      paths.push(prefix);
-      return;
-    }
-    for (let index = 0; index < left.length; index++) {
-      definitionDiffPaths(left[index], right[index], `${prefix}.${index}`, paths);
-    }
-    return;
-  }
-  if (Array.isArray(left) || Array.isArray(right)) {
-    paths.push(prefix);
-    return;
-  }
-  if (isPlainRecord(left) && isPlainRecord(right)) {
-    const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
-    for (const key of keys) {
-      definitionDiffPaths(left[key], right[key], `${prefix}.${key}`, paths);
-    }
-    return;
-  }
-  paths.push(prefix);
-};
-
 const secretDriftPaths = (
   candidate: ReadonlyArray<SecretSlotInput>,
   persisted: PersistedStackState["secrets"],
@@ -1328,19 +1835,37 @@ const inspectConfigDrift = (
   config: StackConfig,
 ): Effect.Effect<ConfigDrift, InvalidStackConfigError | StackVersionUnsupportedError, Path.Path> =>
   Effect.gen(function* () {
-    const compiled = yield* compileStack(
-      {
-        projectRoot: state.identity.projectRoot,
-        runtime: state.runtime,
-        config,
-      },
-      state.definition === undefined ? undefined : { definition: state.definition },
-    );
-    if (state.definition === undefined)
-      return { status: "unconfigured", paths: [] } satisfies ConfigDrift;
+    const compiled = yield* compileStack({
+      projectRoot: state.identity.projectRoot,
+      runtime: state.runtime,
+      config,
+      registry: state.registry,
+    });
+    const candidate = yield* prospectiveRegistry(state, compiled.definition);
     const paths: string[] = [];
-    if (!sameDefinition(state.definition, compiled.definition))
-      definitionDiffPaths(state.definition, compiled.definition, "definition", paths);
+    const currentDefaults = state.registry.instances.filter(
+      (instance) => state.registry.defaultInstanceIds[instance.service] === instance.id,
+    );
+    const candidateDefaults = candidate.instances.filter(
+      (instance) => candidate.defaultInstanceIds[instance.service] === instance.id,
+    );
+    if (
+      canonical(
+        currentDefaults.map((instance) => ({
+          service: instance.service,
+          config: resolvedStateValue(instance.config, state.secrets),
+        })),
+      ) !==
+      canonical(
+        candidateDefaults.map((instance) => ({
+          service: instance.service,
+          config: resolvedStateValue(instance.config, state.secrets),
+        })),
+      )
+    )
+      paths.push("services");
+    if (canonical(state.security) !== canonical(compiled.definition.security))
+      paths.push("security.jwt");
     paths.push(...secretDriftPaths(compiled.secrets, state.secrets));
     const uniquePaths = [...new Set(paths)].sort();
     return {

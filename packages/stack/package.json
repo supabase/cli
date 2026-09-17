@@ -7,6 +7,7 @@
     ".": "./src/index.ts",
     "./effect": "./src/effect.ts",
     "./testing": "./src/testing.ts",
+    "./internal/functions/files": "./src/functions/FunctionFiles.ts",
     "./internal/supervisor": "./src/internal/supervisor-process.ts"
   },
   "scripts": {
@@ -23,12 +24,14 @@
     "@effect/platform-node": "catalog:",
     "@effect/sql-pg": "catalog:",
     "effect": "catalog:",
-    "jose": "^6.2.10"
+    "jose": "^6.2.10",
+    "tar-stream": "3.2.0"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",
+    "@types/tar-stream": "3.1.4",
     "@types/ws": "catalog:",
     "@vitest/coverage-v8": "catalog:",
     "esbuild": "^0.28.2",
