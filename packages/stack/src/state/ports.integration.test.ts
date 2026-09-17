@@ -28,7 +28,12 @@ import {
   type PortCoordinatorOptions,
 } from "./PortCoordinator.ts";
 import type { HostListener } from "../supervisor/HostListener.ts";
-import { makeStackStateStore, type PersistedStackState } from "./StackStateStore.ts";
+import {
+  makeStackStateStore,
+  PersistedStackStateSchema,
+  type PersistedStackState,
+} from "./StackStateStore.ts";
+import { compileStack } from "../model/Compiler.ts";
 import { bindHeldPort, bindHostListener, checkHostPort } from "../supervisor/HostListener.ts";
 import { withRegistryLock } from "./StackStateStore.ts";
 
@@ -94,8 +99,61 @@ const coordinatorOptions = (
 
 const run = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.scoped(effect).pipe(Effect.provide(NodeServices.layer));
-
 describe("port acquisition", () => {
+  it.live("reads legacy sibling state while allocating ports", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-ports-legacy-state-" });
+        const store = yield* makeStackStateStore({ stateRoot: root });
+        const ownIdentity = identity(root, "own");
+        const ownId = yield* deriveStackId(ownIdentity);
+        const siblingIdentity = identity(root, "legacy");
+        const siblingId = yield* deriveStackId(siblingIdentity);
+        const compiled = yield* compileStack({
+          projectRoot: root,
+          runtime: { kind: "native" },
+          config: {},
+        });
+        const sibling = {
+          ...state(siblingId, siblingIdentity),
+          definition: compiled.definition,
+        };
+        const encoded = yield* Schema.encodeEffect(PersistedStackStateSchema)(sibling);
+        const legacy = structuredClone(encoded) as unknown as {
+          definition: { capabilities: Record<string, { idleTimeoutSeconds?: unknown }> };
+        };
+        for (const capability of Object.values(legacy.definition.capabilities))
+          delete capability.idleTimeoutSeconds;
+        yield* store.initialize(ownId, {
+          ...state(ownId, ownIdentity),
+          desiredLifecycle: "running",
+        });
+        yield* fs.makeDirectory(path.join(root, siblingId), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(root, siblingId, "state.json"),
+          yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(legacy),
+        );
+
+        const result = yield* makePortCoordinator(coordinatorOptions(store, root)).acquire(
+          ownId,
+          intents(),
+          [],
+        );
+        const api = result.assignments.api;
+        expect(api?.port).toBeGreaterThan(0);
+        expect(yield* store.read(ownId)).toEqual(
+          expect.objectContaining({
+            ports: expect.arrayContaining([
+              expect.objectContaining({ field: "api", port: api?.port }),
+            ]),
+          }),
+        );
+      }),
+    ),
+  );
+
   it.live("requires running state and fails closed on an unreadable sibling", () =>
     run(
       Effect.gen(function* () {

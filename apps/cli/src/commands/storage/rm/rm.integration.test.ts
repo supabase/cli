@@ -1,18 +1,21 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { afterEach } from "vitest";
+import { BunServices } from "@effect/platform-bun";
+import { Cause, Effect, Exit, FileSystem, Option, Path } from "effect";
 
+import { DbConfigLoadError } from "../../../command-internal/db-config.errors.ts";
+import { StackStorageCapabilityError } from "../../../command-internal/stack-storage.ts";
+import { ProjectRefNotLinkedError } from "../../../config/project-ref.errors.ts";
 import { setupStorage } from "../../../../tests/helpers/storage.ts";
-import { VALID_REF, useTempWorkdir } from "../../../../tests/helpers/command-mocks.ts";
+import { VALID_REF, useTempWorkdir, withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
 import { storageRm } from "./rm.handler.ts";
 
-function writeAncestorConfig(root: string, toml: string): void {
-  const dir = join(root, "supabase");
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "config.toml"), toml);
-}
+const writeAncestorConfig = Effect.fnUntraced(function* (root: string, toml: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const dir = path.join(root, "supabase");
+  yield* fs.makeDirectory(dir, { recursive: true });
+  yield* fs.writeFileString(path.join(dir, "config.toml"), toml);
+});
 
 const BUCKET = "/storage/v1/bucket";
 const DELETE_OBJECT = (bucket: string) => `/storage/v1/object/${bucket}`;
@@ -29,10 +32,6 @@ function prefixCount(body: unknown): number {
 
 describe("storage rm", () => {
   const tmp = useTempWorkdir("supabase-storage-rm-");
-
-  afterEach(() => {
-    delete process.env["SUPABASE_YES"];
-  });
 
   it.live("deletes multiple objects after confirmation", () => {
     const { layer, requests } = setupStorage(tmp.current, {
@@ -87,24 +86,27 @@ describe("storage rm", () => {
 
   it.live("auto-confirms via SUPABASE_YES even without the --yes flag", () => {
     // The --yes flag itself stays false here, to isolate the env-var path.
-    process.env["SUPABASE_YES"] = "1";
     const { layer, out, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
       routes: [{ method: "DELETE", match: DELETE_OBJECT("private"), body: [{ name: "a.pdf" }] }],
     });
-    return Effect.gen(function* () {
-      const exit = yield* storageRm({
-        files: ["ss:///private/a.pdf"],
-        recursive: false,
-        linked: true,
-        local: true,
-        projectRef: Option.none(),
-      }).pipe(Effect.provide(layer), Effect.exit);
-      expect(Exit.isSuccess(exit)).toBe(true);
-      expect(out.stderrText).toContain("[y/N] y");
-      expect(requests.some((r) => r.method === "DELETE")).toBe(true);
-    });
+    return withEnvVar(
+      "SUPABASE_YES",
+      "1",
+      Effect.gen(function* () {
+        const exit = yield* storageRm({
+          files: ["ss:///private/a.pdf"],
+          recursive: false,
+          linked: true,
+          local: true,
+          projectRef: Option.none(),
+        }).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(out.stderrText).toContain("[y/N] y");
+        expect(requests.some((r) => r.method === "DELETE")).toBe(true);
+      }),
+    );
   });
 
   it.live("auto-confirms from SUPABASE_YES in the project .env (Go loadNestedEnv)", () => {
@@ -147,8 +149,15 @@ describe("storage rm", () => {
           projectRef: Option.none(),
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(JSON.stringify(exit)).toContain("Cannot find project ref");
-        expect(JSON.stringify(exit)).not.toContain("failed to parse environment file");
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("Cannot find project ref");
+          expect(exit.cause.reasons.every(Cause.isFailReason)).toBe(true);
+          const failures = exit.cause.reasons
+            .filter(Cause.isFailReason)
+            .map((reason) => reason.error);
+          expect(failures.some((error) => error instanceof ProjectRefNotLinkedError)).toBe(true);
+          expect(failures.some((error) => error instanceof DbConfigLoadError)).toBe(false);
+        }
         expect(requests).toHaveLength(0);
       });
     },
@@ -290,7 +299,9 @@ describe("storage rm", () => {
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("You must specify a bucket to delete.");
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("You must specify a bucket to delete.");
+      }
       expect(requests).toHaveLength(0);
     });
   });
@@ -309,7 +320,11 @@ describe("storage rm", () => {
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("You must specify -r flag to delete directories.");
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain(
+          "You must specify -r flag to delete directories.",
+        );
+      }
       expect(requests).toHaveLength(0);
     });
   });
@@ -328,7 +343,11 @@ describe("storage rm", () => {
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("You must specify -r flag to delete directories.");
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain(
+          "You must specify -r flag to delete directories.",
+        );
+      }
     });
   });
 
@@ -504,7 +523,9 @@ describe("storage rm", () => {
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("Object not found: private/dir/");
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("Object not found: private/dir/");
+      }
     });
   });
 
@@ -555,7 +576,9 @@ describe("storage rm", () => {
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("Error status 500");
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("Error status 500");
+      }
     });
   });
 
@@ -575,7 +598,9 @@ describe("storage rm", () => {
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("Error status 503");
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("Error status 503");
+      }
       expect(requests.some((r) => r.method === "DELETE")).toBe(false);
     });
   });
@@ -641,9 +666,11 @@ describe("storage rm", () => {
         projectRef: Option.some(FLAG_REF),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain(
-        "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
-      );
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain(
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
+        );
+      }
       expect(requests).toHaveLength(0);
       expect(linkedCache.cached).toBe(false);
     });
@@ -651,19 +678,23 @@ describe("storage rm", () => {
 
   it.live(
     "does not delete anything when --workdir names a config-less subdirectory of a real ancestor project",
-    () => {
+    () =>
       // An explicit --workdir must hard-fail rather than climb to an ancestor's
       // config.toml, which could point at a different (possibly running) local stack.
-      writeAncestorConfig(tmp.current, 'project_id = "test"\n[api]\nport = 65432\n');
-      const sub = join(tmp.current, "nested", "dir");
-      mkdirSync(sub, { recursive: true });
-      const { layer, requests } = setupStorage(sub, {
-        local: true,
-        yes: true,
-        explicitWorkdir: true,
-        routes: [{ method: "DELETE", match: DELETE_OBJECT("private"), body: [{ name: "a.pdf" }] }],
-      });
-      return Effect.gen(function* () {
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* writeAncestorConfig(tmp.current, 'project_id = "test"\n[api]\nport = 65432\n');
+        const sub = path.join(tmp.current, "nested", "dir");
+        yield* fs.makeDirectory(sub, { recursive: true });
+        const { layer, requests } = setupStorage(sub, {
+          local: true,
+          yes: true,
+          explicitWorkdir: true,
+          routes: [
+            { method: "DELETE", match: DELETE_OBJECT("private"), body: [{ name: "a.pdf" }] },
+          ],
+        });
         const exit = yield* storageRm({
           files: ["ss:///private/a.pdf"],
           recursive: false,
@@ -672,11 +703,12 @@ describe("storage rm", () => {
           projectRef: Option.none(),
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(JSON.stringify(exit)).toContain("StorageMissingProjectConfigError");
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("StorageMissingProjectConfigError");
+        }
         expect(requests.some((r) => r.method === "DELETE")).toBe(false);
         expect(requests).toHaveLength(0);
-      });
-    },
+      }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.live(
@@ -703,14 +735,15 @@ describe("storage rm", () => {
 
   it.live(
     "an explicit --workdir naming a directory that does not exist at all fails before any credential resolution",
-    () => {
-      const missing = join(tmp.current, "does-not-exist");
-      const { layer, requests } = setupStorage(missing, {
-        local: true,
-        yes: true,
-        explicitWorkdir: true,
-      });
-      return Effect.gen(function* () {
+    () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const missing = path.join(tmp.current, "does-not-exist");
+        const { layer, requests } = setupStorage(missing, {
+          local: true,
+          yes: true,
+          explicitWorkdir: true,
+        });
         const exit = yield* storageRm({
           files: ["ss:///private/a.pdf"],
           recursive: false,
@@ -719,11 +752,13 @@ describe("storage rm", () => {
           projectRef: Option.none(),
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(JSON.stringify(exit)).toContain("StorageWorkdirError");
-        expect(JSON.stringify(exit)).toContain("failed to change workdir: chdir");
+        if (Exit.isFailure(exit)) {
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("StorageWorkdirError");
+          expect(causeText).toContain("failed to change workdir: chdir");
+        }
         expect(requests).toHaveLength(0);
-      });
-    },
+      }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.live("emits a { deleted, buckets_deleted } result in stream-json mode", () => {
@@ -748,4 +783,90 @@ describe("storage rm", () => {
       expect(success?.data?.["buckets_deleted"]).toEqual([]);
     });
   });
+});
+
+describe("stack backend", () => {
+  const tmp = useTempWorkdir("supabase-storage-rm-stack-");
+
+  it.live("deletes through the stack's api endpoint and JWT after confirmation", () => {
+    const { layer, requests } = setupStorage(tmp.current, {
+      toml: 'project_id = "test"\n',
+      local: true,
+      stackBackend: true,
+      stackApi: { apiEndpoint: "http://127.0.0.1:59999", serviceRoleJwt: "stack-jwt" },
+      confirm: [true],
+      routes: [{ method: "DELETE", match: DELETE_OBJECT("private"), body: [{ name: "a.pdf" }] }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* storageRm({
+        files: ["ss:///private/a.pdf"],
+        recursive: false,
+        linked: true,
+        local: true,
+        projectRef: Option.none(),
+      }).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      const del = requests.find(
+        (r) => r.method === "DELETE" && r.url.includes(DELETE_OBJECT("private")),
+      );
+      expect(del?.url.startsWith("http://127.0.0.1:59999")).toBe(true);
+      expect(del?.headers["apikey"]).toBe("stack-jwt");
+    });
+  });
+
+  it.live("skips deletion when the confirmation is declined, still under the stack backend", () => {
+    const { layer, requests } = setupStorage(tmp.current, {
+      toml: 'project_id = "test"\n',
+      local: true,
+      stackBackend: true,
+      confirm: [false],
+      routes: [{ method: "DELETE", match: DELETE_OBJECT("private"), body: [] }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* storageRm({
+        files: ["ss:///private/a.pdf"],
+        recursive: false,
+        linked: true,
+        local: true,
+        projectRef: Option.none(),
+      }).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(requests.some((r) => r.method === "DELETE")).toBe(false);
+    });
+  });
+
+  it.live(
+    "fails with StackStorageCapabilityError when Storage is disabled, before any prompt",
+    () => {
+      const { layer, out, requests } = setupStorage(tmp.current, {
+        toml: 'project_id = "test"\n',
+        local: true,
+        stackBackend: true,
+        stackApi: { storageState: "disabled" },
+      });
+      return Effect.gen(function* () {
+        const exit = yield* storageRm({
+          files: ["ss:///private/a.pdf"],
+          recursive: false,
+          linked: true,
+          local: true,
+          projectRef: Option.none(),
+        }).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(exit.cause.reasons.every(Cause.isFailReason)).toBe(true);
+          const capability = exit.cause.reasons
+            .filter(Cause.isFailReason)
+            .map((reason) => reason.error)
+            .find((error) => error instanceof StackStorageCapabilityError);
+          expect(capability).toBeDefined();
+          expect(capability?.suggestion).toContain("-x storage");
+        }
+        expect(requests).toHaveLength(0);
+        // The confirm prompt is a `--yes`-only bucket-deletion notice; disabled storage
+        // fails before credential resolution reaches the confirmation flow at all.
+        expect(out.stderrText).not.toContain("[y/N]");
+      });
+    },
+  );
 });

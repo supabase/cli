@@ -3,7 +3,7 @@ import { BunServices } from "@effect/platform-bun";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { Effect, Layer } from "effect";
+import { Config, ConfigProvider, Effect, Layer, PlatformError } from "effect";
 import { cliSettingsLayer } from "../config/cli-settings.layer.ts";
 import { TelemetryRuntime } from "./runtime.service.ts";
 import { telemetryRuntimeLayer } from "./runtime.layer.ts";
@@ -22,23 +22,31 @@ function buildLayer(opts: {
   homeDir: string;
   env?: Record<string, string>;
   stdoutIsTty?: boolean;
-}): Layer.Layer<TelemetryRuntime> {
+}): Layer.Layer<TelemetryRuntime, Config.ConfigError | PlatformError.PlatformError> {
   const runtimeInfoLayer = mockRuntimeInfo({ homeDir: opts.homeDir });
   const cliProjectContextLayer = mockCliProjectContext();
   const envLayer = processEnvLayer({
     SUPABASE_HOME: opts.homeDir,
     ...opts.env,
   });
+  const providerLayer = ConfigProvider.layer(
+    ConfigProvider.fromEnvRecord(
+      { SUPABASE_HOME: opts.homeDir, ...opts.env },
+      { preserveEmptyStrings: true },
+    ),
+  );
   const ttyLayer = mockTty({ stdoutIsTty: opts.stdoutIsTty ?? false });
   const configLayer = cliSettingsLayer.pipe(
     Layer.provide(runtimeInfoLayer),
     Layer.provide(cliProjectContextLayer),
+    Layer.provide(providerLayer),
   );
   const telemetryLayer = telemetryRuntimeLayer.pipe(
     Layer.provide(configLayer),
     Layer.provide(runtimeInfoLayer),
     Layer.provide(ttyLayer),
     Layer.provide(BunServices.layer),
+    Layer.provide(providerLayer),
   );
 
   return Layer.mergeAll(envLayer, telemetryLayer);

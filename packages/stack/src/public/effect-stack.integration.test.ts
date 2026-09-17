@@ -244,6 +244,7 @@ describe("Effect stack lifecycle handoff", () => {
             credentials: () => Effect.succeed(credentials),
             start: () => Effect.succeed(runningStatus),
             destroy: () => Effect.void,
+            resetDatabase: () => Effect.succeed(runningStatus),
             logs: () => emptyLogs(),
           },
           maintenanceHandlers: {
@@ -305,6 +306,7 @@ describe("Effect stack lifecycle handoff", () => {
             credentials: () => Effect.succeed(credentials),
             start: () => Effect.succeed(runningStatus),
             destroy: () => Effect.void,
+            resetDatabase: () => Effect.succeed(runningStatus),
             logs: () => emptyLogs(),
           },
           maintenanceHandlers: {
@@ -422,6 +424,7 @@ describe("Effect stack lifecycle handoff", () => {
             credentials: () => Effect.succeed(credentials),
             start: () => Effect.succeed(runningStatus),
             destroy: () => Effect.void,
+            resetDatabase: () => Effect.succeed(runningStatus),
             logs: (query) => readLogs(query),
           },
           maintenanceHandlers: {
@@ -501,6 +504,7 @@ describe("Effect stack lifecycle handoff", () => {
             credentials: () => Effect.succeed(credentials),
             start: () => Effect.succeed(runningStatus),
             destroy: () => Effect.void,
+            resetDatabase: () => Effect.succeed(runningStatus),
             logs: () =>
               Effect.fail({ tag: "InvalidLogCursorError", message: "Log cursor is invalid" }),
           },
@@ -1289,7 +1293,7 @@ describe("Effect stack lifecycle handoff", () => {
             .prepare({
               config: {
                 capabilities: {
-                  analytics: { enabled: false },
+                  rest: { enabled: false },
                   studio: { enabled: true },
                 },
               },
@@ -1425,6 +1429,7 @@ describe("Effect stack lifecycle handoff", () => {
                   message: "Container engine command failed while starting database",
                 }),
               destroy: () => Effect.void,
+              resetDatabase: () => Effect.succeed(runningStatus),
               logs: () => emptyLogs(),
             },
             maintenanceHandlers: {
@@ -1500,6 +1505,7 @@ describe("Effect stack lifecycle handoff", () => {
                 } as const);
               }),
             destroy: () => Effect.void,
+            resetDatabase: () => Effect.succeed(runningStatus),
             logs: () => emptyLogs(),
           },
           maintenanceHandlers: {
@@ -1692,6 +1698,7 @@ describe("Effect stack lifecycle handoff", () => {
             return Effect.succeed(runningStatus);
           },
           destroy: () => Effect.void,
+          resetDatabase: () => Effect.succeed(runningStatus),
           logs: emptyLogs,
         };
         yield* startControlServer({
@@ -1753,6 +1760,7 @@ describe("Effect stack lifecycle handoff", () => {
             credentials: () => Effect.succeed(credentials),
             start: () => Effect.succeed(runningStatus),
             destroy: () => Effect.void,
+            resetDatabase: () => Effect.succeed(runningStatus),
             logs: emptyLogs,
           },
           maintenanceHandlers: {
@@ -1795,6 +1803,7 @@ describe("Effect stack lifecycle handoff", () => {
           credentials: () => Effect.succeed(credentials),
           start: () => Effect.succeed(runningStatus),
           destroy: () => Effect.void,
+          resetDatabase: () => Effect.succeed(runningStatus),
           logs: emptyLogs,
         };
         const maintenanceHandlers = {
@@ -2031,6 +2040,8 @@ describe("Effect stack lifecycle handoff", () => {
                 tempRoot: env.tempRoot,
                 platform: env.platform,
               });
+              // bare imports in a `node -e` script resolve from cwd, so run from the package root
+              const cwd = path.resolve(import.meta.dirname, "../..");
               const child = yield* ChildProcess.make(
                 process.execPath,
                 [
@@ -2056,7 +2067,7 @@ describe("Effect stack lifecycle handoff", () => {
                 `,
                 ],
                 {
-                  cwd: process.cwd(),
+                  cwd,
                   env: {
                     OWNERSHIP_MODULE: new URL("../state/Ownership.ts", import.meta.url).href,
                     OWNERSHIP_STACK_ID: id,
@@ -2211,6 +2222,7 @@ describe("Effect stack lifecycle handoff", () => {
               credentials: () => invoked(credentials),
               start: () => invoked(runningStatus),
               destroy: () => invoked(undefined),
+              resetDatabase: () => invoked(runningStatus),
               logs: () => invoked({ entries: [], cursor: { opaque: "v1_0" }, running: false }),
             },
             maintenanceHandlers: {
@@ -2285,6 +2297,7 @@ describe("Effect stack lifecycle handoff", () => {
             start: () =>
               Deferred.succeed(startEntered, undefined).pipe(Effect.andThen(Effect.never)),
             destroy: () => Effect.void,
+            resetDatabase: () => Effect.succeed(runningStatus),
             logs: () => emptyLogs(),
           },
           maintenanceHandlers: {
@@ -2344,6 +2357,7 @@ describe("Effect stack lifecycle handoff", () => {
             start: () => Effect.succeed(runningStatus),
             destroy: () =>
               Deferred.succeed(destroyEntered, undefined).pipe(Effect.andThen(Effect.never)),
+            resetDatabase: () => Effect.succeed(runningStatus),
             logs: () => emptyLogs(),
           },
           maintenanceHandlers: {
@@ -2407,6 +2421,7 @@ describe("Effect stack lifecycle handoff", () => {
             start: () =>
               Deferred.succeed(startEntered, undefined).pipe(Effect.andThen(Effect.never)),
             destroy: () => Effect.void,
+            resetDatabase: () => Effect.succeed(runningStatus),
             logs: () => emptyLogs(),
           },
           maintenanceHandlers: {
@@ -2491,6 +2506,7 @@ describe("Effect stack lifecycle handoff", () => {
             start: () =>
               Deferred.succeed(startEntered, undefined).pipe(Effect.andThen(Effect.never)),
             destroy: () => Effect.void,
+            resetDatabase: () => Effect.succeed(runningStatus),
             logs: () => emptyLogs(),
           },
           maintenanceHandlers: {
@@ -2570,6 +2586,7 @@ describe("Effect stack lifecycle handoff", () => {
             start: () =>
               Deferred.succeed(startEntered, undefined).pipe(Effect.andThen(Effect.never)),
             destroy: () => Effect.void,
+            resetDatabase: () => Effect.succeed(runningStatus),
             logs: () => emptyLogs(),
           },
           maintenanceHandlers: {

@@ -28,7 +28,6 @@ export const PropCliVersion = "cli_version";
 export const PropEnvSignals = "env_signals";
 export const PropCommandRunId = "command_run_id";
 export const PropCommand = "command";
-export const PropFlags = "flags";
 export const PropExitCode = "exit_code";
 export const PropDurationMs = "duration_ms";
 export const PropOutputFormat = "output_format";

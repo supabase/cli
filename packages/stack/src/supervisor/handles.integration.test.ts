@@ -500,6 +500,7 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
           start: () =>
             Effect.fail({ tag: "StackPreparationError", message: "artifact is incomplete" }),
           destroy: () => Effect.void,
+          resetDatabase: () => Effect.succeed(status),
           logs: () => Effect.succeed({ entries: [], cursor: { opaque: "v1_0" }, running: false }),
         };
         yield* startControlServer({
@@ -604,6 +605,7 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
                 Effect.andThen(Deferred.await(responseRelease)),
                 Effect.asVoid,
               ),
+            resetDatabase: () => Effect.succeed(status),
             logs: () => Effect.succeed({ entries: [], cursor: { opaque: "v1_0" }, running: false }),
           },
           onShutdownReady: Deferred.succeed(callbackStarted, undefined).pipe(
@@ -758,6 +760,8 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
         const supabaseHome = path.dirname(project);
         const stackModule = new URL("../public/EffectStack.ts", import.meta.url).href;
         const encodedStackModule = quoteModuleSpecifier(stackModule);
+        // bare imports in a `node -e` script resolve from cwd, so run from the package root
+        const cwd = path.resolve(import.meta.dirname, "../..");
         const script = `
           const { Effect } = await import("effect");
           const { NodeServices } = await import("@effect/platform-node");
@@ -777,7 +781,7 @@ describe("managed stack handles", { timeout: 30_000 }, () => {
               process.execPath,
               ["--input-type=module", "-e", script, project],
               {
-                cwd: process.cwd(),
+                cwd,
                 env: { SUPABASE_HOME: supabaseHome },
                 extendEnv: true,
                 stdout: "pipe",

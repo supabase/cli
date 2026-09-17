@@ -8,7 +8,8 @@ import { identityStitchLayer } from "./identity-stitch.ts";
 import { debugLoggerLayer } from "./debug-logger.layer.ts";
 import { telemetryStateLayer } from "../telemetry/telemetry-state.layer.ts";
 import { commandRuntimeLayer } from "../shared/runtime/command-runtime.layer.ts";
-
+import { stackApiLayer } from "./stack-api.ts";
+import { bundledPostgresClientLayer } from "./bundled-postgres-client.ts";
 /**
  * Runtime layer shared by `supabase test db` and its hidden alias `supabase
  * db test`, both calling this same factory and `runTestDbCommand`.
@@ -45,5 +46,7 @@ export const testDbRuntimeLayer = (commandPath: ReadonlyArray<string>) =>
     // above, so the lazy linked stack shares a single stitch attempt.
     identityStitchLayer,
     telemetryStateLayer,
+    stackApiLayer,
+    bundledPostgresClientLayer,
     commandRuntimeLayer(commandPath),
   );

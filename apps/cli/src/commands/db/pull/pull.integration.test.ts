@@ -42,6 +42,7 @@ import {
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { type DbSession, DbConnection } from "../../../command-internal/db-connection.service.ts";
 import { DbExecError } from "../../../command-internal/db-connection.errors.ts";
+import { BundledPostgresClient } from "../../../command-internal/bundled-postgres-client.ts";
 import { DockerRun, type DockerRunOpts } from "../../../command-internal/docker-run.service.ts";
 import { EdgeRuntimeScriptError } from "../../../command-internal/edge-runtime-script.errors.ts";
 import {
@@ -429,6 +430,9 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     pgDeltaEngine,
     edge,
     docker,
+    Layer.succeed(BundledPostgresClient, {
+      run: () => Effect.die("bundled postgres client unused"),
+    }),
     dbConnection,
     dockerDaemon?.layer ?? shadowSpawner.layer,
     alwaysReadyHttpClientLayer,
@@ -1482,9 +1486,8 @@ describe("db pull", () => {
   it.effect(
     "resolves the pg_dump image via SUPABASE_INTERNAL_IMAGE_REGISTRY from supabase/.env",
     () => {
-      // Applied before resolving the registry image, so a mirror set only in
-      // supabase/.env is used for the native pg_dump seed (scoped to the run via
-      // `applyProjectEnv`, reverted on close).
+      // Passed explicitly to the native pg_dump seed, so a mirror set only in
+      // supabase/.env is used without mutating process.env.
       const prev = process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
       delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
       mkdirSync(join(tmp.current, "supabase"), { recursive: true });

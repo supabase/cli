@@ -24,10 +24,53 @@ capability is lazy. Starting the stack therefore launches only
 PostgreSQL by default; capabilities configured as eager join its startup dependency closure.
 The remaining lazy capabilities activate through the stack's listeners on demand for the current
 running session.
+
+Lazy REST, Auth, Realtime, Studio, and pooler capabilities stop after 60 seconds without traffic
+by default. Traffic means an active request or stream; idle HTTP keep-alive sockets do not keep a
+service running, while open WebSocket or TCP connections do. Configure a different positive
+timeout, or disable traffic stopping for a capability, with `idleTimeoutSeconds`:
+
+```ts
+await stack.start({
+  config: {
+    capabilities: {
+      rest: { idleTimeoutSeconds: 120 },
+      realtime: { idleTimeoutSeconds: false },
+    },
+  },
+});
+```
+
+To change `idleTimeoutSeconds` on a running stack, call `stop()` and then `start()` with the updated
+configuration.
+
+Stacks saved before idle stopping retain their previous policy: missing timeout values are read as
+`false`. Restarting with the saved definition preserves that policy. To adopt the current defaults,
+stop the stack and start it with the project configuration. Status can report changed effective
+defaults even when the project file is unchanged; a stack still marked running must be stopped
+before those defaults can be applied.
+
+Eager capabilities never auto-stop; an explicit timeout on an eager capability is ignored and its
+effective timeout is `false`. PostgreSQL, Storage, Functions, Mail, and Analytics do not accept
+idle timeout configuration. Studio and its `pg-meta` companion are stopped and started together.
+Dependency protection keeps required dependencies available while a capability is running.
+Stopping preserves listeners and data, and the next request wakes the lazy capability and restarts
+its workloads.
+Retirement cleanup is fail closed: if removal is unproven, the stack remains stopping and new
+activation is rejected. An unproven cleanup marks participating capabilities as failed and fences
+new activation across the stack. This is an operation-level result; the workload ledger tracks
+resources still requiring removal. Unrelated healthy capabilities retain their observations. An
+explicit stop retries the retained ledger. A failed committed destroy remains destroying and
+accepts only a destroy retry; successful cleanup is required before the managed state is removed.
+Status exposes the required recovery operation (`stop` or `destroy`) and its reason in `recovery`.
+Participating capability failure states describe incomplete cleanup, including shared listener
+cleanup; they do not imply that each workload process failed.
+
 The Effect API's `excludeStackCapabilities` helper disables requested optional capabilities and
-their dependents in an in-memory config. Excluding `rest` or `analytics` also disables `studio`,
-while the database remains required. The project config is unchanged, and runtime listeners are
+their dependents in an in-memory config. Excluding `rest` also disables `studio`; excluding
+`analytics` does not. The database remains required. The project config is unchanged, and runtime listeners are
 created only for enabled capability routes.
+
 Native workloads have a two-minute readiness budget to allow cold starts to load shared libraries;
 container workloads retain a 30-second budget, and PostgreSQL uses its configured `health_timeout`.
 Each readiness probe returns immediately when its endpoint becomes healthy.
@@ -86,9 +129,13 @@ realistic traffic, and verifies stop/start cycles, stable ports, and persistent 
 CLI is not involved in these runtime tests.
 
 When `runtime` is omitted for a new stack, the package selects Docker when the Docker client is
-installed and native otherwise. The check runs `docker --version`, so a stopped Docker daemon still
-selects Docker. Existing stacks reuse their persisted runtime without probing; native, Docker, and
-Podman preferences remain explicit when supplied. Podman is supported only on local Linux hosts.
+installed and its daemon is reachable, and native otherwise. An installed client with an
+unreachable daemon selects native, and the Effect handle carries a `dockerFallbackNotice` explaining
+that the choice is persisted; switching to Docker later requires destroying the stack or choosing a
+new stack name. The Promise facade does not expose the notice.
+Native is refused when the process runs as uid 0. Existing stacks reuse their persisted runtime
+without probing; native, Docker, and Podman preferences remain explicit when supplied, and an
+explicit Docker runtime does not fall back. Podman is supported only on local Linux hosts.
 
 Stack identity is the length-delimited SHA-256 tuple of the canonical project root, Git branch
 context (or `ordinary-workspace` outside Git), and stack name. Separate worktree roots, branches,
@@ -97,7 +144,7 @@ resolution is read-only; moving a project creates a new identity.
 
 `createTestStack` gives each test stack a unique temporary project root and identity while sharing
 the managed state root used by ordinary package callers. It uses the same runtime selection as
-`createStack`: an installed Docker client selects Docker even when its daemon is stopped. Pass
+`createStack`: a reachable Docker daemon selects Docker, and anything else selects native. Pass
 `runtime: { kind: "native" }` or an explicit container runtime for reproducible test environments.
 Automatic ports therefore
 coordinate across all default callers. Helper project roots and identities remain isolated; a
@@ -112,7 +159,20 @@ Each capability may opt into eager activation in `StackConfig`; omitted settings
 non-PostgreSQL capability lazy. Prepared artifacts are not automatically pruned. `followLogs(...)`
 provides filterable live entries through a stateless client-polled cursor.
 
-Database reset is intentionally outside the current API. Applying migrations, declarative schemas,
-and seeds remains the caller's responsibility. The runtime bootstrap only reconciles the `_realtime`
-schema owner, closed database role passwords, and JWT settings in one transaction; the slim database
-artifact owns its initialization and migrations.
+`resetDatabase()` wipes Postgres data only: identity, ports, secrets, logs, and storage volumes
+stay. The database is started and bootstrapped before return. Applying migrations, declarative
+schemas, and seeds remains the caller's responsibility. The runtime bootstrap only reconciles the
+`_realtime` schema owner, closed database role passwords, and JWT settings in one transaction; the
+slim database artifact owns its initialization and migrations.
+
+`createEphemeralPostgres` is a scoped, Supervisor-free Postgres cluster for schema tooling. It uses
+the same catalog artifact and bootstrap as a stack database, is not registered in `listStacks` /
+`discoverStacks`, and destroys its data directory or volume when the Effect scope closes. The
+Promise facade returns a handle with explicit `destroy()`. Callers own migrations and PGDATA
+cache keys. `exportPgData` is valid only while the cluster is stopped; native and container snapshots
+are not interchangeable.
+
+`runPostgresClient` prepares that same catalog pin and runs caller argv (`bash -c` dump scripts,
+`pg_prove`, …) without starting Postgres. Native prepends `artifact/bin` to `PATH`; container is a
+one-shot `docker|podman run --rm`. It is not an `EffectStack` method, so linked dump can prepare
+tools without a running stack.

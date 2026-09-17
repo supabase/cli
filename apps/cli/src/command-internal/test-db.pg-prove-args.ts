@@ -1,5 +1,6 @@
 import * as nodePath from "node:path";
 import { Option } from "effect";
+import type { PostgresClientMount } from "@supabase/stack/effect";
 
 import { toDockerMountPath } from "./docker-path.ts";
 
@@ -8,6 +9,7 @@ export interface PgProveArgs {
   readonly cmd: ReadonlyArray<string>;
   /** Docker volume binds, each `hostpath:dockerpath:ro`. */
   readonly binds: ReadonlyArray<string>;
+  readonly mounts: ReadonlyArray<PostgresClientMount>;
   /**
    * The searched paths as they exist on the host, for diagnostics — not the
    * `toDockerMountPath` form used in `cmd`, which strips the volume name on
@@ -40,6 +42,7 @@ export function buildPgProveArgs(opts: {
     opts.paths.length > 0 ? opts.paths : [nodePath.resolve(opts.workdir, "supabase", "tests")];
 
   const cmd: string[] = ["pg_prove", "--ext", ".pg", "--ext", ".sql", "-r"];
+  const mounts: PostgresClientMount[] = [];
   const binds: string[] = [];
   const hostPaths: string[] = [];
   const seenTargets = new Set<string>();
@@ -66,6 +69,7 @@ export function buildPgProveArgs(opts: {
     // Docker rejects.
     if (!seenTargets.has(dockerMount)) {
       seenTargets.add(dockerMount);
+      mounts.push({ source: hostMount, target: dockerMount, readOnly: true });
       binds.push(`${hostMount}:${dockerMount}:ro`);
     }
     if (workingDir === "") workingDir = dockerMount;
@@ -73,5 +77,5 @@ export function buildPgProveArgs(opts: {
 
   if (opts.debug) cmd.push("--verbose");
 
-  return { cmd, binds, hostPaths, workingDir: Option.some(workingDir) };
+  return { cmd, binds, mounts, hostPaths, workingDir: Option.some(workingDir) };
 }

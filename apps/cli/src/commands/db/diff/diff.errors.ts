@@ -109,6 +109,7 @@ export class DbDiffPgAdminError extends Data.TaggedError("DbDiffPgAdminError")<{
     | "differ"
     | "invalid_output"
     | "docker_daemon"
+    | "config"
     | "registry_pull"
     | "image_inspect";
 }> {
@@ -118,6 +119,8 @@ export class DbDiffPgAdminError extends Data.TaggedError("DbDiffPgAdminError")<{
         return { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" };
       case "registry_pull":
         return { ...actionability.externalNetwork, fingerprint_suffix: "registry_pull" };
+      case "config":
+        return { ...actionability.invalidConfig, fingerprint_suffix: "invalid_config" };
       // Malformed pinned-differ wire output is an internal contract violation, not a
       // user input mistake — same classification as pg-delta's own malformed-output
       // failures (`PgDeltaEngineError` with `reason: "output_parse"`).

@@ -11,7 +11,7 @@ import {
   StackTargetResolver,
   validateStackTarget,
 } from "../stack.shared.ts";
-import { loadStackConfig } from "../stack-config.ts";
+import { loadStackConfig } from "../../../../command-internal/stack-config.ts";
 import type { StackPrepareFlags } from "./prepare.command.ts";
 import { StackCommandPrepareError, stackPrepareError } from "./prepare.errors.ts";
 

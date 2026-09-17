@@ -1,6 +1,5 @@
-import { $ } from "bun";
-
 import { bundleServeMainTemplate } from "../src/shared/functions/serve-main-bundler.ts";
+import { OXFMT_OPTIONAL_PLUGIN_EXTERNALS } from "./bundle-externals.ts";
 
 /**
  * Compiles the CLI to a standalone binary, run via `pnpm build:binary`. Embeds the pre-bundled
@@ -17,9 +16,15 @@ const packageJson = JSON.parse(
 if (packageJson.version === undefined || packageJson.version.length === 0) {
   throw new Error("CLI package version is required for a compiled build");
 }
-const versionDefine = `--define=SUPABASE_CLI_VERSION=${JSON.stringify(packageJson.version)}`;
-const defineArg = `--define=SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE=${JSON.stringify(
-  await bundleServeMainTemplate(),
-)}`;
-
-await $`bun build ${entrypoint} --compile ${versionDefine} ${defineArg} --outfile ${outfile}`;
+const result = await Bun.build({
+  entrypoints: [entrypoint],
+  compile: { outfile },
+  external: [...OXFMT_OPTIONAL_PLUGIN_EXTERNALS],
+  define: {
+    SUPABASE_CLI_VERSION: JSON.stringify(packageJson.version),
+    SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE: JSON.stringify(await bundleServeMainTemplate()),
+  },
+});
+for (const log of result.logs) {
+  console.warn(log);
+}

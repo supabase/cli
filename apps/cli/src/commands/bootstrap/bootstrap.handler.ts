@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Option, Path, Schedule } from "effect";
+import { Effect, FileSystem, Option, Path, Redacted, Schedule } from "effect";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 
 import { CommandPlatformApi } from "../../auth/command-platform-api.service.ts";
@@ -26,11 +26,7 @@ import { getProjectApiKeys } from "../../command-internal/get-api-keys.ts";
 import { sanitizeErrorBody } from "../../command-internal/http-errors.ts";
 import type { ConnectSuggestionContext } from "../../command-internal/connect-errors.ts";
 import { resolveLinkedConn } from "../../command-internal/db-config.layer.ts";
-import {
-  applyProjectEnv,
-  checkDbToml,
-  loadProjectEnv,
-} from "../../command-internal/db-config.toml-read.ts";
+import { checkDbToml, loadProjectEnv } from "../../command-internal/db-config.toml-read.ts";
 import { dbPushCore } from "../../command-internal/db-push-core.ts";
 import { linkServicesCore } from "../../command-internal/link-services-core.ts";
 import { projectCreateCore } from "../../command-internal/project-create-core.ts";
@@ -41,6 +37,7 @@ import { resolveExperimentalFeature } from "../../command-internal/experimental-
 import { initProject } from "../../shared/init/project-init.ts";
 import { buildDotEnv, marshalDotEnv } from "./bootstrap.dotenv.ts";
 import {
+  BootstrapDotEnvParseError,
   BootstrapHealthError,
   BootstrapInvalidTemplateError,
   BootstrapOverwriteDeclinedError,
@@ -97,7 +94,7 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
     // Reads the prefixed `SUPABASE_WORKDIR` only (never plain `WORKDIR`).
     const workdirRaw = Option.isSome(workdirFlag)
       ? workdirFlag.value
-      : process.env["SUPABASE_WORKDIR"];
+      : Option.getOrUndefined(cliSettings.workdirEnvValue);
     const workdirInput =
       workdirRaw ??
       (yield* output.promptText(
@@ -183,7 +180,9 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
 
     const seededPassword = Option.isSome(flags.password)
       ? flags.password.value
-      : (process.env["SUPABASE_DB_PASSWORD"] ?? "");
+      : Option.isSome(cliSettings.dbPassword)
+        ? Redacted.value(cliSettings.dbPassword.value)
+        : "";
     const created = yield* projectCreateCore({
       name: path.basename(workdir),
       orgId: "",
@@ -209,10 +208,8 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
     const { anon } = extractServiceKeys(keys);
 
     // Config load must run before link/health/`.env` steps: a malformed config.toml aborts here
-    // rather than after side effects start. `applyProjectEnv`'s scope stays open for the rest of
-    // this handler (closed by the outer `Effect.scoped` below).
+    // rather than after side effects start.
     const projectEnv = yield* loadProjectEnv(fs, path, workdir);
-    yield* applyProjectEnv(projectEnv);
     const pushYes = yield* resolveYesWithProjectEnv(projectEnv);
     const toml = yield* checkDbToml(fs, path, workdir, projectRef);
     if (toml.appliedRemote !== undefined) {
@@ -258,7 +255,10 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
         const content = yield* fs.readFileString(examplePath);
         example = yield* Effect.try({
           try: () => parseDotEnv(content),
-          catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+          catch: (cause) =>
+            new BootstrapDotEnvParseError({
+              message: cause instanceof Error ? cause.message : String(cause),
+            }),
         });
       }
       const env = buildDotEnv(keys, dbConfig, supabaseUrl, example);
@@ -318,7 +318,7 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
     }).pipe(pushNotify, Effect.retry(retry));
 
     if (isText) {
-      const suggestion = suggestAppStart(runtimeInfo.cwd, workdir, starter.start, aqua);
+      const suggestion = suggestAppStart(path, runtimeInfo.cwd, workdir, starter.start, aqua);
       yield* emitSuccessTrailer(`${suggestion}\n`);
     } else {
       yield* output.success("", {
@@ -348,11 +348,6 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
       ),
     ),
     Effect.ensuring(telemetryState.flush),
-    // `applyProjectEnv` above uses `Effect.acquireRelease` to revert
-    // `SUPABASE_INTERNAL_IMAGE_REGISTRY` when its scope closes; that scope must span the rest of
-    // this handler (link services, health poll, `.env` write, and the push step's own use of
-    // that var), so it's closed here rather than narrowly around a single step.
-    Effect.scoped,
   );
 });
 

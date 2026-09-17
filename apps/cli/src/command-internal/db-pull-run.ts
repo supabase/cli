@@ -19,12 +19,7 @@ import { ipv6Suggestion, isIPv6ConnectivityError } from "./connect-errors.ts";
 import { DbConfigResolver } from "./db-config.service.ts";
 import { resolveDbImage } from "./db-image.ts";
 import { DbConnection, type PgConnInput } from "./db-connection.service.ts";
-import {
-  applyProjectEnv,
-  loadProjectEnv,
-  readDbToml,
-  resolveDeclarativeDir,
-} from "./db-config.toml-read.ts";
+import { loadProjectEnv, readDbToml, resolveDeclarativeDir } from "./db-config.toml-read.ts";
 import type { DbConnType } from "./db-target-flags.ts";
 import { makeDir } from "./make-dir.ts";
 import { toPostgresURL } from "./postgres-url.ts";
@@ -51,7 +46,7 @@ import {
 import { diffMigra } from "../commands/db/shared/migra.ts";
 import { writePgDeltaMigrations } from "../commands/db/shared/pgdelta-migrations.write.ts";
 import { type DumpOptions, buildSchemaDumpEnv } from "./pg-dump.env.ts";
-import { streamPgDump } from "./pg-dump.run.ts";
+import { streamPgDumpWithClient } from "./pg-dump.run.ts";
 import {
   emitPoolerFallbackWarning,
   isDirectLinkedHost,
@@ -66,6 +61,9 @@ import {
 } from "../commands/db/shared/pgdelta-engine.service.ts";
 import { type PgDeltaContext, isPgDeltaDebugEnabled, resolvePgDeltaProjectId } from "./pgdelta.ts";
 import { prepareShadowSource } from "../commands/db/shared/shadow-source.ts";
+import { currentStackBackend } from "./stack-backend.ts";
+import { stackRejectNativeDockerDiffEngine } from "./stack-local-database.ts";
+import { stackPrepareShadowSource, stackWithShadowDatabase } from "./stack-shadow.ts";
 import type { DbPullFlags } from "../commands/db/pull/pull.command.ts";
 import {
   DbPullDumpError,
@@ -180,10 +178,6 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
   let linkedRefForCache: string | undefined;
 
   return yield* Effect.gen(function* () {
-    // Make an allowlisted `supabase/.env` registry override visible to the
-    // synchronous `process.env` reader in `getRegistryImageUrl` (the pg_dump
-    // seed + migra/pg-delta diff images), reverted when this scope closes.
-    yield* applyProjectEnv(projectEnv);
     const name = Option.getOrElse(flags.name, () => "remote_schema");
     // `--declarative` and the deprecated `--use-pg-delta` both bind to the same
     // `useDeclarative` outcome. When both are passed, the last occurrence in argv wins
@@ -366,12 +360,17 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
     const usePgDeltaDiff = resolvePullDiffEngine({
       engineFlagChanged: Option.isSome(flags.diffEngine),
       engine: Option.getOrElse(flags.diffEngine, () => "migra"),
-      pgDeltaDefault: shouldUsePgDelta({
-        configEnabled: toml.pgDelta.enabled,
-        usePgDeltaFlag: false,
-        envEnabled: parseBoolEnv(toml.envLookup("SUPABASE_EXPERIMENTAL_PG_DELTA")),
-      }),
+      pgDeltaDefault:
+        (yield* currentStackBackend).kind === "stack" ||
+        shouldUsePgDelta({
+          configEnabled: toml.pgDelta.enabled,
+          usePgDeltaFlag: false,
+          envEnabled: parseBoolEnv(toml.envLookup("SUPABASE_EXPERIMENTAL_PG_DELTA")),
+        }),
     });
+    if (Option.getOrElse(flags.diffEngine, () => "pg-delta") === "migra") {
+      yield* stackRejectNativeDockerDiffEngine("--diff-engine migra");
+    }
 
     // Connectivity check, run before dialing.
     return yield* Effect.scoped(
@@ -473,13 +472,13 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
           yield* makeDir(fs, path.dirname(migrationPath)).pipe(
             Effect.mapError((cause) => new DbPullWriteError({ message: cause.message })),
           );
-          const { image } = yield* resolveDbImage(
+          const image = (yield* resolveDbImage(
             fs,
             path,
             cliSettings.workdir,
             toml.majorVersion,
             Option.getOrUndefined(toml.orioledbVersion),
-          );
+          )).image;
           // Default dump options: no schema filter (so the internal-schema exclude
           // list applies) and comments stripped.
           const dumpEnvOpt: DumpOptions = {
@@ -511,11 +510,12 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
                       const file = yield* fs
                         .open(migrationPath, { flag: "a" })
                         .pipe(Effect.mapError(toDumpOpenError));
-                      return yield* streamPgDump({
+                      return yield* streamPgDumpWithClient({
                         image,
                         script: dumpSchemaScript,
                         env: buildSchemaDumpEnv(target, dumpEnvOpt),
                         projectEnvValues: projectEnv,
+                        client: { kind: "container" },
                         onStdout: (chunk) => {
                           if (chunk.length > 0) seedWroteBytes = true;
                           return file.writeAll(chunk).pipe(
@@ -576,7 +576,10 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
         const runShadowDiff = (targetEndpoint: PgDeltaDatabaseEndpoint) =>
           Effect.gen(function* () {
             yield* output.raw("Creating shadow database...\n", "stderr");
-            const resolvedPullShadowImage = yield* pullLocalInputs.resolvePostgresImage;
+            const stackBackend = (yield* currentStackBackend).kind === "stack";
+            const resolvedPullShadowImage = stackBackend
+              ? "stack-ephemeral"
+              : yield* pullLocalInputs.resolvePostgresImage;
             const migrationMode: "legacy" | "pgdelta-next" = usePgDeltaDiff
               ? "pgdelta-next"
               : "legacy";
@@ -596,65 +599,70 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
               schemaPaths: toml.schemaPathPatterns,
               pgDelta: toml.pgDelta,
             };
-            // `withShadowDatabase` owns the interrupt-safe lifecycle and the cache seam. Each
-            // pooler-retry attempt still acquires and releases its own shadow; on the warm path
-            // every attempt restores a fresh container from the same cached snapshot. The key's
-            // webhooks policy must mirror what {@link prepareShadowSource} selects for this mode,
-            // or the two engines could restore each other's tars.
-            return yield* withShadowDatabase(
-              spawner,
-              shadowInput,
-              (handle) =>
-                Effect.gen(function* () {
-                  const shadow = yield* prepareShadowSource(spawner, handle, shadowInput);
-                  const target = shadow.targetUrlOverride ?? targetEndpoint.ref;
-                  yield* output.raw(
-                    diffSchema.length > 0
-                      ? `Diffing schemas: ${diffSchema.join(",")}\n`
-                      : "Diffing schemas...\n",
-                    "stderr",
-                  );
-                  if (usePgDeltaDiff) {
-                    return yield* pgDeltaEngine.diffDatabase({
-                      context: ctx,
-                      source: {
-                        kind: "database",
-                        ref: shadow.sourceUrl,
-                        connectOptions: { isLocal: true, dnsResolver: "native" },
-                      },
-                      target: {
-                        kind: "database",
-                        ref: target,
-                        ...(shadow.targetUrlOverride === undefined
-                          ? {
-                              ...(targetEndpoint.connection !== undefined
-                                ? { connection: targetEndpoint.connection }
-                                : {}),
-                              connectOptions: targetEndpoint.connectOptions,
-                            }
-                          : {
-                              connectOptions: { isLocal: true, dnsResolver },
-                            }),
-                      },
-                      schema: diffSchema,
-                      formatOptions,
-                      debug: isPgDeltaDebugEnabled(),
-                      strictCoverage: flags.strictCoverage,
-                    });
-                  }
-                  const sql = yield* diffMigra(ctx, {
-                    source: shadow.sourceUrl,
-                    target,
+            const runDiff = (shadow: {
+              readonly sourceUrl: string;
+              readonly targetUrlOverride: string | undefined;
+            }) =>
+              Effect.gen(function* () {
+                const target = shadow.targetUrlOverride ?? targetEndpoint.ref;
+                yield* output.raw(
+                  diffSchema.length > 0
+                    ? `Diffing schemas: ${diffSchema.join(",")}\n`
+                    : "Diffing schemas...\n",
+                  "stderr",
+                );
+                if (usePgDeltaDiff) {
+                  return yield* pgDeltaEngine.diffDatabase({
+                    context: ctx,
+                    source: {
+                      kind: "database",
+                      ref: shadow.sourceUrl,
+                      connectOptions: { isLocal: true, dnsResolver: "native" },
+                    },
+                    target: {
+                      kind: "database",
+                      ref: target,
+                      ...(shadow.targetUrlOverride === undefined
+                        ? {
+                            ...(targetEndpoint.connection !== undefined
+                              ? { connection: targetEndpoint.connection }
+                              : {}),
+                            connectOptions: targetEndpoint.connectOptions,
+                          }
+                        : {
+                            connectOptions: { isLocal: true, dnsResolver },
+                          }),
+                    },
                     schema: diffSchema,
-                    connectOptions:
-                      shadow.targetUrlOverride === undefined
-                        ? targetEndpoint.connectOptions
-                        : { isLocal: true, dnsResolver },
+                    formatOptions,
+                    debug: isPgDeltaDebugEnabled(),
+                    strictCoverage: flags.strictCoverage,
                   });
-                  return { sql, files: undefined, debug: undefined };
-                }),
-              { webhooks: migrationMode === "pgdelta-next" ? "config" : "enabled" },
-            );
+                }
+                const sql = yield* diffMigra(ctx, {
+                  source: shadow.sourceUrl,
+                  target,
+                  schema: diffSchema,
+                  connectOptions:
+                    shadow.targetUrlOverride === undefined
+                      ? targetEndpoint.connectOptions
+                      : { isLocal: true, dnsResolver },
+                });
+                return { sql, files: undefined, debug: undefined };
+              });
+            return stackBackend
+              ? yield* stackWithShadowDatabase(shadowInput, (handle) =>
+                  stackPrepareShadowSource(handle, shadowInput).pipe(Effect.flatMap(runDiff)),
+                )
+              : // `withShadowDatabase` owns the interrupt-safe lifecycle and the cache seam.
+                // Webhooks policy must mirror {@link prepareShadowSource} for this mode.
+                yield* withShadowDatabase(
+                  spawner,
+                  shadowInput,
+                  (handle) =>
+                    prepareShadowSource(spawner, handle, shadowInput).pipe(Effect.flatMap(runDiff)),
+                  { webhooks: migrationMode === "pgdelta-next" ? "config" : "enabled" },
+                );
           });
         const diffOutcome = yield* withPoolerFallback(targetEndpoint, runShadowDiff);
 
@@ -820,8 +828,5 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
       ),
     ),
     Effect.ensuring(telemetryState.flush),
-    // Scope the `SUPABASE_INTERNAL_IMAGE_REGISTRY`-from-`.env` apply above to this
-    // command run: `applyProjectEnv` registers a finalizer that reverts it.
-    Effect.scoped,
   );
 });

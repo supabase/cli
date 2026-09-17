@@ -15,6 +15,7 @@ import {
   connectFailureMessage,
   connectSuggestion,
   isDialFailure,
+  isIPv6ConnectivityErrorCause,
   isSqlState,
 } from "./connect-errors.ts";
 import { DbConnectError, DbCopyError, DbExecError } from "./db-connection.errors.ts";
@@ -395,6 +396,19 @@ export interface ClientCert {
   readonly passphrase?: string;
 }
 
+/**
+ * Whether the DSN itself asked for TLS behavior: `--db-url`'s `sslmode`/`sslrootcert` are honored
+ * even against a target classified local (e.g. a TLS tunnel on the loopback stack), so `isLocal`
+ * alone must not force plaintext when one of these is set.
+ */
+export function tlsExplicitlyRequested(cfg: PgConnInput): boolean {
+  return (
+    cfg.sslmode !== undefined ||
+    (cfg.sslrootcert?.length ?? 0) > 0 ||
+    (cfg.sslrootcertInline?.length ?? 0) > 0
+  );
+}
+
 export function sslOptionFor(
   sslmode: string | undefined,
   isLocal: boolean,
@@ -442,6 +456,9 @@ export function sslOptionFor(
  * so a failed handshake on the default `prefer` mode fails loudly rather than silently
  * downgrading to plaintext. `servername` targets the original hostname per dial host when a
  * DoH-resolved IP was substituted; `caCert` promotes `require` to `verify-ca` when set.
+ * `isLocal` is the caller's TLS-exemption decision, not the raw target classification: a local
+ * target that explicitly set `sslmode`/`sslrootcert` (see {@link tlsExplicitlyRequested}) is not
+ * exempt, so the caller passes `false` for it in that case.
  */
 export function sslConfigsFor(
   sslmode: string | undefined,
@@ -610,7 +627,11 @@ export const acquireProbedPool = <P extends ProbePool>(
   });
 
 /** Maps a driver connect failure to a credential-free `DbConnectError`. */
-const toConnectError = (cfg: PgConnInput, isLocal: boolean, error: unknown): DbConnectError => {
+export const toConnectError = (
+  cfg: PgConnInput,
+  isLocal: boolean,
+  error: unknown,
+): DbConnectError => {
   const suggestion =
     cfg.suggestionContext === undefined
       ? undefined
@@ -619,6 +640,7 @@ const toConnectError = (cfg: PgConnInput, isLocal: boolean, error: unknown): DbC
     message: `failed to connect to postgres: ${connectFailureMessage(cfg, error)}`,
     ...(suggestion === undefined ? {} : { suggestion }),
     ...(isDialFailure(error) ? { retryable: true } : {}),
+    ...(isIPv6ConnectivityErrorCause(error) ? { ipv6Unreachable: true } : {}),
   });
 };
 
@@ -630,6 +652,9 @@ const toConnectError = (cfg: PgConnInput, isLocal: boolean, error: unknown): DbC
  */
 const acquirePgPoolConnection = (cfg: PgConnInput, { isLocal, dnsResolver }: DbConnectOptions) =>
   Effect.gen(function* () {
+    // A local target that explicitly set `sslmode`/`sslrootcert` (e.g. a TLS tunnel on the
+    // loopback stack) is not exempt from TLS; only the default loopback case stays plaintext.
+    const explicitTls = tlsExplicitlyRequested(cfg);
     // Dials the primary host then each HA fallback from `cfg.fallbacks`, in order. When
     // `--dns-resolver https` is set, each host resolves to all its Cloudflare DoH IPs up front
     // and each is retried in turn; the original hostname is kept as the TLS `servername` so
@@ -682,21 +707,28 @@ const acquirePgPoolConnection = (cfg: PgConnInput, { isLocal, dnsResolver }: DbC
     // `failed to connect to postgres:` prefix plus the connection identity and underlying driver
     // cause, not the bare `SqlError` toString, which drops that detail.
     // Loads the `sslrootcert` CA bundle; a missing/unreadable file aborts. Skipped for local
-    // connections. Loaded whenever any dial target is non-socket, since a socket primary can
-    // still have a TCP fallback that needs it ({@link sslConfigsFor} already plaintexts socket
-    // targets).
+    // connections, unless the local target explicitly requested TLS. Loaded whenever any dial
+    // target is non-socket, since a socket primary can still have a TCP fallback that needs it
+    // ({@link sslConfigsFor} already plaintexts socket targets).
     const rootcertPath = cfg.sslrootcert;
     const anyTcpTarget = dialTargets.some(({ dialHost }) => !isUnixSocketHost(dialHost));
     const caCert =
-      rootcertPath !== undefined && rootcertPath.length > 0 && !isLocal && anyTcpTarget
-        ? yield* Effect.try({
-            try: () => readFileSync(rootcertPath, "utf8"),
-            catch: (error) =>
-              new DbConnectError({
-                message: `failed to read sslrootcert ${rootcertPath}: ${error}`,
-              }),
-          })
-        : undefined;
+      cfg.sslrootcertInline !== undefined &&
+      cfg.sslrootcertInline.length > 0 &&
+      (!isLocal || explicitTls)
+        ? cfg.sslrootcertInline
+        : rootcertPath !== undefined &&
+            rootcertPath.length > 0 &&
+            (!isLocal || explicitTls) &&
+            anyTcpTarget
+          ? yield* Effect.try({
+              try: () => readFileSync(rootcertPath, "utf8"),
+              catch: (error) =>
+                new DbConnectError({
+                  message: `failed to read sslrootcert ${rootcertPath}: ${error}`,
+                }),
+            })
+          : undefined;
 
     // Loads the client `sslcert`/`sslkey` for cert auth, using the same non-local/TCP gate as
     // the CA bundle; `sslpassword` decrypts an encrypted key. Bound to locals so the narrowing
@@ -728,7 +760,14 @@ const acquirePgPoolConnection = (cfg: PgConnInput, { isLocal, dnsResolver }: DbC
     // each dial target (host × resolved IPs), with `servername` per target set to the original
     // hostname when dialing a DoH-resolved IP.
     const attempts = dialTargets.flatMap(({ dialHost, port, servername }) =>
-      sslConfigsFor(cfg.sslmode, isLocal, servername, caCert, dialHost, clientCert).map((ssl) => ({
+      sslConfigsFor(
+        cfg.sslmode,
+        isLocal && !explicitTls,
+        servername,
+        caCert,
+        dialHost,
+        clientCert,
+      ).map((ssl) => ({
         pool: makePool(dialHost, port, ssl),
         // The fallback chain only short-circuits on an auth error when the failed attempt used
         // TLS; a TLS config is any non-plaintext `ssl` value.

@@ -476,14 +476,28 @@ const releaseFor = <T>(
 const enabledSettings = (
   name: CapabilityName,
   raw: unknown,
-): { enabled: boolean; activation: "eager" | "lazy"; settings: unknown; raw: unknown } => {
+): {
+  enabled: boolean;
+  activation: "eager" | "lazy";
+  idleTimeoutSeconds: number | false;
+  settings: unknown;
+  raw: unknown;
+} => {
+  const defaultIdleTimeout = CAPABILITY_MODULES[name].defaultIdleTimeoutSeconds ?? false;
   if (name === "database")
-    return { enabled: true, activation: "eager", settings: extract(raw, "settings") ?? {}, raw };
+    return {
+      enabled: true,
+      activation: "eager",
+      idleTimeoutSeconds: false,
+      settings: extract(raw, "settings") ?? {},
+      raw,
+    };
   if (raw === undefined || raw === null) {
     const module = CAPABILITY_MODULES[name];
     return {
       enabled: module.defaultEnabled,
       activation: module.defaultActivation,
+      idleTimeoutSeconds: module.defaultActivation === "lazy" ? defaultIdleTimeout : false,
       settings: module.defaultSettings,
       raw: {},
     };
@@ -492,16 +506,31 @@ const enabledSettings = (
     return {
       enabled: false,
       activation: CAPABILITY_MODULES[name].defaultActivation,
+      idleTimeoutSeconds: false,
       settings: CAPABILITY_MODULES[name].defaultSettings,
       raw,
     };
   const activation = extract(raw, "activation");
+  const idleTimeoutSeconds = extract(raw, "idleTimeoutSeconds");
+  const selectedActivation =
+    activation === "eager" || activation === "lazy"
+      ? activation
+      : CAPABILITY_MODULES[name].defaultActivation;
   return {
     enabled: true,
-    activation:
-      activation === "eager" || activation === "lazy"
-        ? activation
-        : CAPABILITY_MODULES[name].defaultActivation,
+    activation: selectedActivation,
+    idleTimeoutSeconds:
+      selectedActivation === "eager"
+        ? false
+        : idleTimeoutSeconds === false
+          ? false
+          : defaultIdleTimeout === false
+            ? false
+            : typeof idleTimeoutSeconds === "number" &&
+                Number.isFinite(idleTimeoutSeconds) &&
+                idleTimeoutSeconds > 0
+              ? idleTimeoutSeconds
+              : defaultIdleTimeout,
     settings: extract(raw, "settings") ?? {},
     raw,
   };
@@ -535,6 +564,7 @@ const materializeCapability = <T>(
     return {
       enabled: selected.enabled,
       activation: selected.activation,
+      idleTimeoutSeconds: selected.idleTimeoutSeconds,
       version,
       settings: completeSettings,
     };

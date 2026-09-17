@@ -118,7 +118,13 @@ const hasCompleteDefaults = (value: unknown, defaults: unknown): boolean => {
   return true;
 };
 
-const capabilityKeys = ["enabled", "activation", "version", "settings"] as const;
+const capabilityKeys = [
+  "enabled",
+  "activation",
+  "idleTimeoutSeconds",
+  "version",
+  "settings",
+] as const;
 
 const invalid = (message: string): Effect.Effect<never, SchemaIssue.Issue> =>
   Effect.fail(new SchemaIssue.InvalidValue({ message }));
@@ -230,6 +236,13 @@ const isDefinitionShape = (input: unknown): input is StackDefinition => {
     if (!hasExactKeys(capability, capabilityKeys)) return false;
     if (typeof capability.enabled !== "boolean") return false;
     if (capability.activation !== "eager" && capability.activation !== "lazy") return false;
+    if (
+      capability.idleTimeoutSeconds !== false &&
+      (typeof capability.idleTimeoutSeconds !== "number" ||
+        !Number.isFinite(capability.idleTimeoutSeconds) ||
+        capability.idleTimeoutSeconds <= 0)
+    )
+      return false;
     if (typeof capability.version !== "string" || capability.version.length === 0) return false;
   }
   const listeners = input.listeners;

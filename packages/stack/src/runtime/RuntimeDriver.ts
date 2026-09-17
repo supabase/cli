@@ -46,6 +46,11 @@ export interface RuntimeDriver {
    * cleanup removes them after containers and networks have been removed.
    */
   readonly cleanup: (request: RuntimeCleanupRequest) => Effect.Effect<void, RuntimeDriverError>;
+  /**
+   * Wipes persistent data for one stopped and removed workload. Native database data directories
+   * and container volumes owned by that workload are removed; other stack volumes stay.
+   */
+  readonly wipePersistentData: (key: RuntimeWorkloadKey) => Effect.Effect<void, RuntimeDriverError>;
 }
 
 export class RuntimeDriverError extends Data.TaggedError("RuntimeDriverError")<{

@@ -1,4 +1,4 @@
-import { Effect, type FileSystem, Option, type Path } from "effect";
+import { Config, Effect, Match, type FileSystem, Option, type Path } from "effect";
 import * as SmolToml from "smol-toml";
 import {
   PROJECT_REF_PATTERN,
@@ -746,26 +746,28 @@ export const resolveSeedSqlPath = (pathSvc: Path.Path, pattern: string): string 
 /** `[db]` ports default through the development env unless `SUPABASE_ENV` overrides. */
 const DEFAULT_SUPABASE_ENV = "development";
 
-/**
- * Keys {@link applyProjectEnv} copies from the project `.env` into
- * `process.env`: only values read directly via `process.env` rather than
- * through {@link loadProjectEnv}'s returned map, e.g.
- * `SUPABASE_INTERNAL_IMAGE_REGISTRY` (`getRegistryImageUrl`).
- */
-const PROCESS_ENV_APPLY_KEYS = ["SUPABASE_INTERNAL_IMAGE_REGISTRY"] as const;
+const configEnvOption = Effect.fnUntraced(function* (name: string) {
+  return yield* Config.option(Config.string(name)).pipe(
+    Effect.mapError(
+      () => new DbConfigLoadError({ message: `failed to resolve environment variable: ${name}` }),
+    ),
+  );
+});
 
 /**
- * Loads the project's nested `.env` files into a lookup map without mutating
- * `process.env` (first writer wins; the shell environment always wins over any
- * file). Callers needing a key visible to a synchronous `process.env` reader
- * instead opt into {@link applyProjectEnv} around that work.
+ * Loads the project's nested `.env` files into a sparse lookup map without mutating
+ * `process.env` (first writer wins; the ambient environment always wins over any file).
  */
 export const loadProjectEnv = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   workdir: string,
 ) {
-  const env = process.env["SUPABASE_ENV"] || DEFAULT_SUPABASE_ENV;
+  const configuredEnv = yield* configEnvOption("SUPABASE_ENV");
+  const env = Option.getOrElse(
+    configuredEnv.pipe(Option.filter((value) => value.length > 0)),
+    () => DEFAULT_SUPABASE_ENV,
+  );
   const filenames = [`.env.${env}.local`];
   if (env !== "test") filenames.push(".env.local");
   filenames.push(`.env.${env}`, ".env");
@@ -779,64 +781,34 @@ export const loadProjectEnv = Effect.fnUntraced(function* (
       const content = yield* fs.readFileString(path.join(dir, name)).pipe(
         Effect.map(Option.some<string>),
         Effect.catchTag("PlatformError", (error) =>
-          error.reason._tag === "NotFound"
-            ? Effect.succeed(Option.none<string>())
-            : Effect.fail(
+          Match.value(error.reason).pipe(
+            Match.tag("NotFound", () => Effect.succeed(Option.none<string>())),
+            Match.orElse(() =>
+              Effect.fail(
                 new DbConfigLoadError({
                   message: `failed to read environment file: ${name}`,
                 }),
               ),
+            ),
+          ),
         ),
       );
       if (Option.isNone(content)) continue;
-      let parsed: Record<string, string>;
-      try {
-        parsed = parseDotEnv(content.value);
-      } catch {
-        return yield* Effect.fail(
+      const parsed = yield* Effect.try({
+        try: () => parseDotEnv(content.value),
+        catch: () =>
           new DbConfigLoadError({ message: `failed to parse environment file: ${name}` }),
-        );
-      }
+      });
       for (const [key, value] of Object.entries(parsed)) {
         // The shell env and earlier files win; never overrides an already-set key.
-        if (process.env[key] === undefined && loaded[key] === undefined) loaded[key] = value;
+        if (loaded[key] !== undefined) continue;
+        const ambientValue = yield* configEnvOption(key);
+        if (Option.isNone(ambientValue)) loaded[key] = value;
       }
     }
   }
   return loaded;
 });
-
-/**
- * Applies the allowlisted project-`.env` keys (see {@link PROCESS_ENV_APPLY_KEYS})
- * to `process.env` for the duration of the current scope, then reverts —
- * the opt-in counterpart to the pure {@link loadProjectEnv}, kept separate so
- * that loader stays side-effect-free. Never overrides an existing
- * `process.env` value. The `acquireRelease` finalizer deletes only the keys it
- * set, so in-process test workers don't leak env between cases.
- */
-export const applyProjectEnv = (
-  loaded: Readonly<Record<string, string>>,
-  keys: ReadonlyArray<string> = PROCESS_ENV_APPLY_KEYS,
-) =>
-  Effect.forEach(
-    keys,
-    (key) => {
-      const value = loaded[key];
-      if (value === undefined || process.env[key] !== undefined) {
-        return Effect.void;
-      }
-      return Effect.acquireRelease(
-        Effect.sync(() => {
-          process.env[key] = value;
-        }),
-        () =>
-          Effect.sync(() => {
-            delete process.env[key];
-          }),
-      );
-    },
-    { discard: true },
-  );
 
 function nonEmptyString(value: unknown): Option.Option<string> {
   return typeof value === "string" && value.length > 0 ? Option.some(value) : Option.none();
@@ -1078,13 +1050,16 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     : yield* fs.readFileString(configPath).pipe(
         Effect.map(Option.some<string>),
         Effect.catchTag("PlatformError", (error) =>
-          error.reason._tag === "NotFound"
-            ? Effect.succeed(Option.none<string>())
-            : Effect.fail(
+          Match.value(error.reason).pipe(
+            Match.tag("NotFound", () => Effect.succeed(Option.none<string>())),
+            Match.orElse(() =>
+              Effect.fail(
                 new DbConfigLoadError({
                   message: `failed to read file config: ${error.message}`,
                 }),
               ),
+            ),
+          ),
         ),
       );
 

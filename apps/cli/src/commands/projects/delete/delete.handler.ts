@@ -111,10 +111,10 @@ export const projectsDelete = Effect.fn("projects.delete")(function* (flags: Pro
     const tempDir = path.join(cliSettings.workdir, "supabase", ".temp");
     const refPath = path.join(tempDir, "project-ref");
     // Compare trimmed content so a corrupt/multi-ref file can't trigger an unintended removal.
-    const matches = yield* fs
-      .readFileString(refPath)
-      .pipe(Effect.map((content) => content.trim() === ref))
-      .pipe(Effect.orElseSucceed(() => false));
+    const matches = yield* fs.readFileString(refPath).pipe(
+      Effect.map((content) => content.trim() === ref),
+      Effect.orElseSucceed(() => false),
+    );
     if (matches) {
       yield* fs.remove(tempDir, { recursive: true }).pipe(Effect.ignore);
     }

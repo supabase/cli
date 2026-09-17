@@ -1,9 +1,6 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, FileSystem, Layer, Option, PlatformError } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, PlatformError } from "effect";
 
 import { mockOutput, mockRuntimeInfo, processEnvLayer } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -31,11 +28,13 @@ function mockDebugLoggerTracked() {
   };
 }
 
-function permissionDeniedReadLayer(target: string) {
+function permissionDeniedReadLayer(name: string) {
   return Layer.effect(
     FileSystem.FileSystem,
-    Effect.map(FileSystem.FileSystem, (real) =>
-      FileSystem.FileSystem.of({
+    Effect.gen(function* () {
+      const real = yield* FileSystem.FileSystem;
+      const target = yield* tempPath(name);
+      return FileSystem.FileSystem.of({
         ...real,
         readFileString: (path, encoding) =>
           path === target
@@ -48,8 +47,8 @@ function permissionDeniedReadLayer(target: string) {
                 }),
               )
             : real.readFileString(path, encoding),
-      }),
-    ),
+      });
+    }),
   ).pipe(Layer.provide(BunServices.layer));
 }
 
@@ -86,15 +85,25 @@ function setup(opts: SetupOpts = {}) {
   return { layer, out, api, debugLogger };
 }
 
-function writeConfig(content: string) {
-  mkdirSync(join(tempRoot.current, "supabase"), { recursive: true });
-  writeFileSync(join(tempRoot.current, "supabase", "config.toml"), content);
-}
+const tempPath = (...segments: ReadonlyArray<string>) =>
+  Effect.map(Path.Path, (path) => path.join(tempRoot.current, ...segments));
 
-function writeSupabaseDotEnv(content: string) {
-  mkdirSync(join(tempRoot.current, "supabase"), { recursive: true });
-  writeFileSync(join(tempRoot.current, "supabase", ".env"), content);
-}
+const writeTempFile = (name: string, content: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    yield* fs.writeFileString(yield* tempPath(name), content);
+  });
+
+const writeSupabaseFile = (name: string, content: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    yield* fs.makeDirectory(yield* tempPath("supabase"), { recursive: true });
+    yield* fs.writeFileString(yield* tempPath("supabase", name), content);
+  });
+
+const writeConfig = (content: string) => writeSupabaseFile("config.toml", content);
+
+const writeSupabaseDotEnv = (content: string) => writeSupabaseFile(".env", content);
 
 function parsePostBody(body: unknown): Array<{ name: string; value: string }> {
   return body as Array<{ name: string; value: string }>;
@@ -189,7 +198,7 @@ describe("secrets set integration", () => {
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("SecretsSetInputError");
+          expect(Cause.pretty(exit.cause)).toContain("SecretsSetInputError");
           const classified = classifyCliCauseActionability(exit.cause);
           expect(classified.error_kind).toBe("user_actionable");
           expect(classified.error_category).toBe("invalid_input");
@@ -200,9 +209,9 @@ describe("secrets set integration", () => {
   );
 
   it.live("sets secrets from --env-file with a relative path (joined to CWD)", () => {
-    writeFileSync(join(tempRoot.current, "myfile.env"), "FROM_FILE=fromvalue\n");
     const { layer, api } = setup();
     return Effect.gen(function* () {
+      yield* writeTempFile("myfile.env", "FROM_FILE=fromvalue\n");
       yield* secretsSet({
         projectRef: Option.none(),
         envFile: Option.some("myfile.env"),
@@ -215,10 +224,10 @@ describe("secrets set integration", () => {
   });
 
   it.live("sets secrets from --env-file with an absolute path", () => {
-    const abs = join(tempRoot.current, "absolute.env");
-    writeFileSync(abs, "ABS=value\n");
     const { layer, api } = setup();
     return Effect.gen(function* () {
+      yield* writeTempFile("absolute.env", "ABS=value\n");
+      const abs = yield* tempPath("absolute.env");
       yield* secretsSet({
         projectRef: Option.none(),
         envFile: Option.some(abs),
@@ -229,9 +238,9 @@ describe("secrets set integration", () => {
   });
 
   it.live("CLI args override --env-file entries for the same key", () => {
-    writeFileSync(join(tempRoot.current, "override.env"), "FOO=from-file\n");
     const { layer, api } = setup();
     return Effect.gen(function* () {
+      yield* writeTempFile("override.env", "FOO=from-file\n");
       yield* secretsSet({
         projectRef: Option.none(),
         envFile: Option.some("override.env"),
@@ -244,15 +253,15 @@ describe("secrets set integration", () => {
   it.live(
     "merges entries from supabase/config.toml [edge_runtime.secrets] ahead of env-file and CLI args",
     () => {
-      writeConfig(
-        `[edge_runtime.secrets]
+      const { layer, api } = setup();
+      return Effect.gen(function* () {
+        yield* writeConfig(
+          `[edge_runtime.secrets]
 FROM_CONFIG = "config-value"
 SHARED = "config-shared"
 `,
-      );
-      writeFileSync(join(tempRoot.current, ".env-file"), "SHARED=envfile-shared\n");
-      const { layer, api } = setup();
-      return Effect.gen(function* () {
+        );
+        yield* writeTempFile(".env-file", "SHARED=envfile-shared\n");
         yield* secretsSet({
           projectRef: Option.none(),
           envFile: Option.some(".env-file"),
@@ -270,13 +279,13 @@ SHARED = "config-shared"
   );
 
   it.live("interpolates env(VAR) in config.toml secrets when the env var is defined", () => {
-    writeConfig(
-      `[edge_runtime.secrets]
-DB_URL = "env(MY_DB_URL)"
-`,
-    );
     const { layer, api } = setup({ env: { MY_DB_URL: "postgres://x" } });
     return Effect.gen(function* () {
+      yield* writeConfig(
+        `[edge_runtime.secrets]
+DB_URL = "env(MY_DB_URL)"
+`,
+      );
       yield* secretsSet({
         projectRef: Option.none(),
         envFile: Option.none(),
@@ -289,15 +298,15 @@ DB_URL = "env(MY_DB_URL)"
   });
 
   it.live("skips secrets whose env() reference cannot be resolved (Go set.go:48-52 parity)", () => {
-    writeConfig(
-      `[edge_runtime.secrets]
+    const { layer, api } = setup({ env: { MY_DB_URL: "postgres://x" } });
+    return Effect.gen(function* () {
+      yield* writeConfig(
+        `[edge_runtime.secrets]
 RESOLVED = "env(MY_DB_URL)"
 UNRESOLVED = "env(NOT_SET_ANYWHERE)"
 LITERAL = "plain-value"
 `,
-    );
-    const { layer, api } = setup({ env: { MY_DB_URL: "postgres://x" } });
-    return Effect.gen(function* () {
+      );
       yield* secretsSet({
         projectRef: Option.none(),
         envFile: Option.none(),
@@ -319,14 +328,14 @@ LITERAL = "plain-value"
     () => {
       // An empty `EMPTY = ""` value in config.toml is never sent, which prevents it from
       // silently overwriting a same-named remote secret with an empty string.
-      writeConfig(
-        `[edge_runtime.secrets]
+      const { layer, api } = setup();
+      return Effect.gen(function* () {
+        yield* writeConfig(
+          `[edge_runtime.secrets]
 EMPTY = ""
 NON_EMPTY = "config-value"
 `,
-      );
-      const { layer, api } = setup();
-      return Effect.gen(function* () {
+        );
         yield* secretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
@@ -342,16 +351,16 @@ NON_EMPTY = "config-value"
   it.live(
     "does not crash when config.toml has env(NUMERIC_PORT) on an unrelated numeric field (CLI-1489 regression guard)",
     () => {
-      writeConfig(
-        `[analytics]
+      const { layer, api } = setup({ env: { SUPABASE_ANALYTICS_PORT: "54327" } });
+      return Effect.gen(function* () {
+        yield* writeConfig(
+          `[analytics]
 port = "env(SUPABASE_ANALYTICS_PORT)"
 
 [edge_runtime.secrets]
 FOO = "literal-foo"
 `,
-      );
-      const { layer, api } = setup({ env: { SUPABASE_ANALYTICS_PORT: "54327" } });
-      return Effect.gen(function* () {
+        );
         yield* secretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
@@ -394,7 +403,7 @@ FOO = "literal-foo"
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("SecretsNoArgumentsError");
+          expect(Cause.pretty(exit.cause)).toContain("SecretsNoArgumentsError");
         }
         expect(api.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
@@ -413,9 +422,9 @@ FOO = "literal-foo"
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errJson = JSON.stringify(exit.cause);
-        expect(errJson).toContain("InvalidSecretPairError");
-        expect(errJson).toContain("Invalid secret pair: NOTAPAIR");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("InvalidSecretPairError");
+        expect(causeText).toContain("Invalid secret pair: NOTAPAIR");
       }
       expect(api.requests).toHaveLength(0);
     }).pipe(Effect.provide(layer));
@@ -433,9 +442,9 @@ FOO = "literal-foo"
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errJson = JSON.stringify(exit.cause);
-        expect(errJson).toContain("SecretsEnvFileOpenError");
-        expect(errJson).toContain("failed to open env file");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("SecretsEnvFileOpenError");
+        expect(causeText).toContain("failed to open env file");
         expect(classifyCliCauseActionability(exit.cause)).toMatchObject({
           error_category: "invalid_input",
           suggestion_type: "provide_flags",
@@ -446,10 +455,10 @@ FOO = "literal-foo"
   });
 
   it.live("classifies an unreadable env file as a permission failure", () => {
-    const envPath = join(tempRoot.current, "private.env");
     const { layer: baseLayer, api } = setup();
-    const layer = Layer.mergeAll(baseLayer, permissionDeniedReadLayer(envPath));
+    const layer = Layer.mergeAll(baseLayer, permissionDeniedReadLayer("private.env"));
     return Effect.gen(function* () {
+      const envPath = yield* tempPath("private.env");
       const exit = yield* Effect.exit(
         secretsSet({
           projectRef: Option.none(),
@@ -473,9 +482,9 @@ FOO = "literal-foo"
   it.live(
     "tolerates a malformed config.toml, logs it to the debug logger, and still sets CLI-arg secrets",
     () => {
-      writeConfig("this is not valid = = toml [[[\n");
       const { layer, api, debugLogger } = setup();
       return Effect.gen(function* () {
+        yield* writeConfig("this is not valid = = toml [[[\n");
         yield* secretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
@@ -496,16 +505,16 @@ FOO = "literal-foo"
       // per-field decode tolerance means an unrelated type error doesn't stop
       // `edge_runtime.secrets` from being read; Effect Schema's `decodeUnknownSync` is atomic
       // and would otherwise discard the whole document, silently dropping `FROM_CONFIG` too.
-      writeConfig(
-        `[edge_runtime.secrets]
+      const { layer, api, debugLogger } = setup();
+      return Effect.gen(function* () {
+        yield* writeConfig(
+          `[edge_runtime.secrets]
 FROM_CONFIG = "config-value"
 
 [analytics]
 port = "not-a-number"
 `,
-      );
-      const { layer, api, debugLogger } = setup();
-      return Effect.gen(function* () {
+        );
         yield* secretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
@@ -527,16 +536,16 @@ port = "not-a-number"
       // the same table, not an unrelated top-level table) has the wrong type. The recovery
       // must re-decode `secrets` on its own rather than the whole `edge_runtime` subtree, or
       // the sibling error would take `FROM_CONFIG` down with it.
-      writeConfig(
-        `[edge_runtime]
+      const { layer, api, debugLogger } = setup();
+      return Effect.gen(function* () {
+        yield* writeConfig(
+          `[edge_runtime]
 inspector_port = "not-a-number"
 
 [edge_runtime.secrets]
 FROM_CONFIG = "config-value"
 `,
-      );
-      const { layer, api, debugLogger } = setup();
-      return Effect.gen(function* () {
+        );
         yield* secretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
@@ -558,14 +567,14 @@ FROM_CONFIG = "config-value"
       // schema decode, so a malformed dotenv line fails with `CliProjectEnvParseError` rather
       // than `CliConfigParseError`, and this must not abort the command either. `.env` is only
       // read once a config.toml/.json is found, so one must exist here too.
-      writeConfig(
-        `[edge_runtime.secrets]
-FROM_CONFIG = "config-value"
-`,
-      );
-      writeSupabaseDotEnv("THIS IS NOT A VALID DOTENV LINE\n");
       const { layer, api, debugLogger } = setup();
       return Effect.gen(function* () {
+        yield* writeConfig(
+          `[edge_runtime.secrets]
+FROM_CONFIG = "config-value"
+`,
+        );
+        yield* writeSupabaseDotEnv("THIS IS NOT A VALID DOTENV LINE\n");
         yield* secretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
@@ -586,14 +595,14 @@ FROM_CONFIG = "config-value"
       // schema expects a string-like secret. The recovery decodes each `edge_runtime.secrets`
       // entry independently, so `GOOD` still lands even with `BAD` present — Effect Schema's
       // `decodeUnknownSync` is atomic per record and would otherwise discard `GOOD` too.
-      writeConfig(
-        `[edge_runtime.secrets]
+      const { layer, api, debugLogger } = setup();
+      return Effect.gen(function* () {
+        yield* writeConfig(
+          `[edge_runtime.secrets]
 GOOD = "config-value"
 BAD = 123
 `,
-      );
-      const { layer, api, debugLogger } = setup();
-      return Effect.gen(function* () {
+        );
         yield* secretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
@@ -613,17 +622,17 @@ BAD = 123
       // Same empty-value skip as the happy path, exercised through the recovery path instead:
       // `EMPTY` decodes fine on its own, so it must be dropped downstream in the same merge
       // loop the happy path uses, not resurrected as a false "recoverable" entry.
-      writeConfig(
-        `[edge_runtime.secrets]
+      const { layer, api, debugLogger } = setup();
+      return Effect.gen(function* () {
+        yield* writeConfig(
+          `[edge_runtime.secrets]
 EMPTY = ""
 GOOD = "config-value"
 
 [analytics]
 port = "not-a-number"
 `,
-      );
-      const { layer, api, debugLogger } = setup();
-      return Effect.gen(function* () {
+        );
         yield* secretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
@@ -644,16 +653,16 @@ port = "not-a-number"
       // `edge_runtime.secrets` as an array (instead of a table) is not recoverable: the whole
       // field is left empty rather than being misread as `{ "0": "actual-secret" }` via
       // `Object.entries`.
-      writeConfig(
-        `[analytics]
+      const { layer, api, debugLogger } = setup();
+      return Effect.gen(function* () {
+        yield* writeConfig(
+          `[analytics]
 port = "not-a-number"
 
 [edge_runtime]
 secrets = ["actual-secret"]
 `,
-      );
-      const { layer, api, debugLogger } = setup();
-      return Effect.gen(function* () {
+        );
         yield* secretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
@@ -673,8 +682,10 @@ secrets = ["actual-secret"]
       // `analytics.port` triggers the recovery path. `remotes.staging.project_id` matches the
       // resolved ref, so the remote override is merged before the tolerant decode — the
       // recovered secret must reflect the remote's override value, not the base document's.
-      writeConfig(
-        `[edge_runtime.secrets]
+      const { layer, out, api, debugLogger } = setup();
+      return Effect.gen(function* () {
+        yield* writeConfig(
+          `[edge_runtime.secrets]
 FROM_CONFIG = "base-value"
 
 [analytics]
@@ -686,9 +697,7 @@ project_id = "${VALID_REF}"
 [remotes.staging.edge_runtime.secrets]
 FROM_CONFIG = "remote-value"
 `,
-      );
-      const { layer, out, api, debugLogger } = setup();
-      return Effect.gen(function* () {
+        );
         yield* secretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
@@ -712,8 +721,10 @@ FROM_CONFIG = "remote-value"
       // No decode error here — the plain success path. The override notice still prints
       // unconditionally whenever a `[remotes.*]` block's `project_id` matches the resolved
       // ref. `mockCommandSettings` defaults that ref to `VALID_REF`.
-      writeConfig(
-        `[edge_runtime.secrets]
+      const { layer, out, api } = setup();
+      return Effect.gen(function* () {
+        yield* writeConfig(
+          `[edge_runtime.secrets]
 FROM_CONFIG = "base-value"
 
 [remotes.staging]
@@ -722,9 +733,7 @@ project_id = "${VALID_REF}"
 [remotes.staging.edge_runtime.secrets]
 FROM_CONFIG = "remote-value"
 `,
-      );
-      const { layer, out, api } = setup();
-      return Effect.gen(function* () {
+        );
         yield* secretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
@@ -741,13 +750,13 @@ FROM_CONFIG = "remote-value"
   it.live(
     "does not print a remote override notice when no [remotes.*] block matches the resolved ref",
     () => {
-      writeConfig(
-        `[edge_runtime.secrets]
-FROM_CONFIG = "config-value"
-`,
-      );
       const { layer, out, api } = setup();
       return Effect.gen(function* () {
+        yield* writeConfig(
+          `[edge_runtime.secrets]
+FROM_CONFIG = "config-value"
+`,
+        );
         yield* secretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
@@ -767,8 +776,10 @@ FROM_CONFIG = "config-value"
       // Swallowed non-fatally like every other load error here. There's no parsed document to
       // recover a subtree from, so config-sourced secrets are dropped entirely — only
       // CLI-arg secrets survive.
-      writeConfig(
-        `[edge_runtime.secrets]
+      const { layer, api, debugLogger } = setup();
+      return Effect.gen(function* () {
+        yield* writeConfig(
+          `[edge_runtime.secrets]
 FROM_CONFIG = "config-value"
 
 [remotes.a]
@@ -777,9 +788,7 @@ project_id = "dupe-project-id"
 [remotes.b]
 project_id = "dupe-project-id"
 `,
-      );
-      const { layer, api, debugLogger } = setup();
-      return Effect.gen(function* () {
+        );
         yield* secretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
@@ -798,16 +807,16 @@ project_id = "dupe-project-id"
       // Swallowed non-fatally like every other load error here. There's no parsed document to
       // recover a subtree from, so config-sourced secrets are dropped entirely — only
       // CLI-arg secrets survive.
-      writeConfig(
-        `[edge_runtime.secrets]
+      const { layer, api, debugLogger } = setup();
+      return Effect.gen(function* () {
+        yield* writeConfig(
+          `[edge_runtime.secrets]
 FROM_CONFIG = "config-value"
 
 [remotes.a]
 project_id = "not-a-valid-ref"
 `,
-      );
-      const { layer, api, debugLogger } = setup();
-      return Effect.gen(function* () {
+        );
         yield* secretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
@@ -826,15 +835,15 @@ project_id = "not-a-valid-ref"
       // `smol-toml`'s `TomlError` embeds a source codeblock (the offending line ±1)
       // in its message; the planted secret sits directly above the syntax error so
       // it would land inside that codeblock if the handler logged the raw message.
-      writeConfig(
-        [
-          "[edge_runtime.secrets]",
-          'PLANTED_SECRET = "sk_live_TOTALLY_REAL_SECRET_VALUE"',
-          "BROKEN = = invalid[[[",
-        ].join("\n"),
-      );
       const { layer, debugLogger } = setup();
       return Effect.gen(function* () {
+        yield* writeConfig(
+          [
+            "[edge_runtime.secrets]",
+            'PLANTED_SECRET = "sk_live_TOTALLY_REAL_SECRET_VALUE"',
+            "BROKEN = = invalid[[[",
+          ].join("\n"),
+        );
         yield* secretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
@@ -854,13 +863,13 @@ project_id = "not-a-valid-ref"
       // truncate: the rejected value appears inline on one line. The bad entry sits inside
       // `[edge_runtime.secrets]` itself, so this also exercises the per-entry recovery path —
       // `PLANTED_SECRET` is dropped, but the CLI-arg secret still goes through.
-      writeConfig(
-        `[edge_runtime.secrets]
-PLANTED_SECRET = ["sk_live_TOTALLY_REAL_SECRET_VALUE"]
-`,
-      );
       const { layer, api, debugLogger } = setup();
       return Effect.gen(function* () {
+        yield* writeConfig(
+          `[edge_runtime.secrets]
+PLANTED_SECRET = ["sk_live_TOTALLY_REAL_SECRET_VALUE"]
+`,
+        );
         yield* secretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
@@ -877,9 +886,9 @@ PLANTED_SECRET = ["sk_live_TOTALLY_REAL_SECRET_VALUE"]
   it.live(
     "still fails with SecretsNoArgumentsError when a malformed config leaves zero secret sources",
     () => {
-      writeConfig("this is not valid = = toml [[[\n");
       const { layer, api } = setup();
       return Effect.gen(function* () {
+        yield* writeConfig("this is not valid = = toml [[[\n");
         const exit = yield* Effect.exit(
           secretsSet({
             projectRef: Option.none(),
@@ -889,7 +898,7 @@ PLANTED_SECRET = ["sk_live_TOTALLY_REAL_SECRET_VALUE"]
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("SecretsNoArgumentsError");
+          expect(Cause.pretty(exit.cause)).toContain("SecretsNoArgumentsError");
         }
         expect(api.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
@@ -908,9 +917,9 @@ PLANTED_SECRET = ["sk_live_TOTALLY_REAL_SECRET_VALUE"]
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errJson = JSON.stringify(exit.cause);
-        expect(errJson).toContain("SecretsSetNetworkError");
-        expect(errJson).toContain("failed to set secrets");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("SecretsSetNetworkError");
+        expect(causeText).toContain("failed to set secrets");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -927,9 +936,9 @@ PLANTED_SECRET = ["sk_live_TOTALLY_REAL_SECRET_VALUE"]
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errJson = JSON.stringify(exit.cause);
-        expect(errJson).toContain("SecretsSetUnexpectedStatusError");
-        expect(errJson).toContain("Unexpected error setting project secrets");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("SecretsSetUnexpectedStatusError");
+        expect(causeText).toContain("Unexpected error setting project secrets");
       }
     }).pipe(Effect.provide(layer));
   });

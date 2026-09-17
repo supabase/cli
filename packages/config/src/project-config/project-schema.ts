@@ -1,13 +1,15 @@
 /**
  * Runtime schema for {@link ProjectConfig}, derived from {@link CliConfigSchema} so the two shapes
  * cannot drift independently: picks the seven hosted-section fields, strips down to the decoded
- * shape, then makes every property deep-optional while dropping secret-only (`x-secret`) leaves
- * and containers and struct-level `.check()` refinements a sparse overlay can't satisfy. Always
- * permissive (`additionalProperties: true`); `_apiResponse` is non-enumerable, so it's excluded.
+ * shape, then makes every property deep-optional while dropping secret-only (`x-secret`) leaves,
+ * every `DOCUMENT_ONLY_LOCAL_PATHS` entry, and containers and struct-level `.check()`
+ * refinements a sparse overlay can't satisfy. Always permissive (`additionalProperties: true`);
+ * `_apiResponse` is non-enumerable, so it's excluded.
  */
 import type { StandardSchemaV1 } from "@standard-schema/spec";
 import { Schema, SchemaAST } from "effect";
 import { CliConfigSchema } from "../base.ts";
+import { isDocumentOnlyLocalPath } from "./hosted-sections.ts";
 import type { ProjectConfig } from "./project-config.ts";
 
 function isSecretAst(ast: SchemaAST.AST): boolean {
@@ -22,14 +24,11 @@ function hasObjectMembers(ast: SchemaAST.AST): boolean {
 }
 
 /**
- * True when every member of `original` was secret-shaped and got stripped from `transformed`,
- * leaving it empty — as opposed to an `Objects` node that was already empty in the source schema,
- * which must pass through as a permissive leaf rather than being treated as secret-shaped.
+ * True when every member of `original` was secret or local-only and got stripped from
+ * `transformed`, leaving it empty — as opposed to an `Objects` node that was already empty in the
+ * source schema, which must pass through as a permissive leaf.
  */
-function isAllSecretCollapsedContainer(
-  original: SchemaAST.AST,
-  transformed: SchemaAST.AST,
-): boolean {
+function isEmptiedContainer(original: SchemaAST.AST, transformed: SchemaAST.AST): boolean {
   return hasObjectMembers(original) && !hasObjectMembers(transformed);
 }
 
@@ -44,15 +43,20 @@ function toOptionalAst(ast: SchemaAST.AST): SchemaAST.AST {
 /**
  * `Suspend` nodes fall through untouched; no recursive schema reaches this walk today. A test
  * fails loudly if one is introduced, rather than this silently mishandling the recursion.
+ *
+ * `path` is the property path from the struct root, used to check each property against
+ * {@link isDocumentOnlyLocalPath}; an index signature descends with a `"*"` segment, which never
+ * matches an exact-match local path.
  */
-function toDeepOptionalHostedAst(ast: SchemaAST.AST): SchemaAST.AST {
+function toDeepOptionalHostedAst(ast: SchemaAST.AST, path: ReadonlyArray<string>): SchemaAST.AST {
   if (SchemaAST.isObjects(ast)) {
     const propertySignatures = ast.propertySignatures.flatMap((property) => {
-      if (isSecretAst(property.type)) {
+      const childPath = [...path, String(property.name)];
+      if (isSecretAst(property.type) || isDocumentOnlyLocalPath(childPath)) {
         return [];
       }
-      const transformedType = toDeepOptionalHostedAst(property.type);
-      if (isAllSecretCollapsedContainer(property.type, transformedType)) {
+      const transformedType = toDeepOptionalHostedAst(property.type, childPath);
+      if (isEmptiedContainer(property.type, transformedType)) {
         return [];
       }
       return [new SchemaAST.PropertySignature(property.name, toOptionalAst(transformedType))];
@@ -61,8 +65,8 @@ function toDeepOptionalHostedAst(ast: SchemaAST.AST): SchemaAST.AST {
       if (isSecretAst(indexSignature.type)) {
         return [];
       }
-      const transformedType = toDeepOptionalHostedAst(indexSignature.type);
-      if (isAllSecretCollapsedContainer(indexSignature.type, transformedType)) {
+      const transformedType = toDeepOptionalHostedAst(indexSignature.type, [...path, "*"]);
+      if (isEmptiedContainer(indexSignature.type, transformedType)) {
         return [];
       }
       return [new SchemaAST.IndexSignature(indexSignature.parameter, transformedType)];
@@ -82,7 +86,7 @@ function toDeepOptionalHostedAst(ast: SchemaAST.AST): SchemaAST.AST {
   }
   if (SchemaAST.isUnion(ast)) {
     return new SchemaAST.Union(
-      ast.types.map(toDeepOptionalHostedAst),
+      ast.types.map((type) => toDeepOptionalHostedAst(type, path)),
       ast.mode,
       ast.annotations,
       ast.checks,
@@ -106,9 +110,10 @@ const hostedSectionsStruct = Schema.Struct({
   experimental: CliConfigSchema.fields.experimental,
 });
 
-// Must name the same seven keys as `HOSTED_SECTION_KEYS`; a test asserts they match rather than
-// an import-time check, so a config-module import can't crash a consumer's process.
-const projectConfigAst = toDeepOptionalHostedAst(SchemaAST.toType(hostedSectionsStruct.ast));
+// Must name the same seven keys as `HOSTED_SECTION_KEYS`; a test asserts the derived schema's keys
+// match (minus any fully local-only section) rather than an import-time check, so a config-module
+// import can't crash a consumer's process.
+const projectConfigAst = toDeepOptionalHostedAst(SchemaAST.toType(hostedSectionsStruct.ast), []);
 
 /**
  * The runtime shape {@link projectConfigAst} validates: {@link ProjectConfig} minus

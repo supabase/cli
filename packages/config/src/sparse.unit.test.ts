@@ -1,7 +1,12 @@
 import { describe, expect, test } from "vitest";
 import { Schema } from "effect";
 import { CliConfigSchema } from "./base.ts";
-import { getDefaultCliConfig, omitDefaultValues, subtractCliConfig } from "./sparse.ts";
+import {
+  getDefaultCliConfig,
+  omitDefaultValues,
+  subtractCliConfig,
+  type OmitPaths,
+} from "./sparse.ts";
 
 const decodeCliConfig = Schema.decodeUnknownSync(CliConfigSchema);
 
@@ -172,5 +177,29 @@ describe("EffectiveConfig operand widening (CLI-2230)", () => {
     const sparse = omitDefaultValues({ api: { max_rows: 500, extra_search_path: [] } });
     expect(sparse).toEqual({ api: { max_rows: 500, extra_search_path: [] } });
     expect(Object.keys(sparse.api ?? {}).sort()).toEqual(["extra_search_path", "max_rows"]);
+  });
+});
+
+describe("OmitPaths type-level pins", () => {
+  type Fixture = {
+    readonly plain: { readonly x: number; readonly y: number };
+    readonly onlyLocal: { readonly x: number };
+    readonly items: { readonly [key: string]: { readonly a: number } };
+  };
+  type Result = OmitPaths<
+    Fixture,
+    readonly ["plain", "x"] | readonly ["onlyLocal", "x"] | readonly ["items", "x"]
+  >;
+
+  // @ts-expect-error plain.x is removed
+  const removedScalar: Result = { plain: { x: 1, y: 1 }, items: {} };
+  // @ts-expect-error onlyLocal is emptied by the removal and dropped entirely
+  const removedContainer: Result = { plain: { y: 1 }, items: {}, onlyLocal: {} };
+  const survivor: Result = { plain: { y: 1 }, items: { anything: { a: 1 } } };
+
+  test("a plain-object literal segment is removed without disturbing its siblings or a same-named index key", () => {
+    expect(removedScalar).toBeDefined();
+    expect(removedContainer).toBeDefined();
+    expect(survivor).toEqual({ plain: { y: 1 }, items: { anything: { a: 1 } } });
   });
 });

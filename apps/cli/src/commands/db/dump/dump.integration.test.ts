@@ -4,7 +4,7 @@ import process from "node:process";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option, Stream } from "effect";
 
 import { mockOutput, mockTty, processEnvLayer } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -32,8 +32,13 @@ import type { PgConnInput } from "../../../command-internal/db-connection.servic
 import { DbConfigConnectTempRoleError } from "../../../command-internal/db-config.errors.ts";
 import { DockerRunError } from "../../../command-internal/docker-run.errors.ts";
 import { DockerRun, type DockerRunOpts } from "../../../command-internal/docker-run.service.ts";
+import { BundledPostgresClient } from "../../../command-internal/bundled-postgres-client.ts";
+import { ContainerEngineResolver, type RunPostgresClientOptions } from "@supabase/stack/effect";
 import type { DbDumpFlags } from "./dump.command.ts";
 import { dbDump } from "./dump.handler.ts";
+import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
+import { StackApi } from "../../../command-internal/stack-api.ts";
+import { StackIdSchema, type EffectStack } from "@supabase/stack/effect";
 
 const LOCAL_CONN: PgConnInput = {
   host: "127.0.0.1",
@@ -206,11 +211,57 @@ function mockDockerRun(opts: {
   };
 }
 
-const runtimeInfoLayer = (platform: NodeJS.Platform) =>
+function mockBundledPostgresClient(opts: {
+  exitCode?: number;
+  stdout?: string;
+  stderr?: string;
+  runFails?: boolean;
+  results?: ReadonlyArray<DockerResult>;
+}) {
+  const allOpts: Array<RunPostgresClientOptions<unknown>> = [];
+  const queue = [...(opts.results ?? [])];
+  const layer = Layer.succeed(BundledPostgresClient, {
+    run: (runOpts) =>
+      Effect.gen(function* () {
+        allOpts.push(runOpts);
+        if (opts.runFails === true) {
+          return yield* Effect.fail(
+            new DockerRunError({
+              message: "failed to run docker: not found",
+              reason: "spawn",
+              daemonDown: false,
+            }),
+          );
+        }
+        const next = queue.shift();
+        const r = next ?? { exitCode: opts.exitCode, stdout: opts.stdout, stderr: opts.stderr };
+        const bytes = new TextEncoder().encode(r.stdout ?? "");
+        if (bytes.length > 0) yield* runOpts.onStdout(bytes);
+        return { exitCode: r.exitCode ?? 0, stderr: r.stderr ?? "" };
+      }),
+  });
+  return {
+    layer,
+    get allOpts() {
+      return allOpts;
+    },
+    get lastOpts() {
+      return allOpts[allOpts.length - 1];
+    },
+  };
+}
+
+const containerEngineResolver = (installed: boolean) =>
+  Layer.succeed(ContainerEngineResolver, {
+    isInstalled: () => Effect.succeed(installed),
+    resolve: () => Effect.die("unused"),
+  });
+
+const runtimeInfoLayer = (platform: NodeJS.Platform, arch?: NodeJS.Architecture) =>
   Layer.succeed(RuntimeInfo, {
     cwd: "/work/project",
     platform,
-    arch: "x64",
+    arch: arch ?? (platform === "darwin" ? "arm64" : "x64"),
     homeDir: "/home/user",
     execPath: "/usr/bin/supabase",
     pid: 1234,
@@ -234,8 +285,10 @@ interface SetupOpts {
   ref?: string;
   linkedFails?: boolean;
   platform?: NodeJS.Platform;
+  arch?: NodeJS.Architecture;
   stdoutIsPipe?: boolean;
   env?: Readonly<Record<string, string>>;
+  dockerInstalled?: boolean;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -256,18 +309,21 @@ function setup(opts: SetupOpts = {}) {
     linkedFails: opts.linkedFails,
   });
   const docker = mockDockerRun(opts);
+  const bundled = mockBundledPostgresClient(opts);
   const layer = Layer.mergeAll(
     out.layer,
     resolver.layer,
     projectRef.layer,
     docker.layer,
+    bundled.layer,
+    containerEngineResolver(opts.dockerInstalled ?? true),
     mockCommandSettings({
       workdir: opts.workdir ?? "/work/project",
       projectId: opts.projectId ?? Option.none(),
     }),
     telemetry.layer,
     cache.layer,
-    runtimeInfoLayer(opts.platform ?? "linux"),
+    runtimeInfoLayer(opts.platform ?? "linux", opts.arch),
     mockTty({ stdoutIsPipe: opts.stdoutIsPipe }),
     processEnvLayer(opts.env ?? {}),
     Layer.succeed(
@@ -277,7 +333,7 @@ function setup(opts: SetupOpts = {}) {
     Layer.succeed(DnsResolverFlag, "native"),
     BunServices.layer,
   );
-  return { layer, out, telemetry, resolver, docker, cache };
+  return { layer, out, telemetry, resolver, docker, bundled, cache };
 }
 
 const flags = (over: Partial<DbDumpFlags> = {}): DbDumpFlags => ({
@@ -972,4 +1028,305 @@ describe("db dump integration", () => {
       }).pipe(Effect.provide(layer));
     });
   }
+
+  const DUMP_STACK_ID = StackIdSchema.make("d".repeat(64));
+  const unusedDump = () => Effect.die("unused");
+  const unusedDumpEffect = Effect.die("unused");
+  const dumpStackApi = (
+    runtime: { kind: "native" } | { kind: "container"; engine: "docker" },
+    databaseVersion = "17.6.1.168",
+  ) => {
+    const stack: EffectStack = {
+      id: DUMP_STACK_ID,
+      status: Effect.succeed({
+        id: DUMP_STACK_ID,
+        lifecycle: "running",
+        desiredLifecycle: "running",
+        runtime,
+        endpoints: {},
+        versions: { database: databaseVersion },
+        capabilities: [],
+        artifacts: [],
+      }),
+      credentials: unusedDumpEffect,
+      prepare: unusedDump,
+      start: unusedDump,
+      stop: unusedDumpEffect,
+      destroy: unusedDumpEffect,
+      resetDatabase: unusedDumpEffect,
+      logs: unusedDump,
+      followLogs: () => Stream.empty,
+    };
+    return Layer.succeed(StackApi, {
+      createStack: unusedDump,
+      findStack: () =>
+        Effect.succeed(
+          Option.some({
+            id: DUMP_STACK_ID,
+            projectRoot: "/work/project",
+            name: "default",
+            branchContext: "main",
+            runtime,
+            desiredLifecycle: "running",
+          }),
+        ),
+      discoverStacks: unusedDump,
+      openStack: () => Effect.succeed(stack),
+      inspectStack: unusedDump,
+    });
+  };
+
+  it.live(
+    "dump --local on the stack backend fails instead of using Docker when no stack exists",
+    () => {
+      const { layer, docker } = setup({ isLocal: true, stdout: "-- schema\n" });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(dbDump(flags({ local: Option.some(true) })));
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(failMessage(exit)).toContain("Could not determine the stack runtime");
+        expect(docker.lastOpts).toBeUndefined();
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layer,
+            stackBackendLayer("stack"),
+            Layer.succeed(StackApi, {
+              createStack: unusedDump,
+              findStack: () => Effect.succeed(Option.none()),
+              discoverStacks: unusedDump,
+              openStack: unusedDump,
+              inspectStack: unusedDump,
+            }),
+          ),
+        ),
+      );
+    },
+  );
+
+  it.live(
+    "dump --db-url on the stack backend does not require a project stack even when isLocal is true",
+    () => {
+      const { layer, docker, resolver, bundled } = setup({
+        isLocal: true,
+        stdout: "-- schema\n",
+        platform: "darwin",
+      });
+      return Effect.gen(function* () {
+        yield* dbDump(
+          flags({
+            dbUrl: Option.some("postgresql://postgres:review@127.0.0.1:54322/postgres"),
+          }),
+        );
+        expect(resolver.calls[0]).toMatchObject({ connType: "db-url" });
+        expect(docker.lastOpts).toBeUndefined();
+        expect(bundled.lastOpts?.env?.["PGHOST"]).toBe("host.docker.internal");
+        expect(bundled.lastOpts?.network).toBe("host");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layer,
+            stackBackendLayer("stack"),
+            Layer.succeed(StackApi, {
+              createStack: unusedDump,
+              findStack: () => Effect.succeed(Option.none()),
+              discoverStacks: unusedDump,
+              openStack: unusedDump,
+              inspectStack: unusedDump,
+            }),
+          ),
+        ),
+      );
+    },
+  );
+
+  it.live("dump --local on a docker stack ignores compose SUPABASE_NETWORK_ID", () => {
+    const { layer, docker, bundled } = setup({
+      isLocal: true,
+      stdout: "-- schema\n",
+      platform: "darwin",
+      env: { SUPABASE_NETWORK_ID: "supabase_network_test" },
+    });
+    return Effect.gen(function* () {
+      yield* dbDump(flags({ local: Option.some(true) }));
+      expect(docker.lastOpts).toBeUndefined();
+      expect(bundled.lastOpts?.network).toBe("host");
+      expect(bundled.lastOpts?.env?.["PGHOST"]).toBe("host.docker.internal");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layer,
+          stackBackendLayer("stack"),
+          dumpStackApi({ kind: "container", engine: "docker" }),
+        ),
+      ),
+    );
+  });
+
+  it.live("dump --db-url native keeps the resolved host even when isLocal is true", () => {
+    const { layer, docker, bundled } = setup({
+      conn: { ...LOCAL_CONN, host: "db.internal" },
+      isLocal: true,
+      stdout: "-- schema\n",
+      dockerInstalled: false,
+      platform: "darwin",
+    });
+    return Effect.gen(function* () {
+      yield* dbDump(
+        flags({
+          dbUrl: Option.some("postgresql://postgres:postgres@db.internal:54322/postgres"),
+        }),
+      );
+      expect(docker.lastOpts).toBeUndefined();
+      expect(bundled.lastOpts?.runtime).toEqual({ kind: "native" });
+      expect(bundled.lastOpts?.env?.["PGHOST"]).toBe("db.internal");
+    }).pipe(Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))));
+  });
+
+  it.live("dump --linked on the stack backend keeps the remote host for a native client", () => {
+    const { layer, docker, bundled } = setup({
+      conn: REMOTE_CONN,
+      isLocal: false,
+      stdout: "-- schema\n",
+      dockerInstalled: false,
+      platform: "darwin",
+    });
+    return Effect.gen(function* () {
+      yield* dbDump(flags({ linked: Option.some(true) }));
+      expect(docker.lastOpts).toBeUndefined();
+      expect(bundled.lastOpts?.runtime).toEqual({ kind: "native" });
+      expect(bundled.lastOpts?.env?.["PGHOST"]).toBe(REMOTE_CONN.host);
+    }).pipe(Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))));
+  });
+
+  it.live("dump --linked on a native-less platform uses a Docker pg_dump client", () => {
+    const { layer, docker, bundled } = setup({
+      conn: REMOTE_CONN,
+      isLocal: false,
+      stdout: "-- schema\n",
+      dockerInstalled: false,
+      platform: "darwin",
+      arch: "x64",
+    });
+    return Effect.gen(function* () {
+      yield* dbDump(flags({ linked: Option.some(true) }));
+      expect(docker.lastOpts).toBeUndefined();
+      expect(bundled.lastOpts?.runtime).toEqual({ kind: "container", engine: "docker" });
+      expect(bundled.lastOpts?.env?.["PGHOST"]).toBe(REMOTE_CONN.host);
+    }).pipe(Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))));
+  });
+
+  it.live("dump --local on a native stack uses bundled pg_dump, not a tool container", () => {
+    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+    writeFileSync(
+      join(tmp.current, "supabase", "config.toml"),
+      'project_id = "test"\n[db]\nmajor_version = 17\n',
+    );
+    const { layer, docker, bundled, out } = setup({
+      isLocal: true,
+      workdir: tmp.current,
+      stdout: "-- schema\n",
+    });
+    return Effect.gen(function* () {
+      yield* dbDump(flags({ local: Option.some(true) }));
+      expect(docker.lastOpts).toBeUndefined();
+      expect(bundled.lastOpts?.runtime).toEqual({ kind: "native" });
+      expect(bundled.lastOpts?.argv).toEqual(["bash", "-c", expect.any(String), "--"]);
+      expect(out.stdoutText).toContain("-- schema");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(layer, stackBackendLayer("stack"), dumpStackApi({ kind: "native" })),
+      ),
+    );
+  });
+
+  it.live("dump --local on a native stack reports bundled pg_dump exit, not a container", () => {
+    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+    writeFileSync(
+      join(tmp.current, "supabase", "config.toml"),
+      'project_id = "test"\n[db]\nmajor_version = 17\n',
+    );
+    const { layer, docker } = setup({
+      isLocal: true,
+      workdir: tmp.current,
+      exitCode: 1,
+    });
+    return Effect.gen(function* () {
+      const exit = yield* dbDump(flags({ local: Option.some(true) })).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(failMessage(exit)).toBe("error running pg_dump: exit 1");
+      expect(docker.lastOpts).toBeUndefined();
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(layer, stackBackendLayer("stack"), dumpStackApi({ kind: "native" })),
+      ),
+    );
+  });
+
+  it.live("dump --local on a Windows native stack uses a Docker pg_dump client", () => {
+    const { layer, docker, bundled } = setup({
+      isLocal: true,
+      stdout: "-- schema\n",
+      platform: "win32",
+    });
+    return Effect.gen(function* () {
+      yield* dbDump(flags({ local: Option.some(true) }));
+      expect(docker.lastOpts).toBeUndefined();
+      expect(bundled.lastOpts?.runtime).toEqual({ kind: "container", engine: "docker" });
+      expect(bundled.lastOpts?.env?.["PGHOST"]).toBe("host.docker.internal");
+      expect(bundled.lastOpts?.network).toBe("host");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(layer, stackBackendLayer("stack"), dumpStackApi({ kind: "native" })),
+      ),
+    );
+  });
+
+  it.live(
+    "dump --local on a Windows native stack asks for Docker Desktop when Docker is missing",
+    () => {
+      const { layer } = setup({
+        isLocal: true,
+        platform: "win32",
+        runFails: true,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* dbDump(flags({ local: Option.some(true) })).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(failMessage(exit)).toContain("failed to run docker");
+        expect(failSuggestion(exit)).toContain("Docker Desktop");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(layer, stackBackendLayer("stack"), dumpStackApi({ kind: "native" })),
+        ),
+      );
+    },
+  );
+
+  it.live(
+    "dump --local on the stack backend uses status().versions.database for the catalog pin",
+    () => {
+      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+      writeFileSync(
+        join(tmp.current, "supabase", "config.toml"),
+        'project_id = "test"\n[db]\nmajor_version = 17\n',
+      );
+      const { layer, bundled } = setup({
+        isLocal: true,
+        workdir: tmp.current,
+        stdout: "-- schema\n",
+      });
+      return Effect.gen(function* () {
+        yield* dbDump(flags({ local: Option.some(true) }));
+        expect(bundled.lastOpts?.version).toBe("15.14.1.168");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layer,
+            stackBackendLayer("stack"),
+            dumpStackApi({ kind: "native" }, "15.14.1.168"),
+          ),
+        ),
+      );
+    },
+  );
 });

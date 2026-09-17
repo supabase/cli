@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Layer, Option, Path } from "effect";
+import { Config, ConfigProvider, Effect, FileSystem, Layer, Option, Path, Schema } from "effect";
 import { aiToolLayer } from "../shared/telemetry/ai-tool.layer.ts";
 import { AiTool } from "../shared/telemetry/ai-tool.service.ts";
 import {
@@ -26,6 +26,7 @@ import {
   PropSessionId,
 } from "../shared/telemetry/event-catalog.ts";
 import { scopedPosthogClient } from "../shared/telemetry/posthog-client.ts";
+import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { resolvePosthogConfig } from "../shared/telemetry/posthog-config.ts";
 import { telemetryRuntimeLayer } from "../shared/telemetry/runtime.layer.ts";
 import { TelemetryRuntime } from "../shared/telemetry/runtime.service.ts";
@@ -36,6 +37,13 @@ interface LinkedProjectCacheValue {
   readonly organization_id: string;
   readonly organization_slug: string;
 }
+
+const LinkedProjectCacheSchema = Schema.Struct({
+  ref: Schema.String,
+  name: Schema.optionalKey(Schema.Unknown),
+  organization_id: Schema.optionalKey(Schema.Unknown),
+  organization_slug: Schema.String,
+});
 
 function stripUndefined(properties: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(Object.entries(properties).filter(([, value]) => value !== undefined));
@@ -74,20 +82,21 @@ export function resolveGroups(
   };
 }
 
-export function collectEnvSignals(): Record<string, true | string> | undefined {
+export const collectEnvSignals = Effect.gen(function* () {
   const signals: Record<string, true | string> = {};
 
   for (const key of EnvSignalPresenceKeys) {
-    const raw = process.env[key];
-    if (raw === undefined) continue;
-    if (raw.trim().length === 0) continue;
+    const raw = yield* Config.option(Config.string(key));
+    if (Option.isNone(raw)) continue;
+    const value = raw.value;
+    if (value.trim().length === 0) continue;
     signals[key] = true;
   }
 
   for (const key of EnvSignalValueKeys) {
-    const raw = process.env[key];
-    if (raw === undefined) continue;
-    const trimmed = raw.trim();
+    const raw = yield* Config.option(Config.string(key));
+    if (Option.isNone(raw)) continue;
+    const trimmed = raw.value.trim();
     if (trimmed.length === 0) continue;
     signals[key] =
       trimmed.length > MaxEnvSignalValueLength
@@ -95,51 +104,48 @@ export function collectEnvSignals(): Record<string, true | string> | undefined {
         : trimmed;
   }
 
-  return Object.keys(signals).length === 0 ? undefined : signals;
-}
+  return Object.keys(signals).length === 0
+    ? Option.none<Record<string, true | string>>()
+    : Option.some(signals);
+});
 
-// Best-effort: any error returns None. Resolves workdir from `SUPABASE_WORKDIR` or
-// `process.cwd()` since global flag services (`--workdir`) aren't accessible at this
-// construction scope — so a lookup can miss group attribution when the user invokes from outside
-// that directory.
 function makeLoadLinkedProject(
   fs: FileSystem.FileSystem,
   path: Path.Path,
+  runtimeInfo: { readonly cwd: string },
 ): Effect.Effect<Option.Option<LinkedProjectCacheValue>> {
-  const workdir = process.env.SUPABASE_WORKDIR ?? process.cwd();
-  const cachePath = path.join(workdir, "supabase", ".temp", "linked-project.json");
   return Effect.gen(function* () {
+    const configuredWorkdir = yield* Config.option(Config.string("SUPABASE_WORKDIR"));
+    const workdir = Option.getOrElse(configuredWorkdir, () => runtimeInfo.cwd);
+    const cachePath = path.join(workdir, "supabase", ".temp", "linked-project.json");
     const exists = yield* fs.exists(cachePath).pipe(Effect.orElseSucceed(() => false));
     if (!exists) return Option.none<LinkedProjectCacheValue>();
 
     const content = yield* fs.readFileString(cachePath).pipe(Effect.option);
     if (Option.isNone(content)) return Option.none<LinkedProjectCacheValue>();
 
-    try {
-      const parsed = JSON.parse(content.value) as Partial<LinkedProjectCacheValue>;
-      if (typeof parsed.ref !== "string" || typeof parsed.organization_slug !== "string") {
-        return Option.none<LinkedProjectCacheValue>();
-      }
-      return Option.some<LinkedProjectCacheValue>({
-        ref: parsed.ref,
-        name: typeof parsed.name === "string" ? parsed.name : "",
-        organization_id: typeof parsed.organization_id === "string" ? parsed.organization_id : "",
-        organization_slug: parsed.organization_slug,
-      });
-    } catch {
-      return Option.none<LinkedProjectCacheValue>();
-    }
-  }).pipe(Effect.catch(() => Effect.succeed(Option.none<LinkedProjectCacheValue>())));
+    const decoded = yield* Schema.decodeEffect(Schema.fromJsonString(LinkedProjectCacheSchema))(
+      content.value,
+    ).pipe(Effect.option);
+    return Option.map(decoded, (parsed) => ({
+      ref: parsed.ref,
+      name: typeof parsed.name === "string" ? parsed.name : "",
+      organization_id: typeof parsed.organization_id === "string" ? parsed.organization_id : "",
+      organization_slug: parsed.organization_slug,
+    }));
+  }).pipe(Effect.orElseSucceed(() => Option.none<LinkedProjectCacheValue>()));
 }
 
 export const analyticsLayer = Layer.effect(
   Analytics,
   Effect.gen(function* () {
     const runtime = yield* TelemetryRuntime;
+    const configProvider = yield* ConfigProvider.ConfigProvider;
     const aiTool = yield* AiTool;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const posthogConfig = resolvePosthogConfig(process.env);
+    const runtimeInfo = yield* RuntimeInfo;
+    const posthogConfig = yield* resolvePosthogConfig(configProvider);
 
     if (runtime.consent !== "granted" || Option.isNone(posthogConfig.key)) {
       return Analytics.of({
@@ -152,10 +158,10 @@ export const analyticsLayer = Layer.effect(
 
     const client = yield* scopedPosthogClient(posthogConfig.key.value, posthogConfig.host);
 
-    const loadLinkedProject = makeLoadLinkedProject(fs, path);
+    const loadLinkedProject = makeLoadLinkedProject(fs, path, runtimeInfo);
 
     const isAgent = Option.isSome(aiTool.name);
-    const envSignals = collectEnvSignals();
+    const envSignals = yield* collectEnvSignals;
 
     const baseProperties = stripUndefined({
       [PropPlatform]: "cli",
@@ -169,7 +175,7 @@ export const analyticsLayer = Layer.effect(
       [PropOs]: runtime.os,
       [PropArch]: runtime.arch,
       [PropCliVersion]: runtime.cliVersion,
-      [PropEnvSignals]: envSignals,
+      [PropEnvSignals]: Option.isSome(envSignals) ? envSignals.value : undefined,
     });
 
     const capture = (event: string, properties: Record<string, unknown> = {}) =>

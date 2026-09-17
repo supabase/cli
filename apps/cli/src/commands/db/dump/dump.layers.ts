@@ -13,6 +13,8 @@ import { identityStitchLayer } from "../../../command-internal/identity-stitch.t
 import { linkedProjectCacheLayer } from "../../../telemetry/linked-project-cache.layer.ts";
 import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
+import { stackApiLayer } from "../../../command-internal/stack-api.ts";
+import { bundledPostgresClientLayer } from "../../../command-internal/bundled-postgres-client.ts";
 
 /**
  * Runtime layer for `supabase db dump`.
@@ -74,5 +76,7 @@ export const dbDumpRuntimeLayer = Layer.mergeAll(
   linkedProjectCache,
   identityStitchLayer,
   telemetryStateLayer,
+  stackApiLayer,
+  bundledPostgresClientLayer,
   commandRuntimeLayer(["db", "dump"]),
 );

@@ -169,18 +169,14 @@ export const status = Effect.fn("status")(function* (flags: StatusFlags) {
         Effect.mapError((cause) => new StatusDbInspectError({ message: cause.message })),
       );
       if (!state.running) {
-        return yield* Effect.fail(
-          new StatusDbNotRunningError({
-            message: `${dbContainerId} container is not running: ${state.status}`,
-          }),
-        );
+        return yield* new StatusDbNotRunningError({
+          message: `${dbContainerId} container is not running: ${state.status}`,
+        });
       }
       if (state.health !== undefined && state.health !== "healthy") {
-        return yield* Effect.fail(
-          new StatusDbNotReadyError({
-            message: `${dbContainerId} container is not ready: ${state.health}`,
-          }),
-        );
+        return yield* new StatusDbNotReadyError({
+          message: `${dbContainerId} container is not ready: ${state.health}`,
+        });
       }
     }
 

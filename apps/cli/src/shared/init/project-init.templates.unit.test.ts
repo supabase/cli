@@ -12,17 +12,12 @@ import {
 } from "./project-init.templates.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const goCliRoot = join(here, "../../../../cli-go");
 // Vendored copies of the Go CLI's init-template scaffold files. Dotted file
 // names are de-dotted so git/tooling don't interpret the fixtures themselves.
 const goTemplatesFixtureDir = join(here, "testdata/go-templates");
 
 function normalizeNewlines(text: string): string {
   return text.replace(/\r\n/g, "\n");
-}
-
-function readGoTemplate(...segments: ReadonlyArray<string>): string {
-  return normalizeNewlines(readFileSync(join(goCliRoot, ...segments), "utf8"));
 }
 
 function readVendoredTemplate(name: string): string {
@@ -41,7 +36,7 @@ function resolveGoTemplateEscapes(template: string): string {
 // Emulates what Go's config.Eject writes to disk for a fresh `supabase init` project.
 function renderExpectedGoEject(): string {
   return (
-    resolveGoTemplateEscapes(readGoTemplate("pkg", "config", "templates", "config.toml"))
+    resolveGoTemplateEscapes(readVendoredTemplate("config.toml"))
       .replace("{{ .ProjectId }}", "demo-project")
       .replace("{{ .Experimental.OrioleDBVersion }}", "15.1.0.150")
       // supabase init always opts new projects into pg-delta; the Go template

@@ -4,19 +4,17 @@ import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { makeTempHome, makeTempStackProject, runSupabase } from "../../../../tests/helpers/cli.ts";
 import { dockerfileServiceImage } from "../../../shared/services/dockerfile-images.ts";
-import { localDbContainerId, localNetworkId } from "../../../command-internal/docker-ids.ts";
-import { getRegistryImageUrl } from "../../../command-internal/docker-registry.ts";
+import { localDbContainerId } from "../../../command-internal/docker-ids.ts";
 import {
   RESOLVE_BUDGET_MS,
   ensureImage,
   resolveDeadline,
 } from "../../../../tests/helpers/docker-image.ts";
-import { resolvePgmetaImage } from "./types.shared.ts";
 
 const TYPEGEN_LANGS = ["typescript", "go", "swift", "python"] as const;
 type TypegenLang = (typeof TYPEGEN_LANGS)[number];
 
-const LOCAL_POSTGRES_IMAGE = getRegistryImageUrl(dockerfileServiceImage("pg"));
+const LOCAL_POSTGRES_IMAGE = dockerfileServiceImage("pg");
 const LOCAL_POSTGRES_TIMEOUT_MS = 120_000;
 const TYPEGEN_TIMEOUT_MS = 90_000;
 // Image resolution runs inside the test body, so its timeout must add on top of the
@@ -204,26 +202,16 @@ async function waitForLocalPostgres(containerName: string) {
   );
 }
 
-// Pre-pulls pg-meta inside the image budget and retags the winning candidate onto the
-// reference `gen types` resolves, so the CLI's own resolver takes the cached path.
-async function ensurePgmetaImage(deadline?: number) {
-  const expected = resolvePgmetaImage();
-  const resolved = await ensureImage(dockerfileServiceImage("pgmeta"), deadline);
-  if (resolved !== expected) {
-    await expectDockerSucceeded(["tag", resolved, expected], 30_000);
-  }
-}
-
+/**
+ * Starts a bare Postgres container named for `assertLocalDbRunning`'s `container inspect` check.
+ * Generation itself runs in-process against the host-mapped port, so — unlike the pg-meta-era
+ * setup this replaces — no Docker network or network alias is needed here.
+ */
 async function startLocalPostgres(input: { readonly projectId: string; readonly dbPort: number }) {
   const containerName = localDbContainerId(input.projectId);
-  const networkName = localNetworkId(input.projectId);
-  // Reserves pg-meta's slice of the shared window up front so Postgres pull time can't
-  // starve it.
   const imageDeadline = resolveDeadline(LOCAL_IMAGE_BUDGET_MS);
   const postgresImage = await ensureImage(LOCAL_POSTGRES_IMAGE, imageDeadline - RESOLVE_BUDGET_MS);
-  await ensurePgmetaImage(imageDeadline);
 
-  await expectDockerSucceeded(["network", "create", networkName], 30_000);
   await expectDockerSucceeded(
     [
       "run",
@@ -231,10 +219,6 @@ async function startLocalPostgres(input: { readonly projectId: string; readonly 
       "--rm",
       "--name",
       containerName,
-      "--network",
-      networkName,
-      "--network-alias",
-      "db",
       "-p",
       `${input.dbPort}:5432`,
       "-e",
@@ -254,7 +238,7 @@ async function startLocalPostgres(input: { readonly projectId: string; readonly 
   );
   await waitForLocalPostgres(containerName);
 
-  return { containerName, networkName };
+  return { containerName };
 }
 
 async function seedSmokeTable(containerName: string) {
@@ -285,12 +269,8 @@ async function seedSmokeTable(containerName: string) {
   );
 }
 
-async function cleanupLocalPostgres(input: {
-  readonly containerName: string;
-  readonly networkName: string;
-}) {
+async function cleanupLocalPostgres(input: { readonly containerName: string }) {
   await runDocker(["rm", "-f", input.containerName], { timeoutMs: 30_000 });
-  await runDocker(["network", "rm", input.networkName], { timeoutMs: 30_000 });
 }
 
 function expectNoRemoteAuthPath(result: { stdout: string; stderr: string }) {
@@ -341,10 +321,7 @@ describe("gen types e2e", () => {
       const projectId = `typegen${project.ports.dbPort}`;
       const profilePath = await writeOfflineProfile(project.dir);
       const env = tokenlessEnv(profilePath, project.dir);
-      const localPostgres = {
-        containerName: localDbContainerId(projectId),
-        networkName: localNetworkId(projectId),
-      };
+      const localPostgres = { containerName: localDbContainerId(projectId) };
 
       try {
         await writeLocalConfig(project.dir, projectId, project.ports.dbPort);
@@ -395,8 +372,6 @@ describe("gen types e2e", () => {
           `Set ${REMOTE_E2E_FLAG}=1, ${REMOTE_PROJECT_REF_ENV}, and SUPABASE_ACCESS_TOKEN to run remote typegen e2e.`,
         );
       }
-
-      await ensurePgmetaImage();
 
       for (const lang of TYPEGEN_LANGS) {
         const result = await runSupabase(

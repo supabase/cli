@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Effect, FileSystem, Option, Path, Predicate } from "effect";
 
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
@@ -6,18 +6,14 @@ import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.serv
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import type { DbConnType } from "../../../command-internal/db-target-flags.ts";
-import {
-  applyProjectEnv,
-  loadProjectEnv,
-  readDbToml,
-} from "../../../command-internal/db-config.toml-read.ts";
+import { loadProjectEnv, readDbToml } from "../../../command-internal/db-config.toml-read.ts";
 import { resolveDbImage } from "../../../command-internal/db-image.ts";
 import {
   ipv6Suggestion,
   isIPv6ConnectivityError,
 } from "../../../command-internal/connect-errors.ts";
 import { bold, yellow } from "../../../command-internal/colors.ts";
-import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
+import { DnsResolverFlag, NetworkIdFlag } from "../../../command-internal/global-flags.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { Tty } from "../../../shared/runtime/tty.service.ts";
 import { cobraMutuallyExclusiveErrorMessage } from "../../../shared/cli/cobra-flag-groups.ts";
@@ -35,7 +31,23 @@ import {
   buildSchemaDumpEnv,
   expandScript,
 } from "../../../command-internal/pg-dump.env.ts";
-import { streamPgDump } from "../../../command-internal/pg-dump.run.ts";
+import {
+  pgDumpClientExitMessage,
+  streamPgDumpWithClient,
+} from "../../../command-internal/pg-dump.run.ts";
+import {
+  dumpConnForHostClient,
+  rewriteDumpHostForToolContainer,
+  toolContainerUsesHostNetwork,
+} from "../../../command-internal/postgres-client.run.ts";
+import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
+import {
+  stackProjectDatabaseVersion,
+  stackRequireProjectRuntime,
+} from "../../../command-internal/stack-local-database.ts";
+import { resolveBundledPostgresRuntime } from "../../../command-internal/bundled-postgres-client.ts";
+import { viperEnvStringWithProjectFallback } from "../../../command-internal/viper-env.ts";
+import { DockerRunError } from "../../../command-internal/docker-run.errors.ts";
 import { runWithPoolerFallback } from "../shared/pooler-fallback.ts";
 import {
   dumpDataScript,
@@ -71,6 +83,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const dnsResolver = yield* DnsResolverFlag;
+  const networkIdFlag = yield* NetworkIdFlag;
   const tty = yield* Tty;
   const runtimeInfo = yield* RuntimeInfo;
 
@@ -79,10 +92,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
   let linkedRefForCache: string | undefined;
 
   yield* Effect.gen(function* () {
-    // Makes an allowlisted `supabase/.env` registry override visible to the synchronous
-    // `process.env` reader in `getRegistryImageUrl`; reverted when this scope closes.
     const projectEnv = yield* loadProjectEnv(fs, path, cliSettings.workdir);
-    yield* applyProjectEnv(projectEnv);
 
     // Resolves grouped boolean flags' effective values (default false) for code paths
     // that need the value, not just presence.
@@ -183,6 +193,57 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
     // silently printing a script.
     const tomlValues = yield* readDbToml(fs, path, cliSettings.workdir, linkedRef);
 
+    const backend = yield* currentStackBackend;
+    const stackRuntime =
+      backend.kind === "stack" && connType === "local"
+        ? yield* stackRequireProjectRuntime
+        : undefined;
+    const bundledRuntime =
+      backend.kind === "stack"
+        ? yield* resolveBundledPostgresRuntime(stackRuntime, runtimeInfo.platform, runtimeInfo.arch)
+        : undefined;
+    const useNativeClient = bundledRuntime?.kind === "native";
+    const networkId = Option.getOrUndefined(networkIdFlag);
+    const envNetworkId = viperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", projectEnv);
+    const dumpUsesHostNetwork =
+      backend.kind === "stack"
+        ? toolContainerUsesHostNetwork(networkId)
+        : toolContainerUsesHostNetwork(
+            networkId !== undefined && networkId.length > 0
+              ? networkId
+              : envNetworkId.length === 0
+                ? undefined
+                : envNetworkId,
+          );
+    const stackPublishedTarget = backend.kind === "stack" && isLocal;
+    const dumpConn = useNativeClient
+      ? connType === "local"
+        ? dumpConnForHostClient(conn)
+        : conn
+      : stackPublishedTarget
+        ? {
+            ...conn,
+            host: rewriteDumpHostForToolContainer(conn.host, {
+              platform: runtimeInfo.platform,
+              usesHostNetwork: dumpUsesHostNetwork,
+            }),
+          }
+        : conn;
+    const catalogVersion =
+      backend.kind === "stack" && connType === "local"
+        ? ((yield* stackProjectDatabaseVersion) ?? String(tomlValues.majorVersion))
+        : String(tomlValues.majorVersion);
+    const dumpMajor = tomlValues.majorVersion;
+    const dumpClient =
+      backend.kind === "stack"
+        ? {
+            kind: "bundled" as const,
+            command: roleOnly ? ("pg_dumpall" as const) : ("pg_dump" as const),
+            version: catalogVersion,
+            runtime: bundledRuntime,
+          }
+        : { kind: "container" as const };
+
     // 4. Pick the mode-specific script + env. --schema/-s and --exclude/-x arrive here
     //    already CSV-parsed by `parseSchemaFlags`.
     const opt = {
@@ -206,7 +267,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
             script: dumpSchemaScript,
             buildEnv: buildSchemaDumpEnv,
           } as const);
-    const modeEnv = mode.buildEnv(conn, opt);
+    const modeEnv = mode.buildEnv(dumpConn, opt);
 
     // Keys off `path.length > 0`, not flag presence: `--file ""` means stdout, no
     // file opened.
@@ -227,13 +288,16 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
     }
 
     // Resolved before opening `--file`; the dry-run path above never reaches here.
-    const { image } = yield* resolveDbImage(
-      fs,
-      path,
-      cliSettings.workdir,
-      tomlValues.majorVersion,
-      Option.getOrUndefined(tomlValues.orioledbVersion),
-    );
+    const image =
+      dumpClient.kind === "container"
+        ? (yield* resolveDbImage(
+            fs,
+            path,
+            cliSettings.workdir,
+            dumpMajor,
+            Option.getOrUndefined(tomlValues.orioledbVersion),
+          )).image
+        : "";
 
     // Resolves a relative `--file` against the workdir (e.g. --workdir /repo -f
     // out.sql → /repo/out.sql).
@@ -278,13 +342,15 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
                     const file = yield* fs
                       .open(resolvedFile.value, { flag: "a" })
                       .pipe(Effect.mapError(toOpenFileError));
-                    return yield* streamPgDump({
+                    return yield* streamPgDumpWithClient({
                       image,
                       script: mode.script,
                       env,
                       onStdout: (chunk) =>
                         file.writeAll(chunk).pipe(Effect.mapError(toOpenFileError)),
                       projectEnvValues: projectEnv,
+                      client: dumpClient,
+                      forceHostNetwork: stackPublishedTarget,
                     });
                   }),
                 ),
@@ -293,7 +359,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
         : // stdout: write each chunk straight to stdout (binary-safe, no decode).
           // On a pooler retry the partial first-attempt bytes are left on
           // stdout (a pipe can't be rewound); streaming matches that.
-          streamPgDump({
+          streamPgDumpWithClient({
             image,
             script: mode.script,
             env,
@@ -307,31 +373,50 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
                   })
               : (chunk) => output.rawBytes(chunk),
             projectEnvValues: projectEnv,
+            client: dumpClient,
+            forceHostNetwork: stackPublishedTarget,
           });
 
     // 7b. IPv6 → IPv4-pooler retry, shared with `db pull`: a linked dump can reach the
     //     direct host from the CLI process yet fail inside the container on an
     //     IPv6-only Docker network. Falls back to `None` on any resolution error so the
     //     original pg_dump failure surfaces instead of a fallback-setup error.
-    const result = yield* runWithPoolerFallback({
-      result: yield* runContainer(modeEnv),
-      connType,
-      host: conn.host,
-      isLocal,
-      projectHost: cliSettings.projectHost,
-      resolvePooler: () =>
-        resolver
-          .resolvePoolerFallback({
-            dbUrl: flags.dbUrl,
-            connType: "linked",
-            dnsResolver,
-            password: flags.password,
-            linkedProjectRef: flags.projectRef,
-          })
-          .pipe(Effect.orElseSucceed(() => Option.none())),
-      runWithConn: (c) => runContainer(mode.buildEnv(c, opt)),
-      reprintOnRetry: output.raw(`Dumping ${mode.verb} from ${db} database...\n`, "stderr"),
-    });
+    const result = yield* runContainer(modeEnv).pipe(
+      Effect.flatMap((dumped) =>
+        runWithPoolerFallback({
+          result: dumped,
+          connType,
+          host: conn.host,
+          isLocal,
+          projectHost: cliSettings.projectHost,
+          resolvePooler: () =>
+            resolver
+              .resolvePoolerFallback({
+                dbUrl: flags.dbUrl,
+                connType: "linked",
+                dnsResolver,
+                password: flags.password,
+                linkedProjectRef: flags.projectRef,
+              })
+              .pipe(Effect.orElseSucceed(() => Option.none())),
+          runWithConn: (c) => runContainer(mode.buildEnv(c, opt)),
+          reprintOnRetry: output.raw(`Dumping ${mode.verb} from ${db} database...\n`, "stderr"),
+        }),
+      ),
+      Effect.catchIf(
+        (error): error is DockerRunError =>
+          Predicate.isTagged(error, "DockerRunError") &&
+          stackRuntime?.kind === "native" &&
+          runtimeInfo.platform === "win32",
+        (error) =>
+          Effect.fail(
+            new DbDumpRunError({
+              message: error.message,
+              suggestion: "Install Docker Desktop to dump a native stack on Windows.",
+            }),
+          ),
+      ),
+    );
 
     // 8. The dump has already been streamed to the destination by `runContainer`
     //    (to `--file` or stdout) as pg_dump produced it.
@@ -342,7 +427,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
     if (result.exitCode !== 0) {
       return yield* Effect.fail(
         new DbDumpRunError({
-          message: `error running container: exit ${result.exitCode}`,
+          message: pgDumpClientExitMessage(dumpClient, result.exitCode),
           ...(isIPv6ConnectivityError(result.stderr) ? { suggestion: ipv6Suggestion() } : {}),
         }),
       );
@@ -372,8 +457,5 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
       ),
     ),
     Effect.ensuring(telemetryState.flush),
-    // Scope the `SUPABASE_INTERNAL_IMAGE_REGISTRY`-from-`.env` apply above to this
-    // command run: `applyProjectEnv` registers a finalizer that reverts it.
-    Effect.scoped,
   );
 });

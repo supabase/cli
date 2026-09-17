@@ -3,11 +3,12 @@
 // `command-internal/db-bootstrap/container-lifecycle.ts` (a different
 // family, using the generic `isUserDefinedDockerNetwork` predicate).
 import { resolve } from "node:path";
-import { Effect, Stream } from "effect";
+import { Effect, Option, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { spawnContainerCli } from "../../command-internal/container-cli.ts";
 import { makeDockerImageResolver } from "../../command-internal/docker-image-resolve.ts";
 import { DENO1_EDGE_RUNTIME_VERSION } from "./functions.shared.ts";
+import { bitbucketCloneDir } from "../../command-internal/bitbucket-pipeline.ts";
 
 const INVALID_PROJECT_ID = /[^a-zA-Z0-9_.-]+/g;
 const MAX_PROJECT_ID_LENGTH = 40;
@@ -282,8 +283,9 @@ export const ensureDockerNetwork = Effect.fnUntraced(function* (
 export const ensureDockerNamedVolume = Effect.fnUntraced(function* (
   volumeName: string,
   projectId: string,
+  projectEnvValues?: Readonly<Record<string, string>>,
 ) {
-  if (process.env["BITBUCKET_CLONE_DIR"] !== undefined) {
+  if (Option.isSome(yield* bitbucketCloneDir(projectEnvValues))) {
     return;
   }
 

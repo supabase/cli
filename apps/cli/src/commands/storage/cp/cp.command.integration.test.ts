@@ -84,10 +84,9 @@ describe("storage cp --jobs negative rejection (command-tree wiring)", () => {
         if (Exit.isFailure(exit)) {
           const failure = Cause.findErrorOption(exit.cause);
           expect(Option.isSome(failure)).toBe(true);
-          expect(JSON.stringify(exit.cause)).not.toContain(
-            "must set the --experimental flag to run this command",
-          );
-          expect(JSON.stringify(exit.cause)).not.toContain("StorageMutuallyExclusiveFlags");
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).not.toContain("must set the --experimental flag to run this command");
+          expect(causeText).not.toContain("StorageMutuallyExclusiveFlags");
           // `normalizeCause` is the same rendering path `runCli` uses for parse failures.
           expect(normalizeCause(exit.cause).message).toBe(
             'invalid argument "-1" for "-j, --jobs" flag: strconv.ParseUint: parsing "-1": invalid syntax',
@@ -151,7 +150,7 @@ describe("storage cp --jobs negative rejection (command-tree wiring)", () => {
         const exit = yield* Effect.exit(Command.runWith(testRoot, { version: "0.0.0-test" })(args));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).not.toContain(
+          expect(Cause.pretty(exit.cause)).not.toContain(
             "must set the --experimental flag to run this command",
           );
           expect(normalizeCause(exit.cause).message).toBe(message);
@@ -170,7 +169,7 @@ describe("storage cp --jobs negative rejection (command-tree wiring)", () => {
         const exit = yield* Effect.exit(Command.runWith(testRoot, { version: "0.0.0-test" })(args));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain(
+          expect(Cause.pretty(exit.cause)).toContain(
             "must set the --experimental flag to run this command",
           );
         }
@@ -189,7 +188,7 @@ describe("storage cp --jobs negative rejection (command-tree wiring)", () => {
       const exit = yield* Effect.exit(Command.runWith(testRoot, { version: "0.0.0-test" })(args));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).not.toContain("MissingArgument");
+        expect(Cause.pretty(exit.cause)).not.toContain("MissingArgument");
         expect(normalizeCause(exit.cause).message).toBe(
           'invalid argument "-1" for "-j, --jobs" flag: strconv.ParseUint: parsing "-1": invalid syntax',
         );

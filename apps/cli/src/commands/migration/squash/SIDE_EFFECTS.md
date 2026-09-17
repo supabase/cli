@@ -7,6 +7,10 @@ full schema into the target file, and deleting the merged files — then either
 suggests `migration repair` (local target) or prompts to baseline the remote
 migration-history table to match.
 
+When `[experimental].stack` is on, the shadow is `EphemeralPostgres` under
+`$SUPABASE_HOME/managed/ephemeral-postgres/<identity>/` (`~/.supabase/managed/…` by default).
+On the stack backend, squash dumps through catalog `pg_dump` (native artifact or a one-shot container of the same image). There is no PATH fallback.
+
 ## Files Read
 
 | Path                                                                                               | Format                                                                                | When                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |

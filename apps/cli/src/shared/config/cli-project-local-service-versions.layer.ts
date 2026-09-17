@@ -25,7 +25,7 @@ const makeCliProjectLocalServiceVersions = Effect.gen(function* () {
         return Option.none<LocalServiceVersionsState>();
       }
 
-      const content = yield* fs.readFileString(filePath).pipe(Effect.orDie);
+      const content = yield* fs.readFileString(filePath);
       const decoded = yield* decodeLocalServiceVersionsState(content).pipe(
         Effect.mapError(
           () =>
@@ -38,9 +38,7 @@ const makeCliProjectLocalServiceVersions = Effect.gen(function* () {
       return Option.some(decoded);
     });
 
-  const load = Effect.gen(function* () {
-    return yield* loadFromPath(cliProjectHome.projectLocalVersionsPath);
-  });
+  const load = loadFromPath(cliProjectHome.projectLocalVersionsPath);
 
   return CliProjectLocalServiceVersions.of({
     load,

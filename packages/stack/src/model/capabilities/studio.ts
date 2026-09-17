@@ -16,12 +16,13 @@ export const StudioModule: CapabilityModule<StudioSettings> = {
   defaultSettings: { api_url: "", openai_api_key: undefined },
   defaultEnabled: true,
   defaultActivation: "lazy",
+  defaultIdleTimeoutSeconds: 60,
   defaultVersion: version,
-  dependencies: ["rest", "analytics"],
+  dependencies: ["rest"],
   releases: {
     [version]: release(version, [
       workload("studio", "studio", {
-        dependencies: ["studio:pgmeta", "analytics:analytics"],
+        dependencies: ["studio:pgmeta"],
         readiness: { portField: "studio" },
       }),
       workload("pgmeta", "studio", {

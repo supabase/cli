@@ -4,8 +4,13 @@ import { mkdtempSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Effect, Layer, Option, Redacted } from "effect";
-import { mockRuntimeInfo, processEnvLayer } from "../../../tests/helpers/mocks.ts";
+import { ConfigProvider, Effect, Layer, Option, Redacted } from "effect";
+import {
+  mockCliProjectContext,
+  mockRuntimeInfo,
+  processEnvLayer,
+} from "../../../tests/helpers/mocks.ts";
+import { getEffectiveConsent } from "../telemetry/consent.ts";
 import { CliSettings } from "./cli-settings.service.ts";
 import { cliSettingsLayer } from "./cli-settings.layer.ts";
 import { cliProjectContextLayer } from "./cli-project-context.layer.ts";
@@ -15,7 +20,12 @@ function makeTempDir(): string {
   return mkdtempSync(join(tmpdir(), "supabase-cli-settings-"));
 }
 
-function buildLayer(opts: { cwd: string; env?: Record<string, string>; homeDir?: string }) {
+function buildLayer(opts: {
+  cwd: string;
+  env?: Record<string, string>;
+  providerEnv?: Record<string, string>;
+  homeDir?: string;
+}) {
   const runtimeInfoLayer = mockRuntimeInfo({
     cwd: opts.cwd,
     homeDir: opts.homeDir ?? join(opts.cwd, ".home"),
@@ -29,6 +39,13 @@ function buildLayer(opts: { cwd: string; env?: Record<string, string>; homeDir?:
   const discoveredCliSettingsLayer = cliSettingsLayer.pipe(
     Layer.provide(runtimeInfoLayer),
     Layer.provide(discoveredCliProjectContextLayer),
+    Layer.provide(
+      ConfigProvider.layer(
+        ConfigProvider.fromEnvRecord(opts.providerEnv ?? opts.env ?? {}, {
+          preserveEmptyStrings: true,
+        }),
+      ),
+    ),
   );
 
   return Layer.mergeAll(
@@ -41,6 +58,30 @@ function buildLayer(opts: { cwd: string; env?: Record<string, string>; homeDir?:
 }
 
 describe("cliSettingsLayer", () => {
+  for (const optOut of ["SUPABASE_TELEMETRY_DISABLED", "DO_NOT_TRACK"]) {
+    it.live(`honors injected ${optOut} alongside discovered project settings`, () => {
+      const cwd = makeTempDir();
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() => mkdir(join(cwd, "supabase")));
+        yield* Effect.tryPromise(() =>
+          writeFile(join(cwd, "supabase", "config.toml"), 'project_id = "demo"\n'),
+        );
+        yield* Effect.tryPromise(() =>
+          writeFile(join(cwd, "supabase", ".env"), "SUPABASE_DEBUG=\n"),
+        );
+        yield* Effect.gen(function* () {
+          const settings = yield* CliSettings;
+          expect(settings.debug).toEqual(Option.some(""));
+          expect(yield* getEffectiveConsent(Option.none())).toBe("denied");
+        }).pipe(
+          Effect.provide(
+            buildLayer({ cwd, providerEnv: { [optOut]: "1", SUPABASE_DEBUG: "true" } }),
+          ),
+        );
+      }).pipe(Effect.ensuring(Effect.tryPromise(() => rm(cwd, { recursive: true, force: true }))));
+    });
+  }
+
   it.live("falls back to ambient env when no Supabase project is found", () => {
     const tempDir = makeTempDir();
     return Effect.gen(function* () {
@@ -168,6 +209,32 @@ describe("cliSettingsLayer", () => {
       Effect.provide(buildLayer({ cwd: tempDir })),
       Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
     );
+  });
+
+  it.effect("preserves empty runtime settings as present options", () => {
+    const settingsLayer = cliSettingsLayer.pipe(
+      Layer.provide(mockRuntimeInfo({ cwd: "/test/cwd", homeDir: "/test/home" })),
+      Layer.provide(mockCliProjectContext()),
+      Layer.provide(
+        ConfigProvider.layer(
+          ConfigProvider.fromEnvRecord(
+            {
+              SUPABASE_NO_KEYRING: "",
+              SUPABASE_DEBUG: "",
+              SUPABASE_TELEMETRY_DISABLED: "",
+            },
+            { preserveEmptyStrings: true },
+          ),
+        ),
+      ),
+    );
+    return Effect.gen(function* () {
+      const cliSettings = yield* CliSettings;
+
+      expect(cliSettings.noKeyring).toEqual(Option.some(""));
+      expect(cliSettings.debug).toEqual(Option.some(""));
+      expect(cliSettings.telemetryDisabled).toEqual(Option.some(""));
+    }).pipe(Effect.provide(settingsLayer));
   });
 
   it.live("prefers SUPABASE_TELEMETRY_POSTHOG_KEY over the shipped default", () => {
