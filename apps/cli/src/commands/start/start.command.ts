@@ -75,8 +75,8 @@ const startRuntimeLayer = Layer.mergeAll(
   dbConnectionLayer,
   httpClient,
   platformApiFactory,
-  // `stdinLayer` feeds `promptYesNo`'s bounded stdin read for the fresh-volume bucket-seed
-  // overwrite/prune confirmations (consent resolves from `--yes`/`SUPABASE_YES`).
+  // `stdinLayer` satisfies `promptYesNo`'s `Stdin` requirement (seed-buckets runs
+  // `promptless`), so `start` never reads a piped line at runtime — type requirements only.
   stdinLayer,
 );
 

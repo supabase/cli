@@ -144,6 +144,13 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
   readonly credentials?: StorageCredentials;
   /** Explicit project root for config/env loading and `objects_path` resolution. */
   readonly workdir?: string;
+  /**
+   * When true, overwrite/prune decisions resolve from consent alone and no prompt runs, so the
+   * caller cannot consume a line of its parent's stdin. `start` sets this: it has already
+   * decided (prune only on explicit `--yes`/`SUPABASE_YES`), and a bounded read on fd 0 there
+   * would swallow the next line of a `curl … | bash` script. Declined prunes say so instead.
+   */
+  readonly promptless?: boolean;
 }) {
   const output = yield* Output;
   const cliSettings = yield* CommandSettings;
@@ -155,6 +162,7 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
   const yes = opts.yes ?? (yield* resolveYesWithProjectEnv(projectEnvValues));
   const { projectRef, emitSummary } = opts;
   const interactive = opts.interactive ?? true;
+  const promptless = opts.promptless ?? false;
 
   // Loads config.toml, merging `[remotes.*]` overrides for `--linked`; skipped when the
   // caller already supplied `resolvedConfig`.
@@ -249,7 +257,7 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
 
     const summary = emptySummary();
 
-    yield* upsertBuckets(output, yes, interactive, gateway, bucketPropsByName, summary);
+    yield* upsertBuckets(output, yes, interactive, promptless, gateway, bucketPropsByName, summary);
 
     // Upsert analytics buckets (remote --linked only).
     if (config.storage.analytics.enabled && projectRef !== "") {
@@ -258,6 +266,7 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
         output,
         yes,
         interactive,
+        promptless,
         gateway,
         Object.keys(config.storage.analytics.buckets),
         summary,
@@ -271,6 +280,7 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
         output,
         yes,
         interactive,
+        promptless,
         gateway,
         vectorBucketNames,
         summary,
@@ -332,6 +342,7 @@ const upsertBuckets = Effect.fnUntraced(function* (
   output: typeof Output.Service,
   yes: boolean,
   interactive: boolean,
+  promptless: boolean,
   gateway: StorageGateway,
   propsByName: ReadonlyMap<string, UpsertBucketProps>,
   summary: SeedSummary,
@@ -342,13 +353,15 @@ const upsertBuckets = Effect.fnUntraced(function* (
   for (const [name, props] of propsByName) {
     const bucketId = byName.get(name);
     if (bucketId !== undefined) {
-      const overwrite = yield* promptYesNo(
-        output,
-        yes,
-        `Bucket ${bold(bucketId)} already exists. Do you want to overwrite its properties?`,
-        true,
-        interactive,
-      );
+      const overwrite = promptless
+        ? true
+        : yield* promptYesNo(
+            output,
+            yes,
+            `Bucket ${bold(bucketId)} already exists. Do you want to overwrite its properties?`,
+            true,
+            interactive,
+          );
       if (!overwrite) {
         summary.buckets_skipped.push(bucketId);
         continue;
@@ -368,6 +381,7 @@ const upsertVectorBuckets = Effect.fnUntraced(function* (
   output: typeof Output.Service,
   yes: boolean,
   interactive: boolean,
+  promptless: boolean,
   gateway: StorageGateway,
   configuredNames: ReadonlyArray<string>,
   summary: SeedSummary,
@@ -388,14 +402,22 @@ const upsertVectorBuckets = Effect.fnUntraced(function* (
   }
 
   for (const name of toDelete) {
-    const prune = yield* promptYesNo(
-      output,
-      yes,
-      `Bucket ${bold(name)} not found in ${bold(CONFIG_PATH)}. Do you want to prune it?`,
-      false,
-      interactive,
-    );
+    const prune = promptless
+      ? yes
+      : yield* promptYesNo(
+          output,
+          yes,
+          `Bucket ${bold(name)} not found in ${bold(CONFIG_PATH)}. Do you want to prune it?`,
+          false,
+          interactive,
+        );
     if (!prune) {
+      if (promptless) {
+        yield* output.raw(
+          `Keeping vector bucket ${bold(name)}: not declared in ${bold(CONFIG_PATH)}. Run ${bold("supabase seed buckets")} to prune.\n`,
+          "stderr",
+        );
+      }
       continue;
     }
     yield* output.raw(`Pruning vector bucket: ${name}\n`, "stderr");
@@ -408,6 +430,7 @@ const upsertAnalyticsBuckets = Effect.fnUntraced(function* (
   output: typeof Output.Service,
   yes: boolean,
   interactive: boolean,
+  promptless: boolean,
   gateway: StorageGateway,
   configuredNames: ReadonlyArray<string>,
   summary: SeedSummary,
@@ -428,14 +451,22 @@ const upsertAnalyticsBuckets = Effect.fnUntraced(function* (
   }
 
   for (const name of toDelete) {
-    const prune = yield* promptYesNo(
-      output,
-      yes,
-      `Bucket ${bold(name)} not found in ${bold(CONFIG_PATH)}. Do you want to prune it?`,
-      false,
-      interactive,
-    );
+    const prune = promptless
+      ? yes
+      : yield* promptYesNo(
+          output,
+          yes,
+          `Bucket ${bold(name)} not found in ${bold(CONFIG_PATH)}. Do you want to prune it?`,
+          false,
+          interactive,
+        );
     if (!prune) {
+      if (promptless) {
+        yield* output.raw(
+          `Keeping analytics bucket ${bold(name)}: not declared in ${bold(CONFIG_PATH)}. Run ${bold("supabase seed buckets")} to prune.\n`,
+          "stderr",
+        );
+      }
       continue;
     }
     yield* output.raw(`Pruning analytics bucket: ${name}\n`, "stderr");

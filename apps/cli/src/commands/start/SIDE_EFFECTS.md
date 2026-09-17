@@ -78,11 +78,12 @@ Docker healthcheck — mirroring PostgREST's own probe shape.
 Runs only when `isFreshVolume && Storage started`, after the bulk
 health check genuinely succeeds, right before the `cli_stack_started` telemetry capture. A
 seeding failure rolls back the whole `start` run, same as any other post-bring-up failure.
-Seeding is non-interactive. In text mode its overwrite/prune confirmations print their
-label, read one bounded stdin line, and fall back to their defaults (overwrite → yes,
-prune → no); in machine modes they take those defaults silently. Either way
-`--yes`/`SUPABASE_YES` auto-confirms, so a vector bucket missing from `config.toml`
-is never pruned without explicit consent.
+Seeding never prompts. `start` resolves overwrite/prune from consent alone
+(`--yes`/`SUPABASE_YES`): overwrite proceeds, prune does not. No stdin is read, so `start`
+cannot consume a line of a parent script's input. A bucket left in place prints
+`Keeping <vector|analytics> bucket <name>: not declared in supabase/config.toml. Run supabase
+seed buckets to prune.` to stderr in every output mode, and deliberate pruning lives in
+`supabase seed buckets`.
 
 A second, narrower seeding path exists for the `--ignore-health-check` downgrade branch:
 when the bulk health check fails but `isFreshVolume && Storage
@@ -277,6 +278,12 @@ output modes.
   volume) → Postgres create+start+health-wait → `Starting containers...` → (image
   pre-pull) → per-container create+start → `Waiting for health checks...` → `Started
 supabase local development setup.`
+- stderr (conditional, fresh-volume bucket seeding): `Creating <kind> bucket: <name>` per
+  created bucket, `Pruning vector bucket: <name>` when `--yes`/`SUPABASE_YES` consents, and
+  `Keeping <kind> bucket <name>: not declared in supabase/config.toml. Run supabase seed
+buckets to prune.` for a bucket left in place. These seeding lines use the raw writer, so they
+  appear in every output mode, not only text. No confirmation question is printed and no stdin
+  line is read.
 - stderr (conditional, health-check timeout): per unhealthy container, a
   `<container> container logs:` header and that container's `docker logs` output, then one
   `<container>: <reason>` line each. Containers are named `supabase_<service>_<project id>`
