@@ -495,6 +495,26 @@ const ensureExecutableFile = (
   );
 };
 
+const metadataMatchesRequest = (request: ArtifactRequest, metadata: ArtifactMetadata): boolean => {
+  const samePaths =
+    metadata.requiredRuntimePaths.length === request.requiredRuntimePaths.length &&
+    metadata.requiredRuntimePaths.every(
+      (entry, index) => entry === request.requiredRuntimePaths[index],
+    );
+  const kindEntries = Object.keys(metadata.requiredRuntimeKinds);
+  const sameKinds =
+    kindEntries.length === request.requiredRuntimePaths.length &&
+    request.requiredRuntimePaths.every(
+      (entry) => metadata.requiredRuntimeKinds[entry] !== undefined,
+    );
+  return (
+    metadata.key === request.key &&
+    samePaths &&
+    sameKinds &&
+    metadata.executablePath === request.executablePath
+  );
+};
+
 const verifyMetadata = (
   request: ArtifactRequest,
   metadata: ArtifactMetadata,
@@ -507,23 +527,7 @@ const verifyMetadata = (
       }),
     ),
   );
-  const samePaths =
-    metadata.requiredRuntimePaths.length === request.requiredRuntimePaths.length &&
-    metadata.requiredRuntimePaths.every(
-      (entry, index) => entry === request.requiredRuntimePaths[index],
-    );
-  const kindEntries = Object.keys(metadata.requiredRuntimeKinds);
-  const sameKinds =
-    kindEntries.length === request.requiredRuntimePaths.length &&
-    request.requiredRuntimePaths.every(
-      (entry) => metadata.requiredRuntimeKinds[entry] !== undefined,
-    );
-  if (
-    metadata.key !== request.key ||
-    !samePaths ||
-    !sameKinds ||
-    metadata.executablePath !== request.executablePath
-  )
+  if (!metadataMatchesRequest(request, metadata))
     return Effect.fail(
       metadataError("Cached artifact metadata does not match the request", { key: request.key }),
     );
@@ -612,6 +616,8 @@ const makeArtifactOperation = (
       const cachedMetadata = yield* readMetadata(fs, metadataPath);
       if (Option.isNone(cachedMetadata)) return Option.none();
       const metadata = cachedMetadata.value;
+      // Same version/target key with an expanded required-path list is a miss, not corruption.
+      if (!metadataMatchesRequest(request, metadata)) return Option.none();
       const sha256 = yield* verifyMetadata(request, metadata);
       // Published content is not rehashed on cache hits: metadata and cheap structural checks
       // protect the cache boundary; content tampering may execute or fail later when the

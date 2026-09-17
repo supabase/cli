@@ -42,6 +42,7 @@ import {
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { type DbSession, DbConnection } from "../../../command-internal/db-connection.service.ts";
 import { DbExecError } from "../../../command-internal/db-connection.errors.ts";
+import { BundledPostgresClient } from "../../../command-internal/bundled-postgres-client.ts";
 import { DockerRun, type DockerRunOpts } from "../../../command-internal/docker-run.service.ts";
 import { EdgeRuntimeScriptError } from "../../../command-internal/edge-runtime-script.errors.ts";
 import {
@@ -429,6 +430,9 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     pgDeltaEngine,
     edge,
     docker,
+    Layer.succeed(BundledPostgresClient, {
+      run: () => Effect.die("bundled postgres client unused"),
+    }),
     dbConnection,
     dockerDaemon?.layer ?? shadowSpawner.layer,
     alwaysReadyHttpClientLayer,

@@ -21,6 +21,9 @@ describe("buildPgProveArgs", () => {
       "/work/supabase/tests",
     ]);
     expect(result.binds).toEqual(["/work/supabase/tests:/work/supabase/tests:ro"]);
+    expect(result.mounts).toEqual([
+      { source: "/work/supabase/tests", target: "/work/supabase/tests", readOnly: true },
+    ]);
     expect(Option.getOrNull(result.workingDir)).toBe("/work/supabase/tests");
   });
 

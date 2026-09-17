@@ -41,7 +41,9 @@ One connection (local / `--db-url` / linked-direct). Within one transaction:
 5. `ROLLBACK` (always — lint has no committed effects)
 
 Requires `plpgsql_check` to be installable; a bare vanilla `--db-url` without
-the extension fails at step 3.
+the extension fails at step 3. Stack catalog Postgres (native artifact and the
+digest-pinned image) ships the extension, so `--local` lint on native and
+container stacks can enable it. Compose uses the Compose Postgres image.
 
 ## Environment Variables
 

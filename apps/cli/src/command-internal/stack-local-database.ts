@@ -228,30 +228,27 @@ export const stackRequireProjectRuntime: Effect.Effect<
   return descriptor.value.runtime;
 });
 
-/** Server major from `status().versions.database` (`17.6.1` → 17). */
-export const parsePostgresServerMajor = (version: string): number | undefined => {
-  const major = Number.parseInt(version.split(".")[0] ?? "", 10);
-  return Number.isInteger(major) ? major : undefined;
-};
-
-/** Running stack Postgres major, or undefined when status is missing. */
-export const stackProjectDatabaseMajor: Effect.Effect<number | undefined, never, CommandSettings> =
-  Effect.gen(function* () {
-    const api = yield* Effect.serviceOption(StackApi);
-    if (Option.isNone(api)) return undefined;
-    const cliSettings = yield* CommandSettings;
-    const descriptor = yield* api.value
-      .findStack({ projectRoot: cliSettings.workdir })
-      .pipe(Effect.orElseSucceed(() => Option.none()));
-    if (Option.isNone(descriptor)) return undefined;
-    const stack = yield* api.value
-      .openStack(descriptor.value.id)
-      .pipe(Effect.orElseSucceed(() => undefined));
-    if (stack === undefined) return undefined;
-    const status = yield* stack.status.pipe(Effect.orElseSucceed(() => undefined));
-    if (status === undefined || typeof status.versions.database !== "string") return undefined;
-    return parsePostgresServerMajor(status.versions.database);
-  });
+/** Catalog pin from `status().versions.database`, when the project stack is available. */
+export const stackProjectDatabaseVersion: Effect.Effect<
+  string | undefined,
+  never,
+  CommandSettings
+> = Effect.gen(function* () {
+  const api = yield* Effect.serviceOption(StackApi);
+  if (Option.isNone(api)) return undefined;
+  const cliSettings = yield* CommandSettings;
+  const descriptor = yield* api.value
+    .findStack({ projectRoot: cliSettings.workdir })
+    .pipe(Effect.orElseSucceed(() => Option.none()));
+  if (Option.isNone(descriptor)) return undefined;
+  const stack = yield* api.value
+    .openStack(descriptor.value.id)
+    .pipe(Effect.orElseSucceed(() => undefined));
+  if (stack === undefined) return undefined;
+  const status = yield* stack.status.pipe(Effect.orElseSucceed(() => undefined));
+  if (status === undefined || typeof status.versions.database !== "string") return undefined;
+  return status.versions.database;
+});
 
 const STACK_NATIVE_ENGINE_MESSAGE = "The stack backend only supports the pg-delta engine.";
 

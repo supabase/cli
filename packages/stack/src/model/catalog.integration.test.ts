@@ -70,6 +70,9 @@ describe("complete workload catalog", () => {
     ]);
     expect(WORKLOAD_CATALOG["database:database"]?.requiredRuntimePaths).toEqual([
       "bin/supabase-postgres-start",
+      "bin/pg_dump",
+      "bin/pg_dumpall",
+      "bin/psql",
     ]);
     expect(WORKLOAD_CATALOG["storage:storage"]?.requiredRuntimePaths).toEqual([
       "bin/storage",

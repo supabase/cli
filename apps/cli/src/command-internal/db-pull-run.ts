@@ -46,7 +46,7 @@ import {
 import { diffMigra } from "../commands/db/shared/migra.ts";
 import { writePgDeltaMigrations } from "../commands/db/shared/pgdelta-migrations.write.ts";
 import { type DumpOptions, buildSchemaDumpEnv } from "./pg-dump.env.ts";
-import { streamPgDump } from "./pg-dump.run.ts";
+import { streamPgDumpWithClient } from "./pg-dump.run.ts";
 import {
   emitPoolerFallbackWarning,
   isDirectLinkedHost,
@@ -472,13 +472,13 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
           yield* makeDir(fs, path.dirname(migrationPath)).pipe(
             Effect.mapError((cause) => new DbPullWriteError({ message: cause.message })),
           );
-          const { image } = yield* resolveDbImage(
+          const image = (yield* resolveDbImage(
             fs,
             path,
             cliSettings.workdir,
             toml.majorVersion,
             Option.getOrUndefined(toml.orioledbVersion),
-          );
+          )).image;
           // Default dump options: no schema filter (so the internal-schema exclude
           // list applies) and comments stripped.
           const dumpEnvOpt: DumpOptions = {
@@ -510,11 +510,12 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
                       const file = yield* fs
                         .open(migrationPath, { flag: "a" })
                         .pipe(Effect.mapError(toDumpOpenError));
-                      return yield* streamPgDump({
+                      return yield* streamPgDumpWithClient({
                         image,
                         script: dumpSchemaScript,
                         env: buildSchemaDumpEnv(target, dumpEnvOpt),
                         projectEnvValues: projectEnv,
+                        client: { kind: "container" },
                         onStdout: (chunk) => {
                           if (chunk.length > 0) seedWroteBytes = true;
                           return file.writeAll(chunk).pipe(

@@ -122,6 +122,40 @@ describe("verified native artifact preparation", () => {
     ),
   );
 
+  it.live("re-downloads when required runtime paths expand on the same key", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-stack-artifact-paths-expand-",
+        });
+        let checksumCalls = 0;
+        let materializeCalls = 0;
+        const source: ArtifactSource = {
+          checksum: () =>
+            Effect.sync(() => {
+              checksumCalls += 1;
+              return archiveSha256;
+            }),
+          materialize: (entry, destination) =>
+            Effect.sync(() => {
+              materializeCalls += 1;
+              return entry;
+            }).pipe(Effect.andThen(sourceWriting().materialize(entry, destination, archiveSha256))),
+        };
+        const store = yield* makeArtifactStore({ cacheRoot: root, source });
+        const narrow: ArtifactRequest = { ...request, requiredRuntimePaths: ["bin/postgres"] };
+        const first = yield* store.prepare(narrow);
+        const second = yield* store.prepare(request);
+        expect(first.outcome).toBe("downloaded");
+        expect(second.outcome).toBe("downloaded");
+        expect(second.requiredRuntimePaths).toEqual([...request.requiredRuntimePaths]);
+        expect(checksumCalls).toBe(2);
+        expect(materializeCalls).toBe(2);
+      }),
+    ),
+  );
+
   it.live("replaces a cached tree with unknown artifact metadata", () =>
     replacesMalformedMetadata("unknown", '{"format":"supabase-stack-artifact-v0"}'),
   );
