@@ -40,6 +40,7 @@ import { CommandPlatformApi } from "../../../../../auth/command-platform-api.ser
 import { CommandPlatformApiFactory } from "../../../../../auth/command-platform-api-factory.service.ts";
 import { dockerRunLayer } from "../../../../../command-internal/docker-run.layer.ts";
 import { DockerRun } from "../../../../../command-internal/docker-run.service.ts";
+import { BundledPostgresClient } from "../../../../../command-internal/bundled-postgres-client.ts";
 import { stackBackendLayer } from "../../../../../command-internal/stack-backend.ts";
 import { StackApi, stackApiLayer } from "../../../../../command-internal/stack-api.ts";
 import {
@@ -352,6 +353,9 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     processControl.layer,
     alwaysReadyHttpClientLayer,
     dockerRun,
+    Layer.succeed(BundledPostgresClient, {
+      run: () => Effect.succeed({ exitCode: 0, stderr: "" }),
+    }),
     stackApiLayer.pipe(Layer.provide(BunServices.layer)),
     backendLayer,
   );

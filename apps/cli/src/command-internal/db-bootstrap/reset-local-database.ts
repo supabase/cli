@@ -60,13 +60,8 @@ import {
 import { shadowRunInputFromLocalContainerInputs } from "./shadow-database.ts";
 import { stackWithShadowDatabase } from "../stack-shadow.ts";
 import type { EffectStack, ServiceInstanceId, StackRuntime } from "@supabase/stack/effect";
-import {
-  nativeHostClientPathPrepend,
-  requireHostPostgresClient,
-  rewriteDumpHostForToolContainer,
-  streamHostCommand,
-} from "../postgres-client.run.ts";
-import { DockerRun } from "../docker-run.service.ts";
+import { rewriteDumpHostForToolContainer } from "../postgres-client.run.ts";
+import { BundledPostgresClient, bundledPostgresClientRuntime } from "../bundled-postgres-client.ts";
 import { RESERVED_ROLES, toDumpEnv } from "../pg-dump.env.ts";
 import { parseConnectionString } from "../db-config.parse.ts";
 import { splitAndTrim } from "../sql-split.ts";
@@ -120,72 +115,36 @@ export const restoreStackLogicalBaselineScript = (): string =>
 const restoreStackLogicalBaseline = Effect.fnUntraced(function* (input: {
   readonly source: PgConnInput;
   readonly target: PgConnInput;
-  readonly image: string;
-  readonly majorVersion: number;
+  readonly version: string;
   readonly runtime: StackRuntime;
   readonly platform: string;
   readonly extraHosts: ReadonlyArray<string>;
-  readonly projectEnvValues: Readonly<Record<string, string>>;
+  readonly arch?: string;
 }) {
   const script = restoreStackLogicalBaselineScript();
-  const env = {
-    ...toDumpEnv(input.source),
-    TARGET_HOST: input.target.host,
-    TARGET_PORT: String(input.target.port),
-    TARGET_USER: input.target.user,
-    TARGET_PASSWORD: input.target.password,
-    TARGET_DATABASE: input.target.database,
-  };
-  if (input.runtime.kind === "native") {
-    const pathPrepend = yield* nativeHostClientPathPrepend("pg_dump", {
-      major: input.majorVersion,
-    });
-    yield* requireHostPostgresClient("pg_dump", input.majorVersion, pathPrepend).pipe(
-      Effect.mapError((cause) =>
-        resetFailed(`failed to prepare PostgreSQL client: ${cause.message}`),
-      ),
-    );
-    yield* requireHostPostgresClient("psql", input.majorVersion, pathPrepend).pipe(
-      Effect.mapError((cause) =>
-        resetFailed(`failed to prepare PostgreSQL client: ${cause.message}`),
-      ),
-    );
-    const result = yield* streamHostCommand({
-      command: "bash",
-      args: ["-c", script, "--"],
-      env,
-      pathPrepend,
-      onStdout: () => Effect.void,
-      teeStderr: true,
-    }).pipe(
-      Effect.mapError((cause) =>
-        resetFailed(`failed to restore stack database baseline: ${cause.message}`),
-      ),
-    );
-    if (result.exitCode !== 0)
-      return yield* Effect.fail(
-        new ResetLocalDbFailedError({
-          message: `failed to restore stack database baseline: exit ${result.exitCode}${result.stderr.trim().length > 0 ? `: ${result.stderr.trim()}` : ""}`,
-        }),
-      );
-    return;
-  }
-  const docker = yield* DockerRun;
-  const source = {
-    ...input.source,
-    host: rewriteDumpHostForToolContainer(input.source.host, {
-      platform: input.platform,
-      usesHostNetwork: true,
-    }),
-  };
-  const target = {
-    ...input.target,
-    host: rewriteDumpHostForToolContainer(input.target.host, {
-      platform: input.platform,
-      usesHostNetwork: true,
-    }),
-  };
-  const dockerEnv = {
+  const clientRuntime =
+    bundledPostgresClientRuntime(input.runtime, input.platform, input.arch) ?? input.runtime;
+  const source =
+    clientRuntime.kind === "container"
+      ? {
+          ...input.source,
+          host: rewriteDumpHostForToolContainer(input.source.host, {
+            platform: input.platform,
+            usesHostNetwork: true,
+          }),
+        }
+      : input.source;
+  const target =
+    clientRuntime.kind === "container"
+      ? {
+          ...input.target,
+          host: rewriteDumpHostForToolContainer(input.target.host, {
+            platform: input.platform,
+            usesHostNetwork: true,
+          }),
+        }
+      : input.target;
+  const clientEnv = {
     ...toDumpEnv(source),
     TARGET_HOST: target.host,
     TARGET_PORT: String(target.port),
@@ -193,21 +152,18 @@ const restoreStackLogicalBaseline = Effect.fnUntraced(function* (input: {
     TARGET_PASSWORD: target.password,
     TARGET_DATABASE: target.database,
   };
-  const result = yield* docker
-    .runStream(
-      {
-        image: input.image,
-        cmd: ["bash", "-c", script, "--"],
-        env: dockerEnv,
-        binds: [],
-        workingDir: Option.none(),
-        securityOpt: [],
-        extraHosts: input.extraHosts,
-        network: { _tag: "host" },
-        projectEnvValues: input.projectEnvValues,
-      },
-      { onStdout: () => Effect.void, teeStderr: true },
-    )
+  const bundled = yield* BundledPostgresClient;
+  const result = yield* bundled
+    .run({
+      version: input.version,
+      runtime: clientRuntime,
+      argv: ["bash", "-c", script, "--"],
+      env: clientEnv,
+      network: "host",
+      extraHosts: input.extraHosts,
+      onStdout: () => Effect.void,
+      teeStderr: true,
+    })
     .pipe(
       Effect.mapError((cause) =>
         resetFailed(`failed to restore stack database baseline: ${cause.message}`),
@@ -281,6 +237,7 @@ const resetStackDatabase = Effect.fnUntraced(function* (input: {
   readonly image: string;
   readonly toml: DbTomlValues;
   readonly platform: string;
+  readonly arch?: string;
 }) {
   const dbConn = yield* DbConnection;
   const primary = yield* input.stack.services
@@ -459,12 +416,11 @@ const resetStackDatabase = Effect.fnUntraced(function* (input: {
               // cannot SET ROLE to supabase_admin, so restore through the managed superuser
               // while retaining the primary database password.
               target: { ...primaryConn, user: "supabase_admin", database },
-              image: input.image,
-              majorVersion: baselineLocalInputs.setup.majorVersion,
+              version: baselineDescriptor.config.version,
               runtime: shadow.runtime,
               platform: input.platform,
               extraHosts: input.localInputs.containerOpts.extraHosts,
-              projectEnvValues: input.localInputs.context.projectEnvValues,
+              arch: input.arch,
             });
           }
         }).pipe(Effect.onExit(() => restorePrimaryConfig));
@@ -555,6 +511,7 @@ export const resetLocalDatabase = Effect.fnUntraced(function* (
       image: resolvedImage,
       toml,
       platform: runtimeInfo.platform,
+      arch: runtimeInfo.arch,
     });
     const primary = yield* opened.value.stack.services
       .get({ name: "database" })

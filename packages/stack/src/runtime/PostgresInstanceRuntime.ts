@@ -41,10 +41,7 @@ import {
 import type { StackPaths } from "../state/Paths.ts";
 import type { RuntimeDriver, RuntimeWorkloadKey } from "./RuntimeDriver.ts";
 import type { RuntimeBindingPublication } from "./RuntimeBinding.ts";
-import type {
-  PreparedWorkloadArtifact,
-  RuntimeArtifactPreparer,
-} from "../preparation/RuntimeArtifacts.ts";
+import type { PreparedWorkloadArtifact } from "../preparation/RuntimeArtifacts.ts";
 
 const DATABASE_CAPABILITY = "database" as const;
 const DATABASE_BINDING = "sql:internal";
@@ -94,11 +91,18 @@ interface PostgresSnapshotMetadata {
   readonly majorVersion: number;
 }
 
+interface PostgresArtifactPreparer {
+  readonly prepare: (
+    runtime: StackRuntime,
+    workload: PlannedWorkload,
+  ) => Effect.Effect<PreparedWorkloadArtifact, StackError>;
+}
+
 export interface PostgresInstanceRuntimeOptions {
   readonly runtime: StackRuntime;
   readonly paths: StackPaths;
   readonly driver: RuntimeDriver;
-  readonly artifactPreparer: RuntimeArtifactPreparer;
+  readonly artifactPreparer: PostgresArtifactPreparer;
   readonly context: Context.Context<
     FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
   >;

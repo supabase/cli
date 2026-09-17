@@ -457,7 +457,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     }),
     Layer.succeed(CliArgs, { args: opts.args ?? [] }),
     mockRuntimeInfo(),
-    stackApiLayer.pipe(Layer.provideMerge(BunServices.layer)),
+    stackApiLayer.pipe(Layer.provide(BunServices.layer)),
   );
   return {
     layer: baseLayer,

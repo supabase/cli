@@ -413,7 +413,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     Layer.succeed(DebugFlag, false),
     Layer.succeed(CliArgs, { args: [] }),
     mockRuntimeInfo({ platform: opts.platform ?? "linux" }),
-    stackApiLayer.pipe(Layer.provideMerge(BunServices.layer)),
+    stackApiLayer.pipe(Layer.provide(BunServices.layer)),
   );
   // Merged last so its `FileSystem` overrides everything above (last-wins).
   const failWriteLayer =

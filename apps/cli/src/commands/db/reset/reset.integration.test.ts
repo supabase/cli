@@ -66,6 +66,7 @@ import { DbConfigResolver } from "../../../command-internal/db-config.service.ts
 import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
 import { DbConfigConnectTempRoleError } from "../../../command-internal/db-config.errors.ts";
 import { LocalDockerEngine } from "../../../command-internal/db-bootstrap/local-db-running.ts";
+import { BundledPostgresClient } from "../../../command-internal/bundled-postgres-client.ts";
 import { DbExecError } from "../../../command-internal/db-connection.errors.ts";
 import {
   DbConnection,
@@ -864,6 +865,8 @@ function setup(
     stackServiceRoleJwt?: string;
     stackCapabilityStates?: Partial<Record<(typeof CAPABILITY_NAMES)[number], CapabilityState>>;
     stackResumeFails?: boolean;
+    bundledExitCode?: number;
+    bundledStderr?: string;
     httpClient?: Layer.Layer<HttpClient.HttpClient>;
   },
 ) {
@@ -911,6 +914,12 @@ function setup(
         }))
       : undefined;
   const requests: Array<{ method: string; url: string; body: unknown }> = [];
+  const bundledRuns: Array<{
+    readonly version: string | undefined;
+    readonly argv: ReadonlyArray<string>;
+    readonly env: Readonly<Record<string, string>> | undefined;
+    readonly runtime: unknown;
+  }> = [];
   const storageRoutes = opts.storageRoutes;
   const httpLayer =
     storageRoutes === undefined
@@ -948,6 +957,18 @@ function setup(
     mockProcessControl().layer,
     opts.httpClient ?? httpLayer,
     dockerRunLayer.pipe(Layer.provide(child.layer), Layer.provide(mockProcessControl().layer)),
+    Layer.succeed(BundledPostgresClient, {
+      run: (options) =>
+        Effect.sync(() => {
+          bundledRuns.push({
+            version: options.version,
+            argv: options.argv,
+            env: options.env,
+            runtime: options.runtime,
+          });
+          return { exitCode: opts.bundledExitCode ?? 0, stderr: opts.bundledStderr ?? "" };
+        }),
+    }),
     Layer.succeed(NetworkIdFlag, Option.none()),
     // Default: a TTY whose remote-reset confirmation is answered through mockOutput's
     // `promptConfirmResponses` (the clack path); `stdinIsTty: false` + `pipedStdin` model a
@@ -993,6 +1014,7 @@ function setup(
     stackApi,
     catalogApplied: catalog?.applied ?? [],
     requests,
+    bundledRuns,
   };
 }
 
@@ -1166,12 +1188,15 @@ describe("db reset", () => {
     );
 
     it.live("resets the stack database without Compose volume recreate", () => {
-      const { layer, child, conn, stackApi, catalogApplied, out } = setup(tmp.current, {
-        toml: 'project_id = "test"\n',
-        args: ["db", "reset", "--local"],
-        isLocal: true,
-        stackBackend: true,
-      });
+      const { layer, child, conn, stackApi, catalogApplied, out, bundledRuns } = setup(
+        tmp.current,
+        {
+          toml: 'project_id = "test"\n',
+          args: ["db", "reset", "--local"],
+          isLocal: true,
+          stackBackend: true,
+        },
+      );
       return Effect.gen(function* () {
         yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         expect(stackApi.events.restarts).toBe(2);
@@ -1198,13 +1223,44 @@ describe("db reset", () => {
             "CREATE DATABASE _supabase WITH OWNER postgres",
           ]),
         );
-        expect(dbSetupJobCalls(child.spawned)).toHaveLength(2);
+        expect(bundledRuns).toHaveLength(2);
+        expect(bundledRuns.map((run) => run.version)).toEqual(["17.6.1", "17.6.1"]);
+        expect(bundledRuns[0]?.argv.slice(0, 2)).toEqual(["bash", "-c"]);
+        expect(bundledRuns[0]?.env).toMatchObject({
+          PGHOST: "127.0.0.1",
+          PGPORT: "54330",
+          PGDATABASE: "postgres",
+          TARGET_HOST: "127.0.0.1",
+          TARGET_PORT: "54329",
+          TARGET_DATABASE: "postgres",
+        });
         expect(child.spawned.some((s) => s.args[0] === "container" && s.args[1] === "rm")).toBe(
           false,
         );
         // No `[storage.buckets]`/`[storage.vector.buckets]` configured, so there is nothing to
         // skip even though this fixture's storage capability defaults to "stopped".
         expect(out.stderrText).not.toContain("skipped seeding storage buckets");
+      });
+    });
+
+    it.live("reports a bundled logical restore exit and resumes dependents", () => {
+      const { layer, stackApi } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        stackBackend: true,
+        bundledExitCode: 7,
+        bundledStderr: "psql failed",
+      });
+      return Effect.gen(function* () {
+        const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(JSON.stringify(exit.cause)).toContain(
+            "failed to restore stack database baseline: exit 7: psql failed",
+          );
+        }
+        expect(stackApi.events.started).toEqual([ServiceInstanceIdSchema.make("rest-primary")]);
       });
     });
 

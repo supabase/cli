@@ -779,7 +779,7 @@ export const makeProductionRuntime = (
             : Effect.fail(driverError(key, "Persisted runtime changed while owner was active")),
         ),
       );
-    const prepareOne = (runtime: StackRuntime, workload: RuntimeArtifactInput) => {
+    const prepareOne = (runtime: StackRuntime, workload: PlannedWorkload) => {
       return Effect.suspend(() => {
         const key = artifactKey(runtime, workload);
         const cached = artifacts.get(key);
@@ -837,7 +837,7 @@ export const makeProductionRuntime = (
             });
       });
     };
-    const prepare = (runtime: StackRuntime, workload: RuntimeArtifactInput) =>
+    const prepare = (runtime: StackRuntime, workload: PlannedWorkload) =>
       Effect.gen(function* () {
         const key = artifactKey(runtime, workload);
         const joined = yield* Effect.uninterruptible(
