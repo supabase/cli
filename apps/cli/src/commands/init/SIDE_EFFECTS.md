@@ -28,8 +28,8 @@
 
 ## Environment Variables
 
-| Variable                      | Purpose                                                                                                                                                              | Required? |
-| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| Variable                      | Purpose                                                                                                                                                          | Required? |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
 | `SUPABASE_EXPERIMENTAL_STACK` | when `1`, persist `[experimental] stack = true` and omit Docker-era default ports from `supabase/config.toml`; when `0` or unset, write the established template | no        |
 
 ## Exit Codes
