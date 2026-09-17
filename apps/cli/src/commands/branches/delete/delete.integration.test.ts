@@ -1,8 +1,5 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, FileSystem, Option, Path } from "effect";
 
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -113,9 +110,9 @@ describe("branches delete integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("BranchesDeleteUnexpectedStatusError");
-        expect(json).toContain("unexpected delete branch status 500");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("BranchesDeleteUnexpectedStatusError");
+        expect(causeText).toContain("unexpected delete branch status 500");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -176,21 +173,20 @@ describe("branches delete integration", () => {
         projectId: Option.none(),
       });
       const layer = buildTestRuntime({ out, api, cliSettings });
-      // Simulates the state left by `supabase link <branch>`: project-ref holds the branch's own
-      // ref, but linked-project.json still holds the real parent — `branches delete` must
-      // resolve the parent for the name lookup, not the branch ref sitting in project-ref.
-      mkdirSync(join(tempRoot.current, "supabase", ".temp"), { recursive: true });
-      writeFileSync(join(tempRoot.current, "supabase", ".temp", "project-ref"), BRANCH_OWN_REF);
-      writeFileSync(
-        join(tempRoot.current, "supabase", ".temp", "linked-project.json"),
-        JSON.stringify({
-          ref: PARENT_REF,
-          name: "Parent Project",
-          organization_id: "org_1",
-          organization_slug: "acme",
-        }),
-      );
       return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        // Simulates the state left by `supabase link <branch>`: project-ref holds the branch's own
+        // ref, but linked-project.json still holds the real parent — `branches delete` must
+        // resolve the parent for the name lookup, not the branch ref sitting in project-ref.
+        const tempDir = path.join(tempRoot.current, "supabase", ".temp");
+        yield* fs.makeDirectory(tempDir, { recursive: true });
+        yield* fs.writeFileString(path.join(tempDir, "project-ref"), BRANCH_OWN_REF);
+        yield* fs.writeFileString(
+          path.join(tempDir, "linked-project.json"),
+          `{"ref":"${PARENT_REF}","name":"Parent Project","organization_id":"org_1","organization_slug":"acme"}`,
+        );
+
         yield* branchesDelete({ ...baseFlags, name: Option.some("my-feature") });
         const lookup = api.requests.find(
           (r) => r.method === "GET" && r.url.includes("/branches/my-feature"),

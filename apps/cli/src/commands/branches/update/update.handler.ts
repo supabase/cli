@@ -71,14 +71,12 @@ export const branchesUpdate = Effect.fn("branches.update")(function* (flags: Bra
               Effect.gen(function* () {
                 const mapped = yield* Effect.flip(mapUpdateError(cause));
                 if (mapped._tag === "BranchesUpdateUnexpectedStatusError") {
-                  return yield* Effect.fail(
-                    new BranchesUpdateUnexpectedStatusError({
-                      status: mapped.status,
-                      body: mapped.body,
-                      message: mapped.message,
-                      upgradeSuggested,
-                    }),
-                  );
+                  return yield* new BranchesUpdateUnexpectedStatusError({
+                    status: mapped.status,
+                    body: mapped.body,
+                    message: mapped.message,
+                    upgradeSuggested,
+                  });
                 }
                 return yield* Effect.fail(mapped);
               }),

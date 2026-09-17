@@ -1,4 +1,4 @@
-import * as nodePath from "node:path";
+import { type Path } from "effect";
 
 import { splitBucketPrefix, storageIsDir } from "../../../command-internal/storage-url.ts";
 
@@ -7,7 +7,7 @@ import { splitBucketPrefix, storageIsDir } from "../../../command-internal/stora
 export interface UploadDstPathInput {
   /** The destination object path (e.g. `/private/dir/`). */
   readonly remotePath: string;
-  /** Path of the current file relative to `localPath`; `"."` when `localPath` is the file itself. */
+  /** POSIX-separated path of the current file relative to `localPath`; `"."` when `localPath` is the file itself. */
   readonly relPath: string;
   /** Base name of the current file, used in the single-file branch. */
   readonly fileName: string;
@@ -28,20 +28,19 @@ export interface UploadDstPathInput {
  *  - otherwise: nest under `baseName` when the destination dir exists (or the destination is a
  *    bare bucket), then append the relative path.
  *
- * Remote keys use POSIX join semantics; the relative segment's OS separators are normalized to `/`.
+ * Remote keys use POSIX join semantics, so `posixPath` must be a POSIX `Path` service.
  */
-export function resolveUploadDstPath(input: UploadDstPathInput): string {
+export function resolveUploadDstPath(posixPath: Path.Path, input: UploadDstPathInput): string {
   let dstPath = input.remotePath;
   if (input.relPath === ".") {
     const [, prefix] = splitBucketPrefix(dstPath);
     if (storageIsDir(prefix) || (input.dirExists && !input.fileExists)) {
-      dstPath = nodePath.posix.join(dstPath, input.fileName);
+      dstPath = posixPath.join(dstPath, input.fileName);
     }
     return dstPath;
   }
   if (input.baseName !== "." && (input.dirExists || input.noSlash.length === 0)) {
-    dstPath = nodePath.posix.join(dstPath, input.baseName);
+    dstPath = posixPath.join(dstPath, input.baseName);
   }
-  const relPosix = input.relPath.split(nodePath.sep).join(nodePath.posix.sep);
-  return nodePath.posix.join(dstPath, relPosix);
+  return posixPath.join(dstPath, input.relPath);
 }

@@ -1,6 +1,7 @@
 {
   "name": "@supabase/root",
   "private": true,
+  "type": "module",
   "scripts": {
     "prepare": "effect-tsgo patch --no-typescript --oxlint && husky",
     "build": "pnpm exec turbo run build",

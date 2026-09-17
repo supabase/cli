@@ -36,12 +36,10 @@ export const storageLs = Effect.fn("storage.ls")(function* (flags: StorageLsFlag
 
     // `--project-ref` only applies to the linked project; it never implies `--linked`.
     if (Option.isSome(flags.projectRef) && flags.local) {
-      return yield* Effect.fail(
-        new StorageMutuallyExclusiveFlagsError({
-          message:
-            "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
-        }),
-      );
+      return yield* new StorageMutuallyExclusiveFlagsError({
+        message:
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
+      });
     }
 
     // `--local` clears the ref; otherwise the linked path resolves it. No network access yet,

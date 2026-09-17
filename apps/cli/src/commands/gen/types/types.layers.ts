@@ -10,9 +10,8 @@ import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { dbConfigLayer } from "../../../command-internal/db-config.layer.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { dbConnectionLayer } from "../../../command-internal/db-connection.layer.ts";
+import { DbConnection } from "../../../command-internal/db-connection.service.ts";
 import { debugLoggerLayer } from "../../../command-internal/debug-logger.layer.ts";
-import { pgDeltaSslProbeLayer } from "../../../command-internal/pgdelta-ssl-probe.layer.ts";
-import { PgDeltaSslProbe } from "../../../command-internal/pgdelta-ssl-probe.service.ts";
 import { IdentityStitch, identityStitchLayer } from "../../../command-internal/identity-stitch.ts";
 import { httpClientLayer } from "../../../auth/http-debug.layer.ts";
 import { linkedProjectCacheLayer } from "../../../telemetry/linked-project-cache.layer.ts";
@@ -21,6 +20,8 @@ import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { CommandRuntime } from "../../../shared/runtime/command-runtime.service.ts";
+import { genTypesGeneratorLayer } from "./types.generator.layer.ts";
+import { GenTypesGenerator } from "./types.generator.service.ts";
 
 /**
  * Avoids `managementApiRuntimeLayer`, which eagerly builds the platform API client and
@@ -48,10 +49,12 @@ export const genTypesRuntimeLayer = (() => {
     Layer.provide(debugLoggerLayer),
     Layer.provide(identityStitchLayer),
   );
+  const generator = genTypesGeneratorLayer.pipe(Layer.provide(dbConnectionLayer));
 
   const built = Layer.mergeAll(
     dbConfig,
     dbConnectionLayer,
+    generator,
     cliSettings,
     platformApiFactory,
     projectRefLayer.pipe(Layer.provide(platformApiFactory), Layer.provide(cliSettings)),
@@ -61,7 +64,6 @@ export const genTypesRuntimeLayer = (() => {
       Layer.provide(httpClient),
       Layer.provide(identityStitchLayer),
     ),
-    pgDeltaSslProbeLayer,
     telemetryStateLayer,
     // Exposed at top level so `withCommandTelemetry` can read `stitchedDistinctId()` and
     // attribute the cli_command_executed event to the gotrue id.
@@ -80,7 +82,8 @@ type GenTypesServices =
   | CommandSettings
   | ProjectRefResolver
   | DbConfigResolver
-  | PgDeltaSslProbe
+  | DbConnection
+  | GenTypesGenerator
   | LinkedProjectCache
   | TelemetryState
   | IdentityStitch
