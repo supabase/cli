@@ -1,7 +1,7 @@
 import type { LoadedCliConfig } from "@supabase/config/effect";
 import { loadCliConfig } from "@supabase/config/internal";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { Effect, FileSystem, Option, Path, Stdio, Stream } from "effect";
+import { Effect, FileSystem, Option, Path, Predicate, Stdio, Stream } from "effect";
 import { getDomain } from "tldts";
 import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
@@ -25,6 +25,7 @@ import type { DbConfigFlags } from "../../../command-internal/db-config.types.ts
 import { poolerConfigFromConnectionString } from "../../../command-internal/db-config.parse.ts";
 import { readDbToml } from "../../../command-internal/db-config.toml-read.ts";
 import { getHostname } from "../../../command-internal/hostname.ts";
+import type { DbConnectError } from "../../../command-internal/db-connection.errors.ts";
 import type { PgConnInput } from "../../../command-internal/db-connection.service.ts";
 import { tempPaths } from "../../../command-internal/temp-paths.ts";
 import {
@@ -48,7 +49,7 @@ import {
   GenTypesUnexpectedStatusError,
   GenTypesWorkdirError,
 } from "./types.errors.ts";
-import { GenTypesGenerator } from "./types.generator.service.ts";
+import { type GenTypesGenerationError, GenTypesGenerator } from "./types.generator.service.ts";
 import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
 import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
 import {
@@ -302,6 +303,16 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       : { connectTimeoutSeconds: Math.max(1, Math.ceil(queryTimeoutMillis / 1000)) }),
   });
 
+  /**
+   * `toConnectError` classifies the IPv6-unreachable dial failure at the connection boundary and
+   * exposes it via `DbConnectError.ipv6Unreachable`, so a `DbConnectError` no longer carries the
+   * raw driver cause `isIPv6ConnectivityErrorCause` needs; fall back to it for any other error.
+   */
+  const classifyGenerateError = (error: DbConnectError | GenTypesGenerationError): boolean =>
+    Predicate.isTagged(error, "DbConnectError")
+      ? (error.ipv6Unreachable ?? false)
+      : isIPv6ConnectivityErrorCause(error);
+
   const runGenerate = (input: {
     readonly conn: PgConnInput;
     readonly isLocal: boolean;
@@ -340,7 +351,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
               directHost: input.poolerFallback.directHost,
               eligible: input.poolerFallback.eligible,
               resolveFallback: input.poolerFallback.resolve,
-              classifyError: isIPv6ConnectivityErrorCause,
+              classifyError: classifyGenerateError,
             });
 
       yield* output.raw(types);

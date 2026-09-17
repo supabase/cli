@@ -15,6 +15,7 @@ import {
   connectFailureMessage,
   connectSuggestion,
   isDialFailure,
+  isIPv6ConnectivityErrorCause,
   isSqlState,
 } from "./connect-errors.ts";
 import { DbConnectError, DbCopyError, DbExecError } from "./db-connection.errors.ts";
@@ -610,7 +611,11 @@ export const acquireProbedPool = <P extends ProbePool>(
   });
 
 /** Maps a driver connect failure to a credential-free `DbConnectError`. */
-const toConnectError = (cfg: PgConnInput, isLocal: boolean, error: unknown): DbConnectError => {
+export const toConnectError = (
+  cfg: PgConnInput,
+  isLocal: boolean,
+  error: unknown,
+): DbConnectError => {
   const suggestion =
     cfg.suggestionContext === undefined
       ? undefined
@@ -619,6 +624,7 @@ const toConnectError = (cfg: PgConnInput, isLocal: boolean, error: unknown): DbC
     message: `failed to connect to postgres: ${connectFailureMessage(cfg, error)}`,
     ...(suggestion === undefined ? {} : { suggestion }),
     ...(isDialFailure(error) ? { retryable: true } : {}),
+    ...(isIPv6ConnectivityErrorCause(error) ? { ipv6Unreachable: true } : {}),
   });
 };
 

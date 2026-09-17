@@ -38,6 +38,8 @@ import {
   mockTelemetryStateTracked,
 } from "../../../../tests/helpers/command-mocks.ts";
 import type { PgConnInput } from "../../../command-internal/db-connection.service.ts";
+import type { DbConnectError } from "../../../command-internal/db-connection.errors.ts";
+import { toConnectError } from "../../../command-internal/db-connection.sql-pg.layer.ts";
 import type { DbConfigError } from "../../../command-internal/db-config.service.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { DbConfigLoadError } from "../../../command-internal/db-config.errors.ts";
@@ -152,7 +154,7 @@ function mockGenTypesGenerator(
     readonly generate?: (
       input: GenTypesGenerateInput,
       callIndex: number,
-    ) => Effect.Effect<string, GenTypesGenerationError>;
+    ) => Effect.Effect<string, GenTypesGenerationError | DbConnectError>;
     readonly output?: string;
   } = {},
 ) {
@@ -176,7 +178,7 @@ function mockGenTypesGenerator(
 
 /** One `GenTypesGenerator.generate` outcome per attempt — models a failing then a retried call. */
 function sequentialGenerator(
-  steps: ReadonlyArray<() => Effect.Effect<string, GenTypesGenerationError>>,
+  steps: ReadonlyArray<() => Effect.Effect<string, GenTypesGenerationError | DbConnectError>>,
 ) {
   return mockGenTypesGenerator({
     generate: (_input, index) =>
@@ -184,10 +186,44 @@ function sequentialGenerator(
   });
 }
 
-function ipv6Failure(lang = "go") {
-  return new GenTypesGenerationError({
-    message: `failed to generate ${lang} types: could not translate host name to address: No address associated with hostname`,
-  });
+const DIAL_FAILURE_CONN: PgConnInput = {
+  host: "db.example.supabase.co",
+  port: 5432,
+  user: "postgres",
+  password: "pw",
+  database: "postgres",
+};
+
+/**
+ * A `DbConnectError` shaped exactly as `toConnectError` builds one from a real ENETUNREACH dial
+ * failure against an IPv6 literal — the connection layer no longer forwards the raw driver cause,
+ * so the pooler-fallback classifier must key off `DbConnectError.ipv6Unreachable` instead.
+ */
+function ipv6Failure(): DbConnectError {
+  return toConnectError(
+    DIAL_FAILURE_CONN,
+    false,
+    Object.assign(new Error("connect ENETUNREACH 2600:1f18::1:5432"), {
+      code: "ENETUNREACH",
+      address: "2600:1f18::1",
+      port: 5432,
+    }),
+  );
+}
+
+/**
+ * A `DbConnectError` for an ENOTFOUND (DNS miss) dial failure — carries no IPv6 literal in its
+ * rendered message, so only the structured `code` classification `toConnectError` performs at the
+ * connection boundary (not a message-text fallback) can mark it IPv6-pooler-retryable.
+ */
+function enotfoundFailure(): DbConnectError {
+  return toConnectError(
+    DIAL_FAILURE_CONN,
+    false,
+    Object.assign(new Error("getaddrinfo ENOTFOUND db.example.supabase.co"), {
+      code: "ENOTFOUND",
+    }),
+  );
 }
 
 function nonIpv6Failure(lang = "go") {
@@ -1658,6 +1694,50 @@ describe("gen types", () => {
       });
     });
 
+    it.live("retries through the IPv4 pooler on an ENOTFOUND direct-host dial failure", () => {
+      const poolerConn: PgConnInput = {
+        host: "127.0.0.1",
+        port: 5432,
+        user: `postgres.${VALID_REF}`,
+        password: "pooler-password",
+        database: "postgres",
+      };
+      const generator = sequentialGenerator([
+        () => Effect.fail(enotfoundFailure()),
+        () => Effect.succeed("type RetriedViaPooler struct {}"),
+      ]);
+      const { layer, out, dbConfig } = setup({
+        args: ["gen", "types", "--lang", "go", "--project-id", VALID_REF],
+        generator,
+        dbConfigResolve: () =>
+          Effect.succeed(
+            remoteResolvedConfig({
+              host: `db.${VALID_REF}.supabase.co`,
+              port: 5432,
+              user: "postgres",
+              password: "direct-password",
+              database: "postgres",
+            }),
+          ),
+        poolerFallback: Option.some(poolerConn),
+      });
+
+      return Effect.gen(function* () {
+        yield* genTypes(
+          defaultFlags({
+            projectId: Option.some(VALID_REF),
+            lang: "go",
+          }),
+        ).pipe(Effect.provide(layer));
+
+        expect(out.stdoutText).toContain("type RetriedViaPooler struct {}");
+        expect(out.stderrText).toContain("Retrying via the IPv4 connection pooler.");
+        expect(generator.calls).toHaveLength(2);
+        expect(generator.calls[1]?.conn.host).toBe("127.0.0.1");
+        expect(dbConfig.poolerFallbacks).toHaveLength(1);
+      });
+    });
+
     it.live("does not retry through the pooler when the failure is not IPv6-classified", () => {
       const generator = sequentialGenerator([() => Effect.fail(nonIpv6Failure())]);
       const { layer, dbConfig } = setup({
@@ -1798,7 +1878,7 @@ describe("gen types", () => {
 
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(String(exit.cause)).toContain("No address associated with hostname");
+          expect(String(exit.cause)).toContain("dial error (connect ENETUNREACH");
           expect(String(exit.cause)).not.toContain("pooler fallback failed");
         }
         expect(generator.calls).toHaveLength(1);
@@ -1808,7 +1888,7 @@ describe("gen types", () => {
     it.live("retries preview branch generation through the branch IPv4 pooler", () => {
       const poolerHost = "aws-0-us-east-1.pooler.supabase.com";
       const generator = sequentialGenerator([
-        () => Effect.fail(ipv6Failure("python")),
+        () => Effect.fail(ipv6Failure()),
         () => Effect.succeed("class RetriedViaBranchPooler(BaseModel):"),
       ]);
       const { layer, api } = setup({
@@ -1866,7 +1946,7 @@ describe("gen types", () => {
     });
 
     it.live("skips preview branch pooler fallback when the pooler URL fails validation", () => {
-      const generator = sequentialGenerator([() => Effect.fail(ipv6Failure("python"))]);
+      const generator = sequentialGenerator([() => Effect.fail(ipv6Failure())]);
       const { layer, api } = setup({
         args: ["gen", "types", "--lang", "python", "--project-id", VALID_REF],
         generator,
