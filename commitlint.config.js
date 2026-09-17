@@ -15,9 +15,11 @@ const PROJECT_SCOPES = [
 // scope emitted by the automated release-notes-proposal commit.
 const ESCAPE_SCOPES = ["ci", "deps", "repo", "misc", "release"];
 
-module.exports = {
+const config = {
   extends: ["@commitlint/config-conventional"],
   rules: {
     "scope-enum": [2, "always", [...PROJECT_SCOPES, ...ESCAPE_SCOPES]],
   },
 };
+
+export default config;
