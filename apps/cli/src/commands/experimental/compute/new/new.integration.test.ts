@@ -1,6 +1,7 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Option, FileSystem, Path, Predicate, Schema } from "effect";
+import * as SmolToml from "smol-toml";
 import { makeComputeProject, setupCompute } from "../../../../../tests/helpers/compute.ts";
 import {
   ComputeAlreadyConfiguredError,
@@ -328,22 +329,55 @@ describe("compute new", () => {
 
   // Written into config.toml rather than applied invisibly at push time, so the list is
   // visible and editable and `push` needs no built-in defaults of its own.
-  it.live.each(["node", "deno", "dockerfile"] as const)(
-    "writes no exclude key when the %s runtime declares no patterns",
-    (runtime) =>
+  describe("the chosen runtime's default exclude patterns", () => {
+    it.live.each(["node", "deno", "dockerfile"] as const)(
+      "records the %s runtime's own list",
+      (runtime) =>
+        Effect.gen(function* () {
+          const repo = yield* project();
+          const { layer } = setupCompute({ workdir: repo.dir });
+
+          return yield* Effect.gen(function* () {
+            yield* computeNew(flags({ runtime: Option.some(runtime) }));
+
+            expect(yield* repo.config).toContain(excludeLine(runtime).trimEnd());
+          }).pipe(Effect.provide(layer));
+        }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+
+    // The written entry has to be loadable, or the scaffold leaves behind a project whose
+    // config nothing can read — the patterns are quoted strings in a TOML array, which is
+    // exactly the shape a hand-rolled renderer gets wrong.
+    it.live("writes them as a list the config loader reads back", () =>
+      Effect.gen(function* () {
+        const repo = yield* project();
+        const { layer } = setupCompute({ workdir: repo.dir });
+
+        return yield* Effect.gen(function* () {
+          yield* computeNew(flags({ runtime: Option.some("node") }));
+
+          const parsed = SmolToml.parse(yield* repo.config) as {
+            compute?: { api?: { exclude?: unknown } };
+          };
+          expect(parsed.compute?.api?.exclude).toEqual([...COMPUTE_RUNTIME_EXCLUSIONS.node]);
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+
+    it.live("reports them alongside the compute's other dials", () =>
       Effect.gen(function* () {
         const repo = yield* project();
         const { layer, out } = setupCompute({ workdir: repo.dir });
 
         return yield* Effect.gen(function* () {
-          yield* computeNew(flags({ runtime: Option.some(runtime) }));
+          yield* computeNew(flags({ runtime: Option.some("node") }));
 
-          expect(COMPUTE_RUNTIME_EXCLUSIONS[runtime]).toEqual([]);
-          expect(yield* repo.config).not.toContain("exclude");
-          expect(out.stdoutText).not.toContain("Excluded");
+          expect(out.stdoutText).toContain("Excluded");
+          expect(out.stdoutText).toContain(".env");
         }).pipe(Effect.provide(layer));
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
-  );
+    );
+  });
 
   // The runtime and size prompts do have defaults to fall back on, so a piped
   // stdin must leave them unasked rather than consuming the pipe.

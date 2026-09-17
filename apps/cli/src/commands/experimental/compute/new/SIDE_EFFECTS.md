@@ -39,9 +39,11 @@ time — the list is the runtime's opinion about its own build, and a file the u
 edit is the only place that opinion can be argued with. `push` has no built-in defaults of its
 own, so editing or deleting the line is all it takes to change what ships.
 
-The key is omitted entirely for a runtime that declares no patterns, which is every runtime for
-now. When a list is non-empty it is reported as the `Excluded` row beside the compute's other
-dials, and carried on the machine-output payload as `exclude`.
+Every runtime excludes environment files and version-control metadata (`.env`, `.env.*`,
+`.git/`); beyond that the lists differ by how each runtime resolves dependencies. The key is
+omitted entirely for a runtime that declares no patterns. The chosen list is reported as the
+`Excluded` row beside the compute's other dials, and carried on the machine-output payload as
+`exclude`.
 
 Compute resources are recorded in `config.toml` only. The project config loader prefers
 `supabase/config.json` when one exists, but the entry writer is a TOML text

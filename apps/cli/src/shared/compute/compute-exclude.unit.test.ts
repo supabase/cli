@@ -183,4 +183,24 @@ describe("COMPUTE_RUNTIME_EXCLUSIONS", () => {
       compileComputeExclude({ name: "api", patterns: COMPUTE_RUNTIME_EXCLUSIONS[runtime] }),
     ),
   );
+
+  it.effect("keeps environment files out of every runtime's build context", () =>
+    Effect.sync(() => {
+      for (const runtime of COMPUTE_RUNTIMES) {
+        const matcher = compile(COMPUTE_RUNTIME_EXCLUSIONS[runtime]);
+
+        expect(matcher.excludes(".env", false)).toBe(true);
+        expect(matcher.excludes(".env.production", false)).toBe(true);
+      }
+    }),
+  );
+
+  it.effect("drops the node runtime's installed tree but keeps its resolution root", () =>
+    Effect.sync(() => {
+      const matcher = compile(COMPUTE_RUNTIME_EXCLUSIONS.node);
+
+      expect(matcher.excludes("node_modules", true)).toBe(false);
+      expect(matcher.excludes("node_modules/left-pad", true)).toBe(true);
+    }),
+  );
 });
