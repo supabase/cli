@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, FileSystem, Layer, Option, Path, Schema } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 import { badArgument } from "effect/PlatformError";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 
@@ -17,8 +17,6 @@ import {
 import { unlink } from "./unlink.handler.ts";
 
 const tempRoot = useTempWorkdir("supabase-unlink-int-");
-
-const jsonText = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const noopHttpClient = Layer.succeed(
   HttpClient.HttpClient,
@@ -129,7 +127,7 @@ describe("unlink integration", () => {
       const exit = yield* Effect.exit(unlink());
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = yield* jsonText(exit.cause);
+        const json = Cause.pretty(exit.cause);
         expect(json).toContain("ProjectRefNotLinkedError");
         expect(json).toContain("Cannot find project ref");
       }
@@ -143,7 +141,7 @@ describe("unlink integration", () => {
       const exit = yield* Effect.exit(unlink());
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(yield* jsonText(exit.cause)).toContain("CredentialDeleteError");
+        expect(Cause.pretty(exit.cause)).toContain("CredentialDeleteError");
       }
       const stillExists = yield* tempDirExists(workdir);
       expect(stillExists).toBe(false);
@@ -157,7 +155,7 @@ describe("unlink integration", () => {
       const exit = yield* Effect.exit(unlink());
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = yield* jsonText(exit.cause);
+        const json = Cause.pretty(exit.cause);
         expect(json).toContain("UnlinkTempRemovalError");
         expect(json).toContain("failed to remove temp directory");
       }
@@ -171,7 +169,7 @@ describe("unlink integration", () => {
       const exit = yield* Effect.exit(unlink());
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = yield* jsonText(exit.cause);
+        const json = Cause.pretty(exit.cause);
         expect(json).toContain("failed to remove temp directory");
         expect(json).toContain("failed to delete project credential");
       }
