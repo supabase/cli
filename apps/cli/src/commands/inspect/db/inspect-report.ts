@@ -13,7 +13,6 @@ import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import {
   InspectMutuallyExclusiveFlagsError,
   type InspectConnectionFlags,
-  type InspectQuerySpec,
 } from "./inspect-query.ts";
 
 /**
@@ -40,7 +39,7 @@ export interface InspectReportSpec {
  * extracting the shared prologue is the follow-up once the report path has
  * proven itself (design doc, Phase 2).
  */
-export const runInspectReport = Effect.fnUntraced(function* (
+const runInspectReport = Effect.fnUntraced(function* (
   spec: InspectReportSpec,
   flags: InspectConnectionFlags,
   dnsResolver: "native" | "https",
@@ -113,29 +112,4 @@ export function makeInspectDbReportHandler(spec: InspectReportSpec, traceName: s
     const telemetryState = yield* TelemetryState;
     yield* runInspectReport(spec, flags, dnsResolver).pipe(Effect.ensuring(telemetryState.flush));
   });
-}
-
-/**
- * Lifts a table spec into the report model: one table block, no severity.
- * In text mode the output is byte-identical (same headers, same projected
- * cells, same renderer), which is what makes flipping the existing commands a
- * mechanical, zero-behavior-change migration.
- */
-export function reportSpecFromTableSpec(spec: InspectQuerySpec): InspectReportSpec {
-  return {
-    name: spec.name,
-    sql: spec.sql,
-    params: spec.params,
-    report: (rows, cfg) => ({
-      command: spec.name,
-      severity: "info",
-      blocks: [
-        {
-          kind: "table",
-          columns: spec.headers.map((title) => ({ title })),
-          rows: rows.map((row) => ({ cells: spec.project(row, cfg) })),
-        },
-      ],
-    }),
-  };
 }

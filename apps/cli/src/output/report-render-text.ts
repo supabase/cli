@@ -80,7 +80,7 @@ function renderSteps(block: ReportStepsBlock): string {
 }
 
 /** Greedy word wrap; preserves words longer than the width intact. */
-export function wrap(text: string, width: number): string[] {
+function wrap(text: string, width: number): string[] {
   const out: string[] = [];
   for (const paragraph of text.split("\n")) {
     let line = "";

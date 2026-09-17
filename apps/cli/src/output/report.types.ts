@@ -12,7 +12,7 @@
 export type ReportSeverity = "info" | "ok" | "warn" | "critical";
 
 /** Aligned label/value pairs, e.g. the environment header of a diagnostic. */
-export interface ReportKeyValueBlock {
+interface ReportKeyValueBlock {
   readonly kind: "keyValue";
   readonly entries: ReadonlyArray<{ readonly key: string; readonly value: string }>;
 }
@@ -28,14 +28,14 @@ export interface ReportTableBlock {
 }
 
 /** A short highlighted message: the empty state, a warning, a success line. */
-export interface ReportCalloutBlock {
+interface ReportCalloutBlock {
   readonly kind: "callout";
   readonly severity: ReportSeverity;
   readonly text: string;
 }
 
 /** Copy-pasteable SQL, rendered indented under a title. */
-export interface ReportSqlBlock {
+interface ReportSqlBlock {
   readonly kind: "sql";
   readonly title: string;
   readonly statements: ReadonlyArray<string>;
