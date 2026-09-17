@@ -5,12 +5,12 @@ import { Cause, Effect, Exit, FileSystem, Path } from "effect";
 import { expect } from "vitest";
 
 import {
-  removeStorageLiveObject,
   requireLiveSuccess,
   storageLiveFlags,
   test,
   throwWithCleanup,
 } from "../../../../tests/helpers/live.ts";
+import { removeObject } from "../../../../tests/helpers/storage-live.ts";
 
 test("copies a local file to the remote bucket", ({ cli, cliEffect, project, workspace }) =>
   Effect.runPromise(
@@ -33,9 +33,7 @@ test("copies a local file to the remote bucket", ({ cli, cliEffect, project, wor
       });
 
       const targetExit = yield* Effect.exit(target);
-      const cleanupExit = yield* Effect.exit(
-        Effect.promise(() => removeStorageLiveObject(cli, remote)),
-      );
+      const cleanupExit = yield* Effect.exit(removeObject(cli, remote));
       return {
         targetError: Exit.isFailure(targetExit) ? Cause.squash(targetExit.cause) : undefined,
         cleanupErrors: Exit.isFailure(cleanupExit) ? [Cause.squash(cleanupExit.cause)] : [],

@@ -5,12 +5,12 @@ import { Cause, Effect, Exit, FileSystem, Path } from "effect";
 import { expect } from "vitest";
 
 import {
-  removeStorageLiveObject,
   requireLiveSuccess,
   storageLiveFlags,
   test,
   throwWithCleanup,
 } from "../../../../tests/helpers/live.ts";
+import { removeObject } from "../../../../tests/helpers/storage-live.ts";
 
 test("moves an uploaded object to a new path", ({ cli, cliEffect, project, workspace }) =>
   Effect.runPromise(
@@ -49,9 +49,7 @@ test("moves an uploaded object to a new path", ({ cli, cliEffect, project, works
       const targetExit = yield* Effect.exit(target);
       const cleanupErrors: Array<unknown> = [];
       for (const remote of [destination, source]) {
-        const cleanupExit = yield* Effect.exit(
-          Effect.promise(() => removeStorageLiveObject(cli, remote)),
-        );
+        const cleanupExit = yield* Effect.exit(removeObject(cli, remote));
         if (Exit.isFailure(cleanupExit)) {
           cleanupErrors.push(Cause.squash(cleanupExit.cause));
         }
