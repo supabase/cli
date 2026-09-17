@@ -75,8 +75,8 @@ const startRuntimeLayer = Layer.mergeAll(
   dbConnectionLayer,
   httpClient,
   platformApiFactory,
-  // `stdinLayer` satisfies `promptYesNo`'s `Stdin` requirement (seed-buckets runs with
-  // `yes: true`), so `start` never reads a piped line at runtime — type requirements only.
+  // `stdinLayer` satisfies `promptYesNo`'s `Stdin` requirement (seed-buckets runs
+  // `promptless`), so `start` never reads a piped line at runtime — type requirements only.
   stdinLayer,
 );
 
