@@ -143,6 +143,11 @@ describe("packageComputeDirectory", () => {
         expect(Option.isSome(failure) ? failure.value : undefined).toBeInstanceOf(
           ComputeSourceEscapingLinkError,
         );
+        // Naming the escape hatch is the whole value of the refusal: excluding the link is
+        // cheaper than vendoring whatever it points at, and is the recovery `exclude` added.
+        expect(Option.isSome(failure) ? failure.value : undefined).toMatchObject({
+          suggestion: expect.stringContaining("`exclude`"),
+        });
       }),
     ),
   );

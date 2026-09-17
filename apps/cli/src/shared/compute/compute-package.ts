@@ -136,7 +136,7 @@ const collectEntries = (
           return yield* new ComputeSourceEscapingLinkError({
             detail: `${relativePath} links to ${linkTarget.value}, which is outside the compute source and cannot be packaged with it.`,
             suggestion:
-              "Install the compute's dependencies inside its own directory, or point `source` at a directory that contains everything the build needs.",
+              "Add it to the compute's `exclude` patterns, or point `source` at a directory that contains everything the build needs.",
           });
         }
         entries.push({
