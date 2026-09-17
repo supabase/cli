@@ -1,7 +1,7 @@
-import { legacyMakeInspectDbReportHandler } from "../legacy-inspect-report.ts";
-import { legacyCollationDriftSpec } from "./collation-drift.query.ts";
+import { makeInspectDbReportHandler } from "../inspect-report.ts";
+import { collationDriftSpec } from "./collation-drift.query.ts";
 
-export const legacyInspectDbCollationDrift = legacyMakeInspectDbReportHandler(
-  legacyCollationDriftSpec,
-  "legacy.inspect.db.collation-drift",
+export const inspectDbCollationDrift = makeInspectDbReportHandler(
+  collationDriftSpec,
+  "inspect.db.collation-drift",
 );

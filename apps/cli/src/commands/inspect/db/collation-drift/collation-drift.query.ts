@@ -1,4 +1,4 @@
-import type { LegacyInspectReportSpec } from "../legacy-inspect-report.ts";
+import type { InspectReportSpec } from "../inspect-report.ts";
 import type { Report, ReportSeverity } from "../../../../output/report.types.ts";
 
 const SQL = `-- Indexes whose sort order may no longer match the current collation library.
@@ -309,7 +309,7 @@ export function buildCollationDriftReport(rawRows: ReadonlyArray<Record<string, 
  * schemas (`auth`, `storage`, …): those hold user data, and a mis-ordered
  * index on `auth.users` is exactly as damaging as one in `public`.
  */
-export const legacyCollationDriftSpec: LegacyInspectReportSpec = {
+export const collationDriftSpec: InspectReportSpec = {
   name: "collation-drift",
   sql: SQL,
   params: () => [],

@@ -1,14 +1,11 @@
 import { Command } from "effect/unstable/cli";
-import { legacyInspectDbCollationDrift } from "./collation-drift.handler.ts";
-import {
-  LEGACY_INSPECT_DB_FLAGS,
-  legacyInspectDbCommandHandler,
-} from "../legacy-inspect-db-command.ts";
-import { legacyInspectDbRuntimeLayer } from "../db.layers.ts";
+import { inspectDbCollationDrift } from "./collation-drift.handler.ts";
+import { INSPECT_DB_FLAGS, inspectDbCommandHandler } from "../inspect-db-command.ts";
+import { inspectDbRuntimeLayer } from "../db.layers.ts";
 
-export const legacyInspectDbCollationDriftCommand = Command.make(
+export const inspectDbCollationDriftCommand = Command.make(
   "collation-drift",
-  LEGACY_INSPECT_DB_FLAGS,
+  INSPECT_DB_FLAGS,
 ).pipe(
   Command.withDescription(
     `Show indexes affected by collation version drift, with the fix workflow.
@@ -24,6 +21,6 @@ The output lists the affected indexes and the exact statements to verify
 order they must be run. This command itself is read-only.`,
   ),
   Command.withShortDescription("Show indexes affected by collation version drift"),
-  Command.withHandler(legacyInspectDbCommandHandler(legacyInspectDbCollationDrift)),
-  Command.provide(legacyInspectDbRuntimeLayer("collation-drift")),
+  Command.withHandler(inspectDbCommandHandler(inspectDbCollationDrift)),
+  Command.provide(inspectDbRuntimeLayer("collation-drift")),
 );

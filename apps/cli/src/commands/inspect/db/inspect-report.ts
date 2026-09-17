@@ -1,20 +1,20 @@
 import { Effect, Option } from "effect";
 
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
-import { LegacyDnsResolverFlag } from "../../../shared/legacy/global-flags.ts";
+import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { renderReportText } from "../../../output/report-render-text.ts";
 import type { Report } from "../../../output/report.types.ts";
-import { LegacyDbConfigResolver } from "../../../command-internal/legacy-db-config.service.ts";
-import type { LegacyResolvedDbConfig } from "../../../command-internal/legacy-db-config.types.ts";
-import { LegacyDbConnection } from "../../../command-internal/legacy-db-connection.service.ts";
-import { resolveLegacyDbTargetFlags } from "../../../command-internal/legacy-db-target-flags.ts";
-import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
+import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
+import type { ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
+import { DbConnection } from "../../../command-internal/db-connection.service.ts";
+import { resolveDbTargetFlags } from "../../../command-internal/db-target-flags.ts";
+import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import {
-  LegacyInspectMutuallyExclusiveFlagsError,
-  type LegacyInspectConnectionFlags,
-  type LegacyInspectQuerySpec,
-} from "./legacy-inspect-query.ts";
+  InspectMutuallyExclusiveFlagsError,
+  type InspectConnectionFlags,
+  type InspectQuerySpec,
+} from "./inspect-query.ts";
 
 /**
  * A report-producing `inspect db` subcommand: the SQL it runs, the query
@@ -23,14 +23,11 @@ import {
  * `report` is pure — rows in, document out — so a command's entire output
  * logic is unit-testable without a database.
  */
-export interface LegacyInspectReportSpec {
+export interface InspectReportSpec {
   readonly name: string;
   readonly sql: string;
-  readonly params: (cfg: LegacyResolvedDbConfig) => ReadonlyArray<unknown>;
-  readonly report: (
-    rows: ReadonlyArray<Record<string, unknown>>,
-    cfg: LegacyResolvedDbConfig,
-  ) => Report;
+  readonly params: (cfg: ResolvedDbConfig) => ReadonlyArray<unknown>;
+  readonly report: (rows: ReadonlyArray<Record<string, unknown>>, cfg: ResolvedDbConfig) => Report;
 }
 
 /**
@@ -38,25 +35,25 @@ export interface LegacyInspectReportSpec {
  *
  * The connection-selection half (flag exclusivity keyed off raw argv, the
  * `--project-ref` guard, the stderr connect line) intentionally mirrors
- * `legacyRunInspectQuery` line for line. The two are kept separate for now so
+ * `runInspectQuery` line for line. The two are kept separate for now so
  * this change cannot affect the 25 shipped table commands; unifying them by
  * extracting the shared prologue is the follow-up once the report path has
  * proven itself (design doc, Phase 2).
  */
-export const legacyRunInspectReport = Effect.fnUntraced(function* (
-  spec: LegacyInspectReportSpec,
-  flags: LegacyInspectConnectionFlags,
+export const runInspectReport = Effect.fnUntraced(function* (
+  spec: InspectReportSpec,
+  flags: InspectConnectionFlags,
   dnsResolver: "native" | "https",
 ) {
   const output = yield* Output;
-  const resolver = yield* LegacyDbConfigResolver;
-  const dbConn = yield* LegacyDbConnection;
+  const resolver = yield* DbConfigResolver;
+  const dbConn = yield* DbConnection;
   const cliArgs = yield* CliArgs;
 
-  const target = resolveLegacyDbTargetFlags(cliArgs.args);
+  const target = resolveDbTargetFlags(cliArgs.args);
   if (target.setFlags.length > 1) {
     return yield* Effect.fail(
-      new LegacyInspectMutuallyExclusiveFlagsError({
+      new InspectMutuallyExclusiveFlagsError({
         message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
       }),
     );
@@ -66,7 +63,7 @@ export const legacyRunInspectReport = Effect.fnUntraced(function* (
 
   if (Option.isSome(flags.projectRef) && connType !== "linked") {
     return yield* Effect.fail(
-      new LegacyInspectMutuallyExclusiveFlagsError({
+      new InspectMutuallyExclusiveFlagsError({
         message:
           "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
       }),
@@ -107,16 +104,14 @@ export const legacyRunInspectReport = Effect.fnUntraced(function* (
 
 /**
  * Builds an `inspect db <name>` handler from a report spec. Trace-span and
- * telemetry-flush behavior matches `legacyMakeInspectDbHandler` — callers must
+ * telemetry-flush behavior matches `makeInspectDbHandler` — callers must
  * NOT add a second `Effect.ensuring(flush)` at the command level.
  */
-export function legacyMakeInspectDbReportHandler(spec: LegacyInspectReportSpec, traceName: string) {
-  return Effect.fn(traceName)(function* (flags: LegacyInspectConnectionFlags) {
-    const dnsResolver = yield* LegacyDnsResolverFlag;
-    const telemetryState = yield* LegacyTelemetryState;
-    yield* legacyRunInspectReport(spec, flags, dnsResolver).pipe(
-      Effect.ensuring(telemetryState.flush),
-    );
+export function makeInspectDbReportHandler(spec: InspectReportSpec, traceName: string) {
+  return Effect.fn(traceName)(function* (flags: InspectConnectionFlags) {
+    const dnsResolver = yield* DnsResolverFlag;
+    const telemetryState = yield* TelemetryState;
+    yield* runInspectReport(spec, flags, dnsResolver).pipe(Effect.ensuring(telemetryState.flush));
   });
 }
 
@@ -126,7 +121,7 @@ export function legacyMakeInspectDbReportHandler(spec: LegacyInspectReportSpec, 
  * cells, same renderer), which is what makes flipping the existing commands a
  * mechanical, zero-behavior-change migration.
  */
-export function reportSpecFromTableSpec(spec: LegacyInspectQuerySpec): LegacyInspectReportSpec {
+export function reportSpecFromTableSpec(spec: InspectQuerySpec): InspectReportSpec {
   return {
     name: spec.name,
     sql: spec.sql,

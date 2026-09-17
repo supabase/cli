@@ -1,4 +1,4 @@
-import { renderGlamourTable } from "./legacy-glamour-table.ts";
+import { renderGlamourTable } from "./glamour-table.ts";
 import type { Report, ReportBlock, ReportSeverity, ReportStepsBlock } from "./report.types.ts";
 
 /**
