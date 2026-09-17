@@ -35,6 +35,7 @@
     "!apps/cli/src/commands/storage/**",
     "!apps/cli/src/commands/telemetry/**",
     "!apps/cli/src/commands/test/**",
+    "!apps/cli/src/commands/unlink/**",
     "!apps/cli/src/commands/vanity-subdomains/**",
     "!apps/cli/src/commands/whoami/**",
     "!apps/cli/src/shared/compute/**",
