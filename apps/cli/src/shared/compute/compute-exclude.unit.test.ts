@@ -3,6 +3,7 @@ import { Effect } from "effect";
 import { describe, expect } from "vitest";
 import { compileComputeExclude, NO_COMPUTE_EXCLUSIONS } from "./compute-exclude.ts";
 import { InvalidComputeExcludeError } from "./compute.errors.ts";
+import { COMPUTE_RUNTIME_EXCLUSIONS, COMPUTE_RUNTIMES } from "./compute-runtimes.ts";
 
 const compile = (patterns: ReadonlyArray<string>) =>
   Effect.runSync(compileComputeExclude({ name: "api", patterns }));
@@ -173,5 +174,13 @@ describe("compileComputeExclude", () => {
       expect(error.detail).toContain('"!keep"');
       expect(error.suggestion).toContain("[compute.worker] exclude");
     }),
+  );
+});
+
+describe("COMPUTE_RUNTIME_EXCLUSIONS", () => {
+  it.effect("records a compilable list for every offered runtime", () =>
+    Effect.forEach(COMPUTE_RUNTIMES, (runtime) =>
+      compileComputeExclude({ name: "api", patterns: COMPUTE_RUNTIME_EXCLUSIONS[runtime] }),
+    ),
   );
 });

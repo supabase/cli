@@ -42,6 +42,26 @@ export const COMPUTE_RUNTIME_DESCRIPTIONS: Record<ComputeRuntime, string> = {
 };
 
 /**
+ * The `[compute.<name>] exclude` patterns `new` records for each runtime, read the way
+ * `.gitignore` reads them (see `./compute-exclude.ts`).
+ *
+ * Recorded into `config.toml` at scaffold time rather than applied silently at `push` time, so
+ * the list is visible, editable, and the same on every machine — a built-in default nobody
+ * could see would be a second, invisible source of truth for what ships. `push` therefore
+ * excludes nothing a project did not ask for, including for a compute scaffolded by an older
+ * CLI.
+ *
+ * A runtime whose list is empty has no `exclude` key written for it at all, which is every
+ * runtime for now: what each one should leave out depends on how it resolves dependencies, and
+ * is decided per runtime rather than here.
+ */
+export const COMPUTE_RUNTIME_EXCLUSIONS: Record<ComputeRuntime, ReadonlyArray<string>> = {
+  dockerfile: [],
+  node: [],
+  deno: [],
+};
+
+/**
  * The only instance sizes offered, denominated by memory. There is no resize — a different size
  * means a new compute, not a `push` flag.
  */

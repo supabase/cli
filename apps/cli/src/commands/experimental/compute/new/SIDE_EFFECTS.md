@@ -24,12 +24,24 @@ and the command handler does not run. See the [Compute command guide](../../../.
 
 ## Files Written
 
-| Path                                            | Format | When                                                                                                                                                                                                                          |
-| ----------------------------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml`                | TOML   | on success — appends `[compute.<name>]` with `runtime`, `size` and `exposure` always, `instances` only when it differs from the default of 1, and `source` only when `--source` was passed, preserving surrounding formatting |
-| `<workdir>/supabase/compute/<name>/*`           | varies | on success, unless `--source` names another directory                                                                                                                                                                         |
-| `<workdir>/<source>/*`                          | varies | on success, when `--source` is given                                                                                                                                                                                          |
-| `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON   | whenever the handler runs — flushed on success and on failure                                                                                                                                                                 |
+| Path                                            | Format | When                                                                                                                                                                                                                                                                                           |
+| ----------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml`                | TOML   | on success — appends `[compute.<name>]` with `runtime`, `size` and `exposure` always, `exclude` whenever the chosen runtime declares default patterns, `instances` only when it differs from the default of 1, and `source` only when `--source` was passed, preserving surrounding formatting |
+| `<workdir>/supabase/compute/<name>/*`           | varies | on success, unless `--source` names another directory                                                                                                                                                                                                                                          |
+| `<workdir>/<source>/*`                          | varies | on success, when `--source` is given                                                                                                                                                                                                                                                           |
+| `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON   | whenever the handler runs — flushed on success and on failure                                                                                                                                                                                                                                  |
+
+## Default `exclude` patterns
+
+Each runtime declares the `[compute.<name>] exclude` patterns a scaffold starts with, and they
+are written into `config.toml` as a single-line TOML array rather than applied silently at push
+time — the list is the runtime's opinion about its own build, and a file the user can read and
+edit is the only place that opinion can be argued with. `push` has no built-in defaults of its
+own, so editing or deleting the line is all it takes to change what ships.
+
+The key is omitted entirely for a runtime that declares no patterns, which is every runtime for
+now. When a list is non-empty it is reported as the `Excluded` row beside the compute's other
+dials, and carried on the machine-output payload as `exclude`.
 
 Compute resources are recorded in `config.toml` only. The project config loader prefers
 `supabase/config.json` when one exists, but the entry writer is a TOML text

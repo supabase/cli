@@ -5,7 +5,12 @@ import {
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../telemetry/error-actionability.ts";
-import { appendTomlSection, isRenderableTomlNumber, tomlKey } from "./toml-section.ts";
+import {
+  appendTomlSection,
+  isRenderableTomlNumber,
+  tomlKey,
+  type TomlSectionValue,
+} from "./toml-section.ts";
 
 /**
  * The `[compute]` section of `supabase/config.toml`, read through the decoded
@@ -155,8 +160,8 @@ export interface ComputeEntryWrite {
 export const planComputeEntry = Effect.fnUntraced(function* (options: {
   readonly configPath: string;
   readonly name: string;
-  /** Rendered as written: strings are quoted, numbers are not. */
-  readonly patch: Readonly<Record<string, string | number>>;
+  /** Rendered as written: strings are quoted, numbers are not, lists become TOML arrays. */
+  readonly patch: Readonly<Record<string, TomlSectionValue>>;
   /** The already-parsed config — the authority on whether an entry exists. */
   readonly existingCompute: Readonly<Record<string, ComputeEntry>>;
 }) {

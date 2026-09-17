@@ -73,6 +73,24 @@ size = "2gb"
     );
   });
 
+  test("writes a list of patterns as a single-line TOML array", () => {
+    expect(appendTomlSection("", "compute.api", { exclude: [".env", "node_modules/*"] })).toBe(
+      '[compute.api]\nexclude = [".env", "node_modules/*"]\n',
+    );
+  });
+
+  test("escapes a quote inside a list entry", () => {
+    expect(appendTomlSection("", "compute.api", { exclude: ['say"what'] })).toBe(
+      '[compute.api]\nexclude = ["say\\"what"]\n',
+    );
+  });
+
+  test("writes an empty list rather than dropping the key", () => {
+    expect(appendTomlSection("", "compute.api", { exclude: [] })).toBe(
+      "[compute.api]\nexclude = []\n",
+    );
+  });
+
   test("writes a header with no keys when there is nothing to set", () => {
     expect(appendTomlSection("", "compute.api", {})).toBe("[compute.api]\n");
   });
