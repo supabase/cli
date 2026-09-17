@@ -137,7 +137,11 @@ const squashMigrations = Effect.fnUntraced(function* (
           const networkId = Option.getOrUndefined(networkIdFlag);
           const dumpUsesHostNetwork = toolContainerUsesHostNetwork(networkId);
           const dumpRuntime =
-            bundledPostgresClientRuntime(handle.runtime, runtimeInfo.platform) ?? handle.runtime;
+            bundledPostgresClientRuntime(
+              handle.runtime,
+              runtimeInfo.platform,
+              runtimeInfo.arch,
+            ) ?? handle.runtime;
           const release = yield* resolveEphemeralPostgresRelease(handle.ephemeral.version).pipe(
             Effect.orElseSucceed(() => undefined),
           );

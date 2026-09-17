@@ -40,4 +40,11 @@ describe("bundledPostgresClientRuntime", () => {
       engine: "docker",
     });
   });
+
+  it("forces a container client when the platform has no native postgres artifact", () => {
+    expect(bundledPostgresClientRuntime({ kind: "native" }, "darwin", "x64")).toEqual({
+      kind: "container",
+      engine: "docker",
+    });
+  });
 });

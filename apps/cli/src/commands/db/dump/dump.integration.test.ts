@@ -257,11 +257,11 @@ const containerEngineResolver = (installed: boolean) =>
     resolve: () => Effect.die("unused"),
   });
 
-const runtimeInfoLayer = (platform: NodeJS.Platform) =>
+const runtimeInfoLayer = (platform: NodeJS.Platform, arch?: NodeJS.Architecture) =>
   Layer.succeed(RuntimeInfo, {
     cwd: "/work/project",
     platform,
-    arch: "x64",
+    arch: arch ?? (platform === "darwin" ? "arm64" : "x64"),
     homeDir: "/home/user",
     execPath: "/usr/bin/supabase",
     pid: 1234,
@@ -285,6 +285,7 @@ interface SetupOpts {
   ref?: string;
   linkedFails?: boolean;
   platform?: NodeJS.Platform;
+  arch?: NodeJS.Architecture;
   stdoutIsPipe?: boolean;
   env?: Readonly<Record<string, string>>;
   dockerInstalled?: boolean;
@@ -322,7 +323,7 @@ function setup(opts: SetupOpts = {}) {
     }),
     telemetry.layer,
     cache.layer,
-    runtimeInfoLayer(opts.platform ?? "linux"),
+    runtimeInfoLayer(opts.platform ?? "linux", opts.arch),
     mockTty({ stdoutIsPipe: opts.stdoutIsPipe }),
     processEnvLayer(opts.env ?? {}),
     Layer.succeed(
@@ -1033,7 +1034,7 @@ describe("db dump integration", () => {
   const unusedDumpEffect = Effect.die("unused");
   const dumpStackApi = (
     runtime: { kind: "native" } | { kind: "container"; engine: "docker" },
-    databaseVersion = "17.6.1",
+    databaseVersion = "17.6.1.168",
   ) => {
     const stack: EffectStack = {
       id: DUMP_STACK_ID,
@@ -1161,6 +1162,29 @@ describe("db dump integration", () => {
     );
   });
 
+  it.live(
+    "dump --db-url native keeps the resolved host even when isLocal is true",
+    () => {
+      const { layer, docker, bundled } = setup({
+        conn: { ...LOCAL_CONN, host: "db.internal" },
+        isLocal: true,
+        stdout: "-- schema\n",
+        dockerInstalled: false,
+        platform: "darwin",
+      });
+      return Effect.gen(function* () {
+        yield* dbDump(
+          flags({
+            dbUrl: Option.some("postgresql://postgres:postgres@db.internal:54322/postgres"),
+          }),
+        );
+        expect(docker.lastOpts).toBeUndefined();
+        expect(bundled.lastOpts?.runtime).toEqual({ kind: "native" });
+        expect(bundled.lastOpts?.env?.["PGHOST"]).toBe("db.internal");
+      }).pipe(Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))));
+    },
+  );
+
   it.live("dump --linked on the stack backend keeps the remote host for a native client", () => {
     const { layer, docker, bundled } = setup({
       conn: REMOTE_CONN,
@@ -1173,6 +1197,23 @@ describe("db dump integration", () => {
       yield* dbDump(flags({ linked: Option.some(true) }));
       expect(docker.lastOpts).toBeUndefined();
       expect(bundled.lastOpts?.runtime).toEqual({ kind: "native" });
+      expect(bundled.lastOpts?.env?.["PGHOST"]).toBe(REMOTE_CONN.host);
+    }).pipe(Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))));
+  });
+
+  it.live("dump --linked on a native-less platform uses a Docker pg_dump client", () => {
+    const { layer, docker, bundled } = setup({
+      conn: REMOTE_CONN,
+      isLocal: false,
+      stdout: "-- schema\n",
+      dockerInstalled: false,
+      platform: "darwin",
+      arch: "x64",
+    });
+    return Effect.gen(function* () {
+      yield* dbDump(flags({ linked: Option.some(true) }));
+      expect(docker.lastOpts).toBeUndefined();
+      expect(bundled.lastOpts?.runtime).toEqual({ kind: "container", engine: "docker" });
       expect(bundled.lastOpts?.env?.["PGHOST"]).toBe(REMOTE_CONN.host);
     }).pipe(Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))));
   });

@@ -102,9 +102,9 @@ command (exit 1).
 ## Notes
 
 - Native TypeScript port (Phase 1+); no Go proxy. Hidden command.
-- Native stacks prefer artifact `psql` on PATH when present so `pg_prove`'s client
-  matches; `pg_prove` itself stays a PATH requirement. If the extra is absent, the
-  existing PATH `pg_dump`/`psql` major check still applies.
+- Native stacks run `pg_prove` from the catalog Postgres artifact. Stack+container
+  prove stays on `supabase/pg_prove:3.36` until the catalog image ships `pg_prove`.
+  There is no PATH fallback or host major-version check.
 - **`--project-ref`** (TS-only, no Go equivalent on any user-facing command;
   shared verbatim by `db test` via `testDbConfig`) overrides ONLY the
   linked-ref resolution used for the connection (flag > `SUPABASE_PROJECT_ID` >

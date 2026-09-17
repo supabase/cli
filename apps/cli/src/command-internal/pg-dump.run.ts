@@ -128,7 +128,11 @@ export const streamPgDumpWithClient = Effect.fnUntraced(function* <E>(params: {
     const networkIdFlag = yield* NetworkIdFlag;
     const runtime =
       params.client.runtime ??
-      (yield* resolveBundledPostgresRuntime(undefined, runtimeInfo.platform));
+      (yield* resolveBundledPostgresRuntime(
+        undefined,
+        runtimeInfo.platform,
+        runtimeInfo.arch,
+      ));
     const extraHosts =
       runtime.kind === "container" && runtimeInfo.platform === "linux"
         ? ["host.docker.internal:host-gateway"]

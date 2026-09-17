@@ -7,6 +7,7 @@ export * from "./Logs.ts";
 export * from "./Credentials.ts";
 export * from "./Errors.ts";
 export * from "./Config.ts";
+export { targetForPlatform } from "../model/WorkloadCatalog.ts";
 export { excludeStackCapabilities } from "../model/Exclusions.ts";
 export type { ExcludableCapabilityName } from "../model/Exclusions.ts";
 export {

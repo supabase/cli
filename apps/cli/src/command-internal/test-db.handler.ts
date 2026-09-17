@@ -116,7 +116,11 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
         : undefined;
     const proveRuntime =
       backend.kind === "stack"
-        ? yield* resolveBundledPostgresRuntime(stackRuntime, runtimeInfo.platform)
+        ? yield* resolveBundledPostgresRuntime(
+            stackRuntime,
+            runtimeInfo.platform,
+            runtimeInfo.arch,
+          )
         : undefined;
     const useNativeProve = proveRuntime?.kind === "native";
     const stackPublishedProve = backend.kind === "stack" && !useNativeProve;
@@ -125,7 +129,7 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
     const dumpUsesHostNetwork = toolContainerUsesHostNetwork(networkId);
     const runEnv = {
       PGHOST: useNativeProve
-        ? isLocal
+        ? connType === "local"
           ? "127.0.0.1"
           : conn.host
         : stackPublishedProve

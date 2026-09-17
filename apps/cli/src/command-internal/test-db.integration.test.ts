@@ -222,11 +222,11 @@ const containerEngineResolver = (installed: boolean) =>
     resolve: () => Effect.die("unused"),
   });
 
-const runtimeInfoLayer = (platform: NodeJS.Platform) =>
+const runtimeInfoLayer = (platform: NodeJS.Platform, arch?: NodeJS.Architecture) =>
   Layer.succeed(RuntimeInfo, {
     cwd: "/work/project",
     platform,
-    arch: "x64",
+    arch: arch ?? (platform === "darwin" ? "arm64" : "x64"),
     homeDir: "/home/user",
     execPath: "/usr/bin/supabase",
     pid: 1234,
@@ -235,6 +235,7 @@ const runtimeInfoLayer = (platform: NodeJS.Platform) =>
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
   platform?: NodeJS.Platform;
+  arch?: NodeJS.Architecture;
   conn?: PgConnInput;
   isLocal?: boolean;
   existed?: boolean;
@@ -269,7 +270,7 @@ function setup(opts: SetupOpts = {}) {
     containerEngineResolver(opts.dockerInstalled ?? true),
     mockCommandSettings({ workdir: opts.workdir ?? "/work/project", projectId: Option.none() }),
     telemetry.layer,
-    runtimeInfoLayer(opts.platform ?? "linux"),
+    runtimeInfoLayer(opts.platform ?? "linux", opts.arch),
     Layer.succeed(DebugFlag, opts.debug ?? false),
     Layer.succeed(
       NetworkIdFlag,
@@ -509,6 +510,26 @@ describe("test db integration", () => {
         ),
       ),
     );
+  });
+
+  it.live("stack --db-url native keeps PGHOST when isLocal is true", () => {
+    const { layer, docker, bundled } = setup({
+      conn: { ...LOCAL_CONN, host: "db.internal" },
+      isLocal: true,
+      dockerInstalled: false,
+      args: ["--db-url=postgresql://postgres:postgres@db.internal:54322/postgres"],
+    });
+    return Effect.gen(function* () {
+      yield* testDb(
+        flags({
+          dbUrl: Option.some("postgresql://postgres:postgres@db.internal:54322/postgres"),
+          local: false,
+        }),
+      );
+      expect(docker.lastOpts).toBeUndefined();
+      expect(bundled.lastOpts?.runtime).toEqual({ kind: "native" });
+      expect(bundled.lastOpts?.env?.["PGHOST"]).toBe("db.internal");
+    }).pipe(Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))));
   });
 
   it.live("stack --linked native keeps the remote PGHOST", () => {

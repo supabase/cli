@@ -1,11 +1,16 @@
 import { Context, Crypto, Effect, FileSystem, Layer, Option, Path } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import {
+  ArtifactIntegrityError,
   ContainerEngineError,
   ContainerEngineResolver,
+  ContainerPullError,
   PostgresClientError,
   runPostgresClient,
   selectDefaultRuntime,
+  StackPreparationError,
+  StackVersionUnsupportedError,
+  targetForPlatform,
   type PostgresClientResult,
   type PostgresClientRunError,
   type PostgresClientServices,
@@ -43,9 +48,28 @@ const mapClientFailure = <E>(error: E): E | HostPostgresClientError | DockerRunE
       suggestion: BUNDLED_CLIENT_SUGGESTION,
     });
   }
+  if (error instanceof StackVersionUnsupportedError) {
+    return new HostPostgresClientError({ message: error.message });
+  }
+  if (error instanceof StackPreparationError || error instanceof ArtifactIntegrityError) {
+    return new HostPostgresClientError({
+      message: error.message,
+      suggestion: BUNDLED_CLIENT_SUGGESTION,
+    });
+  }
+  if (error instanceof ContainerPullError) {
+    return new DockerRunError({
+      message: error.message,
+      reason: "pull",
+      daemonDown: false,
+    });
+  }
   if (error instanceof ContainerEngineError) {
     return new DockerRunError({
-      message: `failed to run docker. ${SUGGEST_DOCKER_INSTALL}`,
+      message:
+        error.message.length > 0
+          ? error.message
+          : `failed to run ${error.engine ?? "docker"}. ${SUGGEST_DOCKER_INSTALL}`,
       reason: "spawn",
       daemonDown: false,
     });
@@ -53,31 +77,38 @@ const mapClientFailure = <E>(error: E): E | HostPostgresClientError | DockerRunE
   return error;
 };
 
-/** Windows has no native postgres artifact; native stacks dump through a one-shot container. */
+const clientNeedsContainerRuntime = (platform: string, arch?: string): boolean =>
+  platform === "win32" ||
+  (arch !== undefined && targetForPlatform({ os: platform, arch }) === undefined);
+
+/** Platforms without a native postgres artifact dump through a one-shot container. */
 export const bundledPostgresClientRuntime = (
   stackRuntime: StackRuntime | undefined,
   platform: string,
+  arch?: string,
 ): StackRuntimePreference | undefined => {
+  const forceContainer = clientNeedsContainerRuntime(platform, arch);
   if (stackRuntime !== undefined) {
-    if (stackRuntime.kind === "native" && platform === "win32") {
+    if (stackRuntime.kind === "native" && forceContainer) {
       return { kind: "container", engine: "docker" };
     }
     return stackRuntime;
   }
-  if (platform === "win32") return { kind: "container", engine: "docker" };
+  if (forceContainer) return { kind: "container", engine: "docker" };
   return undefined;
 };
 
 export const resolveBundledPostgresRuntime = (
   stackRuntime: StackRuntime | undefined,
   platform: string,
+  arch?: string,
 ): Effect.Effect<
   StackRuntimePreference,
   ContainerEngineError,
   ChildProcessSpawner.ChildProcessSpawner
 > =>
   Effect.gen(function* () {
-    const forced = bundledPostgresClientRuntime(stackRuntime, platform);
+    const forced = bundledPostgresClientRuntime(stackRuntime, platform, arch);
     if (forced !== undefined) return forced;
     const resolver = yield* Effect.serviceOption(ContainerEngineResolver);
     return yield* selectDefaultRuntime(Option.getOrUndefined(resolver));

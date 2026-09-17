@@ -42,7 +42,6 @@ import {
 } from "../../../command-internal/postgres-client.run.ts";
 import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
 import {
-  stackProjectDatabaseMajor,
   stackProjectDatabaseVersion,
   stackRequireProjectRuntime,
 } from "../../../command-internal/stack-local-database.ts";
@@ -201,7 +200,11 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
         : undefined;
     const bundledRuntime =
       backend.kind === "stack"
-        ? yield* resolveBundledPostgresRuntime(stackRuntime, runtimeInfo.platform)
+        ? yield* resolveBundledPostgresRuntime(
+            stackRuntime,
+            runtimeInfo.platform,
+            runtimeInfo.arch,
+          )
         : undefined;
     const useNativeClient = bundledRuntime?.kind === "native";
     const networkId = Option.getOrUndefined(networkIdFlag);
@@ -218,7 +221,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
           );
     const stackPublishedTarget = backend.kind === "stack" && isLocal;
     const dumpConn = useNativeClient
-      ? isLocal
+      ? connType === "local"
         ? dumpConnForHostClient(conn)
         : conn
       : stackPublishedTarget
@@ -230,15 +233,11 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
             }),
           }
         : conn;
-    const serverMajor =
-      backend.kind === "stack" && connType === "local"
-        ? yield* stackProjectDatabaseMajor
-        : undefined;
     const catalogVersion =
       backend.kind === "stack" && connType === "local"
         ? ((yield* stackProjectDatabaseVersion) ?? String(tomlValues.majorVersion))
         : String(tomlValues.majorVersion);
-    const dumpMajor = serverMajor ?? tomlValues.majorVersion;
+    const dumpMajor = tomlValues.majorVersion;
     const dumpClient =
       backend.kind === "stack"
         ? {

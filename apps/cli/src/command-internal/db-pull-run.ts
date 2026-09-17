@@ -47,7 +47,6 @@ import { diffMigra } from "../commands/db/shared/migra.ts";
 import { writePgDeltaMigrations } from "../commands/db/shared/pgdelta-migrations.write.ts";
 import { type DumpOptions, buildSchemaDumpEnv } from "./pg-dump.env.ts";
 import { streamPgDumpWithClient } from "./pg-dump.run.ts";
-import { resolveBundledPostgresRuntime } from "./bundled-postgres-client.ts";
 import {
   emitPoolerFallbackWarning,
   isDirectLinkedHost,
@@ -473,24 +472,13 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
           yield* makeDir(fs, path.dirname(migrationPath)).pipe(
             Effect.mapError((cause) => new DbPullWriteError({ message: cause.message })),
           );
-          const stackDump = (yield* currentStackBackend).kind === "stack";
-          const dumpClient = stackDump
-            ? {
-                kind: "bundled" as const,
-                command: "pg_dump" as const,
-                version: String(toml.majorVersion),
-                runtime: yield* resolveBundledPostgresRuntime(undefined, runtimeInfo.platform),
-              }
-            : { kind: "container" as const };
-          const image = stackDump
-            ? ""
-            : (yield* resolveDbImage(
-                fs,
-                path,
-                cliSettings.workdir,
-                toml.majorVersion,
-                Option.getOrUndefined(toml.orioledbVersion),
-              )).image;
+          const image = (yield* resolveDbImage(
+            fs,
+            path,
+            cliSettings.workdir,
+            toml.majorVersion,
+            Option.getOrUndefined(toml.orioledbVersion),
+          )).image;
           // Default dump options: no schema filter (so the internal-schema exclude
           // list applies) and comments stripped.
           const dumpEnvOpt: DumpOptions = {
@@ -527,8 +515,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
                         script: dumpSchemaScript,
                         env: buildSchemaDumpEnv(target, dumpEnvOpt),
                         projectEnvValues: projectEnv,
-                        client: dumpClient,
-                        forceHostNetwork: stackDump,
+                        client: { kind: "container" },
                         onStdout: (chunk) => {
                           if (chunk.length > 0) seedWroteBytes = true;
                           return file.writeAll(chunk).pipe(
@@ -573,7 +560,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
           if (dumpResult.exitCode !== 0) {
             return yield* Effect.fail(
               new DbPullDumpError({
-                message: `error running ${dumpClient.kind === "bundled" && dumpClient.runtime?.kind === "native" ? "pg_dump" : "container"}: exit ${dumpResult.exitCode}`,
+                message: `error running container: exit ${dumpResult.exitCode}`,
                 ...(isIPv6ConnectivityError(dumpResult.stderr)
                   ? { suggestion: ipv6Suggestion() }
                   : {}),
