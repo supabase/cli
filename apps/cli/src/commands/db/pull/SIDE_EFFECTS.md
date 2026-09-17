@@ -63,8 +63,8 @@ disables formatting without disabling safe compaction.
   below. Migration-style pulls only; `--declarative` provisions no shadow.
 - `supabase/migra` container — the migra OOM bash fallback only.
 - `pg_dump` container — the initial-migra pull's native remote-schema dump
-  (`streamPgDumpWithClient`, shared with `db dump`). On the stack backend this is the
-  catalog Postgres artifact or image rather than the Compose dump image.
+  (`streamPgDumpWithClient`, shared with `db dump`). Stack-backed pulls skip dump
+  seeding: they always use pg-delta and reject `--diff-engine migra`.
 
 ### Shadow baseline cache (`SUPABASE_SHADOW_CACHE`, default ON)
 
@@ -172,10 +172,10 @@ Progress strings still go to stderr; stdout carries a single structured envelope
   declarative files and `schema_paths` do not replace that baseline.
 - Bundled nontransactional files begin with
   `-- pg-delta: transaction=false`, which later migration commands honor.
-- The initial-migra pull (no local migrations) is native: it streams a `pg_dump` of
-  the remote schema into the migration file, then appends the migra diff. An empty
-  diff after a non-empty dump is swallowed; an empty dump + empty diff is "No schema
-  changes found".
+- The initial-migra pull (no local migrations, Compose / non-stack only) is native:
+  it streams a `pg_dump` of the remote schema into the migration file, then appends
+  the migra diff. An empty diff after a non-empty dump is swallowed; an empty dump +
+  empty diff is "No schema changes found". Stack-backed pulls never take this path.
 - The `--experimental` structured-dump branch (or the `SUPABASE_EXPERIMENTAL`
   project-`.env` equivalent) now runs the same in-process declarative export
   as `--declarative`. It is deprecated: a warning pointing at `--declarative`
