@@ -17,6 +17,11 @@ export class DbConnectError extends Data.TaggedError("DbConnectError")<{
    * fresh-db bootstrap's connect retry keys off this field.
    */
   readonly retryable?: boolean;
+  /**
+   * True when the failure is an IPv6 dial failure that an IPv4 pooler retry can recover;
+   * `gen types`' pooler fallback keys off this field.
+   */
+  readonly ipv6Unreachable?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.dbConnection;

@@ -1,6 +1,5 @@
-import * as nodePath from "node:path";
-
 import type { CliConfig } from "@supabase/config";
+import { BunPath } from "@effect/platform-bun";
 import { Effect, FileSystem, Option, Path, Stream } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 
@@ -67,6 +66,7 @@ export const storageCp = Effect.fn("storage.cp")(function* (flags: StorageCpFlag
   const resolver = yield* ProjectRefResolver;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const posixPath = yield* Effect.provide(Path.Path, BunPath.layerPosix);
   const runtimeInfo = yield* RuntimeInfo;
 
   const jobsFlag = Option.getOrElse(flags.jobs, () => 1);
@@ -85,12 +85,10 @@ export const storageCp = Effect.fn("storage.cp")(function* (flags: StorageCpFlag
 
     // `--project-ref` only applies to the linked project; it never implies `--linked`.
     if (Option.isSome(flags.projectRef) && flags.local) {
-      return yield* Effect.fail(
-        new StorageMutuallyExclusiveFlagsError({
-          message:
-            "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
-        }),
-      );
+      return yield* new StorageMutuallyExclusiveFlagsError({
+        message:
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
+      });
     }
 
     const projectRef = flags.local ? "" : yield* resolver.loadProjectRef(flags.projectRef);
@@ -116,7 +114,17 @@ export const storageCp = Effect.fn("storage.cp")(function* (flags: StorageCpFlag
           if (srcIsStorage && dstUrl.scheme === "") {
             const localPath = absLocal(path, runtimeInfo.cwd, flags.dst);
             if (flags.recursive) {
-              yield* downloadAll(gateway, output, fs, path, srcUrl.path, localPath, jobs, summary);
+              yield* downloadAll(
+                gateway,
+                output,
+                fs,
+                path,
+                posixPath,
+                srcUrl.path,
+                localPath,
+                jobs,
+                summary,
+              );
             } else {
               yield* downloadSingle(gateway, fs, srcUrl.path, localPath, summary);
             }
@@ -127,6 +135,7 @@ export const storageCp = Effect.fn("storage.cp")(function* (flags: StorageCpFlag
               output,
               fs,
               path,
+              posixPath,
               contentTypeFlag,
               cacheControl,
               config: loaded.config,
@@ -212,6 +221,7 @@ const downloadAll = (
   output: typeof Output.Service,
   fs: FileSystem.FileSystem,
   path: Path.Path,
+  posixPath: Path.Path,
   remotePath: string,
   localPath0: string,
   jobs: number,
@@ -223,9 +233,7 @@ const downloadAll = (
       Effect.map((i) => i.type === "Directory"),
       Effect.orElseSucceed(() => false),
     );
-    const localPath = isDir
-      ? path.join(localPath0, nodePath.posix.basename(remotePath))
-      : localPath0;
+    const localPath = isDir ? path.join(localPath0, posixPath.basename(remotePath)) : localPath0;
 
     const tasks: Array<{ objectPath: string; dstPath: string; isDir: boolean }> = [];
     // Captured as a value, not failed immediately: an "Object not found" (nothing visited) must
@@ -279,7 +287,7 @@ const downloadAll = (
     // Surfaced only after the queued downloads have run; a download failure propagates from the
     // pass above first, so a rare walk-error + download-error pair collapses to whichever fails first.
     if (iterError !== undefined) {
-      return yield* Effect.fail(iterError);
+      return yield* iterError;
     }
   });
 
@@ -300,6 +308,7 @@ interface UploadCtx {
   readonly output: typeof Output.Service;
   readonly fs: FileSystem.FileSystem;
   readonly path: Path.Path;
+  readonly posixPath: Path.Path;
   readonly contentTypeFlag: string;
   readonly cacheControl: string;
   readonly config: CliConfig;
@@ -337,7 +346,7 @@ const uploadAll = (ctx: UploadCtx, remotePath: string, localPath: string, jobs: 
     let dirExists = false;
     let fileExists = false;
     if (noSlash.length > 0) {
-      const base = nodePath.posix.basename(noSlash);
+      const base = ctx.posixPath.basename(noSlash);
       yield* iterateStoragePaths(ctx.gateway, ctx.output, noSlash, (objectName) =>
         Effect.sync(() => {
           if (objectName === base) fileExists = true;
@@ -351,7 +360,7 @@ const uploadAll = (ctx: UploadCtx, remotePath: string, localPath: string, jobs: 
 
     const tasks: Array<{ filePath: string; dstPath: string }> = [];
     for (const file of files) {
-      const dstPath = resolveUploadDstPath({
+      const dstPath = resolveUploadDstPath(ctx.posixPath, {
         remotePath,
         relPath: file.relPath,
         fileName: ctx.path.basename(file.filePath),
@@ -403,7 +412,7 @@ const autoCreateAndRetry = (
     const [bucket, prefix] = splitBucketPrefix(dstPath);
     // Only auto-creates the bucket when a prefix follows it; a bare bucket destination fails instead.
     if (prefix.length === 0) {
-      return yield* Effect.fail(original);
+      return yield* original;
     }
     const props = yield* bucketAutoCreateProps(ctx, bucket);
     yield* ctx.gateway.createBucket(bucket, props);
@@ -474,14 +483,14 @@ const walkUploadDir = (
       // Symlinks are detected via `readLink` and skipped without following them.
       const isSymlink = yield* fs.readLink(abs).pipe(
         Effect.as(true),
-        Effect.catch(() => Effect.succeed(false)),
+        Effect.orElseSucceed(() => false),
       );
       if (isSymlink) continue;
       const info = yield* fs.stat(abs);
       if (info.type === "Directory") {
         yield* walkUploadDir(fs, path, root, abs, out);
       } else if (info.type === "File") {
-        out.push({ filePath: abs, relPath: path.relative(root, abs) });
+        out.push({ filePath: abs, relPath: path.relative(root, abs).split(path.sep).join("/") });
       }
     }
   });
