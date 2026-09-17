@@ -5,7 +5,10 @@
 import { resolve } from "node:path";
 import { Effect, Option, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { spawnContainerCli } from "../../command-internal/container-cli.ts";
+import {
+  describeContainerCliFailure,
+  spawnContainerCli,
+} from "../../command-internal/container-cli.ts";
 import { makeDockerImageResolver } from "../../command-internal/docker-image-resolve.ts";
 import { DENO1_EDGE_RUNTIME_VERSION } from "./functions.shared.ts";
 import { bitbucketCloneDir } from "../../command-internal/bitbucket-pipeline.ts";
@@ -226,7 +229,11 @@ export const runChildProcess = Effect.fnUntraced(function* (
     }),
   ).pipe(
     Effect.mapError(
-      (cause) => new FunctionsDockerError({ message: "failed to run container process", cause }),
+      (cause) =>
+        new FunctionsDockerError({
+          message: describeContainerCliFailure(cause),
+          cause,
+        }),
     ),
   );
 });

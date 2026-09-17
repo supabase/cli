@@ -19,7 +19,7 @@ import { deriveStackId } from "../identity/Identity.ts";
 import { compileServiceInstance, compileServiceRestart } from "../model/Compiler.ts";
 import type { SnapshotDescriptor } from "../public/Service.ts";
 import type { ServiceInstanceId } from "../public/ServiceInstanceId.ts";
-import { StackLifecycleConflictError } from "../public/Errors.ts";
+import { StackLifecycleConflictError, StackStateInvalidError } from "../public/Errors.ts";
 import { makeStackStateStore } from "../state/StackStateStore.ts";
 import { AUTH_JWT_SECRET_SLOT } from "../state/SecretStore.ts";
 import { makeInstanceEngine } from "./InstanceEngine.ts";
@@ -31,6 +31,9 @@ const makeFixture = (
   pauseFirstStop = false,
   failEndpointPublication = false,
   failRuntimeStop = false,
+  failRuntimeDestroy = false,
+  pauseHandoffCleanup = false,
+  failHandoffCleanup = false,
 ) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -76,6 +79,13 @@ const makeFixture = (
     const admittedStart = yield* Deferred.make<void>();
     const releaseAdmission = yield* Deferred.make<void>();
     const admissionPaused = yield* Ref.make(false);
+    const pauseBatchAdmission = yield* Ref.make(false);
+    const batchAdmissionPaused = yield* Ref.make(false);
+    const admittedBatch = yield* Deferred.make<void>();
+    const releaseBatchAdmission = yield* Deferred.make<void>();
+    const handoffCleanupPaused = yield* Ref.make(false);
+    const admittedHandoffCleanup = yield* Deferred.make<void>();
+    const releaseHandoffCleanup = yield* Deferred.make<void>();
     const pauseStudioAdmission = yield* Ref.make(false);
     const studioAdmissionPaused = yield* Ref.make(false);
     const admittedStudio = yield* Deferred.make<void>();
@@ -90,6 +100,9 @@ const makeFixture = (
     const enteredStop = yield* Deferred.make<ServiceInstanceId>();
     const releaseStop = yield* Deferred.make<void>();
     const stopPaused = yield* Ref.make(false);
+    const runtimeStopFails = yield* Ref.make(failRuntimeStop);
+    const runtimeDestroyFails = yield* Ref.make(failRuntimeDestroy);
+    const failHandoffCleanupOnce = yield* Ref.make(failHandoffCleanup);
     const snapshot = (input: InstanceRuntimeInput): SnapshotDescriptor => ({
       lineageId: "source-lineage",
       initializationProfileId: null,
@@ -119,7 +132,7 @@ const makeFixture = (
         }),
       stop: (input) =>
         Effect.gen(function* () {
-          if (failRuntimeStop)
+          if (yield* Ref.get(runtimeStopFails))
             return yield* new StackLifecycleConflictError({ message: "runtime cleanup failed" });
           if (pauseFirstStop && !(yield* Ref.getAndSet(stopPaused, true))) {
             yield* Deferred.succeed(enteredStop, input.instance.id);
@@ -131,7 +144,14 @@ const makeFixture = (
           );
         }),
       destroy: (input) =>
-        Ref.update(ready, (ids) => new Set([...ids].filter((id) => id !== input.instance.id))),
+        Effect.gen(function* () {
+          if (yield* Ref.get(runtimeDestroyFails))
+            return yield* new StackLifecycleConflictError({ message: "runtime destroy failed" });
+          yield* Ref.update(
+            ready,
+            (ids) => new Set([...ids].filter((id) => id !== input.instance.id)),
+          );
+        }),
       exportSnapshot: (input) =>
         Deferred.succeed(enteredExport, undefined).pipe(
           Effect.andThen(Deferred.await(releaseExport)),
@@ -143,6 +163,26 @@ const makeFixture = (
       ...store,
       update: (id, transform) =>
         store.update(id, transform).pipe(
+          Effect.flatMap((saved) =>
+            saved.registry.instances.some(
+              (instance) =>
+                instance.id === database.id &&
+                instance.intent === "started" &&
+                instance.pendingOperation === null,
+            )
+              ? Ref.getAndSet(failHandoffCleanupOnce, false).pipe(
+                  Effect.flatMap((fail) =>
+                    fail
+                      ? Effect.fail(
+                          new StackStateInvalidError({
+                            message: "handoff journal cleanup failed",
+                          }),
+                        )
+                      : Effect.succeed(saved),
+                  ),
+                )
+              : Effect.succeed(saved),
+          ),
           Effect.tap((saved) =>
             Effect.gen(function* () {
               if (
@@ -167,6 +207,29 @@ const makeFixture = (
               ) {
                 yield* Deferred.succeed(admittedStudio, undefined);
                 yield* Deferred.await(releaseStudioAdmission);
+              }
+              if (
+                (yield* Ref.get(pauseBatchAdmission)) &&
+                saved.registry.instances.some(
+                  (instance) => instance.pendingOperation?.kind === "start",
+                ) &&
+                !(yield* Ref.getAndSet(batchAdmissionPaused, true))
+              ) {
+                yield* Deferred.succeed(admittedBatch, undefined);
+                yield* Deferred.await(releaseBatchAdmission);
+              }
+              if (
+                pauseHandoffCleanup &&
+                saved.registry.instances.some(
+                  (instance) =>
+                    instance.id === database.id &&
+                    instance.intent === "started" &&
+                    instance.pendingOperation === null,
+                ) &&
+                !(yield* Ref.getAndSet(handoffCleanupPaused, true))
+              ) {
+                yield* Deferred.succeed(admittedHandoffCleanup, undefined);
+                yield* Deferred.await(releaseHandoffCleanup);
               }
               if (
                 (yield* Ref.get(pauseSleepAdmission)) &&
@@ -213,6 +276,9 @@ const makeFixture = (
       starts,
       enteredStop,
       releaseStop,
+      runtimeStopFails,
+      runtimeDestroyFails,
+      failHandoffCleanupOnce,
       enteredStart,
       releaseStart,
       enteredDependentStart,
@@ -222,6 +288,12 @@ const makeFixture = (
       releaseExport,
       admittedStart,
       releaseAdmission,
+      pauseBatchAdmission,
+      admittedBatch,
+      releaseBatchAdmission,
+      handoffCleanupPaused,
+      admittedHandoffCleanup,
+      releaseHandoffCleanup,
       pauseStudioAdmission,
       admittedStudio,
       releaseStudioAdmission,
@@ -443,6 +515,147 @@ describe("instance operation isolation with durable transactions", () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.live("shares a start owner when its first waiter is interrupted", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const f = yield* makeFixture(true);
+        const first = yield* f.engine
+          .start(f.database.id)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(f.admittedStart);
+        const second = yield* f.engine
+          .start(f.database.id)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Fiber.interrupt(first);
+        yield* Deferred.succeed(f.releaseAdmission, undefined);
+        yield* Deferred.succeed(f.releaseStart, undefined);
+        expect((yield* Fiber.join(second)).phase).toBe("ready");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("keeps a batch start owner alive when its caller is interrupted", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const f = yield* makeFixture(false);
+        yield* Ref.set(f.pauseBatchAdmission, true);
+        const starting = yield* f.engine
+          .startAll([f.database.id])
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(f.admittedBatch);
+        const traffic = yield* f.engine
+          .acquireTraffic(f.database.id)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.yieldNow;
+        expect(traffic.pollUnsafe()).toBeUndefined();
+        const interruption = yield* Effect.forkChild(Fiber.interrupt(starting), {
+          startImmediately: true,
+        });
+        yield* Deferred.succeed(f.releaseBatchAdmission, undefined);
+        yield* Deferred.succeed(f.releaseStart, undefined);
+        yield* Fiber.join(interruption).pipe(Effect.timeout("5 seconds"));
+        const lease = yield* Fiber.join(traffic).pipe(Effect.timeout("5 seconds"));
+        yield* lease.release;
+        expect((yield* f.engine.status(f.database.id)).phase).toBe("ready");
+        expect((yield* f.engine.stop(f.database.id)).phase).toBe("stopped");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("settles traffic that observed a superseded batch start claim", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const f = yield* makeFixture(true);
+        const starting = yield* f.engine
+          .start(f.database.id)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(f.admittedStart);
+        yield* Ref.set(f.pauseBatchAdmission, true);
+        const stopping = yield* f.engine
+          .stopAll([f.database.id])
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(f.admittedBatch);
+        const traffic = yield* f.engine
+          .acquireTraffic(f.database.id)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.yieldNow;
+        expect(traffic.pollUnsafe()).toBeUndefined();
+        expect(Exit.isFailure(yield* f.engine.stopAll([f.database.id]).pipe(Effect.exit))).toBe(
+          true,
+        );
+        expect(Exit.isFailure(yield* f.engine.stop(f.database.id).pipe(Effect.exit))).toBe(true);
+        yield* Deferred.succeed(f.releaseBatchAdmission, undefined);
+        expect((yield* Fiber.join(stopping))[0]?.phase).toBe("stopped");
+        expect(Exit.isFailure(yield* Fiber.join(traffic).pipe(Effect.exit))).toBe(true);
+        expect(Exit.isFailure(yield* Fiber.join(starting).pipe(Effect.exit))).toBe(true);
+        yield* Deferred.succeed(f.releaseAdmission, undefined);
+        yield* Deferred.succeed(f.releaseStart, undefined);
+        expect((yield* f.engine.start(f.database.id)).phase).toBe("ready");
+        expect((yield* f.engine.stop(f.database.id)).phase).toBe("stopped");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("keeps a superseded stop owner alive when its caller is interrupted", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const f = yield* makeFixture(true, true, false, false, false, true);
+        const starting = yield* f.engine
+          .start(f.database.id)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(f.admittedStart);
+        yield* Deferred.succeed(f.releaseAdmission, undefined);
+        const stopping = yield* f.engine
+          .stop(f.database.id)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(f.admittedHandoffCleanup);
+        yield* Fiber.interrupt(stopping);
+        yield* Deferred.succeed(f.releaseHandoffCleanup, undefined);
+        yield* Deferred.succeed(f.releaseStart, undefined);
+        yield* Deferred.await(f.enteredStop).pipe(Effect.timeout("5 seconds"));
+        const traffic = yield* f.engine
+          .acquireTraffic(f.database.id)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.yieldNow;
+        expect(traffic.pollUnsafe()).toBeUndefined();
+        const settled = yield* f.engine.followStatus(f.database.id).pipe(
+          Stream.takeUntil((status) => status.phase === "stopped"),
+          Stream.runCollect,
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* Deferred.succeed(f.releaseStop, undefined);
+        yield* Fiber.join(settled);
+        expect((yield* f.engine.status(f.database.id)).phase).toBe("stopped");
+        expect(Exit.isFailure(yield* Fiber.join(traffic).pipe(Effect.exit))).toBe(true);
+        expect((yield* f.engine.stop(f.database.id)).phase).toBe("stopped");
+        expect(Exit.isFailure(yield* Fiber.join(starting).pipe(Effect.exit))).toBe(true);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("fences a superseded stop when its journal cleanup fails", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const f = yield* makeFixture(true, false, false, false, false, false, true);
+        const starting = yield* f.engine
+          .start(f.database.id)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(f.admittedStart);
+        yield* Deferred.succeed(f.releaseAdmission, undefined);
+        yield* Ref.set(f.failHandoffCleanupOnce, true);
+        const stopped = yield* f.engine.stop(f.database.id).pipe(Effect.exit);
+        expect(Exit.isFailure(stopped)).toBe(true);
+        yield* Deferred.succeed(f.releaseStart, undefined);
+        expect((yield* f.engine.status(f.database.id)).phase).toBe("recovery");
+        expect(
+          Exit.isFailure(yield* f.engine.acquireTraffic(f.database.id).pipe(Effect.exit)),
+        ).toBe(true);
+        expect((yield* f.engine.stop(f.database.id)).phase).toBe("stopped");
+        expect(Exit.isFailure(yield* Fiber.join(starting).pipe(Effect.exit))).toBe(true);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.live("cleans up a runtime when endpoint publication fails", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -466,9 +679,67 @@ describe("instance operation isolation with durable transactions", () => {
 
         const started = yield* f.engine.start(f.database.id).pipe(Effect.exit);
         expect(Exit.isFailure(started)).toBe(true);
-        expect((yield* f.engine.status(f.database.id)).phase).toBe("failed");
+        expect((yield* f.engine.status(f.database.id)).phase).toBe("recovery");
         expect((yield* f.engine.status(f.database.id)).pendingOperation?.kind).toBe("start");
+        expect((yield* f.engine.status(f.database.id)).recovery?.operation).toBe("stop");
+        yield* Ref.set(f.runtimeStopFails, false);
+        expect((yield* f.engine.stop(f.database.id)).phase).toBe("stopped");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("fences traffic after a failed stop until cleanup is retried", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const f = yield* makeFixture(false, false, false, true);
+        yield* Deferred.succeed(f.releaseStart, undefined);
+        yield* f.engine.start(f.database.id);
+        const stopped = yield* f.engine.stop(f.database.id).pipe(Effect.exit);
+        expect(Exit.isFailure(stopped)).toBe(true);
+        expect(yield* f.engine.status(f.database.id)).toMatchObject({
+          intent: "stopped",
+          phase: "recovery",
+          pendingOperation: { kind: "stop" },
+          recovery: { operation: "stop" },
+        });
+        expect(
+          Exit.isFailure(yield* f.engine.acquireTraffic(f.database.id).pipe(Effect.exit)),
+        ).toBe(true);
+        yield* Ref.set(f.runtimeStopFails, false);
+        expect((yield* f.engine.stop(f.database.id)).phase).toBe("stopped");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("destroys a publication cleanup fence in the same owner", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const f = yield* makeFixture(false, false, true, true);
+        yield* Deferred.succeed(f.releaseStart, undefined);
         expect(Exit.isFailure(yield* f.engine.start(f.database.id).pipe(Effect.exit))).toBe(true);
+        yield* Ref.set(f.runtimeStopFails, false);
+        yield* f.engine.destroy(f.database.id);
+        expect((yield* f.engine.list).some(({ id }) => id === f.database.id)).toBe(false);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("retains stopped intent after a failed destroy until cleanup is retried", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const f = yield* makeFixture(false, false, false, false, true);
+        yield* Deferred.succeed(f.releaseStart, undefined);
+        yield* f.engine.start(f.database.id);
+        expect(Exit.isFailure(yield* f.engine.destroy(f.database.id).pipe(Effect.exit))).toBe(true);
+        expect(yield* f.engine.status(f.database.id)).toMatchObject({
+          intent: "stopped",
+          phase: "recovery",
+          pendingOperation: { kind: "destroy" },
+          recovery: { operation: "destroy" },
+        });
+        yield* Ref.set(f.runtimeDestroyFails, false);
+        yield* f.engine.destroy(f.database.id);
+        expect((yield* f.engine.list).some(({ id }) => id === f.database.id)).toBe(false);
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );

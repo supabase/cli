@@ -862,9 +862,11 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
             if (
               ids.some((id) => {
                 const claim = current.get(id);
+                const pendingStartupClaim =
+                  pendingStartIds.has(id) && claim?.startupControlAllowed === true;
                 return (
                   claim !== undefined &&
-                  ((claim.token !== undefined && !pendingStartIds.has(id)) ||
+                  ((claim.token !== undefined && !pendingStartupClaim) ||
                     (rejectActive && claim.active > 0))
                 );
               })
@@ -873,8 +875,9 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
             const next = new Map(current);
             for (const [index, id] of ids.entries()) {
               const existing = current.get(id);
-              if (startupControlAllowed && pendingStartIds.has(id) && existing?.token !== undefined)
-                continue;
+              const pendingStartupClaim =
+                pendingStartIds.has(id) && existing?.startupControlAllowed === true;
+              if (startupControlAllowed && pendingStartupClaim) continue;
               next.set(id, {
                 token,
                 active: current.get(id)?.active ?? 0,
@@ -889,9 +892,11 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
               Effect.map((current) =>
                 ids.find((id) => {
                   const claim = current.get(id);
+                  const pendingStartupClaim =
+                    pendingStartIds.has(id) && claim?.startupControlAllowed === true;
                   return (
                     claim !== undefined &&
-                    ((claim.token !== undefined && !pendingStartIds.has(id)) ||
+                    ((claim.token !== undefined && !pendingStartupClaim) ||
                       (rejectActive && claim.active > 0))
                   );
                 }),
@@ -1083,6 +1088,24 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
       Ref.update(failures, (all) =>
         new Map(all).set(id, serviceFailureFor(id, operationId, state, error)),
       );
+    const markRecovery = (
+      id: ServiceInstanceId,
+      pending: PersistedPendingOperation,
+      error: StackError,
+    ): Effect.Effect<void, never> =>
+      Ref.update(recovery, (recoveries) => {
+        const next = new Map(recoveries);
+        next.set(id, {
+          operation:
+            pending.kind === "destroy" ||
+            pending.kind === "restoreSnapshot" ||
+            pending.kind === "exportSnapshot"
+              ? "destroy"
+              : "stop",
+          message: `Recovery of ${pending.kind} operation ${pending.id} failed: ${error.message}`,
+        });
+        return next;
+      }).pipe(Effect.andThen(setPhase(id, "recovery")), Effect.ignore);
     const publishBindings = (
       id: ServiceInstanceId,
       publications: ReadonlyArray<RuntimeBindingPublication>,
@@ -1351,7 +1374,7 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
                             revisions: { ...instance.revisions, intent: generation },
                             pendingOperation,
                           }
-                        : mutation === "stop"
+                        : mutation === "stop" || mutation === "destroy"
                           ? {
                               ...instance,
                               intent: "stopped" as const,
@@ -1560,45 +1583,49 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
                   : cancelIdle(id),
             ),
             Effect.catch((error) => {
-              const cleanup =
-                error instanceof StackCleanupError || error instanceof UncertainOperationError
-                  ? Effect.void
-                  : options.stateStore
-                      .update(options.stackId, (state) => {
-                        const current = state.registry.instances.find((entry) => entry.id === id);
-                        const pending = current?.pendingOperation;
-                        if (
-                          current === undefined ||
-                          pending === null ||
-                          pending?.id !== operationId ||
-                          pending.generation !== instance.revisions.intent
-                        )
-                          return Effect.succeed(state);
-                        return Effect.succeed({
-                          ...state,
-                          registry: {
-                            ...state.registry,
-                            instances: state.registry.instances.map((entry) =>
-                              entry.id === id
-                                ? {
-                                    ...entry,
-                                    intent:
-                                      mutation === "start"
-                                        ? ("stopped" as const)
-                                        : mutation === "stop"
-                                          ? ("started" as const)
-                                          : entry.intent,
-                                    pendingOperation: null,
-                                  }
-                                : entry,
-                            ),
-                          },
-                        });
-                      })
-                      .pipe(Effect.provideContext(options.context), Effect.asVoid);
+              const retainJournal =
+                error instanceof StackCleanupError ||
+                error instanceof UncertainOperationError ||
+                mutation === "stop" ||
+                mutation === "destroy";
+              const cleanup = retainJournal
+                ? Effect.void
+                : options.stateStore
+                    .update(options.stackId, (state) => {
+                      const current = state.registry.instances.find((entry) => entry.id === id);
+                      const pending = current?.pendingOperation;
+                      if (
+                        current === undefined ||
+                        pending === null ||
+                        pending?.id !== operationId ||
+                        pending.generation !== instance.revisions.intent
+                      )
+                        return Effect.succeed(state);
+                      return Effect.succeed({
+                        ...state,
+                        registry: {
+                          ...state.registry,
+                          instances: state.registry.instances.map((entry) =>
+                            entry.id === id
+                              ? {
+                                  ...entry,
+                                  ...(mutation === "start" ? { intent: "stopped" as const } : {}),
+                                  pendingOperation: null,
+                                }
+                              : entry,
+                          ),
+                        },
+                      });
+                    })
+                    .pipe(Effect.provideContext(options.context), Effect.asVoid);
+              const markFailure =
+                retainJournal && input.instance.pendingOperation !== null
+                  ? markRecovery(id, input.instance.pendingOperation, error)
+                  : Effect.void;
               return cleanup.pipe(
                 Effect.andThen(retainFailure(id, operationId, input.state, error)),
-                Effect.andThen(setPhase(id, "failed")),
+                Effect.andThen(markFailure),
+                Effect.andThen(retainJournal ? Effect.void : setPhase(id, "failed")),
                 Effect.andThen(Effect.fail(error)),
               );
             }),
@@ -1629,6 +1656,12 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
                 )
             : lock.withPermit(ownerBody);
         let handoffToken: symbol | undefined;
+        let supersededStart:
+          | {
+              readonly fiber: Fiber.Fiber<unknown, unknown>;
+              readonly pending: PersistedPendingOperation;
+            }
+          | undefined;
         const ownClaim =
           batchToken !== undefined
             ? Effect.sync(() => ({
@@ -1665,72 +1698,77 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
                   );
                 }),
               );
-        const supersedeStart =
+        const supersedeStart = (
+          restore: <A>(effect: Effect.Effect<A, StackError>) => Effect.Effect<A, StackError>,
+        ) =>
           mutation === "stop" || mutation === "destroy"
             ? Effect.gen(function* () {
-                const { instance } = yield* current(id);
+                const { instance } = yield* restore(current(id));
                 if (
                   instance.pendingOperation?.kind !== "start" &&
                   instance.pendingOperation?.kind !== "restart"
                 )
                   return;
                 const pending = instance.pendingOperation;
-                const oldToken = yield* Ref.get(batchClaims).pipe(
-                  Effect.map((claims) => claims.get(id)?.token),
+                const oldToken = yield* restore(
+                  Ref.get(batchClaims).pipe(Effect.map((claims) => claims.get(id)?.token)),
                 );
-                const fiber = yield* Ref.get(operationFibers).pipe(
-                  Effect.map((fibers) => fibers.get(id)),
+                const fiber = yield* restore(
+                  Ref.get(operationFibers).pipe(Effect.map((fibers) => fibers.get(id))),
                 );
-                if (fiber === undefined)
-                  return yield* new StackLifecycleConflictError({
-                    stackId: options.stackId,
-                    instanceId: id,
-                    message: `Service instance ${id} has a pending startup without a live owner`,
-                  });
+                if (fiber === undefined) {
+                  const recoverable = yield* Ref.get(recovery).pipe(
+                    Effect.map((recoveries) => recoveries.has(id)),
+                  );
+                  if (!recoverable)
+                    return yield* new StackLifecycleConflictError({
+                      stackId: options.stackId,
+                      instanceId: id,
+                      message: `Service instance ${id} has a pending startup without a live owner`,
+                    });
+                  return;
+                }
                 const replacementToken = Symbol("instance-stop-handoff");
                 const replacementCompletion = yield* Deferred.make<Exit.Exit<void, StackError>>();
                 const handedOff = yield* Ref.modify(batchClaims, (claims) => {
                   const claim = claims.get(id);
-                  return claim?.token !== undefined && claim.token === oldToken
+                  const canHandoff =
+                    claim?.token !== undefined &&
+                    claim.token === oldToken &&
+                    (claim.startupControlAllowed === true ||
+                      (batchToken !== undefined && claim.token === batchToken));
+                  return canHandoff
                     ? [
                         true,
                         new Map(claims).set(id, {
                           token: replacementToken,
                           active: claim.active,
-                          completion: replacementCompletion,
+                          completion:
+                            batchToken !== undefined && claim.token === batchToken
+                              ? (claim.completion ?? replacementCompletion)
+                              : replacementCompletion,
                         }),
                       ]
                     : [false, claims];
                 });
-                if (handedOff) handoffToken = replacementToken;
-                yield* Fiber.interrupt(fiber);
-                yield* options.stateStore
-                  .update(options.stackId, (state) => {
-                    const currentInstance = state.registry.instances.find(
-                      (entry) => entry.id === id,
-                    );
-                    return currentInstance?.pendingOperation?.id === pending.id &&
-                      currentInstance.pendingOperation.generation === pending.generation
-                      ? Effect.succeed({
-                          ...state,
-                          registry: {
-                            ...state.registry,
-                            instances: state.registry.instances.map((entry) =>
-                              entry.id === id ? { ...entry, pendingOperation: null } : entry,
-                            ),
-                          },
-                        })
-                      : Effect.succeed(state);
-                  })
-                  .pipe(Effect.provideContext(options.context), Effect.asVoid);
+                if (!handedOff)
+                  return yield* new StackLifecycleConflictError({
+                    stackId: options.stackId,
+                    instanceId: id,
+                    message: `Service instance ${id} is already changing lifecycle state`,
+                  });
+                handoffToken = replacementToken;
+                supersededStart = { fiber, pending };
               })
             : Effect.void;
         return rejectSnapshotConflict.pipe(
-          Effect.andThen(supersedeStart),
-          Effect.andThen(rejectBatchConflict),
           Effect.flatMap(() =>
             Effect.uninterruptibleMask((restore) =>
-              ownClaim.pipe(
+              supersedeStart(restore).pipe(
+                Effect.andThen(rejectBatchConflict),
+                Effect.flatMap(() =>
+                  supersededStart === undefined ? restore(ownClaim) : ownClaim,
+                ),
                 Effect.flatMap(({ token, owned }) =>
                   Effect.gen(function* () {
                     let ownerFiber: Fiber.Fiber<unknown, unknown> | undefined;
@@ -1740,7 +1778,47 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
                         return claim?.token === token ? claim.completion : undefined;
                       }),
                     );
-                    const owner = admittedOwner.pipe(
+                    const handoff =
+                      supersededStart === undefined
+                        ? Effect.void
+                        : Effect.gen(function* () {
+                            const superseded = supersededStart;
+                            if (superseded === undefined) return;
+                            const { fiber, pending } = superseded;
+                            yield* restore(Fiber.interrupt(fiber));
+                            yield* restore(
+                              options.stateStore
+                                .update(options.stackId, (state) => {
+                                  const currentInstance = state.registry.instances.find(
+                                    (entry) => entry.id === id,
+                                  );
+                                  const currentPending = currentInstance?.pendingOperation;
+                                  return currentPending?.id === pending.id &&
+                                    currentPending.generation === pending.generation
+                                    ? Effect.succeed({
+                                        ...state,
+                                        registry: {
+                                          ...state.registry,
+                                          instances: state.registry.instances.map((entry) =>
+                                            entry.id === id
+                                              ? { ...entry, pendingOperation: null }
+                                              : entry,
+                                          ),
+                                        },
+                                      })
+                                    : Effect.succeed(state);
+                                })
+                                .pipe(Effect.provideContext(options.context), Effect.asVoid),
+                            ).pipe(
+                              Effect.catch((error) =>
+                                markRecovery(id, pending, error).pipe(
+                                  Effect.andThen(Effect.fail(error)),
+                                ),
+                              ),
+                            );
+                          });
+                    const owner = handoff.pipe(
+                      Effect.andThen(admittedOwner),
                       Effect.onExit((exit) =>
                         completeClaim(id, token, exit, claimCompletion).pipe(
                           Effect.andThen(
@@ -1919,21 +1997,26 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
             Effect.flatMap(joinExit),
             Effect.andThen(status(id)),
           );
-        return Deferred.make<Exit.Exit<ServiceStatus, ServiceNotFoundError | StackError>>().pipe(
-          Effect.flatMap((completion) => {
-            startsInFlight.set(id, completion);
-            return startOperationBody(id, batchToken).pipe(
-              Effect.onExit((exit) =>
-                Deferred.succeed(completion, exit).pipe(
-                  Effect.andThen(
-                    Effect.sync(() => {
-                      if (startsInFlight.get(id) === completion) startsInFlight.delete(id);
-                    }),
+        return Effect.uninterruptibleMask((restore) =>
+          Deferred.make<Exit.Exit<ServiceStatus, ServiceNotFoundError | StackError>>().pipe(
+            Effect.flatMap((completion) => {
+              startsInFlight.set(id, completion);
+              const owner = startOperationBody(id, batchToken).pipe(
+                Effect.onExit((exit) =>
+                  Deferred.succeed(completion, exit).pipe(
+                    Effect.andThen(
+                      Effect.sync(() => {
+                        if (startsInFlight.get(id) === completion) startsInFlight.delete(id);
+                      }),
+                    ),
                   ),
                 ),
-              ),
-            );
-          }),
+              );
+              return Effect.forkIn(restore(owner), options.scope, { startImmediately: false }).pipe(
+                Effect.flatMap((fiber) => restore(Fiber.join(fiber))),
+              );
+            }),
+          ),
         );
       });
     const start = (id: ServiceInstanceId) => startOperation(id).pipe(Effect.andThen(status(id)));
@@ -2378,24 +2461,6 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
           ),
         ),
       );
-    const markRecovery = (
-      id: ServiceInstanceId,
-      pending: PersistedPendingOperation,
-      error: StackError,
-    ): Effect.Effect<void, never> =>
-      Ref.update(recovery, (recoveries) => {
-        const next = new Map(recoveries);
-        next.set(id, {
-          operation:
-            pending.kind === "destroy" ||
-            pending.kind === "restoreSnapshot" ||
-            pending.kind === "exportSnapshot"
-              ? "destroy"
-              : "stop",
-          message: `Recovery of ${pending.kind} operation ${pending.id} failed: ${error.message}`,
-        });
-        return next;
-      }).pipe(Effect.andThen(setPhase(id, "recovery")), Effect.ignore);
     const recover: Effect.Effect<void, StackError> = read().pipe(
       Effect.flatMap((state) =>
         Effect.forEach(
@@ -2725,25 +2790,25 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
               allowPendingStarts,
             ),
           );
-          return yield* restore(
-            operation(token).pipe(
-              Effect.onExit((exit) =>
-                Ref.get(batchClaims).pipe(
-                  Effect.flatMap((claims) =>
-                    Effect.forEach(ids, (id) => {
-                      const completion = claims.get(id);
-                      return completion?.token === token && completion.completion !== undefined
-                        ? Deferred.succeed(completion.completion, voidExit(exit)).pipe(
-                            Effect.asVoid,
-                          )
-                        : Effect.void;
-                    }),
-                  ),
-                  Effect.andThen(releaseBatch(ids, token)),
+          const owner = operation(token).pipe(
+            Effect.onExit((exit) =>
+              Ref.get(batchClaims).pipe(
+                Effect.flatMap((claims) =>
+                  Effect.forEach(ids, (id) => {
+                    const completion = claims.get(id);
+                    return completion?.token === token && completion.completion !== undefined
+                      ? Deferred.succeed(completion.completion, voidExit(exit)).pipe(Effect.asVoid)
+                      : Effect.void;
+                  }),
                 ),
+                Effect.andThen(releaseBatch(ids, token)),
               ),
             ),
           );
+          const fiber = yield* Effect.forkIn(restore(owner), options.scope, {
+            startImmediately: true,
+          });
+          return yield* restore(Fiber.join(fiber));
         }),
       );
     const collectStatuses = (
