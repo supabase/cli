@@ -308,7 +308,13 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
     // 6. Cost matrix (drives cost-aware prompts).
     const cost = yield* getCostMatrix(ref);
 
-    // `promptYesNo` scans piped stdin on a non-TTY before falling back to the default.
+    // `promptYesNo` scans piped stdin on a non-TTY before falling back to the default, and a
+    // pipe carries a fixed number of answers, so on a non-TTY the last answer given becomes the
+    // default for the rest of the run: running out of answers must not flip an explicit decline
+    // back into a remote write (CLI-2450). A run that pipes no answer at all still takes the
+    // `true` default for every prompt, unchanged.
+    const stdinIsTty = (yield* Tty).stdinIsTty;
+    let carried = true;
     const keep = (name: string) =>
       Effect.gen(function* () {
         const item = cost.get(name);
@@ -316,7 +322,11 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
           item === undefined
             ? `Do you want to push ${name} config to remote?`
             : `Enabling ${item.name} will cost you ${item.price}. Keep it enabled?`;
-        return yield* promptYesNo(output, yes, title, true);
+        const answer = yield* promptYesNo(output, yes, title, carried);
+        if (!stdinIsTty) {
+          carried = answer;
+        }
+        return answer;
       });
 
     // 7. Read the project's effective configuration in one call. No spinner, matching the rest

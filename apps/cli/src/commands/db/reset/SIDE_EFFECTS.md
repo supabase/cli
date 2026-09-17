@@ -226,15 +226,17 @@ stdout is payload-only; a `result` object is emitted:
 { "target": "remote" | "local", "version": "<resolved version or empty>" }
 ```
 
-In machine modes the remote confirmation prompt is non-interactive and takes its
-default (`false`), so a remote reset is declined unless `--yes` is set. The local
-path has no reset confirmation, but its bucket-seed step carries the seed-buckets
-overwrite/prune confirmations: in machine modes they take their defaults silently
-(overwrite → yes, prune → no) unless `--yes`/`SUPABASE_YES` auto-confirms; in text
-mode each prints its label and reads one stdin line, bounded to 100 ms and performed
-even when stdin is a TTY — a parsed `y`/`n` answer wins (so `yes | supabase db reset`
-confirms a vector prune), while an empty, unparseable, or timed-out read falls back
-to those defaults (the usual outcome for an interactive terminal).
+On an interactive TTY the remote confirmation prompt takes its default (`false`) in
+machine modes, so a remote reset is declined there unless `--yes` is set. On a non-TTY
+stdin the prompt reads one piped line in EVERY output format, so a piped `y` confirms a
+remote reset without `--yes` — `yes | supabase db reset --linked` drops and recreates the
+remote database. The local path has no reset confirmation, but its bucket-seed step
+carries the seed-buckets overwrite/prune confirmations (defaults: overwrite → yes,
+prune → no) unless `--yes`/`SUPABASE_YES` auto-confirms; each prints its label and reads
+one stdin line, bounded to 100 ms and performed even when stdin is a TTY — a parsed
+`y`/`n` answer wins (so `yes | supabase db reset` confirms a vector prune), while an
+empty, unparseable, or timed-out read falls back to those defaults (the usual outcome for
+an interactive terminal).
 
 ## Notes
 

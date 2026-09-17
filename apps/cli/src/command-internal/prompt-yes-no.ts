@@ -23,10 +23,11 @@ export const parseYesNo = (input: string): boolean | undefined => {
 
 /**
  * Confirm-or-default prompt shared by command handlers and shell-agnostic code alike.
- * `yes` echoes an affirmative answer and returns `true` immediately; non-text output uses
- * the default silently; a real interactive TTY prompts via clack; otherwise (including
- * `interactive: false`) it reads one line via the shared `Stdin` reader, falling back to
- * the default only when the line is empty or unparseable.
+ * `yes` echoes an affirmative answer and returns `true` immediately; a non-TTY stdin
+ * (including `interactive: false`) reads one line via the shared `Stdin` reader in every
+ * output format, falling back to the default only when the line is empty or unparseable;
+ * a real interactive TTY prompts via clack, or takes the default when the run asked for
+ * machine-readable output.
  */
 export const promptYesNo = Effect.fnUntraced(function* (
   output: typeof Output.Service,
@@ -40,14 +41,15 @@ export const promptYesNo = Effect.fnUntraced(function* (
     yield* output.raw(`${label} [${choices}] y\n`, "stderr");
     return true;
   }
-  if (output.format !== "text") {
-    return defaultValue;
-  }
   const tty = yield* Tty;
   // `interactive: false` still prints the label and reads one line instead of silently
   // returning the default — it uses the same non-TTY read path below.
   if (!interactive || !tty.stdinIsTty) {
     // A parsed piped answer wins; an empty or unparseable line falls back to the default.
+    // The read is deliberately NOT gated on `output.format`: the label and its echo go to
+    // stderr under every layer, so reading it leaves the machine-readable stdout payload
+    // untouched, and an answer piped by a script or a coding agent (whose auto-detected
+    // output format is json) is honored exactly as it is in text mode (CLI-2450).
     yield* output.raw(`${label} [${choices}] `, "stderr");
     const stdin = yield* Stdin;
     const line = yield* stdin.readLine(NON_TTY_TIMEOUT_MILLIS);
@@ -59,6 +61,11 @@ export const promptYesNo = Effect.fnUntraced(function* (
         return answer;
       }
     }
+    return defaultValue;
+  }
+  // Only an interactive TTY reaches here; machine-readable output takes the default rather
+  // than rendering a clack prompt into a structured run.
+  if (output.format !== "text") {
     return defaultValue;
   }
   return yield* output

@@ -581,6 +581,50 @@ max_rows = 1000
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("honors a piped 'n' decline under agent-mode json output (no update)", () => {
+    const { layer, api } = setup({
+      toml: `project_id = "test"\n[api]\nmax_rows = 2000\n`,
+      format: "json",
+      stdinIsTty: false,
+      pipedAnswers: ["n"],
+    });
+    return Effect.gen(function* () {
+      yield* configPush({ projectRef: Option.none() });
+      expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
+        false,
+      );
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("applies a single piped 'n' to every later resource prompt (no update)", () => {
+    // One prompt fires per changed resource but `echo n` carries one answer, so the later
+    // prompts read an exhausted pipe. They must not fall back to pushing (CLI-2450).
+    const { layer, api } = setup({
+      toml: `project_id = "test"\n[api]\nmax_rows = 2000\n[auth]\nsite_url = "http://localhost:9999"\n`,
+      format: "json",
+      stdinIsTty: false,
+      pipedAnswers: ["n"],
+    });
+    return Effect.gen(function* () {
+      yield* configPush({ projectRef: Option.none() });
+      expect(api.requests.filter((r) => r.method === "PATCH").map((r) => r.url)).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("still answers each prompt from its own piped line when enough are given", () => {
+    const { layer, api } = setup({
+      toml: `project_id = "test"\n[api]\nmax_rows = 2000\n[auth]\nsite_url = "http://localhost:9999"\n`,
+      stdinIsTty: false,
+      pipedAnswers: ["n", "y"],
+    });
+    return Effect.gen(function* () {
+      yield* configPush({ projectRef: Option.none() });
+      const patched = api.requests.filter((r) => r.method === "PATCH").map((r) => r.url);
+      expect(patched.some((url) => url.includes("/postgrest"))).toBe(false);
+      expect(patched.some((url) => url.includes("/auth"))).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("honors SUPABASE_YES from supabase/.env even against a piped 'n'", () => {
     const prev = process.env["SUPABASE_YES"];
     delete process.env["SUPABASE_YES"];

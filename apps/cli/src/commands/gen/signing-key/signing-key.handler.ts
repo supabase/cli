@@ -240,10 +240,7 @@ export const genSigningKey = Effect.fn("gen.signing-key")(function* (flags: GenS
             !yes && tty.stdinIsTty && output.format !== "text"
               ? false
               : yield* promptYesNo(
-                  // Presents a text-shaped `output` so `promptYesNo` reads piped stdin instead
-                  // of short-circuiting on `output.format !== "text"`; the prompt itself always
-                  // writes to stderr, so this never touches the machine-readable stdout payload.
-                  output.format === "text" ? output : { ...output, format: "text" },
+                  output,
                   yes,
                   `Do you want to overwrite the existing ${emphasize(configured.value.displayPath)} file?`,
                   true,

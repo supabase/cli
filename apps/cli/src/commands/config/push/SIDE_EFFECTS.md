@@ -175,9 +175,10 @@ prints, and the push proceeds immediately. Declining fails the command
 (`ConfigPushCancelledError`, exit `1`) — the rendered text is `context canceled`
 (`Output.fail`'s standard text-mode rendering, no `--debug` hint) — before any further
 network call (not even the cost-matrix fetch). Unlike this command's other
-confirmations, this gate's default is **no**: a non-TTY run with no piped answer, or
-`--output-format json`/`stream-json`, declines (and fails) rather than proceeding,
-unless `--yes`/`SUPABASE_YES` is set. A plain-project target never shows this prompt.
+confirmations, this gate's default is **no**: a run with no answer available — no piped
+answer on a non-TTY, or `--output-format json`/`stream-json` on a TTY — declines (and
+fails) rather than proceeding, unless `--yes`/`SUPABASE_YES` is set. A piped `y` answers
+it in every output format. A plain-project target never shows this prompt.
 Then `Comparison scope: <present> (not returned:
 <missing>)` — printed EVERY run, not just when a block is missing (family consistency
 with `config diff`/`config pull`). Then, per resource, one of:
@@ -219,7 +220,8 @@ declared change, sent at its schema default because the read didn't report the
 project's current value for it. Secret values never appear in output. Every block ends
 on a blank line. Experimental prints `Enabling webhooks for project: <ref>`. The
 per-service confirmations are unchanged from before CLI-2168: they render
-`<title> [Y/n] ` (or `<title> [Y/n] y` when `--yes`) and still exit **0** on decline —
+`<title> [Y/n] ` (or `<title> [Y/n] y` when `--yes`, and `<title> [y/N] ` once a non-TTY
+decline has flipped the carried default — see Notes) and still exit **0** on decline —
 only the branch confirmation gate described above fails.
 
 After the resource loop, up to six `Note:` lines report anything the push couldn't do
@@ -242,10 +244,11 @@ through the same control-character sanitizing `config diff` uses.
 
 ### `--output-format json` / `stream-json`
 
-Per-service diagnostics stay on stderr; the per-service `keep()` prompts auto-confirm
-(default yes) — but the branch confirmation gate above (CLI-2168) auto-**declines** (and
-fails) without `--yes`, since its default differs from every other confirmation in this
-command. A structured summary is emitted on stdout via `output.success(message, data)`;
+Per-service diagnostics stay on stderr; on a TTY the per-service `keep()` prompts
+auto-confirm (default yes) — but the branch confirmation gate above (CLI-2168)
+auto-**declines** (and fails) without `--yes`, since its default differs from every other
+confirmation in this command. On a non-TTY stdin these formats read piped answers exactly
+as text mode does (CLI-2450). A structured summary is emitted on stdout via `output.success(message, data)`;
 a declined/failed branch gate instead emits this command's standard machine error
 envelope (`{_tag: "Error", error: {...}}` in `json` mode, a `{type: "error", ...}` NDJSON
 event in `stream-json` mode) with no success payload.
@@ -331,8 +334,8 @@ of it was encodable. `services[].service` is an OPAQUE IDENTIFIER (a dotted key
 mirroring — but not equal to — a `config.toml` path, plus the fixed string
 `"experimental.webhooks"`), never itself a config path to be parsed or compared.
 `project_ref`, `services[].service`, and `services[].status` are the established
-contract; every other field is additive. When the branch gate declines (machine format
-without `--yes`), the command fails (exit `1`) with the standard error envelope in place
+contract; every other field is additive. When the branch gate declines (no answer
+available and no `--yes`), the command fails (exit `1`) with the standard error envelope in place
 of the success payload — see above. `secrets` partitions every declared secret
 (`changeSet.masked`) across its six buckets, reporting what was OBSERVED to happen —
 `sent` only when the auth write actually ran AND the container carrying that secret
@@ -351,7 +354,7 @@ may itself contain a `.`.
 - **`--project-ref` accepts a project ref, or the name (or UUID) of a branch of the linked project** (CLI-2289, the same vocabulary `link`/`config diff` already accept). A value that is exactly 20 lowercase letters is always treated as a ref. A name is resolved against the currently linked project (fails if none is linked, or if the linked ref is itself invalid); a UUID resolves directly and needs no linked project at all.
 - **Every invocation detects whether the resolved ref is the linked project, one of its branches, or genuinely undeterminable** (CLI-2168) and always echoes which one before doing anything else — see Output above. When `--project-ref` already named a branch by name/UUID, this is known for free (certain, never re-derived from a live probe); otherwise it's a live `GET /v1/projects/{ref}` probe: 200 is a plain project, 404 confirms a branch, and EVERYTHING else (a TIMEOUT, a transport failure, or any other status) degrades to "unknown" — never "project" (that would skip the confirmation gate for what might genuinely be a branch) and never a hard failure (this probe is diagnostic-only and must never block a push that would otherwise succeed). A confirmed branch's own name/parent are recovered best-effort from `.temp/linked-project.json`/`.temp/project-ref` and a branch-list lookup. A CONFIRMED branch target resolved IMPLICITLY (not via an explicit `--project-ref <name-or-uuid>` this invocation) is gated behind a confirmation before any further network call; a target resolved from an EXPLICIT `--project-ref <name-or-uuid>` this invocation skips that confirmation (same-invocation intent already expressed once); an "unknown" target is never gated at all. The target-echo line always prints regardless of which shape it is.
 - **Resolution runs BEFORE the config load**, not after: a `[remotes.<name>]` overlay is merged INSIDE `loadCliConfig` itself before its one full schema decode, and only one decode may ever run per invocation — reloading with a different `projectRef` a second time would either double the load-time deprecation warnings or wrongly reject a base document that's only valid once its matching remote's overlay applies. The accepted tradeoff: a branch name/UUID resolution's network call can fire even when the local `config.toml` turns out to be malformed (this only affects `--project-ref <name-or-uuid>`; a ref-shaped or absent target never needs a network call to resolve, so a malformed config there still aborts with zero requests made, matching this command's behavior before CLI-2168/CLI-2289).
-- **A non-TTY script piping multiple `y`/`n` answers needs one extra leading answer for an IMPLICIT branch target.** The branch confirmation gate reads one piped stdin line just like any other prompt in this command; it runs before the per-service `keep()` prompts, so a script written for the pre-CLI-2168 prompt sequence (`api`, `db`, `auth`, ...) has every answer shifted by one when its target happens to be an inferred branch. A plain-project target, or a target named explicitly via `--project-ref`, is unaffected (no new prompt fires).
+- **A non-TTY script piping multiple `y`/`n` answers needs one extra leading answer for an IMPLICIT branch target.** The branch confirmation gate reads one piped stdin line just like any other prompt in this command; it runs before the per-service `keep()` prompts, so a script written for the pre-CLI-2168 prompt sequence (`api`, `db`, `auth`, ...) has every answer shifted by one when its target happens to be an inferred branch. A plain-project target, or a target named explicitly via `--project-ref`, is unaffected (no new prompt fires). **A non-TTY script that pipes FEWER answers than there are prompts has its last answer applied to the remaining ones** (CLI-2450): `echo n | supabase config push` declines every resource, not just the first, since running out of answers must not flip an explicit decline back into a remote write. A run that pipes no answer at all is unaffected — every `keep()` prompt still takes its `true` default.
 - The post-run linked-project telemetry cache fill (`Effect.ensuring`, unconditional) may issue its own `GET /v1/projects/{ref}` independent of the target-detection probe above — both are best-effort/non-fatal for that fill, so a branch ref 404ing there is expected and harmless.
 - Run from the project root (or pass `--workdir`); `config.toml` is read relative to it.
 - Auth email `content_path` resolution: `[auth.email.template.*]` and `[auth.email.notification.*]` paths are relative to the discovered project root; notification paths fall back to the legacy `supabase/`-relative location when the root-resolved file is missing. Notification HTML is read only when `enabled = true`. **Every resolved path — relative (after collapsing `..`), absolute, or reached through an in-root symlink — must stay inside the project root** (CLI-2320; symlinks are dereferenced with `realpathSync` before the check, so an in-root symlink pointing outside can't bypass it); a path that resolves outside it aborts with `Invalid config for auth.email.<kind>.<name>.content_path: resolves outside the project root (<resolved path>)`, before any file read. This containment check now lives centrally in `resolveEmailTemplateContentPath` (`config-validate.ts`) rather than in this command's own module (CLI-2339), and applies unconditionally to every caller of that resolver — config validation and `start`'s eager pre-Docker pass, not just `config push`.

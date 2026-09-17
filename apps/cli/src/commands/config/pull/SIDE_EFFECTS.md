@@ -3,10 +3,10 @@
 Writes the effective configuration of a remote project or branch back into the local
 `supabase/config.toml`/`config.json` — the write side of `supabase config diff` (same target
 resolution, fetch, and classification, `../diff/`). Prompts for confirmation before writing on an
-interactive TTY, unless `--yes` is set; `--output-format json|stream-json` never prompts at all and
-returns the confirmation's default value without reading anything. A non-interactive TEXT run (no
-TTY on stdin) still prints the confirmation to stderr and reads a single line from piped stdin,
-honoring an explicit `y`/`n` answer and falling back to the default otherwise. Never writes on
+interactive TTY, unless `--yes` is set; on a TTY, `--output-format json|stream-json` does not prompt
+and returns the confirmation's default value. A non-interactive run (no TTY on stdin) prints the
+confirmation to stderr and reads a single line from piped stdin in EVERY output format, honoring an
+explicit `y`/`n` answer and falling back to the default otherwise. Never writes on
 `--dry-run`, on a declined prompt, or on any error.
 
 ## Files Read
