@@ -1,9 +1,6 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, FileSystem, Layer, Option } from "effect";
+import { Effect, Exit, FileSystem, Layer, Option, Path, Schema } from "effect";
 import { badArgument } from "effect/PlatformError";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 
@@ -20,6 +17,8 @@ import {
 import { unlink } from "./unlink.handler.ts";
 
 const tempRoot = useTempWorkdir("supabase-unlink-int-");
+
+const jsonText = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const noopHttpClient = Layer.succeed(
   HttpClient.HttpClient,
@@ -52,10 +51,21 @@ const failingRemoveFsLayer = Layer.effect(
   }),
 ).pipe(Layer.provide(BunServices.layer));
 
-function seedProjectRef(workdir: string, ref: string) {
-  mkdirSync(join(workdir, "supabase", ".temp"), { recursive: true });
-  writeFileSync(join(workdir, "supabase", ".temp", "project-ref"), ref);
-}
+const seedProjectRef = (workdir: string, ref: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const tempDir = path.join(workdir, "supabase", ".temp");
+    yield* fs.makeDirectory(tempDir, { recursive: true });
+    yield* fs.writeFileString(path.join(tempDir, "project-ref"), ref);
+  });
+
+const tempDirExists = (workdir: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    return yield* fs.exists(path.join(workdir, "supabase", ".temp"));
+  });
 
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
@@ -83,10 +93,11 @@ function setup(opts: SetupOpts = {}) {
 describe("unlink integration", () => {
   it.live("unlinks: removes the temp dir, deletes the keyring entry, prints Finished", () => {
     const { layer, out, credentials, workdir } = setup();
-    seedProjectRef(workdir, VALID_REF);
     return Effect.gen(function* () {
+      yield* seedProjectRef(workdir, VALID_REF);
       yield* unlink();
-      expect(existsSync(join(workdir, "supabase", ".temp"))).toBe(false);
+      const stillExists = yield* tempDirExists(workdir);
+      expect(stillExists).toBe(false);
       expect(credentials.deletedRefs).toEqual([VALID_REF]);
       expect(out.stdoutText).toContain("Finished supabase unlink.");
     }).pipe(Effect.provide(layer));
@@ -94,8 +105,8 @@ describe("unlink integration", () => {
 
   it.live("writes 'Unlinking project: <ref>' to stderr", () => {
     const { layer, out, workdir } = setup();
-    seedProjectRef(workdir, VALID_REF);
     return Effect.gen(function* () {
+      yield* seedProjectRef(workdir, VALID_REF);
       yield* unlink();
       expect(out.stderrText).toContain(`Unlinking project: ${VALID_REF}`);
     }).pipe(Effect.provide(layer));
@@ -105,8 +116,8 @@ describe("unlink integration", () => {
     // The mock returns true here; a real not-found returns false without erroring —
     // either way unlink succeeds.
     const { layer, out, workdir } = setup();
-    seedProjectRef(workdir, VALID_REF);
     return Effect.gen(function* () {
+      yield* seedProjectRef(workdir, VALID_REF);
       yield* unlink();
       expect(out.stdoutText).toContain("Finished supabase unlink.");
     }).pipe(Effect.provide(layer));
@@ -118,7 +129,7 @@ describe("unlink integration", () => {
       const exit = yield* Effect.exit(unlink());
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = yield* jsonText(exit.cause);
         expect(json).toContain("ProjectRefNotLinkedError");
         expect(json).toContain("Cannot find project ref");
       }
@@ -127,25 +138,26 @@ describe("unlink integration", () => {
 
   it.live("fails when the keyring delete errors (permission denied)", () => {
     const { layer, workdir } = setup({ deleteFails: true });
-    seedProjectRef(workdir, VALID_REF);
     return Effect.gen(function* () {
+      yield* seedProjectRef(workdir, VALID_REF);
       const exit = yield* Effect.exit(unlink());
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("CredentialDeleteError");
+        expect(yield* jsonText(exit.cause)).toContain("CredentialDeleteError");
       }
-      expect(existsSync(join(workdir, "supabase", ".temp"))).toBe(false);
+      const stillExists = yield* tempDirExists(workdir);
+      expect(stillExists).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 
   it.live("fails with UnlinkTempRemovalError when the temp dir cannot be removed", () => {
     const { layer, workdir } = setup({ removeFails: true });
-    seedProjectRef(workdir, VALID_REF);
     return Effect.gen(function* () {
+      yield* seedProjectRef(workdir, VALID_REF);
       const exit = yield* Effect.exit(unlink());
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = yield* jsonText(exit.cause);
         expect(json).toContain("UnlinkTempRemovalError");
         expect(json).toContain("failed to remove temp directory");
       }
@@ -154,12 +166,12 @@ describe("unlink integration", () => {
 
   it.live("surfaces both messages when temp removal and keyring delete both fail", () => {
     const { layer, workdir } = setup({ removeFails: true, deleteFails: true });
-    seedProjectRef(workdir, VALID_REF);
     return Effect.gen(function* () {
+      yield* seedProjectRef(workdir, VALID_REF);
       const exit = yield* Effect.exit(unlink());
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = yield* jsonText(exit.cause);
         expect(json).toContain("failed to remove temp directory");
         expect(json).toContain("failed to delete project credential");
       }
@@ -168,8 +180,8 @@ describe("unlink integration", () => {
 
   it.live("flushes telemetry via ensuring", () => {
     const { layer, telemetry, workdir } = setup();
-    seedProjectRef(workdir, VALID_REF);
     return Effect.gen(function* () {
+      yield* seedProjectRef(workdir, VALID_REF);
       yield* unlink();
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -177,8 +189,8 @@ describe("unlink integration", () => {
 
   it.live("json output: emits a structured success and suppresses the Finished line", () => {
     const { layer, out, workdir } = setup({ format: "json" });
-    seedProjectRef(workdir, VALID_REF);
     return Effect.gen(function* () {
+      yield* seedProjectRef(workdir, VALID_REF);
       yield* unlink();
       const success = out.messages.find((m) => m.type === "success");
       expect(success?.data).toMatchObject({ project_ref: VALID_REF });
@@ -188,8 +200,8 @@ describe("unlink integration", () => {
 
   it.live("stream-json output: emits a structured success", () => {
     const { layer, out, workdir } = setup({ format: "stream-json" });
-    seedProjectRef(workdir, VALID_REF);
     return Effect.gen(function* () {
+      yield* seedProjectRef(workdir, VALID_REF);
       yield* unlink();
       const success = out.messages.find((m) => m.type === "success");
       expect(success?.data).toMatchObject({ project_ref: VALID_REF });
