@@ -328,7 +328,10 @@ describe("compute list", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("reports a project outside the alpha as unavailable", () =>
+  // Until the Management API ships `not_found.compute.not_enabled`, an unenrolled
+  // project answers the shared `generic_not_found`, which no branch claims — so
+  // this pins the fallback that carries the alpha refusal until then.
+  it.live("still reports the alpha refusal's pre-rollout body as unavailable", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({

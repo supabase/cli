@@ -1032,10 +1032,13 @@ describe("compute push", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  // Both of the next two arrive as a 404 on the same route; only `error.code`
-  // separates them, so they are asserted against the bodies the API really
-  // sends rather than a shape of our own invention.
-  it.live("reports a project outside the alpha as unavailable", () =>
+  // These all arrive as a 404 on the same route; only `error.code` separates
+  // them, so they are asserted against the bodies the API really sends rather
+  // than a shape of our own invention. Until the Management API ships
+  // `not_found.compute.not_enabled`, an unenrolled project answers the shared
+  // `generic_not_found`, which no branch claims — so the first pins the
+  // fallback that carries the alpha refusal until then.
+  it.live("still reports the alpha refusal's pre-rollout body as unavailable", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({
@@ -1046,6 +1049,33 @@ describe("compute push", () => {
             body: {
               error: {
                 code: "generic_not_found",
+                message: "Compute is not available for this project",
+              },
+            },
+          },
+        }),
+      });
+
+      return yield* Effect.gen(function* () {
+        const error = yield* push().pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(ComputeUnavailableError);
+        expect((error as ComputeUnavailableError).suggestion).toContain("private alpha");
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live("reports the alpha refusal's own code as unavailable, not as a missing project", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer } = setupCompute({
+        workdir: repo.dir,
+        routes: routes({
+          [`POST ${computeRoute("/api/uploads")}`]: {
+            status: 404,
+            body: {
+              error: {
+                code: "not_found.compute.not_enabled",
                 message: "Compute is not available for this project",
               },
             },
@@ -1375,6 +1405,40 @@ describe("compute push", () => {
         expect(
           http.routeKeys.filter((key) => key === `GET ${computeRoute("/api")}`).length,
         ).toBeGreaterThan(1);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live("surfaces a permanent poll failure on the first read instead of retrying it", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer, http } = setupCompute({
+        workdir: repo.dir,
+        routes: routes({
+          [`GET ${computeRoute("/api")}`]: {
+            status: 404,
+            body: {
+              error: {
+                code: "not_found.compute.not_enabled",
+                message: "Compute is not available for this project",
+              },
+            },
+          },
+        }),
+      });
+
+      return yield* Effect.gen(function* () {
+        // A real retry schedule: a verdict the retry cannot change must not hold
+        // the poll open for its whole window.
+        const error = yield* computePush(flags(), {
+          pollSchedule: IMMEDIATE,
+          pollRetrySchedule: Schedule.recurs(3),
+        }).pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(ComputeUnavailableError);
+        expect(http.routeKeys.filter((key) => key === `GET ${computeRoute("/api")}`)).toHaveLength(
+          1,
+        );
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );

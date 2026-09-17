@@ -1,15 +1,20 @@
 import { markSupabaseApiInputErrorAsUserInput, SupabaseApiInputError } from "@supabase/api/effect";
-import { Effect, Schema } from "effect";
+import { Effect, Option, Schema } from "effect";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import { CLI_UPGRADE_GUIDE_URL } from "../cli/version.ts";
-import { ComputeApiNetworkError, ComputeApiUnexpectedStatusError } from "./compute.errors.ts";
+import {
+  ComputeApiNetworkError,
+  ComputeApiUnexpectedStatusError,
+  ComputeProjectNotFoundError,
+} from "./compute.errors.ts";
 
 /**
  * Status handling shared by every Compute API seam: the compute routes and the analytics logs
  * endpoint fail the same three ways (the request never left, the server answered something
- * unexpected, or the body couldn't be read). Route-specific status meaning — like
- * `projectScoped404`, which disambiguates a `/v2/projects/{ref}/compute` 404 by body — stays with its own route.
+ * unexpected, or the body couldn't be read), and both have to tell several 404s apart by body.
+ * Reading a 404 body is shared here; what each code *means* on a given route — like
+ * `projectScoped404` — stays with that route.
  */
 
 /**
@@ -89,3 +94,47 @@ export const decodeJsonBody = <A, I>(
     Effect.mapError(mapRequestError(operation)),
     Effect.flatMap((body) => decodeBody(schema, operation, body, response.status)),
   );
+
+/**
+ * The Management API's error envelope, as it arrives on a 404.
+ *
+ * `message` is `Unknown` rather than `String` so a non-string message cannot fail the decode and
+ * cost the code-based classification that follows it.
+ */
+const NotFoundBody = Schema.Struct({
+  error: Schema.Struct({
+    code: Schema.String,
+    message: Schema.optionalKey(Schema.Unknown),
+  }),
+});
+
+type NotFoundEnvelope = Schema.Schema.Type<typeof NotFoundBody>;
+
+/** The 404 body parsed into its envelope, or `None` when it is something else entirely. */
+export const parse404 = (body: string) =>
+  Schema.decodeEffect(Schema.fromJsonString(NotFoundBody))(body).pipe(Effect.option);
+
+/** Express's default for an unrouted path. Anchored so a message merely containing it cannot match. */
+const ROUTE_NOT_FOUND_MESSAGE = /^Cannot [A-Z]+ \//;
+
+/** The route named by the router's own 404 text, when the body is that rather than a handler's. */
+export const unroutedPath = (parsed: Option.Option<NotFoundEnvelope>): Option.Option<string> => {
+  if (Option.isNone(parsed)) return Option.none();
+  const { message } = parsed.value.error;
+  // `Cannot GET /v2/projects/{ref}/compute` -> `GET /v2/projects/{ref}/compute`
+  return typeof message === "string" && ROUTE_NOT_FOUND_MESSAGE.test(message)
+    ? Option.some(message.slice("Cannot ".length))
+    : Option.none();
+};
+
+export const hasErrorCode = (parsed: Option.Option<NotFoundEnvelope>, code: string) =>
+  Option.isSome(parsed) && parsed.value.error.code === code;
+
+/** The ref names no project this account can see — the same verdict on every seam that reads one. */
+export const projectNotFound = (projectRef: string) =>
+  new ComputeProjectNotFoundError({
+    detail: `No project ${projectRef} was found for this account.`,
+    suggestion:
+      "Check the project ref, or pick the project again with `supabase link`. " +
+      "If it belongs to another account, log in with `supabase login`.",
+  });

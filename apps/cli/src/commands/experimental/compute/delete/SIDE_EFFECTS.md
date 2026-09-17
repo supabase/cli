@@ -54,15 +54,15 @@ rather than deleting unasked.
 
 ## Exit Codes
 
-| Code | Condition                                                                 |
-| ---- | ------------------------------------------------------------------------- |
-| `0`  | success (a `404` on DELETE counts — it is already gone)                   |
-| `0`  | nothing deployed under that name, with `--yes` (teardown is idempotent)   |
-| `1`  | invalid compute name                                                      |
-| `1`  | nothing deployed under that name, without `--yes`                         |
-| `1`  | the typed confirmation did not match the compute's name                   |
-| `1`  | confirmation needed but no interactive terminal to ask on, and no `--yes` |
-| `1`  | API error, or project not enrolled in the alpha                           |
+| Code | Condition                                                                                        |
+| ---- | ------------------------------------------------------------------------------------------------ |
+| `0`  | success (a `404` on DELETE counts — it is already gone)                                          |
+| `0`  | nothing deployed under that name, with `--yes` (teardown is idempotent)                          |
+| `1`  | invalid compute name                                                                             |
+| `1`  | nothing deployed under that name, without `--yes`                                                |
+| `1`  | the typed confirmation did not match the compute's name                                          |
+| `1`  | confirmation needed but no interactive terminal to ask on, and no `--yes`                        |
+| `1`  | API error, project not enrolled in the alpha, no such project, or a route the API does not serve |
 
 ## Environment Variables
 

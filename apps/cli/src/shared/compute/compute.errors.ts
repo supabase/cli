@@ -204,9 +204,9 @@ export class ComputeNotDeployedError extends Data.TaggedError("ComputeNotDeploye
 }
 
 /**
- * Compute are in private alpha: an unenrolled project's routes answer 404, indistinguishable at
- * the transport level from an unknown compute — so this is only raised on collection endpoints,
- * where there's no compute name that could have been wrong.
+ * Compute are in private alpha, and an unenrolled project's routes answer 404 with their own
+ * `not_found.compute.not_enabled`. Raised on every compute route, named ones included, plus as
+ * the fallback for a 404 body this CLI cannot classify.
  */
 export class ComputeUnavailableError extends Data.TaggedError("ComputeUnavailableError")<{
   readonly detail: string;

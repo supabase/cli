@@ -14,6 +14,7 @@ import {
   ComputeNotDeployedError,
   ComputeUnavailableError,
   ComputeApiUnexpectedStatusError,
+  ComputeProjectNotFoundError,
   ComputeRouteNotFoundError,
 } from "../../../../shared/compute/compute.errors.ts";
 import { ComputeEnvNotSupportedError } from "../compute.errors.ts";
@@ -398,12 +399,17 @@ describe("compute delete", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
+  const notDeployed = {
+    status: 404,
+    body: { error: { code: "not_found.compute.instance", message: "Compute instance not found" } },
+  };
+
   it.live("fails with `not deployed` before asking anything", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
         workdir: repo.dir,
-        routes: { [getRoute]: { status: 404, body: { message: "compute not found" } } },
+        routes: { [getRoute]: notDeployed },
       });
 
       return yield* Effect.gen(function* () {
@@ -506,6 +512,55 @@ describe("compute delete", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
+  const projectNotFound = {
+    status: 404,
+    body: { error: { code: "not_found", message: "Not Found" } },
+  };
+
+  it.live("does not read a missing project as a compute that was never deployed", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer, out, http } = setupCompute({
+        workdir: repo.dir,
+        routes: { [getRoute]: projectNotFound },
+        yes: true,
+      });
+
+      return yield* Effect.gen(function* () {
+        const error = yield* computeDelete({
+          name: "api",
+          projectRef: Option.none(),
+        }).pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(ComputeProjectNotFoundError);
+        expect(error).not.toBeInstanceOf(ComputeNotDeployedError);
+        expect(http.routeKeys).toEqual([getRoute]);
+        expect(out.stdoutText).not.toContain("Deleted Compute");
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live("does not report a delete against a missing project as done", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer, out } = setupCompute({
+        workdir: repo.dir,
+        routes: { ...routes, [deleteRoute]: projectNotFound },
+        yes: true,
+      });
+
+      return yield* Effect.gen(function* () {
+        const error = yield* computeDelete({
+          name: "api",
+          projectRef: Option.none(),
+        }).pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(ComputeProjectNotFoundError);
+        expect(out.stdoutText).not.toContain("Deleted Compute");
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
   // `deleteCompute` already treats a DELETE 404 as done; the pre-flight GET used
   // to contradict that, so a teardown script run twice failed the second time
   // for a compute in exactly the state it asked for.
@@ -514,7 +569,7 @@ describe("compute delete", () => {
       const repo = yield* project();
       const { layer, out, http } = setupCompute({
         workdir: repo.dir,
-        routes: { [getRoute]: { status: 404, body: { message: "compute not found" } } },
+        routes: { [getRoute]: notDeployed },
         yes: true,
       });
 
@@ -534,7 +589,7 @@ describe("compute delete", () => {
       const repo = yield* project();
       const { layer, out, http } = setupCompute({
         workdir: repo.dir,
-        routes: { [getRoute]: { status: 404, body: { message: "compute not found" } } },
+        routes: { [getRoute]: notDeployed },
         yes: true,
         goOutput: "json",
       });
@@ -560,7 +615,7 @@ describe("compute delete", () => {
       const repo = yield* project();
       const { layer, out } = setupCompute({
         workdir: repo.dir,
-        routes: { ...routes, [deleteRoute]: { status: 404, body: { message: "already gone" } } },
+        routes: { ...routes, [deleteRoute]: notDeployed },
         yes: true,
       });
 
