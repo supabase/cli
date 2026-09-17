@@ -93,7 +93,8 @@ no-native-artifact platforms: a one-shot of the same catalog image). Native
 Windows and Intel Mac have no native postgres artifact, so dump/squash/prove run a one-shot
 Docker client against the published URL (`host.docker.internal`). The stack stays native.
 If Docker is missing on that path, the command fails and tells the user to install Docker
-Desktop.
+Desktop. `db lint --local` does not launch a client binary: catalog Postgres ships
+`plpgsql_check`, so the lint transaction can `CREATE EXTENSION` on native and container stacks.
 
 ### (e) Studio does not require analytics
 

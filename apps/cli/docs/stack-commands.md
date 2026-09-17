@@ -121,6 +121,10 @@ catalog Postgres image. There is no host PATH fallback and stack `--local` never
 loopback to `127.0.0.1`. Missing `pg_prove` fails closed. Install Docker Desktop when a
 no-native-artifact platform cannot spawn the one-shot client.
 
+`db lint --local` talks to the running stack over SQL. Catalog Postgres includes
+`plpgsql_check`, so native and container stacks can `CREATE EXTENSION` inside the
+lint transaction (always rolled back). It does not launch a client binary.
+
 ## Reading stack logs
 
 `supabase stack logs` reads retained logs without starting or stopping the selected stack. Use
