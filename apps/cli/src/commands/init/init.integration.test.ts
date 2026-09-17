@@ -119,6 +119,8 @@ describe("init", () => {
 
       const content = yield* readTextFile(tempDir, "supabase", "config.toml");
       expect(content).toContain("major_version = 17");
+      expect(content).toContain("port = 54321");
+      expect(content).not.toContain("stack = true");
       expect(out.stdoutText).toBe("Finished supabase init.\n");
     });
   });
@@ -325,5 +327,70 @@ describe("init", () => {
         '"deno.enablePaths"',
       );
     });
+  });
+
+  it.live("writes the stack-opt-in template when SUPABASE_EXPERIMENTAL_STACK=1", () => {
+    const tempDir = tempRoot.current;
+
+    return withEnvVar(
+      "SUPABASE_EXPERIMENTAL_STACK",
+      "1",
+      Effect.gen(function* () {
+        const { layer, out } = setup(tempDir);
+
+        yield* init({ ...BASE_INIT_FLAGS, interactive: false }).pipe(Effect.provide(layer));
+
+        const content = yield* readTextFile(tempDir, "supabase", "config.toml");
+        expect(content).toContain("stack = true");
+        expect(content).not.toMatch(/^shadow_port = 54320$/m);
+        expect(content).not.toMatch(/^port = 54321$/m);
+        expect(content).not.toMatch(/^inspector_port = 8083$/m);
+        expect(out.stdoutText).toBe("Finished supabase init.\n");
+      }),
+    );
+  });
+
+  it.live("keeps the established template when SUPABASE_EXPERIMENTAL_STACK=0", () => {
+    const tempDir = tempRoot.current;
+
+    return withEnvVar(
+      "SUPABASE_EXPERIMENTAL_STACK",
+      "0",
+      Effect.gen(function* () {
+        const { layer } = setup(tempDir);
+
+        yield* init({ ...BASE_INIT_FLAGS, interactive: false }).pipe(Effect.provide(layer));
+
+        const content = yield* readTextFile(tempDir, "supabase", "config.toml");
+        expect(content).not.toContain("stack = true");
+        expect(content).toContain("port = 54321");
+      }),
+    );
+  });
+
+  it.live("fails closed when SUPABASE_EXPERIMENTAL_STACK is not 0 or 1", () => {
+    const tempDir = tempRoot.current;
+
+    return withEnvVar(
+      "SUPABASE_EXPERIMENTAL_STACK",
+      "yes",
+      Effect.gen(function* () {
+        const { layer } = setup(tempDir);
+
+        const exit = yield* init({ ...BASE_INIT_FLAGS, interactive: false }).pipe(
+          Effect.provide(layer),
+          Effect.exit,
+        );
+
+        const error = findFailure(exit);
+        expect(error["_tag"]).toBe("ExperimentalFeatureFlagError");
+        expect(error["message"]).toBe("SUPABASE_EXPERIMENTAL_STACK must be 0 or 1 when set");
+
+        expect(yield* renderFailureToStderr(exit)).toEqual([
+          "SUPABASE_EXPERIMENTAL_STACK must be 0 or 1 when set\n",
+          "Try rerunning the command with --debug to troubleshoot the error.\n",
+        ]);
+      }),
+    );
   });
 });

@@ -87,6 +87,11 @@ For temporary selection, set `SUPABASE_EXPERIMENTAL_STACK=1` to select the new b
 precedence over `experimental.stack`; an unset or empty value falls back to the file setting.
 Other values are rejected. The override is applied before reading the project configuration.
 
+`SUPABASE_EXPERIMENTAL_STACK=1 supabase init` writes `[experimental] stack = true` into the new
+project config and omits the Docker-era default ports so the stack is not pinned to them.
+Without the environment variable, `init` still writes the established template with those ports
+and without the stack flag. Blank `supabase bootstrap` uses the same scaffold.
+
 ## Reading stack logs
 
 `supabase stack logs` reads retained logs without starting or stopping the selected stack. Use

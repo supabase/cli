@@ -100,6 +100,23 @@ describe("project init templates", () => {
     expect(rendered).toContain("[experimental.pgdelta]\nenabled = true");
   });
 
+  it("opts the experimental stack template into stack=true without default listener ports", () => {
+    const rendered = renderCliConfigTemplate("demo-project", false, true);
+    expect(rendered).toMatch(
+      /\[experimental\]\n# Use the new local stack backend for top-level start, stop, and status.\nstack = true\n/,
+    );
+    expect(rendered).toContain("# smtp_port = 54325");
+    expect(rendered).toContain("[experimental.pgdelta]\nenabled = true");
+    expect(rendered).not.toMatch(/^port = 54321$/m);
+    expect(rendered).not.toMatch(/^port = 54322$/m);
+    expect(rendered).not.toMatch(/^shadow_port = 54320$/m);
+    expect(rendered).not.toMatch(/^port = 54329$/m);
+    expect(rendered).not.toMatch(/^port = 54323$/m);
+    expect(rendered).not.toMatch(/^port = 54324$/m);
+    expect(rendered).not.toMatch(/^inspector_port = 8083$/m);
+    expect(rendered).not.toMatch(/^port = 54327$/m);
+  });
+
   it("matches the Go .gitignore scaffold", () => {
     expect(INIT_GITIGNORE_TEMPLATE).toBe(readVendoredTemplate("gitignore"));
   });

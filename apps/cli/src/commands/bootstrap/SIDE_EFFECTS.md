@@ -61,21 +61,22 @@ neither branch ever reaches the temp-login-role/Management-API path a passwordle
 
 ## Environment Variables
 
-| Variable                | Purpose                                                                                              | Required? |
-| ----------------------- | ---------------------------------------------------------------------------------------------------- | --------- |
-| `SUPABASE_WORKDIR`      | target dir (`--workdir` flag → env → prompt → cwd)                                                   | no        |
-| `SUPABASE_DB_PASSWORD`  | DB password (`-p` flag → env → prompt/generate)                                                      | no        |
-| `GITHUB_TOKEN`          | raise the GitHub API rate limit for template fetch                                                   | no        |
-| `SUPABASE_ACCESS_TOKEN` | auth bypass for ensure-login                                                                         | no        |
-| `SUPABASE_PROFILE`      | profile name/path (env → `~/.supabase/profile` → `supabase`)                                         | no        |
-| `SUPABASE_YES`          | auto-confirm the native push step's prompts, read project-`.env`-aware like the standalone `db push` | no        |
+| Variable                      | Purpose                                                                                                                                                                   | Required? |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| `SUPABASE_WORKDIR`            | target dir (`--workdir` flag → env → prompt → cwd)                                                                                                                        | no        |
+| `SUPABASE_DB_PASSWORD`        | DB password (`-p` flag → env → prompt/generate)                                                                                                                           | no        |
+| `GITHUB_TOKEN`                | raise the GitHub API rate limit for template fetch                                                                                                                        | no        |
+| `SUPABASE_ACCESS_TOKEN`       | auth bypass for ensure-login                                                                                                                                              | no        |
+| `SUPABASE_PROFILE`            | profile name/path (env → `~/.supabase/profile` → `supabase`)                                                                                                              | no        |
+| `SUPABASE_YES`                | auto-confirm the native push step's prompts, read project-`.env`-aware like the standalone `db push`                                                                      | no        |
+| `SUPABASE_EXPERIMENTAL_STACK` | blank/`scratch` path only; when `1`, the `initProject` scaffold persists `[experimental] stack = true` and omits Docker-era default ports. Invalid values fail closed | no        |
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                                                                                                                                                                                                                                          |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `0`  | success                                                                                                                                                                                                                                                                                                                                                                                                            |
-| `1`  | invalid template arg; overwrite declined (`context canceled`); template list/download failure; login failure; create failure; api-keys exhausted; health unhealthy / error status; native push failure (missing local/remote migrations, cancelled confirmation, connect/apply failure); any network failure. The `.env` derive/write is **non-fatal** (prints `Failed to create .env file: <err>` and continues). |
+| Code | Condition                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `1`  | invalid template arg; overwrite declined (`context canceled`); template list/download failure; login failure; create failure; api-keys exhausted; health unhealthy / error status; native push failure (missing local/remote migrations, cancelled confirmation, connect/apply failure); invalid `SUPABASE_EXPERIMENTAL_STACK` on the blank path; any network failure. The `.env` derive/write is **non-fatal** (prints `Failed to create .env file: <err>` and continues). |
 
 ## Telemetry
 

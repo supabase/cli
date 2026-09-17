@@ -453,6 +453,14 @@ enabled = true
     });
   });
 
+  it.effect("leaves stack-opt-in init listeners automatic except disabled pooler", () => {
+    return Effect.gen(function* () {
+      const root = yield* project(renderCliConfigTemplate("stack-config-init", false, true));
+      const config = yield* load(root);
+      expect(config.listeners).toEqual({ pooler: { enabled: false } });
+    });
+  });
+
   it.effect("ignores unresolved function env references when edge runtime is disabled", () => {
     return Effect.gen(function* () {
       const root = yield* project(`project_id = "stack-config-disabled-functions-env"
