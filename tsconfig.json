@@ -1,6 +1,3 @@
 {
-  "extends": "@tsconfig/bun/tsconfig.json",
-  "compilerOptions": {
-    "skipLibCheck": true
-  }
+  "extends": "@tsconfig/bun/tsconfig.json"
 }
