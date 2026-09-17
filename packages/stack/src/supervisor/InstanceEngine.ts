@@ -698,6 +698,7 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
     );
     const statusUpdates = yield* PubSub.unbounded<StatusUpdate>();
     const locks = new Map<ServiceInstanceId, Semaphore.Semaphore>();
+    const metadataAdmission = yield* Semaphore.make(1);
     const lockFor = (id: ServiceInstanceId): Effect.Effect<Semaphore.Semaphore> =>
       Effect.sync(() => {
         const current = locks.get(id);
@@ -798,6 +799,7 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
     type CoordinationClaim = {
       readonly token?: symbol;
       readonly active: number;
+      readonly mutation?: Mutation;
       readonly startupControlAllowed?: boolean;
       readonly completion?: Deferred.Deferred<Exit.Exit<void, StackError>, never>;
     };
@@ -828,132 +830,163 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
             );
     const claimBatch = (
       ids: ReadonlyArray<ServiceInstanceId>,
+      mutation: Mutation,
       rejectActive = false,
       startupControlAllowed = false,
       allowRecoveryCleanup = false,
       allowPendingStarts = false,
     ): Effect.Effect<symbol, StackError> =>
-      Effect.gen(function* () {
-        const token = Symbol("instance-batch");
-        const recoveryIds = allowRecoveryCleanup
-          ? yield* Ref.get(recovery).pipe(Effect.map((recoveries) => new Set(recoveries.keys())))
-          : new Set<ServiceInstanceId>();
-        const pendingStartIds = allowPendingStarts
-          ? yield* read().pipe(
-              Effect.map(
-                (state) =>
-                  new Set(
-                    state.registry.instances
-                      .filter(
-                        (instance) =>
-                          instance.pendingOperation?.kind === "start" ||
-                          instance.pendingOperation?.kind === "restart",
-                      )
-                      .map((instance) => instance.id),
-                  ),
-              ),
-            )
-          : new Set<ServiceInstanceId>();
-        const completions = yield* Effect.forEach(ids, () =>
-          Deferred.make<Exit.Exit<void, StackError>>(),
-        );
-        return yield* Effect.gen(function* () {
-          const claimed = yield* Ref.modify(batchClaims, (current) => {
-            if (
-              ids.some((id) => {
-                const claim = current.get(id);
-                const pendingStartupClaim =
-                  pendingStartIds.has(id) && claim?.startupControlAllowed === true;
-                return (
-                  claim !== undefined &&
-                  ((claim.token !== undefined && !pendingStartupClaim) ||
-                    (rejectActive && claim.active > 0))
-                );
-              })
-            )
-              return [false, current] as const;
-            const next = new Map(current);
-            for (const [index, id] of ids.entries()) {
-              const existing = current.get(id);
-              const pendingStartupClaim =
-                pendingStartIds.has(id) && existing?.startupControlAllowed === true;
-              if (startupControlAllowed && pendingStartupClaim) continue;
-              next.set(id, {
-                token,
-                active: current.get(id)?.active ?? 0,
-                ...(startupControlAllowed ? { startupControlAllowed: true } : {}),
-                ...(completions[index] !== undefined ? { completion: completions[index] } : {}),
-              });
+      metadataAdmission.withPermit(
+        Effect.gen(function* () {
+          const token = Symbol("instance-batch");
+          const recoveryIds = allowRecoveryCleanup
+            ? yield* Ref.get(recovery).pipe(Effect.map((recoveries) => new Set(recoveries.keys())))
+            : new Set<ServiceInstanceId>();
+          const pendingStartIds = allowPendingStarts
+            ? yield* read().pipe(
+                Effect.map(
+                  (state) =>
+                    new Set(
+                      state.registry.instances
+                        .filter(
+                          (instance) =>
+                            instance.pendingOperation?.kind === "start" ||
+                            instance.pendingOperation?.kind === "restart",
+                        )
+                        .map((instance) => instance.id),
+                    ),
+                ),
+              )
+            : new Set<ServiceInstanceId>();
+          const completions = yield* Effect.forEach(ids, () =>
+            Deferred.make<Exit.Exit<void, StackError>>(),
+          );
+          const selected = new Set(ids);
+          if (mutation === "stop" || mutation === "destroy") {
+            const state = yield* read();
+            for (const id of ids) {
+              const dependent = state.registry.instances.find(
+                (entry) =>
+                  !selected.has(entry.id) &&
+                  Object.values(entry.dependencies).includes(id) &&
+                  (mutation === "destroy" || entry.intent === "started"),
+              );
+              if (dependent !== undefined)
+                return yield* new StackLifecycleConflictError({
+                  stackId: options.stackId,
+                  instanceId: id,
+                  message:
+                    mutation === "destroy"
+                      ? `Service instance ${id} has dependent ${dependent.id}`
+                      : `Service instance ${id} has active dependents`,
+                });
             }
-            return [true, next] as const;
-          });
-          if (!claimed) {
-            const blocked = yield* Ref.get(batchClaims).pipe(
-              Effect.map((current) =>
-                ids.find((id) => {
+          }
+          return yield* Effect.gen(function* () {
+            const claimed = yield* Ref.modify(batchClaims, (current) => {
+              if (
+                ids.some((id) => {
                   const claim = current.get(id);
                   const pendingStartupClaim =
-                    pendingStartIds.has(id) && claim?.startupControlAllowed === true;
+                    pendingStartIds.has(id) &&
+                    (claim?.mutation === "start" || claim?.mutation === "restart") &&
+                    claim.startupControlAllowed === true;
                   return (
                     claim !== undefined &&
                     ((claim.token !== undefined && !pendingStartupClaim) ||
                       (rejectActive && claim.active > 0))
                   );
-                }),
-              ),
-            );
-            return yield* new StackLifecycleConflictError({
-              stackId: options.stackId,
-              ...(blocked === undefined ? {} : { instanceId: blocked }),
-              message: "A selected service instance is already part of another batch operation",
+                })
+              )
+                return [false, current] as const;
+              const next = new Map(current);
+              for (const [index, id] of ids.entries()) {
+                const existing = current.get(id);
+                const pendingStartupClaim =
+                  pendingStartIds.has(id) &&
+                  (existing?.mutation === "start" || existing?.mutation === "restart") &&
+                  existing.startupControlAllowed === true;
+                if (startupControlAllowed && pendingStartupClaim) continue;
+                next.set(id, {
+                  token,
+                  active: current.get(id)?.active ?? 0,
+                  mutation,
+                  ...(startupControlAllowed ? { startupControlAllowed: true } : {}),
+                  ...(completions[index] !== undefined ? { completion: completions[index] } : {}),
+                });
+              }
+              return [true, next] as const;
             });
-          }
-          const verified = yield* options.stateStore
-            .update<StackError>(options.stackId, (state) => {
-              const selected = state.registry.instances.filter((instance) =>
-                ids.includes(instance.id),
-              );
-              return selected.length === ids.length &&
-                selected.every(
-                  (instance) =>
-                    instance.pendingOperation === null ||
-                    recoveryIds.has(instance.id) ||
-                    pendingStartIds.has(instance.id),
-                )
-                ? Effect.succeed(state)
-                : Effect.fail(
-                    new StackLifecycleConflictError({
-                      stackId: options.stackId,
-                      message: "A selected service instance changed during batch admission",
-                    }),
-                  );
-            })
-            .pipe(Effect.provideContext(options.context), Effect.asVoid, Effect.exit);
-          if (Exit.isFailure(verified)) return yield* Effect.failCause(verified.cause);
-          return token;
-        }).pipe(
-          Effect.onExit((exit) =>
-            Exit.isSuccess(exit)
-              ? Effect.void
-              : Effect.forEach(completions, (completion) =>
-                  Deferred.succeed(completion, voidExit(exit)).pipe(Effect.asVoid),
-                ).pipe(
-                  Effect.andThen(
-                    Ref.update(batchClaims, (current) => {
-                      const next = new Map(current);
-                      for (const id of ids) {
-                        const claim = next.get(id);
-                        if (claim?.token !== token) continue;
-                        if (claim.active === 0) next.delete(id);
-                        else next.set(id, { active: claim.active });
-                      }
-                      return next;
-                    }),
-                  ),
+            if (!claimed) {
+              const blocked = yield* Ref.get(batchClaims).pipe(
+                Effect.map((current) =>
+                  ids.find((id) => {
+                    const claim = current.get(id);
+                    const pendingStartupClaim =
+                      pendingStartIds.has(id) &&
+                      (claim?.mutation === "start" || claim?.mutation === "restart") &&
+                      claim.startupControlAllowed === true;
+                    return (
+                      claim !== undefined &&
+                      ((claim.token !== undefined && !pendingStartupClaim) ||
+                        (rejectActive && claim.active > 0))
+                    );
+                  }),
                 ),
-          ),
-        );
-      });
+              );
+              return yield* new StackLifecycleConflictError({
+                stackId: options.stackId,
+                ...(blocked === undefined ? {} : { instanceId: blocked }),
+                message: "A selected service instance is already part of another batch operation",
+              });
+            }
+            const verified = yield* options.stateStore
+              .update<StackError>(options.stackId, (state) => {
+                const selected = state.registry.instances.filter((instance) =>
+                  ids.includes(instance.id),
+                );
+                return selected.length === ids.length &&
+                  selected.every(
+                    (instance) =>
+                      instance.pendingOperation === null ||
+                      recoveryIds.has(instance.id) ||
+                      pendingStartIds.has(instance.id),
+                  )
+                  ? Effect.succeed(state)
+                  : Effect.fail(
+                      new StackLifecycleConflictError({
+                        stackId: options.stackId,
+                        message: "A selected service instance changed during batch admission",
+                      }),
+                    );
+              })
+              .pipe(Effect.provideContext(options.context), Effect.asVoid, Effect.exit);
+            if (Exit.isFailure(verified)) return yield* Effect.failCause(verified.cause);
+            return token;
+          }).pipe(
+            Effect.onExit((exit) =>
+              Exit.isSuccess(exit)
+                ? Effect.void
+                : Effect.forEach(completions, (completion) =>
+                    Deferred.succeed(completion, voidExit(exit)).pipe(Effect.asVoid),
+                  ).pipe(
+                    Effect.andThen(
+                      Ref.update(batchClaims, (current) => {
+                        const next = new Map(current);
+                        for (const id of ids) {
+                          const claim = next.get(id);
+                          if (claim?.token !== token) continue;
+                          if (claim.active === 0) next.delete(id);
+                          else next.set(id, { active: claim.active });
+                        }
+                        return next;
+                      }),
+                    ),
+                  ),
+            ),
+          );
+        }),
+      );
     const releaseBatch = (ids: ReadonlyArray<ServiceInstanceId>, token: symbol) =>
       Ref.update(batchClaims, (current) => {
         const next = new Map(current);
@@ -1240,11 +1273,12 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
               );
         const rejectBatchConflict = Ref.get(batchClaims).pipe(
           Effect.flatMap((claims) => {
-            const owner = claims.get(id)?.token;
+            const claim = claims.get(id);
+            const owner = claim?.token;
             return owner === undefined ||
               owner === batchToken ||
               owner === handoffToken ||
-              (batchToken === undefined && mutation === "start")
+              (batchToken === undefined && mutation === "start" && claim?.mutation === "start")
               ? Effect.void
               : Effect.fail(
                   new StackLifecycleConflictError({
@@ -1255,405 +1289,442 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
                 );
           }),
         );
-        const ownerBody = Effect.gen(function* () {
-          const admitted = yield* current(id);
-          const recoveryCleanup =
-            mutation === "stop" || mutation === "destroy"
-              ? yield* Ref.get(recovery).pipe(Effect.map((recoveries) => recoveries.get(id)))
-              : undefined;
-          if (mutation === "stop" && recoveryCleanup?.operation === "destroy")
-            return yield* new StackLifecycleConflictError({
-              stackId: options.stackId,
-              instanceId: id,
-              message: `Service instance ${id} requires destroy recovery before activation can be unfenced`,
-            });
-          const replacementEnabled = replacement?.instance.config.enabled;
-          const startsWorkload =
-            mutation === "start" ||
-            (mutation === "restart" &&
-              replacement?.startImmediately !== false &&
-              replacement?.desiredIntent !== "stopped");
-          if (startsWorkload && (replacementEnabled ?? admitted.instance.config.enabled) === false)
-            return yield* new StackLifecycleConflictError({
-              stackId: options.stackId,
-              instanceId: id,
-              message: `Disabled service instance ${id} cannot be started`,
-            });
-          if (
-            startsWorkload &&
-            (yield* Ref.get(recovery).pipe(Effect.map((recoveries) => recoveries.has(id))))
-          )
-            return yield* new StackLifecycleConflictError({
-              stackId: options.stackId,
-              instanceId: id,
-              message: `Service instance ${id} is fenced by a recovery failure`,
-            });
-          if (
-            (mutation === "exportSnapshot" || mutation === "restoreSnapshot") &&
-            (admitted.instance.intent !== "stopped" || admitted.instance.pendingOperation !== null)
-          )
-            return yield* new StackLifecycleConflictError({
-              stackId: options.stackId,
-              message: `Snapshot operation requires stopped service instance ${id}`,
-            });
-          if (preflight !== undefined) yield* preflight(admitted);
-          if (skip !== undefined && shouldSkip !== undefined && (yield* shouldSkip(admitted)))
-            return yield* skip(admitted);
-          // Admit the intent and endpoint plan in one transaction. Once the journal is written,
-          // every later failure path below must settle that same operation rather than strand it.
-          const preadmitted = replacement?.admission;
-          const operationId =
-            preadmitted?.operationId ??
-            (yield* Context.get(options.context, Crypto.Crypto).randomUUIDv4.pipe(
-              Effect.mapError(
-                (error) =>
-                  new StackStateInvalidError({
-                    stackId: options.stackId,
-                    message: `Unable to allocate operation identity: ${error.message}`,
-                    cause: error,
-                  }),
-              ),
-            ));
-          const accepted = yield* preadmitted !== undefined
-            ? read().pipe(
-                Effect.flatMap((state) => {
-                  const instance = state.registry.instances.find((entry) => entry.id === id);
-                  const pending = instance?.pendingOperation;
-                  return instance !== undefined &&
-                    pending?.id === preadmitted.operationId &&
-                    pending.generation === preadmitted.generation
-                    ? Effect.succeed(state)
-                    : Effect.fail(
+        const execute = (input: InstanceRuntimeInput) =>
+          Effect.gen(function* () {
+            const { instance } = input;
+            const operationId = input.operation.id;
+            yield* setPhase(
+              id,
+              mutation === "start" || mutation === "restart" ? "starting" : "stopping",
+            );
+            return yield* operation(input).pipe(
+              Effect.flatMap((value) =>
+                options.stateStore
+                  .update(options.stackId, (state) => {
+                    const current = state.registry.instances.find((entry) => entry.id === id);
+                    const pending = current?.pendingOperation;
+                    if (
+                      current === undefined ||
+                      pending === null ||
+                      pending?.id !== operationId ||
+                      pending.generation !== instance.revisions.intent
+                    )
+                      return Effect.fail(
                         new StackLifecycleConflictError({
                           stackId: options.stackId,
-                          instanceId: id,
-                          message: `Service instance ${id} no longer owns its admitted restart`,
+                          message: `Service instance ${id} changed during ${mutation}`,
                         }),
                       );
-                }),
-              )
-            : options.stateStore
-                .update<StackError>(options.stackId, (state) => {
-                  const instance = state.registry.instances.find((entry) => entry.id === id);
-                  if (instance === undefined) return Effect.fail(notFound(id));
-                  if (
-                    replacement !== undefined &&
-                    (mutation !== "restart" ||
-                      replacement.previous.instance.id !== instance.id ||
-                      replacement.previous.instance.revisions.config !==
-                        instance.revisions.config ||
-                      replacement.previous.instance.revisions.intent !== instance.revisions.intent)
-                  )
-                    return Effect.fail(
-                      new StackLifecycleConflictError({
-                        stackId: options.stackId,
-                        instanceId: id,
-                        message: `Service instance ${id} changed before its restart was admitted`,
+                    return settle(state, current, value);
+                  })
+                  .pipe(
+                    Effect.provideContext(options.context),
+                    Effect.andThen(
+                      Ref.update(recovery, (recoveries) => {
+                        const next = new Map(recoveries);
+                        next.delete(id);
+                        return next;
                       }),
-                    );
-                  if (instance.pendingOperation !== null && !recoveryCleanup)
-                    return Effect.fail(
-                      new StackLifecycleConflictError({
-                        stackId: options.stackId,
-                        message: `Service instance ${id} already has a pending operation`,
-                      }),
-                    );
-                  const generation = instance.revisions.intent + 1;
-                  const pendingOperation = {
-                    id: operationId,
-                    kind: mutation,
-                    generation,
-                    ownerSessionId: options.ownerSessionId,
-                    phase: "running" as const,
-                  };
-                  const nextInstanceValue =
-                    mutation === "restart" && replacement !== undefined
-                      ? {
-                          ...replacement.instance,
-                          id: instance.id,
-                          service: instance.service,
-                          intent: replacement.desiredIntent ?? ("started" as const),
-                          resources: instance.resources,
-                          data: instance.data,
-                          revisions: {
-                            ...instance.revisions,
-                            config: instance.revisions.config + 1,
-                            intent: generation,
-                          },
-                          pendingOperation,
-                        }
-                      : mutation === "start"
-                        ? {
-                            ...instance,
-                            intent: "started" as const,
-                            revisions: { ...instance.revisions, intent: generation },
-                            pendingOperation,
-                          }
-                        : mutation === "stop" || mutation === "destroy"
-                          ? {
-                              ...instance,
-                              intent: "stopped" as const,
-                              revisions: { ...instance.revisions, intent: generation },
-                              pendingOperation,
-                            }
-                          : {
-                              ...instance,
-                              revisions: { ...instance.revisions, intent: generation },
-                              pendingOperation,
-                            };
-                  const nextInstance = Schema.decodeUnknownEffect(PersistedServiceInstanceSchema)(
-                    nextInstanceValue,
-                  ).pipe(
-                    Effect.mapError(
-                      (error) =>
-                        new StackStateInvalidError({
-                          stackId: options.stackId,
-                          message: `Restarted service instance failed validation: ${String(error)}`,
-                          cause: error,
-                        }),
                     ),
-                  );
-                  return nextInstance.pipe(
-                    Effect.flatMap((resolvedInstance) => {
-                      const nextState = {
-                        ...state,
-                        registry: {
-                          ...state.registry,
-                          instances: state.registry.instances.map((entry) =>
-                            entry.id === id ? resolvedInstance : entry,
-                          ),
-                        },
-                      };
-                      const withSecrets =
-                        mutation === "restart" && replacement !== undefined
-                          ? resolveSecrets(
-                              {
-                                declarations: [
-                                  ...Object.entries(state.secrets)
-                                    .filter(
-                                      ([slot]) =>
-                                        !replacement.secretSlots.some(
-                                          (candidate) => candidate.slot === slot,
-                                        ),
-                                    )
-                                    .map(([slot, entry]) => ({
-                                      slot,
-                                      policy: entry.policy,
-                                      value: Redacted.make(entry.value),
-                                    })),
-                                  ...replacement.secretSlots,
-                                ],
-                              },
-                              Object.fromEntries(
-                                Object.entries(state.secrets).filter(
-                                  ([slot]) =>
-                                    !replacement.secretSlots.some(
-                                      (candidate) => candidate.slot === slot,
-                                    ),
-                                ),
-                              ),
-                              "stopped",
-                            ).pipe(
-                              Effect.provideContext(options.context),
-                              Effect.map((resolved) => ({
-                                ...nextState,
-                                secrets: resolved.persisted,
-                              })),
-                            )
-                          : Effect.succeed(nextState);
-                      return withSecrets.pipe(
-                        Effect.flatMap((resolved) => {
-                          if (mutation !== "start" && mutation !== "restart")
-                            return Effect.succeed(resolved);
-                          const changed =
-                            mutation === "restart"
-                              ? changedEndpointBindings(
-                                  replacement?.previous.instance.config.endpoints ??
-                                    instance.config.endpoints,
-                                  resolvedInstance.config.endpoints,
-                                )
-                              : new Set<string>();
-                          const replanningState =
-                            changed.size === 0
-                              ? resolved
-                              : {
-                                  ...resolved,
-                                  ports: resolved.ports.filter(
-                                    (assignment) =>
-                                      assignment.owner !== "instance" ||
-                                      assignment.instanceId !== id ||
-                                      !changed.has(assignment.binding),
-                                  ),
-                                };
-                          return plannedInstancePorts(replanningState, resolvedInstance).pipe(
-                            Effect.map((ports) => ({ ...resolved, ...ports })),
-                          );
-                        }),
-                      );
-                    }),
-                  );
-                })
-                .pipe(
-                  Effect.provideContext(options.context),
-                  Effect.mapError((error) =>
-                    error instanceof ServiceNotFoundError || isStackError(error)
-                      ? error
-                      : new StackStateInvalidError({
-                          stackId: options.stackId,
-                          message: String(error),
-                          cause: error,
-                        }),
+                    Effect.andThen(clearFailure(id)),
+                    Effect.flatMap(() =>
+                      afterSettle === undefined ? Effect.succeed(value) : afterSettle(value),
+                    ),
                   ),
+              ),
+              Effect.tap(() =>
+                setPhase(
+                  id,
+                  mutation === "start" || mutation === "restart"
+                    ? mutation === "restart" && replacement?.startImmediately === false
+                      ? replacement.desiredIntent === "stopped"
+                        ? "stopped"
+                        : "dormant"
+                      : "ready"
+                    : mutation === "sleep"
+                      ? "dormant"
+                      : "stopped",
+                ),
+              ),
+              Effect.tap(() =>
+                skipIdleCancel
+                  ? Effect.void
+                  : mutation === "start" || mutation === "restart"
+                    ? armIdle(id)
+                    : cancelIdle(id),
+              ),
+              Effect.catch((error) => {
+                const retainJournal =
+                  error instanceof StackCleanupError ||
+                  error instanceof UncertainOperationError ||
+                  mutation === "stop" ||
+                  mutation === "destroy" ||
+                  mutation === "sleep";
+                const cleanup = retainJournal
+                  ? Effect.void
+                  : options.stateStore
+                      .update(options.stackId, (state) => {
+                        const current = state.registry.instances.find((entry) => entry.id === id);
+                        const pending = current?.pendingOperation;
+                        if (
+                          current === undefined ||
+                          pending === null ||
+                          pending?.id !== operationId ||
+                          pending.generation !== instance.revisions.intent
+                        )
+                          return Effect.succeed(state);
+                        return Effect.succeed({
+                          ...state,
+                          registry: {
+                            ...state.registry,
+                            instances: state.registry.instances.map((entry) =>
+                              entry.id === id
+                                ? {
+                                    ...entry,
+                                    ...(mutation === "start" ? { intent: "stopped" as const } : {}),
+                                    pendingOperation: null,
+                                  }
+                                : entry,
+                            ),
+                          },
+                        });
+                      })
+                      .pipe(Effect.provideContext(options.context), Effect.asVoid);
+                const markFailure =
+                  retainJournal && input.instance.pendingOperation !== null
+                    ? markRecovery(id, input.instance.pendingOperation, error)
+                    : Effect.void;
+                return cleanup.pipe(
+                  Effect.andThen(retainFailure(id, operationId, input.state, error)),
+                  Effect.andThen(markFailure),
+                  Effect.andThen(retainJournal ? Effect.void : setPhase(id, "failed")),
+                  Effect.andThen(Effect.fail(error)),
                 );
-          const preparedState = accepted;
-          const instance = preparedState.registry.instances.find((entry) => entry.id === id);
-          if (instance === undefined) return yield* notFound(id);
-          const plan = yield* instancePlan(preparedState, id);
-          const publishStartupBindings =
-            options.publishEndpoints === undefined
-              ? undefined
-              : (publications: ReadonlyArray<RuntimeBindingPublication>) =>
-                  current(id).pipe(
-                    Effect.flatMap(({ instance: currentInstance }) =>
-                      currentInstance.pendingOperation?.id === operationId &&
-                      currentInstance.pendingOperation.generation === instance.revisions.intent
-                        ? publishBindings(id, publications).pipe(
-                            Effect.andThen(setPhase(id, "starting")),
-                          )
+              }),
+              // A runtime defect means cleanup was not proven. Keep the journal fence so a
+              // later lifecycle observation can recover the exact admitted operation.
+              Effect.catchCause((cause) =>
+                Cause.hasDies(cause)
+                  ? setPhase(id, "failed").pipe(Effect.andThen(Effect.failCause(cause)))
+                  : Effect.failCause(cause),
+              ),
+            );
+          });
+        const ownerBody = metadataAdmission
+          .withPermit(
+            Effect.gen(function* () {
+              const admitted = yield* current(id);
+              const recoveryCleanup =
+                mutation === "stop" || mutation === "destroy"
+                  ? yield* Ref.get(recovery).pipe(Effect.map((recoveries) => recoveries.get(id)))
+                  : undefined;
+              if (mutation === "stop" && recoveryCleanup?.operation === "destroy")
+                return yield* new StackLifecycleConflictError({
+                  stackId: options.stackId,
+                  instanceId: id,
+                  message: `Service instance ${id} requires destroy recovery before activation can be unfenced`,
+                });
+              const replacementEnabled = replacement?.instance.config.enabled;
+              const startsWorkload =
+                mutation === "start" ||
+                (mutation === "restart" &&
+                  replacement?.startImmediately !== false &&
+                  replacement?.desiredIntent !== "stopped");
+              if (
+                startsWorkload &&
+                (replacementEnabled ?? admitted.instance.config.enabled) === false
+              )
+                return yield* new StackLifecycleConflictError({
+                  stackId: options.stackId,
+                  instanceId: id,
+                  message: `Disabled service instance ${id} cannot be started`,
+                });
+              if (
+                startsWorkload &&
+                (yield* Ref.get(recovery).pipe(Effect.map((recoveries) => recoveries.has(id))))
+              )
+                return yield* new StackLifecycleConflictError({
+                  stackId: options.stackId,
+                  instanceId: id,
+                  message: `Service instance ${id} is fenced by a recovery failure`,
+                });
+              if (startsWorkload || replacement !== undefined) {
+                const claims = yield* Ref.get(batchClaims);
+                const dependencies =
+                  replacement?.instance.dependencies ?? admitted.instance.dependencies;
+                const blockedDependency = [...claims].find(
+                  ([dependencyId, claim]) =>
+                    Object.values(dependencies).includes(dependencyId) &&
+                    claim?.mutation !== undefined &&
+                    claim.mutation !== "start" &&
+                    claim.token !== batchToken,
+                )?.[0];
+                if (blockedDependency !== undefined)
+                  return yield* new StackLifecycleConflictError({
+                    stackId: options.stackId,
+                    instanceId: blockedDependency,
+                    message: `Dependency ${blockedDependency} is changing lifecycle state`,
+                  });
+              }
+              if (
+                (mutation === "exportSnapshot" || mutation === "restoreSnapshot") &&
+                (admitted.instance.intent !== "stopped" ||
+                  admitted.instance.pendingOperation !== null)
+              )
+                return yield* new StackLifecycleConflictError({
+                  stackId: options.stackId,
+                  message: `Snapshot operation requires stopped service instance ${id}`,
+                });
+              if (preflight !== undefined) yield* preflight(admitted);
+              if (skip !== undefined && shouldSkip !== undefined && (yield* shouldSkip(admitted)))
+                return { kind: "value" as const, value: yield* skip(admitted) };
+              // Admit the intent and endpoint plan in one transaction. Once the journal is written,
+              // every later failure path below must settle that same operation rather than strand it.
+              const preadmitted = replacement?.admission;
+              const operationId =
+                preadmitted?.operationId ??
+                (yield* Context.get(options.context, Crypto.Crypto).randomUUIDv4.pipe(
+                  Effect.mapError(
+                    (error) =>
+                      new StackStateInvalidError({
+                        stackId: options.stackId,
+                        message: `Unable to allocate operation identity: ${error.message}`,
+                        cause: error,
+                      }),
+                  ),
+                ));
+              const accepted = yield* preadmitted !== undefined
+                ? read().pipe(
+                    Effect.flatMap((state) => {
+                      const instance = state.registry.instances.find((entry) => entry.id === id);
+                      const pending = instance?.pendingOperation;
+                      return instance !== undefined &&
+                        pending?.id === preadmitted.operationId &&
+                        pending.generation === preadmitted.generation
+                        ? Effect.succeed(state)
                         : Effect.fail(
                             new StackLifecycleConflictError({
                               stackId: options.stackId,
                               instanceId: id,
-                              message: `Startup publication ${operationId} is no longer owned by this operation`,
+                              message: `Service instance ${id} no longer owns its admitted restart`,
                             }),
-                          ),
-                    ),
-                  );
-          yield* setPhase(
-            id,
-            mutation === "start" || mutation === "restart" ? "starting" : "stopping",
-          );
-          const input: InstanceRuntimeInput = {
-            stackId: options.stackId,
-            state: preparedState,
-            instance,
-            plan,
-            operation: { id: operationId, generation: instance.revisions.intent },
-            publishStartupBindings,
-          };
-          return yield* operation(input).pipe(
-            Effect.flatMap((value) =>
-              options.stateStore
-                .update(options.stackId, (state) => {
-                  const current = state.registry.instances.find((entry) => entry.id === id);
-                  const pending = current?.pendingOperation;
-                  if (
-                    current === undefined ||
-                    pending === null ||
-                    pending?.id !== operationId ||
-                    pending.generation !== instance.revisions.intent
-                  )
-                    return Effect.fail(
-                      new StackLifecycleConflictError({
-                        stackId: options.stackId,
-                        message: `Service instance ${id} changed during ${mutation}`,
-                      }),
-                    );
-                  return settle(state, current, value);
-                })
-                .pipe(
-                  Effect.provideContext(options.context),
-                  Effect.andThen(
-                    Ref.update(recovery, (recoveries) => {
-                      const next = new Map(recoveries);
-                      next.delete(id);
-                      return next;
+                          );
                     }),
-                  ),
-                  Effect.andThen(clearFailure(id)),
-                  Effect.flatMap(() =>
-                    afterSettle === undefined ? Effect.succeed(value) : afterSettle(value),
-                  ),
-                ),
-            ),
-            Effect.tap(() =>
-              setPhase(
-                id,
-                mutation === "start" || mutation === "restart"
-                  ? mutation === "restart" && replacement?.startImmediately === false
-                    ? replacement.desiredIntent === "stopped"
-                      ? "stopped"
-                      : "dormant"
-                    : "ready"
-                  : mutation === "sleep"
-                    ? "dormant"
-                    : "stopped",
-              ),
-            ),
-            Effect.tap(() =>
-              skipIdleCancel
-                ? Effect.void
-                : mutation === "start" || mutation === "restart"
-                  ? armIdle(id)
-                  : cancelIdle(id),
-            ),
-            Effect.catch((error) => {
-              const retainJournal =
-                error instanceof StackCleanupError ||
-                error instanceof UncertainOperationError ||
-                mutation === "stop" ||
-                mutation === "destroy" ||
-                mutation === "sleep";
-              const cleanup = retainJournal
-                ? Effect.void
+                  )
                 : options.stateStore
-                    .update(options.stackId, (state) => {
-                      const current = state.registry.instances.find((entry) => entry.id === id);
-                      const pending = current?.pendingOperation;
+                    .update<StackError>(options.stackId, (state) => {
+                      const instance = state.registry.instances.find((entry) => entry.id === id);
+                      if (instance === undefined) return Effect.fail(notFound(id));
                       if (
-                        current === undefined ||
-                        pending === null ||
-                        pending?.id !== operationId ||
-                        pending.generation !== instance.revisions.intent
+                        replacement !== undefined &&
+                        (mutation !== "restart" ||
+                          replacement.previous.instance.id !== instance.id ||
+                          replacement.previous.instance.revisions.config !==
+                            instance.revisions.config ||
+                          replacement.previous.instance.revisions.intent !==
+                            instance.revisions.intent)
                       )
-                        return Effect.succeed(state);
-                      return Effect.succeed({
-                        ...state,
-                        registry: {
-                          ...state.registry,
-                          instances: state.registry.instances.map((entry) =>
-                            entry.id === id
+                        return Effect.fail(
+                          new StackLifecycleConflictError({
+                            stackId: options.stackId,
+                            instanceId: id,
+                            message: `Service instance ${id} changed before its restart was admitted`,
+                          }),
+                        );
+                      if (instance.pendingOperation !== null && !recoveryCleanup)
+                        return Effect.fail(
+                          new StackLifecycleConflictError({
+                            stackId: options.stackId,
+                            message: `Service instance ${id} already has a pending operation`,
+                          }),
+                        );
+                      const generation = instance.revisions.intent + 1;
+                      const pendingOperation = {
+                        id: operationId,
+                        kind: mutation,
+                        generation,
+                        ownerSessionId: options.ownerSessionId,
+                        phase: "running" as const,
+                      };
+                      const nextInstanceValue =
+                        mutation === "restart" && replacement !== undefined
+                          ? {
+                              ...replacement.instance,
+                              id: instance.id,
+                              service: instance.service,
+                              intent: replacement.desiredIntent ?? ("started" as const),
+                              resources: instance.resources,
+                              data: instance.data,
+                              revisions: {
+                                ...instance.revisions,
+                                config: instance.revisions.config + 1,
+                                intent: generation,
+                              },
+                              pendingOperation,
+                            }
+                          : mutation === "start"
+                            ? {
+                                ...instance,
+                                intent: "started" as const,
+                                revisions: { ...instance.revisions, intent: generation },
+                                pendingOperation,
+                              }
+                            : mutation === "stop" || mutation === "destroy"
                               ? {
-                                  ...entry,
-                                  ...(mutation === "start" ? { intent: "stopped" as const } : {}),
-                                  pendingOperation: null,
+                                  ...instance,
+                                  intent: "stopped" as const,
+                                  revisions: { ...instance.revisions, intent: generation },
+                                  pendingOperation,
                                 }
-                              : entry,
-                          ),
-                        },
-                      });
+                              : {
+                                  ...instance,
+                                  revisions: { ...instance.revisions, intent: generation },
+                                  pendingOperation,
+                                };
+                      const nextInstance = Schema.decodeUnknownEffect(
+                        PersistedServiceInstanceSchema,
+                      )(nextInstanceValue).pipe(
+                        Effect.mapError(
+                          (error) =>
+                            new StackStateInvalidError({
+                              stackId: options.stackId,
+                              message: `Restarted service instance failed validation: ${String(error)}`,
+                              cause: error,
+                            }),
+                        ),
+                      );
+                      return nextInstance.pipe(
+                        Effect.flatMap((resolvedInstance) => {
+                          const nextState = {
+                            ...state,
+                            registry: {
+                              ...state.registry,
+                              instances: state.registry.instances.map((entry) =>
+                                entry.id === id ? resolvedInstance : entry,
+                              ),
+                            },
+                          };
+                          const withSecrets =
+                            mutation === "restart" && replacement !== undefined
+                              ? resolveSecrets(
+                                  {
+                                    declarations: [
+                                      ...Object.entries(state.secrets)
+                                        .filter(
+                                          ([slot]) =>
+                                            !replacement.secretSlots.some(
+                                              (candidate) => candidate.slot === slot,
+                                            ),
+                                        )
+                                        .map(([slot, entry]) => ({
+                                          slot,
+                                          policy: entry.policy,
+                                          value: Redacted.make(entry.value),
+                                        })),
+                                      ...replacement.secretSlots,
+                                    ],
+                                  },
+                                  Object.fromEntries(
+                                    Object.entries(state.secrets).filter(
+                                      ([slot]) =>
+                                        !replacement.secretSlots.some(
+                                          (candidate) => candidate.slot === slot,
+                                        ),
+                                    ),
+                                  ),
+                                  "stopped",
+                                ).pipe(
+                                  Effect.provideContext(options.context),
+                                  Effect.map((resolved) => ({
+                                    ...nextState,
+                                    secrets: resolved.persisted,
+                                  })),
+                                )
+                              : Effect.succeed(nextState);
+                          return withSecrets.pipe(
+                            Effect.flatMap((resolved) => {
+                              if (mutation !== "start" && mutation !== "restart")
+                                return Effect.succeed(resolved);
+                              const changed =
+                                mutation === "restart"
+                                  ? changedEndpointBindings(
+                                      replacement?.previous.instance.config.endpoints ??
+                                        instance.config.endpoints,
+                                      resolvedInstance.config.endpoints,
+                                    )
+                                  : new Set<string>();
+                              const replanningState =
+                                changed.size === 0
+                                  ? resolved
+                                  : {
+                                      ...resolved,
+                                      ports: resolved.ports.filter(
+                                        (assignment) =>
+                                          assignment.owner !== "instance" ||
+                                          assignment.instanceId !== id ||
+                                          !changed.has(assignment.binding),
+                                      ),
+                                    };
+                              return plannedInstancePorts(replanningState, resolvedInstance).pipe(
+                                Effect.map((ports) => ({ ...resolved, ...ports })),
+                              );
+                            }),
+                          );
+                        }),
+                      );
                     })
-                    .pipe(Effect.provideContext(options.context), Effect.asVoid);
-              const markFailure =
-                retainJournal && input.instance.pendingOperation !== null
-                  ? markRecovery(id, input.instance.pendingOperation, error)
-                  : Effect.void;
-              return cleanup.pipe(
-                Effect.andThen(retainFailure(id, operationId, input.state, error)),
-                Effect.andThen(markFailure),
-                Effect.andThen(retainJournal ? Effect.void : setPhase(id, "failed")),
-                Effect.andThen(Effect.fail(error)),
-              );
+                    .pipe(
+                      Effect.provideContext(options.context),
+                      Effect.mapError((error) =>
+                        error instanceof ServiceNotFoundError || isStackError(error)
+                          ? error
+                          : new StackStateInvalidError({
+                              stackId: options.stackId,
+                              message: String(error),
+                              cause: error,
+                            }),
+                      ),
+                    );
+              const preparedState = accepted;
+              const instance = preparedState.registry.instances.find((entry) => entry.id === id);
+              if (instance === undefined) return yield* notFound(id);
+              const plan = yield* instancePlan(preparedState, id);
+              const publishStartupBindings =
+                options.publishEndpoints === undefined
+                  ? undefined
+                  : (publications: ReadonlyArray<RuntimeBindingPublication>) =>
+                      current(id).pipe(
+                        Effect.flatMap(({ instance: currentInstance }) =>
+                          currentInstance.pendingOperation?.id === operationId &&
+                          currentInstance.pendingOperation.generation === instance.revisions.intent
+                            ? publishBindings(id, publications).pipe(
+                                Effect.andThen(setPhase(id, "starting")),
+                              )
+                            : Effect.fail(
+                                new StackLifecycleConflictError({
+                                  stackId: options.stackId,
+                                  instanceId: id,
+                                  message: `Startup publication ${operationId} is no longer owned by this operation`,
+                                }),
+                              ),
+                        ),
+                      );
+              const input: InstanceRuntimeInput = {
+                stackId: options.stackId,
+                state: preparedState,
+                instance,
+                plan,
+                operation: { id: operationId, generation: instance.revisions.intent },
+                publishStartupBindings,
+              };
+              return { kind: "input" as const, input };
             }),
-            // A runtime defect means cleanup was not proven. Keep the journal fence so a
-            // later lifecycle observation can recover the exact admitted operation.
-            Effect.catchCause((cause) =>
-              Cause.hasDies(cause)
-                ? setPhase(id, "failed").pipe(Effect.andThen(Effect.failCause(cause)))
-                : Effect.failCause(cause),
+          )
+          .pipe(
+            Effect.flatMap((admitted) =>
+              admitted.kind === "input" ? execute(admitted.input) : Effect.succeed(admitted.value),
             ),
           );
-        });
         const admittedOwner =
           mutation === "exportSnapshot" || mutation === "restoreSnapshot"
             ? lock
@@ -1704,6 +1775,7 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
                     Effect.flatMap((recoveries) =>
                       claimBatch(
                         [id],
+                        mutation,
                         mutation === "sleep",
                         mutation === "start" || mutation === "restart",
                         (mutation === "stop" || mutation === "destroy") && recoveries.has(id),
@@ -1719,64 +1791,68 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
         ) =>
           mutation === "stop" || mutation === "destroy"
             ? Effect.gen(function* () {
-                const admitted = yield* restore(current(id));
-                const { instance } = admitted;
-                if (preflight !== undefined) yield* preflight(admitted);
-                if (
-                  instance.pendingOperation?.kind !== "start" &&
-                  instance.pendingOperation?.kind !== "restart"
-                )
-                  return;
-                const pending = instance.pendingOperation;
-                const oldToken = yield* restore(
-                  Ref.get(batchClaims).pipe(Effect.map((claims) => claims.get(id)?.token)),
-                );
-                const fiber = yield* restore(
-                  Ref.get(operationFibers).pipe(Effect.map((fibers) => fibers.get(id))),
-                );
-                if (fiber === undefined) {
-                  const recoverable = yield* Ref.get(recovery).pipe(
-                    Effect.map((recoveries) => recoveries.has(id)),
+                const permit = yield* restore(metadataAdmission.take(1));
+                return yield* Effect.gen(function* () {
+                  const admitted = yield* restore(current(id));
+                  const { instance } = admitted;
+                  if (preflight !== undefined) yield* preflight(admitted);
+                  if (
+                    instance.pendingOperation?.kind !== "start" &&
+                    instance.pendingOperation?.kind !== "restart"
+                  )
+                    return;
+                  const pending = instance.pendingOperation;
+                  const oldToken = yield* restore(
+                    Ref.get(batchClaims).pipe(Effect.map((claims) => claims.get(id)?.token)),
                   );
-                  if (!recoverable)
+                  const fiber = yield* restore(
+                    Ref.get(operationFibers).pipe(Effect.map((fibers) => fibers.get(id))),
+                  );
+                  if (fiber === undefined) {
+                    const recoverable = yield* Ref.get(recovery).pipe(
+                      Effect.map((recoveries) => recoveries.has(id)),
+                    );
+                    if (!recoverable)
+                      return yield* new StackLifecycleConflictError({
+                        stackId: options.stackId,
+                        instanceId: id,
+                        message: `Service instance ${id} has a pending startup without a live owner`,
+                      });
+                    return;
+                  }
+                  const replacementToken = Symbol("instance-stop-handoff");
+                  const replacementCompletion = yield* Deferred.make<Exit.Exit<void, StackError>>();
+                  const handedOff = yield* Ref.modify(batchClaims, (claims) => {
+                    const claim = claims.get(id);
+                    const canHandoff =
+                      claim?.token !== undefined &&
+                      claim.token === oldToken &&
+                      (claim.startupControlAllowed === true ||
+                        (batchToken !== undefined && claim.token === batchToken));
+                    return canHandoff
+                      ? [
+                          true,
+                          new Map(claims).set(id, {
+                            token: replacementToken,
+                            active: claim.active,
+                            mutation,
+                            completion:
+                              batchToken !== undefined && claim.token === batchToken
+                                ? (claim.completion ?? replacementCompletion)
+                                : replacementCompletion,
+                          }),
+                        ]
+                      : [false, claims];
+                  });
+                  if (!handedOff)
                     return yield* new StackLifecycleConflictError({
                       stackId: options.stackId,
                       instanceId: id,
-                      message: `Service instance ${id} has a pending startup without a live owner`,
+                      message: `Service instance ${id} is already changing lifecycle state`,
                     });
-                  return;
-                }
-                const replacementToken = Symbol("instance-stop-handoff");
-                const replacementCompletion = yield* Deferred.make<Exit.Exit<void, StackError>>();
-                const handedOff = yield* Ref.modify(batchClaims, (claims) => {
-                  const claim = claims.get(id);
-                  const canHandoff =
-                    claim?.token !== undefined &&
-                    claim.token === oldToken &&
-                    (claim.startupControlAllowed === true ||
-                      (batchToken !== undefined && claim.token === batchToken));
-                  return canHandoff
-                    ? [
-                        true,
-                        new Map(claims).set(id, {
-                          token: replacementToken,
-                          active: claim.active,
-                          completion:
-                            batchToken !== undefined && claim.token === batchToken
-                              ? (claim.completion ?? replacementCompletion)
-                              : replacementCompletion,
-                        }),
-                      ]
-                    : [false, claims];
-                });
-                if (!handedOff)
-                  return yield* new StackLifecycleConflictError({
-                    stackId: options.stackId,
-                    instanceId: id,
-                    message: `Service instance ${id} is already changing lifecycle state`,
-                  });
-                handoffToken = replacementToken;
-                supersededStart = { fiber, pending };
+                  handoffToken = replacementToken;
+                  supersededStart = { fiber, pending };
+                }).pipe(Effect.ensuring(metadataAdmission.release(permit).pipe(Effect.asVoid)));
               })
             : Effect.void;
         return rejectSnapshotConflict.pipe(
@@ -2771,6 +2847,21 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
                         });
                     }
                   }
+                  if (mutation === "destroy") {
+                    const selected = new Set(ids);
+                    for (const id of ids) {
+                      const dependent = state.registry.instances.find(
+                        (entry) =>
+                          !selected.has(entry.id) && Object.values(entry.dependencies).includes(id),
+                      );
+                      if (dependent !== undefined)
+                        return yield* new StackLifecycleConflictError({
+                          stackId: options.stackId,
+                          instanceId: id,
+                          message: `Service instance ${id} has dependent ${dependent.id}`,
+                        });
+                    }
+                  }
                   if (ids.length === 0) return ids;
                   return yield* createExecutionPlan(
                     state.runtime,
@@ -2807,6 +2898,7 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
       );
     const runBatch = <A>(
       ids: ReadonlyArray<ServiceInstanceId>,
+      mutation: Mutation,
       operation: (token: symbol) => Effect.Effect<A, ServiceNotFoundError | StackError>,
       rejectActive = false,
       startupControlAllowed = false,
@@ -2818,6 +2910,7 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
           const token = yield* restore(
             claimBatch(
               ids,
+              mutation,
               rejectActive,
               startupControlAllowed,
               allowRecoveryCleanup,
@@ -2897,6 +2990,7 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
         );
       const work = runBatch(
         ids,
+        "restart",
         (batchToken) =>
           Effect.gen(function* () {
             const operationIds = yield* Effect.forEach(candidates, () =>
@@ -2911,161 +3005,187 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
                 ),
               ),
             );
-            const committed = yield* options.stateStore
-              .update<StackError>(
-                options.stackId,
-                (state): Effect.Effect<PersistedStackState, StackError> =>
-                  Effect.gen(function* () {
-                    const currentInstances = candidates.map((candidate) =>
-                      state.registry.instances.find((entry) => entry.id === candidate.instance.id),
-                    );
-                    for (const [index, candidate] of candidates.entries()) {
-                      const current = currentInstances[index];
-                      if (current === undefined) return yield* notFound(candidate.instance.id);
-                      if (
-                        current.pendingOperation !== null ||
-                        current.service !== candidate.instance.service ||
-                        current.revisions.config !== candidate.previous.instance.revisions.config ||
-                        current.revisions.intent !== candidate.previous.instance.revisions.intent
-                      )
-                        return yield* new StackLifecycleConflictError({
-                          stackId: options.stackId,
-                          instanceId: candidate.instance.id,
-                          message: `Service instance ${candidate.instance.id} changed before its restart batch was admitted`,
-                        });
-                    }
-                    const replacements = yield* Effect.forEach(
-                      candidates,
-                      (
-                        candidate,
-                        index,
-                      ): Effect.Effect<
-                        PersistedServiceInstance,
-                        ServiceNotFoundError | StackError
-                      > => {
-                        const current = currentInstances[index];
-                        if (current === undefined)
-                          return Effect.fail(notFound(candidate.instance.id));
-                        const operationId = operationIds[index];
-                        if (operationId === undefined)
-                          return Effect.fail(
-                            new StackStateInvalidError({
-                              stackId: options.stackId,
-                              message: `Restart batch operation identity is missing for ${candidate.instance.id}`,
-                            }),
+            const committed = yield* metadataAdmission.withPermit(
+              options.stateStore
+                .update<StackError>(
+                  options.stackId,
+                  (state): Effect.Effect<PersistedStackState, StackError> =>
+                    Effect.gen(function* () {
+                      const claims = yield* Ref.get(batchClaims);
+                      const selected = new Set(ids);
+                      for (const candidate of candidates) {
+                        const blockedDependency = Object.values(
+                          candidate.instance.dependencies,
+                        ).find((dependencyId) => {
+                          const claim = claims.get(dependencyId);
+                          return (
+                            !selected.has(dependencyId) &&
+                            claim?.mutation !== undefined &&
+                            claim.mutation !== "start" &&
+                            claim.token !== batchToken
                           );
-                        return Schema.decodeUnknownEffect(PersistedServiceInstanceSchema)({
-                          ...candidate.instance,
-                          id: current.id,
-                          service: current.service,
-                          intent: candidate.desiredIntent ?? ("started" as const),
-                          resources: current.resources,
-                          data: current.data,
-                          revisions: {
-                            ...current.revisions,
-                            config: current.revisions.config + 1,
-                            intent: current.revisions.intent + 1,
-                          },
-                          pendingOperation: {
-                            id: operationId,
-                            kind: "restart" as const,
-                            generation: current.revisions.intent + 1,
-                            ownerSessionId: options.ownerSessionId,
-                            phase: "running" as const,
-                          },
-                        }).pipe(
-                          Effect.mapError(
-                            (error) =>
+                        });
+                        if (blockedDependency !== undefined)
+                          return yield* new StackLifecycleConflictError({
+                            stackId: options.stackId,
+                            instanceId: blockedDependency,
+                            message: `Dependency ${blockedDependency} is changing lifecycle state`,
+                          });
+                      }
+                      const currentInstances = candidates.map((candidate) =>
+                        state.registry.instances.find(
+                          (entry) => entry.id === candidate.instance.id,
+                        ),
+                      );
+                      for (const [index, candidate] of candidates.entries()) {
+                        const current = currentInstances[index];
+                        if (current === undefined) return yield* notFound(candidate.instance.id);
+                        if (
+                          current.pendingOperation !== null ||
+                          current.service !== candidate.instance.service ||
+                          current.revisions.config !==
+                            candidate.previous.instance.revisions.config ||
+                          current.revisions.intent !== candidate.previous.instance.revisions.intent
+                        )
+                          return yield* new StackLifecycleConflictError({
+                            stackId: options.stackId,
+                            instanceId: candidate.instance.id,
+                            message: `Service instance ${candidate.instance.id} changed before its restart batch was admitted`,
+                          });
+                      }
+                      const replacements = yield* Effect.forEach(
+                        candidates,
+                        (
+                          candidate,
+                          index,
+                        ): Effect.Effect<
+                          PersistedServiceInstance,
+                          ServiceNotFoundError | StackError
+                        > => {
+                          const current = currentInstances[index];
+                          if (current === undefined)
+                            return Effect.fail(notFound(candidate.instance.id));
+                          const operationId = operationIds[index];
+                          if (operationId === undefined)
+                            return Effect.fail(
                               new StackStateInvalidError({
                                 stackId: options.stackId,
-                                message: `Restarted service instance failed validation: ${String(error)}`,
-                                cause: error,
+                                message: `Restart batch operation identity is missing for ${candidate.instance.id}`,
                               }),
+                            );
+                          return Schema.decodeUnknownEffect(PersistedServiceInstanceSchema)({
+                            ...candidate.instance,
+                            id: current.id,
+                            service: current.service,
+                            intent: candidate.desiredIntent ?? ("started" as const),
+                            resources: current.resources,
+                            data: current.data,
+                            revisions: {
+                              ...current.revisions,
+                              config: current.revisions.config + 1,
+                              intent: current.revisions.intent + 1,
+                            },
+                            pendingOperation: {
+                              id: operationId,
+                              kind: "restart" as const,
+                              generation: current.revisions.intent + 1,
+                              ownerSessionId: options.ownerSessionId,
+                              phase: "running" as const,
+                            },
+                          }).pipe(
+                            Effect.mapError(
+                              (error) =>
+                                new StackStateInvalidError({
+                                  stackId: options.stackId,
+                                  message: `Restarted service instance failed validation: ${String(error)}`,
+                                  cause: error,
+                                }),
+                            ),
+                          );
+                        },
+                      );
+                      const replacedIds = new Set<string>(ids);
+                      const replacementsById = new Map(
+                        replacements.map((replacement) => [replacement.id, replacement]),
+                      );
+                      const changedBindingsById = new Map<string, ReadonlySet<string>>(
+                        candidates.map((candidate) => [
+                          candidate.instance.id,
+                          changedEndpointBindings(
+                            candidate.previous.instance.config.endpoints,
+                            candidate.instance.config.endpoints,
                           ),
-                        );
-                      },
-                    );
-                    const replacedIds = new Set<string>(ids);
-                    const replacementsById = new Map(
-                      replacements.map((replacement) => [replacement.id, replacement]),
-                    );
-                    const changedBindingsById = new Map<string, ReadonlySet<string>>(
-                      candidates.map((candidate) => [
-                        candidate.instance.id,
-                        changedEndpointBindings(
-                          candidate.previous.instance.config.endpoints,
-                          candidate.instance.config.endpoints,
+                        ]),
+                      );
+                      const registry = {
+                        ...state.registry,
+                        instances: state.registry.instances.map((entry) => {
+                          return replacementsById.get(entry.id) ?? entry;
+                        }),
+                      };
+                      const secretSlotMap = new Map<string, SecretSlotInput>();
+                      for (const secretSlot of [
+                        ...(shared?.secretSlots ?? []),
+                        ...candidates.flatMap((candidate) => candidate.secretSlots),
+                      ])
+                        secretSlotMap.set(secretSlot.slot, secretSlot);
+                      const secretSlots = [...secretSlotMap.values()];
+                      const slotIds = new Set(secretSlots.map((slot) => slot.slot));
+                      const declarations = [
+                        ...Object.entries(state.secrets)
+                          .filter(([slot]) => !slotIds.has(slot))
+                          .map(([slot, entry]) => ({
+                            slot,
+                            policy: entry.policy,
+                            value: Redacted.make(entry.value),
+                          })),
+                        ...secretSlots,
+                      ];
+                      const resolved = yield* resolveSecrets(
+                        { declarations },
+                        Object.fromEntries(
+                          Object.entries(state.secrets).filter(([slot]) => !slotIds.has(slot)),
                         ),
-                      ]),
-                    );
-                    const registry = {
-                      ...state.registry,
-                      instances: state.registry.instances.map((entry) => {
-                        return replacementsById.get(entry.id) ?? entry;
-                      }),
-                    };
-                    const secretSlotMap = new Map<string, SecretSlotInput>();
-                    for (const secretSlot of [
-                      ...(shared?.secretSlots ?? []),
-                      ...candidates.flatMap((candidate) => candidate.secretSlots),
-                    ])
-                      secretSlotMap.set(secretSlot.slot, secretSlot);
-                    const secretSlots = [...secretSlotMap.values()];
-                    const slotIds = new Set(secretSlots.map((slot) => slot.slot));
-                    const declarations = [
-                      ...Object.entries(state.secrets)
-                        .filter(([slot]) => !slotIds.has(slot))
-                        .map(([slot, entry]) => ({
-                          slot,
-                          policy: entry.policy,
-                          value: Redacted.make(entry.value),
-                        })),
-                      ...secretSlots,
-                    ];
-                    const resolved = yield* resolveSecrets(
-                      { declarations },
-                      Object.fromEntries(
-                        Object.entries(state.secrets).filter(([slot]) => !slotIds.has(slot)),
-                      ),
-                      "stopped",
-                    ).pipe(Effect.provideContext(options.context));
-                    let nextState: PersistedStackState = {
-                      ...state,
-                      ...(shared?.preparation === undefined
-                        ? {}
-                        : { preparation: shared.preparation }),
-                      ...(shared?.security === undefined ? {} : { security: shared.security }),
-                      ...(shared?.listeners === undefined ? {} : { listeners: shared.listeners }),
-                      registry,
-                      secrets: resolved.persisted,
-                      ports: (shared?.ports ?? state.ports).filter((assignment) => {
-                        if (assignment.owner !== "instance") return true;
-                        if (!replacedIds.has(assignment.instanceId)) return true;
-                        return !changedBindingsById
-                          .get(assignment.instanceId)
-                          ?.has(assignment.binding);
-                      }),
-                      privatePorts: state.privatePorts,
-                    };
-                    for (const replacement of replacements) {
-                      const ports = yield* plannedInstancePorts(nextState, replacement);
-                      nextState = { ...nextState, ...ports };
-                    }
-                    return nextState;
-                  }),
-              )
-              .pipe(
-                Effect.provideContext(options.context),
-                Effect.mapError((error) =>
-                  error instanceof ServiceNotFoundError || isStackError(error)
-                    ? error
-                    : new StackStateInvalidError({
-                        stackId: options.stackId,
-                        message: String(error),
-                        cause: error,
-                      }),
+                        "stopped",
+                      ).pipe(Effect.provideContext(options.context));
+                      let nextState: PersistedStackState = {
+                        ...state,
+                        ...(shared?.preparation === undefined
+                          ? {}
+                          : { preparation: shared.preparation }),
+                        ...(shared?.security === undefined ? {} : { security: shared.security }),
+                        ...(shared?.listeners === undefined ? {} : { listeners: shared.listeners }),
+                        registry,
+                        secrets: resolved.persisted,
+                        ports: (shared?.ports ?? state.ports).filter((assignment) => {
+                          if (assignment.owner !== "instance") return true;
+                          if (!replacedIds.has(assignment.instanceId)) return true;
+                          return !changedBindingsById
+                            .get(assignment.instanceId)
+                            ?.has(assignment.binding);
+                        }),
+                        privatePorts: state.privatePorts,
+                      };
+                      for (const replacement of replacements) {
+                        const ports = yield* plannedInstancePorts(nextState, replacement);
+                        nextState = { ...nextState, ...ports };
+                      }
+                      return nextState;
+                    }),
+                )
+                .pipe(
+                  Effect.provideContext(options.context),
+                  Effect.mapError((error) =>
+                    error instanceof ServiceNotFoundError || isStackError(error)
+                      ? error
+                      : new StackStateInvalidError({
+                          stackId: options.stackId,
+                          message: String(error),
+                          cause: error,
+                        }),
+                  ),
                 ),
-              );
+            );
             const admitted = yield* Effect.forEach(
               candidates,
               (
@@ -3171,6 +3291,7 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
         Effect.flatMap((ids) =>
           runBatch(
             ids,
+            "start",
             (token) =>
               orderedIds(ids, false).pipe(
                 Effect.flatMap((ordered) =>
@@ -3195,36 +3316,55 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
                 instance.pendingOperation === null,
             )
             .map((instance) => instance.id);
-          return options.stateStore
-            .update(options.stackId, (current) =>
-              Effect.gen(function* () {
-                const withStartedIntents = {
-                  ...current,
-                  registry: {
-                    ...current.registry,
-                    instances: current.registry.instances.map((instance) =>
-                      lazyIds.includes(instance.id) &&
-                      instance.intent === "stopped" &&
-                      instance.pendingOperation === null &&
-                      instance.config.activation === "lazy"
-                        ? { ...instance, intent: "started" as const }
-                        : instance,
-                    ),
-                  },
-                };
-                let planned = withStartedIntents;
-                for (const instance of planned.registry.instances.filter(
-                  (entry) =>
-                    entry.config.enabled &&
-                    entry.config.activation === "lazy" &&
-                    entry.intent === "started" &&
-                    entry.pendingOperation === null,
-                )) {
-                  const ports = yield* plannedInstancePorts(planned, instance);
-                  planned = { ...planned, ...ports };
-                }
-                return planned;
-              }),
+          return metadataAdmission
+            .withPermit(
+              options.stateStore.update(options.stackId, (current) =>
+                Effect.gen(function* () {
+                  const claims = yield* Ref.get(batchClaims);
+                  for (const id of lazyIds) {
+                    const instance = current.registry.instances.find((entry) => entry.id === id);
+                    const blockedDependency =
+                      instance === undefined
+                        ? undefined
+                        : Object.values(instance.dependencies).find((dependencyId) => {
+                            const claim = claims.get(dependencyId);
+                            return claim?.mutation !== undefined && claim.mutation !== "start";
+                          });
+                    if (blockedDependency !== undefined)
+                      return yield* new StackLifecycleConflictError({
+                        stackId: options.stackId,
+                        instanceId: blockedDependency,
+                        message: `Dependency ${blockedDependency} is changing lifecycle state`,
+                      });
+                  }
+                  const withStartedIntents = {
+                    ...current,
+                    registry: {
+                      ...current.registry,
+                      instances: current.registry.instances.map((instance) =>
+                        lazyIds.includes(instance.id) &&
+                        instance.intent === "stopped" &&
+                        instance.pendingOperation === null &&
+                        instance.config.activation === "lazy"
+                          ? { ...instance, intent: "started" as const }
+                          : instance,
+                      ),
+                    },
+                  };
+                  let planned = withStartedIntents;
+                  for (const instance of planned.registry.instances.filter(
+                    (entry) =>
+                      entry.config.enabled &&
+                      entry.config.activation === "lazy" &&
+                      entry.intent === "started" &&
+                      entry.pendingOperation === null,
+                  )) {
+                    const ports = yield* plannedInstancePorts(planned, instance);
+                    planned = { ...planned, ...ports };
+                  }
+                  return planned;
+                }),
+              ),
             )
             .pipe(
               Effect.provideContext(options.context),
@@ -3270,6 +3410,7 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
         Effect.flatMap((ids) =>
           runBatch(
             ids,
+            "sleep",
             (token) =>
               orderedIds(ids, true).pipe(
                 Effect.flatMap((ordered) =>
@@ -3288,6 +3429,7 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
         Effect.flatMap((ids) =>
           runBatch(
             ids,
+            "stop",
             (token) =>
               orderedIds(ids, true).pipe(
                 Effect.flatMap((ordered) => collectStatuses(ids, ordered, (id) => stop(id, token))),
@@ -3340,6 +3482,7 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
         Effect.flatMap((ids) =>
           runBatch(
             ids,
+            "destroy",
             (token) =>
               destroyOrder(ids).pipe(
                 Effect.flatMap((ordered) =>
@@ -3386,69 +3529,89 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
       instance: PersistedServiceInstance,
       secretSlots: ReadonlyArray<SecretSlotInput> = [],
     ) =>
-      options.stateStore
-        .update(options.stackId, (state) =>
-          Effect.gen(function* () {
-            const registry = yield* registerServiceInstance(state.registry, instance);
-            const newSlots = new Set(secretSlots.map((slot) => slot.slot));
-            const declarations = [
-              ...Object.entries(state.secrets)
-                .filter(([slot]) => !newSlots.has(slot))
-                .map(([slot, entry]) => ({
-                  slot,
-                  policy: entry.policy,
-                  value: Redacted.make(entry.value),
-                })),
-              ...secretSlots,
-            ];
-            const resolved = yield* resolveSecrets({ declarations }, state.secrets, "stopped").pipe(
+      metadataAdmission
+        .withPermit(
+          options.stateStore
+            .update(options.stackId, (state) =>
+              Effect.gen(function* () {
+                const claims = yield* Ref.get(batchClaims);
+                const blockedDependency = Object.values(instance.dependencies).find(
+                  (dependencyId) => {
+                    const claim = claims.get(dependencyId);
+                    return claim?.mutation !== undefined && claim.mutation !== "start";
+                  },
+                );
+                if (blockedDependency !== undefined)
+                  return yield* new StackLifecycleConflictError({
+                    stackId: options.stackId,
+                    instanceId: blockedDependency,
+                    message: `Dependency ${blockedDependency} is changing lifecycle state`,
+                  });
+                const registry = yield* registerServiceInstance(state.registry, instance);
+                const newSlots = new Set(secretSlots.map((slot) => slot.slot));
+                const declarations = [
+                  ...Object.entries(state.secrets)
+                    .filter(([slot]) => !newSlots.has(slot))
+                    .map(([slot, entry]) => ({
+                      slot,
+                      policy: entry.policy,
+                      value: Redacted.make(entry.value),
+                    })),
+                  ...secretSlots,
+                ];
+                const resolved = yield* resolveSecrets(
+                  { declarations },
+                  state.secrets,
+                  "stopped",
+                ).pipe(Effect.provideContext(options.context));
+                const bootstrapInputsId = yield* fingerprintBootstrapInputs(
+                  instance,
+                  state.security,
+                  resolved.persisted,
+                ).pipe(
+                  Effect.provideService(Crypto.Crypto, Context.get(options.context, Crypto.Crypto)),
+                );
+                const materialized =
+                  bootstrapInputsId === undefined ? instance : { ...instance, bootstrapInputsId };
+                const next = {
+                  ...state,
+                  registry: {
+                    ...registry,
+                    instances: registry.instances.map((entry) =>
+                      entry.id === materialized.id ? materialized : entry,
+                    ),
+                  },
+                  secrets: resolved.persisted,
+                };
+                const ports = yield* plannedInstancePorts(next, materialized);
+                return { ...next, ...ports };
+              }),
+            )
+            .pipe(
               Effect.provideContext(options.context),
-            );
-            const bootstrapInputsId = yield* fingerprintBootstrapInputs(
-              instance,
-              state.security,
-              resolved.persisted,
-            ).pipe(
-              Effect.provideService(Crypto.Crypto, Context.get(options.context, Crypto.Crypto)),
-            );
-            const materialized =
-              bootstrapInputsId === undefined ? instance : { ...instance, bootstrapInputsId };
-            const next = {
-              ...state,
-              registry: {
-                ...registry,
-                instances: registry.instances.map((entry) =>
-                  entry.id === materialized.id ? materialized : entry,
-                ),
-              },
-              secrets: resolved.persisted,
-            };
-            const ports = yield* plannedInstancePorts(next, materialized);
-            return { ...next, ...ports };
-          }),
+              Effect.mapError((error) =>
+                error instanceof ServiceNotFoundError || isStackError(error)
+                  ? error
+                  : new StackStateInvalidError({
+                      stackId: options.stackId,
+                      message: error.message,
+                      cause: error,
+                    }),
+              ),
+              Effect.flatMap((state) => {
+                const created = state.registry.instances.find((entry) => entry.id === instance.id);
+                return created === undefined
+                  ? Effect.fail(
+                      new StackStateInvalidError({
+                        stackId: options.stackId,
+                        message: `Created service instance ${instance.id} is missing from the registry`,
+                      }),
+                    )
+                  : descriptor(state, created);
+              }),
+            ),
         )
         .pipe(
-          Effect.provideContext(options.context),
-          Effect.mapError((error) =>
-            error instanceof ServiceNotFoundError
-              ? error
-              : new StackStateInvalidError({
-                  stackId: options.stackId,
-                  message: error.message,
-                  cause: error,
-                }),
-          ),
-          Effect.flatMap((state) => {
-            const created = state.registry.instances.find((entry) => entry.id === instance.id);
-            return created === undefined
-              ? Effect.fail(
-                  new StackStateInvalidError({
-                    stackId: options.stackId,
-                    message: `Created service instance ${instance.id} is missing from the registry`,
-                  }),
-                )
-              : descriptor(state, created);
-          }),
           Effect.tap(() =>
             PubSub.publish(statusUpdates, { id: instance.id, destroyed: false }).pipe(
               Effect.andThen(options.publishStatus ?? Effect.void),

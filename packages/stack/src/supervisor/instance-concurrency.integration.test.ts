@@ -77,23 +77,16 @@ const makeFixture = (
     const enteredExport = yield* Deferred.make<void>();
     const releaseExport = yield* Deferred.make<void>();
     const admittedStart = yield* Deferred.make<void>();
-    const releaseAdmission = yield* Deferred.make<void>();
     const admissionPaused = yield* Ref.make(false);
+    const startAdmissionComplete = yield* Ref.make(!pauseAfterStartAdmission);
     const pauseBatchAdmission = yield* Ref.make(false);
-    const batchAdmissionPaused = yield* Ref.make(false);
+    const batchReadArmed = yield* Ref.make(false);
+    const batchReadPending = yield* Ref.make(false);
     const admittedBatch = yield* Deferred.make<void>();
     const releaseBatchAdmission = yield* Deferred.make<void>();
     const handoffCleanupPaused = yield* Ref.make(false);
     const admittedHandoffCleanup = yield* Deferred.make<void>();
     const releaseHandoffCleanup = yield* Deferred.make<void>();
-    const pauseStudioAdmission = yield* Ref.make(false);
-    const studioAdmissionPaused = yield* Ref.make(false);
-    const admittedStudio = yield* Deferred.make<void>();
-    const releaseStudioAdmission = yield* Deferred.make<void>();
-    const admittedSleep = yield* Deferred.make<void>();
-    const releaseSleepAdmission = yield* Deferred.make<void>();
-    const pauseSleepAdmission = yield* Ref.make(false);
-    const sleepAdmissionPaused = yield* Ref.make(false);
     const ready = yield* Ref.make<ReadonlySet<ServiceInstanceId>>(new Set());
     const active = yield* Ref.make<ReadonlySet<ServiceInstanceId>>(new Set());
     const starts = yield* Ref.make<ReadonlyArray<ServiceInstanceId>>([]);
@@ -194,29 +187,13 @@ const makeFixture = (
                 !(yield* Ref.getAndSet(admissionPaused, true))
               ) {
                 yield* Deferred.succeed(admittedStart, undefined);
-                yield* Deferred.await(releaseAdmission);
-              }
-              if (
-                (yield* Ref.get(pauseStudioAdmission)) &&
-                saved.registry.instances.some(
-                  (instance) =>
-                    instance.name === "partial-lease-studio" &&
-                    instance.pendingOperation?.kind === "start",
-                ) &&
-                !(yield* Ref.getAndSet(studioAdmissionPaused, true))
-              ) {
-                yield* Deferred.succeed(admittedStudio, undefined);
-                yield* Deferred.await(releaseStudioAdmission);
               }
               if (
                 (yield* Ref.get(pauseBatchAdmission)) &&
-                saved.registry.instances.some(
-                  (instance) => instance.pendingOperation?.kind === "start",
-                ) &&
-                !(yield* Ref.getAndSet(batchAdmissionPaused, true))
+                (yield* Ref.get(startAdmissionComplete)) &&
+                !(yield* Ref.getAndSet(batchReadArmed, true))
               ) {
-                yield* Deferred.succeed(admittedBatch, undefined);
-                yield* Deferred.await(releaseBatchAdmission);
+                yield* Ref.set(batchReadPending, true);
               }
               if (
                 pauseHandoffCleanup &&
@@ -231,19 +208,28 @@ const makeFixture = (
                 yield* Deferred.succeed(admittedHandoffCleanup, undefined);
                 yield* Deferred.await(releaseHandoffCleanup);
               }
-              if (
-                (yield* Ref.get(pauseSleepAdmission)) &&
-                saved.registry.instances.some(
-                  (instance) => instance.pendingOperation?.kind === "sleep",
-                ) &&
-                !(yield* Ref.getAndSet(sleepAdmissionPaused, true))
-              ) {
-                yield* Deferred.succeed(admittedSleep, undefined);
-                yield* Deferred.await(releaseSleepAdmission);
-              }
+              if (pauseAfterStartAdmission && (yield* Ref.get(admissionPaused)))
+                yield* Ref.set(startAdmissionComplete, true);
             }),
           ),
         ),
+      read: (id) =>
+        store
+          .read(id)
+          .pipe(
+            Effect.flatMap((state) =>
+              Ref.getAndSet(batchReadPending, false).pipe(
+                Effect.flatMap((pause) =>
+                  pause
+                    ? Deferred.succeed(admittedBatch, undefined).pipe(
+                        Effect.andThen(Deferred.await(releaseBatchAdmission)),
+                        Effect.as(state),
+                      )
+                    : Effect.succeed(state),
+                ),
+              ),
+            ),
+          ),
     };
     const engine = yield* makeInstanceEngine({
       stackId,
@@ -287,19 +273,12 @@ const makeFixture = (
       enteredExport,
       releaseExport,
       admittedStart,
-      releaseAdmission,
       pauseBatchAdmission,
       admittedBatch,
       releaseBatchAdmission,
       handoffCleanupPaused,
       admittedHandoffCleanup,
       releaseHandoffCleanup,
-      pauseStudioAdmission,
-      admittedStudio,
-      releaseStudioAdmission,
-      admittedSleep,
-      releaseSleepAdmission,
-      pauseSleepAdmission,
     };
   });
 const fixture = makeFixture();
@@ -419,7 +398,6 @@ describe("instance operation isolation with durable transactions", () => {
           .pipe(Effect.forkChild({ startImmediately: true }));
         expect((yield* f.engine.status(f.database.id)).pendingOperation?.kind).toBe("start");
         yield* startup.release;
-        yield* Deferred.succeed(f.releaseAdmission, undefined);
         yield* Deferred.succeed(f.releaseStart, undefined);
         expect((yield* Fiber.join(starting)).phase).toBe("ready");
         yield* (yield* Fiber.join(ordinary)).release;
@@ -460,8 +438,8 @@ describe("instance operation isolation with durable transactions", () => {
         const traffic = yield* f.engine
           .acquireTraffic(f.database.id)
           .pipe(Effect.forkChild({ startImmediately: true }));
-        yield* Effect.yieldNow;
         expect(traffic.pollUnsafe()).toBeUndefined();
+        yield* Effect.yieldNow;
         yield* Deferred.succeed(f.releaseStop, undefined);
         expect((yield* Fiber.join(sleeping)).phase).toBe("dormant");
         const lease = yield* Fiber.join(traffic);
@@ -491,7 +469,6 @@ describe("instance operation isolation with durable transactions", () => {
           expect(Option.getOrUndefined(Cause.findErrorOption(startExit.cause))).toBeInstanceOf(
             StackLifecycleConflictError,
           );
-        yield* Deferred.succeed(f.releaseAdmission, undefined);
         yield* Deferred.succeed(f.releaseStart, undefined);
         expect((yield* f.engine.start(f.database.id)).phase).toBe("ready");
         const traffic = yield* f.engine.acquireTraffic(f.database.id);
@@ -512,7 +489,6 @@ describe("instance operation isolation with durable transactions", () => {
         const batchStarting = yield* f.engine
           .startAll([f.database.id])
           .pipe(Effect.forkChild({ startImmediately: true }));
-        yield* Deferred.succeed(f.releaseAdmission, undefined);
         yield* Deferred.succeed(f.releaseStart, undefined);
         expect((yield* Fiber.join(starting)).phase).toBe("ready");
         expect((yield* Fiber.join(batchStarting))[0]?.phase).toBe("ready");
@@ -532,7 +508,6 @@ describe("instance operation isolation with durable transactions", () => {
           .start(f.database.id)
           .pipe(Effect.forkChild({ startImmediately: true }));
         yield* Fiber.interrupt(first);
-        yield* Deferred.succeed(f.releaseAdmission, undefined);
         yield* Deferred.succeed(f.releaseStart, undefined);
         expect((yield* Fiber.join(second)).phase).toBe("ready");
       }),
@@ -580,20 +555,20 @@ describe("instance operation isolation with durable transactions", () => {
           .stopAll([f.database.id])
           .pipe(Effect.forkChild({ startImmediately: true }));
         yield* Deferred.await(f.admittedBatch);
-        const traffic = yield* f.engine
-          .acquireTraffic(f.database.id)
-          .pipe(Effect.forkChild({ startImmediately: true }));
-        yield* Effect.yieldNow;
-        expect(traffic.pollUnsafe()).toBeUndefined();
-        expect(Exit.isFailure(yield* f.engine.stopAll([f.database.id]).pipe(Effect.exit))).toBe(
-          true,
-        );
+        const trafficObservedState = yield* Deferred.make<void>();
+        const traffic = yield* Effect.gen(function* () {
+          expect((yield* f.engine.status(f.database.id)).pendingOperation?.kind).toBe("start");
+          yield* Deferred.succeed(trafficObservedState, undefined);
+          return yield* f.engine.acquireTraffic(f.database.id);
+        }).pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(trafficObservedState);
+        const competing = yield* f.engine.stopAll([f.database.id]).pipe(Effect.exit);
+        expect(Exit.isFailure(competing)).toBe(true);
         expect(Exit.isFailure(yield* f.engine.stop(f.database.id).pipe(Effect.exit))).toBe(true);
         yield* Deferred.succeed(f.releaseBatchAdmission, undefined);
         expect((yield* Fiber.join(stopping))[0]?.phase).toBe("stopped");
         expect(Exit.isFailure(yield* Fiber.join(traffic).pipe(Effect.exit))).toBe(true);
         expect(Exit.isFailure(yield* Fiber.join(starting).pipe(Effect.exit))).toBe(true);
-        yield* Deferred.succeed(f.releaseAdmission, undefined);
         yield* Deferred.succeed(f.releaseStart, undefined);
         expect((yield* f.engine.start(f.database.id)).phase).toBe("ready");
         expect((yield* f.engine.stop(f.database.id)).phase).toBe("stopped");
@@ -609,7 +584,6 @@ describe("instance operation isolation with durable transactions", () => {
           .start(f.database.id)
           .pipe(Effect.forkChild({ startImmediately: true }));
         yield* Deferred.await(f.admittedStart);
-        yield* Deferred.succeed(f.releaseAdmission, undefined);
         const stopping = yield* f.engine
           .stop(f.database.id)
           .pipe(Effect.forkChild({ startImmediately: true }));
@@ -646,7 +620,6 @@ describe("instance operation isolation with durable transactions", () => {
           .start(f.database.id)
           .pipe(Effect.forkChild({ startImmediately: true }));
         yield* Deferred.await(f.admittedStart);
-        yield* Deferred.succeed(f.releaseAdmission, undefined);
         yield* Ref.set(f.failHandoffCleanupOnce, true);
         const stopped = yield* f.engine.stop(f.database.id).pipe(Effect.exit);
         expect(Exit.isFailure(stopped)).toBe(true);
@@ -808,6 +781,38 @@ describe("instance operation isolation with durable transactions", () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.live("rejects targeted destroy for a registered stopped dependent", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const f = yield* makeFixture(true);
+        const rest = yield* compileServiceInstance(
+          {
+            service: "rest",
+            name: "stopped-dependent",
+            config: {},
+            dependencies: { database: f.database.id },
+          },
+          f.context,
+        );
+        yield* f.engine.create(rest.instance, rest.secretSlots);
+        const starting = yield* f.engine
+          .start(f.database.id)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(f.admittedStart);
+        const destroyed = yield* f.engine.destroyAll([f.database.id]).pipe(Effect.exit);
+        expect(Exit.isFailure(destroyed)).toBe(true);
+        if (Exit.isFailure(destroyed))
+          expect(Option.getOrUndefined(Cause.findErrorOption(destroyed.cause))).toBeInstanceOf(
+            StackLifecycleConflictError,
+          );
+        expect((yield* f.engine.status(f.database.id)).pendingOperation?.kind).toBe("start");
+        expect((yield* f.engine.stop(f.database.id)).phase).toBe("stopped");
+        yield* Deferred.succeed(f.releaseStart, undefined);
+        expect(Exit.isFailure(yield* Fiber.join(starting).pipe(Effect.exit))).toBe(true);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.live("rejects explicit sleep of a stopped instance without admitting it", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -921,7 +926,6 @@ describe("instance operation isolation with durable transactions", () => {
           );
         expect((yield* f.engine.status(f.database.id)).pendingOperation?.kind).toBe("start");
         expect((yield* f.engine.status(rest.id)).pendingOperation?.kind).toBe("start");
-        yield* Deferred.succeed(f.releaseAdmission, undefined);
         yield* Deferred.succeed(f.releaseStart, undefined);
         expect((yield* Fiber.join(starting)).phase).toBe("ready");
         const statuses = yield* f.engine.stopAll();
@@ -965,7 +969,7 @@ describe("instance operation isolation with durable transactions", () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.live("protects a dependency while a dependent setup is admitted", () =>
+  it.live("rejects dependency teardown after a dependent setup is admitted", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const f = yield* makeFixture(false);
@@ -986,13 +990,14 @@ describe("instance operation isolation with durable transactions", () => {
         expect(yield* f.engine.sleep(f.database.id).pipe(Effect.flip)).toBeInstanceOf(
           StackLifecycleConflictError,
         );
+        expect((yield* f.engine.status(rest.id)).pendingOperation?.kind).toBe("start");
         yield* Deferred.succeed(f.releaseDependentStart, undefined);
         expect((yield* Fiber.join(starting)).phase).toBe("ready");
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.live("releases earlier dependency leases when a later dependency is fenced", () =>
+  it.live("rejects dependent admission after teardown claims its dependency", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const f = yield* makeFixture(false, true);
@@ -1034,16 +1039,50 @@ describe("instance operation isolation with durable transactions", () => {
         yield* f.engine.start(analytics.id);
         const stopping = yield* f.engine.stop(rest.id).pipe(Effect.forkChild);
         yield* Deferred.await(f.enteredStop);
-        yield* Ref.set(f.pauseStudioAdmission, true);
         const starting = yield* f.engine.start(studio.id).pipe(Effect.forkChild);
-        yield* Deferred.await(f.admittedStudio);
-        yield* Deferred.succeed(f.releaseStudioAdmission, undefined);
+        const startExit = yield* Fiber.join(starting).pipe(Effect.exit);
+        expect(Exit.isFailure(startExit)).toBe(true);
+        if (Exit.isFailure(startExit))
+          expect(Option.getOrUndefined(Cause.findErrorOption(startExit.cause))).toBeInstanceOf(
+            StackLifecycleConflictError,
+          );
+        expect((yield* f.engine.status(studio.id)).pendingOperation).toBeUndefined();
         yield* Deferred.succeed(f.releaseStop, undefined);
         yield* Fiber.join(stopping);
         expect((yield* f.engine.status(rest.id)).phase).toBe("stopped");
-        expect(Exit.isFailure(yield* Fiber.join(starting).pipe(Effect.exit))).toBe(true);
         yield* f.engine.sleep(analytics.id);
         expect((yield* f.engine.sleep(f.database.id)).phase).toBe("dormant");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("rejects dependent registration after teardown claims its dependency", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const f = yield* makeFixture(false, true);
+        yield* Deferred.succeed(f.releaseStart, undefined);
+        yield* f.engine.start(f.database.id);
+        const stopping = yield* f.engine.stop(f.database.id).pipe(Effect.forkChild);
+        yield* Deferred.await(f.enteredStop);
+        const rest = yield* compileServiceInstance(
+          {
+            service: "rest",
+            name: "blocked-registration-rest",
+            config: { activation: "lazy" },
+            dependencies: { database: f.database.id },
+          },
+          f.context,
+        );
+        const created = yield* f.engine.create(rest.instance, rest.secretSlots).pipe(Effect.exit);
+        expect(Exit.isFailure(created)).toBe(true);
+        if (Exit.isFailure(created))
+          expect(Option.getOrUndefined(Cause.findErrorOption(created.cause))).toBeInstanceOf(
+            StackLifecycleConflictError,
+          );
+        expect(yield* f.engine.list).not.toContainEqual(expect.objectContaining({ id: rest.id }));
+        yield* Deferred.succeed(f.releaseStop, undefined);
+        yield* Fiber.join(stopping);
+        expect((yield* f.engine.status(f.database.id)).phase).toBe("stopped");
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );
@@ -1237,7 +1276,6 @@ describe("instance operation isolation with durable transactions", () => {
         );
         expect(publicPorts).toHaveLength(1);
         expect(privatePorts).toHaveLength(1);
-        yield* Deferred.succeed(f.releaseAdmission, undefined);
         expect((yield* Fiber.join(starting)).phase).toBe("ready");
         const settled = yield* f.store.read(f.stackId);
         expect(
