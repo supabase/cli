@@ -69,7 +69,7 @@ Each stage of the prescribed workflow was executed against the fixture,
 re-running the command between stages.
 
 **Step 1 — amcheck** returned silently for both indexes — correct, because
-the fixture lies about the *recorded* version while the indexes were built
+the fixture lies about the _recorded_ version while the indexes were built
 under the current library. This demonstrates the "rows are candidates"
 caveat: detection is a catalog comparison; corruption confirmation is
 amcheck's job.

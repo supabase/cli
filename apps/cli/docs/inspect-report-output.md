@@ -187,11 +187,7 @@ export interface ReportStepsBlock {
 }
 
 export type ReportBlock =
-  | ReportKeyValueBlock
-  | ReportTableBlock
-  | ReportCalloutBlock
-  | ReportSqlBlock
-  | ReportStepsBlock;
+  ReportKeyValueBlock | ReportTableBlock | ReportCalloutBlock | ReportSqlBlock | ReportStepsBlock;
 
 export interface Report {
   readonly command: string;
@@ -229,9 +225,7 @@ Migration is mechanical because the old shape embeds in the new one. A single
 adapter converts every existing spec without touching its file:
 
 ```ts
-export function reportSpecFromTableSpec(
-  spec: LegacyInspectQuerySpec,
-): LegacyInspectReportSpec {
+export function reportSpecFromTableSpec(spec: LegacyInspectQuerySpec): LegacyInspectReportSpec {
   return {
     name: spec.name,
     sql: spec.sql,
@@ -268,8 +262,11 @@ report: (rows, cfg) => {
       command: "collation-drift",
       severity: "ok",
       blocks: [
-        { kind: "callout", severity: "ok",
-          text: "No collation version drift detected. Indexes match the current system sorting rules." },
+        {
+          kind: "callout",
+          severity: "ok",
+          text: "No collation version drift detected. Indexes match the current system sorting rules.",
+        },
       ],
     };
   }
@@ -278,21 +275,30 @@ report: (rows, cfg) => {
     severity: rows.some(isKeyIndex) ? "critical" : "warn",
     blocks: [
       { kind: "keyValue", entries: environmentEntries(rows, cfg) },
-      { kind: "callout", severity: "warn",
-        text: "These indexes were built under different sorting rules. Postgres reports no error for this; queries may return missing rows or admit duplicates." },
+      {
+        kind: "callout",
+        severity: "warn",
+        text: "These indexes were built under different sorting rules. Postgres reports no error for this; queries may return missing rows or admit duplicates.",
+      },
       { kind: "table", columns: DRIFT_COLUMNS, rows: rows.map(toDriftRow) },
-      { kind: "steps", steps: [
-        { title: "Confirm actual corruption with amcheck",
-          sql: amcheckStatements(rows) },
-        { title: "Rebuild affected indexes (CONCURRENTLY keeps the app online)",
-          sql: reindexStatements(rows) },
-        { title: "Only after every rebuild: record the new version",
-          sql: refreshStatements(rows),
-          body: "Refreshing first hides the problem without fixing it." },
-      ]},
+      {
+        kind: "steps",
+        steps: [
+          { title: "Confirm actual corruption with amcheck", sql: amcheckStatements(rows) },
+          {
+            title: "Rebuild affected indexes (CONCURRENTLY keeps the app online)",
+            sql: reindexStatements(rows),
+          },
+          {
+            title: "Only after every rebuild: record the new version",
+            sql: refreshStatements(rows),
+            body: "Refreshing first hides the problem without fixing it.",
+          },
+        ],
+      },
     ],
   };
-}
+};
 ```
 
 The generated SQL is now data, not help text: it appears in the terminal with

@@ -164,10 +164,15 @@ export function quoteIdent(value: string): string {
   return `"${value.replaceAll('"', '""')}"`;
 }
 
+/** Single-quotes a value as a SQL string literal, escaping embedded quotes. */
+export function quoteLiteral(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
 export function amcheckStatements(rows: ReadonlyArray<DriftRow>): string[] {
   return rows.map(
     (r) =>
-      `SELECT bt_index_check('${r.name}'::regclass, heapallindexed => true);` +
+      `SELECT bt_index_check(${quoteLiteral(r.name)}::regclass, heapallindexed => true);` +
       (r.key_type === "" ? "" : `  -- ${r.key_type.toLowerCase()}`),
   );
 }
