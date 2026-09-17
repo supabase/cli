@@ -40,7 +40,10 @@ edit is the only place that opinion can be argued with. `push` has no built-in d
 own, so editing or deleting the line is all it takes to change what ships.
 
 Every runtime excludes environment files and version-control metadata (`.env`, `.env.*`,
-`.git/`); beyond that the lists differ by how each runtime resolves dependencies. The key is
+`.git/`). Beyond that the two catalog runtimes carry more than `dockerfile` does, because the
+CLI knows what tooling writes into their directories: `node` also drops `node_modules/*` and
+`*.log`, `deno` drops `*.log`, and a `dockerfile` context is left alone because the user's own
+`Dockerfile` already decides what it copies. The key is
 omitted entirely for a runtime that declares no patterns. The chosen list is reported as the
 `Excluded` row beside the compute's other dials, and carried on the machine-output payload as
 `exclude`.

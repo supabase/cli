@@ -62,10 +62,13 @@ export const COMPUTE_RUNTIME_EXCLUSIONS: Record<ComputeRuntime, ReadonlyArray<st
   dockerfile: [".env", ".env.*", ".git/"],
   // The build resolves dependencies, so uploading a locally installed tree only ships this
   // machine's platform-specific binaries. `node_modules/*` drops its contents while keeping the
-  // directory, so the runtime still finds the resolution root it expects.
+  // directory, so the runtime still finds the resolution root it expects. `*.log` covers the
+  // crash logs npm and yarn drop into the project root on a failed install.
   node: [".env", ".env.*", ".git/", "node_modules/*", "*.log"],
   // Deno resolves remote dependencies into a cache outside the project, so there is no
   // installed tree here to drop; `node_modules/` appears only under an opt-in `nodeModulesDir`.
+  // `*.log` is kept for the same reason as above, since a Deno compute may still be installed
+  // from npm.
   deno: [".env", ".env.*", ".git/", "*.log"],
 };
 

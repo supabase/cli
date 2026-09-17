@@ -4,21 +4,13 @@ import { InvalidComputeExcludeError } from "./compute.errors.ts";
 
 /**
  * `[compute.<name>] exclude` — the patterns that keep a path out of the uploaded build
- * context.
+ * context, read the way `.gitignore` reads them, with one segment matched by the CLI's own
+ * glob matcher ({@link pathMatch}).
  *
- * Read the way `.gitignore` reads them, because that is the vocabulary the paths people want
- * gone are already written in: a pattern without `/` matches that name at any depth, one with
- * `/` is anchored at the source directory, a trailing `/` matches directories only, and `**`
- * spans directories. Within one path segment the syntax is the CLI's existing glob matcher
- * ({@link pathMatch}), so `*`, `?` and `[a-z]` mean here what they already mean in
- * `[db.seed] sql_paths`.
- *
- * Re-inclusion (`!`) is absent rather than pending: excluding a directory stops the walk
- * there, so the pattern that would re-admit something beneath it can never be reached, and a
- * setting that silently does nothing is worse than one that isn't offered.
+ * @see `../../commands/experimental/compute/push/SIDE_EFFECTS.md` — full semantics, the
+ * refusals, and why re-inclusion (`!`) is not offered.
  */
 
-/** A `/`-separated pattern, ready to match against a path relative to the source directory. */
 interface ExcludePattern {
   readonly raw: string;
   /** Matched against the whole relative path rather than a single name. */
@@ -40,22 +32,24 @@ export const NO_COMPUTE_EXCLUSIONS: ComputeExcludeMatcher = {
   excludes: () => false,
 };
 
-/** `**` is only a segment spanner as a whole segment; `a**b` is the single-segment `a*b`. */
+/** Only a whole segment spans directories; `a**b` is the single-segment `a*b`. */
 const SPANNER = "**";
 
-/**
- * Whether every glob operator in one segment is well-formed. `pathMatch` reports a malformed
- * character class rather than throwing, and keeps walking the pattern after a match fails, so
- * matching against the empty string reaches every operator in it.
- */
+/** `pathMatch` reaches every operator in a pattern even once a match has failed. */
 function isWellFormedSegment(segment: string): boolean {
   return !pathMatch(segment, "").badPattern;
 }
 
+/** Adjacent spanners span exactly what one spans; left in, each retries the same suffixes. */
+function collapseSpanners(segments: ReadonlyArray<string>): Array<string> {
+  return segments.filter(
+    (segment, index) => segment !== SPANNER || segments[index - 1] !== SPANNER,
+  );
+}
+
 /**
- * Matches pattern segments against path segments, with `**` standing for zero or more of the
- * latter. An anchored pattern has to consume the path entirely: a directory that matches is
- * never descended into, so a pattern needs no separate rule for what sits underneath it.
+ * Matches pattern segments against path segments. An anchored pattern consumes the path
+ * entirely, since a matched directory is never descended into.
  */
 function matchSegments(pattern: ReadonlyArray<string>, segments: ReadonlyArray<string>): boolean {
   if (pattern.length === 0) {
@@ -63,7 +57,10 @@ function matchSegments(pattern: ReadonlyArray<string>, segments: ReadonlyArray<s
   }
   const [head, ...rest] = pattern;
   if (head === SPANNER) {
-    for (let skipped = 0; skipped <= segments.length; skipped++) {
+    // A trailing `**` names what is inside a directory, so it must consume a segment or
+    // pruning would take the directory too; elsewhere a spanner may span nothing.
+    const fewest = rest.length === 0 ? 1 : 0;
+    for (let skipped = fewest; skipped <= segments.length; skipped++) {
       if (matchSegments(rest, segments.slice(skipped))) {
         return true;
       }
@@ -78,11 +75,8 @@ function matchSegments(pattern: ReadonlyArray<string>, segments: ReadonlyArray<s
 }
 
 /**
- * Reads the recorded patterns into a matcher, refusing any the CLI cannot act on.
- *
- * Every refusal names the pattern and the compute, since the whole point of the setting is
- * that a file the user expected gone is gone — a pattern quietly read as something else, or
- * skipped, would upload the file it was written to withhold.
+ * Reads the recorded patterns into a matcher, naming any the CLI cannot act on. A pattern read
+ * as something else, or skipped, would upload the file it was written to withhold.
  */
 export const compileComputeExclude = Effect.fnUntraced(function* (options: {
   readonly name: string;
@@ -109,11 +103,11 @@ export const compileComputeExclude = Effect.fnUntraced(function* (options: {
       );
     }
 
-    const directoryOnly = raw.endsWith("/");
-    // A leading `/` anchors without contributing a segment, and so does a `/` anywhere inside
-    // the pattern — both are stripped before splitting, so `segments` never holds a blank.
-    const anchored = raw.startsWith("/") || raw.slice(0, -1).includes("/");
-    const body = raw.replace(/\/+$/, "").replace(/^\/+/, "");
+    // Anchoring is decided after trailing separators come off, so `dist/` and `dist//` agree.
+    const withoutTrailing = raw.replace(/\/+$/, "");
+    const directoryOnly = withoutTrailing !== raw;
+    const anchored = withoutTrailing.includes("/");
+    const body = withoutTrailing.replace(/^\/+/, "");
 
     if (body === "") {
       return yield* refuse(
@@ -132,12 +126,13 @@ export const compileComputeExclude = Effect.fnUntraced(function* (options: {
         raw,
         segments.includes("")
           ? "has an empty path segment"
-          : `has a malformed character class in "${malformed}"`,
+          : // One verdict covers every malformed operator, so the segment is named, not a cause.
+            `has malformed glob syntax in "${malformed}"`,
         `Fix the pattern under [compute.${options.name}] exclude, or replace it with a plain path such as "node_modules".`,
       );
     }
 
-    patterns.push({ raw, anchored, directoryOnly, segments });
+    patterns.push({ raw, anchored, directoryOnly, segments: collapseSpanners(segments) });
   }
 
   return {
@@ -149,11 +144,10 @@ export const compileComputeExclude = Effect.fnUntraced(function* (options: {
         if (pattern.directoryOnly && !isDirectory) {
           return false;
         }
+        // An unanchored pattern is a single segment, so the name answers it at any depth.
         return pattern.anchored
           ? matchSegments(pattern.segments, segments)
-          : // An unanchored pattern is a single segment by construction, so it is the name
-            // that answers it, at whatever depth the walk found it.
-            pathMatch(pattern.segments[0] ?? "", name).matched;
+          : pathMatch(pattern.segments[0] ?? "", name).matched;
       });
     },
   } satisfies ComputeExcludeMatcher;

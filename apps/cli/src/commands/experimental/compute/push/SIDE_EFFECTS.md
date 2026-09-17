@@ -136,6 +136,12 @@ existing glob matcher (`*`, `?`, `[a-z]`). An excluded directory is not descende
 everything beneath it is out too — which is also why the reported count counts the path the
 walk turned back at rather than what sat underneath it.
 
+Two details follow from that pruning. A **trailing** `**` matches what is inside a directory
+rather than the directory itself, so `cache/**` empties `cache` and leaves the directory in the
+archive, while `cache` on its own removes it; a `**` anywhere else may still span nothing, so
+`build/**/cache` matches `build/cache`. And repeated trailing separators are normalized before
+anchoring is decided, so `dist/` and `dist//` are the same unanchored directory pattern.
+
 Re-inclusion (`!`) is **not** supported and is refused rather than read as a literal filename:
 excluding a directory stops the walk there, so a pattern re-admitting something beneath it could
 never be reached. An empty pattern, an empty path segment (`src//dist`), and a malformed
@@ -155,7 +161,10 @@ the compute records no patterns, so an unconfigured compute's output is unchange
 
 A source directory whose every file is excluded fails with `ComputeSourceMissingError` before
 the upload, naming the patterns rather than reporting the "only empty directories" case that a
-genuinely empty tree gets.
+genuinely empty tree gets. The two are told apart by whether any path was actually excluded,
+not by whether patterns were configured — a tree of nothing but empty directories packages to
+zero files whatever `exclude` says, and blaming a pattern that matched nothing would send the
+user to edit a line that is doing its job.
 
 An excluded symlink is excluded **before** it is vetted for escaping the build context, so
 adding a hoisted `node_modules` link to `exclude` is a real answer to

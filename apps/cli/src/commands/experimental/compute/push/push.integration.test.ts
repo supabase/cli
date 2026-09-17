@@ -2000,6 +2000,36 @@ describe("compute push", () => {
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
     );
 
+    // Configured patterns that matched nothing must not be blamed for an empty archive: the
+    // tree packages to zero files on its own, and the exclusion message would send the user
+    // to edit a line that is doing its job.
+    it.live("blames empty directories, not the patterns, when nothing was excluded", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fs = yield* FileSystem.FileSystem;
+        const repo = yield* withExtraFiles('["nothing-matches-this"]');
+        for (const stale of [".env", "index.js"]) {
+          yield* fs.remove(path.join(repo.dir, "supabase", "compute", "api", stale));
+        }
+        yield* fs.remove(path.join(repo.dir, "supabase", "compute", "api", "node_modules"), {
+          recursive: true,
+        });
+        yield* fs.makeDirectory(path.join(repo.dir, "supabase", "compute", "api", "nested"));
+        const { layer, http } = setupCompute({ workdir: repo.dir, routes: routes() });
+
+        return yield* Effect.gen(function* () {
+          const error = yield* push().pipe(Effect.flip);
+
+          expect(error).toBeInstanceOf(ComputeSourceMissingError);
+          expect(error).toMatchObject({
+            detail: expect.stringContaining("only empty directories"),
+            suggestion: expect.stringContaining("Add your compute's code"),
+          });
+          expect(http.requests).toHaveLength(0);
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+
     // A pattern the config schema accepts but no reader can act on: the loader lets it
     // through as a list of strings, so this is `push`'s refusal, not a config-load failure.
     it.live("refuses a malformed pattern", () =>

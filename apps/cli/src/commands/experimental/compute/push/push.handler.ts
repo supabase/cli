@@ -349,11 +349,16 @@ const deployOneCompute = Effect.fnUntraced(function* (input: {
     // does a directory whose every file the exclude patterns matched, which is
     // the same outcome for a different reason and needs its own recovery.
     if (packaged.fileCount === 0) {
+      // Keyed on what the patterns actually removed rather than on whether any were
+      // configured: a tree of empty directories packages to zero files whatever `exclude`
+      // says, and blaming the patterns for it would send the user to edit a line that is
+      // doing nothing.
+      const excludedSomething = packaged.excludedCount > 0;
       return yield* new ComputeSourceMissingError({
-        detail: exclude.active
+        detail: excludedSomething
           ? `Every file in ${sourceDisplay} is matched by [compute.${name}] exclude, so there is nothing to deploy.`
           : `${sourceDisplay} holds no files to deploy, only empty directories.`,
-        suggestion: exclude.active
+        suggestion: excludedSomething
           ? `Narrow [compute.${name}] exclude in supabase/config.toml so the files the build needs are packaged.`
           : addYourCode(sourceDisplay),
       });

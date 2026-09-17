@@ -88,6 +88,18 @@ describe("compileComputeExclude", () => {
   describe("a trailing separator matches directories only", () => {
     const matcher = compile(["dist/"]);
 
+    // Anchoring is decided after the trailing separators come off, so a doubled one does not
+    // quietly turn a match-at-any-depth pattern into a root-only one.
+    it.effect("reads a doubled trailing separator the same way", () =>
+      Effect.sync(() => {
+        const doubled = compile(["dist//"]);
+
+        expect(doubled.excludes("dist", true)).toBe(true);
+        expect(doubled.excludes("packages/api/dist", true)).toBe(true);
+        expect(doubled.excludes("dist", false)).toBe(false);
+      }),
+    );
+
     it.effect("matches the directory", () =>
       Effect.sync(() => {
         expect(matcher.excludes("dist", true)).toBe(true);
@@ -125,6 +137,29 @@ describe("compileComputeExclude", () => {
         expect(matcher.excludes("other/cache", true)).toBe(false);
       }),
     );
+
+    // Pruning makes this the difference between emptying a directory and deleting it: a
+    // trailing `**` that matched the parent would take the directory out of the archive too.
+    it.effect("empties a directory without removing it when trailing", () =>
+      Effect.sync(() => {
+        const trailing = compile(["cache/**"]);
+
+        expect(trailing.excludes("cache", true)).toBe(false);
+        expect(trailing.excludes("cache/blob", false)).toBe(true);
+        expect(trailing.excludes("cache/deep/blob", false)).toBe(true);
+      }),
+    );
+
+    // Repeats span exactly what one spanner spans, so they are folded rather than each
+    // retrying the same suffixes — the pathological case is a pattern, not an input path.
+    it.effect("treats repeated spanners as one", () =>
+      Effect.sync(() => {
+        const repeated = compile(["**/**/**/**/missing"]);
+
+        expect(repeated.excludes("a/b/c/d/e/f/g/h/missing", false)).toBe(true);
+        expect(repeated.excludes("a/b/c/d/e/f/g/h/present", false)).toBe(false);
+      }),
+    );
   });
 
   it.effect("matches a character class within one segment", () =>
@@ -150,9 +185,14 @@ describe("compileComputeExclude", () => {
     }),
   );
 
-  it.effect("refuses a malformed character class", () =>
+  // `pathMatch` reports one verdict for every malformed operator, so the message names the
+  // segment rather than claiming which operator broke.
+  it.effect.each([
+    { label: "an unterminated character class", pattern: "src/[oops" },
+    { label: "a trailing escape", pattern: "src/oops\\" },
+  ])("refuses $label", ({ pattern }) =>
     Effect.sync(() => {
-      expect(refusal(["src/[oops"])).toContain("malformed character class");
+      expect(refusal([pattern])).toContain("malformed glob syntax");
     }),
   );
 
