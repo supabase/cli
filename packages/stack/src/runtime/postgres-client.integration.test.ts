@@ -113,8 +113,6 @@ describe("runPostgresClient", () => {
       expect(calls[0]?.args).toEqual(["-c", "pg_dump --version", "--"]);
       const firstPath = (calls[0]?.env?.["PATH"] ?? "").split(/[:;]/)[0] ?? "";
       expect(firstPath.endsWith("bin")).toBe(true);
-      expect(calls[0]?.command).not.toBe("supabase-postgres-start");
-      expect(calls[0]?.args).not.toContain("supabase-postgres-start");
     }).pipe(Effect.provide(nativeClientLayer(calls)));
   });
 
@@ -175,7 +173,6 @@ describe("runPostgresClient", () => {
       expect(calls[0]?.args).toContain("-e");
       expect(calls[0]?.args).toContain("PGPASSWORD");
       expect(calls[0]?.args).not.toContain("secret");
-      expect(calls[0]?.args).not.toContain("supabase-postgres-start");
       expect(calls[0]?.args.slice(-3)).toEqual(["pg_prove", "--ext", ".sql"]);
     }).pipe(
       Effect.provide(

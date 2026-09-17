@@ -116,11 +116,7 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
         : undefined;
     const proveRuntime =
       backend.kind === "stack"
-        ? yield* resolveBundledPostgresRuntime(
-            stackRuntime,
-            runtimeInfo.platform,
-            runtimeInfo.arch,
-          )
+        ? yield* resolveBundledPostgresRuntime(stackRuntime, runtimeInfo.platform, runtimeInfo.arch)
         : undefined;
     const useNativeProve = proveRuntime?.kind === "native";
     const stackPublishedProve = backend.kind === "stack" && !useNativeProve;

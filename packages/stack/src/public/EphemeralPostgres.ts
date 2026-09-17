@@ -69,9 +69,7 @@ export const resolveEphemeralPostgresRelease = (
   // A running stack can outlive a catalog pin bump; dump/test still need a client.
   const selected =
     DatabaseModule.releases[requested] ??
-    (requested.includes(".")
-      ? DatabaseModule.releases[requested.split(".")[0] ?? ""]
-      : undefined);
+    (requested.includes(".") ? DatabaseModule.releases[requested.split(".")[0] ?? ""] : undefined);
   const release =
     selected === undefined
       ? catalogReleaseFor("database:database", requested)

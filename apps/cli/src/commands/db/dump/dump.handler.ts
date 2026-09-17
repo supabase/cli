@@ -200,11 +200,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
         : undefined;
     const bundledRuntime =
       backend.kind === "stack"
-        ? yield* resolveBundledPostgresRuntime(
-            stackRuntime,
-            runtimeInfo.platform,
-            runtimeInfo.arch,
-          )
+        ? yield* resolveBundledPostgresRuntime(stackRuntime, runtimeInfo.platform, runtimeInfo.arch)
         : undefined;
     const useNativeClient = bundledRuntime?.kind === "native";
     const networkId = Option.getOrUndefined(networkIdFlag);

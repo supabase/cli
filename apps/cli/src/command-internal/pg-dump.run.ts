@@ -45,19 +45,12 @@ export const streamPgDump = Effect.fnUntraced(function* <E>(params: {
   const runtimeInfo = yield* RuntimeInfo;
   const networkIdFlag = yield* NetworkIdFlag;
 
-  // Host networking by default; a resolved flag/env/project-env value wins in that
-  // precedence order. The generated `supabase_network_*` fallback used elsewhere never
-  // applies here, since this path always sets a NetworkMode.
-  const networkId = Option.getOrUndefined(networkIdFlag);
-  const envNetworkId = params.forceHostNetwork
-    ? ""
-    : viperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", params.projectEnvValues ?? {});
-  const network =
-    networkId !== undefined && networkId.length > 0
-      ? { _tag: "named" as const, name: networkId }
-      : envNetworkId.length > 0
-        ? { _tag: "named" as const, name: envNetworkId }
-        : { _tag: "host" as const };
+  // Dump never falls back to generated `supabase_network_*`; host is the default.
+  const network = dumpNetworkMode(
+    Option.getOrUndefined(networkIdFlag),
+    params.forceHostNetwork === true,
+    params.projectEnvValues ?? {},
+  );
   const extraHosts = runtimeInfo.platform === "linux" ? ["host.docker.internal:host-gateway"] : [];
 
   const image = yield* getRegistryImageUrl(params.image, params.projectEnvValues).pipe(
@@ -101,15 +94,24 @@ export const pgDumpClientExitMessage = (client: PgDumpClient, exitCode: number):
     ? `error running ${client.command}: exit ${exitCode}`
     : `error running container: exit ${exitCode}`;
 
+const dumpNetworkMode = (
+  networkId: string | undefined,
+  forceHostNetwork: boolean,
+  projectEnvValues: Readonly<Record<string, string>>,
+): { readonly _tag: "named"; readonly name: string } | { readonly _tag: "host" } => {
+  if (networkId !== undefined && networkId.length > 0) return { _tag: "named", name: networkId };
+  if (forceHostNetwork) return { _tag: "host" };
+  const envNetworkId = viperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", projectEnvValues);
+  return envNetworkId.length > 0 ? { _tag: "named", name: envNetworkId } : { _tag: "host" };
+};
+
 const bundledDumpNetwork = (
   networkId: string | undefined,
   forceHostNetwork: boolean,
   projectEnvValues: Readonly<Record<string, string>>,
 ): "host" | { readonly name: string } => {
-  if (networkId !== undefined && networkId.length > 0) return { name: networkId };
-  if (forceHostNetwork) return "host";
-  const envNetworkId = viperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", projectEnvValues);
-  return envNetworkId.length > 0 ? { name: envNetworkId } : "host";
+  const network = dumpNetworkMode(networkId, forceHostNetwork, projectEnvValues);
+  return network._tag === "host" ? "host" : { name: network.name };
 };
 
 /** Compose dump, or catalog `pg_dump`/`pg_dumpall` on the stack backend. */
@@ -128,11 +130,7 @@ export const streamPgDumpWithClient = Effect.fnUntraced(function* <E>(params: {
     const networkIdFlag = yield* NetworkIdFlag;
     const runtime =
       params.client.runtime ??
-      (yield* resolveBundledPostgresRuntime(
-        undefined,
-        runtimeInfo.platform,
-        runtimeInfo.arch,
-      ));
+      (yield* resolveBundledPostgresRuntime(undefined, runtimeInfo.platform, runtimeInfo.arch));
     const extraHosts =
       runtime.kind === "container" && runtimeInfo.platform === "linux"
         ? ["host.docker.internal:host-gateway"]

@@ -1162,28 +1162,25 @@ describe("db dump integration", () => {
     );
   });
 
-  it.live(
-    "dump --db-url native keeps the resolved host even when isLocal is true",
-    () => {
-      const { layer, docker, bundled } = setup({
-        conn: { ...LOCAL_CONN, host: "db.internal" },
-        isLocal: true,
-        stdout: "-- schema\n",
-        dockerInstalled: false,
-        platform: "darwin",
-      });
-      return Effect.gen(function* () {
-        yield* dbDump(
-          flags({
-            dbUrl: Option.some("postgresql://postgres:postgres@db.internal:54322/postgres"),
-          }),
-        );
-        expect(docker.lastOpts).toBeUndefined();
-        expect(bundled.lastOpts?.runtime).toEqual({ kind: "native" });
-        expect(bundled.lastOpts?.env?.["PGHOST"]).toBe("db.internal");
-      }).pipe(Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))));
-    },
-  );
+  it.live("dump --db-url native keeps the resolved host even when isLocal is true", () => {
+    const { layer, docker, bundled } = setup({
+      conn: { ...LOCAL_CONN, host: "db.internal" },
+      isLocal: true,
+      stdout: "-- schema\n",
+      dockerInstalled: false,
+      platform: "darwin",
+    });
+    return Effect.gen(function* () {
+      yield* dbDump(
+        flags({
+          dbUrl: Option.some("postgresql://postgres:postgres@db.internal:54322/postgres"),
+        }),
+      );
+      expect(docker.lastOpts).toBeUndefined();
+      expect(bundled.lastOpts?.runtime).toEqual({ kind: "native" });
+      expect(bundled.lastOpts?.env?.["PGHOST"]).toBe("db.internal");
+    }).pipe(Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))));
+  });
 
   it.live("dump --linked on the stack backend keeps the remote host for a native client", () => {
     const { layer, docker, bundled } = setup({

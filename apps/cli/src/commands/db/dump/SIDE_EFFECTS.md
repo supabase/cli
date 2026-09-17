@@ -44,11 +44,11 @@ script run inside the local Postgres image (or bundled artifact `pg_dump` /
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                          |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `0`  | success                                                                                                                                                            |
+| Code | Condition                                                                                                                                                             |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                                                                                               |
 | `1`  | `--use-copy`/`--exclude` without `--data-only`; mutually-exclusive flags; bad `--file` path; connection failure; container or bundled `pg_dump`/`pg_dumpall` exit ≠ 0 |
-| `1`  | `--project-ref` set with a resolved target other than linked (see Notes / Divergences)                                                                             |
+| `1`  | `--project-ref` set with a resolved target other than linked (see Notes / Divergences)                                                                                |
 
 ## Output
 
@@ -104,6 +104,6 @@ shell inherits the suppressing variables and is missed.
 - **Stack backend host rewrite.** `--local` native stacks use bundled `pg_dump` from the
   catalog artifact and rewrite loopback to `127.0.0.1`. Native `--linked` / `--db-url` keep
   the resolved host. Container dumps use `isLocal` (config host+port match), not `connType ===
-  "local"`: a `--db-url` that matches `config.toml` is rewritten like a published
+"local"`: a `--db-url` that matches `config.toml` is rewritten like a published
   stack target (`host.docker.internal` / host network) and does not require a
   project stack. Engine/runtime selection still uses `connType`.

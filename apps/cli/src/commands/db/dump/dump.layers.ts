@@ -76,7 +76,6 @@ export const dbDumpRuntimeLayer = Layer.mergeAll(
   linkedProjectCache,
   identityStitchLayer,
   telemetryStateLayer,
-  // Native engines read `runtime.kind` here to pick bundled `pg_dump`.
   stackApiLayer,
   bundledPostgresClientLayer,
   commandRuntimeLayer(["db", "dump"]),

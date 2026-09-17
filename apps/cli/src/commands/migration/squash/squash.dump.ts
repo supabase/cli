@@ -31,7 +31,7 @@ export interface SquashDumpParams<E> {
   readonly onStdout: (chunk: Uint8Array) => Effect.Effect<void, E>;
   /** Loaded project `supabase/.env` map — forwarded to {@link streamPgDump}'s own `SUPABASE_NETWORK_ID` fallback. */
   readonly projectEnvValues?: Readonly<Record<string, string>>;
-  /** Native-engine shadows dump with bundled `pg_dump`; container shadows keep the tool container. */
+  /** Omitted → compose `pg_dump` container. Set for catalog artifact or one-shot container `pg_dump`. */
   readonly client?: PgDumpClient;
 }
 

@@ -46,7 +46,6 @@ export const testDbRuntimeLayer = (commandPath: ReadonlyArray<string>) =>
     // above, so the lazy linked stack shares a single stitch attempt.
     identityStitchLayer,
     telemetryStateLayer,
-    // Native engines read `runtime.kind` here to pick bundled `pg_prove`.
     stackApiLayer,
     bundledPostgresClientLayer,
     commandRuntimeLayer(commandPath),

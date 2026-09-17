@@ -35,11 +35,7 @@ export type PostgresClientServices =
   | Path.Path
   | Crypto.Crypto;
 
-/**
- * Prepares the catalog Postgres artifact or image and runs `argv` against it.
- * Native prepends `artifact/bin` to `PATH`. Container uses `docker|podman run --rm`.
- * Never starts `supabase-postgres-start`.
- */
+/** Runs `argv` against a prepared catalog Postgres artifact or image. */
 export const runPostgresClient = <E>(
   options: RunPostgresClientOptions<E>,
 ): Effect.Effect<PostgresClientResult, E | PostgresClientRunError, PostgresClientServices> =>

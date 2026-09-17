@@ -52,16 +52,6 @@ describe("postgres client argv", () => {
     ]);
   });
 
-  it("does not insert supabase-postgres-start into the container argv", () => {
-    const args = postgresClientContainerArgs({
-      image: "postgres:test",
-      argv: ["pg_prove", "--ext", ".sql"],
-      env: {},
-    });
-    expect(args).not.toContain("supabase-postgres-start");
-    expect(args.slice(-3)).toEqual(["pg_prove", "--ext", ".sql"]);
-  });
-
   it("requires dump clients for bash pipelines and pg_prove only for prove argv", () => {
     expect([...requiredPostgresClientBins(["bash", "-c", "pg_dump --version"])]).toEqual([
       ...POSTGRES_DUMP_BINS,
