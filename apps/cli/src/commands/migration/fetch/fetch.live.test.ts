@@ -1,6 +1,7 @@
-import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
+import { MigrationLiveError } from "../../../../tests/helpers/migration-live.ts";
+
+import { BunServices } from "@effect/platform-bun";
+import { Cause, DateTime, Effect, Exit, FileSystem, Path } from "effect";
 import { expect } from "vitest";
 
 import { requireLiveSuccess, test, throwWithCleanup } from "../../../../tests/helpers/live.ts";
@@ -9,9 +10,9 @@ const LIVE_TIMEOUT_MS = 120_000;
 
 const NAME = "cli_live_fetch";
 
-function liveMigrationVersion(): string {
-  return new Date().toISOString().replace(/\D/gu, "").slice(0, 14);
-}
+const liveMigrationVersion = Effect.map(DateTime.now, (now) =>
+  DateTime.formatIso(now).replace(/\D/gu, "").slice(0, 14),
+);
 
 // Destructive: repairs remote migration history in setup and reverts that row in
 // teardown.
@@ -23,60 +24,77 @@ function liveMigrationVersion(): string {
 test(
   "fetches a seeded remote migration into the local migrations directory",
   { timeout: LIVE_TIMEOUT_MS },
-  async ({ cli, project }) => {
-    const targetArgs = ["--db-url", project.dbUrl];
-    const version = liveMigrationVersion();
-    const migrationFile = `${version}_${NAME}.sql`;
-    const seedDir = await mkdtemp(path.join(tmpdir(), "sb-migration-seed-live-"));
-    const fetchDir = await mkdtemp(path.join(tmpdir(), "sb-migration-fetch-live-"));
-    let targetError: unknown;
-    const cleanupErrors: Array<unknown> = [];
-    try {
-      // repair --status applied reads the local file for name/statements, so write it
-      // before running repair.
-      await mkdir(path.join(seedDir, "supabase", "migrations"), { recursive: true });
-      await writeFile(
-        path.join(seedDir, "supabase", "migrations", migrationFile),
-        "create table if not exists public.cli_live_roundtrip (id int);\n",
-      );
-      const repairResult = await cli(
-        ["migration", "repair", version, "--status", "applied", ...targetArgs],
-        { cwd: seedDir },
-      );
-      requireLiveSuccess(repairResult, "migration repair setup");
+  ({ cliEffect, project, signal }) =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const targetArgs = ["--db-url", project.dbUrl];
+        const version = yield* liveMigrationVersion;
+        const migrationFile = `${version}_${NAME}.sql`;
+        const seedDir = yield* fs.makeTempDirectoryScoped({ prefix: "sb-migration-seed-live-" });
+        const fetchDir = yield* fs.makeTempDirectoryScoped({ prefix: "sb-migration-fetch-live-" });
 
-      // A fresh, empty dir avoids the overwrite prompt.
-      const fetched = await cli(["migration", "fetch", ...targetArgs], { cwd: fetchDir });
-      expect(fetched.exitCode, `stdout:\n${fetched.stdout}\nstderr:\n${fetched.stderr}`).toBe(0);
-
-      const files = await readdir(path.join(fetchDir, "supabase", "migrations"));
-      expect(files).toContain(migrationFile);
-    } catch (error) {
-      targetError = error;
-    } finally {
-      try {
-        const reverted = await cli(
-          ["migration", "repair", version, "--status", "reverted", ...targetArgs],
-          { cwd: seedDir },
-        );
-        if (
-          reverted.exitCode !== 0 &&
-          !/not found|does not exist/i.test(`${reverted.stdout}\n${reverted.stderr}`)
-        ) {
-          cleanupErrors.push(
-            new Error(`migration repair cleanup failed:\n${reverted.stdout}\n${reverted.stderr}`),
+        const target = Effect.gen(function* () {
+          // repair --status applied reads the local file for name/statements, so write it
+          // before running repair.
+          yield* fs.makeDirectory(path.join(seedDir, "supabase", "migrations"), {
+            recursive: true,
+          });
+          yield* fs.writeFileString(
+            path.join(seedDir, "supabase", "migrations", migrationFile),
+            "create table if not exists public.cli_live_roundtrip (id int);\n",
           );
-        }
-      } catch (error) {
-        cleanupErrors.push(error);
-      }
-      await rm(seedDir, { recursive: true, force: true }).catch((error) =>
-        cleanupErrors.push(error),
-      );
-      await rm(fetchDir, { recursive: true, force: true }).catch((error) =>
-        cleanupErrors.push(error),
-      );
-    }
-    throwWithCleanup(targetError, cleanupErrors);
-  },
+          const repairResult = yield* cliEffect(
+            ["migration", "repair", version, "--status", "applied", ...targetArgs],
+            { cwd: seedDir },
+          );
+          requireLiveSuccess(repairResult, "migration repair setup");
+
+          // A fresh, empty dir avoids the overwrite prompt.
+          const fetched = yield* cliEffect(["migration", "fetch", ...targetArgs], {
+            cwd: fetchDir,
+          });
+          expect(fetched.exitCode, `stdout:\n${fetched.stdout}\nstderr:\n${fetched.stderr}`).toBe(
+            0,
+          );
+
+          const files = yield* fs.readDirectory(path.join(fetchDir, "supabase", "migrations"));
+          expect(files).toContain(migrationFile);
+        });
+
+        const revert = Effect.gen(function* () {
+          const reverted = yield* cliEffect(
+            ["migration", "repair", version, "--status", "reverted", ...targetArgs],
+            { cwd: seedDir },
+          );
+          if (
+            reverted.exitCode !== 0 &&
+            !/not found|does not exist/i.test(`${reverted.stdout}\n${reverted.stderr}`)
+          ) {
+            return yield* new MigrationLiveError({
+              message: `migration repair cleanup failed:\n${reverted.stdout}\n${reverted.stderr}`,
+            });
+          }
+        });
+
+        return yield* Effect.uninterruptibleMask((restore) =>
+          Effect.gen(function* () {
+            const targetExit = yield* Effect.exit(restore(target));
+            const cleanupExits: ReadonlyArray<Exit.Exit<unknown, unknown>> = [
+              yield* Effect.exit(revert),
+              yield* Effect.exit(fs.remove(seedDir, { recursive: true, force: true })),
+              yield* Effect.exit(fs.remove(fetchDir, { recursive: true, force: true })),
+            ];
+            return {
+              targetError: Exit.isFailure(targetExit) ? Cause.squash(targetExit.cause) : undefined,
+              cleanupErrors: cleanupExits
+                .filter(Exit.isFailure)
+                .map((exit) => Cause.squash(exit.cause)),
+            };
+          }),
+        );
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+      { signal },
+    ).then(({ targetError, cleanupErrors }) => throwWithCleanup(targetError, cleanupErrors)),
 );

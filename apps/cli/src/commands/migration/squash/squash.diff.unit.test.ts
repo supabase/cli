@@ -1,21 +1,29 @@
-import { readFileSync } from "node:fs";
+import { BunServices } from "@effect/platform-bun";
+import { describe, expect, it } from "@effect/vitest";
+import { Effect, FileSystem, Path } from "effect";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
 
 import { SQUASH_SEPARATOR_COMMENT, squashLineByLineDiff, squashScanLines } from "./squash.diff.ts";
 
 // before.sql/after.sql/diff.sql are vendored real pg_dump output, not hand-transcribed
 // literals, since manual transcription would silently corrupt whitespace/quoting.
 const testdataDir = fileURLToPath(new URL("./testdata/", import.meta.url));
-const readGoFixture = (name: string) => readFileSync(`${testdataDir}${name}`, "utf8");
+
+const readGoFixture = Effect.fnUntraced(function* (name: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  return yield* fs.readFileString(path.join(testdataDir, name));
+});
 
 describe("squashLineByLineDiff", () => {
-  it("diffs real pg_dump output into Go's exact diff.sql bytes", () => {
-    const before = readGoFixture("before.sql");
-    const after = readGoFixture("after.sql");
-    const expected = readGoFixture("diff.sql");
-    expect(squashLineByLineDiff(before, after)).toBe(expected);
-  });
+  it.live("diffs real pg_dump output into Go's exact diff.sql bytes", () =>
+    Effect.gen(function* () {
+      const before = yield* readGoFixture("before.sql");
+      const after = yield* readGoFixture("after.sql");
+      const expected = yield* readGoFixture("diff.sql");
+      expect(squashLineByLineDiff(before, after)).toBe(expected);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
   it("keeps only after-only lines when before is shorter", () => {
     const before = "select 1;";
