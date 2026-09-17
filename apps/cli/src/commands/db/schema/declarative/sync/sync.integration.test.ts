@@ -45,6 +45,7 @@ import { StackApi, stackApiLayer } from "../../../../../command-internal/stack-a
 import {
   CAPABILITY_NAMES,
   StackIdSchema,
+  ServiceInstanceIdSchema,
   type EffectStack,
   type EffectServiceCollection,
   type StackStatus,
@@ -107,6 +108,7 @@ function syncStackApi(workdir: string, port: number) {
     endpoints: {},
     versions: {},
     capabilities: CAPABILITY_NAMES.map((name) => ({
+      id: ServiceInstanceIdSchema.make(`${name}-instance`),
       name,
       activation: name === "database" ? "eager" : "lazy",
       state: name === "database" ? "ready" : "dormant",

@@ -74,6 +74,7 @@ const makeStatus = (
   },
   versions: {},
   capabilities: capabilityNames.map((name) => ({
+    id: ServiceInstanceIdSchema.make(`${name}-instance`),
     name,
     activation: "lazy" as const,
     state: "dormant" as const,

@@ -4,7 +4,7 @@ import * as RpcClient from "effect/unstable/rpc/RpcClient";
 import type { RpcClientError } from "effect/unstable/rpc/RpcClientError";
 import { EffectStackCredentialsSchema } from "../public/Credentials.ts";
 import { StackRestartPayloadSchema } from "../public/Config.ts";
-import { LogQuerySchema, StackLogBatchSchema } from "../public/Logs.ts";
+import { LogQuerySchema, ServiceLogQuerySchema, StackLogBatchSchema } from "../public/Logs.ts";
 import { StackRecoverySchema, StackStatusSchema } from "../public/Status.ts";
 import { StackIdSchema } from "../public/StackId.ts";
 import { STACK_ERROR_TAGS } from "../public/Errors.ts";
@@ -129,7 +129,7 @@ const StackRpc = {
   serviceLogs: Rpc.make("serviceLogs", {
     payload: Schema.Struct({
       id: ServiceInstanceIdSchema,
-      query: Schema.optionalKey(Schema.Unknown),
+      query: Schema.optionalKey(ServiceLogQuerySchema),
     }),
     success: StackLogBatchSchema,
     error: StackRpcErrorSchema,

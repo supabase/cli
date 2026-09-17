@@ -131,6 +131,7 @@ const withServer = <A, E, R>(
         endpoints: {},
         versions: {},
         capabilities: CAPABILITY_NAMES.map((name) => ({
+          id: ServiceInstanceIdSchema.make(`${name}-instance`),
           name,
           activation: "eager",
           state: "stopped",
@@ -736,7 +737,12 @@ describe("control transport", () => {
           const observed = yield* rpc.status(undefined);
           expect(observed.capabilities.find(({ name }) => name === "rest")?.state).toBe("dormant");
           expect(observed.artifacts).toEqual([
-            { workloadId: "rest:rest", capability: "rest", state: "downloading" },
+            {
+              workloadId: "rest:rest",
+              instanceId: "rest-instance",
+              capability: "rest",
+              state: "downloading",
+            },
           ]);
           expect(observed.recovery).toEqual({
             operation: "stop",
@@ -754,7 +760,14 @@ describe("control transport", () => {
               capabilities: status.capabilities.map((capability) =>
                 capability.name === "rest" ? { ...capability, state: "dormant" } : capability,
               ),
-              artifacts: [{ workloadId: "rest:rest", capability: "rest", state: "downloading" }],
+              artifacts: [
+                {
+                  workloadId: "rest:rest",
+                  instanceId: ServiceInstanceIdSchema.make("rest-instance"),
+                  capability: "rest",
+                  state: "downloading",
+                },
+              ],
               recovery: { operation: "stop", message: "injected cleanup diagnostic" },
             }),
         },

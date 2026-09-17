@@ -54,10 +54,8 @@ the stack runtime's own storage workload/catalog setup responsibility; bucket cr
 `objects_path` upload from `[storage.buckets]` remain this command's (via `seed buckets`)
 responsibility — the runtime never creates buckets itself. Durable stack state lives under
 `$SUPABASE_HOME/managed/stacks/<stackId>/`. A missing stack reports "The local stack is not
-running." Config, including `functions/.env`, is validated before the wipe. On the stack path, the
-local reset creates a fresh registered database baseline, replaces the designated primary through
-its managed SQL endpoint, and resumes the same concrete dependent instances that were started
-before reset. Storage files and unrelated registered instances remain in place.
+running." Config, including `functions/.env`, is validated before the wipe. Storage files and
+unrelated registered instances remain in place.
 
 ## Files Read
 

@@ -16,7 +16,7 @@ import {
 } from "effect";
 import * as TestClock from "effect/testing/TestClock";
 import { deriveStackId } from "../identity/Identity.ts";
-import { compileServiceInstance } from "../model/Compiler.ts";
+import { compileServiceInstance, compileServiceRestart } from "../model/Compiler.ts";
 import type { SnapshotDescriptor } from "../public/Service.ts";
 import type { ServiceInstanceId } from "../public/ServiceInstanceId.ts";
 import { StackLifecycleConflictError } from "../public/Errors.ts";
@@ -26,7 +26,12 @@ import { makeInstanceEngine } from "./InstanceEngine.ts";
 import type { SupervisorRuntime } from "./Supervisor.ts";
 import type { InstanceRuntimeInput } from "./Lifecycle.ts";
 
-const makeFixture = (pauseAfterStartAdmission = false, pauseFirstStop = false) =>
+const makeFixture = (
+  pauseAfterStartAdmission = false,
+  pauseFirstStop = false,
+  failEndpointPublication = false,
+  failRuntimeStop = false,
+) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -63,11 +68,22 @@ const makeFixture = (pauseAfterStartAdmission = false, pauseFirstStop = false) =
     );
     const enteredStart = yield* Deferred.make<void>();
     const releaseStart = yield* Deferred.make<void>();
+    const enteredDependentStart = yield* Deferred.make<void>();
+    const releaseDependentStart = yield* Deferred.make<void>();
+    const pauseDependentStart = yield* Ref.make(false);
     const enteredExport = yield* Deferred.make<void>();
     const releaseExport = yield* Deferred.make<void>();
     const admittedStart = yield* Deferred.make<void>();
     const releaseAdmission = yield* Deferred.make<void>();
     const admissionPaused = yield* Ref.make(false);
+    const pauseStudioAdmission = yield* Ref.make(false);
+    const studioAdmissionPaused = yield* Ref.make(false);
+    const admittedStudio = yield* Deferred.make<void>();
+    const releaseStudioAdmission = yield* Deferred.make<void>();
+    const admittedSleep = yield* Deferred.make<void>();
+    const releaseSleepAdmission = yield* Deferred.make<void>();
+    const pauseSleepAdmission = yield* Ref.make(false);
+    const sleepAdmissionPaused = yield* Ref.make(false);
     const ready = yield* Ref.make<ReadonlySet<ServiceInstanceId>>(new Set());
     const active = yield* Ref.make<ReadonlySet<ServiceInstanceId>>(new Set());
     const starts = yield* Ref.make<ReadonlyArray<ServiceInstanceId>>([]);
@@ -94,11 +110,17 @@ const makeFixture = (pauseAfterStartAdmission = false, pauseFirstStop = false) =
             yield* Deferred.succeed(enteredStart, undefined);
             yield* Deferred.await(releaseStart);
           }
+          if (input.instance.id !== database.id && (yield* Ref.get(pauseDependentStart))) {
+            yield* Deferred.succeed(enteredDependentStart, undefined);
+            yield* Deferred.await(releaseDependentStart);
+          }
           yield* Ref.update(ready, (ids) => new Set(ids).add(input.instance.id));
           return [];
         }),
       stop: (input) =>
         Effect.gen(function* () {
+          if (failRuntimeStop)
+            return yield* new StackLifecycleConflictError({ message: "runtime cleanup failed" });
           if (pauseFirstStop && !(yield* Ref.getAndSet(stopPaused, true))) {
             yield* Deferred.succeed(enteredStop, input.instance.id);
             yield* Deferred.await(releaseStop);
@@ -124,16 +146,38 @@ const makeFixture = (pauseAfterStartAdmission = false, pauseFirstStop = false) =
           Effect.tap((saved) =>
             Effect.gen(function* () {
               if (
-                !pauseAfterStartAdmission ||
-                !saved.registry.instances.some(
+                pauseAfterStartAdmission &&
+                saved.registry.instances.some(
                   (instance) =>
                     instance.id === database.id && instance.pendingOperation?.kind === "start",
-                )
-              )
-                return;
-              if (yield* Ref.getAndSet(admissionPaused, true)) return;
-              yield* Deferred.succeed(admittedStart, undefined);
-              yield* Deferred.await(releaseAdmission);
+                ) &&
+                !(yield* Ref.getAndSet(admissionPaused, true))
+              ) {
+                yield* Deferred.succeed(admittedStart, undefined);
+                yield* Deferred.await(releaseAdmission);
+              }
+              if (
+                (yield* Ref.get(pauseStudioAdmission)) &&
+                saved.registry.instances.some(
+                  (instance) =>
+                    instance.name === "partial-lease-studio" &&
+                    instance.pendingOperation?.kind === "start",
+                ) &&
+                !(yield* Ref.getAndSet(studioAdmissionPaused, true))
+              ) {
+                yield* Deferred.succeed(admittedStudio, undefined);
+                yield* Deferred.await(releaseStudioAdmission);
+              }
+              if (
+                (yield* Ref.get(pauseSleepAdmission)) &&
+                saved.registry.instances.some(
+                  (instance) => instance.pendingOperation?.kind === "sleep",
+                ) &&
+                !(yield* Ref.getAndSet(sleepAdmissionPaused, true))
+              ) {
+                yield* Deferred.succeed(admittedSleep, undefined);
+                yield* Deferred.await(releaseSleepAdmission);
+              }
             }),
           ),
         ),
@@ -146,6 +190,14 @@ const makeFixture = (pauseAfterStartAdmission = false, pauseFirstStop = false) =
       scope: yield* Scope.Scope,
       context: yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>(),
       isInstanceActive: (id) => Ref.get(active).pipe(Effect.map((ids) => ids.has(id))),
+      ...(failEndpointPublication
+        ? {
+            publishEndpoints: () =>
+              Effect.fail(
+                new StackLifecycleConflictError({ message: "endpoint publication failed" }),
+              ),
+          }
+        : {}),
     });
     yield* engine.create(database.instance, database.secretSlots);
     yield* engine.create(functions.instance, functions.secretSlots);
@@ -163,10 +215,19 @@ const makeFixture = (pauseAfterStartAdmission = false, pauseFirstStop = false) =
       releaseStop,
       enteredStart,
       releaseStart,
+      enteredDependentStart,
+      releaseDependentStart,
+      pauseDependentStart,
       enteredExport,
       releaseExport,
       admittedStart,
       releaseAdmission,
+      pauseStudioAdmission,
+      admittedStudio,
+      releaseStudioAdmission,
+      admittedSleep,
+      releaseSleepAdmission,
+      pauseSleepAdmission,
     };
   });
 const fixture = makeFixture();
@@ -258,7 +319,7 @@ describe("instance operation isolation with durable transactions", () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.live("admits startup control only for its own lifecycle claim", () =>
+  it.live("waits for readiness before admitting ordinary traffic", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const f = yield* makeFixture(true, true);
@@ -281,12 +342,15 @@ describe("instance operation isolation with durable transactions", () => {
           .pipe(Effect.forkChild({ startImmediately: true }));
         yield* Deferred.await(f.admittedStart);
         const startup = yield* f.engine.acquireTraffic(f.database.id, "startup-control");
-        const ordinary = yield* f.engine.acquireTraffic(f.database.id).pipe(Effect.exit);
-        expect(Exit.isFailure(ordinary)).toBe(true);
+        const ordinary = yield* f.engine
+          .acquireTraffic(f.database.id)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        expect((yield* f.engine.status(f.database.id)).pendingOperation?.kind).toBe("start");
         yield* startup.release;
         yield* Deferred.succeed(f.releaseAdmission, undefined);
         yield* Deferred.succeed(f.releaseStart, undefined);
         expect((yield* Fiber.join(starting)).phase).toBe("ready");
+        yield* (yield* Fiber.join(ordinary)).release;
 
         const ready = yield* f.engine.acquireTraffic(f.database.id, "startup-control");
         yield* ready.release;
@@ -295,12 +359,131 @@ describe("instance operation isolation with durable transactions", () => {
           .stop(f.database.id)
           .pipe(Effect.forkChild({ startImmediately: true }));
         yield* Deferred.await(f.enteredStop);
+        const duringRetirement = yield* f.engine
+          .acquireTraffic(f.database.id)
+          .pipe(Effect.exit, Effect.forkChild({ startImmediately: true }));
+        yield* Effect.yieldNow;
+        expect(duringRetirement.pollUnsafe()).toBeUndefined();
         const duringStop = yield* f.engine
           .acquireTraffic(f.database.id, "startup-control")
           .pipe(Effect.exit);
         expect(Exit.isFailure(duringStop)).toBe(true);
         yield* Deferred.succeed(f.releaseStop, undefined);
         expect((yield* Fiber.join(stopping)).phase).toBe("stopped");
+        expect(Exit.isFailure(yield* Fiber.join(duringRetirement))).toBe(true);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("waits through sleep before admitting traffic to a dormant started instance", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const f = yield* makeFixture(false, true);
+        yield* Deferred.succeed(f.releaseStart, undefined);
+        yield* f.engine.start(f.database.id);
+        const sleeping = yield* f.engine
+          .sleep(f.database.id)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(f.enteredStop);
+        const traffic = yield* f.engine
+          .acquireTraffic(f.database.id)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.yieldNow;
+        expect(traffic.pollUnsafe()).toBeUndefined();
+        yield* Deferred.succeed(f.releaseStop, undefined);
+        expect((yield* Fiber.join(sleeping)).phase).toBe("dormant");
+        const lease = yield* Fiber.join(traffic);
+        expect((yield* f.engine.start(f.database.id)).phase).toBe("ready");
+        yield* lease.release;
+        expect((yield* f.engine.stop(f.database.id)).phase).toBe("stopped");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("stopAll supersedes an in-flight start", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const f = yield* makeFixture(true);
+        const starting = yield* f.engine
+          .start(f.database.id)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(f.admittedStart);
+        const stopping = yield* f.engine
+          .stopAll([f.database.id])
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        const statuses = yield* Fiber.join(stopping);
+        expect(statuses[0]?.phase).toBe("stopped");
+        expect(Exit.isFailure(yield* Fiber.join(starting).pipe(Effect.exit))).toBe(true);
+        yield* Deferred.succeed(f.releaseAdmission, undefined);
+        yield* Deferred.succeed(f.releaseStart, undefined);
+        expect((yield* f.engine.start(f.database.id)).phase).toBe("ready");
+        const traffic = yield* f.engine.acquireTraffic(f.database.id);
+        yield* traffic.release;
+        expect((yield* f.engine.stop(f.database.id)).phase).toBe("stopped");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("startAll joins an in-flight single-instance start", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const f = yield* makeFixture(true);
+        const starting = yield* f.engine
+          .start(f.database.id)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(f.admittedStart);
+        const batchStarting = yield* f.engine
+          .startAll([f.database.id])
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.succeed(f.releaseAdmission, undefined);
+        yield* Deferred.succeed(f.releaseStart, undefined);
+        expect((yield* Fiber.join(starting)).phase).toBe("ready");
+        expect((yield* Fiber.join(batchStarting))[0]?.phase).toBe("ready");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("cleans up a runtime when endpoint publication fails", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const f = yield* makeFixture(false, false, true);
+        yield* Deferred.succeed(f.releaseStart, undefined);
+
+        const started = yield* f.engine.start(f.database.id).pipe(Effect.exit);
+        expect(Exit.isFailure(started)).toBe(true);
+        expect((yield* Ref.get(f.ready)).has(f.database.id)).toBe(false);
+        expect((yield* f.engine.status(f.database.id)).phase).toBe("failed");
+        expect((yield* f.engine.status(f.functions.id)).phase).toBe("stopped");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("keeps the startup fence when publication cleanup fails", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const f = yield* makeFixture(false, false, true, true);
+        yield* Deferred.succeed(f.releaseStart, undefined);
+
+        const started = yield* f.engine.start(f.database.id).pipe(Effect.exit);
+        expect(Exit.isFailure(started)).toBe(true);
+        expect((yield* f.engine.status(f.database.id)).phase).toBe("failed");
+        expect((yield* f.engine.status(f.database.id)).pendingOperation?.kind).toBe("start");
+        expect(Exit.isFailure(yield* f.engine.start(f.database.id).pipe(Effect.exit))).toBe(true);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("destroyAll supersedes an in-flight start", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const f = yield* makeFixture(true);
+        const starting = yield* f.engine
+          .start(f.database.id)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(f.admittedStart);
+        yield* f.engine.destroyAll([f.database.id]);
+        expect(Exit.isFailure(yield* Fiber.join(starting).pipe(Effect.exit))).toBe(true);
+        expect((yield* f.engine.list).some(({ id }) => id === f.database.id)).toBe(false);
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );
@@ -386,6 +569,172 @@ describe("instance operation isolation with durable transactions", () => {
       ).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.live("protects a ready dependent while allowing an already dormant one", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const f = yield* makeFixture(false, true);
+        const rest = yield* compileServiceInstance(
+          {
+            service: "rest",
+            name: "sleep-dependent-rest",
+            config: { activation: "lazy" },
+            dependencies: { database: f.database.id },
+          },
+          f.context,
+        );
+        yield* f.engine.create(rest.instance, rest.secretSlots);
+        yield* Deferred.succeed(f.releaseStart, undefined);
+        yield* f.engine.start(rest.id);
+        expect((yield* f.engine.status(rest.id)).phase).toBe("ready");
+        expect(yield* f.engine.sleep(f.database.id).pipe(Effect.flip)).toBeInstanceOf(
+          StackLifecycleConflictError,
+        );
+        expect((yield* f.engine.status(f.database.id)).phase).toBe("ready");
+        const sleepingRest = yield* f.engine
+          .sleep(rest.id)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(f.enteredStop);
+        yield* Deferred.succeed(f.releaseStop, undefined);
+        yield* Fiber.join(sleepingRest);
+        expect((yield* f.engine.status(rest.id)).phase).toBe("dormant");
+        expect((yield* f.engine.sleep(f.database.id)).phase).toBe("dormant");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("protects a dependency while a dependent setup is admitted", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const f = yield* makeFixture(false);
+        const rest = yield* compileServiceInstance(
+          {
+            service: "rest",
+            name: "blocked-dependent-rest",
+            config: { activation: "lazy" },
+            dependencies: { database: f.database.id },
+          },
+          f.context,
+        );
+        yield* f.engine.create(rest.instance, rest.secretSlots);
+        yield* Ref.set(f.pauseDependentStart, true);
+        yield* Deferred.succeed(f.releaseStart, undefined);
+        const starting = yield* f.engine.start(rest.id).pipe(Effect.forkChild);
+        yield* Deferred.await(f.enteredDependentStart);
+        expect(yield* f.engine.sleep(f.database.id).pipe(Effect.flip)).toBeInstanceOf(
+          StackLifecycleConflictError,
+        );
+        yield* Deferred.succeed(f.releaseDependentStart, undefined);
+        expect((yield* Fiber.join(starting)).phase).toBe("ready");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("releases earlier dependency leases when a later dependency is fenced", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const f = yield* makeFixture(false, true);
+        const rest = yield* compileServiceInstance(
+          {
+            service: "rest",
+            name: "partial-lease-rest",
+            config: { activation: "lazy" },
+            dependencies: { database: f.database.id },
+          },
+          f.context,
+        );
+        const analytics = yield* compileServiceInstance(
+          {
+            service: "analytics",
+            name: "partial-lease-analytics",
+            config: { activation: "lazy" },
+            dependencies: { database: f.database.id },
+          },
+          f.context,
+        );
+        const studio = yield* compileServiceInstance(
+          {
+            service: "studio",
+            name: "partial-lease-studio",
+            config: { activation: "lazy" },
+            dependencies: { database: f.database.id, rest: rest.id, analytics: analytics.id },
+          },
+          f.context,
+        );
+        yield* f.engine.create(rest.instance, rest.secretSlots);
+        yield* f.engine.create(analytics.instance, analytics.secretSlots);
+        yield* f.engine.create(
+          { ...studio.instance, intent: "stopped" as const },
+          studio.secretSlots,
+        );
+        yield* Deferred.succeed(f.releaseStart, undefined);
+        yield* f.engine.start(rest.id);
+        yield* f.engine.start(analytics.id);
+        const stopping = yield* f.engine.stop(rest.id).pipe(Effect.forkChild);
+        yield* Deferred.await(f.enteredStop);
+        yield* Ref.set(f.pauseStudioAdmission, true);
+        const starting = yield* f.engine.start(studio.id).pipe(Effect.forkChild);
+        yield* Deferred.await(f.admittedStudio);
+        yield* Deferred.succeed(f.releaseStudioAdmission, undefined);
+        yield* Deferred.succeed(f.releaseStop, undefined);
+        yield* Fiber.join(stopping);
+        expect((yield* f.engine.status(rest.id)).phase).toBe("stopped");
+        expect(Exit.isFailure(yield* Fiber.join(starting).pipe(Effect.exit))).toBe(true);
+        yield* f.engine.sleep(analytics.id);
+        expect((yield* f.engine.sleep(f.database.id)).phase).toBe("dormant");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("replans endpoint assignments when a targeted restart changes intent", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const f = yield* makeFixture(false);
+        const shadow = yield* compileServiceInstance(
+          {
+            service: "database",
+            name: "restart-endpoint-shadow",
+            config: { endpoints: { sql: { port: "auto" } } },
+          },
+          f.context,
+        );
+        yield* f.engine.create(shadow.instance, shadow.secretSlots);
+        yield* Deferred.succeed(f.releaseStart, undefined);
+        yield* f.engine.start(shadow.id);
+        const before = yield* f.store.read(f.stackId);
+        expect(
+          before?.ports.some(
+            (assignment) => assignment.owner === "instance" && assignment.instanceId === shadow.id,
+          ),
+        ).toBe(true);
+        if (before === undefined)
+          return yield* new StackLifecycleConflictError({ message: "state was not persisted" });
+        const currentShadow = before.registry.instances.find(
+          (instance) => instance.id === shadow.id,
+        );
+        if (currentShadow === undefined)
+          return yield* new StackLifecycleConflictError({ message: "shadow was not persisted" });
+        const replacement = yield* compileServiceRestart(
+          currentShadow,
+          { endpoints: { sql: { enabled: false } } },
+          f.context,
+        );
+        yield* f.engine.restart(shadow.id, {
+          ...replacement,
+          previous: { state: before, instance: currentShadow },
+        });
+        const after = yield* f.store.read(f.stackId);
+        expect(
+          after?.ports.some(
+            (assignment) => assignment.owner === "instance" && assignment.instanceId === shadow.id,
+          ),
+        ).toBe(false);
+        expect(
+          after?.registry.instances.find((instance) => instance.id === shadow.id),
+        ).toMatchObject({ config: { endpoints: { sql: { enabled: false } } } });
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.live("rejects an active batch sleep before stopping any selected instance", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -407,9 +756,60 @@ describe("instance operation isolation with durable transactions", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const f = yield* fixture;
-        yield* f.engine.destroy(f.database.id);
+        const rest = yield* compileServiceInstance(
+          {
+            service: "rest",
+            name: "whole-start-rest",
+            config: { activation: "lazy" },
+            dependencies: { database: f.database.id },
+          },
+          f.context,
+        );
+        const analytics = yield* compileServiceInstance(
+          {
+            service: "analytics",
+            name: "whole-start-analytics",
+            config: { activation: "lazy" },
+            dependencies: { database: f.database.id },
+          },
+          f.context,
+        );
+        const studio = yield* compileServiceInstance(
+          {
+            service: "studio",
+            name: "whole-start-studio",
+            config: { activation: "lazy", endpoints: { studio: { port: "auto" } } },
+            dependencies: { database: f.database.id, rest: rest.id, analytics: analytics.id },
+          },
+          f.context,
+        );
+        const pooler = yield* compileServiceInstance(
+          {
+            service: "pooler",
+            name: "whole-start-pooler",
+            config: { activation: "lazy", endpoints: { pooler: { port: "auto" } } },
+            dependencies: { database: f.database.id },
+          },
+          f.context,
+        );
+        yield* f.engine.create(rest.instance, rest.secretSlots);
+        yield* f.engine.create(analytics.instance, analytics.secretSlots);
+        yield* f.engine.create(studio.instance, studio.secretSlots);
+        yield* f.engine.create(pooler.instance, pooler.secretSlots);
+        yield* Deferred.succeed(f.releaseStart, undefined);
         yield* f.engine.startAll();
-        expect(yield* Ref.get(f.starts)).toEqual([]);
+        expect(yield* Ref.get(f.starts)).toEqual([f.database.id]);
+        const persisted = yield* f.store.read(f.stackId);
+        expect(
+          persisted?.ports.filter(
+            (entry) => entry.owner === "instance" && entry.instanceId === studio.id,
+          ),
+        ).toEqual([expect.objectContaining({ binding: "studio", intent: "automatic" })]);
+        expect(
+          persisted?.ports.filter(
+            (entry) => entry.owner === "instance" && entry.instanceId === pooler.id,
+          ),
+        ).toEqual([expect.objectContaining({ binding: "pooler", intent: "automatic" })]);
         expect(yield* f.engine.status(f.functions.id)).toMatchObject({
           intent: "started",
           phase: "dormant",
@@ -417,10 +817,10 @@ describe("instance operation isolation with durable transactions", () => {
         });
         yield* f.engine.startAll([f.functions.id]);
         expect((yield* f.engine.status(f.functions.id)).phase).toBe("ready");
-        expect(yield* Ref.get(f.starts)).toEqual([f.functions.id]);
+        expect(yield* Ref.get(f.starts)).toEqual([f.database.id, f.functions.id]);
         yield* f.engine.startAll();
         expect((yield* f.engine.status(f.functions.id)).phase).toBe("ready");
-        expect(yield* Ref.get(f.starts)).toEqual([f.functions.id]);
+        expect(yield* Ref.get(f.starts)).toEqual([f.database.id, f.functions.id]);
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );

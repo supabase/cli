@@ -26,6 +26,7 @@ const status: StackStatus = {
   endpoints: {},
   versions: {},
   capabilities: CAPABILITY_NAMES.map((name) => ({
+    id: ServiceInstanceIdSchema.make(`${name}-instance`),
     name,
     activation: "eager" as const,
     state: "ready" as const,

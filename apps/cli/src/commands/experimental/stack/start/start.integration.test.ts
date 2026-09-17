@@ -156,6 +156,7 @@ const status = (id: string, runtime: "native" | "container" = "native") =>
         "pooler",
       ] as const
     ).map((name) => ({
+      id: ServiceInstanceIdSchema.make(`${name}-instance`),
       name,
       activation: name === "database" ? ("eager" as const) : ("lazy" as const),
       state: "ready" as const,

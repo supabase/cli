@@ -1,5 +1,6 @@
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Duration, Effect } from "effect";
+import { Duration, Effect, FileSystem, Path } from "effect";
 import { StackIdSchema } from "../public/StackId.ts";
 import { ServiceInstanceIdSchema } from "../public/ServiceInstanceId.ts";
 import type { PersistedStackState } from "../state/StackState.ts";
@@ -7,7 +8,11 @@ import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
 import type { RuntimeDriver } from "./RuntimeDriver.ts";
 import type { RuntimeEnvFileOwner } from "./RuntimeEnvFile.ts";
 import type { FunctionsBootstrapOwner } from "../functions/FunctionsBootstrap.ts";
-import { readinessDeadlineFor, withOwnedRuntimeFileCleanup } from "./ProductionRuntime.ts";
+import {
+  readinessDeadlineFor,
+  removeOwnedInstancePaths,
+  withOwnedRuntimeFileCleanup,
+} from "./ProductionRuntime.ts";
 
 const stackId = StackIdSchema.make("a".repeat(64));
 const instanceId = ServiceInstanceIdSchema.make("instance");
@@ -59,6 +64,7 @@ const noOpDriver = (): RuntimeDriver => ({
 
 const owner = (cleanupAll: Effect.Effect<void>): RuntimeEnvFileOwner => ({
   write: () => Effect.die("unused"),
+  cleanupFile: () => Effect.die("unused"),
   cleanupAll,
 });
 
@@ -92,5 +98,31 @@ describe("production runtime", () => {
       yield* driver.cleanup({ stackId, destroy: false });
       expect(events).toEqual(["env", "bootstrap"]);
     }),
+  );
+
+  it.live("removes only the destroyed instance data and runtime roots", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "production-instance-cleanup-" });
+      const targetData = path.join(root, "data", "instances", "target");
+      const targetRuntime = path.join(root, "runtime", "instances", "target");
+      const siblingData = path.join(root, "data", "instances", "sibling");
+      const siblingRuntime = path.join(root, "runtime", "instances", "sibling");
+      const external = path.join(root, "external-mount");
+      yield* Effect.forEach(
+        [targetData, targetRuntime, siblingData, siblingRuntime, external],
+        (directory) => fs.makeDirectory(directory, { recursive: true }),
+        { discard: true },
+      );
+
+      yield* removeOwnedInstancePaths(fs, { data: targetData, runtime: targetRuntime });
+
+      expect(yield* fs.exists(targetData)).toBe(false);
+      expect(yield* fs.exists(targetRuntime)).toBe(false);
+      expect(yield* fs.exists(siblingData)).toBe(true);
+      expect(yield* fs.exists(siblingRuntime)).toBe(true);
+      expect(yield* fs.exists(external)).toBe(true);
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

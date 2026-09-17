@@ -98,4 +98,53 @@ describe("instance port acquisition", () => {
       }),
     ),
   );
+
+  it.live("retains unrelated public and private bindings during an API reservation", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-incremental-ports-" });
+        const identity = {
+          projectRoot: root,
+          branchContext: "ordinary-workspace",
+          stackName: "ports",
+        } satisfies StackIdentity;
+        const stackId = yield* deriveStackId(identity);
+        const store = yield* makeStackStateStore({ stateRoot: root });
+        yield* store.initialize(stackId, stackState(identity));
+        const coordinator = makePortCoordinator({
+          stateRoot: root,
+          store,
+          bindHost: listener,
+          bindPrivate: (_address, port) => Effect.succeed({ port, close: Effect.void }),
+        });
+        const instance = binding("db-a");
+        const privateBinding = [
+          { instanceId: "db-a", workloadId: "database:database", binding: "primary" },
+        ];
+        const first = yield* coordinator.acquire(stackId, [instance], privateBinding);
+        const api = {
+          owner: "stack" as const,
+          binding: "api" as const,
+          address: "127.0.0.1",
+          port: "automatic" as const,
+        };
+        yield* coordinator.acquire(stackId, [api], []);
+        const persisted = yield* store.read(stackId);
+        const apiPort = persisted?.ports.find(
+          (assignment) => assignment.owner === "stack" && assignment.binding === "api",
+        )?.port;
+        expect(persisted?.ports).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ owner: "instance", instanceId: "db-a", binding: "sql" }),
+            expect.objectContaining({ owner: "stack", binding: "api" }),
+          ]),
+        );
+        expect(apiPort).not.toBe(first.assignments["instance:db-a:sql"]?.port);
+        expect(apiPort).not.toBe(first.privateAssignments[0]?.port);
+        expect(persisted?.privatePorts).toEqual(first.privateAssignments);
+      }),
+    ),
+  );
 });

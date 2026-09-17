@@ -43,6 +43,7 @@ import {
 import {
   CAPABILITY_NAMES,
   StackIdSchema,
+  ServiceInstanceIdSchema,
   type EffectCreateServiceOptions,
   type EffectServiceCollection,
   type EffectStack,
@@ -1571,6 +1572,7 @@ describe("db start stack backend", () => {
         endpoints: {},
         versions: {},
         capabilities: CAPABILITY_NAMES.map((name) => ({
+          id: ServiceInstanceIdSchema.make(`${name}-instance`),
           name,
           activation: name === "database" ? "eager" : "lazy",
           state: name === "database" && opts.databaseReady === true ? "ready" : "stopped",
@@ -1602,6 +1604,7 @@ describe("db start stack backend", () => {
             endpoints: {},
             versions: {},
             capabilities: CAPABILITY_NAMES.map((name) => ({
+              id: ServiceInstanceIdSchema.make(`${name}-instance`),
               name,
               activation: name === "database" ? ("eager" as const) : ("lazy" as const),
               state: name === "database" ? ("ready" as const) : ("dormant" as const),

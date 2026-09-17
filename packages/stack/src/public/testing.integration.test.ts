@@ -18,6 +18,7 @@ import { CAPABILITY_NAMES } from "./Capability.ts";
 import { StackCleanupError, StackRuntimeError } from "./Errors.ts";
 import type { EffectStack } from "./EffectStack.ts";
 import { StackIdSchema } from "./StackId.ts";
+import { ServiceInstanceIdSchema } from "./ServiceInstanceId.ts";
 import type { StackStatus } from "./Status.ts";
 import { createTestStackWith, type TestStackOperations } from "./Testing.ts";
 import { defaultRuntimeEnvironment } from "../supervisor/Launcher.ts";
@@ -51,6 +52,7 @@ const status = (
       : {},
   versions: {},
   capabilities: CAPABILITY_NAMES.map((name) => ({
+    id: ServiceInstanceIdSchema.make(`${name}-instance`),
     name,
     activation: name === "functions" ? "lazy" : "eager",
     state:

@@ -19,8 +19,6 @@ import type { LogStore } from "./LogStore.ts";
 import { ServiceInstanceIdSchema, type ServiceInstanceId } from "../public/ServiceInstanceId.ts";
 
 const ingress: SupervisorIngress = {
-  acquire: () => Effect.die("whole restart test does not open ingress"),
-  open: () => Effect.die("whole restart test does not open ingress"),
   close: Effect.void,
 };
 const logStore: LogStore = {
@@ -74,7 +72,11 @@ const withFixture = <A, E, R>(use: (fixture: Fixture) => Effect.Effect<A, E, R>)
         {
           service: "database",
           name: "primary",
-          config: { password: Redacted.make("old"), settings: {} },
+          config: {
+            password: Redacted.make("old"),
+            settings: {},
+            endpoints: { sql: { address: "127.0.0.1", port: 25_124 } },
+          },
         },
         {
           projectRoot,
@@ -170,7 +172,15 @@ const withFixture = <A, E, R>(use: (fixture: Fixture) => Effect.Effect<A, E, R>)
             functions: functionsInstance.id,
           },
         },
-        ports: [],
+        ports: [
+          {
+            owner: "stack",
+            binding: "api",
+            address: "127.0.0.1",
+            port: 25_123,
+            intent: "automatic",
+          },
+        ],
         privatePorts: [],
         secrets: {
           [AUTH_JWT_SECRET_SLOT]: { policy: "managed", value: "old-jwt" },
@@ -334,6 +344,49 @@ describe("whole stack restart policy", { timeout: 30_000 }, () => {
         expect(
           (yield* read())?.registry.instances.find((instance) => instance.id === functions)?.intent,
         ).toBe("stopped");
+      }),
+    ),
+  );
+
+  it.live("retains saved endpoint intent when whole restart omits listeners", () =>
+    withFixture(({ endpoint, stackId, read, database }) =>
+      Effect.gen(function* () {
+        const before = yield* read();
+        const saved = before?.registry.instances.find((instance) => instance.id === database);
+        if (saved === undefined)
+          return yield* new StackLifecycleConflictError({ message: "database missing" });
+        yield* withRpc({ endpoint, stackId }, (rpc) => rpc.restart({ config: {} }));
+        const after = yield* read();
+        const restarted = after?.registry.instances.find((instance) => instance.id === database);
+        expect(restarted?.config.endpoints).toEqual(saved.config.endpoints);
+        expect(after?.listeners.api).toEqual({ enabled: true, address: "127.0.0.1" });
+        expect(after?.ports).toEqual(
+          expect.arrayContaining([
+            {
+              owner: "stack",
+              binding: "api",
+              address: "127.0.0.1",
+              port: 25_123,
+              intent: "automatic",
+            },
+          ]),
+        );
+      }),
+    ),
+  );
+
+  it.live("removes the saved API listener when whole restart disables it", () =>
+    withFixture(({ endpoint, stackId, read }) =>
+      Effect.gen(function* () {
+        const result = yield* withRpc({ endpoint, stackId }, (rpc) =>
+          rpc.restart({ config: { listeners: { api: { enabled: false } } } }),
+        );
+        expect(result.endpoints.api).toBeUndefined();
+        const after = yield* read();
+        expect(after?.listeners.api).toEqual({ enabled: false });
+        expect(after?.ports).toEqual(
+          expect.not.arrayContaining([expect.objectContaining({ owner: "stack", binding: "api" })]),
+        );
       }),
     ),
   );

@@ -20,7 +20,7 @@ import {
 } from "./StackStateStore.ts";
 import type { HeldPort, HostListener } from "../supervisor/HostListener.ts";
 
-export interface PrivatePortIntent {
+interface PrivatePortIntent {
   readonly instanceId: string;
   readonly workloadId: string;
   readonly binding: string;
@@ -102,6 +102,10 @@ const bindingKey = (intent: PublicPortIntent): string =>
   intent.owner === "stack"
     ? `stack:${intent.binding}`
     : `instance:${intent.instanceId}:${intent.binding}`;
+const assignmentKey = (assignment: HostPortAssignment): string =>
+  assignment.owner === "stack"
+    ? `stack:${assignment.binding}`
+    : `instance:${assignment.instanceId}:${assignment.binding}`;
 
 const assignmentFor = (
   intent: PublicPortIntent,
@@ -256,6 +260,7 @@ export const makePortCoordinator = (options: PortCoordinatorOptions): PortCoordi
             return yield* allocation(intent.binding, "Duplicate public listener binding");
           requestedPublic.set(key, intent);
         }
+        const requestedPrivate = new Map<string, PrivatePortIntent>();
         const retainedPublic = new Map<string, HostPortAssignment>();
         const retainedPrivate = new Map<string, PrivatePortAssignment>();
         const hardClaims = new Map<number, string>();
@@ -268,6 +273,12 @@ export const makePortCoordinator = (options: PortCoordinatorOptions): PortCoordi
           occupied.add(port);
           return undefined;
         };
+        for (const assignment of current.ports) {
+          if (!requestedPublic.has(assignmentKey(assignment))) {
+            const duplicate = claim(assignment.port, assignmentKey(assignment));
+            if (duplicate !== undefined) return yield* duplicate;
+          }
+        }
         const foreignConflict = (port: number, field: string): PortUnavailableError | undefined => {
           const privateOwner = privateOwners.get(port);
           if (privateOwner !== undefined)
@@ -300,7 +311,6 @@ export const makePortCoordinator = (options: PortCoordinatorOptions): PortCoordi
           if (duplicate !== undefined) return yield* duplicate;
           retainedPublic.set(key, assignmentFor(intent, prior.port, "automatic"));
         }
-        const requestedPrivate = new Map<string, PrivatePortIntent>();
         for (const intent of privateBindings) {
           const key = privateBindingKey(intent);
           if (
@@ -327,6 +337,13 @@ export const makePortCoordinator = (options: PortCoordinatorOptions): PortCoordi
           const duplicate = claim(prior.port, label);
           if (duplicate !== undefined) return yield* duplicate;
           retainedPrivate.set(key, prior);
+        }
+        for (const assignment of current.privatePorts) {
+          const key = privateBindingKey(assignment);
+          if (!requestedPrivate.has(key)) {
+            const duplicate = claim(assignment.port, key);
+            if (duplicate !== undefined) return yield* duplicate;
+          }
         }
         const exactAssignments = new Map<string, HostPortAssignment>();
         for (const intent of publicBindings) {
@@ -448,10 +465,22 @@ export const makePortCoordinator = (options: PortCoordinatorOptions): PortCoordi
                       port: fresh.port,
                     });
                   }
+                  const requestedPublicKeys = new Set(requestedPublic.keys());
+                  const requestedPrivateKeys = new Set(requestedPrivate.keys());
                   const next: PersistedStackState = {
                     ...current,
-                    ports: assignments,
-                    privatePorts: privateAssignments,
+                    ports: [
+                      ...current.ports.filter(
+                        (assignment) => !requestedPublicKeys.has(assignmentKey(assignment)),
+                      ),
+                      ...assignments,
+                    ],
+                    privatePorts: [
+                      ...current.privatePorts.filter(
+                        (assignment) => !requestedPrivateKeys.has(privateBindingKey(assignment)),
+                      ),
+                      ...privateAssignments,
+                    ],
                   };
                   return {
                     privateScope,

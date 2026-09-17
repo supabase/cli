@@ -349,6 +349,12 @@ type ControlError =
   | MaintenanceProtocolError
   | StackError;
 
+type MutationContext = {
+  readonly mutation: UncertainOperationError["mutation"];
+  readonly instanceId?: string;
+  readonly expectedCreationInputsId?: string;
+};
+
 class PreAdmissionOwnerLoss extends Data.TaggedError("PreAdmissionOwnerLoss")<{
   readonly ownerSessionId: string;
   readonly cause: RpcClientError;
@@ -416,12 +422,31 @@ const isUncertainMutation = (value: unknown): value is UncertainOperationError["
 const isOwnerRetiringControlError = (value: unknown): value is StackRpcError =>
   isRecord(value) && value.tag === "OwnerRetiringError" && typeof value.ownerSessionId === "string";
 
-const errorForRpc = (error: ControlError, expectedCreationInputsId?: string): StackError => {
+const errorForRpc = (
+  error: ControlError,
+  context: {
+    readonly stackId?: StackId;
+    readonly mutation?: UncertainOperationError["mutation"];
+    readonly instanceId?: string;
+    readonly expectedCreationInputsId?: string;
+  } = {},
+): StackError => {
   if (isStackError(error)) return error;
-  if (isOwnerUnreachable(error))
+  if (isOwnerUnreachable(error)) {
+    if (context.stackId !== undefined && context.mutation !== undefined)
+      return new UncertainOperationError({
+        message: `The ${context.mutation} response was lost after dispatch: ${error.message}`,
+        stackId: context.stackId,
+        mutation: context.mutation,
+        ...(context.instanceId === undefined ? {} : { instanceId: context.instanceId }),
+        ...(context.expectedCreationInputsId === undefined
+          ? {}
+          : { expectedCreationInputsId: context.expectedCreationInputsId }),
+      });
     return new StackOwnershipConflictError({
       message: `Stack owner is unreachable: ${error.message}`,
     });
+  }
   if (
     typeof error === "object" &&
     error !== null &&
@@ -455,10 +480,10 @@ const errorForRpc = (error: ControlError, expectedCreationInputsId?: string): St
         typeof error.expectedCreationInputsId === "string"
           ? { expectedCreationInputsId: error.expectedCreationInputsId }
           : {}),
-        ...(expectedCreationInputsId === undefined ||
+        ...(context.expectedCreationInputsId === undefined ||
         ("expectedCreationInputsId" in error && typeof error.expectedCreationInputsId === "string")
           ? {}
-          : { expectedCreationInputsId }),
+          : { expectedCreationInputsId: context.expectedCreationInputsId }),
       });
     }
     if (
@@ -615,6 +640,7 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
       call: (rpc: StackRpcClient) => Effect.Effect<A, StackRpcError | RpcClientError>,
       mapError: (error: ControlError) => E,
       launch = false,
+      mutation?: MutationContext,
     ): Effect.Effect<A, E> => {
       const rawAttempt = (): Effect.Effect<A, ControlError | PreAdmissionOwnerLoss> =>
         resolveClient(launch).pipe(
@@ -656,7 +682,9 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
                   message: `Stack owner ${error.ownerSessionId} became unreachable before admission`,
                   cause: error.cause,
                 })
-              : error,
+              : mutation === undefined
+                ? error
+                : errorForRpc(error, { stackId: id, ...mutation }),
           ),
         ),
       );
@@ -664,8 +692,28 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
     const destroyAndAwaitOwner: Effect.Effect<void, DestroyStackError> = resolveClient(true).pipe(
       Effect.mapError(destroyError),
       Effect.flatMap(({ client, ownerSessionId }) =>
-        Effect.scoped(client.rpc.pipe(Effect.flatMap((rpc) => rpc.destroy({})))).pipe(
-          Effect.mapError(destroyError),
+        Effect.scoped(
+          client.rpc.pipe(
+            Effect.mapError(
+              (cause: RpcClientError) =>
+                new PreAdmissionOwnerLoss({
+                  ownerSessionId,
+                  cause,
+                }),
+            ),
+            Effect.flatMap((rpc) => rpc.destroy({})),
+          ),
+        ).pipe(
+          Effect.mapError((error) =>
+            destroyError(
+              isPreAdmissionOwnerLoss(error)
+                ? new StackOwnershipConflictError({
+                    message: `Stack owner ${error.ownerSessionId} became unreachable before admission`,
+                    cause: error.cause,
+                  })
+                : errorForRpc(error, { stackId: id, mutation: "destroy" }),
+            ),
+          ),
           Effect.andThen(
             options.waitForRelease(ownerSessionId).pipe(
               Effect.mapError(
@@ -692,7 +740,9 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
                 ),
               ),
             )
-          : invoke((rpc) => rpc.destroy(serviceSelectionPayload(selection)), destroyError, true);
+          : invoke((rpc) => rpc.destroy(serviceSelectionPayload(selection)), destroyError, true, {
+              mutation: "destroy",
+            });
     const status: Effect.Effect<StackStatus, StackStatusError> = Effect.suspend(
       (): Effect.Effect<StackStatus, StackStatusError> => {
         const rpcStatus = invoke((rpc) => rpc.status(undefined), statusError);
@@ -741,11 +791,9 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
         ),
       );
     const start = (startOptions?: StartStackOptions) => {
-      return invoke(
-        (rpc) => rpc.start(serviceSelectionPayload(startOptions)),
-        startError,
-        true,
-      ).pipe(
+      return invoke((rpc) => rpc.start(serviceSelectionPayload(startOptions)), startError, true, {
+        mutation: "start",
+      }).pipe(
         Effect.tapError(() =>
           options.readPersistedState.pipe(
             Effect.flatMap((state) =>
@@ -763,14 +811,19 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
         ? error
         : new StackStateInvalidError({ message: error.message, cause: error });
     const sleep = (selection?: ServiceSelection) =>
-      invoke((rpc) => rpc.sleep(serviceSelectionPayload(selection)), startError, true);
+      invoke((rpc) => rpc.sleep(serviceSelectionPayload(selection)), startError, true, {
+        mutation: "sleep",
+      });
     const stop = (selection?: ServiceSelection) =>
-      invoke((rpc) => rpc.stop(serviceSelectionPayload(selection)), stopError, true);
+      invoke((rpc) => rpc.stop(serviceSelectionPayload(selection)), stopError, true, {
+        mutation: "stop",
+      });
     const restart = (restartOptions?: RestartStackOptions) =>
       invoke(
         (rpc) => rpc.restart(restartOptions === undefined ? {} : restartOptions),
         startError,
         true,
+        { mutation: "restart" },
       );
     const prepare = (
       prepareOptions?: PrepareStackOptions,
@@ -785,9 +838,9 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
         : Effect.fail(new StackStateInvalidError({ message: `Invalid ${label} response` }));
     const serviceCall = <A>(
       call: (rpc: StackRpcClient) => Effect.Effect<A, StackRpcError | RpcClientError>,
-      expectedCreationInputsId?: string,
+      mutation?: MutationContext,
     ): Effect.Effect<A, StackError> =>
-      invoke(call, (error) => errorForRpc(error, expectedCreationInputsId), true);
+      invoke(call, (error) => errorForRpc(error, { stackId: id, ...mutation }), true, mutation);
     const serviceStream = <A>(
       call: (rpc: StackRpcClient) => Stream.Stream<A, StackRpcError | RpcClientError>,
     ): Stream.Stream<A, StackError> =>
@@ -837,15 +890,18 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
       prepare: serviceCall((rpc) => rpc.servicePrepare({ id: initial.id })).pipe(
         Effect.flatMap((value) => decodeService(value, isPrepareResult, "prepare result")),
       ),
-      start: serviceCall((rpc) => rpc.serviceStart({ id: initial.id })).pipe(
-        Effect.flatMap((value) => decodeService(value, isServiceStatus, "service status")),
-      ),
-      sleep: serviceCall((rpc) => rpc.serviceSleep({ id: initial.id })).pipe(
-        Effect.flatMap((value) => decodeService(value, isServiceStatus, "service status")),
-      ),
-      stop: serviceCall((rpc) => rpc.serviceStop({ id: initial.id })).pipe(
-        Effect.flatMap((value) => decodeService(value, isServiceStatus, "service status")),
-      ),
+      start: serviceCall((rpc) => rpc.serviceStart({ id: initial.id }), {
+        mutation: "start",
+        instanceId: initial.id,
+      }).pipe(Effect.flatMap((value) => decodeService(value, isServiceStatus, "service status"))),
+      sleep: serviceCall((rpc) => rpc.serviceSleep({ id: initial.id }), {
+        mutation: "sleep",
+        instanceId: initial.id,
+      }).pipe(Effect.flatMap((value) => decodeService(value, isServiceStatus, "service status"))),
+      stop: serviceCall((rpc) => rpc.serviceStop({ id: initial.id }), {
+        mutation: "stop",
+        instanceId: initial.id,
+      }).pipe(Effect.flatMap((value) => decodeService(value, isServiceStatus, "service status"))),
       restart: (restartOptions) =>
         Effect.gen(function* () {
           const payload = yield* Schema.decodeUnknownEffect(ServiceRestartPayloadSchema)({
@@ -861,14 +917,22 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
                 }),
             ),
           );
-          return yield* serviceCall((rpc) => rpc.serviceRestart(payload)).pipe(
+          return yield* serviceCall((rpc) => rpc.serviceRestart(payload), {
+            mutation: "restart",
+            instanceId: initial.id,
+          }).pipe(
             Effect.flatMap((value) => decodeService(value, isServiceStatus, "service status")),
           );
         }),
-      destroy: serviceCall((rpc) => rpc.serviceDestroy({ id: initial.id })).pipe(Effect.asVoid),
+      destroy: serviceCall((rpc) => rpc.serviceDestroy({ id: initial.id }), {
+        mutation: "destroy",
+        instanceId: initial.id,
+      }).pipe(Effect.asVoid),
       exportSnapshot: (snapshotOptions) =>
-        serviceCall((rpc) =>
-          rpc.serviceExportSnapshot({ id: initial.id, destination: snapshotOptions.destination }),
+        serviceCall(
+          (rpc) =>
+            rpc.serviceExportSnapshot({ id: initial.id, destination: snapshotOptions.destination }),
+          { mutation: "exportSnapshot", instanceId: initial.id },
         ).pipe(
           Effect.flatMap((value) =>
             decodeService(
@@ -879,8 +943,9 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
           ),
         ),
       restoreSnapshot: (snapshotOptions) =>
-        serviceCall((rpc) =>
-          rpc.serviceRestoreSnapshot({ id: initial.id, source: snapshotOptions.source }),
+        serviceCall(
+          (rpc) => rpc.serviceRestoreSnapshot({ id: initial.id, source: snapshotOptions.source }),
+          { mutation: "restore", instanceId: initial.id },
         ).pipe(
           Effect.flatMap((value) =>
             decodeService(
@@ -975,25 +1040,55 @@ export const makeHandle = (id: StackId, options: HandleDependencies): Effect.Eff
           const value = yield* (() => {
             switch (decoded.service) {
               case "database":
-                return serviceCall((rpc) => rpc.servicesCreate(decoded), expectedCreationInputsId);
+                return serviceCall((rpc) => rpc.servicesCreate(decoded), {
+                  mutation: "create",
+                  expectedCreationInputsId,
+                });
               case "rest":
-                return serviceCall((rpc) => rpc.servicesCreate(decoded), expectedCreationInputsId);
+                return serviceCall((rpc) => rpc.servicesCreate(decoded), {
+                  mutation: "create",
+                  expectedCreationInputsId,
+                });
               case "auth":
-                return serviceCall((rpc) => rpc.servicesCreate(decoded), expectedCreationInputsId);
+                return serviceCall((rpc) => rpc.servicesCreate(decoded), {
+                  mutation: "create",
+                  expectedCreationInputsId,
+                });
               case "realtime":
-                return serviceCall((rpc) => rpc.servicesCreate(decoded), expectedCreationInputsId);
+                return serviceCall((rpc) => rpc.servicesCreate(decoded), {
+                  mutation: "create",
+                  expectedCreationInputsId,
+                });
               case "storage":
-                return serviceCall((rpc) => rpc.servicesCreate(decoded), expectedCreationInputsId);
+                return serviceCall((rpc) => rpc.servicesCreate(decoded), {
+                  mutation: "create",
+                  expectedCreationInputsId,
+                });
               case "functions":
-                return serviceCall((rpc) => rpc.servicesCreate(decoded), expectedCreationInputsId);
+                return serviceCall((rpc) => rpc.servicesCreate(decoded), {
+                  mutation: "create",
+                  expectedCreationInputsId,
+                });
               case "studio":
-                return serviceCall((rpc) => rpc.servicesCreate(decoded), expectedCreationInputsId);
+                return serviceCall((rpc) => rpc.servicesCreate(decoded), {
+                  mutation: "create",
+                  expectedCreationInputsId,
+                });
               case "mail":
-                return serviceCall((rpc) => rpc.servicesCreate(decoded), expectedCreationInputsId);
+                return serviceCall((rpc) => rpc.servicesCreate(decoded), {
+                  mutation: "create",
+                  expectedCreationInputsId,
+                });
               case "analytics":
-                return serviceCall((rpc) => rpc.servicesCreate(decoded), expectedCreationInputsId);
+                return serviceCall((rpc) => rpc.servicesCreate(decoded), {
+                  mutation: "create",
+                  expectedCreationInputsId,
+                });
               case "pooler":
-                return serviceCall((rpc) => rpc.servicesCreate(decoded), expectedCreationInputsId);
+                return serviceCall((rpc) => rpc.servicesCreate(decoded), {
+                  mutation: "create",
+                  expectedCreationInputsId,
+                });
             }
           })();
           const descriptor = yield* decodeService(

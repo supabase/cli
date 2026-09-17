@@ -28,7 +28,11 @@ import {
   isStackError,
   type StackError,
 } from "../public/Errors.ts";
-import type { ArtifactPreparationStatus, ServiceStatus, StackStatus } from "../public/Status.ts";
+import type {
+  InstanceArtifactPreparationStatus,
+  ServiceStatus,
+  StackStatus,
+} from "../public/Status.ts";
 import type { StackId } from "../public/StackId.ts";
 import type { LogQuery, StackLogBatch } from "../public/Logs.ts";
 import type {
@@ -64,6 +68,7 @@ import type { MaintenanceResponse } from "../control/MaintenanceProtocol.ts";
 import type { ActivationResult } from "../gateway/Gateway.ts";
 import type { RuntimeBindingPublication } from "../runtime/RuntimeBinding.ts";
 import type { RpcPrefaceLease } from "../control/ControlServer.ts";
+import { statusEndpointsFor } from "./StatusEndpoints.ts";
 import {
   makeInstanceEngine,
   type InstanceEngine,
@@ -109,7 +114,7 @@ export interface SupervisorRuntime {
   /** Best-effort preparation of lazy artifacts after a stack reaches running. */
   readonly prefetch: (state: PersistedStackState) => Effect.Effect<void>;
   /** Current in-memory preparation state; completed cache entries outlive the session. */
-  readonly artifacts: Effect.Effect<ReadonlyArray<ArtifactPreparationStatus>>;
+  readonly artifacts: Effect.Effect<ReadonlyArray<InstanceArtifactPreparationStatus>>;
   readonly activate: (
     capability: CapabilityName,
     input: LifecycleInput,
@@ -241,7 +246,7 @@ export const makeSupervisor = (
       publishEndpoints: runtime.ingress.publish,
       unpublishEndpoints: runtime.ingress.unpublish,
       publishStatus,
-      armLazyIngress: runtime.ingress.armFunctionsApi,
+      armLazyIngress: runtime.ingress.armLazyIngress,
       isInstanceWakeable: runtime.ingress.isInstanceWakeable,
     });
     yield* instances.recover;
@@ -341,21 +346,7 @@ export const makeSupervisor = (
         }),
       );
     const serviceStatus = (id: ServiceInstanceId) => instances.status(id);
-    const rootEndpoint = (state: PersistedStackState): StackStatus["endpoints"] => {
-      const api = state.ports.find(
-        (assignment) => assignment.owner === "stack" && assignment.binding === "api",
-      );
-      return api === undefined
-        ? {}
-        : {
-            api: {
-              protocol: "http",
-              address: api.address,
-              port: api.port,
-              url: `http://${api.address}:${api.port}`,
-            },
-          };
-    };
+    const rootEndpoint = statusEndpointsFor;
     const capabilityState = (status: ServiceStatus | undefined) => {
       if (status === undefined || !status.enabled) return "disabled" as const;
       return status.phase === "dormant"
@@ -385,13 +376,15 @@ export const makeSupervisor = (
           if (state.registry.defaultInstanceIds[status.service] === status.id)
             byService.set(status.service, status);
         }
-        const capabilities = CAPABILITY_NAMES.map((name) => {
+        const capabilities = CAPABILITY_NAMES.flatMap((name) => {
           const current = byService.get(name);
+          if (current === undefined) return [];
           return {
+            id: current.id,
             name,
-            activation: current?.activation ?? (name === "database" ? "eager" : "lazy"),
+            activation: current.activation,
             state: capabilityState(current),
-            ...(current?.error === undefined ? {} : { error: current.error.message }),
+            ...(current.error === undefined ? {} : { error: current.error.message }),
           };
         });
         const active = statuses.some(
@@ -476,39 +469,75 @@ export const makeSupervisor = (
                     port: listener.port === "automatic" ? ("auto" as const) : listener.port,
                   }
                 : { enabled: false as const };
+            const listeners = input.config.listeners;
+            const databaseEndpoint =
+              listeners?.database === undefined
+                ? undefined
+                : endpointIntent(candidate.definition.listeners.database);
+            const functionsInspectorEndpoint =
+              listeners?.functionsInspector === undefined
+                ? undefined
+                : endpointIntent(candidate.definition.listeners.functionsInspector);
+            const studioEndpoint =
+              listeners?.studio === undefined
+                ? undefined
+                : endpointIntent(candidate.definition.listeners.studio);
+            const smtpEndpoint =
+              listeners?.smtp === undefined
+                ? undefined
+                : endpointIntent(candidate.definition.listeners.smtp);
+            const pop3Endpoint =
+              listeners?.pop3 === undefined
+                ? undefined
+                : endpointIntent(candidate.definition.listeners.pop3);
+            const mailUiEndpoint =
+              listeners?.mailUi === undefined
+                ? undefined
+                : endpointIntent(candidate.definition.listeners.mailUi);
+            const poolerEndpoint =
+              listeners?.pooler === undefined
+                ? undefined
+                : endpointIntent(candidate.definition.listeners.pooler);
             const configFor = (service: CapabilityName): AnyEffectServiceConfig => {
               switch (service) {
                 case "database":
-                  return {
-                    ...candidate.sourceConfig.capabilities?.database,
-                    endpoints: { sql: endpointIntent(candidate.definition.listeners.database) },
-                  };
+                  return databaseEndpoint === undefined
+                    ? (candidate.sourceConfig.capabilities?.database ?? {})
+                    : {
+                        ...candidate.sourceConfig.capabilities?.database,
+                        endpoints: { sql: databaseEndpoint },
+                      };
                 case "functions":
-                  return {
-                    ...candidate.sourceConfig.capabilities?.functions,
-                    endpoints: {
-                      inspector: endpointIntent(candidate.definition.listeners.functionsInspector),
-                    },
-                  };
+                  return functionsInspectorEndpoint === undefined
+                    ? (candidate.sourceConfig.capabilities?.functions ?? {})
+                    : {
+                        ...candidate.sourceConfig.capabilities?.functions,
+                        endpoints: { inspector: functionsInspectorEndpoint },
+                      };
                 case "studio":
-                  return {
-                    ...candidate.sourceConfig.capabilities?.studio,
-                    endpoints: { studio: endpointIntent(candidate.definition.listeners.studio) },
+                  return studioEndpoint === undefined
+                    ? (candidate.sourceConfig.capabilities?.studio ?? {})
+                    : {
+                        ...candidate.sourceConfig.capabilities?.studio,
+                        endpoints: { studio: studioEndpoint },
+                      };
+                case "mail": {
+                  const endpoints = {
+                    ...(smtpEndpoint === undefined ? {} : { smtp: smtpEndpoint }),
+                    ...(pop3Endpoint === undefined ? {} : { pop3: pop3Endpoint }),
+                    ...(mailUiEndpoint === undefined ? {} : { mailUi: mailUiEndpoint }),
                   };
-                case "mail":
-                  return {
-                    ...candidate.sourceConfig.capabilities?.mail,
-                    endpoints: {
-                      smtp: endpointIntent(candidate.definition.listeners.smtp),
-                      pop3: endpointIntent(candidate.definition.listeners.pop3),
-                      mailUi: endpointIntent(candidate.definition.listeners.mailUi),
-                    },
-                  };
+                  return Object.keys(endpoints).length === 0
+                    ? (candidate.sourceConfig.capabilities?.mail ?? {})
+                    : { ...candidate.sourceConfig.capabilities?.mail, endpoints };
+                }
                 case "pooler":
-                  return {
-                    ...candidate.sourceConfig.capabilities?.pooler,
-                    endpoints: { pooler: endpointIntent(candidate.definition.listeners.pooler) },
-                  };
+                  return poolerEndpoint === undefined
+                    ? (candidate.sourceConfig.capabilities?.pooler ?? {})
+                    : {
+                        ...candidate.sourceConfig.capabilities?.pooler,
+                        endpoints: { pooler: poolerEndpoint },
+                      };
                 case "rest":
                   return candidate.sourceConfig.capabilities?.rest ?? {};
                 case "auth":
@@ -541,6 +570,7 @@ export const makeSupervisor = (
                 previous: { state, instance },
               });
             }
+            const apiConfigured = input.config.listeners?.api !== undefined;
             const api = candidate.definition.listeners.api;
             const candidateSigning = candidate.definition.security.jwt.signing;
             const security =
@@ -556,8 +586,9 @@ export const makeSupervisor = (
             const retainedPorts = state.ports.filter(
               (assignment) => assignment.owner !== "stack" || assignment.binding !== "api",
             );
-            const ports =
-              api.enabled && typeof api.port === "number"
+            const ports = !apiConfigured
+              ? state.ports
+              : api.enabled && typeof api.port === "number"
                 ? [
                     ...retainedPorts,
                     {
@@ -568,21 +599,23 @@ export const makeSupervisor = (
                       intent: "exact" as const,
                     },
                   ]
-                : state.ports;
+                : retainedPorts;
             const shared: RestartSharedPatch = {
               preparation: candidate.definition.preparation,
               security,
-              listeners: candidate.definition.listeners.api.enabled
-                ? {
-                    api: {
-                      enabled: true,
-                      address: candidate.definition.listeners.api.address,
-                      ...(typeof candidate.definition.listeners.api.port === "number"
-                        ? { port: candidate.definition.listeners.api.port }
-                        : {}),
-                    },
-                  }
-                : { api: { enabled: false } },
+              listeners: !apiConfigured
+                ? state.listeners
+                : candidate.definition.listeners.api.enabled
+                  ? {
+                      api: {
+                        enabled: true,
+                        address: candidate.definition.listeners.api.address,
+                        ...(typeof candidate.definition.listeners.api.port === "number"
+                          ? { port: candidate.definition.listeners.api.port }
+                          : {}),
+                      },
+                    }
+                  : { api: { enabled: false } },
               ports,
               secretSlots: candidate.secrets,
             };
@@ -938,8 +971,7 @@ export const makeSupervisor = (
       serviceRestart: (payload) => decodeRpc(ServiceStatusSchema, admit(serviceRestart(payload))),
       serviceCredentials: (payload) =>
         decodeRpc(ServiceCredentialsSchema, admit(serviceCredentials(payload))),
-      serviceLogs: ({ id, query }) =>
-        toRpc(admit(logs({ ...(query as LogQuery | undefined), services: [id] }))),
+      serviceLogs: ({ id, query }) => toRpc(admit(logs({ ...query, services: [id] }))),
       serviceExportSnapshot: ({ id, destination }) =>
         decodeRpc(SnapshotDescriptorSchema, admit(instances.exportSnapshot(id, destination))),
       serviceRestoreSnapshot: ({ id, source }) =>

@@ -628,8 +628,24 @@ export const functionOverridesForSettings = (
 const functionsConfigEnvironment = (state: PersistedStackState, instanceId: string): string =>
   JSON.stringify(functionOverridesForSettings(state, instanceId));
 
+const functionsInstanceIdFor = (
+  state: PersistedStackState,
+  instanceId: string,
+): string | undefined => {
+  const instance = state.registry.instances.find((entry) => entry.id === instanceId);
+  if (instance?.service === "functions") return instance.id;
+  if (instance?.service !== "studio") return undefined;
+  const functionsId = state.registry.defaultInstanceIds.functions;
+  const functions = state.registry.instances.find(
+    (entry) => entry.id === functionsId && entry.service === "functions",
+  );
+  return functions?.config.enabled === true ? functions.id : undefined;
+};
+
 const functionsRoot = (state: PersistedStackState, instanceId: string): string => {
-  const settings = settingsForInstance(state, instanceId, "functions");
+  const functionsId = functionsInstanceIdFor(state, instanceId);
+  const settings =
+    functionsId === undefined ? undefined : settingsForInstance(state, functionsId, "functions");
   return isRecord(settings) ? settingValue(state, settings.functions_root) : "";
 };
 
@@ -647,6 +663,7 @@ const functionsContainerMounts = (
   inputs: WorkloadRuntimeInputs,
 ): ReadonlyArray<ContainerMount> => {
   const root = functionsRoot(state, workload.instanceId);
+  if (root.length === 0) return [];
   const filesByTarget = new Map<string, FunctionFilesPlan["files"][number]>();
   for (const file of inputs.functions?.files?.files ?? []) {
     if (!pathWithin(root, file.hostPath) && !filesByTarget.has(file.targetPath))
@@ -1790,8 +1807,9 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
   "studio:studio": {
     bindings: { primary: { containerPort: 3000 } },
     args: () => [],
-    env: (state, workload, port, runtime = "native", inputs = {}) =>
-      compactEnvironment({
+    env: (state, workload, port, runtime = "native", inputs = {}) => {
+      const analyticsInstanceId = serviceInstanceIdFor(state, workload.instanceId, "analytics");
+      return compactEnvironment({
         ...capabilityEnv(state, "studio", "STUDIO", workload.instanceId),
         PORT: String(port),
         HOSTNAME: "0.0.0.0",
@@ -1802,19 +1820,19 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
         LOGFLARE_URL:
           runtime === "container"
             ? `http://${serviceAlias(state, runtime, workload.instanceId, "analytics:analytics")}:4000`
-            : `http://127.0.0.1:${workloadPort(state, workloadIdFor(state, workload.instanceId, "analytics:analytics"), "primary", runtime, 4000, workload.instanceId)}`,
+            : `http://127.0.0.1:${workloadPort(state, `${analyticsInstanceId}:analytics`, "primary", runtime, 4000, analyticsInstanceId)}`,
         LOGFLARE_PRIVATE_ACCESS_TOKEN: valueAtInstance(
           state,
-          workload.instanceId,
+          analyticsInstanceId,
           "analytics",
           "api_key",
         ),
-        NEXT_PUBLIC_ENABLE_LOGS: capabilityEnabled(state, "analytics", workload.instanceId)
+        NEXT_PUBLIC_ENABLE_LOGS: capabilityEnabled(state, "analytics", analyticsInstanceId)
           ? "true"
           : "false",
         NEXT_ANALYTICS_BACKEND_PROVIDER: valueAtInstance(
           state,
-          workload.instanceId,
+          analyticsInstanceId,
           "analytics",
           "backend",
         ),
@@ -1832,7 +1850,8 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
         PGRST_DB_SCHEMAS: "public,graphql_public",
         PGRST_DB_EXTRA_SEARCH_PATH: "public,extensions",
         PGRST_DB_MAX_ROWS: "1000",
-      }),
+      });
+    },
     containerArgs: () => [],
     containerMounts: (state, workload, inputs = {}) =>
       functionsContainerMounts(state, workload, inputs),

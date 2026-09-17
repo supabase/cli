@@ -10,6 +10,7 @@ import {
   InvalidProjectRootError,
   StackIdSchema,
   StackNotFoundError,
+  ServiceInstanceIdSchema,
   type CapabilityState,
   type EffectStack,
   type StackLifecycle,
@@ -165,6 +166,7 @@ export function buildStorageStackApi(
                   },
             versions: {},
             capabilities: CAPABILITY_NAMES.map((name) => ({
+              id: ServiceInstanceIdSchema.make(`${name}-instance`),
               name,
               activation: name === "database" ? ("eager" as const) : ("lazy" as const),
               state: name === "storage" ? storageState : ("ready" as const),

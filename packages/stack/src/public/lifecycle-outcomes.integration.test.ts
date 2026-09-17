@@ -36,8 +36,6 @@ import { makeHandle, type HandleDependencies } from "./EffectStack.ts";
 import { adaptEffectStack } from "./PromiseStack.ts";
 
 const ingress: SupervisorIngress = {
-  acquire: () => Effect.die("lifecycle outcome fixture does not open ingress"),
-  open: () => Effect.die("lifecycle outcome fixture does not open ingress"),
   close: Effect.void,
 };
 const logStore: LogStore = {

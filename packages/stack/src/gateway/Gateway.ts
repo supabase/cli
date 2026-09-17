@@ -100,7 +100,7 @@ export interface StackGateway {
   readonly close: Effect.Effect<void>;
 }
 
-export interface HttpGatewayListenerOptions {
+interface HttpGatewayListenerOptions {
   readonly field: PortField;
   /** Optional internal map key when multiple listeners serve one logical field. */
   readonly key?: GatewayHttpKey;

@@ -37,6 +37,8 @@ export type {
   StackRecovery,
   ArtifactPreparationState,
   ArtifactPreparationStatus,
+  InstanceArtifactPreparationStatus,
+  ServiceLogQuery,
   StackDescriptor,
   StackInspection,
 } from "./public/index.ts";
@@ -74,6 +76,7 @@ export {
   CapabilityVersionsSchema,
   ArtifactPreparationStateSchema,
   ArtifactPreparationStatusSchema,
+  InstanceArtifactPreparationStatusSchema,
 } from "./public/Status.ts";
 export {
   CapabilityNameSchema,
@@ -85,6 +88,7 @@ export type { PreparationMode } from "./public/Config.ts";
 export {
   LogCursorSchema,
   LogQuerySchema,
+  ServiceLogQuerySchema,
   StackLogBatchSchema,
   StackLogEntrySchema,
 } from "./public/Logs.ts";

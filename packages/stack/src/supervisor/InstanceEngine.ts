@@ -53,7 +53,12 @@ import type {
   PrepareResult,
   SnapshotDescriptor,
 } from "../public/Service.ts";
-import type { ServiceStatus } from "../public/Status.ts";
+import {
+  PORT_FIELD_PROTOCOL,
+  type ServiceFailure,
+  type ServiceStatus,
+  type StackRecovery,
+} from "../public/Status.ts";
 import {
   ServiceNotFoundError,
   StackLifecycleConflictError,
@@ -69,7 +74,7 @@ import {
 import type { StackId } from "../public/StackId.ts";
 import type { PersistedStackState } from "../state/StackState.ts";
 import type { StackStateStore } from "../state/StackStateStore.ts";
-import { resolveSecrets } from "../state/SecretStore.ts";
+import { redactKnownSecrets, resolveSecrets } from "../state/SecretStore.ts";
 import type { InstanceRuntimeInput } from "./Lifecycle.ts";
 import type { SupervisorRuntime } from "./Supervisor.ts";
 import {
@@ -81,6 +86,7 @@ import type { RuntimeBindingPublication } from "../runtime/RuntimeBinding.ts";
 import { privateBindingIntentsFor } from "../runtime/WorkloadRuntimeSpec.ts";
 import { makeIdleRetirement } from "./IdleRetirement.ts";
 import type { TrafficAdmissionMode, TrafficLease } from "./Ingress.ts";
+import { portFieldForInstanceBinding } from "./StatusEndpoints.ts";
 
 type Mutation =
   | "start"
@@ -95,6 +101,11 @@ type Phase = ServiceStatus["phase"];
 type StatusUpdate =
   | { readonly id: ServiceInstanceId; readonly destroyed: false }
   | { readonly id: ServiceInstanceId; readonly destroyed: true };
+
+const protocolForInstanceBinding = (binding: string): "http" | "tcp" => {
+  const field = portFieldForInstanceBinding(binding);
+  return field === undefined ? "http" : PORT_FIELD_PROTOCOL[field];
+};
 
 function redactSettings<K extends ServiceKind>(
   value: PersistedServiceInstanceFor<K>["config"]["settings"],
@@ -350,6 +361,21 @@ const errorFromCause = (cause: Cause.Cause<StackError>): StackError => {
     : new StackStateInvalidError({ message: String(value), cause: value });
 };
 
+const serviceFailureFor = (
+  id: ServiceInstanceId,
+  operationId: string,
+  state: PersistedStackState,
+  error: StackError,
+): ServiceFailure => ({
+  tag: error._tag,
+  message: redactKnownSecrets(
+    error.message,
+    Object.values(state.secrets).map(({ value }) => value),
+  ),
+  instanceId: id,
+  operationId,
+});
+
 const outcomeFor = (
   requested: ReadonlyArray<ServiceInstanceId>,
   affected: ReadonlyArray<ServiceInstanceId>,
@@ -407,17 +433,18 @@ const descriptorForKind = <K extends ServiceKind>(
         .filter(
           (assignment) => assignment.owner === "instance" && assignment.instanceId === instance.id,
         )
-        .map((assignment) => [
-          assignment.binding,
-          {
-            address: assignment.address,
-            port: assignment.port,
-            url: `${assignment.binding === "sql" || assignment.binding === "pooler" ? "tcp" : "http"}://${assignment.address}:${assignment.port}`,
-            ...(assignment.binding === "sql" || assignment.binding === "pooler"
-              ? { protocol: "tcp" as const }
-              : { protocol: "http" as const }),
-          },
-        ]),
+        .map((assignment) => {
+          const protocol = protocolForInstanceBinding(assignment.binding);
+          return [
+            assignment.binding,
+            {
+              address: assignment.address,
+              port: assignment.port,
+              url: `${protocol}://${assignment.address}:${assignment.port}`,
+              protocol,
+            },
+          ];
+        }),
     );
     return {
       id: instance.id,
@@ -491,6 +518,8 @@ const statusFor = (
   instance: PersistedServiceInstance,
   phase: Phase,
   publishedBindings: ReadonlySet<string> = new Set(),
+  recovery?: StackRecovery,
+  error?: ServiceFailure,
 ): ServiceStatus => ({
   id: instance.id,
   service: instance.service,
@@ -511,20 +540,22 @@ const statusFor = (
     .filter(
       (assignment) => assignment.owner === "instance" && assignment.instanceId === instance.id,
     )
-    .map((assignment) => ({
-      binding: assignment.binding,
-      protocol:
-        assignment.binding === "sql" || assignment.binding === "pooler"
-          ? ("tcp" as const)
-          : ("http" as const),
-      address: assignment.address,
-      port: assignment.port,
-      url: `${assignment.binding === "sql" || assignment.binding === "pooler" ? "tcp" : "http"}://${assignment.address}:${assignment.port}`,
-      availability:
-        phase === "ready" || publishedBindings.has(assignment.binding)
-          ? ("listening" as const)
-          : ("planned" as const),
-    })),
+    .map((assignment) => {
+      const protocol = protocolForInstanceBinding(assignment.binding);
+      return {
+        binding: assignment.binding,
+        protocol,
+        address: assignment.address,
+        port: assignment.port,
+        url: `${protocol}://${assignment.address}:${assignment.port}`,
+        availability:
+          phase === "ready" || publishedBindings.has(assignment.binding)
+            ? ("listening" as const)
+            : ("planned" as const),
+      };
+    }),
+  ...(recovery === undefined ? {} : { recovery }),
+  ...(error === undefined ? {} : { error }),
 });
 
 const instancePlan = (
@@ -643,9 +674,25 @@ export const plannedInstancePorts = (
   );
 };
 
+const changedEndpointBindings = (
+  previous: PersistedServiceInstance["config"]["endpoints"],
+  next: PersistedServiceInstance["config"]["endpoints"],
+): ReadonlySet<string> => {
+  const previousEntries = new Map(Object.entries(previous));
+  const nextEntries = new Map(Object.entries(next));
+  const bindings = new Set([...previousEntries.keys(), ...nextEntries.keys()]);
+  return new Set(
+    [...bindings].filter(
+      (binding) =>
+        JSON.stringify(previousEntries.get(binding)) !== JSON.stringify(nextEntries.get(binding)),
+    ),
+  );
+};
+
 export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effect<InstanceEngine> =>
   Effect.gen(function* () {
     const phases = yield* Ref.make<ReadonlyMap<ServiceInstanceId, Phase>>(new Map());
+    const failures = yield* Ref.make<ReadonlyMap<ServiceInstanceId, ServiceFailure>>(new Map());
     const publishedBindings = yield* Ref.make<ReadonlyMap<ServiceInstanceId, ReadonlySet<string>>>(
       new Map(),
     );
@@ -752,85 +799,155 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
       readonly token?: symbol;
       readonly active: number;
       readonly startupControlAllowed?: boolean;
+      readonly completion?: Deferred.Deferred<Exit.Exit<void, StackError>, never>;
     };
     const batchClaims = yield* Ref.make<ReadonlyMap<ServiceInstanceId, CoordinationClaim>>(
       new Map(),
     );
+    const operationFibers = yield* Ref.make<
+      ReadonlyMap<ServiceInstanceId, Fiber.Fiber<unknown, unknown>>
+    >(new Map());
+    const recovery = yield* Ref.make<ReadonlyMap<ServiceInstanceId, StackRecovery>>(new Map());
+    const completeClaim = (
+      id: ServiceInstanceId,
+      token: symbol | undefined,
+      exit: Exit.Exit<unknown, ServiceNotFoundError | StackError>,
+      completion?: Deferred.Deferred<Exit.Exit<void, StackError>, never>,
+    ) =>
+      token === undefined
+        ? Effect.void
+        : completion !== undefined
+          ? Deferred.succeed(completion, voidExit(exit)).pipe(Effect.asVoid)
+          : Ref.get(batchClaims).pipe(
+              Effect.flatMap((claims) => {
+                const claim = claims.get(id);
+                return claim?.token === token && claim.completion !== undefined
+                  ? Deferred.succeed(claim.completion, voidExit(exit)).pipe(Effect.asVoid)
+                  : Effect.void;
+              }),
+            );
     const claimBatch = (
       ids: ReadonlyArray<ServiceInstanceId>,
       rejectActive = false,
       startupControlAllowed = false,
+      allowRecoveryCleanup = false,
+      allowPendingStarts = false,
     ): Effect.Effect<symbol, StackError> =>
       Effect.gen(function* () {
         const token = Symbol("instance-batch");
-        const claimed = yield* Ref.modify(batchClaims, (current) => {
-          if (
-            ids.some((id) => {
-              const claim = current.get(id);
-              return (
-                claim !== undefined &&
-                (claim.token !== undefined || (rejectActive && claim.active > 0))
-              );
-            })
-          )
-            return [false, current] as const;
-          const next = new Map(current);
-          for (const id of ids)
-            next.set(id, {
-              token,
-              active: current.get(id)?.active ?? 0,
-              ...(startupControlAllowed ? { startupControlAllowed: true } : {}),
-            });
-          return [true, next] as const;
-        });
-        if (!claimed) {
-          const blocked = yield* Ref.get(batchClaims).pipe(
-            Effect.map((current) =>
-              ids.find((id) => {
+        const recoveryIds = allowRecoveryCleanup
+          ? yield* Ref.get(recovery).pipe(Effect.map((recoveries) => new Set(recoveries.keys())))
+          : new Set<ServiceInstanceId>();
+        const pendingStartIds = allowPendingStarts
+          ? yield* read().pipe(
+              Effect.map(
+                (state) =>
+                  new Set(
+                    state.registry.instances
+                      .filter(
+                        (instance) =>
+                          instance.pendingOperation?.kind === "start" ||
+                          instance.pendingOperation?.kind === "restart",
+                      )
+                      .map((instance) => instance.id),
+                  ),
+              ),
+            )
+          : new Set<ServiceInstanceId>();
+        const completions = yield* Effect.forEach(ids, () =>
+          Deferred.make<Exit.Exit<void, StackError>>(),
+        );
+        return yield* Effect.gen(function* () {
+          const claimed = yield* Ref.modify(batchClaims, (current) => {
+            if (
+              ids.some((id) => {
                 const claim = current.get(id);
                 return (
                   claim !== undefined &&
-                  (claim.token !== undefined || (rejectActive && claim.active > 0))
+                  ((claim.token !== undefined && !pendingStartIds.has(id)) ||
+                    (rejectActive && claim.active > 0))
                 );
-              }),
-            ),
-          );
-          return yield* new StackLifecycleConflictError({
-            stackId: options.stackId,
-            ...(blocked === undefined ? {} : { instanceId: blocked }),
-            message: "A selected service instance is already part of another batch operation",
-          });
-        }
-        const verified = yield* options.stateStore
-          .update<StackError>(options.stackId, (state) => {
-            const selected = state.registry.instances.filter((instance) =>
-              ids.includes(instance.id),
-            );
-            return selected.length === ids.length &&
-              selected.every((instance) => instance.pendingOperation === null)
-              ? Effect.succeed(state)
-              : Effect.fail(
-                  new StackLifecycleConflictError({
-                    stackId: options.stackId,
-                    message: "A selected service instance changed during batch admission",
-                  }),
-                );
-          })
-          .pipe(Effect.provideContext(options.context), Effect.asVoid, Effect.exit);
-        if (Exit.isFailure(verified)) {
-          yield* Ref.update(batchClaims, (current) => {
+              })
+            )
+              return [false, current] as const;
             const next = new Map(current);
-            for (const id of ids) {
-              const claim = next.get(id);
-              if (claim?.token !== token) continue;
-              if (claim.active === 0) next.delete(id);
-              else next.set(id, { active: claim.active });
+            for (const [index, id] of ids.entries()) {
+              const existing = current.get(id);
+              if (startupControlAllowed && pendingStartIds.has(id) && existing?.token !== undefined)
+                continue;
+              next.set(id, {
+                token,
+                active: current.get(id)?.active ?? 0,
+                ...(startupControlAllowed ? { startupControlAllowed: true } : {}),
+                ...(completions[index] !== undefined ? { completion: completions[index] } : {}),
+              });
             }
-            return next;
+            return [true, next] as const;
           });
-          return yield* Effect.failCause(verified.cause);
-        }
-        return token;
+          if (!claimed) {
+            const blocked = yield* Ref.get(batchClaims).pipe(
+              Effect.map((current) =>
+                ids.find((id) => {
+                  const claim = current.get(id);
+                  return (
+                    claim !== undefined &&
+                    ((claim.token !== undefined && !pendingStartIds.has(id)) ||
+                      (rejectActive && claim.active > 0))
+                  );
+                }),
+              ),
+            );
+            return yield* new StackLifecycleConflictError({
+              stackId: options.stackId,
+              ...(blocked === undefined ? {} : { instanceId: blocked }),
+              message: "A selected service instance is already part of another batch operation",
+            });
+          }
+          const verified = yield* options.stateStore
+            .update<StackError>(options.stackId, (state) => {
+              const selected = state.registry.instances.filter((instance) =>
+                ids.includes(instance.id),
+              );
+              return selected.length === ids.length &&
+                selected.every(
+                  (instance) =>
+                    instance.pendingOperation === null ||
+                    recoveryIds.has(instance.id) ||
+                    pendingStartIds.has(instance.id),
+                )
+                ? Effect.succeed(state)
+                : Effect.fail(
+                    new StackLifecycleConflictError({
+                      stackId: options.stackId,
+                      message: "A selected service instance changed during batch admission",
+                    }),
+                  );
+            })
+            .pipe(Effect.provideContext(options.context), Effect.asVoid, Effect.exit);
+          if (Exit.isFailure(verified)) return yield* Effect.failCause(verified.cause);
+          return token;
+        }).pipe(
+          Effect.onExit((exit) =>
+            Exit.isSuccess(exit)
+              ? Effect.void
+              : Effect.forEach(completions, (completion) =>
+                  Deferred.succeed(completion, voidExit(exit)).pipe(Effect.asVoid),
+                ).pipe(
+                  Effect.andThen(
+                    Ref.update(batchClaims, (current) => {
+                      const next = new Map(current);
+                      for (const id of ids) {
+                        const claim = next.get(id);
+                        if (claim?.token !== token) continue;
+                        if (claim.active === 0) next.delete(id);
+                        else next.set(id, { active: claim.active });
+                      }
+                      return next;
+                    }),
+                  ),
+                ),
+          ),
+        );
       });
     const releaseBatch = (ids: ReadonlyArray<ServiceInstanceId>, token: symbol) =>
       Ref.update(batchClaims, (current) => {
@@ -843,48 +960,128 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
         }
         return next;
       });
-    const acquireTraffic = (id: ServiceInstanceId, mode: TrafficAdmissionMode = "normal") =>
-      Effect.gen(function* () {
-        const admitted = yield* Ref.modify(batchClaims, (current) => {
-          const claim = current.get(id);
-          if (
-            claim?.token !== undefined &&
-            (mode !== "startup-control" || claim.startupControlAllowed !== true)
-          )
-            return [false, current] as const;
-          const next = new Map(current);
-          next.set(id, { ...claim, active: (claim?.active ?? 0) + 1 });
-          return [true, next] as const;
-        });
-        if (!admitted)
-          return yield* new StackLifecycleConflictError({
-            stackId: options.stackId,
-            instanceId: id,
-            message: `Service instance ${id} is changing lifecycle state`,
-          });
-        // A traffic lease makes the instance non-idle. Cancel any timer that was armed
-        // before admission so releasing this lease starts a fresh idle interval.
-        yield* cancelIdle(id);
-        return {
-          release: Ref.update(batchClaims, (current) => {
-            const claim = current.get(id);
-            if (claim === undefined || claim.active === 0) return current;
-            const next = new Map(current);
-            if (claim.active === 1 && claim.token === undefined) next.delete(id);
-            else
-              next.set(id, {
-                token: claim.token,
-                active: claim.active - 1,
-                ...(claim.startupControlAllowed ? { startupControlAllowed: true } : {}),
+    const acquireTraffic = (
+      id: ServiceInstanceId,
+      mode: TrafficAdmissionMode = "normal",
+    ): Effect.Effect<TrafficLease, ServiceNotFoundError | StackError> =>
+      Effect.suspend(() =>
+        Effect.gen(function* () {
+          if (yield* Ref.get(recovery).pipe(Effect.map((recoveries) => recoveries.has(id))))
+            return yield* new StackLifecycleConflictError({
+              stackId: options.stackId,
+              instanceId: id,
+              message: `Service instance ${id} is fenced by a recovery failure`,
+            });
+          const claim = yield* Ref.get(batchClaims).pipe(Effect.map((claims) => claims.get(id)));
+          let completedToken: symbol | undefined;
+          let completedCompletion:
+            | Deferred.Deferred<Exit.Exit<void, StackError>, never>
+            | undefined;
+          if (claim?.token !== undefined && mode === "normal") {
+            if (claim.completion === undefined)
+              return yield* new StackLifecycleConflictError({
+                stackId: options.stackId,
+                instanceId: id,
+                message: `Service instance ${id} is changing lifecycle state`,
               });
-            return next;
-          }).pipe(Effect.andThen(armIdle(id).pipe(Effect.ignore))),
-        } satisfies TrafficLease;
-      });
+            yield* Deferred.await(claim.completion).pipe(Effect.flatMap(joinExit));
+            completedToken = claim.token;
+            completedCompletion = claim.completion;
+            const settled = yield* current(id);
+            const settledPhase = yield* phaseFor(id, settled.instance);
+            if (
+              !settled.instance.config.enabled ||
+              settled.instance.intent !== "started" ||
+              (settledPhase !== "ready" && settledPhase !== "dormant")
+            )
+              return yield* new StackLifecycleConflictError({
+                stackId: options.stackId,
+                instanceId: id,
+                message: `Service instance ${id} is no longer ready after lifecycle settlement`,
+              });
+          }
+          const admitted = yield* Ref.modify(batchClaims, (current) => {
+            const currentClaim = current.get(id);
+            if (
+              currentClaim?.token !== undefined &&
+              (mode === "normal" || currentClaim.startupControlAllowed !== true) &&
+              (currentClaim.token !== completedToken ||
+                currentClaim.completion !== completedCompletion)
+            )
+              return [false, current] as const;
+            const next = new Map(current);
+            next.set(id, { ...currentClaim, active: (currentClaim?.active ?? 0) + 1 });
+            return [true, next] as const;
+          });
+          if (!admitted)
+            return yield* new StackLifecycleConflictError({
+              stackId: options.stackId,
+              instanceId: id,
+              message: `Service instance ${id} is changing lifecycle state`,
+            });
+          // A traffic lease makes the instance non-idle. Cancel any timer that was armed
+          // before admission so releasing this lease starts a fresh idle interval.
+          yield* cancelIdle(id);
+          return {
+            release: Ref.update(batchClaims, (current) => {
+              const claim = current.get(id);
+              if (claim === undefined || claim.active === 0) return current;
+              const next = new Map(current);
+              if (claim.active === 1 && claim.token === undefined) next.delete(id);
+              else next.set(id, { ...claim, active: claim.active - 1 });
+              return next;
+            }).pipe(Effect.andThen(armIdle(id).pipe(Effect.ignore))),
+          } satisfies TrafficLease;
+        }),
+      );
+    const withDependencyTraffic = <A>(
+      input: InstanceRuntimeInput,
+      operation: Effect.Effect<A, StackError>,
+    ): Effect.Effect<A, StackError> =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* Effect.forEach(Object.values(input.instance.dependencies), (dependencyId) =>
+            Effect.uninterruptibleMask((restore) =>
+              Effect.acquireRelease(
+                restore(
+                  acquireTraffic(dependencyId).pipe(
+                    Effect.mapError((error) =>
+                      error instanceof ServiceNotFoundError
+                        ? new StackLifecycleConflictError({
+                            stackId: options.stackId,
+                            instanceId: dependencyId,
+                            message: `Dependency ${dependencyId} disappeared during startup`,
+                          })
+                        : error,
+                    ),
+                  ),
+                ),
+                (lease) => lease.release,
+              ),
+            ),
+          );
+          return yield* operation;
+        }),
+      );
     const setPhase = (id: ServiceInstanceId, phase: Phase) =>
       Ref.update(phases, (all) => new Map(all).set(id, phase)).pipe(
         Effect.andThen(PubSub.publish(statusUpdates, { id, destroyed: false })),
         Effect.andThen(options.publishStatus ?? Effect.void),
+      );
+    const clearFailure = (id: ServiceInstanceId) =>
+      Ref.update(failures, (all) => {
+        const next = new Map(all);
+        next.delete(id);
+        return next;
+      });
+    const retainFailure = (
+      id: ServiceInstanceId,
+      operationId: string,
+      state: PersistedStackState,
+      error: StackError,
+    ) =>
+      Ref.update(failures, (all) =>
+        new Map(all).set(id, serviceFailureFor(id, operationId, state, error)),
       );
     const publishBindings = (
       id: ServiceInstanceId,
@@ -918,6 +1115,37 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
             next.delete(id);
             return next;
           }),
+        ),
+      );
+    const startAndPublish = (
+      input: InstanceRuntimeInput,
+    ): Effect.Effect<ReadonlyArray<RuntimeBindingPublication>, StackError> =>
+      options.runtime.start(input).pipe(
+        Effect.flatMap((publications) =>
+          publishBindings(input.instance.id, publications).pipe(
+            Effect.as(publications),
+            Effect.catch((publicationError) =>
+              Effect.gen(function* () {
+                const runtimeCleanup = yield* options.runtime.stop(input).pipe(Effect.exit);
+                const ingressCleanup = yield* unpublishBindings(input.instance.id).pipe(
+                  Effect.exit,
+                );
+                const cleanupExit = Exit.isFailure(runtimeCleanup)
+                  ? runtimeCleanup
+                  : Exit.isFailure(ingressCleanup)
+                    ? ingressCleanup
+                    : undefined;
+                if (cleanupExit !== undefined) {
+                  const cleanupError = errorFromCause(cleanupExit.cause);
+                  return yield* new StackCleanupError({
+                    message: `Startup publication failed and cleanup was not proven: ${cleanupError.message}`,
+                    cause: cleanupError,
+                  });
+                }
+                return yield* publicationError;
+              }),
+            ),
+          ),
         ),
       );
     const run = <A>(
@@ -957,11 +1185,17 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
                 Effect.flatMap(({ instance }) =>
                   instance.pendingOperation?.kind === "exportSnapshot" ||
                   instance.pendingOperation?.kind === "restoreSnapshot"
-                    ? Effect.fail(
-                        new StackLifecycleConflictError({
-                          stackId: options.stackId,
-                          message: `Service instance ${id} has a snapshot operation in progress`,
-                        }),
+                    ? Ref.get(recovery).pipe(
+                        Effect.flatMap((recoveries) =>
+                          mutation === "destroy" && recoveries.get(id)?.operation === "destroy"
+                            ? Effect.void
+                            : Effect.fail(
+                                new StackLifecycleConflictError({
+                                  stackId: options.stackId,
+                                  message: `Service instance ${id} has a snapshot operation in progress`,
+                                }),
+                              ),
+                        ),
                       )
                     : Effect.void,
                 ),
@@ -971,6 +1205,7 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
             const owner = claims.get(id)?.token;
             return owner === undefined ||
               owner === batchToken ||
+              owner === handoffToken ||
               (batchToken === undefined && mutation === "start")
               ? Effect.void
               : Effect.fail(
@@ -984,6 +1219,37 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
         );
         const ownerBody = Effect.gen(function* () {
           const admitted = yield* current(id);
+          const recoveryCleanup =
+            mutation === "stop" || mutation === "destroy"
+              ? yield* Ref.get(recovery).pipe(Effect.map((recoveries) => recoveries.get(id)))
+              : undefined;
+          if (mutation === "stop" && recoveryCleanup?.operation === "destroy")
+            return yield* new StackLifecycleConflictError({
+              stackId: options.stackId,
+              instanceId: id,
+              message: `Service instance ${id} requires destroy recovery before activation can be unfenced`,
+            });
+          const replacementEnabled = replacement?.instance.config.enabled;
+          const startsWorkload =
+            mutation === "start" ||
+            (mutation === "restart" &&
+              replacement?.startImmediately !== false &&
+              replacement?.desiredIntent !== "stopped");
+          if (startsWorkload && (replacementEnabled ?? admitted.instance.config.enabled) === false)
+            return yield* new StackLifecycleConflictError({
+              stackId: options.stackId,
+              instanceId: id,
+              message: `Disabled service instance ${id} cannot be started`,
+            });
+          if (
+            startsWorkload &&
+            (yield* Ref.get(recovery).pipe(Effect.map((recoveries) => recoveries.has(id))))
+          )
+            return yield* new StackLifecycleConflictError({
+              stackId: options.stackId,
+              instanceId: id,
+              message: `Service instance ${id} is fenced by a recovery failure`,
+            });
           if (
             (mutation === "exportSnapshot" || mutation === "restoreSnapshot") &&
             (admitted.instance.intent !== "stopped" || admitted.instance.pendingOperation !== null)
@@ -1047,7 +1313,7 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
                         message: `Service instance ${id} changed before its restart was admitted`,
                       }),
                     );
-                  if (instance.pendingOperation !== null)
+                  if (instance.pendingOperation !== null && !recoveryCleanup)
                     return Effect.fail(
                       new StackLifecycleConflictError({
                         stackId: options.stackId,
@@ -1158,13 +1424,33 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
                             )
                           : Effect.succeed(nextState);
                       return withSecrets.pipe(
-                        Effect.flatMap((resolved) =>
-                          mutation === "start" || mutation === "restart"
-                            ? plannedInstancePorts(resolved, resolvedInstance).pipe(
-                                Effect.map((ports) => ({ ...resolved, ...ports })),
-                              )
-                            : Effect.succeed(resolved),
-                        ),
+                        Effect.flatMap((resolved) => {
+                          if (mutation !== "start" && mutation !== "restart")
+                            return Effect.succeed(resolved);
+                          const changed =
+                            mutation === "restart"
+                              ? changedEndpointBindings(
+                                  replacement?.previous.instance.config.endpoints ??
+                                    instance.config.endpoints,
+                                  resolvedInstance.config.endpoints,
+                                )
+                              : new Set<string>();
+                          const replanningState =
+                            changed.size === 0
+                              ? resolved
+                              : {
+                                  ...resolved,
+                                  ports: resolved.ports.filter(
+                                    (assignment) =>
+                                      assignment.owner !== "instance" ||
+                                      assignment.instanceId !== id ||
+                                      !changed.has(assignment.binding),
+                                  ),
+                                };
+                          return plannedInstancePorts(replanningState, resolvedInstance).pipe(
+                            Effect.map((ports) => ({ ...resolved, ...ports })),
+                          );
+                        }),
                       );
                     }),
                   );
@@ -1239,6 +1525,14 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
                 })
                 .pipe(
                   Effect.provideContext(options.context),
+                  Effect.andThen(
+                    Ref.update(recovery, (recoveries) => {
+                      const next = new Map(recoveries);
+                      next.delete(id);
+                      return next;
+                    }),
+                  ),
+                  Effect.andThen(clearFailure(id)),
                   Effect.flatMap(() =>
                     afterSettle === undefined ? Effect.succeed(value) : afterSettle(value),
                   ),
@@ -1303,6 +1597,7 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
                       })
                       .pipe(Effect.provideContext(options.context), Effect.asVoid);
               return cleanup.pipe(
+                Effect.andThen(retainFailure(id, operationId, input.state, error)),
                 Effect.andThen(setPhase(id, "failed")),
                 Effect.andThen(Effect.fail(error)),
               );
@@ -1333,12 +1628,18 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
                   ),
                 )
             : lock.withPermit(ownerBody);
+        let handoffToken: symbol | undefined;
         const ownClaim =
           batchToken !== undefined
-            ? Effect.succeed({ token: batchToken, owned: false })
+            ? Effect.sync(() => ({
+                token: handoffToken ?? batchToken,
+                owned: handoffToken !== undefined,
+              }))
             : Ref.get(batchClaims).pipe(
                 Effect.flatMap((claims) => {
                   const existing = claims.get(id)?.token;
+                  if (handoffToken !== undefined)
+                    return Effect.succeed({ token: handoffToken, owned: true });
                   if (existing !== undefined) {
                     return mutation === "start"
                       ? Effect.succeed({ token: existing, owned: false })
@@ -1350,22 +1651,123 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
                           }),
                         );
                   }
-                  return claimBatch(
-                    [id],
-                    mutation === "sleep",
-                    mutation === "start" || mutation === "restart",
-                  ).pipe(Effect.map((token) => ({ token, owned: true })));
+                  return Ref.get(recovery).pipe(
+                    Effect.flatMap((recoveries) =>
+                      claimBatch(
+                        [id],
+                        mutation === "sleep",
+                        mutation === "start" || mutation === "restart",
+                        (mutation === "stop" || mutation === "destroy") && recoveries.has(id),
+                        false,
+                      ),
+                    ),
+                    Effect.map((token) => ({ token, owned: true })),
+                  );
                 }),
               );
+        const supersedeStart =
+          mutation === "stop" || mutation === "destroy"
+            ? Effect.gen(function* () {
+                const { instance } = yield* current(id);
+                if (
+                  instance.pendingOperation?.kind !== "start" &&
+                  instance.pendingOperation?.kind !== "restart"
+                )
+                  return;
+                const pending = instance.pendingOperation;
+                const oldToken = yield* Ref.get(batchClaims).pipe(
+                  Effect.map((claims) => claims.get(id)?.token),
+                );
+                const fiber = yield* Ref.get(operationFibers).pipe(
+                  Effect.map((fibers) => fibers.get(id)),
+                );
+                if (fiber === undefined)
+                  return yield* new StackLifecycleConflictError({
+                    stackId: options.stackId,
+                    instanceId: id,
+                    message: `Service instance ${id} has a pending startup without a live owner`,
+                  });
+                const replacementToken = Symbol("instance-stop-handoff");
+                const replacementCompletion = yield* Deferred.make<Exit.Exit<void, StackError>>();
+                const handedOff = yield* Ref.modify(batchClaims, (claims) => {
+                  const claim = claims.get(id);
+                  return claim?.token !== undefined && claim.token === oldToken
+                    ? [
+                        true,
+                        new Map(claims).set(id, {
+                          token: replacementToken,
+                          active: claim.active,
+                          completion: replacementCompletion,
+                        }),
+                      ]
+                    : [false, claims];
+                });
+                if (handedOff) handoffToken = replacementToken;
+                yield* Fiber.interrupt(fiber);
+                yield* options.stateStore
+                  .update(options.stackId, (state) => {
+                    const currentInstance = state.registry.instances.find(
+                      (entry) => entry.id === id,
+                    );
+                    return currentInstance?.pendingOperation?.id === pending.id &&
+                      currentInstance.pendingOperation.generation === pending.generation
+                      ? Effect.succeed({
+                          ...state,
+                          registry: {
+                            ...state.registry,
+                            instances: state.registry.instances.map((entry) =>
+                              entry.id === id ? { ...entry, pendingOperation: null } : entry,
+                            ),
+                          },
+                        })
+                      : Effect.succeed(state);
+                  })
+                  .pipe(Effect.provideContext(options.context), Effect.asVoid);
+              })
+            : Effect.void;
         return rejectSnapshotConflict.pipe(
+          Effect.andThen(supersedeStart),
           Effect.andThen(rejectBatchConflict),
-          Effect.andThen(ownClaim),
-          Effect.flatMap(({ token, owned }) =>
-            Effect.forkIn(
-              admittedOwner.pipe(Effect.ensuring(owned ? releaseBatch([id], token) : Effect.void)),
-              options.scope,
-              { startImmediately: true },
-            ).pipe(Effect.flatMap(Fiber.join)),
+          Effect.flatMap(() =>
+            Effect.uninterruptibleMask((restore) =>
+              ownClaim.pipe(
+                Effect.flatMap(({ token, owned }) =>
+                  Effect.gen(function* () {
+                    let ownerFiber: Fiber.Fiber<unknown, unknown> | undefined;
+                    const claimCompletion = yield* Ref.get(batchClaims).pipe(
+                      Effect.map((claims) => {
+                        const claim = claims.get(id);
+                        return claim?.token === token ? claim.completion : undefined;
+                      }),
+                    );
+                    const owner = admittedOwner.pipe(
+                      Effect.onExit((exit) =>
+                        completeClaim(id, token, exit, claimCompletion).pipe(
+                          Effect.andThen(
+                            Ref.update(operationFibers, (fibers) => {
+                              const next = new Map(fibers);
+                              if (next.get(id) === ownerFiber) next.delete(id);
+                              return next;
+                            }),
+                          ),
+                        ),
+                      ),
+                      Effect.ensuring(owned ? releaseBatch([id], token) : Effect.void),
+                    );
+                    const fiber = yield* Effect.forkIn(restore(owner), options.scope, {
+                      startImmediately: false,
+                    });
+                    ownerFiber = fiber;
+                    yield* Ref.update(operationFibers, (fibers) => {
+                      const next = new Map(fibers);
+                      next.set(id, fiber);
+                      return next;
+                    });
+                    return yield* restore(Fiber.join(fiber));
+                  }),
+                ),
+              ),
+            ),
           ),
         );
       });
@@ -1408,8 +1810,23 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
           phaseFor(id, instance).pipe(
             Effect.flatMap((phase) =>
               Ref.get(publishedBindings).pipe(
-                Effect.map((bindings) =>
-                  statusFor(state, instance, phase, bindings.get(id) ?? new Set()),
+                Effect.flatMap((bindings) =>
+                  Ref.get(recovery).pipe(
+                    Effect.flatMap((recoveries) =>
+                      Ref.get(failures).pipe(
+                        Effect.map((errors) =>
+                          statusFor(
+                            state,
+                            instance,
+                            phase,
+                            bindings.get(id) ?? new Set(),
+                            recoveries.get(id),
+                            errors.get(id),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -1437,7 +1854,11 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
           return Stream.concat(Stream.succeed(initial), updates);
         }),
       );
-    const startOperation = (
+    const startsInFlight = new Map<
+      ServiceInstanceId,
+      Deferred.Deferred<Exit.Exit<ServiceStatus, ServiceNotFoundError | StackError>, never>
+    >();
+    const startOperationBody = (
       id: ServiceInstanceId,
       batchToken?: symbol,
     ): Effect.Effect<ServiceStatus, ServiceNotFoundError | StackError> =>
@@ -1453,14 +1874,27 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
                     Effect.flatMap((phase) =>
                       phase === "ready"
                         ? Effect.void
-                        : startOperation(dependency.id, batchToken).pipe(Effect.asVoid),
+                        : input.state.registry.instances.some(
+                              (entry) =>
+                                entry.id === dependency.id &&
+                                (entry.pendingOperation?.kind === "stop" ||
+                                  entry.pendingOperation?.kind === "destroy"),
+                            )
+                          ? Effect.fail(
+                              new StackLifecycleConflictError({
+                                stackId: options.stackId,
+                                instanceId: dependency.id,
+                                message: `Dependency ${dependency.id} was superseded during startup`,
+                              }),
+                            )
+                          : startOperation(dependency.id, batchToken).pipe(Effect.asVoid),
                     ),
                   ),
                 ),
               ),
             );
-            const publications = yield* options.runtime.start(input);
-            yield* publishBindings(input.instance.id, publications);
+            const publications = yield* withDependencyTraffic(input, startAndPublish(input));
+            return publications;
           }).pipe(Effect.andThen(status(id))),
         (state, instance) =>
           Effect.succeed({
@@ -1477,6 +1911,31 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
         undefined,
         batchToken,
       );
+    const startOperation = (id: ServiceInstanceId, batchToken?: symbol) =>
+      Effect.suspend(() => {
+        const existing = startsInFlight.get(id);
+        if (existing !== undefined)
+          return Deferred.await(existing).pipe(
+            Effect.flatMap(joinExit),
+            Effect.andThen(status(id)),
+          );
+        return Deferred.make<Exit.Exit<ServiceStatus, ServiceNotFoundError | StackError>>().pipe(
+          Effect.flatMap((completion) => {
+            startsInFlight.set(id, completion);
+            return startOperationBody(id, batchToken).pipe(
+              Effect.onExit((exit) =>
+                Deferred.succeed(completion, exit).pipe(
+                  Effect.andThen(
+                    Effect.sync(() => {
+                      if (startsInFlight.get(id) === completion) startsInFlight.delete(id);
+                    }),
+                  ),
+                ),
+              ),
+            );
+          }),
+        );
+      });
     const start = (id: ServiceInstanceId) => startOperation(id).pipe(Effect.andThen(status(id)));
     const stop = (id: ServiceInstanceId, batchToken?: symbol) =>
       run(
@@ -1500,6 +1959,7 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
           state.registry.instances.some(
             (dependent) =>
               dependent.intent === "started" &&
+              batchToken === undefined &&
               Object.values(dependent.dependencies).includes(instance.id),
           )
             ? Effect.fail(
@@ -1540,7 +2000,7 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
           }),
         () => status(id),
         ({ instance }) => phaseFor(id, instance).pipe(Effect.map((phase) => phase === "dormant")),
-        ({ instance }) =>
+        ({ state, instance }) =>
           phaseFor(id, instance).pipe(
             Effect.flatMap((phase) =>
               expectedGeneration !== undefined && instance.revisions.intent !== expectedGeneration
@@ -1559,16 +2019,45 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
                         message: `Service instance ${id} is stopped and cannot be put to sleep`,
                       }),
                     )
-                  : (options.isInstanceWakeable?.(instance.id) ?? Effect.succeed(true)).pipe(
-                      Effect.flatMap((wakeable) =>
-                        wakeable
-                          ? Effect.void
-                          : Effect.fail(
+                  : Effect.forEach(
+                      state.registry.instances.filter(
+                        (dependent) =>
+                          dependent.intent === "started" &&
+                          dependent.id !== id &&
+                          Object.values(dependent.dependencies).includes(id),
+                      ),
+                      (dependent) =>
+                        phaseFor(dependent.id, dependent).pipe(
+                          Effect.map(
+                            (dependentPhase) =>
+                              dependentPhase !== "stopped" && dependentPhase !== "dormant",
+                          ),
+                        ),
+                    ).pipe(
+                      Effect.map((active) => active.some(Boolean)),
+                      Effect.flatMap((active) =>
+                        active
+                          ? Effect.fail(
                               new StackLifecycleConflictError({
                                 stackId: options.stackId,
                                 instanceId: id,
-                                message: `Service instance ${id} has no demand-wake route`,
+                                message: `Service instance ${id} has active dependents`,
                               }),
+                            )
+                          : (
+                              options.isInstanceWakeable?.(instance.id) ?? Effect.succeed(true)
+                            ).pipe(
+                              Effect.flatMap((wakeable) =>
+                                wakeable
+                                  ? Effect.void
+                                  : Effect.fail(
+                                      new StackLifecycleConflictError({
+                                        stackId: options.stackId,
+                                        instanceId: id,
+                                        message: `Service instance ${id} has no demand-wake route`,
+                                      }),
+                                    ),
+                              ),
                             ),
                       ),
                     ),
@@ -1776,15 +2265,7 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
               ).pipe(
                 Effect.andThen(
                   startImmediately
-                    ? options.runtime
-                        .start(input)
-                        .pipe(
-                          Effect.flatMap((publications) =>
-                            publishBindings(input.instance.id, publications).pipe(
-                              Effect.as(publications),
-                            ),
-                          ),
-                        )
+                    ? withDependencyTraffic(input, startAndPublish(input))
                     : Effect.succeed([] as ReadonlyArray<RuntimeBindingPublication>),
                 ),
               ),
@@ -1897,6 +2378,24 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
           ),
         ),
       );
+    const markRecovery = (
+      id: ServiceInstanceId,
+      pending: PersistedPendingOperation,
+      error: StackError,
+    ): Effect.Effect<void, never> =>
+      Ref.update(recovery, (recoveries) => {
+        const next = new Map(recoveries);
+        next.set(id, {
+          operation:
+            pending.kind === "destroy" ||
+            pending.kind === "restoreSnapshot" ||
+            pending.kind === "exportSnapshot"
+              ? "destroy"
+              : "stop",
+          message: `Recovery of ${pending.kind} operation ${pending.id} failed: ${error.message}`,
+        });
+        return next;
+      }).pipe(Effect.andThen(setPhase(id, "recovery")), Effect.ignore);
     const recover: Effect.Effect<void, StackError> = read().pipe(
       Effect.flatMap((state) =>
         Effect.forEach(
@@ -2043,7 +2542,12 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
                   });
                 })
                 .pipe(Effect.provideContext(options.context), Effect.asVoid);
-            }),
+            }).pipe(
+              Effect.catch((error) => {
+                const pending = instance.pendingOperation;
+                return pending === null ? Effect.void : markRecovery(instance.id, pending, error);
+              }),
+            ),
           { discard: true },
         ),
       ),
@@ -2063,6 +2567,7 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
                 ServiceNotFoundError | StackError
               > =>
                 Effect.gen(function* () {
+                  const recoveries = yield* Ref.get(recovery);
                   const ids = [
                     ...new Set(
                       requested ??
@@ -2072,7 +2577,9 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
                               ? true
                               : mutation === "start"
                                 ? instance.config.enabled && instance.config.activation === "eager"
-                                : instance.intent === "started",
+                                : mutation === "stop"
+                                  ? true
+                                  : instance.intent === "started",
                           )
                           .map((instance) => instance.id),
                     ),
@@ -2082,17 +2589,53 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
                       return yield* notFound(id);
                   for (const id of ids) {
                     const instance = state.registry.instances.find((entry) => entry.id === id);
-                    if (
-                      instance?.pendingOperation !== null &&
-                      instance?.pendingOperation !== undefined
-                    )
+                    const pending = instance?.pendingOperation;
+                    const canSupersede =
+                      (mutation === "stop" || mutation === "destroy") &&
+                      (pending?.kind === "start" ||
+                        pending?.kind === "restart" ||
+                        (instance !== undefined && recoveries.has(instance.id)));
+                    const canJoinStart = mutation === "start" && pending?.kind === "start";
+                    if (pending !== null && pending !== undefined && !canSupersede && !canJoinStart)
                       return yield* new StackLifecycleConflictError({
                         stackId: options.stackId,
                         message: `Service instance ${id} already has a pending operation`,
                       });
+                    if (
+                      (mutation === "start" || mutation === "restart") &&
+                      instance !== undefined &&
+                      !instance.config.enabled
+                    )
+                      return yield* new StackLifecycleConflictError({
+                        stackId: options.stackId,
+                        instanceId: id,
+                        message: `Disabled service instance ${id} cannot be started`,
+                      });
                   }
                   if (mutation === "sleep") {
+                    const selected = new Set(ids);
                     for (const id of ids) {
+                      const activeDependent = yield* Effect.forEach(
+                        state.registry.instances.filter(
+                          (dependent) =>
+                            dependent.intent === "started" &&
+                            !selected.has(dependent.id) &&
+                            Object.values(dependent.dependencies).includes(id),
+                        ),
+                        (dependent) =>
+                          phaseFor(dependent.id, dependent).pipe(
+                            Effect.map(
+                              (dependentPhase) =>
+                                dependentPhase !== "stopped" && dependentPhase !== "dormant",
+                            ),
+                          ),
+                      ).pipe(Effect.map((active) => active.some(Boolean)));
+                      if (activeDependent)
+                        return yield* new StackLifecycleConflictError({
+                          stackId: options.stackId,
+                          instanceId: id,
+                          message: `Service instance ${id} has active dependents`,
+                        });
                       const active = yield* options.isInstanceActive?.(id) ?? Effect.succeed(false);
                       if (active)
                         return yield* new StackLifecycleConflictError({
@@ -2168,19 +2711,54 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
       operation: (token: symbol) => Effect.Effect<A, ServiceNotFoundError | StackError>,
       rejectActive = false,
       startupControlAllowed = false,
+      allowPendingStarts = false,
+      allowRecoveryCleanup = false,
     ): Effect.Effect<A, ServiceNotFoundError | StackError> =>
-      Effect.gen(function* () {
-        const token = yield* claimBatch(ids, rejectActive, startupControlAllowed);
-        return yield* operation(token).pipe(Effect.ensuring(releaseBatch(ids, token)));
-      });
+      Effect.uninterruptibleMask((restore) =>
+        Effect.gen(function* () {
+          const token = yield* restore(
+            claimBatch(
+              ids,
+              rejectActive,
+              startupControlAllowed,
+              allowRecoveryCleanup,
+              allowPendingStarts,
+            ),
+          );
+          return yield* restore(
+            operation(token).pipe(
+              Effect.onExit((exit) =>
+                Ref.get(batchClaims).pipe(
+                  Effect.flatMap((claims) =>
+                    Effect.forEach(ids, (id) => {
+                      const completion = claims.get(id);
+                      return completion?.token === token && completion.completion !== undefined
+                        ? Deferred.succeed(completion.completion, voidExit(exit)).pipe(
+                            Effect.asVoid,
+                          )
+                        : Effect.void;
+                    }),
+                  ),
+                  Effect.andThen(releaseBatch(ids, token)),
+                ),
+              ),
+            ),
+          );
+        }),
+      );
     const collectStatuses = (
       requested: ReadonlyArray<ServiceInstanceId>,
       affected: ReadonlyArray<ServiceInstanceId>,
       operation: (
         id: ServiceInstanceId,
       ) => Effect.Effect<ServiceStatus, ServiceNotFoundError | StackError>,
+      concurrent = false,
     ): Effect.Effect<ReadonlyArray<ServiceStatus>, ServiceNotFoundError | StackError> =>
-      Effect.forEach(affected, (id) => Effect.exit(operation(id))).pipe(
+      Effect.forEach(
+        affected,
+        (id) => Effect.exit(operation(id)),
+        concurrent ? { concurrency: "unbounded" as const } : undefined,
+      ).pipe(
         Effect.flatMap((outcomes) => {
           const completed = outcomes.map(Exit.isSuccess);
           const values = outcomes.flatMap((outcome) =>
@@ -2312,6 +2890,15 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
                     const replacementsById = new Map(
                       replacements.map((replacement) => [replacement.id, replacement]),
                     );
+                    const changedBindingsById = new Map<string, ReadonlySet<string>>(
+                      candidates.map((candidate) => [
+                        candidate.instance.id,
+                        changedEndpointBindings(
+                          candidate.previous.instance.config.endpoints,
+                          candidate.instance.config.endpoints,
+                        ),
+                      ]),
+                    );
                     const registry = {
                       ...state.registry,
                       instances: state.registry.instances.map((entry) => {
@@ -2352,14 +2939,14 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
                       ...(shared?.listeners === undefined ? {} : { listeners: shared.listeners }),
                       registry,
                       secrets: resolved.persisted,
-                      ports: (shared?.ports ?? state.ports).filter(
-                        (assignment) =>
-                          assignment.owner !== "instance" ||
-                          !replacedIds.has(assignment.instanceId),
-                      ),
-                      privatePorts: state.privatePorts.filter(
-                        (assignment) => !replacedIds.has(assignment.instanceId),
-                      ),
+                      ports: (shared?.ports ?? state.ports).filter((assignment) => {
+                        if (assignment.owner !== "instance") return true;
+                        if (!replacedIds.has(assignment.instanceId)) return true;
+                        return !changedBindingsById
+                          .get(assignment.instanceId)
+                          ?.has(assignment.binding);
+                      }),
+                      privatePorts: state.privatePorts,
                     };
                     for (const replacement of replacements) {
                       const ports = yield* plannedInstancePorts(nextState, replacement);
@@ -2488,10 +3075,11 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
             (token) =>
               orderedIds(ids, false).pipe(
                 Effect.flatMap((ordered) =>
-                  collectStatuses(ids, ordered, (id) => startOperation(id, token)),
+                  collectStatuses(ids, ordered, (id) => startOperation(id, token), true),
                 ),
               ),
             false,
+            true,
             true,
           ),
         ),
@@ -2508,22 +3096,35 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
                 instance.pendingOperation === null,
             )
             .map((instance) => instance.id);
-          if (lazyIds.length === 0) return Effect.void;
           return options.stateStore
             .update(options.stackId, (current) =>
-              Effect.succeed({
-                ...current,
-                registry: {
-                  ...current.registry,
-                  instances: current.registry.instances.map((instance) =>
-                    lazyIds.includes(instance.id) &&
-                    instance.intent === "stopped" &&
-                    instance.pendingOperation === null &&
-                    instance.config.activation === "lazy"
-                      ? { ...instance, intent: "started" as const }
-                      : instance,
-                  ),
-                },
+              Effect.gen(function* () {
+                const withStartedIntents = {
+                  ...current,
+                  registry: {
+                    ...current.registry,
+                    instances: current.registry.instances.map((instance) =>
+                      lazyIds.includes(instance.id) &&
+                      instance.intent === "stopped" &&
+                      instance.pendingOperation === null &&
+                      instance.config.activation === "lazy"
+                        ? { ...instance, intent: "started" as const }
+                        : instance,
+                    ),
+                  },
+                };
+                let planned = withStartedIntents;
+                for (const instance of planned.registry.instances.filter(
+                  (entry) =>
+                    entry.config.enabled &&
+                    entry.config.activation === "lazy" &&
+                    entry.intent === "started" &&
+                    entry.pendingOperation === null,
+                )) {
+                  const ports = yield* plannedInstancePorts(planned, instance);
+                  planned = { ...planned, ...ports };
+                }
+                return planned;
               }),
             )
             .pipe(
@@ -2577,16 +3178,25 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
                 ),
               ),
             true,
+            false,
+            false,
+            false,
           ),
         ),
       );
     const stopAll = (requested?: ReadonlyArray<ServiceInstanceId>) =>
       selectedIds("stop", requested).pipe(
         Effect.flatMap((ids) =>
-          runBatch(ids, (token) =>
-            orderedIds(ids, true).pipe(
-              Effect.flatMap((ordered) => collectStatuses(ids, ordered, (id) => stop(id, token))),
-            ),
+          runBatch(
+            ids,
+            (token) =>
+              orderedIds(ids, true).pipe(
+                Effect.flatMap((ordered) => collectStatuses(ids, ordered, (id) => stop(id, token))),
+              ),
+            false,
+            false,
+            true,
+            true,
           ),
         ),
       );
@@ -2629,40 +3239,47 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
     const destroyAll = (requested?: ReadonlyArray<ServiceInstanceId>) =>
       selectedIds("destroy", requested).pipe(
         Effect.flatMap((ids) =>
-          runBatch(ids, (token) =>
-            destroyOrder(ids).pipe(
-              Effect.flatMap((ordered) =>
-                Effect.forEach(ordered, (id) => Effect.exit(destroy(id, token))).pipe(
-                  Effect.flatMap((outcomes) => {
-                    const completed = outcomes.map(Exit.isSuccess);
-                    const failure = outcomes.find((outcome) => Exit.isFailure(outcome));
-                    if (failure === undefined || !Exit.isFailure(failure)) return Effect.void;
-                    const error = errorFromCause(failure.cause);
-                    return read().pipe(
-                      Effect.flatMap((state) => {
-                        const removed = ids.filter(
-                          (id) => !state.registry.instances.some((instance) => instance.id === id),
-                        );
-                        const retained = ids.filter((id) =>
-                          state.registry.instances.some((instance) => instance.id === id),
-                        );
-                        return Effect.fail(
-                          new StackDestructionError({
-                            message: error.message,
-                            cause: error,
-                            outcome: {
-                              ...outcomeFor(ids, ordered, completed),
-                              removed,
-                              retained,
-                            },
-                          }),
-                        );
-                      }),
-                    );
-                  }),
+          runBatch(
+            ids,
+            (token) =>
+              destroyOrder(ids).pipe(
+                Effect.flatMap((ordered) =>
+                  Effect.forEach(ordered, (id) => Effect.exit(destroy(id, token))).pipe(
+                    Effect.flatMap((outcomes) => {
+                      const completed = outcomes.map(Exit.isSuccess);
+                      const failure = outcomes.find((outcome) => Exit.isFailure(outcome));
+                      if (failure === undefined || !Exit.isFailure(failure)) return Effect.void;
+                      const error = errorFromCause(failure.cause);
+                      return read().pipe(
+                        Effect.flatMap((state) => {
+                          const removed = ids.filter(
+                            (id) =>
+                              !state.registry.instances.some((instance) => instance.id === id),
+                          );
+                          const retained = ids.filter((id) =>
+                            state.registry.instances.some((instance) => instance.id === id),
+                          );
+                          return Effect.fail(
+                            new StackDestructionError({
+                              message: error.message,
+                              cause: error,
+                              outcome: {
+                                ...outcomeFor(ids, ordered, completed),
+                                removed,
+                                retained,
+                              },
+                            }),
+                          );
+                        }),
+                      );
+                    }),
+                  ),
                 ),
               ),
-            ),
+            false,
+            false,
+            true,
+            true,
           ),
         ),
       );

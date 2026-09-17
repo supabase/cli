@@ -342,8 +342,6 @@ export const bindHostListenerWithOptions = (
   );
 };
 
-export const isHttpPortField = (field: PortField): boolean => PORT_FIELD_PROTOCOL[field] === "http";
-
 const boundAddress = (server: HttpServer | NetServer, fallback: string): string => {
   const address = server.address();
   return typeof address === "object" && address !== null ? address.address : fallback;

@@ -279,7 +279,12 @@ export const makeRuntimeInputOwner = (
       state: PersistedStackState,
       instanceId: ServiceInstanceId,
     ): Effect.Effect<void, StackPreparationError> => {
-      const settings = settingsForInstance(state, instanceId, "functions");
+      const functionsInstance = state.registry.instances.find(
+        (instance) =>
+          instance.id === instanceId && instance.service === "functions" && instance.config.enabled,
+      );
+      if (functionsInstance === undefined) return Effect.void;
+      const settings: unknown = functionsInstance.config.settings;
       const root = isRecord(settings) ? settingValue(state, settings.functions_root) : "";
       if (root.length === 0) return Effect.fail(failure("Persisted Functions root is missing"));
       return mapFile(
@@ -545,8 +550,11 @@ export const makeRuntimeInputOwner = (
       authMaterial: NonNullable<RuntimeInputMaterial["auth"]> | undefined,
     ): Effect.Effect<RuntimeInputMaterial, StackPreparationError> =>
       Effect.gen(function* () {
-        if (workloadId.endsWith(":studio") || workloadId.endsWith(":edge-runtime"))
-          yield* ensureFunctionsRoot(state, instanceId);
+        if (workloadId.endsWith(":edge-runtime")) yield* ensureFunctionsRoot(state, instanceId);
+        if (workloadId.endsWith(":studio")) {
+          const functionsId = state.registry.defaultInstanceIds.functions;
+          if (functionsId !== undefined) yield* ensureFunctionsRoot(state, functionsId);
+        }
         const auth = needsAuthMaterial(state, instanceId) ? authMaterial : undefined;
         const resolvesAnalyticsMaterial =
           state.registry.instances.some(

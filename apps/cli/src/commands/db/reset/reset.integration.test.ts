@@ -704,6 +704,7 @@ function mockResetStackApi(opts: {
           },
     versions: { database: "17.6.1" },
     capabilities: CAPABILITY_NAMES.map((name) => ({
+      id: ServiceInstanceIdSchema.make(`${name}-primary`),
       name,
       activation: name === "database" ? "eager" : "lazy",
       state:

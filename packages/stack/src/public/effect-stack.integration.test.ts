@@ -153,6 +153,7 @@ describe("Effect stack public lifecycle", () => {
           ownerSessionId,
           rpcRelease: STACK_RPC_RELEASE,
           rpcHandlers: {
+            ...unconfiguredStackRpcHandlers,
             ...unconfiguredServiceRpcHandlers,
             servicesCreate: () =>
               Ref.getAndSet(rejectBeforeAdmission, false).pipe(
@@ -221,6 +222,82 @@ describe("Effect stack public lifecycle", () => {
         expect(yield* Ref.get(releaseObserved)).toBe(true);
         expect(yield* Ref.get(ownerResolutions)).toBe(2);
         expect(yield* stack.services.list).toEqual([descriptor]);
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
+
+  it.live("surfaces post-dispatch create transport loss without replaying the mutation", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-post-dispatch-create-",
+        });
+        const endpoint = { kind: "unix" as const, path: path.join(root, "control.sock") };
+        const ownerSessionId = "post-dispatch-create-owner";
+        const ownerScope = yield* Scope.make();
+        const createDispatched = yield* Deferred.make<void>();
+        const createCalls = yield* Ref.make(0);
+        yield* Effect.addFinalizer(() => Scope.close(ownerScope, Exit.void));
+        yield* startControlServer({
+          endpoint,
+          stackId,
+          ownerSessionId,
+          rpcRelease: STACK_RPC_RELEASE,
+          rpcHandlers: {
+            ...unconfiguredStackRpcHandlers,
+            ...unconfiguredServiceRpcHandlers,
+            servicesCreate: () =>
+              Ref.update(createCalls, (calls) => calls + 1).pipe(
+                Effect.andThen(Deferred.succeed(createDispatched, undefined)),
+                Effect.andThen(Effect.never),
+              ),
+          },
+          maintenanceHandlers: {
+            probe: Effect.succeed({
+              ok: true,
+              op: "probe" as const,
+              stackId,
+              ownerSessionId,
+              rpcRelease: STACK_RPC_RELEASE,
+            }),
+            stop: Effect.succeed({ ok: true as const, op: "stop" as const }),
+          },
+        }).pipe(Effect.provideService(Scope.Scope, ownerScope));
+        const resolutions = yield* Ref.make(0);
+        const owner = {
+          format: "supabase-stack-owner-v1" as const,
+          stackId,
+          endpoint,
+          ownerSessionId,
+          leasePort: 45_007,
+          rpcRelease: STACK_RPC_RELEASE,
+        };
+        const stack = yield* makeTestHandle({
+          resolveOwner: () =>
+            Ref.updateAndGet(resolutions, (count) => count + 1).pipe(
+              Effect.as(Option.some({ owner, launched: false })),
+            ),
+          fingerprintCreationInputs: () => Effect.succeed("post-dispatch-create-digest"),
+        });
+        const request = yield* Effect.forkChild(
+          stack.services.create({ service: "functions", config: { enabled: false } }),
+          { startImmediately: true },
+        );
+        yield* Deferred.await(createDispatched);
+        yield* Scope.close(ownerScope, Exit.void);
+        const result = yield* Fiber.join(request).pipe(Effect.exit);
+        expect(Exit.isFailure(result)).toBe(true);
+        const error = errorFrom(result);
+        expect(error._tag).toBe("UncertainOperationError");
+        if (error._tag === "UncertainOperationError") {
+          expect(error.stackId).toBe(stackId);
+          expect(error.mutation).toBe("create");
+          expect(error.expectedCreationInputsId).toBe("post-dispatch-create-digest");
+        }
+        expect(yield* Ref.get(createCalls)).toBe(1);
+        expect(yield* Ref.get(resolutions)).toBe(1);
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
   );

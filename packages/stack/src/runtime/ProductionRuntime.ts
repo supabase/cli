@@ -29,13 +29,17 @@ import {
   type FunctionsBootstrapOwner,
 } from "../functions/FunctionsBootstrap.ts";
 import type { StackStateStore } from "../state/StackStateStore.ts";
-import { resolveServiceInstancePaths, resolveStackPaths } from "../state/Paths.ts";
+import {
+  resolveServiceInstancePaths,
+  resolveStackPaths,
+  type ServiceInstancePaths,
+} from "../state/Paths.ts";
 import { redactKnownSecrets } from "../state/SecretStore.ts";
 import { privateBindingKey, type PersistedStackState } from "../state/StackState.ts";
 import type { PersistedSecretValues } from "../state/StackState.ts";
 import type { StackId } from "../public/StackId.ts";
 import type { StackRuntime } from "../public/Runtime.ts";
-import type { ArtifactPreparationStatus } from "../public/Status.ts";
+import type { InstanceArtifactPreparationStatus } from "../public/Status.ts";
 import type { CapabilityName } from "../public/Capability.ts";
 import {
   GatewayActivationError,
@@ -575,6 +579,26 @@ export const withOwnedRuntimeFileCleanup = (
   };
 };
 
+/** Removes the durable and runtime roots owned by one destroyed service instance. */
+export const removeOwnedInstancePaths = (
+  fileSystem: FileSystem.FileSystem,
+  instancePaths: Pick<ServiceInstancePaths, "data" | "runtime">,
+): Effect.Effect<void, StackCleanupError> =>
+  Effect.forEach(
+    [instancePaths.data, instancePaths.runtime],
+    (ownedPath) =>
+      fileSystem.remove(ownedPath, { recursive: true, force: true }).pipe(
+        Effect.mapError(
+          (error) =>
+            new StackCleanupError({
+              message: `Unable to remove destroyed instance path ${ownedPath}`,
+              cause: error,
+            }),
+        ),
+      ),
+    { discard: true },
+  );
+
 /** Composes concrete runtime owners around one persisted stack identity. */
 export const makeProductionRuntime = (
   options: ProductionRuntimeOptions,
@@ -693,24 +717,41 @@ export const makeProductionRuntime = (
       });
 
     const artifacts = new Map<string, PreparedWorkloadArtifact>();
-    const preparationStatuses = new Map<string, ArtifactPreparationStatus>();
-    const recordPreparationProgress = (progress: RuntimeArtifactPreparationProgress): void => {
+    const preparationStatuses = new Map<string, InstanceArtifactPreparationStatus>();
+    const recordPreparationProgress = (
+      progress: RuntimeArtifactPreparationProgress,
+      workload: PlannedWorkload,
+      artifactIdentity?: string,
+    ): void => {
       preparationStatuses.set(progress.workloadId, {
         workloadId: progress.workloadId,
+        instanceId: workload.instanceId,
         capability: progress.capability,
         state: progress.state,
+        ...(artifactIdentity === undefined ? {} : { artifactIdentity }),
         ...(progress.error === undefined ? {} : { error: progress.error }),
       });
     };
     const queuePreparation = (workload: PlannedWorkload): void => {
-      if (artifacts.has(artifactKey(state.runtime, workload))) return;
+      const cached = artifacts.get(artifactKey(state.runtime, workload));
+      if (cached !== undefined) {
+        recordPreparationProgress(
+          { workloadId: workload.id, capability: workload.capability, state: "ready" },
+          workload,
+          cached.image ?? `${workload.recipeId}@${cached.version}`,
+        );
+        return;
+      }
       const current = preparationStatuses.get(workload.id);
       if (current?.state === "preparing" || current?.state === "downloading") return;
-      recordPreparationProgress({
-        workloadId: workload.id,
-        capability: workload.capability,
-        state: "queued",
-      });
+      recordPreparationProgress(
+        {
+          workloadId: workload.id,
+          capability: workload.capability,
+          state: "queued",
+        },
+        workload,
+      );
     };
     const preparationGate = yield* Semaphore.make(1);
     const parentScope = yield* Scope.Scope;
@@ -743,35 +784,56 @@ export const makeProductionRuntime = (
         const cached = artifacts.get(key);
         return cached === undefined
           ? Effect.sync(() =>
-              recordPreparationProgress({
-                workloadId: workload.id,
-                capability: workload.capability,
-                state: "preparing",
-              }),
+              recordPreparationProgress(
+                {
+                  workloadId: workload.id,
+                  capability: workload.capability,
+                  state: "preparing",
+                },
+                workload,
+              ),
             ).pipe(
-              Effect.andThen(preparer.prepare(runtime, workload, recordPreparationProgress)),
+              Effect.andThen(
+                preparer.prepare(runtime, workload, (progress) =>
+                  recordPreparationProgress(progress, workload),
+                ),
+              ),
               Effect.tap((prepared) =>
                 Effect.sync(() => {
                   artifacts.set(key, prepared);
-                  recordPreparationProgress({
-                    workloadId: workload.id,
-                    capability: workload.capability,
-                    state: "ready",
-                  });
+                  recordPreparationProgress(
+                    {
+                      workloadId: workload.id,
+                      capability: workload.capability,
+                      state: "ready",
+                    },
+                    workload,
+                    prepared.image ?? `${workload.recipeId}@${prepared.version}`,
+                  );
                 }),
               ),
               Effect.tapError((error) =>
                 Effect.sync(() =>
-                  recordPreparationProgress({
-                    workloadId: workload.id,
-                    capability: workload.capability,
-                    state: "failed",
-                    error: error.message,
-                  }),
+                  recordPreparationProgress(
+                    {
+                      workloadId: workload.id,
+                      capability: workload.capability,
+                      state: "failed",
+                      error: error.message,
+                    },
+                    workload,
+                  ),
                 ),
               ),
             )
-          : Effect.succeed(cached);
+          : Effect.sync(() => {
+              recordPreparationProgress(
+                { workloadId: workload.id, capability: workload.capability, state: "ready" },
+                workload,
+                cached.image ?? `${workload.recipeId}@${cached.version}`,
+              );
+              return cached;
+            });
       });
     };
     const prepare = (runtime: StackRuntime, workload: RuntimeArtifactInput) =>
@@ -797,7 +859,29 @@ export const makeProductionRuntime = (
             }),
           ),
         );
-        return yield* Fiber.join(joined);
+        const prepared = yield* Fiber.join(joined).pipe(
+          Effect.tapError((error) =>
+            Effect.sync(() =>
+              recordPreparationProgress(
+                {
+                  workloadId: workload.id,
+                  capability: workload.capability,
+                  state: "failed",
+                  error: error.message,
+                },
+                workload,
+              ),
+            ),
+          ),
+        );
+        yield* Effect.sync(() =>
+          recordPreparationProgress(
+            { workloadId: workload.id, capability: workload.capability, state: "ready" },
+            workload,
+            prepared.image ?? `${workload.recipeId}@${prepared.version}`,
+          ),
+        );
+        return prepared;
       });
     const prepareArtifacts = (runtime: StackRuntime, workloads: ReadonlyArray<PlannedWorkload>) =>
       Effect.forEach(workloads, (workload) => prepare(runtime, workload), {
@@ -1357,22 +1441,18 @@ export const makeProductionRuntime = (
               ),
             );
             const dataPath = instancePaths.postgresData;
-            const exists = yield* fileSystem
-              .exists(dataPath)
-              .pipe(Effect.orElseSucceed(() => false));
-            if (exists)
-              yield* fileSystem
-                .remove(dataPath, { recursive: true })
-                .pipe(
-                  Effect.mapError((error) =>
-                    driverError(key, "Unable to wipe native database data", error),
-                  ),
-                );
             yield* fileSystem
-              .makeDirectory(dataPath, { recursive: true, mode: 0o700 })
+              .remove(dataPath, { recursive: true, force: true })
               .pipe(
                 Effect.mapError((error) =>
-                  driverError(key, "Unable to recreate native database data directory", error),
+                  driverError(key, "Unable to wipe native database data", error),
+                ),
+              );
+            yield* fileSystem
+              .remove(instancePaths.manifest, { force: true })
+              .pipe(
+                Effect.mapError((error) =>
+                  driverError(key, "Unable to remove native database manifest", error),
                 ),
               );
           }),
@@ -1849,11 +1929,7 @@ export const makeProductionRuntime = (
                 message: "Container catalog artifact image is unavailable",
                 workload: workload.id,
               });
-            const envFile = yield* envFiles.write({
-              instanceId: input.instance.id,
-              workloadId: `${workload.id}:init:${input.operation.id}`,
-              values: environment,
-            });
+            const initWorkloadId = `${workload.id}:init:${input.operation.id}`;
             const startups = spec.containerStartupProcesses(input.state, workload, inputs);
             if (startups.length === 0)
               return yield* new StackPreparationError({
@@ -1861,36 +1937,65 @@ export const makeProductionRuntime = (
                 workload: workload.id,
               });
             const image = artifact.image;
-            yield* Effect.forEach(
-              startups,
-              (startup) =>
-                runContainerStartupProcess({
-                  engine: containerEngine,
-                  key,
-                  timeout: "5 minutes",
-                  specification: {
-                    name: catalogInitContainerName(key, `${input.operation.id}-${recipe.recipeId}`),
-                    image,
-                    labels: {
-                      stackId: input.stackId,
-                      ownerSessionId: options.ownerSessionId,
-                      instanceId: input.instance.id,
-                      workloadId: workload.id,
-                      recipeId: workload.recipeId,
-                      role: "workload",
-                      startup: true,
-                    },
-                    network: network.id,
-                    mounts: spec.containerMounts?.(input.state, workload, inputs) ?? [],
-                    volumeMounts: [],
-                    publications: [],
-                    role: "workload",
-                    entrypoint: startup.entrypoint,
-                    command: startup.command,
-                    envFile,
-                  },
-                }),
-              { discard: true },
+            yield* Effect.uninterruptibleMask((restore) =>
+              Effect.gen(function* () {
+                const startup = Effect.gen(function* () {
+                  const envFile = yield* envFiles.write({
+                    instanceId: input.instance.id,
+                    workloadId: initWorkloadId,
+                    values: environment,
+                  });
+                  yield* Effect.forEach(
+                    startups,
+                    (process) =>
+                      runContainerStartupProcess({
+                        engine: containerEngine,
+                        key,
+                        timeout: "5 minutes",
+                        specification: {
+                          name: catalogInitContainerName(
+                            key,
+                            `${input.operation.id}-${recipe.recipeId}`,
+                          ),
+                          image,
+                          labels: {
+                            stackId: input.stackId,
+                            ownerSessionId: options.ownerSessionId,
+                            instanceId: input.instance.id,
+                            workloadId: workload.id,
+                            recipeId: workload.recipeId,
+                            role: "workload",
+                            startup: true,
+                          },
+                          network: network.id,
+                          mounts: spec.containerMounts?.(input.state, workload, inputs) ?? [],
+                          volumeMounts: [],
+                          publications: [],
+                          role: "workload",
+                          entrypoint: process.entrypoint,
+                          command: process.command,
+                          envFile,
+                        },
+                      }),
+                    { discard: true },
+                  );
+                });
+                const startupResult = yield* Effect.exit(restore(startup));
+                const cleanupResult = yield* Effect.exit(
+                  envFiles.cleanupFile({
+                    instanceId: input.instance.id,
+                    workloadId: initWorkloadId,
+                  }),
+                );
+                if (Exit.isFailure(startupResult) && Exit.isFailure(cleanupResult))
+                  return yield* Effect.failCause(
+                    Cause.combine(startupResult.cause, cleanupResult.cause),
+                  );
+                if (Exit.isFailure(startupResult))
+                  return yield* Effect.failCause(startupResult.cause);
+                if (Exit.isFailure(cleanupResult))
+                  return yield* Effect.failCause(cleanupResult.cause);
+              }),
             );
           }
           return {
@@ -2269,21 +2374,23 @@ export const makeProductionRuntime = (
                   workload: input.instance.id,
                 });
               const volume = yield* snapshotVolume(input, workload);
-              const copied = yield* Effect.exit(
-                withSnapshotContainer(input, workload, (helperId) =>
-                  copy(helperId, `${source}/.`, "/var/lib/postgresql/data/."),
-                ),
+              const restored = yield* Effect.exit(
+                Effect.gen(function* () {
+                  yield* withSnapshotContainer(input, workload, (helperId) =>
+                    copy(helperId, `${source}/.`, "/var/lib/postgresql/data/."),
+                  );
+                  yield* restoreContainerOwnership(input, workload);
+                }),
               );
-              if (Exit.isFailure(copied)) {
+              if (Exit.isFailure(restored)) {
                 const removed = yield* Effect.exit(engine.removeVolume(volume.id));
                 if (Exit.isFailure(removed))
                   return yield* new StackCleanupError({
                     message: "Unable to remove PostgreSQL snapshot volume after restore failure",
-                    cause: Cause.combine(copied.cause, removed.cause),
+                    cause: Cause.combine(restored.cause, removed.cause),
                   });
-                return yield* Effect.failCause(copied.cause);
+                return yield* Effect.failCause(restored.cause);
               }
-              yield* restoreContainerOwnership(input, workload);
               return;
             }
             const parent = pathService.dirname(destination);
@@ -2490,7 +2597,23 @@ export const makeProductionRuntime = (
     const instanceStop = (input: InstanceRuntimeInput) =>
       input.instance.service === "database" ? postgres.stop(input) : stopWorkloads(input);
     const instanceDestroy = (input: InstanceRuntimeInput) =>
-      input.instance.service === "database" ? postgres.destroy(input) : destroyWorkloads(input);
+      Effect.gen(function* () {
+        const runtime =
+          input.instance.service === "database" ? postgres.destroy(input) : destroyWorkloads(input);
+        const runtimeResult = yield* Effect.exit(runtime);
+        if (Exit.isFailure(runtimeResult)) return yield* Effect.failCause(runtimeResult.cause);
+        const instancePaths = yield* resolveServiceInstancePaths(paths, input.instance.id).pipe(
+          Effect.provideService(Path.Path, pathService),
+          Effect.mapError(
+            (error) =>
+              new StackCleanupError({
+                message: "Unable to resolve destroyed instance paths",
+                cause: error,
+              }),
+          ),
+        );
+        yield* removeOwnedInstancePaths(fileSystem, instancePaths);
+      });
     const unsupportedSnapshot = (input: InstanceRuntimeInput) =>
       Effect.fail(
         new UnsupportedSnapshotError({

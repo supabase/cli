@@ -32,8 +32,6 @@ const withPlatform = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.scoped(effect).pipe(Effect.provide(NodeServices.layer));
 
 const ingress: SupervisorIngress = {
-  acquire: () => Effect.die("owner-retirement test does not open public ingress"),
-  open: () => Effect.die("owner-retirement test does not open public ingress"),
   close: Effect.void,
 };
 

@@ -11,6 +11,11 @@ export interface RuntimeEnvFileOwner {
     readonly workloadId: string;
     readonly values: Readonly<Record<string, string>>;
   }) => Effect.Effect<string, StackPreparationError>;
+  /** Removes one exact workload file owned by this instance. */
+  readonly cleanupFile: (input: {
+    readonly instanceId: ServiceInstanceId;
+    readonly workloadId: string;
+  }) => Effect.Effect<void, StackPreparationError>;
   /** Removes only this owner's env-file directory; safe when already absent. */
   readonly cleanupAll: Effect.Effect<void, StackPreparationError>;
 }
@@ -136,10 +141,38 @@ export const makeRuntimeEnvFileOwner = (
       });
     };
 
+    const cleanupFile = (input: {
+      readonly instanceId: ServiceInstanceId;
+      readonly workloadId: string;
+    }) => {
+      if (!validWorkloadId(input.workloadId))
+        return Effect.fail(error("Invalid runtime environment workload identity"));
+      return resolveServiceInstancePaths(paths, input.instanceId).pipe(
+        Effect.provideService(Path.Path, path),
+        Effect.flatMap((instancePaths) => {
+          const target = path.join(
+            instancePaths.runtime,
+            "env",
+            `${encodeWorkloadId(input.workloadId)}.env`,
+          );
+          return mapFile(
+            target,
+            "clean runtime environment file",
+            fs.remove(target, { force: true }),
+          );
+        }),
+        Effect.mapError((cause) =>
+          cause instanceof StackPreparationError
+            ? cause
+            : error("Unable to resolve runtime environment path", { cause }),
+        ),
+      );
+    };
+
     const cleanupAll = mapFile(
       envRoot,
       "clean runtime environment files",
       fs.remove(envRoot, { recursive: true, force: true }),
     );
-    return { write, cleanupAll };
+    return { write, cleanupFile, cleanupAll };
   });

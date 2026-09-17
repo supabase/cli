@@ -478,7 +478,7 @@ describe("port acquisition", () => {
     ),
   );
 
-  it.live("drops a removed private binding after successful acquisition", () =>
+  it.live("retains an existing private binding when no replacement is requested", () =>
     run(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -495,7 +495,7 @@ describe("port acquisition", () => {
         yield* store.initialize(id, { ...state(id, value), privatePorts: [previous] });
         const coordinator = makePortCoordinator(coordinatorOptions(store, root));
         yield* coordinator.acquire(id, [], []);
-        expect((yield* store.read(id))?.privatePorts).toEqual([]);
+        expect((yield* store.read(id))?.privatePorts).toEqual([previous]);
       }),
     ),
   );

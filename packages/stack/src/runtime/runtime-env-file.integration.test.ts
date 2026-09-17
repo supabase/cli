@@ -122,6 +122,32 @@ describe("runtime environment file owner", () => {
     ),
   );
 
+  it.live("cleans one exact workload file", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const { fs, owner } = yield* setupEnvOwner("stack-env-file-cleanup-");
+        const first = yield* owner.write({
+          instanceId,
+          workloadId: "rest:rest:init-operation",
+          values: { X: "first" },
+        });
+        const second = yield* owner.write({
+          instanceId,
+          workloadId: "auth:auth:init-operation",
+          values: { X: "second" },
+        });
+
+        yield* owner.cleanupFile({
+          instanceId,
+          workloadId: "rest:rest:init-operation",
+        });
+
+        expect(yield* fs.exists(first)).toBe(false);
+        expect(yield* fs.exists(second)).toBe(true);
+      }),
+    ),
+  );
+
   it.live("recreates a workload file after cleanup", () =>
     withPlatform(
       Effect.gen(function* () {

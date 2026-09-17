@@ -31,8 +31,6 @@ import type { LogStore } from "./LogStore.ts";
 import { ServiceInstanceIdSchema, type ServiceInstanceId } from "../public/ServiceInstanceId.ts";
 
 const ingress: SupervisorIngress = {
-  acquire: () => Effect.die("restart admission test does not open ingress"),
-  open: () => Effect.die("restart admission test does not open ingress"),
   close: Effect.void,
 };
 

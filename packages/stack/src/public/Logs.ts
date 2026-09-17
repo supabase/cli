@@ -15,6 +15,13 @@ export const LogQuerySchema = Schema.Struct({
 });
 export type LogQuery = Schema.Schema.Type<typeof LogQuerySchema>;
 
+/** Query fields accepted by an instance-scoped log stream. */
+export const ServiceLogQuerySchema = Schema.Struct({
+  cursor: Schema.optionalKey(LogCursorSchema),
+  tail: Schema.optionalKey(Schema.Finite),
+});
+export type ServiceLogQuery = Schema.Schema.Type<typeof ServiceLogQuerySchema>;
+
 export const StackLogEntrySchema = Schema.Struct({
   cursor: LogCursorSchema,
   timestamp: Schema.String,
@@ -34,5 +41,3 @@ export const StackLogBatchSchema = Schema.Struct({
 export type StackLogBatch = Schema.Schema.Type<typeof StackLogBatchSchema>;
 
 export type StackLogSource = CapabilityName | "supervisor" | "gateway";
-
-export type ServiceLogQuery = Omit<LogQuery, "services" | "capabilities">;

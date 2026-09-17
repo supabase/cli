@@ -1,42 +1,27 @@
 import { Context, Crypto, Effect, Exit, FileSystem, Path, Ref, Scope, Semaphore } from "effect";
-import type { LifecycleInput } from "./Lifecycle.ts";
-import type {
-  ActivationResult,
-  GatewayRoute,
-  GatewayProxyRoute,
-  GatewayRouteRequest,
-  HttpGatewayListenerOptions,
-  StackGateway,
-} from "../gateway/Gateway.ts";
+import type { GatewayRoute, GatewayProxyRoute } from "../gateway/Gateway.ts";
 import type { GatewayActivity } from "../gateway/ActivityTracker.ts";
 import {
   GatewayActivationError,
   PortUnavailableError,
-  StackLifecycleConflictError,
   StackPreparationError,
   StackStateInvalidError,
   type StackError,
 } from "../public/Errors.ts";
-import { PORT_FIELDS, type PortField } from "../public/Status.ts";
+import type { PortField } from "../public/Status.ts";
 import type { ServiceInstanceId } from "../public/ServiceInstanceId.ts";
 import type { StackId } from "../public/StackId.ts";
 import { routeCatalogFor, type GatewayApiMaterial } from "../gateway/RouteCatalog.ts";
 import {
   GatewayRouteNotFoundError,
   type BackendEndpoint,
-  makeGateway,
+  isGatewayProxyRoute,
 } from "../gateway/Gateway.ts";
 import { makeHttpGateway, type HttpGateway } from "../gateway/HttpGateway.ts";
 import { makeTcpGateway, type TcpGateway } from "../gateway/TcpGateway.ts";
-import {
-  makePortCoordinator,
-  type PrivatePortIntent,
-  type PublicPortIntent,
-  type PortReservation,
-} from "../state/PortCoordinator.ts";
+import { makePortCoordinator, type PortReservation } from "../state/PortCoordinator.ts";
 import type { HostListener } from "./HostListener.ts";
 import type { StackStateStore } from "../state/StackStateStore.ts";
-import { privateBindingIntentsFor } from "../runtime/WorkloadRuntimeSpec.ts";
 import { runtimeSpecFor } from "../runtime/WorkloadRuntimeSpec.ts";
 import type { RuntimeBindingPublication } from "../runtime/RuntimeBinding.ts";
 import { createExecutionPlan, type ExecutionPlan } from "../model/ExecutionPlan.ts";
@@ -45,7 +30,6 @@ import {
   bindHeldPort,
   bindHostListener,
   hostListenerCoversAddress,
-  isHttpPortField,
   type HeldPort,
 } from "./HostListener.ts";
 import {
@@ -55,44 +39,22 @@ import {
   AUTH_SERVICE_ROLE_KEY_SLOT,
 } from "../state/SecretStore.ts";
 
-interface SupervisorIngressReservation extends PortReservation {
-  /** False when this accepted definition already owns the exact listeners and gateway. */
-  readonly fresh: boolean;
-  /** Stable identity for the reservation across non-fresh reacquisition views. */
-  readonly ownershipToken: symbol;
-}
+export type TrafficAdmissionMode = "normal" | "startup-control";
 
-interface ListenerIntent {
-  readonly enabled: boolean;
-  readonly address: string;
-  readonly port: "automatic" | number;
+export interface TrafficLease {
+  readonly release: Effect.Effect<void>;
 }
-
-type ListenerIntents = Readonly<Record<PortField, ListenerIntent>>;
 
 export interface SupervisorIngress {
-  /** Reserve durable ports and bind public listeners before workload launch. */
-  readonly acquire: (
-    input: LifecycleInput,
-  ) => Effect.Effect<SupervisorIngressReservation, StackError>;
-  /** Adopt acquired listeners into HTTP/TCP gateways after workloads are ready. */
-  readonly open: (
-    input: LifecycleInput,
-    reservation: SupervisorIngressReservation,
-    activate: (
-      capability: import("../public/Capability.ts").CapabilityName,
-    ) => Effect.Effect<ActivationResult, GatewayActivationError | StackError>,
-    activity?: GatewayActivity,
-  ) => Effect.Effect<void, GatewayActivationError | StackError>;
-  /** Close gateway, accepted sockets, and exact listeners; safe to call repeatedly. */
+  /** Close gateways and exact listeners; safe to call repeatedly. */
   readonly close: Effect.Effect<void, StackError>;
   /** Publish the concrete backend bindings returned after one instance starts. */
   readonly publish?: (
     instanceId: ServiceInstanceId,
     publications: ReadonlyArray<RuntimeBindingPublication>,
   ) => Effect.Effect<void, StackError>;
-  /** Reserves and arms the shared Functions API without starting its lazy instance. */
-  readonly armFunctionsApi?: (
+  /** Bind all admitted lazy listeners and the shared API before lazy workloads start. */
+  readonly armLazyIngress?: (
     state: PersistedStackState,
     plan: ExecutionPlan,
   ) => Effect.Effect<void, GatewayActivationError | StackError>;
@@ -105,21 +67,15 @@ export interface SupervisorIngress {
   readonly setInstanceActivator?: (
     activate: (instanceId: ServiceInstanceId) => Effect.Effect<void, StackError>,
   ) => Effect.Effect<void>;
-  /** Installs the Supervisor-owned atomic traffic admission lease. */
+  /** Installs the Supervisor owned atomic traffic admission lease. */
   readonly setTrafficAcquirer?: (
     acquire: (
       instanceId: ServiceInstanceId,
       mode?: TrafficAdmissionMode,
     ) => Effect.Effect<TrafficLease, StackError>,
   ) => Effect.Effect<void>;
-  /** Reports whether a dormant instance still has a bound demand-wake listener. */
+  /** Reports whether a dormant instance still has a bound demand wake listener. */
   readonly isInstanceWakeable?: (instanceId: ServiceInstanceId) => Effect.Effect<boolean>;
-}
-
-export type TrafficAdmissionMode = "normal" | "startup-control";
-
-export interface TrafficLease {
-  readonly release: Effect.Effect<void>;
 }
 
 export interface SupervisorIngressOptions {
@@ -141,10 +97,10 @@ export interface SupervisorIngressOptions {
   readonly resolveInternalApiBindAddress?: () => Effect.Effect<string | undefined>;
   /** Resolver may be replaced by the production credential owner. */
   readonly apiMaterial?: (
-    state: LifecycleInput["state"],
+    state: PersistedStackState,
   ) => Effect.Effect<GatewayApiMaterial, StackPreparationError>;
   /** Resolves the accepted definition's Auth templates for live local serving. */
-  readonly resolveAuthTemplates?: (state: LifecycleInput["state"]) => Effect.Effect<
+  readonly resolveAuthTemplates?: (state: PersistedStackState) => Effect.Effect<
     ReadonlyArray<{
       readonly id: string;
       readonly canonicalPath: string;
@@ -154,142 +110,8 @@ export interface SupervisorIngressOptions {
   >;
 }
 
-const listenerIntents = (input: LifecycleInput): ListenerIntents => {
-  const usable = new Set(input.plan.routes.map(({ listener }) => listener));
-  const select = <K extends keyof ListenerIntents>(field: K): ListenerIntents[K] =>
-    usable.has(field)
-      ? input.definition.listeners[field]
-      : { ...input.definition.listeners[field], enabled: false };
-  return {
-    api: select("api"),
-    database: select("database"),
-    pooler: select("pooler"),
-    studio: select("studio"),
-    mailUi: select("mailUi"),
-    smtp: select("smtp"),
-    pop3: select("pop3"),
-    functionsInspector: select("functionsInspector"),
-  };
-};
-
-const publicBindings = (input: LifecycleInput): ReadonlyArray<PublicPortIntent> => {
-  const intents = listenerIntents(input);
-  const bindingForField: Partial<Record<PortField, string>> = {
-    database: "sql",
-    pooler: "pooler",
-    studio: "studio",
-    mailUi: "mailUi",
-    smtp: "smtp",
-    pop3: "pop3",
-    functionsInspector: "inspector",
-  };
-  const configured = PORT_FIELDS.flatMap((listenerField): ReadonlyArray<PublicPortIntent> => {
-    const intent = intents[listenerField];
-    if (!intent.enabled) return [];
-    if (listenerField === "api")
-      return [
-        {
-          owner: "stack",
-          binding: "api",
-          listenerField,
-          address: intent.address,
-          port: intent.port,
-        },
-      ];
-    const binding = bindingForField[listenerField];
-    const workload = input.plan.workloads.find(
-      (entry) =>
-        entry.capability === (listenerField === "functionsInspector" ? "functions" : listenerField),
-    );
-    if (binding === undefined || workload === undefined) return [];
-    return [
-      {
-        owner: "instance",
-        instanceId: workload.instanceId,
-        binding,
-        listenerField,
-        address: intent.address,
-        port: intent.port,
-      },
-    ];
-  });
-  const endpointFields: Readonly<Record<string, Readonly<Record<string, PortField>>>> = {
-    database: { sql: "database" },
-    functions: { inspector: "functionsInspector" },
-    studio: { studio: "studio" },
-    mail: { smtp: "smtp", pop3: "pop3", mailUi: "mailUi" },
-    pooler: { pooler: "pooler" },
-  };
-  const instanceEndpoints = input.plan.workloads.flatMap((workload) => {
-    const instance = input.state.registry.instances.find(
-      (entry) => entry.id === workload.instanceId,
-    );
-    const fields = instance === undefined ? undefined : endpointFields[instance.service];
-    if (instance === undefined || fields === undefined) return [];
-    return Object.entries(instance.config.endpoints).flatMap(([binding, endpoint]) => {
-      const listenerField = fields[binding];
-      if (listenerField === undefined || endpoint === undefined || endpoint.enabled === false)
-        return [];
-      return [
-        {
-          owner: "instance" as const,
-          instanceId: instance.id,
-          binding,
-          listenerField,
-          address: endpoint.address ?? "127.0.0.1",
-          port:
-            endpoint.port === undefined || endpoint.port === "auto"
-              ? ("automatic" as const)
-              : endpoint.port,
-        },
-      ];
-    });
-  });
-  const unique = new Map<string, PublicPortIntent>();
-  for (const intent of [...configured, ...instanceEndpoints]) {
-    const key =
-      intent.owner === "stack"
-        ? `stack:${intent.binding}`
-        : `instance:${intent.instanceId}:${intent.binding}`;
-    if (!unique.has(key)) unique.set(key, intent);
-  }
-  return [...unique.values()];
-};
-
-const configuredListenerKeys = (input: LifecycleInput): ReadonlySet<string> => {
-  const intents = listenerIntents(input);
-  const bindingForField: Partial<Record<PortField, string>> = {
-    database: "sql",
-    pooler: "pooler",
-    studio: "studio",
-    mailUi: "mailUi",
-    smtp: "smtp",
-    pop3: "pop3",
-    functionsInspector: "inspector",
-  };
-  const keys = new Set<string>(["stack:api"]);
-  for (const field of PORT_FIELDS) {
-    if (field === "api" || !intents[field].enabled) continue;
-    const binding = bindingForField[field];
-    const workload = input.plan.workloads.find(
-      (entry) => entry.capability === (field === "functionsInspector" ? "functions" : field),
-    );
-    if (binding !== undefined && workload !== undefined)
-      keys.add(`instance:${workload.instanceId}:${binding}`);
-  }
-  return keys;
-};
-
-const privateBindings = (input: LifecycleInput): ReadonlyArray<PrivatePortIntent> => {
-  const workloads = new Map(input.plan.workloads.map((workload) => [workload.id, workload]));
-  return privateBindingIntentsFor(input.plan, input.state).flatMap((intent) => {
-    const workload = workloads.get(intent.workloadId);
-    return workload === undefined ? [] : [{ ...intent, instanceId: workload.instanceId }];
-  });
-};
-
 const defaultApiMaterial = (
-  state: LifecycleInput["state"],
+  state: PersistedStackState,
 ): Effect.Effect<GatewayApiMaterial, StackPreparationError> => {
   const get = (slot: string): string | undefined => state.secrets[slot]?.value;
   const publishableKey = get(AUTH_PUBLISHABLE_KEY_SLOT);
@@ -308,61 +130,9 @@ const defaultApiMaterial = (
   return Effect.succeed({ publishableKey, secretKey, anonJwt, serviceRoleJwt });
 };
 
-const routeBackend = (
-  input: LifecycleInput,
-  reservation: SupervisorIngressReservation,
-  route: Pick<GatewayProxyRoute, "capability" | "binding" | "instanceId">,
-  activation: ActivationResult,
-  published?: ReadonlyMap<string, ReadonlyArray<RuntimeBindingPublication>>,
-) => {
-  if (route.binding === undefined) return Effect.succeed(activation.endpoint);
-  const workload = input.plan.workloads.find(
-    (entry) =>
-      entry.capability === route.capability &&
-      (route.instanceId === undefined || entry.instanceId === route.instanceId),
-  );
-  const publishedEndpoint =
-    workload === undefined
-      ? undefined
-      : publishedEndpointFor(published?.get(workload.instanceId), workload, route.binding);
-  if (publishedEndpoint !== undefined) return Effect.succeed(publishedEndpoint);
-  if (route.instanceId !== undefined && published !== undefined)
-    return Effect.fail(
-      new GatewayActivationError({
-        message: `Service backend for ${route.instanceId} is not ready`,
-      }),
-    );
-  const workloadIds = new Set(
-    input.plan.workloads
-      .filter(
-        (entry) =>
-          entry.capability === route.capability &&
-          (route.instanceId === undefined || entry.instanceId === route.instanceId),
-      )
-      .map((entry) => entry.id),
-  );
-  const assignments = reservation.privateAssignments.filter(
-    (entry) =>
-      workloadIds.has(entry.workloadId) &&
-      entry.binding === route.binding &&
-      (route.instanceId === undefined || entry.instanceId === route.instanceId),
-  );
-  const [assignment, ...additionalAssignments] = assignments;
-  if (assignment === undefined || additionalAssignments.length > 0)
-    return Effect.fail(
-      new GatewayActivationError({
-        message:
-          assignment === undefined
-            ? "Gateway private binding is unavailable"
-            : "Gateway private binding is ambiguous",
-      }),
-    );
-  return Effect.succeed({ host: "127.0.0.1", port: assignment.port });
-};
-
 const publishedEndpointFor = (
   publications: ReadonlyArray<RuntimeBindingPublication> | undefined,
-  workload: LifecycleInput["plan"]["workloads"][number],
+  workload: ExecutionPlan["workloads"][number],
   binding: string,
 ): BackendEndpoint | undefined =>
   publications?.find(
@@ -373,6 +143,21 @@ const publishedEndpointFor = (
           workload.capability === "database" &&
           publication.binding === "sql:internal")),
   )?.endpoint;
+
+const publicWorkloadFor = (
+  plan: ExecutionPlan,
+  instanceId: ServiceInstanceId,
+  capability: import("../public/Capability.ts").CapabilityName,
+  listener: PortField,
+): ExecutionPlan["workloads"][number] | undefined => {
+  const candidates = plan.workloads.filter(
+    (entry) => entry.instanceId === instanceId && entry.capability === capability,
+  );
+  return (
+    candidates.find((entry) => entry.readiness.portField === listener) ??
+    (candidates.length === 1 ? candidates[0] : undefined)
+  );
+};
 
 const publicationKey = (publication: RuntimeBindingPublication): string =>
   `${publication.workloadId}\u0000${publication.binding}`;
@@ -391,7 +176,7 @@ const templateContentType = (extension: string): string => {
   }
 };
 
-/** Compose PortCoordinator and StackGateway under one Supervisor owner scope. */
+/** Compose the Supervisor owned gateways under one owner scope. */
 export const makeSupervisorIngress = (
   options: SupervisorIngressOptions,
 ): Effect.Effect<
@@ -403,15 +188,6 @@ export const makeSupervisorIngress = (
     const fs = yield* FileSystem.FileSystem;
     const ownerScope = yield* Scope.Scope;
     const lock = yield* Semaphore.make(1);
-    const current = yield* Ref.make<
-      | {
-          readonly input?: LifecycleInput;
-          readonly reservation: SupervisorIngressReservation;
-          readonly scope: Scope.Scope;
-          readonly gateway?: StackGateway;
-        }
-      | undefined
-    >(undefined);
     const published = yield* Ref.make<
       ReadonlyMap<string, ReadonlyArray<RuntimeBindingPublication>>
     >(new Map());
@@ -419,7 +195,17 @@ export const makeSupervisorIngress = (
       new Map(),
     );
     const apiGateway = yield* Ref.make<HttpGateway | undefined>(undefined);
-    const armSharedFunctionsApi = yield* Ref.make(false);
+    const apiInternalGateway = yield* Ref.make<HttpGateway | undefined>(undefined);
+    const apiReservation = yield* Ref.make<
+      { readonly reservation: PortReservation; readonly scope: Scope.Scope } | undefined
+    >(undefined);
+    const apiGatewayInstances = yield* Ref.make<ReadonlySet<ServiceInstanceId>>(new Set());
+    const sharedApiRoutes: GatewayRoute[] = [];
+    const sharedApiRouteInstances = new Map<
+      import("../public/Capability.ts").CapabilityName,
+      ServiceInstanceId
+    >();
+    const armSharedApi = yield* Ref.make(false);
     const instanceActivator = yield* Ref.make<
       ((instanceId: ServiceInstanceId) => Effect.Effect<void, StackError>) | undefined
     >(undefined);
@@ -435,28 +221,32 @@ export const makeSupervisorIngress = (
       startupControl = false,
     ): GatewayActivity => ({
       track: (_capability, effect) =>
-        Effect.acquireUseRelease(
-          Ref.get(trafficAcquirer).pipe(
-            Effect.flatMap((acquire) =>
-              acquire === undefined
-                ? Effect.fail(
-                    new GatewayActivationError({
-                      message: `Traffic admission is unavailable for ${instanceId}`,
-                    }),
-                  )
-                : acquire(instanceId, startupControl ? "startup-control" : "normal").pipe(
-                    Effect.mapError(
-                      (error) =>
+        Effect.uninterruptibleMask((restore) =>
+          Effect.acquireUseRelease(
+            restore(
+              Ref.get(trafficAcquirer).pipe(
+                Effect.flatMap((acquire) =>
+                  acquire === undefined
+                    ? Effect.fail(
                         new GatewayActivationError({
-                          message: error.message,
-                          cause: error,
+                          message: `Traffic admission is unavailable for ${instanceId}`,
                         }),
-                    ),
-                  ),
+                      )
+                    : acquire(instanceId, startupControl ? "startup-control" : "normal").pipe(
+                        Effect.mapError(
+                          (error) =>
+                            new GatewayActivationError({
+                              message: error.message,
+                              cause: error,
+                            }),
+                        ),
+                      ),
+                ),
+              ),
             ),
+            () => restore(effect),
+            (lease) => lease.release,
           ),
-          () => effect,
-          (lease) => lease.release,
         ),
     });
     const coordinator = makePortCoordinator({
@@ -465,648 +255,589 @@ export const makeSupervisorIngress = (
       bindHost: options.bindHost ?? bindHostListener,
       bindPrivate: options.bindPrivate ?? bindHeldPort,
     });
-    const acquire = (
-      input: LifecycleInput,
-    ): Effect.Effect<SupervisorIngressReservation, StackError> =>
-      lock.withPermit(
-        Effect.gen(function* () {
-          const existing = yield* Ref.get(current);
-          // A Supervisor owns one ingress reservation for its running session. Definition
-          // changes are rejected while running and a stopped session closes this reservation,
-          // so a live reservation can always be reused without a configuration fingerprint.
-          if (existing !== undefined) return { ...existing.reservation, fresh: false };
-          const reservationScope = Scope.forkUnsafe(ownerScope);
-          const reservation = yield* coordinator
-            .acquire(options.stackId, publicBindings(input), privateBindings(input))
-            .pipe(
-              Effect.provideContext(options.context),
-              Effect.provideService(Scope.Scope, reservationScope),
-              Effect.onExit((exit) =>
-                Exit.isSuccess(exit) ? Effect.void : Scope.close(reservationScope, exit),
-              ),
-            );
-          const owned: SupervisorIngressReservation = {
-            ...reservation,
-            fresh: true,
-            ownershipToken: Symbol(),
-          };
-          yield* Ref.set(current, { input, reservation: owned, scope: reservationScope });
-          return owned;
-        }),
-      );
-
-    const closeCurrent = (entry: {
-      readonly reservation: SupervisorIngressReservation;
-      readonly gateway?: StackGateway;
-      readonly scope: Scope.Scope;
-    }): Effect.Effect<void, StackError> =>
-      Effect.gen(function* () {
-        if (entry.gateway !== undefined) yield* entry.gateway.close;
-        yield* Scope.close(entry.scope, Exit.void);
-      });
-
-    const close: Effect.Effect<void, StackError> = lock.withPermit(
-      Effect.gen(function* () {
-        const entry = yield* Ref.get(current);
-        if (entry !== undefined) yield* closeCurrent(entry);
-        for (const gateway of (yield* Ref.get(instanceGateways)).values()) yield* gateway.close;
-        const sharedApi = yield* Ref.get(apiGateway);
-        if (sharedApi !== undefined) yield* sharedApi.close;
-        yield* Ref.set(instanceGateways, new Map());
-        yield* Ref.set(apiGateway, undefined);
-        yield* Ref.set(published, new Map());
-        yield* Ref.set(current, undefined);
-      }),
-    );
-
-    const open = (
-      input: LifecycleInput,
-      reservation: SupervisorIngressReservation,
-      activate: (
-        capability: import("../public/Capability.ts").CapabilityName,
-      ) => Effect.Effect<ActivationResult, GatewayActivationError | StackError>,
-      activity?: GatewayActivity,
-    ): Effect.Effect<void, GatewayActivationError | StackError> =>
-      lock.withPermit(
-        Effect.gen(function* () {
-          const entry = yield* Ref.get(current);
-          if (
-            entry === undefined ||
-            entry.reservation.ownershipToken !== reservation.ownershipToken
-          )
-            return yield* new GatewayActivationError({
-              message: "Gateway reservation is no longer current",
-            });
-          if (entry.gateway !== undefined) return;
-          const intents = listenerIntents(input);
-          const adoptedKeys = configuredListenerKeys(input);
-          const adoptedListeners = reservation.hostListeners.filter(
-            (listener) => listener.routeKey === undefined || adoptedKeys.has(listener.routeKey),
-          );
-          const material = intents.api.enabled
-            ? yield* (options.apiMaterial ?? defaultApiMaterial)(input.state)
-            : undefined;
-          const catalog = routeCatalogFor(input.plan, material);
-          const resolveTemplates = options.resolveAuthTemplates;
-          const templateRoute: GatewayRoute | undefined =
-            resolveTemplates === undefined
-              ? undefined
-              : {
-                  match: (request) => {
-                    const pathname = request.path.split("?", 1)[0] ?? request.path;
-                    return pathname === "/email" || pathname.startsWith("/email/");
-                  },
-                  localResponse: (request) => {
-                    const pathname = request.path.split("?", 1)[0] ?? request.path;
-                    if (request.method !== "GET")
-                      return Effect.fail(
-                        new GatewayRouteNotFoundError({ message: "Auth template not found" }),
-                      );
-                    return resolveTemplates(input.state).pipe(
-                      Effect.mapError(
-                        () => new GatewayRouteNotFoundError({ message: "Auth template not found" }),
-                      ),
-                      Effect.flatMap((templates) => {
-                        const template = templates.find(
-                          (entry) => `/email/${entry.id}${entry.extension}` === pathname,
-                        );
-                        return template === undefined
-                          ? Effect.fail(
-                              new GatewayRouteNotFoundError({
-                                message: "Auth template not found",
-                              }),
-                            )
-                          : fs.readFile(template.canonicalPath).pipe(
-                              Effect.mapError(
-                                () =>
-                                  new GatewayRouteNotFoundError({
-                                    message: "Auth template not found",
-                                  }),
-                              ),
-                              Effect.map((body) => ({
-                                body,
-                                contentType: templateContentType(template.extension),
-                              })),
-                            );
-                      }),
-                    );
-                  },
-                };
-          const http: HttpGatewayListenerOptions[] = adoptedListeners
-            .filter((listener) => isHttpPortField(listener.field))
-            .map((listener) => ({
-              field: listener.field,
-              key: listener.routeKey ?? listener.field,
-              options: {
-                listener,
-                routes:
-                  listener.field === "api" && templateRoute !== undefined
-                    ? [templateRoute, ...(catalog.http.get(listener.field) ?? [])]
-                    : (catalog.http.get(listener.field) ?? []),
-                resolveBackend: (
-                  route: GatewayProxyRoute,
-                  _request: GatewayRouteRequest,
-                  result: ActivationResult,
-                ) =>
-                  Ref.get(published).pipe(
-                    Effect.flatMap((value) =>
-                      routeBackend(input, reservation, route, result, value),
-                    ),
-                  ),
-              },
-            }));
-          const internalApiAddress =
-            intents.api.enabled &&
-            reservation.assignments.api !== undefined &&
-            options.resolveInternalApiBindAddress !== undefined
-              ? yield* options.resolveInternalApiBindAddress()
-              : undefined;
-          let internalApi: HostListener | undefined;
-          if (internalApiAddress !== undefined && reservation.assignments.api !== undefined) {
-            const covered = adoptedListeners.some(
-              (listener) =>
-                listener.field === "api" &&
-                listener.port === reservation.assignments.api?.port &&
-                hostListenerCoversAddress(listener, internalApiAddress),
-            );
-            if (!covered) {
-              internalApi = yield* (options.bindHost ?? bindHostListener)(
-                internalApiAddress,
-                reservation.assignments.api.port,
-                "api",
-              ).pipe(Effect.provideService(Scope.Scope, entry.scope));
-              http.push({
-                field: "api",
-                key: "api:internal",
-                options: {
-                  listener: internalApi,
-                  routes:
-                    templateRoute !== undefined
-                      ? [templateRoute, ...(catalog.http.get("api") ?? [])]
-                      : (catalog.http.get("api") ?? []),
-                  resolveBackend: (
-                    route: GatewayProxyRoute,
-                    _request: GatewayRouteRequest,
-                    result: ActivationResult,
-                  ) =>
-                    Ref.get(published).pipe(
-                      Effect.flatMap((value) =>
-                        routeBackend(input, reservation, route, result, value),
-                      ),
-                    ),
-                },
-              });
-            }
-          }
-          const tcp = adoptedListeners
-            .filter((listener) => !isHttpPortField(listener.field))
-            .map((listener) => ({
-              field: listener.field,
-              key: listener.routeKey ?? listener.field,
-              options: {
-                listener,
-                routes: catalog.tcp.get(listener.field) ?? [],
-                resolveBackend: (
-                  route: GatewayProxyRoute,
-                  _request: GatewayRouteRequest,
-                  result: ActivationResult,
-                ) =>
-                  Ref.get(published).pipe(
-                    Effect.flatMap((value) =>
-                      routeBackend(input, reservation, route, result, value),
-                    ),
-                  ),
-              },
-            }));
-          const gatewayResult = yield* Effect.exit(
-            makeGateway({
-              http,
-              tcp,
-              activate: (capability) =>
-                activate(capability).pipe(
-                  Effect.mapError((error) =>
-                    error instanceof GatewayActivationError
-                      ? error
-                      : new GatewayActivationError({
-                          message: error.message,
-                          cause: error,
-                          recovery:
-                            error instanceof StackLifecycleConflictError
-                              ? error.recovery
-                              : undefined,
-                        }),
-                  ),
-                ),
-              activity,
-            }).pipe(Effect.provideService(Scope.Scope, entry.scope)),
-          );
-          if (Exit.isFailure(gatewayResult)) {
-            if (internalApi !== undefined) yield* internalApi.close.pipe(Effect.ignore);
-            return yield* Effect.failCause(gatewayResult.cause);
-          }
-          const gateway = gatewayResult.value;
-          yield* Ref.set(current, {
-            input,
-            reservation,
-            scope: entry.scope,
-            gateway,
-          });
-        }),
-      );
-
-    const publish = (
+    const releaseSharedApi = Effect.gen(function* () {
+      const sharedApi = yield* Ref.get(apiGateway);
+      if (sharedApi !== undefined) yield* sharedApi.close;
+      const sharedApiInternal = yield* Ref.get(apiInternalGateway);
+      if (sharedApiInternal !== undefined) yield* sharedApiInternal.close;
+      const reservation = yield* Ref.get(apiReservation);
+      if (reservation !== undefined) yield* Scope.close(reservation.scope, Exit.void);
+      yield* Ref.set(apiGateway, undefined);
+      yield* Ref.set(apiInternalGateway, undefined);
+      yield* Ref.set(apiReservation, undefined);
+      yield* Ref.set(apiGatewayInstances, new Set());
+      sharedApiRoutes.splice(0, sharedApiRoutes.length);
+      sharedApiRouteInstances.clear();
+    });
+    const closeUnlocked: Effect.Effect<void, StackError> = Effect.gen(function* () {
+      for (const gateway of (yield* Ref.get(instanceGateways)).values()) yield* gateway.close;
+      yield* releaseSharedApi;
+      yield* Ref.set(instanceGateways, new Map());
+      yield* Ref.set(published, new Map());
+    });
+    const close: Effect.Effect<void, StackError> = lock.withPermit(closeUnlocked);
+    const publishUnlocked = (
       instanceId: ServiceInstanceId,
       publications: ReadonlyArray<RuntimeBindingPublication>,
     ): Effect.Effect<void, StackError> =>
-      lock.withPermit(
-        Effect.gen(function* () {
-          // A dormant listener remains bound so its first request can wake the instance. Reusing
-          // that listener during wake avoids a close/rebind race on the durable public port.
-          yield* Ref.update(published, (current) => {
-            const previous = current.get(instanceId) ?? [];
-            const merged = new Map(
-              previous.map((publication) => [publicationKey(publication), publication]),
-            );
-            for (const publication of publications)
-              merged.set(publicationKey(publication), publication);
-            return new Map(current).set(instanceId, [...merged.values()]);
+      Effect.gen(function* () {
+        // A dormant listener remains bound so its first request can wake the instance. Reusing
+        // that listener during wake avoids a close/rebind race on the durable public port.
+        yield* Ref.update(published, (current) => {
+          const previous = current.get(instanceId) ?? [];
+          const merged = new Map(
+            previous.map((publication) => [publicationKey(publication), publication]),
+          );
+          for (const publication of publications)
+            merged.set(publicationKey(publication), publication);
+          return new Map(current).set(instanceId, [...merged.values()]);
+        });
+        const existing = yield* Ref.get(instanceGateways);
+        const state = yield* options.store.read(options.stackId).pipe(
+          Effect.provideContext(options.context),
+          Effect.mapError(
+            (error) => new StackStateInvalidError({ message: error.message, cause: error }),
+          ),
+        );
+        if (state === undefined)
+          return yield* new StackStateInvalidError({
+            message: "Stack state is missing while publishing instance endpoints",
           });
-          const stackGatewayOpen = (yield* Ref.get(current))?.gateway !== undefined;
-          const currentEntry = yield* Ref.get(current);
-          const reservationListeners = currentEntry?.reservation.hostListeners ?? [];
-          const adoptedKeys =
-            currentEntry?.input === undefined
-              ? new Set<string>(["stack:api"])
-              : configuredListenerKeys(currentEntry.input);
-          const adoptedListeners = reservationListeners.filter(
-            (listener) => listener.routeKey === undefined || adoptedKeys.has(listener.routeKey),
-          );
-          const existing = yield* Ref.get(instanceGateways);
-          const state = yield* options.store.read(options.stackId).pipe(
-            Effect.provideContext(options.context),
-            Effect.mapError(
-              (error) => new StackStateInvalidError({ message: error.message, cause: error }),
-            ),
-          );
-          if (state === undefined)
-            return yield* new StackStateInvalidError({
-              message: "Stack state is missing while publishing instance endpoints",
-            });
-          const plan = yield* createExecutionPlan(state.runtime, state.registry).pipe(
-            Effect.mapError(
-              (error) => new StackStateInvalidError({ message: error.message, cause: error }),
-            ),
-          );
-          const gatewayKinds: Readonly<
-            Record<
-              string,
-              {
-                readonly field: PortField;
-                readonly capability: import("../public/Capability.ts").CapabilityName;
-                readonly protocol: "http" | "tcp";
-                readonly routeBinding: string;
-                readonly workloadBinding: string;
-              }
-            >
-          > = {
-            sql: {
-              field: "database",
-              capability: "database",
-              protocol: "tcp",
-              routeBinding: "primary",
-              workloadBinding: "sql:internal",
-            },
-            pooler: {
-              field: "pooler",
-              capability: "pooler",
-              protocol: "tcp",
-              routeBinding: "primary",
-              workloadBinding: "primary",
-            },
-            inspector: {
-              field: "functionsInspector",
-              capability: "functions",
-              protocol: "http",
-              routeBinding: "inspector",
-              workloadBinding: "inspector",
-            },
-            studio: {
-              field: "studio",
-              capability: "studio",
-              protocol: "http",
-              routeBinding: "primary",
-              workloadBinding: "primary",
-            },
-            mailUi: {
-              field: "mailUi",
-              capability: "mail",
-              protocol: "http",
-              routeBinding: "ui",
-              workloadBinding: "ui",
-            },
-            smtp: {
-              field: "smtp",
-              capability: "mail",
-              protocol: "tcp",
-              routeBinding: "smtp",
-              workloadBinding: "smtp",
-            },
-            pop3: {
-              field: "pop3",
-              capability: "mail",
-              protocol: "tcp",
-              routeBinding: "pop3",
-              workloadBinding: "pop3",
-            },
-          };
-          const publishSharedFunctionsApi = (
-            workload: (typeof plan.workloads)[number],
-          ): Effect.Effect<void, StackError> =>
-            Effect.gen(function* () {
-              if ((yield* Ref.get(apiGateway)) !== undefined) return;
-              if ((yield* Ref.get(current))?.gateway !== undefined) return;
-              const apiAssignment = state.ports.find(
-                (entry) => entry.owner === "stack" && entry.binding === "api",
-              );
-              if (apiAssignment === undefined) return;
-              const reservedListener = (yield* Ref.get(current))?.reservation.hostListeners.find(
-                (entry) =>
-                  entry.routeKey === "stack:api" &&
-                  entry.field === "api" &&
-                  entry.port === apiAssignment.port,
-              );
-              const listener =
-                reservedListener ??
-                (yield* (options.bindHost ?? bindHostListener)(
-                  apiAssignment.address,
-                  apiAssignment.port,
-                  "api",
-                ).pipe(Effect.provideService(Scope.Scope, ownerScope)));
-              const route: GatewayProxyRoute = {
-                capability: "functions",
-                instanceId,
-                match: (request) => request.path.startsWith("/functions/v1/"),
-                upstreamPath: (request) => {
-                  const path = request.path.slice("/functions/v1".length);
-                  return path.length === 0 ? "/" : path;
-                },
-              };
-              const activate = (_capability: import("../public/Capability.ts").CapabilityName) =>
-                Effect.gen(function* () {
-                  let activeEndpoint = publishedEndpointFor(
-                    (yield* Ref.get(published)).get(instanceId),
-                    workload,
-                    "primary",
-                  );
-                  if (activeEndpoint === undefined) {
-                    const wake = yield* Ref.get(instanceActivator);
-                    if (wake === undefined)
-                      return yield* new GatewayActivationError({
-                        message: "Functions are dormant",
-                      });
-                    yield* wake(instanceId);
-                    activeEndpoint = publishedEndpointFor(
-                      (yield* Ref.get(published)).get(instanceId),
-                      workload,
-                      "primary",
-                    );
-                  }
-                  return activeEndpoint === undefined
-                    ? yield* new GatewayActivationError({
-                        message: "Functions backend is unavailable",
-                      })
-                    : { capability: "functions" as const, instanceId, endpoint: activeEndpoint };
-                }).pipe(
-                  Effect.mapError((error) =>
-                    error instanceof GatewayActivationError
-                      ? error
-                      : new GatewayActivationError({ message: error.message, cause: error }),
-                  ),
-                );
-              const gateway = yield* makeHttpGateway({
-                listener,
-                routes: [route],
-                activate,
-                resolveBackend: () =>
-                  Ref.get(published).pipe(
-                    Effect.flatMap((current) => {
-                      const active = publishedEndpointFor(
-                        current.get(instanceId),
-                        workload,
-                        "primary",
-                      );
-                      return active === undefined
-                        ? Effect.fail(
-                            new GatewayActivationError({
-                              message: `Functions backend for ${instanceId} is not published`,
-                            }),
-                          )
-                        : Effect.succeed(active);
-                    }),
-                  ),
-                activity: activityFor(instanceId),
-              }).pipe(Effect.provideService(Scope.Scope, ownerScope));
-              yield* Ref.set(apiGateway, gateway);
-            });
-          // Functions expose their main HTTP route through the shared API listener. The inspector
-          // listener is optional, so publication must follow the workload start itself.
-          const functionsWorkload = plan.workloads.find(
-            (entry) => entry.instanceId === instanceId && entry.capability === "functions",
-          );
-          if (functionsWorkload !== undefined) {
-            if (
-              publishedEndpointFor(
-                (yield* Ref.get(published)).get(instanceId),
-                functionsWorkload,
-                "primary",
-              ) !== undefined ||
-              (yield* Ref.get(armSharedFunctionsApi))
+        const plan = yield* createExecutionPlan(state.runtime, state.registry).pipe(
+          Effect.mapError(
+            (error) => new StackStateInvalidError({ message: error.message, cause: error }),
+          ),
+        );
+        const gatewayKinds: Readonly<
+          Record<
+            string,
+            {
+              readonly field: PortField;
+              readonly capability: import("../public/Capability.ts").CapabilityName;
+              readonly protocol: "http" | "tcp";
+              readonly routeBinding: string;
+              readonly workloadBinding: string;
+            }
+          >
+        > = {
+          sql: {
+            field: "database",
+            capability: "database",
+            protocol: "tcp",
+            routeBinding: "primary",
+            workloadBinding: "sql:internal",
+          },
+          pooler: {
+            field: "pooler",
+            capability: "pooler",
+            protocol: "tcp",
+            routeBinding: "primary",
+            workloadBinding: "primary",
+          },
+          inspector: {
+            field: "functionsInspector",
+            capability: "functions",
+            protocol: "http",
+            routeBinding: "inspector",
+            workloadBinding: "inspector",
+          },
+          studio: {
+            field: "studio",
+            capability: "studio",
+            protocol: "http",
+            routeBinding: "primary",
+            workloadBinding: "primary",
+          },
+          mailUi: {
+            field: "mailUi",
+            capability: "mail",
+            protocol: "http",
+            routeBinding: "ui",
+            workloadBinding: "ui",
+          },
+          smtp: {
+            field: "smtp",
+            capability: "mail",
+            protocol: "tcp",
+            routeBinding: "smtp",
+            workloadBinding: "smtp",
+          },
+          pop3: {
+            field: "pop3",
+            capability: "mail",
+            protocol: "tcp",
+            routeBinding: "pop3",
+            workloadBinding: "pop3",
+          },
+        };
+        const apiEnabled =
+          plan.routes.some((route) => route.listener === "api" && route.protocol === "http") &&
+          state.listeners.api?.enabled !== false;
+        const admittedApiInstances = new Set(
+          state.registry.instances
+            .filter(
+              (instance) => instance.config.enabled !== false && instance.intent === "started",
             )
-              yield* publishSharedFunctionsApi(functionsWorkload);
-          }
-          const assignments =
-            state?.ports.filter(
-              (entry) => entry.owner === "instance" && entry.instanceId === instanceId,
+            .map((instance) => instance.id),
+        );
+        const apiRoutes =
+          routeCatalogFor(
+            plan,
+            apiEnabled ? yield* (options.apiMaterial ?? defaultApiMaterial)(state) : undefined,
+          )
+            .http.get("api")
+            ?.filter(
+              (route): route is GatewayProxyRoute & { readonly instanceId: ServiceInstanceId } =>
+                isGatewayProxyRoute(route) &&
+                route.instanceId !== undefined &&
+                admittedApiInstances.has(route.instanceId),
             ) ?? [];
-          for (const assignment of assignments) {
-            const kind = gatewayKinds[assignment.binding];
-            if (kind === undefined) continue;
+        const publishSharedApi = (): Effect.Effect<void, StackError> =>
+          Effect.gen(function* () {
+            const apiAssignment = state.ports.find(
+              (entry) => entry.owner === "stack" && entry.binding === "api",
+            );
+            if (apiAssignment === undefined || apiRoutes.length === 0) return;
+            let existingGateway = yield* Ref.get(apiGateway);
             if (
-              stackGatewayOpen &&
-              adoptedListeners.some(
-                (listener) => listener.field === kind.field && listener.port === assignment.port,
-              )
-            )
-              continue;
-            if (existing.has(`${instanceId}:${assignment.binding}`)) continue;
-            const workload = plan.workloads.find((entry) => {
-              if (entry.instanceId !== instanceId) return false;
-              const spec = runtimeSpecFor(entry);
-              return (
-                spec !== undefined && Object.keys(spec.bindings).includes(kind.workloadBinding)
-              );
-            });
-            const endpoint =
-              workload === undefined
+              existingGateway !== undefined &&
+              (existingGateway.address !== apiAssignment.address ||
+                existingGateway.port !== apiAssignment.port)
+            ) {
+              yield* existingGateway.close;
+              const existingInternalGateway = yield* Ref.get(apiInternalGateway);
+              if (existingInternalGateway !== undefined) yield* existingInternalGateway.close;
+              const existingReservation = yield* Ref.get(apiReservation);
+              if (existingReservation !== undefined)
+                yield* Scope.close(existingReservation.scope, Exit.void);
+              yield* Ref.set(apiGateway, undefined);
+              yield* Ref.set(apiInternalGateway, undefined);
+              yield* Ref.set(apiReservation, undefined);
+              existingGateway = undefined;
+            }
+            const routeInstances = new Map(
+              apiRoutes.map((route) => [route.capability, route.instanceId]),
+            );
+            const routeInstanceIds = new Set(apiRoutes.map((route) => route.instanceId));
+            const resolveTemplates = options.resolveAuthTemplates;
+            const templateRoute: GatewayRoute | undefined =
+              resolveTemplates === undefined
                 ? undefined
-                : publishedEndpointFor(
-                    (yield* Ref.get(published)).get(instanceId),
-                    workload,
-                    kind.workloadBinding,
-                  );
-            if (endpoint === undefined) continue;
-            const reservedListener = reservationListeners.find(
-              (listener) =>
-                listener.routeKey === `instance:${instanceId}:${assignment.binding}` &&
-                listener.port === assignment.port,
+                : {
+                    match: (request) => {
+                      const pathname = request.path.split("?", 1)[0] ?? request.path;
+                      return pathname === "/email" || pathname.startsWith("/email/");
+                    },
+                    localResponse: (request) => {
+                      const pathname = request.path.split("?", 1)[0] ?? request.path;
+                      if (request.method !== "GET")
+                        return Effect.fail(
+                          new GatewayRouteNotFoundError({ message: "Auth template not found" }),
+                        );
+                      return resolveTemplates(state).pipe(
+                        Effect.mapError(
+                          () =>
+                            new GatewayRouteNotFoundError({ message: "Auth template not found" }),
+                        ),
+                        Effect.flatMap((templates) => {
+                          const template = templates.find(
+                            (entry) => `/email/${entry.id}${entry.extension}` === pathname,
+                          );
+                          return template === undefined
+                            ? Effect.fail(
+                                new GatewayRouteNotFoundError({
+                                  message: "Auth template not found",
+                                }),
+                              )
+                            : fs.readFile(template.canonicalPath).pipe(
+                                Effect.mapError(
+                                  () =>
+                                    new GatewayRouteNotFoundError({
+                                      message: "Auth template not found",
+                                    }),
+                                ),
+                                Effect.map((body) => ({
+                                  body,
+                                  contentType: templateContentType(template.extension),
+                                })),
+                              );
+                        }),
+                      );
+                    },
+                  };
+            const routes = apiRoutes.map((route) => {
+              const workload = publicWorkloadFor(plan, route.instanceId, route.capability, "api");
+              const binding = route.binding ?? "primary";
+              return {
+                ...route,
+                binding,
+                prepare: () =>
+                  Effect.gen(function* () {
+                    let endpoint =
+                      workload === undefined
+                        ? undefined
+                        : publishedEndpointFor(
+                            (yield* Ref.get(published)).get(route.instanceId),
+                            workload,
+                            binding,
+                          );
+                    if (endpoint === undefined) {
+                      const latestState = yield* options.store.read(options.stackId).pipe(
+                        Effect.provideContext(options.context),
+                        Effect.mapError(
+                          (error) =>
+                            new GatewayActivationError({
+                              message: "Unable to inspect API instance state",
+                              cause: error,
+                            }),
+                        ),
+                      );
+                      const instance = latestState?.registry.instances.find(
+                        (entry) => entry.id === route.instanceId,
+                      );
+                      if (
+                        instance === undefined ||
+                        instance.config.enabled === false ||
+                        instance.intent !== "started"
+                      )
+                        return yield* new GatewayActivationError({
+                          message: `${route.capability} is not admitted for wake`,
+                        });
+                      const wake = yield* Ref.get(instanceActivator);
+                      if (wake === undefined)
+                        return yield* new GatewayActivationError({
+                          message: `${route.capability} is dormant`,
+                        });
+                      yield* wake(route.instanceId);
+                      endpoint =
+                        workload === undefined
+                          ? undefined
+                          : publishedEndpointFor(
+                              (yield* Ref.get(published)).get(route.instanceId),
+                              workload,
+                              binding,
+                            );
+                    }
+                    return endpoint === undefined
+                      ? yield* new GatewayActivationError({
+                          message: `${route.capability} backend for ${route.instanceId} is unavailable`,
+                        })
+                      : { resolveBackend: () => Effect.succeed(endpoint) };
+                  }).pipe(
+                    Effect.mapError((error) =>
+                      error instanceof GatewayActivationError
+                        ? error
+                        : new GatewayActivationError({ message: error.message, cause: error }),
+                    ),
+                  ),
+              } satisfies GatewayProxyRoute;
+            });
+            const nextRoutes = templateRoute === undefined ? routes : [templateRoute, ...routes];
+            sharedApiRoutes.splice(0, sharedApiRoutes.length, ...nextRoutes);
+            sharedApiRouteInstances.clear();
+            for (const [capability, routeInstanceId] of routeInstances)
+              sharedApiRouteInstances.set(capability, routeInstanceId);
+            if (existingGateway !== undefined) {
+              yield* Ref.set(apiGatewayInstances, routeInstanceIds);
+              return;
+            }
+            const reservedListener = (yield* Ref.get(
+              apiReservation,
+            ))?.reservation.hostListeners.find(
+              (entry) =>
+                entry.routeKey === "stack:api" &&
+                entry.field === "api" &&
+                entry.port === apiAssignment.port,
             );
             const listener =
               reservedListener ??
               (yield* (options.bindHost ?? bindHostListener)(
-                assignment.address,
-                assignment.port,
-                kind.field,
+                apiAssignment.address,
+                apiAssignment.port,
+                "api",
               ).pipe(Effect.provideService(Scope.Scope, ownerScope)));
-            const route: import("../gateway/Gateway.ts").GatewayProxyRoute = {
-              capability: kind.capability,
-              instanceId,
-              binding: kind.routeBinding,
-              match: () => true,
+            const internalAddress = options.resolveInternalApiBindAddress
+              ? yield* options.resolveInternalApiBindAddress()
+              : undefined;
+            const internalListener =
+              internalAddress !== undefined && !hostListenerCoversAddress(listener, internalAddress)
+                ? yield* (options.bindHost ?? bindHostListener)(
+                    internalAddress,
+                    apiAssignment.port,
+                    "api",
+                  ).pipe(Effect.provideService(Scope.Scope, ownerScope))
+                : undefined;
+            const activity: GatewayActivity = {
+              track: (capability, effect) => {
+                const instance = sharedApiRouteInstances.get(capability);
+                return instance === undefined
+                  ? effect
+                  : activityFor(instance).track(capability, effect);
+              },
             };
-            const activate = (_capability: import("../public/Capability.ts").CapabilityName) =>
-              Effect.gen(function* () {
-                const current = yield* Ref.get(published);
-                const active = current.get(instanceId);
-                let activeEndpoint =
-                  workload === undefined
-                    ? undefined
-                    : publishedEndpointFor(active, workload, kind.workloadBinding);
-                if (activeEndpoint === undefined) {
-                  const activateInstance = yield* Ref.get(instanceActivator);
-                  if (activateInstance === undefined)
-                    return yield* new GatewayActivationError({
-                      message: `Service instance ${instanceId} is dormant`,
-                    });
-                  yield* activateInstance(instanceId);
-                  const refreshed = (yield* Ref.get(published)).get(instanceId);
-                  activeEndpoint =
-                    workload === undefined
-                      ? undefined
-                      : publishedEndpointFor(refreshed, workload, kind.workloadBinding);
-                }
-                return activeEndpoint === undefined
-                  ? yield* new GatewayActivationError({
-                      message: `Service instance ${instanceId} did not publish a backend endpoint`,
-                    })
-                  : { capability: kind.capability, instanceId, endpoint: activeEndpoint };
-              }).pipe(
-                Effect.mapError((error) =>
-                  error instanceof GatewayActivationError
-                    ? error
-                    : new GatewayActivationError({ message: error.message, cause: error }),
-                ),
-              );
-            const gateway =
-              kind.protocol === "http"
-                ? yield* makeHttpGateway({
-                    listener,
-                    routes: [route],
-                    activate,
-                    resolveBackend: () =>
-                      Ref.get(published).pipe(
-                        Effect.flatMap((current) => {
-                          const active =
-                            workload === undefined
-                              ? endpoint
-                              : publishedEndpointFor(
-                                  current.get(instanceId),
-                                  workload,
-                                  kind.workloadBinding,
-                                );
-                          return active === undefined
-                            ? Effect.fail(
-                                new GatewayActivationError({
-                                  message: `Service backend for ${instanceId} is not published`,
-                                }),
-                              )
-                            : Effect.succeed(active);
-                        }),
-                      ),
-                    activity: activityFor(instanceId, kind.routeBinding === "inspector"),
-                  }).pipe(Effect.provideService(Scope.Scope, ownerScope))
-                : yield* makeTcpGateway({
-                    listener,
-                    routes: [route],
-                    activate,
-                    resolveBackend: () =>
-                      Ref.get(published).pipe(
-                        Effect.flatMap((current) => {
-                          const active =
-                            workload === undefined
-                              ? endpoint
-                              : publishedEndpointFor(
-                                  current.get(instanceId),
-                                  workload,
-                                  kind.workloadBinding,
-                                );
-                          return active === undefined
-                            ? Effect.fail(
-                                new GatewayActivationError({
-                                  message: `Service backend for ${instanceId} is not published`,
-                                }),
-                              )
-                            : Effect.succeed(active);
-                        }),
-                      ),
-                    activity: activityFor(instanceId),
+            const gatewayOptions = {
+              routes: sharedApiRoutes,
+              activate: (capability: import("../public/Capability.ts").CapabilityName) =>
+                Effect.succeed({
+                  capability,
+                  endpoint: { host: "127.0.0.1", port: 1 },
+                }),
+              activity,
+            };
+            const gateway = yield* makeHttpGateway({
+              listener,
+              ...gatewayOptions,
+            }).pipe(Effect.provideService(Scope.Scope, ownerScope));
+            const internalGateway =
+              internalListener === undefined
+                ? undefined
+                : yield* makeHttpGateway({
+                    listener: internalListener,
+                    ...gatewayOptions,
                   }).pipe(Effect.provideService(Scope.Scope, ownerScope));
-            yield* Ref.update(instanceGateways, (current) =>
-              new Map(current).set(`${instanceId}:${assignment.binding}`, gateway),
+            yield* Ref.set(apiGateway, gateway);
+            yield* Ref.set(apiInternalGateway, internalGateway);
+            yield* Ref.set(apiGatewayInstances, routeInstanceIds);
+          });
+        if (!apiEnabled) {
+          yield* releaseSharedApi;
+        } else if (
+          apiRoutes.length > 0 &&
+          (publications.length > 0 || (yield* Ref.get(armSharedApi)))
+        ) {
+          yield* publishSharedApi();
+        }
+        const assignments =
+          state?.ports.filter(
+            (entry) => entry.owner === "instance" && entry.instanceId === instanceId,
+          ) ?? [];
+        for (const assignment of assignments) {
+          const kind = gatewayKinds[assignment.binding];
+          if (kind === undefined) continue;
+          if (existing.has(`${instanceId}:${assignment.binding}`)) continue;
+          const workload = publicWorkloadFor(plan, instanceId, kind.capability, kind.field);
+          const resolvedWorkload =
+            workload !== undefined &&
+            Object.keys(runtimeSpecFor(workload)?.bindings ?? {}).includes(kind.workloadBinding)
+              ? workload
+              : undefined;
+          const endpoint =
+            resolvedWorkload === undefined
+              ? undefined
+              : publishedEndpointFor(
+                  (yield* Ref.get(published)).get(instanceId),
+                  resolvedWorkload,
+                  kind.workloadBinding,
+                );
+          const instance = state.registry.instances.find((entry) => entry.id === instanceId);
+          const lazy =
+            instance?.intent === "started" &&
+            instance.config.enabled !== false &&
+            plan.activation[instanceId] === "lazy";
+          if (endpoint === undefined && !lazy) continue;
+          const listener = yield* (options.bindHost ?? bindHostListener)(
+            assignment.address,
+            assignment.port,
+            kind.field,
+          ).pipe(Effect.provideService(Scope.Scope, ownerScope));
+          const route: import("../gateway/Gateway.ts").GatewayProxyRoute = {
+            capability: kind.capability,
+            instanceId,
+            binding: kind.routeBinding,
+            match: () => true,
+          };
+          const activate = (_capability: import("../public/Capability.ts").CapabilityName) =>
+            Effect.gen(function* () {
+              const current = yield* Ref.get(published);
+              const active = current.get(instanceId);
+              let activeEndpoint =
+                resolvedWorkload === undefined
+                  ? undefined
+                  : publishedEndpointFor(active, resolvedWorkload, kind.workloadBinding);
+              if (activeEndpoint === undefined) {
+                const activateInstance = yield* Ref.get(instanceActivator);
+                if (activateInstance === undefined)
+                  return yield* new GatewayActivationError({
+                    message: `Service instance ${instanceId} is dormant`,
+                  });
+                yield* activateInstance(instanceId);
+                const refreshed = (yield* Ref.get(published)).get(instanceId);
+                activeEndpoint =
+                  resolvedWorkload === undefined
+                    ? undefined
+                    : publishedEndpointFor(refreshed, resolvedWorkload, kind.workloadBinding);
+              }
+              return activeEndpoint === undefined
+                ? yield* new GatewayActivationError({
+                    message: `Service instance ${instanceId} did not publish a backend endpoint`,
+                  })
+                : { capability: kind.capability, instanceId, endpoint: activeEndpoint };
+            }).pipe(
+              Effect.mapError((error) =>
+                error instanceof GatewayActivationError
+                  ? error
+                  : new GatewayActivationError({ message: error.message, cause: error }),
+              ),
             );
-          }
-        }),
-      );
-    const armFunctionsApi = (
+          const gateway =
+            kind.protocol === "http"
+              ? yield* makeHttpGateway({
+                  listener,
+                  routes: [route],
+                  activate,
+                  resolveBackend: () =>
+                    Ref.get(published).pipe(
+                      Effect.flatMap((current) => {
+                        const active =
+                          resolvedWorkload === undefined
+                            ? endpoint
+                            : publishedEndpointFor(
+                                current.get(instanceId),
+                                resolvedWorkload,
+                                kind.workloadBinding,
+                              );
+                        return active === undefined
+                          ? Effect.fail(
+                              new GatewayActivationError({
+                                message: `Service backend for ${instanceId} is not published`,
+                              }),
+                            )
+                          : Effect.succeed(active);
+                      }),
+                    ),
+                  activity: activityFor(instanceId, kind.routeBinding === "inspector"),
+                }).pipe(Effect.provideService(Scope.Scope, ownerScope))
+              : yield* makeTcpGateway({
+                  listener,
+                  routes: [route],
+                  activate,
+                  resolveBackend: () =>
+                    Ref.get(published).pipe(
+                      Effect.flatMap((current) => {
+                        const active =
+                          resolvedWorkload === undefined
+                            ? endpoint
+                            : publishedEndpointFor(
+                                current.get(instanceId),
+                                resolvedWorkload,
+                                kind.workloadBinding,
+                              );
+                        return active === undefined
+                          ? Effect.fail(
+                              new GatewayActivationError({
+                                message: `Service backend for ${instanceId} is not published`,
+                              }),
+                            )
+                          : Effect.succeed(active);
+                      }),
+                    ),
+                  activity: activityFor(instanceId),
+                }).pipe(Effect.provideService(Scope.Scope, ownerScope));
+          yield* Ref.update(instanceGateways, (current) =>
+            new Map(current).set(`${instanceId}:${assignment.binding}`, gateway),
+          );
+        }
+      });
+    const publish = (
+      instanceId: ServiceInstanceId,
+      publications: ReadonlyArray<RuntimeBindingPublication>,
+    ): Effect.Effect<void, StackError> =>
+      lock.withPermit(publishUnlocked(instanceId, publications));
+    const armLazyIngress = (
       state: PersistedStackState,
       plan: ExecutionPlan,
     ): Effect.Effect<void, GatewayActivationError | StackError> =>
-      Effect.gen(function* () {
-        const functionsWorkload = plan.workloads.find((entry) => entry.capability === "functions");
-        if (functionsWorkload === undefined) return;
-        const api = state.listeners.api;
-        if (api?.enabled === false) return;
-        const reservationScope = Scope.forkUnsafe(ownerScope);
-        const reservation = yield* coordinator
-          .acquire(
-            options.stackId,
-            [
-              {
-                owner: "stack",
-                binding: "api",
-                listenerField: "api",
-                address: api?.address ?? "127.0.0.1",
-                port: api?.port ?? "automatic",
-              },
-            ],
-            [],
-          )
-          .pipe(
-            Effect.provideContext(options.context),
-            Effect.provideService(Scope.Scope, reservationScope),
-            Effect.onExit((exit) =>
-              Exit.isSuccess(exit) ? Effect.void : Scope.close(reservationScope, exit),
-            ),
+      lock.withPermit(
+        Effect.gen(function* () {
+          const apiEnabled =
+            state.listeners.api?.enabled !== false &&
+            plan.routes.some((route) => route.listener === "api" && route.protocol === "http");
+          const desiredApi = state.ports.find(
+            (entry) => entry.owner === "stack" && entry.binding === "api",
           );
-        yield* Ref.set(current, {
-          reservation: { ...reservation, fresh: true, ownershipToken: Symbol() },
-          scope: reservationScope,
-        });
-        yield* Ref.set(armSharedFunctionsApi, true);
-        yield* publish(functionsWorkload.instanceId, []).pipe(
-          Effect.ensuring(Ref.set(armSharedFunctionsApi, false)),
-        );
-      });
-    const unpublish = (
+          const existingApi = yield* Ref.get(apiGateway);
+          if (
+            existingApi !== undefined &&
+            (!apiEnabled ||
+              desiredApi === undefined ||
+              existingApi.address !== desiredApi.address ||
+              existingApi.port !== desiredApi.port)
+          )
+            yield* releaseSharedApi;
+          const existingReservation = yield* Ref.get(apiReservation);
+          const reservedApi = existingReservation?.reservation.assignments.api;
+          if (
+            existingReservation !== undefined &&
+            (!apiEnabled ||
+              desiredApi === undefined ||
+              reservedApi === undefined ||
+              reservedApi.address !== desiredApi.address ||
+              reservedApi.port !== desiredApi.port)
+          )
+            yield* releaseSharedApi;
+          if (
+            apiEnabled &&
+            (yield* Ref.get(apiGateway)) === undefined &&
+            (yield* Ref.get(apiReservation)) === undefined
+          ) {
+            const reservationScope = Scope.forkUnsafe(ownerScope);
+            const reservation = yield* coordinator
+              .acquire(
+                options.stackId,
+                [
+                  {
+                    owner: "stack",
+                    binding: "api",
+                    listenerField: "api",
+                    address: state.listeners.api?.address ?? "127.0.0.1",
+                    port: state.listeners.api?.port ?? "automatic",
+                  },
+                ],
+                [],
+              )
+              .pipe(
+                Effect.provideContext(options.context),
+                Effect.provideService(Scope.Scope, reservationScope),
+                Effect.onExit((exit) =>
+                  Exit.isSuccess(exit) ? Effect.void : Scope.close(reservationScope, exit),
+                ),
+              );
+            yield* Ref.set(apiReservation, { reservation, scope: reservationScope });
+          }
+          const lazyInstanceIds = state.registry.instances
+            .filter(
+              (instance) =>
+                instance.config.enabled !== false &&
+                instance.intent === "started" &&
+                plan.activation[instance.id] === "lazy",
+            )
+            .map((instance) => instance.id);
+          const apiInstanceId = apiEnabled
+            ? plan.routes.find(
+                (route) =>
+                  route.listener === "api" &&
+                  route.protocol === "http" &&
+                  route.instanceId !== undefined &&
+                  state.registry.instances.some(
+                    (instance) =>
+                      instance.id === route.instanceId &&
+                      instance.config.enabled !== false &&
+                      instance.intent === "started",
+                  ),
+              )?.instanceId
+            : undefined;
+          const instancesToArm = [
+            ...new Set(
+              apiInstanceId === undefined ? lazyInstanceIds : [...lazyInstanceIds, apiInstanceId],
+            ),
+          ];
+          yield* Ref.set(armSharedApi, true);
+          yield* Effect.forEach(instancesToArm, (instanceId) => publishUnlocked(instanceId, []), {
+            discard: true,
+          }).pipe(Effect.ensuring(Ref.set(armSharedApi, false)));
+        }),
+      );
+    const unpublishUnlocked = (
       instanceId: ServiceInstanceId,
       preserveListener = false,
     ): Effect.Effect<void, StackError> =>
@@ -1122,6 +853,22 @@ export const makeSupervisorIngress = (
               return next;
             });
           }
+          const sharedApi = yield* Ref.get(apiGateway);
+          if (sharedApi !== undefined && (yield* Ref.get(apiGatewayInstances)).has(instanceId)) {
+            const remaining = new Set(yield* Ref.get(apiGatewayInstances));
+            remaining.delete(instanceId);
+            yield* Ref.set(apiGatewayInstances, remaining);
+            const remainingRoutes = sharedApiRoutes.filter(
+              (route) => !isGatewayProxyRoute(route) || route.instanceId !== instanceId,
+            );
+            sharedApiRoutes.splice(0, sharedApiRoutes.length, ...remainingRoutes);
+            for (const [capability, routeInstanceId] of sharedApiRouteInstances)
+              if (routeInstanceId === instanceId) sharedApiRouteInstances.delete(capability);
+            if (remaining.size === 0) {
+              sharedApiRoutes.splice(0, sharedApiRoutes.length);
+              sharedApiRouteInstances.clear();
+            }
+          }
         }
         yield* Ref.update(published, (current) => {
           const next = new Map(current);
@@ -1129,6 +876,11 @@ export const makeSupervisorIngress = (
           return next;
         });
       });
+    const unpublish = (
+      instanceId: ServiceInstanceId,
+      preserveListener = false,
+    ): Effect.Effect<void, StackError> =>
+      lock.withPermit(unpublishUnlocked(instanceId, preserveListener));
     const setInstanceActivator = (
       activate: (instanceId: ServiceInstanceId) => Effect.Effect<void, StackError>,
     ): Effect.Effect<void> => Ref.set(instanceActivator, activate);
@@ -1139,17 +891,20 @@ export const makeSupervisorIngress = (
       ) => Effect.Effect<TrafficLease, StackError>,
     ): Effect.Effect<void> => Ref.set(trafficAcquirer, acquire);
     const isInstanceWakeable = (instanceId: ServiceInstanceId): Effect.Effect<boolean> =>
-      Ref.get(instanceGateways).pipe(
-        Effect.map((current) =>
-          [...current.keys()].some((key) => key.startsWith(`${instanceId}:`)),
+      Effect.all({
+        gateways: Ref.get(instanceGateways),
+        sharedApiInstances: Ref.get(apiGatewayInstances),
+      }).pipe(
+        Effect.map(
+          ({ gateways, sharedApiInstances }) =>
+            sharedApiInstances.has(instanceId) ||
+            [...gateways.keys()].some((key) => key.startsWith(`${instanceId}:`)),
         ),
       );
     return {
-      acquire,
-      open,
       close,
       publish,
-      armFunctionsApi,
+      armLazyIngress,
       unpublish,
       setInstanceActivator,
       setTrafficAcquirer,

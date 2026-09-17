@@ -4,7 +4,8 @@ import { Effect, Path, Schema } from "effect";
 import { compileStack, createExecutionPlan, seedServiceRegistry } from "../model/Compiler.ts";
 import type { ExecutionPlan, PlannedWorkload } from "../model/ExecutionPlan.ts";
 import { catalogEntryFor } from "../model/WorkloadCatalog.ts";
-import type { PersistedStackState } from "../state/StackState.ts";
+import { PersistedStackStateSchema, type PersistedStackState } from "../state/StackState.ts";
+import { isRecord, settingValue } from "../state/MaterializedSettings.ts";
 import type { StackConfig } from "../public/Config.ts";
 import { resolveSecrets } from "../state/SecretStore.ts";
 import {
@@ -193,6 +194,54 @@ describe("workload runtime", () => {
           ).SUPABASE_DB_URL,
         ).toBeUndefined();
       }
+    }),
+  );
+
+  it.live("gives Studio the designated default Functions management root", () =>
+    Effect.gen(function* () {
+      const { state, plan } = yield* makeFixture({ kind: "native" });
+      const workload = workloadFor(plan, "studio:studio");
+      const analytics = workloadFor(plan, "analytics:analytics");
+      const spec = runtimeSpecFor(workload);
+      if (spec === undefined) return yield* Effect.die("Studio runtime spec missing");
+      const port = state.privatePorts.find(
+        (entry) => entry.instanceId === workload.instanceId && entry.workloadId === workload.id,
+      )?.port;
+      if (port === undefined) return yield* Effect.die("Studio private port missing");
+      const functions = state.registry.instances.find((entry) => entry.service === "functions");
+      if (functions === undefined || !isRecord(functions.config.settings))
+        return yield* Effect.die("Functions fixture missing");
+      const expectedRoot = settingValue(state, functions.config.settings.functions_root);
+      expect(expectedRoot.length).toBeGreaterThan(0);
+      const stateWithAnalyticsPort = {
+        ...state,
+        privatePorts: [
+          ...state.privatePorts,
+          {
+            instanceId: analytics.instanceId,
+            workloadId: analytics.id,
+            binding: "primary",
+            port: 32_000,
+          },
+        ],
+      };
+      expect(
+        spec.env(stateWithAnalyticsPort, workload, port).EDGE_FUNCTIONS_MANAGEMENT_FOLDER,
+      ).toBe(expectedRoot);
+      const disabledFunctionsState = yield* Schema.decodeUnknownEffect(PersistedStackStateSchema)({
+        ...stateWithAnalyticsPort,
+        registry: {
+          ...stateWithAnalyticsPort.registry,
+          instances: stateWithAnalyticsPort.registry.instances.map((entry) =>
+            entry.id === functions.id
+              ? { ...entry, config: { ...entry.config, enabled: false } }
+              : entry,
+          ),
+        },
+      });
+      expect(
+        spec.env(disabledFunctionsState, workload, port).EDGE_FUNCTIONS_MANAGEMENT_FOLDER,
+      ).toBeUndefined();
     }),
   );
 

@@ -72,6 +72,40 @@ const authSettings = (issuer: string, templatePath?: string) =>
     },
   });
 
+const serviceInstance = (
+  id: string,
+  service: "functions" | "studio",
+  enabled: boolean,
+  settings: unknown,
+): PersistedServiceInstance =>
+  Schema.decodeUnknownSync(PersistedServiceInstanceSchema)({
+    id: ServiceInstanceIdSchema.make(id),
+    service,
+    intent: "stopped",
+    dependencies:
+      service === "studio"
+        ? {
+            database: ServiceInstanceIdSchema.make("database-default"),
+            rest: ServiceInstanceIdSchema.make("rest-default"),
+            analytics: ServiceInstanceIdSchema.make("analytics-default"),
+          }
+        : {},
+    resources: {},
+    revisions: { config: 0, intent: 0 },
+    pendingOperation: null,
+    initialization: null,
+    initializationInputs: null,
+    data: { origin: "absent" },
+    config: {
+      enabled,
+      activation: "lazy",
+      idleTimeoutSeconds: false,
+      version: "test",
+      settings,
+      endpoints: {},
+    },
+  });
+
 const nullify = (value: unknown): unknown => {
   if (value === undefined) return null;
   if (Array.isArray(value)) return value.map(nullify);
@@ -180,6 +214,60 @@ describe("runtime input owner", () => {
       };
       const material = yield* owner.resolve(state, instanceId, `${instanceId}:edge-runtime`);
       expect(material.functions?.secrets).toEqual({ CUSTOM_TOKEN: "token-value" });
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("uses the default Functions root for Studio without changing instance roots", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "runtime-input-studio-" });
+      const defaultFunctionsRoot = pathJoin(root, "default-functions");
+      const extraFunctionsRoot = pathJoin(root, "extra-functions");
+      const studioRoot = pathJoin(root, "studio");
+      const functionsSettings = (functionsRoot: string) => ({
+        functions_root: functionsRoot,
+        edge_runtime: {
+          policy: null,
+          deno_version: null,
+          verify_jwt_default: null,
+          import_map_default: null,
+          secrets: {},
+        },
+        inspector: null,
+        functions: null,
+      });
+      const defaultFunctions = serviceInstance(
+        "functions-default",
+        "functions",
+        true,
+        functionsSettings(defaultFunctionsRoot),
+      );
+      const extraFunctions = serviceInstance(
+        "functions-extra",
+        "functions",
+        true,
+        functionsSettings(extraFunctionsRoot),
+      );
+      const studio = serviceInstance("studio-default", "studio", true, {
+        api_url: "",
+        openai_api_key: null,
+      });
+      const state: PersistedStackState = {
+        ...stateFor(root),
+        registry: {
+          initialized: true,
+          defaultInstanceIds: { functions: defaultFunctions.id, studio: studio.id },
+          instances: [defaultFunctions, extraFunctions, studio],
+        },
+      };
+      const owner = yield* makeRuntimeInputOwner({ stateRoot: root, stackId });
+
+      yield* owner.resolve(state, studio.id, `${studio.id}:studio`);
+      expect(yield* fs.exists(defaultFunctionsRoot)).toBe(true);
+      expect(yield* fs.exists(studioRoot)).toBe(false);
+
+      yield* owner.resolve(state, extraFunctions.id, `${extraFunctions.id}:edge-runtime`);
+      expect(yield* fs.exists(extraFunctionsRoot)).toBe(true);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 

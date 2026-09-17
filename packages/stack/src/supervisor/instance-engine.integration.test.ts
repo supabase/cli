@@ -4,6 +4,7 @@ import {
   Context,
   Crypto,
   Deferred,
+  Exit,
   Effect,
   FileSystem,
   Fiber,
@@ -18,7 +19,10 @@ import type { SupervisorRuntime } from "./Supervisor.ts";
 import type { PersistedStackState } from "../state/StackState.ts";
 import { makeStackStateStore } from "../state/StackStateStore.ts";
 import type { StackStateStore } from "../state/StackStateStore.ts";
-import type { PersistedServiceInstance } from "../model/ServiceRegistry.ts";
+import type {
+  PersistedPendingOperation,
+  PersistedServiceInstance,
+} from "../model/ServiceRegistry.ts";
 import type { RuntimeBindingPublication } from "../runtime/RuntimeBinding.ts";
 import type { RuntimeDriver } from "../runtime/RuntimeDriver.ts";
 import { ServiceInstanceIdSchema, type ServiceInstanceId } from "../public/ServiceInstanceId.ts";
@@ -29,11 +33,7 @@ import { deriveStackId } from "../identity/Identity.ts";
 import type { SupervisorIngress } from "./Ingress.ts";
 import type { LogStore } from "./LogStore.ts";
 
-const noOpIngress: SupervisorIngress = {
-  acquire: () => Effect.die("instance-engine test does not open public ingress"),
-  open: () => Effect.die("instance-engine test does not open public ingress"),
-  close: Effect.void,
-};
+const noOpIngress: SupervisorIngress = { close: Effect.void };
 
 const noOpLogStore: LogStore = {
   path: "/dev/null",
@@ -41,13 +41,17 @@ const noOpLogStore: LogStore = {
   read: () => Effect.succeed([]),
 };
 
-const instance = (id: ServiceInstanceId, name: string): PersistedServiceInstance => ({
+const instance = (
+  id: ServiceInstanceId,
+  name: string,
+  enabled = true,
+): PersistedServiceInstance => ({
   id,
   service: "database",
   name,
   intent: "stopped",
   config: {
-    enabled: true,
+    enabled,
     activation: "eager",
     idleTimeoutSeconds: false,
     version: "17.6.1.168",
@@ -136,6 +140,10 @@ interface RuntimeHooks {
   ) => Effect.Effect<ReadonlyArray<RuntimeBindingPublication>, StackError>;
   readonly stop?: (input: InstanceRuntimeInput) => Effect.Effect<void, StackError>;
   readonly destroy?: (input: InstanceRuntimeInput) => Effect.Effect<void, StackError>;
+  readonly recoverSnapshot?: (
+    input: InstanceRuntimeInput,
+    operation: PersistedPendingOperation,
+  ) => Effect.Effect<SnapshotDescriptor | undefined, StackError>;
 }
 
 const runtimeFor = (hooks: RuntimeHooks = {}): SupervisorRuntime => {
@@ -159,6 +167,7 @@ const runtimeFor = (hooks: RuntimeHooks = {}): SupervisorRuntime => {
     destroy: hooks.destroy ?? (() => Effect.void),
     exportSnapshot: unsupportedSnapshot,
     restoreSnapshot: unsupportedSnapshot,
+    ...(hooks.recoverSnapshot === undefined ? {} : { recoverSnapshot: hooks.recoverSnapshot }),
     prefetch: () => Effect.void,
     artifacts: Effect.succeed([]),
     activate: () => Effect.die("instance-engine test does not activate gateways"),
@@ -249,6 +258,247 @@ describe("instance engine", () => {
         expect(
           (yield* f.read())?.registry.instances.map(({ id: instanceId }) => instanceId),
         ).toEqual([second.id]);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("lets stop supersede and cancel an in-flight start", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const first = instance(id("00000000-0000-4000-8000-000000000041"), "cancel-start");
+        const second = instance(id("00000000-0000-4000-8000-000000000042"), "other");
+        const entered = yield* Deferred.make<void>();
+        const stopped = yield* Deferred.make<void>();
+        const never = yield* Deferred.make<void>();
+        const f = yield* makeFixture(first, second, undefined, {
+          start: () =>
+            Deferred.succeed(entered, undefined).pipe(
+              Effect.andThen(Deferred.await(never)),
+              Effect.andThen(Effect.succeed([])),
+            ),
+          stop: () => Deferred.succeed(stopped, undefined).pipe(Effect.asVoid),
+        });
+        const starting = yield* Effect.forkChild(f.engine.start(first.id), {
+          startImmediately: true,
+        });
+        yield* Deferred.await(entered);
+        const stopping = yield* Effect.forkChild(f.engine.stop(first.id), {
+          startImmediately: true,
+        });
+        yield* Deferred.await(stopped);
+        expect((yield* Fiber.join(stopping)).phase).toBe("stopped");
+        expect(Exit.isFailure(yield* Fiber.join(starting).pipe(Effect.exit))).toBe(true);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("rejects starting a disabled instance before invoking its runtime", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const first = instance(id("00000000-0000-4000-8000-000000000051"), "disabled", false);
+        const second = instance(id("00000000-0000-4000-8000-000000000052"), "other");
+        let starts = 0;
+        const f = yield* makeFixture(first, second, undefined, {
+          start: () =>
+            Effect.sync(() => {
+              starts += 1;
+              return [];
+            }),
+        });
+        expect(Exit.isFailure(yield* f.engine.start(first.id).pipe(Effect.exit))).toBe(true);
+        expect(starts).toBe(0);
+        expect((yield* f.engine.status(first.id)).intent).toBe("stopped");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("reports mail listener bindings as TCP endpoints", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const first = instance(id("00000000-0000-4000-8000-000000000055"), "mail-endpoints");
+        const second = instance(id("00000000-0000-4000-8000-000000000056"), "other");
+        const f = yield* makeFixture(first, second);
+        yield* f.store
+          .update(f.stackId, (current) =>
+            Effect.succeed({
+              ...current,
+              ports: [
+                {
+                  owner: "instance" as const,
+                  instanceId: first.id,
+                  binding: "smtp",
+                  address: "127.0.0.1",
+                  port: 2525,
+                  intent: "exact" as const,
+                },
+                {
+                  owner: "instance" as const,
+                  instanceId: first.id,
+                  binding: "pop3",
+                  address: "127.0.0.1",
+                  port: 2110,
+                  intent: "exact" as const,
+                },
+              ],
+            }),
+          )
+          .pipe(Effect.provideContext(f.context));
+
+        const descriptor = (yield* f.engine.list).find(
+          ({ id: instanceId }) => instanceId === first.id,
+        );
+        expect(descriptor?.endpoints.smtp).toMatchObject({
+          protocol: "tcp",
+          url: "tcp://127.0.0.1:2525",
+        });
+        expect(descriptor?.endpoints.pop3).toMatchObject({
+          protocol: "tcp",
+          url: "tcp://127.0.0.1:2110",
+        });
+        const status = yield* f.engine.status(first.id);
+        expect(status.endpoints).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ binding: "smtp", protocol: "tcp" }),
+            expect.objectContaining({ binding: "pop3", protocol: "tcp" }),
+          ]),
+        );
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("retains a redacted startup failure per instance until retry succeeds", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const first = instance(id("00000000-0000-4000-8000-000000000057"), "failed-start");
+        const second = instance(id("00000000-0000-4000-8000-000000000058"), "healthy-start");
+        let failFirst = true;
+        const f = yield* makeFixture(first, second, undefined, {
+          start: (input) =>
+            input.instance.id === first.id && failFirst
+              ? Effect.fail(
+                  new StackLifecycleConflictError({
+                    message: "startup failed with test-jwt-secret",
+                  }),
+                )
+              : Effect.succeed([]),
+        });
+
+        expect(Exit.isFailure(yield* f.engine.start(first.id).pipe(Effect.exit))).toBe(true);
+        const failed = yield* f.engine.status(first.id);
+        expect(failed.phase).toBe("failed");
+        expect(failed.error).toMatchObject({
+          tag: "StackLifecycleConflictError",
+          message: "startup failed with [REDACTED]",
+          instanceId: first.id,
+        });
+        expect(failed.error?.operationId).toEqual(expect.any(String));
+        expect((yield* f.engine.start(second.id)).phase).toBe("ready");
+
+        failFirst = false;
+        expect((yield* f.engine.start(first.id)).phase).toBe("ready");
+        expect((yield* f.engine.status(first.id)).error).toBeUndefined();
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("fences only the instance whose recovery cleanup failed", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const first = instance(id("00000000-0000-4000-8000-000000000061"), "broken-recovery");
+        const second = instance(id("00000000-0000-4000-8000-000000000062"), "healthy");
+        const f = yield* makeFixture(first, second, undefined, {
+          stop: () =>
+            Effect.fail(new StackLifecycleConflictError({ message: "cleanup unavailable" })),
+        });
+        yield* f.store
+          .update(f.stackId, (current): Effect.Effect<PersistedStackState, never> =>
+            Effect.succeed({
+              ...current,
+              registry: {
+                ...current.registry,
+                instances: current.registry.instances.map((entry) =>
+                  entry.id === first.id
+                    ? {
+                        ...entry,
+                        intent: "started" as const,
+                        pendingOperation: {
+                          id: "recovery-stop",
+                          kind: "stop" as const,
+                          generation: 1,
+                          ownerSessionId: "crashed-owner",
+                          phase: "running" as const,
+                        },
+                      }
+                    : entry,
+                ),
+              },
+            }),
+          )
+          .pipe(Effect.provideContext(f.context));
+        expect(Exit.isSuccess(yield* f.engine.recover.pipe(Effect.exit))).toBe(true);
+        expect((yield* f.engine.status(first.id)).phase).toBe("recovery");
+        expect((yield* f.engine.status(first.id)).recovery?.operation).toBe("stop");
+        expect((yield* f.engine.status(second.id)).phase).toBe("stopped");
+        expect(Exit.isFailure(yield* f.engine.start(first.id).pipe(Effect.exit))).toBe(true);
+        yield* f.engine.destroy(first.id);
+        expect((yield* f.engine.list).some(({ id: currentId }) => currentId === first.id)).toBe(
+          false,
+        );
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("keeps an unresolved restore fenced until destroy cleanup", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const first = instance(id("00000000-0000-4000-8000-000000000071"), "broken-restore");
+        const second = instance(id("00000000-0000-4000-8000-000000000072"), "healthy");
+        const f = yield* makeFixture(first, second, undefined, {
+          recoverSnapshot: () =>
+            Effect.fail(new StackLifecycleConflictError({ message: "restore manifest missing" })),
+        });
+        yield* f.store
+          .update(f.stackId, (current): Effect.Effect<PersistedStackState, never> =>
+            Effect.succeed({
+              ...current,
+              registry: {
+                ...current.registry,
+                instances: current.registry.instances.map((entry) =>
+                  entry.id === first.id
+                    ? {
+                        ...entry,
+                        intent: "started" as const,
+                        data: {
+                          origin: "incomplete" as const,
+                          operationId: "restore-operation",
+                        },
+                        pendingOperation: {
+                          id: "restore-operation",
+                          kind: "restoreSnapshot" as const,
+                          generation: 1,
+                          ownerSessionId: "crashed-owner",
+                          phase: "complete" as const,
+                        },
+                      }
+                    : entry,
+                ),
+              },
+            }),
+          )
+          .pipe(Effect.provideContext(f.context));
+        expect(Exit.isSuccess(yield* f.engine.recover.pipe(Effect.exit))).toBe(true);
+        expect((yield* f.engine.status(first.id)).recovery?.operation).toBe("destroy");
+        const stopped = yield* f.engine.stop(first.id).pipe(Effect.exit);
+        expect(Exit.isFailure(stopped)).toBe(true);
+        expect(
+          (yield* f.read())?.registry.instances.find((entry) => entry.id === first.id)
+            ?.pendingOperation,
+        ).toMatchObject({ kind: "restoreSnapshot", id: "restore-operation" });
+        yield* f.engine.destroy(first.id);
+        expect((yield* f.engine.list).some(({ id: currentId }) => currentId === first.id)).toBe(
+          false,
+        );
+        expect((yield* f.engine.status(second.id)).phase).toBe("stopped");
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );
