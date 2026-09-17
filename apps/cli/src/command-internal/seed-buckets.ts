@@ -280,7 +280,7 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
     }
 
     // Upload objects for each bucket with a configured objects_path.
-    yield* uploadObjects(fs, path, posixPath, output, gateway, workdir, bucketsConfig, summary);
+    yield* uploadObjects(fs, { path, posixPath }, output, gateway, workdir, bucketsConfig, summary);
 
     // Machine-readable summary; text mode emits nothing extra.
     if (emitSummary && output.format !== "text") {
@@ -476,8 +476,7 @@ const handleVectorError = Effect.fnUntraced(function* (
 
 const uploadObjects = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
-  path: Path.Path,
-  posixPath: Path.Path,
+  { path, posixPath }: { readonly path: Path.Path; readonly posixPath: Path.Path },
   output: typeof Output.Service,
   gateway: StorageGateway,
   workdir: string,
