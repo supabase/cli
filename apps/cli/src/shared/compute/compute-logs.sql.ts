@@ -45,13 +45,16 @@ export const ALL_COMPUTE_LOG_STREAMS: ReadonlyArray<string> = Object.values(COMP
 const COMPUTE_LOG_NAME_ATTRIBUTE = "worker";
 
 /**
- * Which top-level column carries the stream name.
+ * Which `log_attributes` key carries the stream name.
  *
- * The writer publishes it beside `project` rather than inside `metadata`, so it is a column
- * here rather than a `log_attributes` key. `metadata.source` carries the same value for
- * readers that have not moved across; this is the one to filter on.
+ * The writer publishes `subservice` at the top level, beside `project`, but that does not
+ * make it a column here: the Compute Logflare source is not enrolled as a category in the
+ * generic logs path, so nothing it sends is promoted, and every key — top-level ones
+ * included — arrives flattened into `log_attributes`. Filtering on a bare `subservice`
+ * fails the whole query with `Field "subservice" does not exist`. Once the source is
+ * enrolled it becomes a real column and this moves with it.
  */
-const COMPUTE_LOG_STREAM_COLUMN = "subservice";
+const COMPUTE_LOG_STREAM_ATTRIBUTE = "subservice";
 
 /**
  * The server clamps a span of more than 24 hours, so the default window sits just under the
@@ -148,12 +151,12 @@ export function computeLogsQuery(options: {
   return (
     `select id, ` +
     `toUnixTimestamp64Milli(timestamp) as ts_ms, ` +
-    `${COMPUTE_LOG_STREAM_COLUMN} as stream, ` +
+    `log_attributes['${COMPUTE_LOG_STREAM_ATTRIBUTE}'] as stream, ` +
     `event_message, ` +
     `log_attributes ` +
     `from logs ` +
     `where log_attributes['${COMPUTE_LOG_NAME_ATTRIBUTE}'] = ${quote(options.name)} ` +
-    `and ${COMPUTE_LOG_STREAM_COLUMN} in (${streams}) ` +
+    `and log_attributes['${COMPUTE_LOG_STREAM_ATTRIBUTE}'] in (${streams}) ` +
     `order by timestamp desc ` +
     `limit ${options.tail}`
   );

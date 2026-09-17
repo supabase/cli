@@ -12,13 +12,15 @@ import {
 } from "./compute-logs.sql.ts";
 
 describe("computeLogsQuery", () => {
-  it("filters on the subservice column, never the source column", () => {
+  it("filters on the subservice attribute, never a bare column or the legacy source key", () => {
     const sql = computeLogsQuery({ name: "api", streams: ALL_COMPUTE_LOG_STREAMS, tail: 100 });
 
     expect(sql).toContain("log_attributes['worker'] = 'api'");
-    expect(sql).toContain("subservice as stream");
-    expect(sql).toContain("and subservice in (");
+    expect(sql).toContain("log_attributes['subservice'] as stream");
+    expect(sql).toContain("and log_attributes['subservice'] in (");
     expect(sql).not.toContain("log_attributes['source']");
+    // A bare `subservice` is not a column on an unenrolled source; it fails the query.
+    expect(sql).not.toMatch(/(?<!\[')subservice/);
     expect(sql).not.toMatch(/(?:^|\s)where source =/);
     expect(sql).not.toMatch(/(?:^|\s)and source =/);
   });

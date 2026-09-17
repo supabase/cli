@@ -258,7 +258,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("filters on the subservice column, never the empty source column", () =>
+  it.live("filters on the subservice attribute, never the empty source column", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, http } = setupCompute({
@@ -271,8 +271,9 @@ describe("compute logs", () => {
 
         const sql = sentQuery(http.requests[0]!).sql ?? "";
         expect(sql).toContain("log_attributes['worker'] = 'api'");
-        expect(sql).toContain("and subservice in (");
+        expect(sql).toContain("and log_attributes['subservice'] in (");
         expect(sql).not.toContain("log_attributes['source']");
+        expect(sql).not.toMatch(/(?<!\[')subservice/);
         expect(sql).not.toMatch(/where source =/);
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
