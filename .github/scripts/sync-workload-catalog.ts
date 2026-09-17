@@ -5,26 +5,26 @@
  *
  * Dependabot owns the Dockerfile and cannot own this table: these pins carry
  * image digests, which tag resolution never produces (ADR 0017). The dispatch
- * payload is untrusted and revalidated here — those patterns are what keep
- * `version`/`digest` inside the string literals they are written into.
+ * payload is untrusted and revalidated here — `slim-mirror-payload.ts`
+ * keeps `version`/`digest` inside the string literals they are written into.
  *
  * Run: `bun .github/scripts/sync-workload-catalog.ts` with SLIM_SERVICE,
  * SLIM_VERSION, SLIM_DIGEST. Exit 1 on an invalid payload; an unmodelled
  * service or release line is a successful no-op.
  */
 
+import {
+  InvalidPayloadError,
+  SOURCE_REGISTRY,
+  escapeRegExp,
+  validatePayload,
+} from "./slim-mirror-payload.ts";
+
+export { InvalidPayloadError, validatePayload } from "./slim-mirror-payload.ts";
+
 export const CATALOG_PATH = "packages/stack/src/model/WorkloadCatalog.ts";
 
-/** Mirrors the payload validation in `mirror-slim-image.yml`. */
-const SERVICE_PATTERN = /^[a-z][a-z0-9-]*$/;
-const VERSION_PATTERN = /^[A-Za-z0-9._-]+$/;
-const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
-
-const SLIM_IMAGE_PREFIX = "ghcr.io/supabase/cli/";
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
+const SLIM_IMAGE_PREFIX = `${SOURCE_REGISTRY}/`;
 
 /** Leading numeric component, `v` stripped. Only postgres carries >1 line. */
 export function releaseLine(version: string): string {
@@ -51,25 +51,6 @@ export type CatalogUpdatePlan =
   | { readonly kind: "unchanged" }
   | { readonly kind: "unmodelled-service" }
   | { readonly kind: "unmodelled-release-line"; readonly known: ReadonlyArray<string> };
-
-export class InvalidPayloadError extends Error {}
-
-/** `service` / `version` / `digest` are the image fields. Extra dispatch keys such as `natives[]` are ignored. */
-export function validatePayload(input: {
-  readonly service: string;
-  readonly version: string;
-  readonly digest: string;
-}): void {
-  if (!SERVICE_PATTERN.test(input.service)) {
-    throw new InvalidPayloadError(`invalid service name: '${input.service}'`);
-  }
-  if (!VERSION_PATTERN.test(input.version)) {
-    throw new InvalidPayloadError(`invalid version: '${input.version}'`);
-  }
-  if (!DIGEST_PATTERN.test(input.digest)) {
-    throw new InvalidPayloadError(`invalid digest: '${input.digest}'`);
-  }
-}
 
 /** `native("<service>", "<version>", "<image>"` — image anchored so postgres != postgrest. */
 function defaultEntryPattern(service: string): RegExp {

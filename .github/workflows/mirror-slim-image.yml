@@ -7,9 +7,11 @@ name: Mirror Slim Image
 # which can rewrite the index and change its digest.
 #
 # The payload arrives with whatever authority holds the dispatch token, so it is treated as
-# untrusted: names are pattern-checked, source/destination are derived here rather than trusted
-# from the payload, and the source must resolve to the claimed digest before anything is copied.
+# untrusted: names are pattern-checked, source/destination are derived in
+# `.github/scripts/mirror-slim-image.ts` rather than trusted from the payload, and the source
+# must resolve to the claimed digest before anything is copied.
 #
+# Replay locally: `bun .github/scripts/mirror-slim-image.ts --help`
 # Full contract: docs/design/ecr-mirror-dispatch.md in supabase/slim-services.
 
 on:
@@ -49,6 +51,14 @@ jobs:
       packages: read
       id-token: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: .bun-version
+
       - name: Validate payload
         id: validate
         env:
@@ -58,41 +68,7 @@ jobs:
           DIGEST: ${{ github.event.client_payload.digest || inputs.digest }}
           PAYLOAD_SOURCE: ${{ github.event.client_payload.source }}
           PAYLOAD_DESTINATION: ${{ github.event.client_payload.destination }}
-        run: |
-          set -euo pipefail
-          if [[ ! "$SERVICE" =~ ^[a-z][a-z0-9-]*$ ]]; then
-            echo "::error::invalid service name: '$SERVICE'"
-            exit 1
-          fi
-          if [[ ! "$VERSION" =~ ^[A-Za-z0-9._-]+$ ]]; then
-            echo "::error::invalid version: '$VERSION'"
-            exit 1
-          fi
-          if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "::error::invalid digest: '$DIGEST'"
-            exit 1
-          fi
-          SOURCE="ghcr.io/supabase/cli/${SERVICE}:${VERSION}"
-          DESTINATION="public.ecr.aws/supabase/cli/${SERVICE}:${VERSION}"
-          # Never trust the payload's source/destination strings; require them
-          # to match the values derived from service + version.
-          if [ "$EVENT_NAME" = "repository_dispatch" ]; then
-            if [ "$PAYLOAD_SOURCE" != "$SOURCE" ]; then
-              echo "::error::payload source '$PAYLOAD_SOURCE' does not match derived '$SOURCE'"
-              exit 1
-            fi
-            if [ "$PAYLOAD_DESTINATION" != "$DESTINATION" ]; then
-              echo "::error::payload destination '$PAYLOAD_DESTINATION' does not match derived '$DESTINATION'"
-              exit 1
-            fi
-          fi
-          {
-            echo "service=$SERVICE"
-            echo "source=$SOURCE"
-            echo "destination=$DESTINATION"
-            echo "digest=$DIGEST"
-            echo "version=$VERSION"
-          } >> "$GITHUB_OUTPUT"
+        run: bun .github/scripts/mirror-slim-image.ts validate
 
       - name: Install regctl
         # $RUNNER_TEMP is always writable by the job user.
@@ -115,15 +91,9 @@ jobs:
 
       - name: Verify source digest
         env:
-          SOURCE: ${{ steps.validate.outputs.source }}
+          REFERENCE: ${{ steps.validate.outputs.source }}
           DIGEST: ${{ steps.validate.outputs.digest }}
-        run: |
-          set -euo pipefail
-          SOURCE_DIGEST="$(regctl manifest head "$SOURCE")"
-          if [ "$SOURCE_DIGEST" != "$DIGEST" ]; then
-            echo "::error::source $SOURCE resolves to $SOURCE_DIGEST, expected $DIGEST"
-            exit 1
-          fi
+        run: bun .github/scripts/mirror-slim-image.ts verify-digest
 
       - name: Configure aws credentials
         uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
@@ -139,26 +109,7 @@ jobs:
       - name: Ensure ECR Public repository exists
         env:
           SERVICE: ${{ steps.validate.outputs.service }}
-        run: |
-          set -euo pipefail
-          REPO_NAME="cli/${SERVICE}"
-          if aws ecr-public describe-repositories \
-            --repository-names "$REPO_NAME" --region us-east-1 >/dev/null 2>&1; then
-            echo "ECR Public repository $REPO_NAME exists"
-            exit 0
-          fi
-          if CREATE_ERR="$(aws ecr-public create-repository \
-            --repository-name "$REPO_NAME" --region us-east-1 2>&1 >/dev/null)"; then
-            echo "created ECR Public repository $REPO_NAME"
-          elif grep -q RepositoryAlreadyExistsException <<< "$CREATE_ERR"; then
-            # Concurrent run for another version of the same new service won
-            # the creation race; the repository exists, which is all we need.
-            echo "ECR Public repository $REPO_NAME was created concurrently"
-          else
-            echo "$CREATE_ERR"
-            echo "::error::ECR Public repository '$REPO_NAME' does not exist and this role cannot create it (missing ecr-public:CreateRepository). Create it once manually — aws ecr-public create-repository --repository-name '$REPO_NAME' --region us-east-1 — then re-run this workflow."
-            exit 1
-          fi
+        run: bun .github/scripts/mirror-slim-image.ts ensure-repo
 
       - name: Mirror image
         env:
@@ -169,23 +120,13 @@ jobs:
         # unconditionally with no early exit: regctl's copy is incremental, so re-dispatching
         # after a complete copy is a cheap no-op, and after a partial failure it finishes the
         # copy instead of skipping it.
-        run: |
-          set -euo pipefail
-          regctl image copy --referrers --digest-tags \
-            "${SOURCE%:*}@${DIGEST}" "$DESTINATION"
+        run: bun .github/scripts/mirror-slim-image.ts copy-image
 
       - name: Verify destination digest
         env:
-          DESTINATION: ${{ steps.validate.outputs.destination }}
+          REFERENCE: ${{ steps.validate.outputs.destination }}
           DIGEST: ${{ steps.validate.outputs.digest }}
-        run: |
-          set -euo pipefail
-          DEST_DIGEST="$(regctl manifest head "$DESTINATION")"
-          if [ "$DEST_DIGEST" != "$DIGEST" ]; then
-            echo "::error::destination $DESTINATION resolves to $DEST_DIGEST, expected $DIGEST"
-            exit 1
-          fi
-          echo "$DESTINATION resolves to $DIGEST"
+        run: bun .github/scripts/mirror-slim-image.ts verify-digest
 
       - name: Mirror native artifacts
         continue-on-error: true
@@ -195,61 +136,4 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
         # Native tags are copied without --referrers. Failure must not fail the
         # image digest the sender polls; daily audit reports native drift.
-        run: |
-          set -euo pipefail
-          natives_json='[]'
-          if [ "$EVENT_NAME" = "repository_dispatch" ]; then
-            natives_json="$(python3 -c 'import json, os; event=json.load(open(os.environ["GITHUB_EVENT_PATH"])); print(json.dumps(event.get("client_payload", {}).get("natives") or []))')"
-          fi
-          python3 - "$SERVICE" "$VERSION" "$natives_json" <<'PY'
-          import json
-          import re
-          import sys
-
-          service, version, raw = sys.argv[1:]
-          natives = json.loads(raw)
-          if not isinstance(natives, list):
-              raise SystemExit("natives must be a JSON array")
-          tag_re = re.compile(
-              rf"^{re.escape(version)}-native-(linux-arm64|linux-amd64|darwin-arm64)$"
-          )
-          digest_re = re.compile(r"^sha256:[0-9a-f]{64}$")
-          rows = []
-          for item in natives:
-              if not isinstance(item, dict) or "tag" not in item or "digest" not in item:
-                  raise SystemExit(f"invalid native entry: {item!r}")
-              if not tag_re.fullmatch(item["tag"]):
-                  raise SystemExit(f"invalid native tag: {item['tag']}")
-              if not digest_re.fullmatch(item["digest"]):
-                  raise SystemExit(f"invalid native digest: {item['digest']}")
-              rows.append((item["tag"], item["digest"]))
-          with open("natives.tsv", "w", encoding="utf-8") as fh:
-              for tag, digest in rows:
-                  fh.write(f"{tag}\t{digest}\n")
-          PY
-          if [[ ! -s natives.tsv ]]; then
-            echo "no native artifacts in payload"
-            exit 0
-          fi
-          failed=0
-          while IFS=$'\t' read -r tag digest; do
-            source="ghcr.io/supabase/cli/${SERVICE}:${tag}"
-            destination="public.ecr.aws/supabase/cli/${SERVICE}:${tag}"
-            source_digest="$(regctl manifest head "$source" | tr -d '[:space:]')" || {
-              echo "::warning::native source $source is missing"
-              failed=1
-              continue
-            }
-            if [ "$source_digest" != "$digest" ]; then
-              echo "::warning::native source $source resolves to $source_digest, expected $digest"
-              failed=1
-              continue
-            fi
-            if ! regctl image copy "${source%:*}@${digest}" "$destination"; then
-              echo "::warning::native copy failed: $source -> $destination"
-              failed=1
-              continue
-            fi
-            echo "mirrored $destination@$digest"
-          done < natives.tsv
-          exit "$failed"
+        run: bun .github/scripts/mirror-slim-image.ts copy-natives
