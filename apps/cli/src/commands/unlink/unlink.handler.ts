@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Path, Result } from "effect";
+import { Effect, FileSystem, Path, Predicate, Result } from "effect";
 
 import { CommandCredentials } from "../../auth/command-credentials.service.ts";
 import { CredentialDeleteError } from "../../auth/errors.ts";
@@ -66,9 +66,10 @@ export const unlink = Effect.fn("unlink")(function* () {
         return yield* first;
       }
       const message = collected.map((e) => e.message).join("\n");
-      return yield* first._tag === "UnlinkTempRemovalError"
+      const failure = Predicate.isTagged(first, "UnlinkTempRemovalError")
         ? new UnlinkTempRemovalError({ message })
         : new CredentialDeleteError({ message });
+      return yield* failure;
     }
 
     // 3. Print "Finished supabase unlink." in text mode, or a structured success otherwise.
