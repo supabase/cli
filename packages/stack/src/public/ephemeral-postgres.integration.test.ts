@@ -249,9 +249,9 @@ describe("ephemeral Postgres", () => {
             );
             const reports = yield* query(
               cluster.url,
-              "SELECT plpgsql_check_function('public.lint_probe()'::regprocedure, format := 'json') AS report",
+              "SELECT plpgsql_check_function('public.lint_probe()'::regprocedure, format := 'json')::text AS report",
             );
-            expect(JSON.stringify(reports)).toContain("lint_probe_missing");
+            expect(reports).toEqual([{ report: expect.stringContaining("lint_probe_missing") }]);
           }
         }),
       ).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
