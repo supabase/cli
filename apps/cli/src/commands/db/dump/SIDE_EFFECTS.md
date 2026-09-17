@@ -1,8 +1,9 @@
 # `supabase db dump`
 
 Native TypeScript port (`dump.handler.ts`). Streams a `pg_dump`/`pg_dumpall`
-script run inside the local Postgres image (or artifact extras / PATH
-`pg_dump`/`pg_dumpall` on a native stack) to stdout or `--file`.
+script run inside the compose Postgres image, or catalog `pg_dump` /
+`pg_dumpall` on the stack backend (native artifact or a one-shot of the same
+image), to stdout or `--file`.
 
 ## Files Read
 
@@ -37,18 +38,18 @@ script run inside the local Postgres image (or artifact extras / PATH
 | `SUPABASE_DB_PASSWORD` (`DB_PASSWORD` viper key; `--password`/`-p` overrides) | remote DB password                                                                                                                                                                                                                 |
 | `SUPABASE_ACCESS_TOKEN`                                                       | `--linked` auth                                                                                                                                                                                                                    |
 | `BITBUCKET_CLONE_DIR`                                                         | (no-op for dump — no `--security-opt` is set)                                                                                                                                                                                      |
-| `SUPABASE_INTERNAL_IMAGE_REGISTRY`                                            | rewrite the pg image registry                                                                                                                                                                                                      |
+| `SUPABASE_INTERNAL_IMAGE_REGISTRY`                                            | rewrite the pg image registry for compose dumps; stack dumps use the catalog image pin unchanged                                                                                                                                   |
 | `SUPABASE_USE_SLIM_IMAGES`                                                    | resolve the current Postgres pin from the slim `ghcr.io/supabase/cli` builds (`true`/`1` enable); majors 13/15 use `15.14.1.167` when the flag is on; historical pins, PG14, OrioleDB, and flag-off `15.8.1.085` stay on docker.io |
 | `DOCKER_HOST`                                                                 | docker daemon endpoint                                                                                                                                                                                                             |
 | `MSYSTEM`, `TERM_PROGRAM`                                                     | suppress the piped-stdout non-ASCII warning in MSYS/mintty sessions                                                                                                                                                                |
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                          |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `0`  | success                                                                                                                                                            |
-| `1`  | `--use-copy`/`--exclude` without `--data-only`; mutually-exclusive flags; bad `--file` path; connection failure; container or PATH `pg_dump`/`pg_dumpall` exit ≠ 0 |
-| `1`  | `--project-ref` set with a resolved target other than linked (see Notes / Divergences)                                                                             |
+| Code | Condition                                                                                                                                                             |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                                                                                               |
+| `1`  | `--use-copy`/`--exclude` without `--data-only`; mutually-exclusive flags; bad `--file` path; connection failure; container or bundled `pg_dump`/`pg_dumpall` exit ≠ 0 |
+| `1`  | `--project-ref` set with a resolved target other than linked (see Notes / Divergences)                                                                                |
 
 ## Output
 
@@ -101,10 +102,10 @@ shell inherits the suppressing variables and is missed.
     suggestion uses the generic `ipv6Suggestion()` text rather than one that
     prefills the project's specific pooler connection string. Surfacing that
     exact URL needs the pooler string exposed at this seam.
-- **Stack backend host rewrite.** `--local` native stacks prefer `pg_dump` /
-  `pg_dumpall` from the prepared slim postgres artifact when those extras exist,
-  otherwise PATH clients and the matching-major check. Container dumps use
-  `isLocal` (config host+port match), not `connType ===
-"local"`: a `--db-url` that matches `config.toml` is rewritten like a published
+- **Stack backend host rewrite.** Stack dumps always use catalog `pg_dump` (native
+  artifact or a one-shot of the same image). `--local` native rewrites loopback to
+  `127.0.0.1`. Native `--linked` / `--db-url` keep
+  the resolved host. Container dumps use `isLocal` (config host+port match), not a
+  `connType` of local: a `--db-url` that matches `config.toml` is rewritten like a published
   stack target (`host.docker.internal` / host network) and does not require a
   project stack. Engine/runtime selection still uses `connType`.

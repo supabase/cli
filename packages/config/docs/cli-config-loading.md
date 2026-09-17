@@ -374,7 +374,7 @@ Important distinction:
   `supabase/config.json`
 - the CLI may still resolve a project root from the nearest `.supabase/project.json` when it needs
   to find local machine state for commands like `link`, `unlink`, `start`, `stop`, `status`,
-  `stack list`, `stack update`, or `logs`
+  `stack list`, or `logs`
 
 In other words, `.supabase/` broadens the CLI's own project-state discovery, but it does not
 broaden config loading semantics in `@supabase/config`.

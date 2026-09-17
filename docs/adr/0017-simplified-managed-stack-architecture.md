@@ -127,12 +127,19 @@ numbers while the stack is stopped. Focused port coverage runs on macOS,
 Linux, and Windows in CI.
 
 Every managed document records one concrete runtime selection. Native and
-container runtimes never mix. For a new stack, an omitted runtime runs
-`docker --version` and selects Docker when the client is installed, or native
-when it is absent; this checks only the client and does not require a running
-daemon. Existing state is reused without probing. Callers may explicitly select
-native, Docker, or Podman, and an omitted engine for an explicit container
-runtime defaults to Docker. Podman is supported only on local Linux hosts.
+container runtimes never mix. For a new stack, an omitted runtime checks that
+the Docker client is installed and then probes the daemon with a short timeout;
+it selects Docker when the daemon is reachable and native otherwise. An
+installed client with an unreachable daemon selects native, and the created
+Effect handle carries a notice that the selection is persisted for that stack,
+so a later switch to Docker requires destroying the stack or choosing a new
+stack name; callers such as `stack start` decide whether to print it. Native is
+refused as uid 0. Existing state is reused without probing. Callers may
+explicitly select native, Docker, or Podman without fallback, and an omitted
+engine for an explicit container runtime defaults to Docker. Podman is
+supported only on local Linux hosts. See
+[ADR-0025](0025-ephemeral-postgres-for-schema-tooling.md) for the daemon
+probe and its interaction with ephemeral Postgres.
 Persisted state records the resolved exact engine. Capability releases and
 workload artifacts are persisted as exact version pins (including their
 concrete native release and container image) rather than ranges or floating
