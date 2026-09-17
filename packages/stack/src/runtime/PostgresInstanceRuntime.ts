@@ -1,4 +1,5 @@
 import {
+  Cause,
   Context,
   Effect,
   Exit,
@@ -6,6 +7,7 @@ import {
   Path,
   PlatformError,
   Predicate,
+  Option,
   Schema,
   Stream,
 } from "effect";
@@ -153,6 +155,8 @@ export interface PostgresInstanceRuntimeOptions {
   ) => Effect.Effect<void, StackError>;
   /** Publishes an operation-scoped incomplete-data marker before storage mutation. */
   readonly publishIncompleteData: (input: InstanceRuntimeInput) => Effect.Effect<void, StackError>;
+  /** Publishes absent data after the runtime proves a failed mutation left no target data. */
+  readonly publishAbsentData: (input: InstanceRuntimeInput) => Effect.Effect<void, StackError>;
   /** Journals helper/staging ownership before any snapshot helper is started. */
   readonly journal: (
     input: InstanceRuntimeInput,
@@ -721,11 +725,31 @@ export const makePostgresInstanceRuntime = (
               ),
             );
           yield* options.publishIncompleteData(input);
-          yield* options.snapshotData.restore(
-            input,
-            path.join(staging, "postgres"),
-            instancePaths.postgresData,
+          const restored = yield* Effect.exit(
+            options.snapshotData.restore(
+              input,
+              path.join(staging, "postgres"),
+              instancePaths.postgresData,
+            ),
           );
+          if (Exit.isFailure(restored)) {
+            const restoreError = Cause.findErrorOption(restored.cause);
+            if (
+              Cause.hasDies(restored.cause) ||
+              Cause.hasInterrupts(restored.cause) ||
+              Option.isNone(restoreError) ||
+              restoreError.value instanceof StackCleanupError
+            )
+              return yield* Effect.failCause(restored.cause);
+            const targetEmpty = yield* Effect.exit(options.snapshotData.restoreTargetEmpty(input));
+            if (Exit.isFailure(targetEmpty))
+              return yield* Effect.failCause(Cause.combine(restored.cause, targetEmpty.cause));
+            if (!targetEmpty.value) return yield* Effect.failCause(restored.cause);
+            const absent = yield* Effect.exit(options.publishAbsentData(input));
+            if (Exit.isFailure(absent))
+              return yield* Effect.failCause(Cause.combine(restored.cause, absent.cause));
+            return yield* Effect.failCause(restored.cause);
+          }
           // A settling journal proves the restore helper published this operation's target. If
           // the owner dies before the manifest receipt is committed, recovery may roll back
           // that exact target through the driver's ownership-aware hook.
@@ -755,6 +779,9 @@ export const makePostgresInstanceRuntime = (
             const rollback = yield* Effect.exit(options.snapshotData.rollbackRestore(input));
             if (Exit.isFailure(rollback))
               return yield* cleanupError({ operation: published.cause, cleanup: rollback.cause });
+            const absent = yield* Effect.exit(options.publishAbsentData(input));
+            if (Exit.isFailure(absent))
+              return yield* cleanupError({ operation: published.cause, cleanup: absent.cause });
             return yield* Effect.failCause(published.cause);
           }
           if (manifest.profileId !== null && manifest.recipes.length > 0) {

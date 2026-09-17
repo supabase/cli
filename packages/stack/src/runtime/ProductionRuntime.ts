@@ -37,6 +37,7 @@ import {
 import { redactKnownSecrets } from "../state/SecretStore.ts";
 import { privateBindingKey, type PersistedStackState } from "../state/StackState.ts";
 import type { PersistedSecretValues } from "../state/StackState.ts";
+import type { PersistedServiceInstance } from "../model/ServiceRegistry.ts";
 import type { StackId } from "../public/StackId.ts";
 import type { StackRuntime } from "../public/Runtime.ts";
 import type { InstanceArtifactPreparationStatus } from "../public/Status.ts";
@@ -1791,6 +1792,38 @@ export const makeProductionRuntime = (
                 }),
           ),
         );
+    const publishData = (
+      input: InstanceRuntimeInput,
+      data: PersistedServiceInstance["data"],
+      shouldPublish: (instance: PersistedServiceInstance) => boolean = () => true,
+    ): Effect.Effect<void, StackError> =>
+      options.stateStore
+        .update(options.stackId, (current) => {
+          const instance = current.registry.instances.find(
+            (entry) => entry.id === input.instance.id,
+          );
+          if (
+            instance === undefined ||
+            instance.pendingOperation?.id !== input.operation.id ||
+            instance.pendingOperation.generation !== input.operation.generation
+          )
+            return Effect.fail(
+              new StackLifecycleConflictError({
+                stackId: options.stackId,
+                message: `Instance operation ${input.operation.id} is no longer current`,
+              }),
+            );
+          return Effect.succeed({
+            ...current,
+            registry: {
+              ...current.registry,
+              instances: current.registry.instances.map((entry) =>
+                entry.id === input.instance.id && shouldPublish(entry) ? { ...entry, data } : entry,
+              ),
+            },
+          });
+        })
+        .pipe(Effect.provideContext(options.context), Effect.asVoid);
     const defaultCatalogReconcile = (
       input: InstanceRuntimeInput,
       recipe: CatalogInitializationRecipe,
@@ -2559,69 +2592,14 @@ export const makeProductionRuntime = (
           })
           .pipe(Effect.provideContext(options.context), Effect.asVoid),
       publishFreshData: (input, lineageId) =>
-        options.stateStore
-          .update(options.stackId, (current) => {
-            const instance = current.registry.instances.find(
-              (entry) => entry.id === input.instance.id,
-            );
-            if (
-              instance === undefined ||
-              instance.pendingOperation?.id !== input.operation.id ||
-              instance.pendingOperation.generation !== input.operation.generation
-            )
-              return Effect.fail(
-                new StackLifecycleConflictError({
-                  stackId: options.stackId,
-                  message: `Instance operation ${input.operation.id} is no longer current`,
-                }),
-              );
-            return Effect.succeed({
-              ...current,
-              registry: {
-                ...current.registry,
-                instances: current.registry.instances.map((entry) =>
-                  entry.id === input.instance.id &&
-                  (entry.data.origin === "absent" || entry.data.origin === "incomplete")
-                    ? { ...entry, data: { origin: "fresh" as const, lineageId } }
-                    : entry,
-                ),
-              },
-            });
-          })
-          .pipe(Effect.provideContext(options.context), Effect.asVoid),
+        publishData(
+          input,
+          { origin: "fresh", lineageId },
+          (entry) => entry.data.origin === "absent" || entry.data.origin === "incomplete",
+        ),
       publishIncompleteData: (input) =>
-        options.stateStore
-          .update(options.stackId, (current) => {
-            const instance = current.registry.instances.find(
-              (entry) => entry.id === input.instance.id,
-            );
-            if (
-              instance === undefined ||
-              instance.pendingOperation?.id !== input.operation.id ||
-              instance.pendingOperation.generation !== input.operation.generation
-            )
-              return Effect.fail(
-                new StackLifecycleConflictError({
-                  stackId: options.stackId,
-                  message: `Instance operation ${input.operation.id} is no longer current`,
-                }),
-              );
-            return Effect.succeed({
-              ...current,
-              registry: {
-                ...current.registry,
-                instances: current.registry.instances.map((entry) =>
-                  entry.id === input.instance.id
-                    ? {
-                        ...entry,
-                        data: { origin: "incomplete" as const, operationId: input.operation.id },
-                      }
-                    : entry,
-                ),
-              },
-            });
-          })
-          .pipe(Effect.provideContext(options.context), Effect.asVoid),
+        publishData(input, { origin: "incomplete", operationId: input.operation.id }),
+      publishAbsentData: (input) => publishData(input, { origin: "absent" }),
       journal: journalInstance,
     });
     const instanceStart = (input: InstanceRuntimeInput) =>

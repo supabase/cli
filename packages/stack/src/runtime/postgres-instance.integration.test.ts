@@ -266,6 +266,18 @@ describe("postgres instance runtime", () => {
               ),
             },
           })),
+        publishAbsentData: (input) =>
+          Ref.update(current, (state) => ({
+            ...state,
+            registry: {
+              ...state.registry,
+              instances: state.registry.instances.map((instance) =>
+                instance.id === input.instance.id
+                  ? { ...instance, data: { origin: "absent" as const } }
+                  : instance,
+              ),
+            },
+          })),
         journal: () => Effect.void,
       });
 
@@ -367,6 +379,7 @@ describe("postgres instance runtime", () => {
       yield* fileSystem.chmod(sourceVersion, 0o600);
       const driver = makeDriver([]);
       let failJournalComplete = false;
+      let failRestoreBeforeCopy = false;
       let failRestore = false;
       let publishedData: PersistedServiceInstance["data"] = { origin: "absent" };
       let restoreEntryData: PersistedServiceInstance["data"] | undefined;
@@ -429,6 +442,10 @@ describe("postgres instance runtime", () => {
           restore: (_input, sourcePath, destination) =>
             Effect.gen(function* () {
               restoreEntryData = publishedData;
+              if (failRestoreBeforeCopy)
+                return yield* new StackPreparationError({
+                  message: "injected empty restore failure",
+                });
               yield* fileSystem
                 .copy(sourcePath, destination, { overwrite: false })
                 .pipe(
@@ -464,6 +481,10 @@ describe("postgres instance runtime", () => {
         publishIncompleteData: (input) =>
           Effect.sync(() => {
             publishedData = { origin: "incomplete", operationId: input.operation.id };
+          }),
+        publishAbsentData: () =>
+          Effect.sync(() => {
+            publishedData = { origin: "absent" };
           }),
         journal: (_input, phase) =>
           failJournalComplete && phase === "complete"
@@ -507,6 +528,16 @@ describe("postgres instance runtime", () => {
       yield* fileSystem.remove(path.join(snapshotPaths.data, "instances", target.id), {
         recursive: true,
       });
+      failRestoreBeforeCopy = true;
+      const cleanFailure = yield* Effect.exit(
+        provider.restoreSnapshot(targetInput, { source: archive }),
+      );
+      expect(Exit.isFailure(cleanFailure)).toBe(true);
+      expect(publishedData).toEqual({ origin: "absent" });
+      expect(
+        yield* fileSystem.exists(path.join(snapshotPaths.data, "instances", target.id, "postgres")),
+      ).toBe(false);
+      failRestoreBeforeCopy = false;
       failRestore = true;
       const failedMutation = yield* Effect.exit(
         provider.restoreSnapshot(targetInput, { source: archive }),
@@ -533,6 +564,10 @@ describe("postgres instance runtime", () => {
         const error = Option.getOrUndefined(Cause.findErrorOption(failedRestore.cause));
         expect(error).toBeInstanceOf(StackCleanupError);
       }
+      expect(publishedData).toEqual({
+        origin: "incomplete",
+        operationId: "restore-operation",
+      });
       expect(
         yield* fileSystem.exists(path.join(snapshotPaths.data, "instances", target.id, "postgres")),
       ).toBe(true);
@@ -664,6 +699,7 @@ describe("postgres instance runtime", () => {
         publishInitialization: () => Effect.void,
         publishFreshData: () => Effect.void,
         publishIncompleteData: () => Effect.void,
+        publishAbsentData: () => Effect.void,
         journal: () => Effect.void,
       });
       const sourceInput = makeInput(state, source, plan, "volume-export-operation");

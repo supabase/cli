@@ -194,6 +194,14 @@ service. Export requires stopped owned data and an absent destination. Restore
 requires a stopped instance with empty storage and compatible runtime, PostgreSQL
 format, and initialization profile.
 
+Database data has four durable states: `absent` means no owned data is present, `fresh` carries
+the lineage of a successful new initialization, `restored` carries the validated snapshot
+descriptor, and `incomplete` carries the operation ID when storage completeness is unknown.
+Starting absent or incomplete data records incomplete before mutation and promotes it to fresh on
+success. A successful restore records restored; once marked incomplete, a failed restore retains
+that state unless the runtime proves the target empty, in which case it records absent. Existing fresh or restored
+provenance is preserved across ordinary restarts.
+
 ```ts
 await database.stop();
 const snapshot = await database.exportSnapshot({ destination: "/tmp/baseline.tar" });

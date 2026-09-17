@@ -135,6 +135,7 @@ const fixture = Effect.gen(function* () {
     publishInitialization: () => Effect.void,
     publishFreshData: () => Effect.die("Restore preserves source lineage"),
     publishIncompleteData: () => Effect.void,
+    publishAbsentData: () => Effect.void,
     journal: () => Effect.void,
   });
   const manifest = {
