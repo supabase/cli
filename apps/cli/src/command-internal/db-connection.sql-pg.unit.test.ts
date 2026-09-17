@@ -21,6 +21,7 @@ import {
   mergedConnectionOptions,
   sslConfigsFor,
   sslOptionFor,
+  tlsExplicitlyRequested,
   toConnectError,
   toExecError,
 } from "./db-connection.sql-pg.layer.ts";
@@ -256,6 +257,38 @@ describe("sslConfigsFor (pgconn fallback list)", () => {
     expect(sslConfigsFor("require", false, undefined, undefined, "db.example.com")).toEqual([
       { rejectUnauthorized: false },
     ]);
+  });
+});
+
+describe("tlsExplicitlyRequested (CLI-2366: --db-url TLS against a local target)", () => {
+  const base: PgConnInput = {
+    host: "127.0.0.1",
+    port: 54322,
+    user: "postgres",
+    password: "postgres",
+    database: "postgres",
+  };
+
+  it("is false when the DSN set neither sslmode nor a root cert", () => {
+    expect(tlsExplicitlyRequested(base)).toBe(false);
+  });
+
+  it("is true for any sslmode, including disable (still resolved by sslConfigsFor)", () => {
+    expect(tlsExplicitlyRequested({ ...base, sslmode: "require" })).toBe(true);
+    expect(tlsExplicitlyRequested({ ...base, sslmode: "verify-full" })).toBe(true);
+    expect(tlsExplicitlyRequested({ ...base, sslmode: "disable" })).toBe(true);
+  });
+
+  it("is true when a root cert (file path or inline PEM) is set", () => {
+    expect(tlsExplicitlyRequested({ ...base, sslrootcert: "/tmp/ca.pem" })).toBe(true);
+    expect(
+      tlsExplicitlyRequested({ ...base, sslrootcertInline: "-----BEGIN CERTIFICATE-----" }),
+    ).toBe(true);
+  });
+
+  it("ignores an empty sslrootcert/sslrootcertInline string", () => {
+    expect(tlsExplicitlyRequested({ ...base, sslrootcert: "" })).toBe(false);
+    expect(tlsExplicitlyRequested({ ...base, sslrootcertInline: "" })).toBe(false);
   });
 });
 

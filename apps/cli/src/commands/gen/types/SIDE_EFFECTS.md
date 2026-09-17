@@ -124,9 +124,11 @@ Not applicable.
   - `--linked` / `--project-id` / the implicit linked fallback / a resolved preview
     branch connect with `sslmode=require` and the bundled Supabase CA pinned
     (promoted to `verify-ca`), matching prior behavior.
-  - `--db-url` honors the DSN's own `sslmode`/`sslrootcert` when either is set;
+  - `--db-url` honors the DSN's own `sslmode`/`sslrootcert` when either is set, even
+    against a target classified local (e.g. a TLS tunnel on the loopback stack);
     otherwise, a known Supabase host gets the Supabase CA pinned the same way, and any
-    other host uses the connection resolver's default.
+    other host — including a loopback target where the DSN sets neither — uses the
+    connection resolver's default, which is plaintext for a local target.
   - `--local` uses no TLS.
 - **Sanctioned intentional divergence (CLI-1988 parity ruling):**
   `--lang` accepts `typescript` (default), `go`, `swift`, or `python`. Project-ref paths

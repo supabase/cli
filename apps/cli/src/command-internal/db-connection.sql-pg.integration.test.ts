@@ -129,6 +129,61 @@ const BIND_COMPLETE = wireMessage("2", Buffer.alloc(0));
 const NO_DATA = wireMessage("n", Buffer.alloc(0));
 const EMPTY_QUERY = wireMessage("I", Buffer.alloc(0));
 
+/**
+ * A fake Postgres server that completes an auth-less startup handshake, answers every
+ * simple-protocol query with `SELECT 1`'s result (satisfying `acquireProbedPool`'s own probe),
+ * and records whether the client sent an SSLRequest first — so a test can prove whether TLS was
+ * attempted independent of how the attempt is resolved.
+ */
+const fakeStartupServer = (): Promise<{
+  readonly port: number;
+  readonly close: () => void;
+  readonly sawSslRequest: () => boolean;
+}> =>
+  new Promise((resolve) => {
+    let sawSslRequest = false;
+    const server = net.createServer((socket) => {
+      let sawStartup = false;
+      let pending = Buffer.alloc(0);
+      socket.on("data", (data: Buffer) => {
+        pending = Buffer.concat([pending, data]);
+        for (;;) {
+          if (!sawStartup) {
+            if (pending.length < 8) return;
+            const length = pending.readInt32BE(0);
+            if (pending.length < length) return;
+            if (pending.readInt32BE(4) === 80877103) {
+              sawSslRequest = true;
+              socket.write("N");
+            } else {
+              sawStartup = true;
+              socket.write(Buffer.concat([AUTHENTICATION_OK, READY_FOR_QUERY]));
+            }
+            pending = pending.subarray(length);
+            continue;
+          }
+          if (pending.length < 5) return;
+          const length = pending.readInt32BE(1);
+          if (pending.length < length + 1) return;
+          const type = String.fromCharCode(pending[0] ?? 0);
+          pending = pending.subarray(length + 1);
+          if (type === "Q") {
+            socket.write(Buffer.concat([commandComplete("SELECT 1"), READY_FOR_QUERY]));
+          }
+        }
+      });
+      socket.on("error", () => {});
+    });
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address() as net.AddressInfo;
+      resolve({
+        port: address.port,
+        close: () => server.close(),
+        sawSslRequest: () => sawSslRequest,
+      });
+    });
+  });
+
 const readCString = (body: Buffer, offset: number): readonly [string, number] => {
   const end = body.indexOf(0, offset);
   return [body.toString("utf8", offset, end), end + 1];
@@ -790,6 +845,87 @@ describe("acquirePgPool", () => {
         expect(acquired?.ending).toBe(true);
         expect(acquired?.ended).toBe(true);
       }).pipe(Effect.ensuring(Effect.sync(server.close)));
+    }),
+  );
+});
+
+describe("a local target's explicit TLS request (CLI-2366: honor --db-url's own sslmode/sslrootcert)", () => {
+  it.live("attempts TLS instead of forcing plaintext when a local target's DSN sets sslmode", () =>
+    Effect.gen(function* () {
+      const server = yield* Effect.promise(fakeStartupServer);
+      const error = yield* connectFailure({ port: server.port, sslmode: "require" }).pipe(
+        Effect.ensuring(Effect.sync(server.close)),
+      );
+      expect(server.sawSslRequest()).toBe(true);
+      expect(error.message).toContain("tls error (The server does not support SSL connections)");
+      expect(error.suggestion).toBe(
+        "This server does not accept TLS. Set `sslmode=disable` on the connection string to connect in plaintext.",
+      );
+    }),
+  );
+
+  it.live("stays plaintext for a local target when sslmode=disable is set explicitly", () =>
+    Effect.gen(function* () {
+      const server = yield* Effect.promise(fakeStartupServer);
+      yield* Effect.gen(function* () {
+        const pool = yield* acquirePgPool(
+          {
+            host: "127.0.0.1",
+            port: server.port,
+            user: "postgres",
+            password: "postgres",
+            database: "postgres",
+            sslmode: "disable",
+          },
+          { isLocal: true, dnsResolver: "native" },
+        );
+        yield* Effect.tryPromise(() => pool.query("select 1"));
+      }).pipe(Effect.scoped, Effect.ensuring(Effect.sync(server.close)));
+      expect(server.sawSslRequest()).toBe(false);
+    }),
+  );
+
+  it.live(
+    "stays plaintext for a local target with no sslmode/sslrootcert set (the default must not regress)",
+    () =>
+      Effect.gen(function* () {
+        const server = yield* Effect.promise(fakeStartupServer);
+        yield* Effect.gen(function* () {
+          const pool = yield* acquirePgPool(
+            {
+              host: "127.0.0.1",
+              port: server.port,
+              user: "postgres",
+              password: "postgres",
+              database: "postgres",
+            },
+            { isLocal: true, dnsResolver: "native" },
+          );
+          yield* Effect.tryPromise(() => pool.query("select 1"));
+        }).pipe(Effect.scoped, Effect.ensuring(Effect.sync(server.close)));
+        expect(server.sawSslRequest()).toBe(false);
+      }),
+  );
+
+  it.live(
+    "loads sslrootcert for a local target when the DSN explicitly set it, instead of silently ignoring it",
+    () =>
+      Effect.gen(function* () {
+        const missingPath = "/tmp/cli-2366-missing-sslrootcert.pem";
+        const error = yield* connectFailure({
+          port: 54322,
+          sslrootcert: missingPath,
+          sslmode: "verify-full",
+        });
+        expect(error.message).toContain(`failed to read sslrootcert ${missingPath}`);
+      }),
+  );
+
+  it.live("keeps a remote target's sslrootcert loading unchanged", () =>
+    Effect.gen(function* () {
+      const missingPath = "/tmp/cli-2366-missing-sslrootcert-remote.pem";
+      const error = yield* connectFailure({ port: 5432, sslrootcert: missingPath }, false);
+      expect(error.message).toContain(`failed to read sslrootcert ${missingPath}`);
     }),
   );
 });
