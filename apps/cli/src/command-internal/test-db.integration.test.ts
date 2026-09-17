@@ -530,21 +530,24 @@ describe("test db integration", () => {
     );
   });
 
-  it.live("stack --local on Windows uses catalog container pg_prove against host.docker.internal", () => {
-    const { layer, docker, bundled } = setup({ isLocal: true, platform: "win32" });
-    return Effect.gen(function* () {
-      yield* testDb(flags({ local: true }));
-      expect(docker.lastOpts).toBeUndefined();
-      expect(bundled.lastOpts?.runtime).toEqual({ kind: "container", engine: "docker" });
-      expect(bundled.lastOpts?.env?.["PGHOST"]).toBe("host.docker.internal");
-      expect(bundled.lastOpts?.network).toBe("host");
-      expect(bundled.lastOpts?.extraHosts).toEqual([]);
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(layer, stackBackendLayer("stack"), proveStackApi({ kind: "native" })),
-      ),
-    );
-  });
+  it.live(
+    "stack --local on Windows uses catalog container pg_prove against host.docker.internal",
+    () => {
+      const { layer, docker, bundled } = setup({ isLocal: true, platform: "win32" });
+      return Effect.gen(function* () {
+        yield* testDb(flags({ local: true }));
+        expect(docker.lastOpts).toBeUndefined();
+        expect(bundled.lastOpts?.runtime).toEqual({ kind: "container", engine: "docker" });
+        expect(bundled.lastOpts?.env?.["PGHOST"]).toBe("host.docker.internal");
+        expect(bundled.lastOpts?.network).toBe("host");
+        expect(bundled.lastOpts?.extraHosts).toEqual([]);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(layer, stackBackendLayer("stack"), proveStackApi({ kind: "native" })),
+        ),
+      );
+    },
+  );
 
   it.live("stack --db-url native keeps PGHOST when isLocal is true", () => {
     const { layer, docker, bundled } = setup({
