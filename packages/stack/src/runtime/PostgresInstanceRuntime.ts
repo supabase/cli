@@ -151,6 +151,8 @@ export interface PostgresInstanceRuntimeOptions {
     input: InstanceRuntimeInput,
     lineageId: string,
   ) => Effect.Effect<void, StackError>;
+  /** Publishes an operation-scoped incomplete-data marker before storage mutation. */
+  readonly publishIncompleteData: (input: InstanceRuntimeInput) => Effect.Effect<void, StackError>;
   /** Journals helper/staging ownership before any snapshot helper is started. */
   readonly journal: (
     input: InstanceRuntimeInput,
@@ -440,6 +442,11 @@ export const makePostgresInstanceRuntime = (
                   profileId: initialization.profileId,
                   message: "Database initialization profile does not match durable receipts",
                 });
+              if (
+                input.instance.data.origin === "absent" ||
+                input.instance.data.origin === "incomplete"
+              )
+                yield* options.publishIncompleteData(input);
               yield* options.driver.start(key, workload);
               started = true;
               yield* journal(options, input, "running");
@@ -475,7 +482,10 @@ export const makePostgresInstanceRuntime = (
                   recipes: receipts,
                 });
               }
-              if (input.instance.data.origin === "absent")
+              if (
+                input.instance.data.origin === "absent" ||
+                input.instance.data.origin === "incomplete"
+              )
                 yield* options.publishFreshData(input, input.operation.id);
               yield* journal(options, input, "complete");
               return [
@@ -710,6 +720,7 @@ export const makePostgresInstanceRuntime = (
                 archiveError("Unable to create instance manifest directory", cause),
               ),
             );
+          yield* options.publishIncompleteData(input);
           yield* options.snapshotData.restore(
             input,
             path.join(staging, "postgres"),

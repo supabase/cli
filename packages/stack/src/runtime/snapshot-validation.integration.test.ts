@@ -134,6 +134,7 @@ const fixture = Effect.gen(function* () {
     reconcileCatalogRecipe: () => Effect.die("Restore must not run catalog migrations"),
     publishInitialization: () => Effect.void,
     publishFreshData: () => Effect.die("Restore preserves source lineage"),
+    publishIncompleteData: () => Effect.void,
     journal: () => Effect.void,
   });
   const manifest = {

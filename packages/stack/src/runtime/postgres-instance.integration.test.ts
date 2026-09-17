@@ -66,11 +66,13 @@ const makeInput = (
 const makeDriver = (
   started: Array<{ readonly instanceId: ServiceInstanceId; readonly workloadId: string }>,
   remove?: () => Effect.Effect<void, RuntimeDriverError>,
+  onStart?: (key: RuntimeWorkloadKey) => Effect.Effect<void>,
 ) =>
   ({
     observe: () => Effect.succeed([]),
     start: (key: RuntimeWorkloadKey, _workload: PlannedWorkload) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
+        if (onStart !== undefined) yield* onStart(key);
         started.push({ instanceId: key.instanceId, workloadId: key.workloadId });
         return { ...key, state: "ready" as const } satisfies ObservedWorkload;
       }),
@@ -157,17 +159,32 @@ describe("postgres instance runtime", () => {
         readonly workloadId: string;
       }> = [];
       const recipes: Array<{ readonly instanceId: string; readonly recipeId: string }> = [];
+      const originsAtDriverStart: string[] = [];
       let failCatalog = false;
       let failRemove = false;
-      const driver = makeDriver(started, () =>
-        failRemove
-          ? Effect.fail(
-              new RuntimeDriverError({
-                message: "injected remove failure",
-                stackId,
+      const driver = makeDriver(
+        started,
+        () =>
+          failRemove
+            ? Effect.fail(
+                new RuntimeDriverError({
+                  message: "injected remove failure",
+                  stackId,
+                }),
+              )
+            : Effect.void,
+        (key) =>
+          Ref.get(current).pipe(
+            Effect.tap((state) =>
+              Effect.sync(() => {
+                const instance = state.registry.instances.find(
+                  (entry) => entry.id === key.instanceId,
+                );
+                if (instance !== undefined) originsAtDriverStart.push(instance.data.origin);
               }),
-            )
-          : Effect.void,
+            ),
+            Effect.asVoid,
+          ),
       );
       const artifactPreparer: RuntimeArtifactPreparer = {
         prepare: (_runtime, workload) =>
@@ -222,7 +239,33 @@ describe("postgres instance runtime", () => {
               },
             },
           ]),
-        publishFreshData: () => Effect.void,
+        publishFreshData: (input, lineageId) =>
+          Ref.update(current, (state) => ({
+            ...state,
+            registry: {
+              ...state.registry,
+              instances: state.registry.instances.map((instance) =>
+                instance.id === input.instance.id
+                  ? { ...instance, data: { origin: "fresh" as const, lineageId } }
+                  : instance,
+              ),
+            },
+          })),
+        publishIncompleteData: (input) =>
+          Ref.update(current, (state) => ({
+            ...state,
+            registry: {
+              ...state.registry,
+              instances: state.registry.instances.map((instance) =>
+                instance.id === input.instance.id
+                  ? {
+                      ...instance,
+                      data: { origin: "incomplete" as const, operationId: input.operation.id },
+                    }
+                  : instance,
+              ),
+            },
+          })),
         journal: () => Effect.void,
       });
 
@@ -252,6 +295,21 @@ describe("postgres instance runtime", () => {
         const error = Option.getOrUndefined(Cause.findErrorOption(failed.cause));
         expect(error).toBeInstanceOf(StackCleanupError);
       }
+      expect(originsAtDriverStart.at(-1)).toBe("incomplete");
+      const failedState = yield* Ref.get(current);
+      const failedInstance = failedState.registry.instances.find(({ id }) => id === first.id);
+      expect(failedInstance?.data).toEqual({
+        origin: "incomplete",
+        operationId: "cleanup-failure",
+      });
+
+      failCatalog = false;
+      failRemove = false;
+      if (failedInstance === undefined) throw new Error("Missing failed database instance");
+      yield* provider.start(makeInput(failedState, failedInstance, plan, "retry-success"));
+      const retriedState = yield* Ref.get(current);
+      const retriedInstance = retriedState.registry.instances.find(({ id }) => id === first.id);
+      expect(retriedInstance?.data).toEqual({ origin: "fresh", lineageId: "retry-success" });
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -309,6 +367,9 @@ describe("postgres instance runtime", () => {
       yield* fileSystem.chmod(sourceVersion, 0o600);
       const driver = makeDriver([]);
       let failJournalComplete = false;
+      let failRestore = false;
+      let publishedData: PersistedServiceInstance["data"] = { origin: "absent" };
+      let restoreEntryData: PersistedServiceInstance["data"] | undefined;
       const artifactPreparer: RuntimeArtifactPreparer = {
         prepare: () =>
           Effect.succeed({
@@ -366,13 +427,18 @@ describe("postgres instance runtime", () => {
                 Effect.mapError((cause) => new StackPreparationError({ message: "export", cause })),
               ),
           restore: (_input, sourcePath, destination) =>
-            fileSystem
-              .copy(sourcePath, destination, { overwrite: false })
-              .pipe(
-                Effect.mapError(
-                  (cause) => new StackPreparationError({ message: "restore", cause }),
-                ),
-              ),
+            Effect.gen(function* () {
+              restoreEntryData = publishedData;
+              yield* fileSystem
+                .copy(sourcePath, destination, { overwrite: false })
+                .pipe(
+                  Effect.mapError(
+                    (cause) => new StackPreparationError({ message: "restore", cause }),
+                  ),
+                );
+              if (failRestore)
+                return yield* new StackPreparationError({ message: "injected restore failure" });
+            }),
           rollbackRestore: (input) =>
             fileSystem
               .remove(path.join(snapshotPaths.data, "instances", input.instance.id), {
@@ -395,6 +461,10 @@ describe("postgres instance runtime", () => {
           Effect.fail(new StackRuntimeError({ message: "catalog is not used in snapshot test" })),
         publishInitialization: () => Effect.void,
         publishFreshData: () => Effect.void,
+        publishIncompleteData: (input) =>
+          Effect.sync(() => {
+            publishedData = { origin: "incomplete", operationId: input.operation.id };
+          }),
         journal: (_input, phase) =>
           failJournalComplete && phase === "complete"
             ? Effect.fail(new StackRuntimeError({ message: "injected completion journal failure" }))
@@ -437,6 +507,23 @@ describe("postgres instance runtime", () => {
       yield* fileSystem.remove(path.join(snapshotPaths.data, "instances", target.id), {
         recursive: true,
       });
+      failRestore = true;
+      const failedMutation = yield* Effect.exit(
+        provider.restoreSnapshot(targetInput, { source: archive }),
+      );
+      expect(Exit.isFailure(failedMutation)).toBe(true);
+      expect(restoreEntryData).toEqual({
+        origin: "incomplete",
+        operationId: "restore-operation",
+      });
+      expect(publishedData).toEqual({
+        origin: "incomplete",
+        operationId: "restore-operation",
+      });
+      yield* fileSystem.remove(path.join(snapshotPaths.data, "instances", target.id), {
+        recursive: true,
+      });
+      failRestore = false;
       failJournalComplete = true;
       const failedRestore = yield* Effect.exit(
         provider.restoreSnapshot(targetInput, { source: archive }),
@@ -576,6 +663,7 @@ describe("postgres instance runtime", () => {
           Effect.fail(new StackRuntimeError({ message: "catalog is not used in volume test" })),
         publishInitialization: () => Effect.void,
         publishFreshData: () => Effect.void,
+        publishIncompleteData: () => Effect.void,
         journal: () => Effect.void,
       });
       const sourceInput = makeInput(state, source, plan, "volume-export-operation");
@@ -793,6 +881,7 @@ fs.writeFileSync(eventsPath, JSON.stringify(events));
                 artifactRoot: root,
               }),
           };
+          let failBootstrap = true;
           const runtimeInstance = yield* makeProductionRuntime({
             stateRoot: root,
             stackId,
@@ -804,7 +893,10 @@ fs.writeFileSync(eventsPath, JSON.stringify(events));
               Context.add(Crypto.Crypto, crypto),
             ),
             artifactPreparer,
-            bootstrapDatabase: () => Effect.void,
+            bootstrapDatabase: () =>
+              failBootstrap
+                ? Effect.fail(new StackPreparationError({ message: "injected bootstrap failure" }))
+                : Effect.void,
           });
           const startedInputs = [];
           for (const instance of current.registry.instances) {
@@ -815,9 +907,77 @@ fs.writeFileSync(eventsPath, JSON.stringify(events));
               plan,
               operation: { id: `production-start-${instance.id}`, generation: 1 },
             };
-            yield* runtimeInstance.start(input);
-            startedInputs.push(input);
+            if (instance.id === db.id) {
+              const failed = yield* Effect.exit(runtimeInstance.start(input));
+              expect(Exit.isFailure(failed)).toBe(true);
+              const failedState = yield* stateStore.read(stackId);
+              if (failedState === undefined) throw new Error("Missing failed production state");
+              const failedInstance = failedState.registry.instances.find(
+                (entry) => entry.id === db.id,
+              );
+              expect(failedInstance?.data).toEqual({
+                origin: "incomplete",
+                operationId: input.operation.id,
+              });
+              if (failedInstance === undefined) throw new Error("Missing failed database instance");
+              failBootstrap = false;
+              const retryInput = { ...input, state: failedState, instance: failedInstance };
+              yield* runtimeInstance.start(retryInput);
+              startedInputs.push(retryInput);
+            } else {
+              yield* runtimeInstance.start(input);
+              startedInputs.push(input);
+            }
           }
+          const firstInput = startedInputs.find((input) => input.instance.id === db.id);
+          if (firstInput === undefined) throw new Error("Missing started database input");
+          yield* runtimeInstance.stop(firstInput);
+          const freshState = yield* stateStore.read(stackId);
+          if (freshState === undefined) throw new Error("Missing fresh production state");
+          const freshInstance = freshState.registry.instances.find(({ id }) => id === db.id);
+          if (freshInstance === undefined) throw new Error("Missing fresh database instance");
+          const restartOperationId = "production-restart-db-one";
+          yield* stateStore.update(stackId, (current) =>
+            Effect.succeed({
+              ...current,
+              registry: {
+                ...current.registry,
+                instances: current.registry.instances.map((entry) =>
+                  entry.id === db.id
+                    ? {
+                        ...entry,
+                        pendingOperation: {
+                          id: restartOperationId,
+                          kind: "start" as const,
+                          generation: 1,
+                          ownerSessionId: "production-test",
+                          phase: "admitted" as const,
+                        },
+                      }
+                    : entry,
+                ),
+              },
+            }),
+          );
+          const restartState = yield* stateStore.read(stackId);
+          if (restartState === undefined) throw new Error("Missing restart production state");
+          const restartInstance = restartState.registry.instances.find(({ id }) => id === db.id);
+          if (restartInstance === undefined) throw new Error("Missing restart database instance");
+          const restartInput = {
+            stackId,
+            state: restartState,
+            instance: restartInstance,
+            plan,
+            operation: { id: restartOperationId, generation: 1 },
+          };
+          yield* runtimeInstance.start(restartInput);
+          startedInputs.splice(startedInputs.indexOf(firstInput), 1, restartInput);
+          const preserved = yield* stateStore.read(stackId);
+          if (preserved === undefined) throw new Error("Missing preserved production state");
+          expect(preserved.registry.instances.find(({ id }) => id === db.id)?.data).toEqual({
+            origin: "fresh",
+            lineageId: firstInput.operation.id,
+          });
           const events = yield* Schema.decodeEffect(Schema.fromJsonString(EventsSchema))(
             yield* fileSystem.readFileString(eventsPath),
           );

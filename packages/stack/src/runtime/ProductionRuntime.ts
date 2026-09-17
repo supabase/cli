@@ -2580,8 +2580,42 @@ export const makeProductionRuntime = (
               registry: {
                 ...current.registry,
                 instances: current.registry.instances.map((entry) =>
-                  entry.id === input.instance.id && entry.data.origin === "absent"
+                  entry.id === input.instance.id &&
+                  (entry.data.origin === "absent" || entry.data.origin === "incomplete")
                     ? { ...entry, data: { origin: "fresh" as const, lineageId } }
+                    : entry,
+                ),
+              },
+            });
+          })
+          .pipe(Effect.provideContext(options.context), Effect.asVoid),
+      publishIncompleteData: (input) =>
+        options.stateStore
+          .update(options.stackId, (current) => {
+            const instance = current.registry.instances.find(
+              (entry) => entry.id === input.instance.id,
+            );
+            if (
+              instance === undefined ||
+              instance.pendingOperation?.id !== input.operation.id ||
+              instance.pendingOperation.generation !== input.operation.generation
+            )
+              return Effect.fail(
+                new StackLifecycleConflictError({
+                  stackId: options.stackId,
+                  message: `Instance operation ${input.operation.id} is no longer current`,
+                }),
+              );
+            return Effect.succeed({
+              ...current,
+              registry: {
+                ...current.registry,
+                instances: current.registry.instances.map((entry) =>
+                  entry.id === input.instance.id
+                    ? {
+                        ...entry,
+                        data: { origin: "incomplete" as const, operationId: input.operation.id },
+                      }
                     : entry,
                 ),
               },
