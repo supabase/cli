@@ -20,6 +20,16 @@ describe("resolveEphemeralPostgresRelease", () => {
     }),
   );
 
+  it.effect("maps a superseded exact pin to the current catalog release of that major", () =>
+    Effect.gen(function* () {
+      const major = DatabaseModule.defaultVersion.split(".")[0];
+      expect(major).toBeDefined();
+      if (major === undefined) return;
+      const selected = yield* resolveEphemeralPostgresRelease(`${major}.0.0.1`);
+      expect(selected.version).toBe(DatabaseModule.defaultVersion);
+    }),
+  );
+
   it.effect("fails for an unknown PostgreSQL version", () =>
     Effect.gen(function* () {
       const exit = yield* resolveEphemeralPostgresRelease("99").pipe(Effect.exit);

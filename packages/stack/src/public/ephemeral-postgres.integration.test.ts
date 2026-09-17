@@ -24,6 +24,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EphemeralPostgresError } from "./Errors.ts";
 import { createEphemeralPostgres } from "./EphemeralPostgres.ts";
+import { catalogEntryFor } from "../model/WorkloadCatalog.ts";
 import { schemaInit } from "./SchemaInit.ts";
 import { listStacks } from "./EffectStack.ts";
 import { defaultRuntimeEnvironment, StackRuntimeEnvironment } from "../supervisor/Launcher.ts";
@@ -220,6 +221,41 @@ describe("ephemeral Postgres", () => {
         }),
       ).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     NATIVE_TIMEOUT_MS,
+  );
+
+  it.live(
+    "catalog native postgres can CREATE EXTENSION plpgsql_check on every database release",
+    () =>
+      withIsolatedRoot(
+        Effect.gen(function* () {
+          const versions = Object.keys(catalogEntryFor("database:database").releases);
+          expect(versions.length).toBeGreaterThan(0);
+          for (const version of versions) {
+            const cluster = yield* createEphemeralPostgres({
+              runtime: { kind: "native" },
+              version,
+              ...secrets,
+            });
+            expect(cluster.version).toBe(version);
+            yield* query(cluster.url, "CREATE EXTENSION IF NOT EXISTS plpgsql_check");
+            const installed = yield* query(
+              cluster.url,
+              "SELECT extname FROM pg_extension WHERE extname = 'plpgsql_check'",
+            );
+            expect(installed).toEqual([{ extname: "plpgsql_check" }]);
+            yield* query(
+              cluster.url,
+              "CREATE FUNCTION public.lint_probe() RETURNS void LANGUAGE plpgsql AS $$ BEGIN PERFORM id FROM lint_probe_missing; END $$",
+            );
+            const reports = yield* query(
+              cluster.url,
+              "SELECT plpgsql_check_function('public.lint_probe()'::regprocedure, format := 'json')::text AS report",
+            );
+            expect(reports).toEqual([{ report: expect.stringContaining("lint_probe_missing") }]);
+          }
+        }),
+      ).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    NATIVE_TIMEOUT_MS * 2,
   );
 
   it.live(
