@@ -380,7 +380,10 @@ describe("postgres instance runtime", () => {
       const driver = makeDriver([]);
       let failJournalComplete = false;
       let failRestoreBeforeCopy = false;
+      let failRestoreEmptyProbe = false;
+      let restoreFailureObserved = false;
       let failRestore = false;
+      let failManifestWrite = false;
       let publishedData: PersistedServiceInstance["data"] = { origin: "absent" };
       let restoreEntryData: PersistedServiceInstance["data"] | undefined;
       const artifactPreparer: RuntimeArtifactPreparer = {
@@ -423,16 +426,24 @@ describe("postgres instance runtime", () => {
                 ),
               ),
           restoreTargetEmpty: (input) =>
-            fileSystem.exists(path.join(snapshotPaths.data, "instances", input.instance.id)).pipe(
-              Effect.flatMap((exists) =>
-                exists
-                  ? fileSystem
-                      .readDirectory(path.join(snapshotPaths.data, "instances", input.instance.id))
-                      .pipe(Effect.map((entries) => entries.length === 0))
-                  : Effect.succeed(true),
-              ),
-              Effect.mapError((cause) => new StackPreparationError({ message: "empty", cause })),
-            ),
+            failRestoreEmptyProbe && restoreFailureObserved
+              ? Effect.die("injected restore empty probe defect")
+              : fileSystem
+                  .exists(path.join(snapshotPaths.data, "instances", input.instance.id))
+                  .pipe(
+                    Effect.flatMap((exists) =>
+                      exists
+                        ? fileSystem
+                            .readDirectory(
+                              path.join(snapshotPaths.data, "instances", input.instance.id),
+                            )
+                            .pipe(Effect.map((entries) => entries.length === 0))
+                        : Effect.succeed(true),
+                    ),
+                    Effect.mapError(
+                      (cause) => new StackPreparationError({ message: "empty", cause }),
+                    ),
+                  ),
           export: (_input, destination) =>
             fileSystem
               .copy(sourceData, destination, { overwrite: false })
@@ -442,6 +453,7 @@ describe("postgres instance runtime", () => {
           restore: (_input, sourcePath, destination) =>
             Effect.gen(function* () {
               restoreEntryData = publishedData;
+              restoreFailureObserved = true;
               if (failRestoreBeforeCopy)
                 return yield* new StackPreparationError({
                   message: "injected empty restore failure",
@@ -453,12 +465,20 @@ describe("postgres instance runtime", () => {
                     (cause) => new StackPreparationError({ message: "restore", cause }),
                   ),
                 );
+              if (failManifestWrite)
+                yield* fileSystem
+                  .makeDirectory(path.join(path.dirname(destination), "manifest.json"))
+                  .pipe(
+                    Effect.mapError(
+                      (cause) => new StackPreparationError({ message: "manifest", cause }),
+                    ),
+                  );
               if (failRestore)
                 return yield* new StackPreparationError({ message: "injected restore failure" });
             }),
           rollbackRestore: (input) =>
             fileSystem
-              .remove(path.join(snapshotPaths.data, "instances", input.instance.id), {
+              .remove(path.join(snapshotPaths.data, "instances", input.instance.id, "postgres"), {
                 recursive: true,
               })
               .pipe(
@@ -529,6 +549,24 @@ describe("postgres instance runtime", () => {
         recursive: true,
       });
       failRestoreBeforeCopy = true;
+      failRestoreEmptyProbe = true;
+      restoreFailureObserved = false;
+      const uncertainFailure = yield* Effect.exit(
+        provider.restoreSnapshot(targetInput, { source: archive }),
+      );
+      expect(Exit.isFailure(uncertainFailure)).toBe(true);
+      if (Exit.isFailure(uncertainFailure)) {
+        expect(Cause.hasDies(uncertainFailure.cause)).toBe(true);
+        expect(
+          uncertainFailure.cause.reasons.some(
+            (reason) => Cause.isFailReason(reason) && reason.error instanceof StackCleanupError,
+          ),
+        ).toBe(true);
+      }
+      yield* fileSystem.remove(path.join(snapshotPaths.data, "instances", target.id), {
+        recursive: true,
+      });
+      failRestoreEmptyProbe = false;
       const cleanFailure = yield* Effect.exit(
         provider.restoreSnapshot(targetInput, { source: archive }),
       );
@@ -543,6 +581,10 @@ describe("postgres instance runtime", () => {
         provider.restoreSnapshot(targetInput, { source: archive }),
       );
       expect(Exit.isFailure(failedMutation)).toBe(true);
+      if (Exit.isFailure(failedMutation)) {
+        const error = Option.getOrUndefined(Cause.findErrorOption(failedMutation.cause));
+        expect(error).toBeInstanceOf(StackCleanupError);
+      }
       expect(restoreEntryData).toEqual({
         origin: "incomplete",
         operationId: "restore-operation",
@@ -555,6 +597,31 @@ describe("postgres instance runtime", () => {
         recursive: true,
       });
       failRestore = false;
+      failManifestWrite = true;
+      const failedManifest = yield* Effect.exit(
+        provider.restoreSnapshot(targetInput, { source: archive }),
+      );
+      expect(Exit.isFailure(failedManifest)).toBe(true);
+      if (Exit.isFailure(failedManifest)) {
+        const error = Option.getOrUndefined(Cause.findErrorOption(failedManifest.cause));
+        expect(error).toBeInstanceOf(StackCleanupError);
+      }
+      expect(publishedData).toEqual({
+        origin: "incomplete",
+        operationId: "restore-operation",
+      });
+      expect(
+        yield* fileSystem.exists(
+          path.join(snapshotPaths.data, "instances", target.id, "manifest.json"),
+        ),
+      ).toBe(true);
+      expect(
+        yield* fileSystem.exists(path.join(snapshotPaths.data, "instances", target.id, "postgres")),
+      ).toBe(false);
+      yield* fileSystem.remove(path.join(snapshotPaths.data, "instances", target.id), {
+        recursive: true,
+      });
+      failManifestWrite = false;
       failJournalComplete = true;
       const failedRestore = yield* Effect.exit(
         provider.restoreSnapshot(targetInput, { source: archive }),
@@ -589,9 +656,9 @@ describe("postgres instance runtime", () => {
         phase: "settling",
       });
       expect(rolledBack).toBeUndefined();
-      expect(yield* fileSystem.exists(path.join(snapshotPaths.data, "instances", target.id))).toBe(
-        false,
-      );
+      expect(
+        yield* fileSystem.exists(path.join(snapshotPaths.data, "instances", target.id, "postgres")),
+      ).toBe(false);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 

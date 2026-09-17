@@ -1,6 +1,7 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
+  Cause,
   Context,
   Crypto,
   Deferred,
@@ -26,7 +27,7 @@ import type {
 import type { RuntimeBindingPublication } from "../runtime/RuntimeBinding.ts";
 import type { RuntimeDriver } from "../runtime/RuntimeDriver.ts";
 import { ServiceInstanceIdSchema, type ServiceInstanceId } from "../public/ServiceInstanceId.ts";
-import { StackLifecycleConflictError } from "../public/Errors.ts";
+import { StackCleanupError, StackLifecycleConflictError } from "../public/Errors.ts";
 import type { SnapshotDescriptor } from "../public/Service.ts";
 import type { StackError } from "../public/Errors.ts";
 import { deriveStackId } from "../identity/Identity.ts";
@@ -140,6 +141,10 @@ interface RuntimeHooks {
   ) => Effect.Effect<ReadonlyArray<RuntimeBindingPublication>, StackError>;
   readonly stop?: (input: InstanceRuntimeInput) => Effect.Effect<void, StackError>;
   readonly destroy?: (input: InstanceRuntimeInput) => Effect.Effect<void, StackError>;
+  readonly restoreSnapshot?: (
+    input: InstanceRuntimeInput,
+    options: { readonly source: string },
+  ) => Effect.Effect<SnapshotDescriptor, StackError>;
   readonly recoverSnapshot?: (
     input: InstanceRuntimeInput,
     operation: PersistedPendingOperation,
@@ -166,7 +171,7 @@ const runtimeFor = (hooks: RuntimeHooks = {}): SupervisorRuntime => {
     stop: hooks.stop ?? (() => Effect.void),
     destroy: hooks.destroy ?? (() => Effect.void),
     exportSnapshot: unsupportedSnapshot,
-    restoreSnapshot: unsupportedSnapshot,
+    restoreSnapshot: hooks.restoreSnapshot ?? unsupportedSnapshot,
     ...(hooks.recoverSnapshot === undefined ? {} : { recoverSnapshot: hooks.recoverSnapshot }),
     prefetch: () => Effect.void,
     artifacts: Effect.succeed([]),
@@ -499,6 +504,40 @@ describe("instance engine", () => {
           false,
         );
         expect((yield* f.engine.status(second.id)).phase).toBe("stopped");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("retains a restore journal when cleanup failure is combined with a defect", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const first = instance(id("00000000-0000-4000-8000-000000000073"), "mixed-restore");
+        const second = instance(id("00000000-0000-4000-8000-000000000074"), "healthy");
+        const f = yield* makeFixture(first, second, undefined, {
+          restoreSnapshot: () =>
+            Effect.failCause(
+              Cause.combine(
+                Cause.fail(new StackCleanupError({ message: "restore cleanup is uncertain" })),
+                Cause.die(new Error("restore driver crashed")),
+              ),
+            ),
+        });
+
+        const failed = yield* f.engine.restoreSnapshot(first.id, "snapshot.tar").pipe(Effect.exit);
+        expect(Exit.isFailure(failed)).toBe(true);
+        if (Exit.isFailure(failed)) {
+          expect(Cause.hasDies(failed.cause)).toBe(true);
+          expect(Cause.findErrorOption(failed.cause)).toMatchObject({
+            _tag: "Some",
+            value: expect.any(StackCleanupError),
+          });
+        }
+        const persisted = yield* f.read();
+        expect(
+          persisted?.registry.instances.find((entry) => entry.id === first.id)?.pendingOperation,
+        ).toMatchObject({ kind: "restoreSnapshot", phase: "running" });
+        expect((yield* f.engine.status(first.id)).phase).toBe("recovery");
+        expect((yield* f.engine.status(first.id)).recovery?.operation).toBe("destroy");
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );

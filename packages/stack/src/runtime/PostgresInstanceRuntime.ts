@@ -6,8 +6,8 @@ import {
   FileSystem,
   Path,
   PlatformError,
-  Predicate,
   Option,
+  Predicate,
   Schema,
   Stream,
 } from "effect";
@@ -647,6 +647,46 @@ export const makePostgresInstanceRuntime = (
     );
   };
 
+  const settleFailedRestore = (input: InstanceRuntimeInput, cause: Cause.Cause<StackError>) =>
+    Effect.gen(function* () {
+      const restoreError = Cause.findErrorOption(cause);
+      if (
+        Cause.hasDies(cause) ||
+        Cause.hasInterrupts(cause) ||
+        Option.isNone(restoreError) ||
+        restoreError.value instanceof StackCleanupError
+      )
+        return yield* Effect.failCause(cause);
+      const targetEmpty = yield* Effect.exit(options.snapshotData.restoreTargetEmpty(input));
+      if (Exit.isFailure(targetEmpty))
+        return yield* Effect.failCause(
+          Cause.combine(
+            Cause.fail(
+              new StackCleanupError({ message: "Unable to prove failed restore target cleanup" }),
+            ),
+            Cause.combine(cause, targetEmpty.cause),
+          ),
+        );
+      if (!targetEmpty.value)
+        return yield* Effect.failCause(
+          Cause.combine(
+            Cause.fail(new StackCleanupError({ message: "Failed restore target is not empty" })),
+            cause,
+          ),
+        );
+      const absent = yield* Effect.exit(options.publishAbsentData(input));
+      if (Exit.isFailure(absent))
+        return yield* Effect.failCause(
+          Cause.combine(
+            Cause.fail(
+              new StackCleanupError({ message: "Unable to publish absent restore data state" }),
+            ),
+            Cause.combine(cause, absent.cause),
+          ),
+        );
+      return yield* Effect.failCause(cause);
+    });
+
   const restoreSnapshot = (input: InstanceRuntimeInput, snapshot: { readonly source: string }) => {
     return provideContext(
       Effect.suspend(() => {
@@ -733,22 +773,7 @@ export const makePostgresInstanceRuntime = (
             ),
           );
           if (Exit.isFailure(restored)) {
-            const restoreError = Cause.findErrorOption(restored.cause);
-            if (
-              Cause.hasDies(restored.cause) ||
-              Cause.hasInterrupts(restored.cause) ||
-              Option.isNone(restoreError) ||
-              restoreError.value instanceof StackCleanupError
-            )
-              return yield* Effect.failCause(restored.cause);
-            const targetEmpty = yield* Effect.exit(options.snapshotData.restoreTargetEmpty(input));
-            if (Exit.isFailure(targetEmpty))
-              return yield* Effect.failCause(Cause.combine(restored.cause, targetEmpty.cause));
-            if (!targetEmpty.value) return yield* Effect.failCause(restored.cause);
-            const absent = yield* Effect.exit(options.publishAbsentData(input));
-            if (Exit.isFailure(absent))
-              return yield* Effect.failCause(Cause.combine(restored.cause, absent.cause));
-            return yield* Effect.failCause(restored.cause);
+            return yield* settleFailedRestore(input, restored.cause);
           }
           // A settling journal proves the restore helper published this operation's target. If
           // the owner dies before the manifest receipt is committed, recovery may roll back
@@ -779,10 +804,7 @@ export const makePostgresInstanceRuntime = (
             const rollback = yield* Effect.exit(options.snapshotData.rollbackRestore(input));
             if (Exit.isFailure(rollback))
               return yield* cleanupError({ operation: published.cause, cleanup: rollback.cause });
-            const absent = yield* Effect.exit(options.publishAbsentData(input));
-            if (Exit.isFailure(absent))
-              return yield* cleanupError({ operation: published.cause, cleanup: absent.cause });
-            return yield* Effect.failCause(published.cause);
+            return yield* settleFailedRestore(input, published.cause);
           }
           if (manifest.profileId !== null && manifest.recipes.length > 0) {
             const initialized = yield* Effect.exit(
@@ -801,14 +823,18 @@ export const makePostgresInstanceRuntime = (
         });
         return withCleanup<StackError>(() =>
           ownsStaging ? cleanupStaging(options, input, "restore") : Effect.void,
-        )(operation.pipe(Effect.mapError(stackError))).pipe(
+        )(
+          operation.pipe(
+            Effect.catchCause((cause) => Effect.failCause(Cause.map(cause, stackError))),
+          ),
+        ).pipe(
           Effect.flatMap((descriptor) =>
             journal(options, input, "complete").pipe(
               Effect.mapError((cause) => cleanupError(cause)),
               Effect.as(descriptor),
             ),
           ),
-          Effect.mapError(stackError),
+          Effect.catchCause((cause) => Effect.failCause(Cause.map(cause, stackError))),
         );
       }),
     );

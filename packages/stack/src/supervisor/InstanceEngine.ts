@@ -1353,58 +1353,75 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
                     ? armIdle(id)
                     : cancelIdle(id),
               ),
-              Effect.catch((error) => {
-                const retainJournal =
-                  error instanceof StackCleanupError ||
-                  error instanceof UncertainOperationError ||
-                  mutation === "stop" ||
-                  mutation === "destroy" ||
-                  mutation === "sleep";
-                const cleanup = retainJournal
-                  ? Effect.void
-                  : options.stateStore
-                      .update(options.stackId, (state) => {
-                        const current = state.registry.instances.find((entry) => entry.id === id);
-                        const pending = current?.pendingOperation;
-                        if (
-                          current === undefined ||
-                          pending === null ||
-                          pending?.id !== operationId ||
-                          pending.generation !== instance.revisions.intent
-                        )
-                          return Effect.succeed(state);
-                        return Effect.succeed({
-                          ...state,
-                          registry: {
-                            ...state.registry,
-                            instances: state.registry.instances.map((entry) =>
-                              entry.id === id
-                                ? {
-                                    ...entry,
-                                    ...(mutation === "start" ? { intent: "stopped" as const } : {}),
-                                    pendingOperation: null,
-                                  }
-                                : entry,
-                            ),
-                          },
-                        });
-                      })
-                      .pipe(Effect.provideContext(options.context), Effect.asVoid);
-                const markFailure =
-                  retainJournal && input.instance.pendingOperation !== null
-                    ? markRecovery(id, input.instance.pendingOperation, error)
-                    : Effect.void;
-                return cleanup.pipe(
-                  Effect.andThen(retainFailure(id, operationId, input.state, error)),
-                  Effect.andThen(markFailure),
-                  Effect.andThen(retainJournal ? Effect.void : setPhase(id, "failed")),
-                  Effect.andThen(Effect.fail(error)),
-                );
-              }),
+              Effect.catchCause((cause) =>
+                Option.match(Cause.findErrorOption(cause), {
+                  onNone: () => Effect.failCause(cause),
+                  onSome: (error) => {
+                    const retainJournal =
+                      Cause.hasDies(cause) ||
+                      Cause.hasInterrupts(cause) ||
+                      error instanceof StackCleanupError ||
+                      error instanceof UncertainOperationError ||
+                      mutation === "stop" ||
+                      mutation === "destroy" ||
+                      mutation === "sleep";
+                    const cleanup = retainJournal
+                      ? Effect.void
+                      : options.stateStore
+                          .update(options.stackId, (state) => {
+                            const current = state.registry.instances.find(
+                              (entry) => entry.id === id,
+                            );
+                            const pending = current?.pendingOperation;
+                            if (
+                              current === undefined ||
+                              pending === null ||
+                              pending?.id !== operationId ||
+                              pending.generation !== instance.revisions.intent
+                            )
+                              return Effect.succeed(state);
+                            return Effect.succeed({
+                              ...state,
+                              registry: {
+                                ...state.registry,
+                                instances: state.registry.instances.map((entry) =>
+                                  entry.id === id
+                                    ? {
+                                        ...entry,
+                                        ...(mutation === "start"
+                                          ? { intent: "stopped" as const }
+                                          : {}),
+                                        pendingOperation: null,
+                                      }
+                                    : entry,
+                                ),
+                              },
+                            });
+                          })
+                          .pipe(Effect.provideContext(options.context), Effect.asVoid);
+                    const markFailure =
+                      retainJournal && input.instance.pendingOperation !== null
+                        ? markRecovery(id, input.instance.pendingOperation, error)
+                        : Effect.void;
+                    const bookkeeping = cleanup.pipe(
+                      Effect.andThen(retainFailure(id, operationId, input.state, error)),
+                      Effect.andThen(markFailure),
+                      Effect.andThen(retainJournal ? Effect.void : setPhase(id, "failed")),
+                    );
+                    return Effect.exit(bookkeeping).pipe(
+                      Effect.flatMap((exit) =>
+                        Exit.isFailure(exit)
+                          ? Effect.failCause(Cause.combine(cause, exit.cause))
+                          : Effect.failCause(cause),
+                      ),
+                    );
+                  },
+                }),
+              ),
               // A runtime defect means cleanup was not proven. Keep the journal fence so a
               // later lifecycle observation can recover the exact admitted operation.
               Effect.catchCause((cause) =>
-                Cause.hasDies(cause)
+                Cause.hasDies(cause) && Option.isNone(Cause.findErrorOption(cause))
                   ? setPhase(id, "failed").pipe(Effect.andThen(Effect.failCause(cause)))
                   : Effect.failCause(cause),
               ),
