@@ -1,5 +1,6 @@
 import { type CliConfig, CliConfigSchema } from "@supabase/config/effect";
 import { loadCliConfig, type InternalLoadCliConfigOptions } from "@supabase/config/internal";
+import { BunPath } from "@effect/platform-bun";
 import { Effect, FileSystem, Path, Schema } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import type { PlatformError } from "effect/PlatformError";
@@ -157,6 +158,7 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
   const workdir = opts.workdir ?? cliSettings.workdir;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const posixPath = yield* Effect.provide(Path.Path, BunPath.layerPosix);
   const projectEnvValues = opts.projectEnvValues ?? (yield* loadProjectEnv(fs, path, workdir));
   // `--yes` OR `SUPABASE_YES`.
   const yes = opts.yes ?? (yield* resolveYesWithProjectEnv(projectEnvValues));
@@ -288,7 +290,7 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
     }
 
     // Upload objects for each bucket with a configured objects_path.
-    yield* uploadObjects(fs, path, output, gateway, workdir, bucketsConfig, summary);
+    yield* uploadObjects(fs, { path, posixPath }, output, gateway, workdir, bucketsConfig, summary);
 
     // Machine-readable summary; text mode emits nothing extra.
     if (emitSummary && output.format !== "text") {
@@ -505,7 +507,7 @@ const handleVectorError = Effect.fnUntraced(function* (
 
 const uploadObjects = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
-  path: Path.Path,
+  { path, posixPath }: { readonly path: Path.Path; readonly posixPath: Path.Path },
   output: typeof Output.Service,
   gateway: StorageGateway,
   workdir: string,
@@ -531,7 +533,7 @@ const uploadObjects = Effect.fnUntraced(function* (
       files,
       (file) =>
         Effect.gen(function* () {
-          const dstPath = bucketObjectKey(name, displayRoot, file.displayPath);
+          const dstPath = bucketObjectKey({ path, posixPath }, name, displayRoot, file.displayPath);
           yield* output.raw(`Uploading: ${file.displayPath} => ${dstPath}\n`, "stderr");
           // Content type is sniffed from the first 512 bytes, refining only a generic
           // text/plain by file extension.
