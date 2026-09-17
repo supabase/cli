@@ -485,7 +485,12 @@ describe("instance operation isolation with durable transactions", () => {
           .pipe(Effect.forkChild({ startImmediately: true }));
         const statuses = yield* Fiber.join(stopping);
         expect(statuses[0]?.phase).toBe("stopped");
-        expect(Exit.isFailure(yield* Fiber.join(starting).pipe(Effect.exit))).toBe(true);
+        const startExit = yield* Fiber.join(starting).pipe(Effect.exit);
+        expect(Exit.isFailure(startExit)).toBe(true);
+        if (Exit.isFailure(startExit))
+          expect(Option.getOrUndefined(Cause.findErrorOption(startExit.cause))).toBeInstanceOf(
+            StackLifecycleConflictError,
+          );
         yield* Deferred.succeed(f.releaseAdmission, undefined);
         yield* Deferred.succeed(f.releaseStart, undefined);
         expect((yield* f.engine.start(f.database.id)).phase).toBe("ready");
@@ -711,6 +716,50 @@ describe("instance operation isolation with durable transactions", () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.live("fences traffic after a failed sleep until cleanup is retried", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const f = yield* makeFixture(false, false, false, true);
+        yield* Deferred.succeed(f.releaseStart, undefined);
+        yield* f.engine.start(f.database.id);
+        expect(Exit.isFailure(yield* f.engine.sleep(f.database.id).pipe(Effect.exit))).toBe(true);
+        expect(yield* f.engine.status(f.database.id)).toMatchObject({
+          intent: "started",
+          phase: "recovery",
+          pendingOperation: { kind: "sleep" },
+          recovery: { operation: "stop" },
+        });
+        expect(
+          Exit.isFailure(yield* f.engine.acquireTraffic(f.database.id).pipe(Effect.exit)),
+        ).toBe(true);
+        yield* Ref.set(f.runtimeStopFails, false);
+        expect((yield* f.engine.stop(f.database.id)).phase).toBe("stopped");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("fences traffic after a failed restart teardown until cleanup is retried", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const f = yield* makeFixture(false, false, false, true);
+        yield* Deferred.succeed(f.releaseStart, undefined);
+        yield* f.engine.start(f.database.id);
+        expect(Exit.isFailure(yield* f.engine.restart(f.database.id).pipe(Effect.exit))).toBe(true);
+        expect(yield* f.engine.status(f.database.id)).toMatchObject({
+          intent: "started",
+          phase: "recovery",
+          pendingOperation: { kind: "restart" },
+          recovery: { operation: "stop" },
+        });
+        expect(
+          Exit.isFailure(yield* f.engine.acquireTraffic(f.database.id).pipe(Effect.exit)),
+        ).toBe(true);
+        yield* Ref.set(f.runtimeStopFails, false);
+        expect((yield* f.engine.stop(f.database.id)).phase).toBe("stopped");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.live("destroys a publication cleanup fence in the same owner", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -838,6 +887,49 @@ describe("instance operation isolation with durable transactions", () => {
           expect((yield* f.engine.status(rest.id)).phase).toBe("stopped");
         }),
       ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("rejects targeted teardown before superseding a joined dependency start", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const f = yield* makeFixture(true);
+        const rest = yield* compileServiceInstance(
+          {
+            service: "rest",
+            name: "joined-rest",
+            config: {},
+            dependencies: { database: f.database.id },
+          },
+          f.context,
+        );
+        yield* f.engine.create(rest.instance, rest.secretSlots);
+        const starting = yield* f.engine
+          .start(rest.id)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(f.admittedStart);
+        const stopped = yield* f.engine.stop(f.database.id).pipe(Effect.exit);
+        const destroyed = yield* f.engine.destroy(f.database.id).pipe(Effect.exit);
+        expect(Exit.isFailure(stopped)).toBe(true);
+        expect(Exit.isFailure(destroyed)).toBe(true);
+        if (Exit.isFailure(stopped))
+          expect(Option.getOrUndefined(Cause.findErrorOption(stopped.cause))).toBeInstanceOf(
+            StackLifecycleConflictError,
+          );
+        if (Exit.isFailure(destroyed))
+          expect(Option.getOrUndefined(Cause.findErrorOption(destroyed.cause))).toBeInstanceOf(
+            StackLifecycleConflictError,
+          );
+        expect((yield* f.engine.status(f.database.id)).pendingOperation?.kind).toBe("start");
+        expect((yield* f.engine.status(rest.id)).pendingOperation?.kind).toBe("start");
+        yield* Deferred.succeed(f.releaseAdmission, undefined);
+        yield* Deferred.succeed(f.releaseStart, undefined);
+        expect((yield* Fiber.join(starting)).phase).toBe("ready");
+        const statuses = yield* f.engine.stopAll();
+        expect(statuses.every((status) => status.phase === "stopped")).toBe(true);
+        expect((yield* f.engine.status(f.database.id)).pendingOperation).toBeUndefined();
+        expect((yield* f.engine.status(rest.id)).pendingOperation).toBeUndefined();
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("protects a ready dependent while allowing an already dormant one", () =>

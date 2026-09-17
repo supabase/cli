@@ -1106,6 +1106,21 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
         });
         return next;
       }).pipe(Effect.andThen(setPhase(id, "recovery")), Effect.ignore);
+    const joinStartExit = <A>(
+      id: ServiceInstanceId,
+      exit: Exit.Exit<A, ServiceNotFoundError | StackError>,
+    ): Effect.Effect<A, ServiceNotFoundError | StackError> =>
+      Exit.isSuccess(exit)
+        ? Effect.succeed(exit.value)
+        : Cause.hasInterruptsOnly(exit.cause)
+          ? Effect.fail(
+              new StackLifecycleConflictError({
+                stackId: options.stackId,
+                instanceId: id,
+                message: `Service instance ${id} was superseded during startup`,
+              }),
+            )
+          : Effect.failCause(exit.cause);
     const publishBindings = (
       id: ServiceInstanceId,
       publications: ReadonlyArray<RuntimeBindingPublication>,
@@ -1587,7 +1602,8 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
                 error instanceof StackCleanupError ||
                 error instanceof UncertainOperationError ||
                 mutation === "stop" ||
-                mutation === "destroy";
+                mutation === "destroy" ||
+                mutation === "sleep";
               const cleanup = retainJournal
                 ? Effect.void
                 : options.stateStore
@@ -1703,7 +1719,9 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
         ) =>
           mutation === "stop" || mutation === "destroy"
             ? Effect.gen(function* () {
-                const { instance } = yield* restore(current(id));
+                const admitted = yield* restore(current(id));
+                const { instance } = admitted;
+                if (preflight !== undefined) yield* preflight(admitted);
                 if (
                   instance.pendingOperation?.kind !== "start" &&
                   instance.pendingOperation?.kind !== "restart"
@@ -1994,7 +2012,7 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
         const existing = startsInFlight.get(id);
         if (existing !== undefined)
           return Deferred.await(existing).pipe(
-            Effect.flatMap(joinExit),
+            Effect.flatMap((exit) => joinStartExit(id, exit)),
             Effect.andThen(status(id)),
           );
         return Effect.uninterruptibleMask((restore) =>
@@ -2013,7 +2031,11 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
                 ),
               );
               return Effect.forkIn(restore(owner), options.scope, { startImmediately: false }).pipe(
-                Effect.flatMap((fiber) => restore(Fiber.join(fiber))),
+                Effect.flatMap((fiber) =>
+                  restore(Fiber.await(fiber)).pipe(
+                    Effect.flatMap((exit) => joinStartExit(id, exit)),
+                  ),
+                ),
               );
             }),
           ),
@@ -2286,7 +2308,9 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
           const completion = completions.get(dependency);
           return completion === undefined
             ? Effect.void
-            : Deferred.await(completion).pipe(Effect.flatMap(joinExit));
+            : Deferred.await(completion).pipe(
+                Effect.flatMap((exit) => joinStartExit(dependency, exit)),
+              );
         },
         { discard: true },
       );
@@ -2325,7 +2349,17 @@ export const makeInstanceEngine = (options: InstanceEngineOptions): Effect.Effec
                 ? Effect.void
                 : awaitPhase(schedule.stopped, dependents)
               ).pipe(
-                Effect.andThen(options.runtime.stop(previousInput)),
+                Effect.andThen(
+                  options.runtime.stop(previousInput).pipe(
+                    Effect.mapError(
+                      (error) =>
+                        new StackCleanupError({
+                          message: `Restart teardown failed and cleanup was not proven: ${error.message}`,
+                          cause: error,
+                        }),
+                    ),
+                  ),
+                ),
                 Effect.andThen(unpublishBindings(input.instance.id)),
               ),
             );

@@ -521,7 +521,10 @@ const awaitPendingSnapshotSettlement = (
   service: EffectServiceInstance<"database">,
 ): Effect.Effect<void, ShadowDbError> =>
   service.followStatus.pipe(
-    Stream.filter((status) => !isSnapshotOperation(status.pendingOperation?.kind)),
+    Stream.filter(
+      (status) =>
+        status.recovery !== undefined || !isSnapshotOperation(status.pendingOperation?.kind),
+    ),
     Stream.runHead,
     Effect.flatMap((settled) =>
       Option.isSome(settled)

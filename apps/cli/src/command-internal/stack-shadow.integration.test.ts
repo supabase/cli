@@ -165,6 +165,7 @@ const fakeStack = (events: {
   readonly restores: string[];
   readonly destroys?: string[];
   readonly pendingSnapshot?: boolean;
+  readonly retainedSnapshotRecovery?: boolean;
   readonly uncertainCreate?: boolean;
   readonly mismatchedCandidate?: boolean;
   readonly profileMismatch?: boolean;
@@ -189,6 +190,12 @@ const fakeStack = (events: {
     };
     const stopped = serviceStatus(serviceDescriptor.id, name);
     const ready = serviceStatus(serviceDescriptor.id, name, "ready");
+    const retainedSnapshot = {
+      ...stopped,
+      phase: "recovery" as const,
+      pendingOperation: { id: "restore", kind: "restoreSnapshot" as const },
+      recovery: { operation: "destroy" as const, message: "snapshot cleanup failed" },
+    };
     return {
       id: serviceDescriptor.id,
       service: "database",
@@ -231,17 +238,19 @@ const fakeStack = (events: {
         }),
       logs: () => Effect.succeed({ cursor: { opaque: "" }, entries: [], running: false }),
       followLogs: () => Stream.empty,
-      followStatus: Stream.fromIterable(
-        events.pendingSnapshot
-          ? [
-              {
-                ...stopped,
-                pendingOperation: { id: "restore", kind: "restoreSnapshot" as const },
-              },
-              stopped,
-            ]
-          : [stopped],
-      ),
+      followStatus: events.retainedSnapshotRecovery
+        ? Stream.concat(Stream.succeed(retainedSnapshot), Stream.never)
+        : Stream.fromIterable(
+            events.pendingSnapshot
+              ? [
+                  {
+                    ...stopped,
+                    pendingOperation: { id: "restore", kind: "restoreSnapshot" as const },
+                  },
+                  stopped,
+                ]
+              : [stopped],
+          ),
     };
   };
   const primaryService = makeService("database");
@@ -456,6 +465,49 @@ describe("stackAcquireShadowDatabase", () => {
       const path = yield* Path.Path;
       yield* stackWithShadowDatabase(input(fs, path), () => Effect.void, { bypassCache: true });
       expect(events.destroys).toHaveLength(1);
+    }).pipe(Effect.provide(layers(stack, catalog)));
+  });
+
+  it.live("destroys a recovery-fenced snapshot service before falling back to cold cache", () => {
+    const events = {
+      creates: [],
+      restores: [],
+      destroys: [],
+      retainedSnapshotRecovery: true,
+      restoreFailures: 1,
+    };
+    const stack = fakeStack(events);
+    const catalog = recordingStackCatalogSetup(() => undefined);
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped();
+      yield* withEnvVar(
+        "SUPABASE_HOME",
+        home,
+        withEnvVar(
+          SHADOW_CACHE_ENV,
+          "1",
+          stackAcquireShadowDatabase(input(fs, path), { runtime: nativeRuntime }).pipe(
+            Effect.flatMap(stackReleaseShadowDatabase),
+          ),
+        ),
+      );
+      const handle = yield* withEnvVar(
+        "SUPABASE_HOME",
+        home,
+        withEnvVar(
+          SHADOW_CACHE_ENV,
+          "1",
+          stackAcquireShadowDatabase(input(fs, path), { runtime: nativeRuntime }),
+        ),
+      );
+      expect(events.restores).toHaveLength(1);
+      expect(events.creates).toHaveLength(3);
+      expect(events.destroys).toHaveLength(2);
+      expect(handle.baselinePresent).toBe(false);
+      yield* stackReleaseShadowDatabase(handle);
+      expect(events.destroys).toHaveLength(3);
     }).pipe(Effect.provide(layers(stack, catalog)));
   });
 
