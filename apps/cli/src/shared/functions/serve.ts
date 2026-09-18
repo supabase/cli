@@ -584,7 +584,7 @@ const resolveLocalAuthArtifacts = Effect.fnUntraced(function* (
     signingKeysPath.length === 0
       ? Effect.succeed<ReadonlyArray<SigningKeyJwk>>([])
       : readFileUtf8(fs, signingKeysPath).pipe(
-          Effect.mapError(nativePlatformFailure),
+          Effect.mapError((error) => nativePlatformFailure(error, signingKeysPath)),
           Effect.flatMap((content) =>
             Effect.try({ try: () => parseSigningKeys(content), catch: nativeFailure }),
           ),
@@ -851,7 +851,7 @@ const readDotEnvFile = Effect.fnUntraced(function* (pathname: string, optional: 
     Effect.catch((error) =>
       optional && Predicate.isTagged(error.reason, "NotFound")
         ? Effect.void
-        : nativePlatformFailure(error),
+        : nativePlatformFailure(error, pathname),
     ),
     Effect.mapError((failure) =>
       nativeFailure(
@@ -954,21 +954,27 @@ const writeDockerEnvFile = Effect.fnUntraced(function* (
   // process (e.g. `functions serve`'s watch-mode restart loop) is removed
   // first — otherwise leftover files from a shrinking env set would survive
   // alongside the fresh write.
-  yield* fs.remove(dir, { recursive: true, force: true });
-  yield* fs.makeDirectory(dir, { recursive: true, mode: 0o700 });
+  yield* fs
+    .remove(dir, { recursive: true, force: true })
+    .pipe(Effect.mapError((error) => nativePlatformFailure(error, dir)));
+  yield* fs
+    .makeDirectory(dir, { recursive: true, mode: 0o700 })
+    .pipe(Effect.mapError((error) => nativePlatformFailure(error, dir)));
   const pathname = path.join(dir, "docker.env");
   // The file holds the JWT secret, anon/service-role keys, and JWKS, so keep it
   // owner-only rather than relying on the process umask.
-  yield* fs.writeFileString(
-    pathname,
-    entries
-      .map(([name, value]) => `${name}=${value.replaceAll("\r", "\\r").replaceAll("\n", "\\n")}`)
-      .join("\n"),
-    { mode: 0o600 },
-  );
+  yield* fs
+    .writeFileString(
+      pathname,
+      entries
+        .map(([name, value]) => `${name}=${value.replaceAll("\r", "\\r").replaceAll("\n", "\\n")}`)
+        .join("\n"),
+      { mode: 0o600 },
+    )
+    .pipe(Effect.mapError((error) => nativePlatformFailure(error, pathname)));
 
   return { path: pathname };
-}, Effect.mapError(nativePlatformFailure));
+});
 
 const writeDockerMultilineEnvScript = Effect.fnUntraced(function* (
   { fs, path }: { readonly fs: FileSystem.FileSystem; readonly path: Path.Path },
@@ -979,13 +985,17 @@ const writeDockerMultilineEnvScript = Effect.fnUntraced(function* (
   // Self-healing — see the matching comment in `writeDockerEnvFile`. Runs
   // unconditionally, before the length check, so a stale directory from an
   // earlier invocation that needed multiline secrets is still reclaimed.
-  yield* fs.remove(dir, { recursive: true, force: true });
+  yield* fs
+    .remove(dir, { recursive: true, force: true })
+    .pipe(Effect.mapError((error) => nativePlatformFailure(error, dir)));
 
   if (env.length === 0) {
     return undefined;
   }
 
-  yield* fs.makeDirectory(dir, { recursive: true, mode: 0o700 });
+  yield* fs
+    .makeDirectory(dir, { recursive: true, mode: 0o700 })
+    .pipe(Effect.mapError((error) => nativePlatformFailure(error, dir)));
   const scriptName = "multiline-env.sh";
   const pathname = path.join(dir, scriptName);
   const envDir = path.join(containerDir, "values");
@@ -999,15 +1009,22 @@ const writeDockerMultilineEnvScript = Effect.fnUntraced(function* (
 export ${name}="\${${name}%x}"`;
     })
     .join("\n");
-  yield* fs.makeDirectory(hostEnvDir, { recursive: true, mode: 0o700 });
+  yield* fs
+    .makeDirectory(hostEnvDir, { recursive: true, mode: 0o700 })
+    .pipe(Effect.mapError((error) => nativePlatformFailure(error, hostEnvDir)));
   // The value files hold secret env values, so keep them owner-only.
   yield* Effect.all(
-    env.map(([, value], index) =>
-      fs.writeFileString(path.join(hostEnvDir, `env-${index}`), value, { mode: 0o600 }),
-    ),
+    env.map(([, value], index) => {
+      const valuePath = path.join(hostEnvDir, `env-${index}`);
+      return fs
+        .writeFileString(valuePath, value, { mode: 0o600 })
+        .pipe(Effect.mapError((error) => nativePlatformFailure(error, valuePath)));
+    }),
     { concurrency: "unbounded" },
   );
-  yield* fs.writeFileString(pathname, script, { mode: 0o600 });
+  yield* fs
+    .writeFileString(pathname, script, { mode: 0o600 })
+    .pipe(Effect.mapError((error) => nativePlatformFailure(error, pathname)));
 
   return {
     // `Z`: private SELinux relabel of this CLI-staged dir (supabase/cli#5989);
@@ -1015,7 +1032,7 @@ export ${name}="\${${name}%x}"`;
     bind: `${dir}:${containerDir}:ro,Z`,
     scriptPath: path.join(containerDir, scriptName).replaceAll("\\", "/"),
   };
-}, Effect.mapError(nativePlatformFailure));
+});
 
 function partitionDockerEnvEntries(env: Readonly<Record<string, string>>) {
   const singleLine: Record<string, string> = {};
@@ -1106,7 +1123,9 @@ const loadServeCliProjectEnvironment = Effect.fnUntraced(function* (
       const envPath = path.join(dir, filename);
       const contents = yield* readFileUtf8(fs, envPath).pipe(
         Effect.catch((error) =>
-          Predicate.isTagged(error.reason, "NotFound") ? Effect.void : nativePlatformFailure(error),
+          Predicate.isTagged(error.reason, "NotFound")
+            ? Effect.void
+            : nativePlatformFailure(error, envPath),
         ),
       );
       if (contents === undefined) {
@@ -1710,7 +1729,7 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
     const fs = yield* FileSystem.FileSystem;
     const removeRuntimeArtifacts = fs
       .remove(stagingDir, { recursive: true, force: true })
-      .pipe(Effect.mapError(nativePlatformFailure));
+      .pipe(Effect.mapError((error) => nativePlatformFailure(error, stagingDir)));
     const bestEffortCleanupRuntimeArtifacts = removeRuntimeArtifacts.pipe(
       Effect.tapError((error) =>
         output.warn(`Failed to clean up Edge Runtime artifacts: ${error.message}`),
@@ -1818,7 +1837,7 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
       `SUPABASE_INTERNAL_JWT_SECRET=${input.authArtifacts.jwtSecret}`,
       `SUPABASE_JWKS=${input.authArtifacts.jwks}`,
       `SUPABASE_INTERNAL_HOST_PORT=${input.config.apiPort}`,
-      `SUPABASE_INTERNAL_FUNCTIONS_CONFIG=${yield* encodeFunctionsContainerConfig(functionsConfig)}`,
+      `SUPABASE_INTERNAL_FUNCTIONS_CONFIG=${yield* encodeFunctionsContainerConfig(functionsConfig).pipe(Effect.mapError(nativeFailure))}`,
       ...(input.debug ? ["SUPABASE_INTERNAL_DEBUG=true"] : []),
     ];
     if (input.inspectMode !== undefined) {

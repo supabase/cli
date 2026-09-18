@@ -390,14 +390,14 @@ export function nativeFailure(cause: unknown): NativeFailure {
 }
 
 /** Preserves the host error carried by an injected platform operation. */
-export function nativePlatformFailure(error: PlatformError): NativeFailure {
+export function nativePlatformFailure(error: PlatformError, pathname?: string): NativeFailure {
   const reason = error.reason;
   if (reason.cause !== undefined && reason.cause !== null) return nativeFailure(reason.cause);
-  // The native filesystem adapter discards synchronous argument errors' causes.
+  // The native adapter drops synchronous argument causes; NUL input identifies the host error.
   if (
     Predicate.isTagged(reason, "BadArgument") &&
     reason.module === "FileSystem" &&
-    reason.description?.includes("without null bytes")
+    pathname?.includes("\0")
   ) {
     return nativeFailure(
       Object.assign(new TypeError(reason.description), { code: "ERR_INVALID_ARG_VALUE" }),

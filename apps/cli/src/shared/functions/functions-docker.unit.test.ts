@@ -1,6 +1,17 @@
 import { BunPath } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Deferred, Effect, Layer, Path, PlatformError, Runtime, Sink, Stream } from "effect";
+import {
+  Cause,
+  Deferred,
+  Effect,
+  Layer,
+  Path,
+  PlatformError,
+  Runtime,
+  Schema,
+  Sink,
+  Stream,
+} from "effect";
 import { CliError } from "effect/unstable/cli";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import process from "node:process";
@@ -445,6 +456,19 @@ describe("native failure compatibility", () => {
     );
   });
 
+  it.effect("preserves schema failure diagnostics and classification", () =>
+    Effect.gen(function* () {
+      const original = yield* Schema.decodeUnknownEffect(Schema.String)(123).pipe(Effect.flip);
+      const wrapped = nativeFailure(original);
+      expect(wrapped.cause).toBe(original);
+      expect(normalizeCause(Cause.fail(wrapped))).toEqual(normalizeCause(Cause.fail(original)));
+      expect(classifyCliCauseActionability(Cause.fail(wrapped))).toEqual(
+        classifyCliCauseActionability(Cause.fail(original)),
+      );
+      expect(Runtime.getErrorExitCode(wrapped)).toBe(Runtime.getErrorExitCode(original));
+    }),
+  );
+
   it("preserves cause-less native filesystem argument diagnostics", () => {
     const original = Object.assign(
       new TypeError("The argument 'path' must be a string without null bytes"),
@@ -456,12 +480,30 @@ describe("native failure compatibility", () => {
         method: "readFile",
         description: original.message,
       }),
+      "/project/bad\0path",
     );
     expect(wrapped.cause).toBeInstanceOf(TypeError);
     expect(Reflect.get(wrapped.cause, "code")).toBe("ERR_INVALID_ARG_VALUE");
     expect(normalizeCliError(wrapped)).toEqual(normalizeCliError(original));
     expect(classifyCliErrorActionability(wrapped)).toEqual(classifyCliErrorActionability(original));
     expect(Runtime.getErrorExitCode(wrapped)).toBe(Runtime.getErrorExitCode(original));
+  });
+
+  it("uses filesystem input rather than diagnostic prose to identify native NUL errors", () => {
+    const reason = PlatformError.badArgument({
+      module: "FileSystem",
+      method: "readFile",
+      description: "a custom rejection without null bytes",
+    });
+    expect(nativePlatformFailure(reason, "/project/valid").cause).toBe(reason.reason);
+    const original = Object.assign(new Error("custom NUL-path rejection"), { code: "CUSTOM" });
+    const withCause = PlatformError.badArgument({
+      module: "FileSystem",
+      method: "readFile",
+      description: "without null bytes",
+      cause: original,
+    });
+    expect(nativePlatformFailure(withCause, "/project/bad\0path").cause).toBe(original);
   });
 
   it.each([0, 7, 8])("preserves the existing cause budget with %s UserError layers", (depth) => {
