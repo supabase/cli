@@ -235,12 +235,11 @@ describe("COMPUTE_RUNTIME_EXCLUSIONS", () => {
     }),
   );
 
-  it.effect("drops the node runtime's installed tree but keeps its resolution root", () =>
+  it.effect("drops the node runtime's installed tree", () =>
     Effect.sync(() => {
       const matcher = compile(COMPUTE_RUNTIME_EXCLUSIONS.node);
 
-      expect(matcher.excludes("node_modules", true)).toBe(false);
-      expect(matcher.excludes("node_modules/left-pad", true)).toBe(true);
+      expect(matcher.excludes("node_modules", true)).toBe(true);
     }),
   );
 });

@@ -41,7 +41,7 @@ own, so editing or deleting the line is all it takes to change what ships.
 
 Every runtime excludes environment files and version-control metadata (`.env`, `.env.*`,
 `.git/`). Beyond that the two catalog runtimes carry more than `dockerfile` does, because the
-CLI knows what tooling writes into their directories: `node` also drops `node_modules/*` and
+CLI knows what tooling writes into their directories: `node` also drops `node_modules/` and
 `*.log`, `deno` drops `*.log`, and a `dockerfile` context is left alone because the user's own
 `Dockerfile` already decides what it copies. The key is
 omitted entirely for a runtime that declares no patterns. The chosen list is reported as the
