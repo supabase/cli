@@ -46,6 +46,7 @@ import {
   ComputeNotDeployedError,
   ComputeApiNetworkError,
   ComputeApiUnexpectedStatusError,
+  ComputeProjectNotFoundError,
   ComputeUnavailableError,
 } from "../../../../shared/compute/compute.errors.ts";
 import { ComputeEnvNotSupportedError } from "../compute.errors.ts";
@@ -529,7 +530,31 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("reports a project outside the alpha for a 404", () =>
+  it.live("points at the project ref when the logs 404 names no such project", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer } = setupCompute({
+        workdir: repo.dir,
+        routes: {
+          [LOGS_ROUTE]: {
+            status: 404,
+            body: { error: { code: "not_found", message: "Not Found" } },
+          },
+        },
+      });
+
+      return yield* Effect.gen(function* () {
+        const error = yield* computeLogs(flags()).pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(ComputeProjectNotFoundError);
+        expect((error as ComputeProjectNotFoundError).suggestion).toContain("supabase link");
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  // The analytics route is not gated on the alpha's allow-list, so only a body
+  // no other branch claims is left to read as the family's refusal.
+  it.live("reports a project outside the alpha for an unclassifiable 404", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({

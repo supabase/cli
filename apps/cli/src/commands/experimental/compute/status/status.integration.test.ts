@@ -11,6 +11,9 @@ import {
 import {
   InvalidComputeNameError,
   ComputeNotDeployedError,
+  ComputeProjectNotFoundError,
+  ComputeRouteNotFoundError,
+  ComputeUnavailableError,
 } from "../../../../shared/compute/compute.errors.ts";
 import { ComputeEnvNotSupportedError } from "../compute.errors.ts";
 import { computeStatus } from "./status.handler.ts";
@@ -264,7 +267,14 @@ describe("compute status", () => {
       const repo = yield* project();
       const { layer } = setupCompute({
         workdir: repo.dir,
-        routes: { [getRoute]: { status: 404, body: { message: "compute not found" } } },
+        routes: {
+          [getRoute]: {
+            status: 404,
+            body: {
+              error: { code: "not_found.compute.instance", message: "Compute instance not found" },
+            },
+          },
+        },
       });
 
       return yield* Effect.gen(function* () {
@@ -276,6 +286,93 @@ describe("compute status", () => {
         expect(error).toBeInstanceOf(ComputeNotDeployedError);
         const suggestion = error instanceof ComputeNotDeployedError ? error.suggestion : "";
         expect(suggestion).toContain("supabase compute push api");
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live("names the alpha, not an undeployed compute, when the project is not enrolled", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer } = setupCompute({
+        workdir: repo.dir,
+        routes: {
+          [getRoute]: {
+            status: 404,
+            body: {
+              error: {
+                code: "not_found.compute.not_enabled",
+                message: "Compute is not available for this project",
+              },
+            },
+          },
+        },
+      });
+
+      return yield* Effect.gen(function* () {
+        const error = yield* computeStatus({
+          name: "api",
+          projectRef: Option.none(),
+        }).pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(ComputeUnavailableError);
+        expect(error).not.toBeInstanceOf(ComputeNotDeployedError);
+        expect((error as ComputeUnavailableError).suggestion).toContain("private alpha");
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live("points at the project ref when no such project exists", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer } = setupCompute({
+        workdir: repo.dir,
+        routes: {
+          [getRoute]: {
+            status: 404,
+            body: { error: { code: "not_found", message: "Not Found" } },
+          },
+        },
+      });
+
+      return yield* Effect.gen(function* () {
+        const error = yield* computeStatus({
+          name: "api",
+          projectRef: Option.none(),
+        }).pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(ComputeProjectNotFoundError);
+        expect(error).not.toBeInstanceOf(ComputeNotDeployedError);
+        expect((error as ComputeProjectNotFoundError).suggestion).toContain("supabase link");
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live("names the unserved route instead of an undeployed compute", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer } = setupCompute({
+        workdir: repo.dir,
+        routes: {
+          [getRoute]: {
+            status: 404,
+            body: {
+              error: {
+                code: "not_found",
+                message: `Cannot GET ${computeRoute("/api")}`,
+              },
+            },
+          },
+        },
+      });
+
+      return yield* Effect.gen(function* () {
+        const error = yield* computeStatus({
+          name: "api",
+          projectRef: Option.none(),
+        }).pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(ComputeRouteNotFoundError);
+        expect(error).not.toBeInstanceOf(ComputeNotDeployedError);
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );

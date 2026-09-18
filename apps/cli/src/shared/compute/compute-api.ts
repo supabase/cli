@@ -6,23 +6,46 @@ import {
   V2ListAllComputeInstancesOutput,
   type ApiClient,
 } from "@supabase/api/effect";
-import { Effect, Option, Schedule, Schema } from "effect";
+import { Effect, Option, Schedule } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import { decodeBody, mapRequestError, unexpectedStatus } from "./compute-api-status.ts";
+import {
+  bodyText,
+  decodeJsonBody,
+  hasErrorCode,
+  mapRequestError,
+  parse404,
+  projectNotFound,
+  unexpectedStatus,
+  unroutedPath,
+} from "./compute-api-status.ts";
 import {
   ComputeBuildTimeoutError,
   ComputeProjectNotFoundError,
+  ComputeRouteNotFoundError,
   ComputeUnavailableError,
   ComputeUploadFailedError,
 } from "./compute.errors.ts";
 
 /**
- * The seam every compute command talks to: `/v2/projects/{ref}/compute` on the Management API. A
- * 404 here is overloaded — a project outside the alpha's allow-list, an unknown project ref, and
- * an undeployed compute all answer the same way. A named-compute 404 is reported as "not deployed";
- * a collection-endpoint 404, where no compute name could be wrong, is split by its body instead —
- * see {@link projectScoped404}.
+ * The seam every compute command talks to: `/v2/projects/{ref}/compute` on the Management API.
+ *
+ * Four unrelated conditions answer 404 here, and `error.code` is the only thing that tells them
+ * apart:
+ *
+ * | condition | code |
+ * | --- | --- |
+ * | project outside the alpha's allow-list | `not_found.compute.not_enabled` |
+ * | no such project | `not_found` |
+ * | no such route | `not_found`, with the router's own `Cannot GET /v2/...` message |
+ * | no compute deployed under that name | `not_found.compute.instance` |
+ *
+ * Only `GET /compute/{name}` and `DELETE /compute/{name}` can mean the last one: every other
+ * route — list, uploads, deploy — cannot mean an absent compute, since an enrolled project with
+ * none answers `200 {"data":[]}` and uploads and deploy create. So those classify through
+ * {@link projectScoped404}, and the two named routes go through
+ * {@link refuseUnreachableCompute}, which fails on the first three and returns on anything else
+ * so the caller can read it as "not deployed".
  */
 
 /** The compute shape the API returns, flattened out of its JSON:API envelope. */
@@ -82,46 +105,48 @@ function toComputeRecord(data: ComputeResourceData): ComputeRecord {
   };
 }
 
-const computeSuggestion =
-  "Compute is in private alpha. Ask in the Supabase dashboard to have this project enrolled.";
+/** The code the API answers with for a project outside the alpha's allow-list. */
+const NOT_ENROLLED_CODE = "not_found.compute.not_enabled";
+
+const notEnrolled = (projectRef: string) =>
+  new ComputeUnavailableError({
+    detail: `Compute is not available for project ${projectRef}.`,
+    suggestion: "Compute is in private alpha. Stay tuned for the public alpha coming soon.",
+  });
+
+const routeNotFound = (projectRef: string, route: string) =>
+  new ComputeRouteNotFoundError({
+    detail: `The Management API does not serve ${route}, so this CLI cannot reach compute for project ${projectRef}.`,
+    // Compute is an allow-listed alpha, so neither a newer CLI nor enrolment puts a route back.
+    suggestion: "Report it with `supabase issue`, including the route named above.",
+  });
 
 /**
- * The `error.code` a 404 carries — the only way to tell an unenrolled project from one that
- * doesn't exist, since both answer 404 on the same routes:
+ * Fails when a named-compute 404 was not about the compute at all — the route is unserved, the
+ * project is not in the alpha, or there is no such project — and returns otherwise so the caller
+ * can read it as "not deployed". Without it, an unenrolled project is told its compute is not
+ * deployed, and `delete` claims it removed something it never reached.
  *
- * - not enrolled -> `{"error":{"code":"generic_not_found","message":"Compute is not available for this project"}}`
- * - no such project -> `{"error":{"code":"not_found","message":"Not Found"}}`
+ * The absence itself carries `not_found.compute.instance`, so it falls through here along with
+ * any body this CLI does not recognize: on these two routes "not deployed" is the 404 that
+ * nothing else claimed.
  */
-const NotFoundBody = Schema.Struct({
-  error: Schema.Struct({ code: Schema.String }),
+const refuseUnreachableCompute = Effect.fnUntraced(function* (projectRef: string, body: string) {
+  const parsed = yield* parse404(body);
+  const route = unroutedPath(parsed);
+
+  if (Option.isSome(route)) return yield* routeNotFound(projectRef, route.value);
+  if (hasErrorCode(parsed, NOT_ENROLLED_CODE)) return yield* notEnrolled(projectRef);
+  if (hasErrorCode(parsed, "not_found")) return yield* projectNotFound(projectRef);
 });
 
-/**
- * Which of the two a project-scoped 404 was. Only `not_found` is read as a missing project — an
- * unrecognized body defaults to the enrolment answer, since guessing the other way would send
- * someone to check a ref that's actually fine.
- */
-const projectScoped404 = Effect.fnUntraced(function* (options: {
-  readonly projectRef: string;
-  readonly body: string;
-}) {
-  const parsed = yield* Schema.decodeEffect(Schema.fromJsonString(NotFoundBody))(options.body).pipe(
-    Effect.option,
-  );
+/** Fails with whichever condition a collection-endpoint 404 was; none of them can mean an absence there. */
+const projectScoped404 = Effect.fnUntraced(function* (projectRef: string, body: string) {
+  yield* refuseUnreachableCompute(projectRef, body);
 
-  if (Option.isSome(parsed) && parsed.value.error.code === "not_found") {
-    return new ComputeProjectNotFoundError({
-      detail: `No project ${options.projectRef} was found for this account.`,
-      suggestion:
-        "Check the project ref, or pick the project again with `supabase link`. " +
-        "If it belongs to another account, log in with `supabase login`.",
-    });
-  }
-
-  return new ComputeUnavailableError({
-    detail: `Compute is not available for project ${options.projectRef}.`,
-    suggestion: computeSuggestion,
-  });
+  // Unavailable is the safe default for an unrecognized body: guessing the other way would send
+  // someone to check a ref that is actually fine.
+  return yield* notEnrolled(projectRef);
 });
 
 export const listCompute = Effect.fnUntraced(function* (api: ApiClient, projectRef: string) {
@@ -131,35 +156,17 @@ export const listCompute = Effect.fnUntraced(function* (api: ApiClient, projectR
     .pipe(Effect.mapError(mapRequestError(operation)));
 
   if (response.status === 404) {
-    const error = yield* projectScoped404({
-      projectRef,
-      body: yield* response.text.pipe(Effect.orElseSucceed(() => "")),
-    });
-    return yield* error;
+    return yield* projectScoped404(projectRef, yield* bodyText(response));
   }
   if (response.status !== 200) {
-    return yield* unexpectedStatus({
-      operation,
-      status: response.status,
-      body: yield* response.text.pipe(Effect.orElseSucceed(() => "")),
-    });
+    return yield* unexpectedStatus(operation, response);
   }
 
-  const body = yield* response.json.pipe(Effect.mapError(mapRequestError(operation)));
-  const decoded = yield* decodeBody(
-    V2ListAllComputeInstancesOutput,
-    operation,
-    body,
-    response.status,
-  );
+  const decoded = yield* decodeJsonBody(V2ListAllComputeInstancesOutput, operation, response);
   return decoded.data.map(toComputeRecord);
 });
 
-/**
- * One compute, or `None` when the API has no record of it — which is also what a
- * project outside the alpha's allow-list answers, so callers report it as "not
- * deployed" and point at `push` rather than guessing which of the two it was.
- */
+/** One compute, or `None` when this project has no record of it — see the 404 notes above. */
 export const getCompute = Effect.fnUntraced(function* (
   api: ApiClient,
   projectRef: string,
@@ -171,18 +178,14 @@ export const getCompute = Effect.fnUntraced(function* (
     .pipe(Effect.mapError(mapRequestError(operation)));
 
   if (response.status === 404) {
+    yield* refuseUnreachableCompute(projectRef, yield* bodyText(response));
     return Option.none<ComputeRecord>();
   }
   if (response.status !== 200) {
-    return yield* unexpectedStatus({
-      operation,
-      status: response.status,
-      body: yield* response.text.pipe(Effect.orElseSucceed(() => "")),
-    });
+    return yield* unexpectedStatus(operation, response);
   }
 
-  const body = yield* response.json.pipe(Effect.mapError(mapRequestError(operation)));
-  const decoded = yield* decodeBody(V2GetAComputeInstanceOutput, operation, body, response.status);
+  const decoded = yield* decodeJsonBody(V2GetAComputeInstanceOutput, operation, response);
   return Option.some(toComputeRecord(decoded.data));
 });
 
@@ -197,27 +200,13 @@ export const createComputeUpload = Effect.fnUntraced(function* (
     .pipe(Effect.mapError(mapRequestError(operation)));
 
   if (response.status === 404) {
-    const error = yield* projectScoped404({
-      projectRef,
-      body: yield* response.text.pipe(Effect.orElseSucceed(() => "")),
-    });
-    return yield* error;
+    return yield* projectScoped404(projectRef, yield* bodyText(response));
   }
   if (response.status !== 201 && response.status !== 200) {
-    return yield* unexpectedStatus({
-      operation,
-      status: response.status,
-      body: yield* response.text.pipe(Effect.orElseSucceed(() => "")),
-    });
+    return yield* unexpectedStatus(operation, response);
   }
 
-  const body = yield* response.json.pipe(Effect.mapError(mapRequestError(operation)));
-  const decoded = yield* decodeBody(
-    V2CreateComputeInstanceUploadOutput,
-    operation,
-    body,
-    response.status,
-  );
+  const decoded = yield* decodeJsonBody(V2CreateComputeInstanceUploadOutput, operation, response);
   return {
     uploadId: decoded.data.id,
     url: decoded.data.attributes.url,
@@ -249,11 +238,8 @@ export const uploadBuildContext = Effect.fnUntraced(function* (
     Effect.mapError(
       (error) =>
         new ComputeUploadFailedError({
-          // Deliberately not `error.message`, which is what the other transport
-          // failures in this module use: it appends the URL that failed, and
-          // here that URL is the write-capable signature. The reason's own
-          // description is the part worth showing, and the destination is
-          // already named by the step the user is watching.
+          // Not `error.message` as elsewhere in this module: it appends the URL that failed,
+          // and here that URL is the write-capable signature.
           detail: `Uploading the build context failed: ${
             error.reason.description ?? "the upload request did not complete"
           }.`,
@@ -263,7 +249,7 @@ export const uploadBuildContext = Effect.fnUntraced(function* (
   );
 
   if (response.status < 200 || response.status >= 300) {
-    const body = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
+    const body = yield* bodyText(response);
     return yield* new ComputeUploadFailedError({
       detail: `Uploading the build context failed with status ${response.status}${
         body.trim() === "" ? "" : `: ${body.trim()}`
@@ -297,27 +283,13 @@ export const deployCompute = Effect.fnUntraced(function* (
     .pipe(Effect.mapError(mapRequestError(operation)));
 
   if (response.status === 404) {
-    const error = yield* projectScoped404({
-      projectRef,
-      body: yield* response.text.pipe(Effect.orElseSucceed(() => "")),
-    });
-    return yield* error;
+    return yield* projectScoped404(projectRef, yield* bodyText(response));
   }
   if (response.status !== 202 && response.status !== 200 && response.status !== 201) {
-    return yield* unexpectedStatus({
-      operation,
-      status: response.status,
-      body: yield* response.text.pipe(Effect.orElseSucceed(() => "")),
-    });
+    return yield* unexpectedStatus(operation, response);
   }
 
-  const body = yield* response.json.pipe(Effect.mapError(mapRequestError(operation)));
-  const decoded = yield* decodeBody(
-    V2DeployAComputeInstanceOutput,
-    operation,
-    body,
-    response.status,
-  );
+  const decoded = yield* decodeJsonBody(V2DeployAComputeInstanceOutput, operation, response);
   return toComputeRecord(decoded.data);
 });
 
@@ -331,17 +303,18 @@ export const deleteCompute = Effect.fnUntraced(function* (
     .executeRaw(operationDefinitions.v2DeleteAComputeInstance, { ref: projectRef, name })
     .pipe(Effect.mapError(mapRequestError(operation)));
 
-  // 404 is the caller's own "not deployed" verdict to report; a delete that
-  // races another one is still a delete that happened.
-  if (response.status === 204 || response.status === 200 || response.status === 404) {
+  // A 404 no other condition claimed is the caller's own "not deployed" verdict
+  // to report; a delete that races another one is still a delete that happened.
+  // The three that `refuseUnreachableCompute` does claim fail instead, so this
+  // cannot report removing something it never reached.
+  if (response.status === 404) {
+    return yield* refuseUnreachableCompute(projectRef, yield* bodyText(response));
+  }
+  if (response.status === 204 || response.status === 200) {
     return;
   }
 
-  return yield* unexpectedStatus({
-    operation,
-    status: response.status,
-    body: yield* response.text.pipe(Effect.orElseSucceed(() => "")),
-  });
+  return yield* unexpectedStatus(operation, response);
 });
 
 /**
@@ -362,6 +335,15 @@ const COMPUTE_POLL_READ_RETRY = Schedule.spaced("2 seconds").pipe(
   Schedule.upTo({ duration: "30 seconds" }),
 );
 
+/**
+ * Verdicts about the route, the project or its enrolment, none of which a retry can change — so
+ * these surface on the first read instead of holding the poll open for the full retry window.
+ */
+const isPermanentReadFailure = (error: unknown) =>
+  error instanceof ComputeRouteNotFoundError ||
+  error instanceof ComputeUnavailableError ||
+  error instanceof ComputeProjectNotFoundError;
+
 export const awaitComputeBuild = Effect.fnUntraced(function* (
   api: ApiClient,
   projectRef: string,
@@ -373,22 +355,22 @@ export const awaitComputeBuild = Effect.fnUntraced(function* (
     /** Called with each poll's result, for progress reporting. */
     readonly onPoll?: (compute: ComputeRecord) => Effect.Effect<void>;
     /**
-     * ` --project-ref <ref>` to append to the suggestion below, when the caller reached this
-     * project via the flag rather than a link. The suggestion is copied verbatim, so omitting it
-     * would re-resolve against whatever this checkout happens to be linked to.
+     * ` --project-ref <ref>` to append to the timeout suggestion, so re-running it cannot
+     * re-resolve against whatever this checkout happens to be linked to.
      */
     readonly refSuffix?: string;
   } = {},
 ) {
   const poll = Effect.gen(function* () {
-    // A build can run for minutes, so a single blip on one read should not throw
-    // away a deploy that is progressing fine.
+    // A build runs for minutes; one blip on one read must not abandon a deploy that is fine.
     const compute = yield* getCompute(api, projectRef, name).pipe(
-      Effect.retry({ schedule: options.retrySchedule ?? COMPUTE_POLL_READ_RETRY }),
+      Effect.retry({
+        schedule: options.retrySchedule ?? COMPUTE_POLL_READ_RETRY,
+        while: (error) => !isPermanentReadFailure(error),
+      }),
     );
     if (Option.isNone(compute)) {
-      // The deploy was accepted, so the compute exists; a 404 here is the read
-      // racing the write. Report it as still building and poll again.
+      // The deploy was accepted, so a 404 here is the read racing the write, not an absence.
       return undefined;
     }
     if (options.onPoll !== undefined) {
