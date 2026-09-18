@@ -1,20 +1,13 @@
-import { type CliConfig, validateCliConfig } from "@supabase/config/effect";
-import {
-  Crypto,
-  Effect,
-  Data,
-  FileSystem,
-  Option,
-  Path,
-  Redacted,
-  Schema,
-  SchemaIssue,
-} from "effect";
-import { StackConfigSchema, type StackConfig } from "@supabase/stack/effect";
+import { getDefaultCliConfig, type CliConfig } from "@supabase/config";
+import { validateCliConfig } from "@supabase/config/effect";
+import { Crypto, Effect, Data, FileSystem, Path, Redacted, SchemaIssue } from "effect";
+import type { ServiceCreation as ServiceCreationType } from "@supabase/stack/effect";
 
 import { loadLocalProjectContext, type LocalProjectContext } from "./local-project-context.ts";
-import { parseDotEnv } from "./dotenv.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
+import { parseFileSizeLimit } from "./storage-bucket-config.ts";
+
+declare const SUPABASE_STACK_FUNCTIONS_SERVE_MAIN_TEMPLATE: string | undefined;
 import {
   envOverride,
   envOverrideApiMaxRows,
@@ -45,7 +38,6 @@ import {
   resolveGotrueWeb3,
   strToArr,
 } from "./local-config-values.ts";
-import { collectDotenvPrivateKeys, decryptSecret, isEncryptedSecret } from "./vault-decrypt.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -61,15 +53,20 @@ export class StackConfigError extends Data.TaggedError("StackConfigError")<{
   }
 }
 
+export interface StackStartConfig {
+  readonly creations: (
+    stackId: string,
+  ) => Effect.Effect<ReadonlyArray<ServiceCreationType>, StackConfigError>;
+  readonly source: CliConfig;
+  readonly projectEnvValues: Readonly<Record<string, string>>;
+  readonly document?: Record<string, unknown>;
+}
+
 type StackConfigEffect = Effect.Effect<
-  StackConfig,
+  StackStartConfig,
   StackConfigError,
   FileSystem.FileSystem | Path.Path | RuntimeInfo | Crypto.Crypto
 >;
-
-type JwtSigning =
-  | { readonly kind: "jwks-file"; readonly path: string }
-  | { readonly kind: "symmetric"; readonly secret: Redacted.Redacted<string> };
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -85,93 +82,6 @@ const withoutUndefined = (value: unknown): unknown => {
   );
 };
 
-const secret = (value: unknown): Redacted.Redacted<string> | undefined => {
-  if (Redacted.isRedacted(value)) {
-    const unwrapped = Redacted.value(value);
-    return typeof unwrapped === "string" ? Redacted.make(unwrapped) : undefined;
-  }
-  return typeof value === "string" ? Redacted.make(value) : undefined;
-};
-
-const parseEnv = (contents: string): Record<string, Redacted.Redacted<string>> =>
-  Object.fromEntries(
-    Object.entries(parseDotEnv(contents)).map(([key, value]) => [key, Redacted.make(value)]),
-  );
-
-const envKeyPattern = /^[A-Z_][A-Z0-9_]*$/u;
-const defaultStudioApiUrl = "http://127.0.0.1";
-
-const validateEnvKeys = (
-  values: Readonly<Record<string, Redacted.Redacted<string>>>,
-  file: string,
-) => {
-  const invalid = Object.keys(values).find((key) => !envKeyPattern.test(key));
-  return invalid === undefined
-    ? Effect.succeed(values)
-    : Effect.fail(
-        new StackConfigError({
-          message: `Invalid environment variable key ${invalid} in ${file}; use uppercase letters, digits, and underscores.`,
-        }),
-      );
-};
-
-const readFunctionEnvironments = (
-  projectRoot: string,
-  disabledFunctions: ReadonlySet<string> = new Set(),
-  skip = false,
-): Effect.Effect<
-  Readonly<{
-    readonly shared: Readonly<Record<string, Redacted.Redacted<string>>>;
-    readonly functions: Readonly<
-      Record<string, Readonly<Record<string, Redacted.Redacted<string>>>>
-    >;
-  }>,
-  StackConfigError,
-  FileSystem.FileSystem | Path.Path
-> =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const root = path.join(projectRoot, "supabase", "functions");
-    if (skip) return { shared: {}, functions: {} };
-    const read = (file: string) =>
-      fs.exists(file).pipe(
-        Effect.flatMap((exists) =>
-          exists
-            ? fs.readFileString(file).pipe(
-                Effect.flatMap((contents) =>
-                  Effect.try({
-                    try: () => parseEnv(contents),
-                    // Keep parser diagnostics free of dotenv values, which may contain secrets.
-                    catch: () =>
-                      new StackConfigError({
-                        message: `Failed to parse environment file ${file}`,
-                      }),
-                  }),
-                ),
-                Effect.flatMap((values) => validateEnvKeys(values, file)),
-              )
-            : Effect.succeed({}),
-        ),
-      );
-    const shared = yield* read(path.join(root, ".env"));
-    const entries = yield* fs.readDirectory(root).pipe(Effect.orElseSucceed(() => []));
-    const result: Record<string, Readonly<Record<string, Redacted.Redacted<string>>>> = {};
-    for (const entry of entries.filter((name) => !name.startsWith(".") && !name.startsWith("_"))) {
-      if (!/^[A-Za-z0-9_-]+$/u.test(entry)) continue;
-      const info = yield* fs.stat(path.join(root, entry)).pipe(Effect.option);
-      if (Option.isNone(info) || info.value.type !== "Directory") continue;
-      if (disabledFunctions.has(entry)) continue;
-      const functionEnv = yield* read(path.join(root, entry, ".env"));
-      result[entry] = { ...shared, ...functionEnv };
-    }
-    return { shared, functions: result };
-  }).pipe(
-    Effect.mapError((cause) =>
-      cause instanceof StackConfigError ? cause : new StackConfigError({ message: String(cause) }),
-    ),
-  );
-
 const section = (document: Readonly<Record<string, unknown>> | undefined, name: string) => {
   const value = document?.[name];
   return isRecord(value) ? value : undefined;
@@ -184,20 +94,6 @@ const explicitPort = (
 ): number | undefined => {
   const value = section(document, sectionName)?.[key];
   return typeof value === "number" ? value : undefined;
-};
-
-const pick = (
-  value: unknown,
-  keys: ReadonlyArray<string>,
-  secretKeys: ReadonlySet<string> = new Set(),
-): Record<string, unknown> => {
-  if (!isRecord(value)) return {};
-  const result: Record<string, unknown> = {};
-  for (const key of keys) {
-    if (!(key in value) || value[key] === undefined) continue;
-    result[key] = secretKeys.has(key) ? secret(value[key]) : value[key];
-  }
-  return result;
 };
 
 const envPortOrConfigured = (
@@ -247,365 +143,6 @@ const authProviderNames = [
   "workos",
   "zoom",
 ] as const;
-
-const stackProjectPath = (path: Path.Path, value: string): string =>
-  value.length === 0 || path.isAbsolute(value)
-    ? value
-    : `supabase/${value.startsWith("./") ? value.slice(2) : value}`;
-
-/** Converts a CLI function path (relative to supabase/) to the stack resolver's
- * function-directory-relative form. */
-const functionRelativePath = (
-  path: Path.Path,
-  projectRoot: string,
-  value: string,
-  name: string,
-): string => {
-  if (value.length === 0) return value;
-  const functionsRoot = path.join(projectRoot, "supabase", "functions");
-  const functionRoot = path.join(functionsRoot, name);
-  const target = path.isAbsolute(value)
-    ? path.normalize(value)
-    : path.normalize(
-        path.join(projectRoot, "supabase", value.startsWith("./") ? value.slice(2) : value),
-      );
-  return path.relative(functionRoot, target).replaceAll(path.sep, "/");
-};
-
-const functionPathError = (
-  path: Path.Path,
-  projectRoot: string,
-  name: string,
-  field: string,
-  value: string,
-): string | undefined => {
-  if (value.length === 0) return undefined;
-  const functionsRoot = path.join(projectRoot, "supabase", "functions");
-  const target = path.isAbsolute(value)
-    ? path.normalize(value)
-    : path.normalize(
-        path.join(projectRoot, "supabase", value.startsWith("./") ? value.slice(2) : value),
-      );
-  const relative = path.relative(functionsRoot, target);
-  if (path.isAbsolute(relative) || relative === ".." || relative.startsWith(`..${path.sep}`))
-    return `functions.${name}.${field} path must be inside supabase/functions`;
-  return undefined;
-};
-
-const apiListener = (
-  document: Readonly<Record<string, unknown>> | undefined,
-  config: CliConfig,
-  portOverride?: number,
-) => {
-  const listener = listenerFromSection(document, "api", "port", portOverride, config.api.enabled);
-  const gatewayEnabled =
-    config.api.enabled ||
-    config.auth.enabled ||
-    config.realtime.enabled ||
-    config.storage.enabled ||
-    config.edge_runtime.enabled ||
-    config.analytics.enabled;
-  if (listener === undefined) return listener;
-  if (gatewayEnabled) {
-    const port = portOverride ?? explicitPort(document, "api", "port");
-    return port === undefined ? {} : { port };
-  }
-  return { ...listener, enabled: false };
-};
-
-const listenerFromSection = (
-  document: Readonly<Record<string, unknown>> | undefined,
-  sectionName: string,
-  portKey: string,
-  portOverride?: number,
-  enabledOverride?: boolean,
-) => {
-  const raw = section(document, sectionName);
-  const port = portOverride ?? explicitPort(document, sectionName, portKey);
-  if (raw === undefined) {
-    if (enabledOverride === false && port !== undefined) return { enabled: false };
-    return port === undefined ? undefined : { port };
-  }
-  const enabled =
-    enabledOverride ?? (typeof raw["enabled"] === "boolean" ? raw["enabled"] : undefined);
-  if (enabled === false) return { enabled: false };
-  return port === undefined ? undefined : { port };
-};
-
-const nestedPort = (
-  document: Readonly<Record<string, unknown>> | undefined,
-  sectionName: string,
-  nestedSection: string,
-  portKey: string,
-): number | undefined => {
-  const nested = section(section(document, sectionName), nestedSection);
-  const value = nested?.[portKey];
-  return typeof value === "number" ? value : undefined;
-};
-
-const nestedListener = (
-  document: Readonly<Record<string, unknown>> | undefined,
-  sectionName: string,
-  nestedSection: string,
-  portKey: string,
-  portOverride?: number,
-  enabledOverride?: boolean,
-) => {
-  const parent = section(document, sectionName);
-  const nested = section(parent, nestedSection);
-  const port = portOverride ?? nestedPort(document, sectionName, nestedSection, portKey);
-  if (nested === undefined) {
-    if (enabledOverride === false && port !== undefined) return { enabled: false };
-    return port === undefined ? undefined : { port };
-  }
-  if (enabledOverride === false || (enabledOverride === undefined && nested.enabled === false))
-    return { enabled: false };
-  return port === undefined ? undefined : { port };
-};
-
-const authSettings = (
-  auth: CliConfig["auth"],
-  document: Readonly<Record<string, unknown>> | undefined,
-) => {
-  const authDocument = section(document, "auth");
-  const resolvedEmail = auth.email;
-  const resolvedSmtp = section(authDocument && section(authDocument, "email"), "smtp")
-    ? auth.email.smtp
-    : undefined;
-  const resolvedMfa = auth.mfa;
-  const resolvedSms = auth.sms;
-  const resolvedExternal = auth.external;
-  const resolvedHooks = auth.hook;
-  const resolvedCaptcha = auth.captcha;
-  const resolvedSessions = auth.sessions;
-  const resolvedRateLimit = auth.rate_limit;
-  const resolvedWeb3 = auth.web3;
-  const resolvedOAuthServer = auth.oauth_server;
-  const passwordRequirements = auth.password_requirements;
-  const thirdParty = auth.third_party;
-
-  const hooks: Record<
-    string,
-    { enabled: boolean; uri?: string; secrets?: Redacted.Redacted<string> }
-  > = {};
-  const hookDocument = section(authDocument, "hook");
-  const hookValues = {
-    mfa_verification_attempt: resolvedHooks.mfa_verification_attempt,
-    password_verification_attempt: resolvedHooks.password_verification_attempt,
-    custom_access_token: resolvedHooks.custom_access_token,
-    send_sms: resolvedHooks.send_sms,
-    send_email: resolvedHooks.send_email,
-    before_user_created: resolvedHooks.before_user_created,
-  };
-  for (const [name, resolved] of Object.entries(hookValues)) {
-    if (hookDocument?.[name] === undefined) continue;
-    hooks[name] = {
-      enabled: resolved.enabled,
-      ...(resolved.uri === undefined || resolved.uri.length === 0 ? {} : { uri: resolved.uri }),
-      ...(resolved.secrets === undefined || resolved.secrets.length === 0
-        ? {}
-        : { secrets: secret(resolved.secrets) }),
-    };
-  }
-
-  const external: Record<string, unknown> = {};
-  const externalDocument = section(authDocument, "external");
-  for (const name of authProviderNames) {
-    const resolved = resolvedExternal[name];
-    if (
-      resolved === undefined ||
-      auth.external[name] === undefined ||
-      (name !== "apple" && externalDocument?.[name] === undefined)
-    )
-      continue;
-    external[name] = {
-      enabled: resolved.enabled,
-      client_id: resolved.client_id,
-      secret: secret(resolved.secret),
-      url: resolved.url,
-      redirect_uri: resolved.redirect_uri,
-      skip_nonce_check: resolved.skip_nonce_check,
-      email_optional: resolved.email_optional,
-    };
-  }
-
-  const sms = {
-    ...pick(resolvedSms, ["enable_signup", "enable_confirmations", "template", "max_frequency"]),
-    twilio: {
-      enabled: resolvedSms.twilio.enabled,
-      account_sid: resolvedSms.twilio.account_sid,
-      message_service_sid: resolvedSms.twilio.message_service_sid,
-      auth_token: secret(resolvedSms.twilio.auth_token),
-    },
-    twilio_verify: {
-      enabled: resolvedSms.twilio_verify.enabled,
-      account_sid: resolvedSms.twilio_verify.account_sid,
-      message_service_sid: resolvedSms.twilio_verify.message_service_sid,
-      auth_token: secret(resolvedSms.twilio_verify.auth_token),
-    },
-    messagebird: {
-      enabled: resolvedSms.messagebird.enabled,
-      originator: resolvedSms.messagebird.originator,
-      access_key: secret(resolvedSms.messagebird.access_key),
-    },
-    textlocal: {
-      enabled: resolvedSms.textlocal.enabled,
-      sender: resolvedSms.textlocal.sender,
-      api_key: secret(resolvedSms.textlocal.api_key),
-    },
-    vonage: {
-      enabled: resolvedSms.vonage.enabled,
-      from: resolvedSms.vonage.from,
-      api_key: secret(resolvedSms.vonage.api_key),
-      api_secret: secret(resolvedSms.vonage.api_secret),
-    },
-    ...(auth.sms.test_otp === undefined ? {} : { test_otp: auth.sms.test_otp }),
-  };
-
-  const email = {
-    enable_signup: resolvedEmail.enable_signup,
-    double_confirm_changes: resolvedEmail.double_confirm_changes,
-    enable_confirmations: resolvedEmail.enable_confirmations,
-    secure_password_change: resolvedEmail.secure_password_change,
-    max_frequency: resolvedEmail.max_frequency,
-    otp_length: resolvedEmail.otp_length,
-    otp_expiry: resolvedEmail.otp_expiry,
-    ...(resolvedSmtp === undefined
-      ? {}
-      : {
-          smtp: {
-            enabled: resolvedSmtp.enabled,
-            host: resolvedSmtp.host,
-            ...(resolvedSmtp.port === 0 ? {} : { port: resolvedSmtp.port }),
-            user: resolvedSmtp.user,
-            pass: secret(resolvedSmtp.pass),
-            admin_email: resolvedSmtp.admin_email,
-            sender_name: resolvedSmtp.sender_name,
-          },
-        }),
-    template: Object.fromEntries(
-      Object.entries(resolvedEmail.template).map(([name, value]) => [
-        name,
-        pick(value, ["subject", "content_path"]),
-      ]),
-    ),
-    notification: Object.fromEntries(
-      Object.entries(resolvedEmail.notification).map(([name, value]) => [
-        name,
-        pick(value, ["enabled", "subject", "content_path"]),
-      ]),
-    ),
-  };
-
-  return {
-    site_url: auth.site_url,
-    additional_redirect_urls: auth.additional_redirect_urls,
-    jwt_expiry: auth.jwt_expiry,
-    jwt_issuer: auth.jwt_issuer,
-    signing_keys_path: auth.signing_keys_path,
-    enable_refresh_token_rotation: auth.enable_refresh_token_rotation,
-    refresh_token_reuse_interval: auth.refresh_token_reuse_interval,
-    enable_manual_linking: auth.enable_manual_linking,
-    enable_signup: auth.enable_signup,
-    enable_anonymous_sign_ins: auth.enable_anonymous_sign_ins,
-    minimum_password_length: auth.minimum_password_length,
-    password_requirements: passwordRequirements,
-    publishable_key: secret(auth.publishable_key),
-    secret_key: secret(auth.secret_key),
-    jwt_secret: secret(auth.jwt_secret),
-    anon_key: secret(auth.anon_key),
-    service_role_key: secret(auth.service_role_key),
-    rate_limit: resolvedRateLimit,
-    ...(resolvedCaptcha === undefined
-      ? {}
-      : {
-          captcha: {
-            enabled: resolvedCaptcha.enabled,
-            provider: resolvedCaptcha.provider,
-            secret:
-              resolvedCaptcha.secret === undefined
-                ? undefined
-                : Redacted.make(resolvedCaptcha.secret),
-          },
-        }),
-    hook: hooks,
-    mfa: resolvedMfa,
-    sessions: resolvedSessions,
-    email,
-    sms,
-    external,
-    web3: resolvedWeb3,
-    oauth_server: resolvedOAuthServer,
-    third_party: thirdParty,
-  };
-};
-
-const functionsSettings = (
-  projectRoot: string,
-  path: Path.Path,
-  config: CliConfig,
-  document?: Record<string, unknown>,
-  projectEnvValues: Readonly<Record<string, string>> = {},
-) => {
-  const edge = config.edge_runtime;
-  const edgePolicy = edge.policy;
-  const edgeDenoVersion = edge.deno_version;
-  const documentFunctions = section(document, "functions");
-  const functions = Object.fromEntries(
-    Object.entries(config.functions).map(([name, value]) => [
-      name,
-      {
-        ...(value.enabled === undefined ? {} : { enabled: value.enabled }),
-        ...(value.verify_jwt === undefined ? {} : { verify_jwt: value.verify_jwt }),
-        ...(value.import_map === undefined
-          ? {}
-          : { import_map: functionRelativePath(path, projectRoot, value.import_map, name) }),
-        ...(value.entrypoint === undefined
-          ? {}
-          : { entrypoint: functionRelativePath(path, projectRoot, value.entrypoint, name) }),
-        ...(value.static_files === undefined
-          ? {}
-          : {
-              static_files: value.static_files.map((filePath) =>
-                functionRelativePath(path, projectRoot, filePath, name),
-              ),
-            }),
-        env: Object.fromEntries(
-          Object.entries(
-            isRecord(documentFunctions?.[name]) && isRecord(documentFunctions[name].env)
-              ? documentFunctions[name].env
-              : value.env,
-          ).flatMap(([key, item]) => {
-            const resolvedValue =
-              typeof item === "string" && /^env\([A-Za-z_][A-Za-z0-9_]*\)$/.test(item)
-                ? projectEnvValues[item.slice(4, -1)]
-                : item;
-            const resolved = secret(resolvedValue);
-            return resolved === undefined ? [] : [[key, resolved]];
-          }),
-        ),
-      },
-    ]),
-  );
-  return {
-    functions_root: "supabase/functions",
-    edge_runtime: {
-      ...(edgePolicy === undefined ? {} : { policy: edgePolicy }),
-      ...(edgeDenoVersion === undefined ? {} : { deno_version: edgeDenoVersion }),
-      ...(edge.secrets === undefined
-        ? {}
-        : {
-            secrets: Object.fromEntries(
-              Object.entries(edge.secrets).flatMap(([key, item]) => {
-                const resolved = secret(item);
-                return resolved === undefined ? [] : [[key, resolved]];
-              }),
-            ),
-          }),
-    },
-    functions,
-  };
-};
 
 const resolvedPort = (
   name: string,
@@ -871,6 +408,14 @@ const resolveEffectiveCliConfig = (
   const mail = config.local_smtp;
   const pooler = db.pooler;
   const edge = config.edge_runtime;
+  const experimental = {
+    ...config.experimental,
+    orioledb_version: envOverride(
+      "SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION",
+      config.experimental.orioledb_version,
+      env,
+    ),
+  };
   const apiSchemasOverride = envOverride("SUPABASE_API_SCHEMAS", undefined, env);
   const apiExtraSearchPathOverride = envOverride("SUPABASE_API_EXTRA_SEARCH_PATH", undefined, env);
   const imageDocument = section(section(document, "storage"), "image_transformation");
@@ -1011,6 +556,7 @@ const resolveEffectiveCliConfig = (
       "analytics.enabled",
       env,
     ),
+    port: resolvedPort("SUPABASE_ANALYTICS_PORT", analytics.port, "analytics.port", env),
     backend: envOverrideAnalyticsBackend(analytics.backend, env),
     gcp_project_id: envOverride("SUPABASE_ANALYTICS_GCP_PROJECT_ID", analytics.gcp_project_id, env),
     gcp_project_number: envOverride(
@@ -1065,6 +611,7 @@ const resolveEffectiveCliConfig = (
       pooler: resolvedPooler,
     },
     edge_runtime: resolvedEdge,
+    experimental,
     realtime: {
       ...realtime,
       enabled: envOverrideBool(
@@ -1112,438 +659,480 @@ const resolveEffectiveCliConfig = (
   };
 };
 
-const configInput = (
-  projectRoot: string,
-  path: Path.Path,
-  config: CliConfig,
-  document?: Record<string, unknown>,
-  listenerEnvValues: Readonly<Record<string, string>> = {},
-) => {
-  // The config has already been resolved and validated. Keep the environment
-  // separate here only for listener explicitness and deferred function env().
-  const db = config.db;
-  const api = config.api;
-  const auth = config.auth;
-  const storage = config.storage;
-  const realtime = config.realtime;
-  const studio = config.studio;
-  const analytics = config.analytics;
-  const mail = config.local_smtp;
-  const pooler = db.pooler;
-  const apiResolved = api;
-  const dbPort = envPortOrConfigured(
-    "SUPABASE_DB_PORT",
-    document,
-    "db",
-    "port",
-    db.port,
-    listenerEnvValues,
-  );
-  const dbMajorVersion = db.major_version;
-  const dbSettings = db.settings;
-  const realtimeResolved = realtime;
-  const imageTransformationDocument = section(section(document, "storage"), "image_transformation");
-  const imageTransformationExplicit =
-    imageTransformationDocument?.enabled !== undefined ||
-    envOverride("SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED", undefined, listenerEnvValues) !==
-      undefined;
-  const storageResolved = imageTransformationExplicit
-    ? storage
-    : { ...storage, image_transformation: undefined };
-  const edgeEnabled = config.edge_runtime.enabled;
-  const analyticsEnabled = analytics.enabled;
-  const analyticsResolved = analytics;
-  const authEnabled = auth.enabled;
-  const studioEnabled = studio.enabled;
-  const studioPort = envPortOrConfigured(
-    "SUPABASE_STUDIO_PORT",
-    document,
-    "studio",
-    "port",
-    studio.port,
-    listenerEnvValues,
-  );
-  const studioApiUrl = studio.api_url;
-  const mailEnabled = mail.enabled;
-  const mailPort = envPortOrConfigured(
-    "SUPABASE_LOCAL_SMTP_PORT",
-    document,
-    "local_smtp",
-    "port",
-    mail.port,
-    listenerEnvValues,
-  );
-  const mailSmtpPort = envPortOrConfigured(
-    "SUPABASE_LOCAL_SMTP_SMTP_PORT",
-    document,
-    "local_smtp",
-    "smtp_port",
-    mail.smtp_port ?? 0,
-    listenerEnvValues,
-  );
-  const mailPop3Port = envPortOrConfigured(
-    "SUPABASE_LOCAL_SMTP_POP3_PORT",
-    document,
-    "local_smtp",
-    "pop3_port",
-    mail.pop3_port ?? 0,
-    listenerEnvValues,
-  );
-  const poolerDocument = section(section(document, "db"), "pooler");
-  const poolerEnabledOverride = envOverride(
-    "SUPABASE_DB_POOLER_ENABLED",
-    undefined,
-    listenerEnvValues,
-  );
-  const poolerEnabledExplicit =
-    poolerDocument?.enabled !== undefined || poolerEnabledOverride !== undefined;
-  const poolerEnabled = poolerEnabledExplicit ? pooler.enabled : undefined;
-  const poolerPort = envNestedPortOrConfigured(
-    "SUPABASE_DB_POOLER_PORT",
-    document,
-    "db",
-    "pooler",
-    "port",
-    pooler.port,
-    listenerEnvValues,
-  );
-  const poolerResolved = pooler;
-  const signingKeysPath = auth.signing_keys_path;
-  const authResolvedSettings = authSettings(auth, document);
-  const jwtIssuer = auth.jwt_issuer;
-  const jwtSecret = secret(auth.jwt_secret);
-  const jwtSigning = (): JwtSigning | undefined => {
-    if (signingKeysPath !== undefined)
-      return {
-        kind: "jwks-file",
-        path: stackProjectPath(path, signingKeysPath),
-      };
-    if (jwtSecret !== undefined) return { kind: "symmetric", secret: jwtSecret };
-    return undefined;
-  };
-  const signing = jwtSigning();
-  const capability = <T>(enabled: boolean, settings: T) =>
-    enabled ? { settings } : { enabled: false as const };
-  return {
-    capabilities: {
-      database: {
-        version: String(dbMajorVersion),
-        settings: {
-          health_timeout: db.health_timeout,
-          settings: dbSettings,
-        },
-      },
-      rest: capability(apiResolved.enabled, {
-        schemas: apiResolved.schemas,
-        extra_search_path: apiResolved.extra_search_path,
-        max_rows: apiResolved.max_rows,
-        external_url: apiResolved.external_url,
-      }),
-      auth: capability(authEnabled, {
-        ...authResolvedSettings,
-        signing_keys_path: signingKeysPath,
-      }),
-      realtime: capability(realtimeResolved.enabled, {
-        ip_version: realtimeResolved.ip_version,
-        max_header_length: realtimeResolved.max_header_length,
-      }),
-      storage: capability(storageResolved.enabled, {
-        file_size_limit: storageResolved.file_size_limit,
-        image_transformation: storageResolved.image_transformation,
-        buckets: storageResolved.buckets,
-        s3_protocol: storageResolved.s3_protocol,
-        vector: storageResolved.vector,
-      }),
-      functions: capability(
-        edgeEnabled,
-        functionsSettings(projectRoot, path, config, document, listenerEnvValues),
-      ),
-      studio: capability(studioEnabled, {
-        // A host-only default must remain unset so the stack runtime can append
-        // the allocated API listener port. Explicit URLs remain caller-owned.
-        api_url: studioApiUrl === defaultStudioApiUrl ? undefined : studioApiUrl,
-        openai_api_key: secret(studio.openai_api_key),
-      }),
-      mail: capability(mailEnabled, {
-        admin_email: mail.admin_email,
-        sender_name: mail.sender_name,
-      }),
-      analytics: capability(analyticsEnabled, {
-        backend: analyticsResolved.backend,
-        gcp_project_id: analyticsResolved.gcp_project_id,
-        gcp_project_number: analyticsResolved.gcp_project_number,
-        gcp_jwt_path: analyticsResolved.gcp_jwt_path,
-      }),
-      pooler: capability(poolerEnabled !== false, {
-        pool_mode: poolerResolved.pool_mode,
-        default_pool_size: poolerResolved.default_pool_size,
-        max_client_conn: poolerResolved.max_client_conn,
-      }),
-    },
-    listeners: {
-      api: apiListener(
-        document,
-        config,
-        envPortOrConfigured(
-          "SUPABASE_API_PORT",
-          document,
-          "api",
-          "port",
-          api.port,
-          listenerEnvValues,
-        ),
-      ),
-      database: listenerFromSection(document, "db", "port", dbPort),
-      pooler: nestedListener(document, "db", "pooler", "port", poolerPort, poolerEnabled),
-      studio: listenerFromSection(document, "studio", "port", studioPort, studioEnabled),
-      mailUi: listenerFromSection(document, "local_smtp", "port", mailPort, mailEnabled),
-      smtp: listenerFromSection(document, "local_smtp", "smtp_port", mailSmtpPort, mailEnabled),
-      pop3: listenerFromSection(document, "local_smtp", "pop3_port", mailPop3Port, mailEnabled),
-      functionsInspector: listenerFromSection(
-        document,
-        "edge_runtime",
-        "inspector_port",
-        envPortOrConfigured(
-          "SUPABASE_EDGE_RUNTIME_INSPECTOR_PORT",
-          document,
-          "edge_runtime",
-          "inspector_port",
-          config.edge_runtime.inspector_port,
-          listenerEnvValues,
-        ),
-        edgeEnabled,
-      ),
-    },
-    security: {
-      jwt: {
-        ...(jwtIssuer === undefined ? {} : { issuer: jwtIssuer }),
-        ...(signing === undefined ? {} : { signing }),
-      },
-    },
-  };
+const unsupportedConfigPaths = [
+  "auth.additional_redirect_urls",
+  "auth.enable_refresh_token_rotation",
+  "auth.refresh_token_reuse_interval",
+  "auth.enable_manual_linking",
+  "auth.enable_anonymous_sign_ins",
+  "auth.minimum_password_length",
+  "auth.password_requirements",
+  "auth.rate_limit",
+  "auth.captcha",
+  "auth.hook",
+  "auth.mfa",
+  "auth.sessions",
+  "auth.email",
+  "auth.sms",
+  "auth.external",
+  "auth.web3",
+  "auth.oauth_server",
+  "auth.third_party",
+  "auth.jwt_issuer",
+  "auth.publishable_key",
+  "auth.secret_key",
+  "auth.anon_key",
+  "auth.service_role_key",
+  "api.extra_search_path",
+  "api.tls",
+  "analytics.vector_port",
+  "analytics.gcp_project_id",
+  "analytics.gcp_project_number",
+  "analytics.gcp_jwt_path",
+  "db.pooler.default_pool_size",
+  "db.pooler.max_client_conn",
+  "edge_runtime.secrets",
+  "edge_runtime.deno_version",
+  "edge_runtime.inspector_port",
+  "realtime.ip_version",
+  "realtime.max_header_length",
+  "storage.analytics",
+  "storage.s3_protocol",
+  "studio.api_url",
+  "studio.openai_api_key",
+  "local_smtp.admin_email",
+  "local_smtp.sender_name",
+  "experimental.orioledb_version",
+  "experimental.s3_host",
+  "experimental.s3_region",
+  "experimental.s3_access_key",
+  "experimental.s3_secret_key",
+] as const;
+
+const pathValue = (value: unknown, path: string): unknown => {
+  let current = value;
+  for (const segment of path.split(".")) {
+    if (!isRecord(current)) return undefined;
+    current = current[segment];
+  }
+  return current;
 };
 
-const decryptConsumedSecrets = (
-  value: unknown,
-  keys: ReadonlyArray<string>,
-  path = "config",
-): Effect.Effect<unknown, StackConfigError> =>
-  Effect.gen(function* () {
-    if (Redacted.isRedacted(value)) {
-      const unwrapped = Redacted.value(value);
-      if (typeof unwrapped !== "string" || !isEncryptedSecret(unwrapped)) return value;
-      const result = yield* Effect.try({
-        try: () => decryptSecret(unwrapped, keys),
-        catch: () =>
-          new StackConfigError({
-            message: `${path} uses an encrypted secret that could not be decrypted`,
-          }),
-      });
-      if (!result.ok) {
-        const reason = keys.length === 0 ? "missing private key" : "decryption failed";
-        return yield* new StackConfigError({
-          message: `${path} uses an encrypted secret that could not be decrypted: ${reason}`,
-        });
-      }
-      return Redacted.make(result.value);
-    }
-    if (Array.isArray(value))
-      return yield* Effect.forEach(value, (item, index) =>
-        decryptConsumedSecrets(item, keys, `${path}[${index}]`),
-      );
-    if (!isRecord(value)) return value;
-    if (value.enabled === false) return value;
-    const entries = yield* Effect.forEach(Object.entries(value), ([key, item]) =>
-      decryptConsumedSecrets(item, keys, `${path}.${key}`).pipe(
-        Effect.map((resolved) => [key, resolved] as const),
-      ),
+const valuesEqual = (left: unknown, right: unknown): boolean => {
+  if ((left === undefined && right === "") || (left === "" && right === undefined)) return true;
+  if (Redacted.isRedacted(left) || Redacted.isRedacted(right)) {
+    return (
+      Redacted.isRedacted(left) &&
+      Redacted.isRedacted(right) &&
+      Redacted.value(left) === Redacted.value(right)
     );
-    return Object.fromEntries(entries);
-  });
+  }
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return (
+      Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((value, index) => valuesEqual(value, right[index]))
+    );
+  }
+  if (isRecord(left) || isRecord(right)) {
+    if (!isRecord(left) || !isRecord(right)) return false;
+    const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
+    return [...keys].every((key) => valuesEqual(left[key], right[key]));
+  }
+  return Object.is(left, right);
+};
+
+const firstDifference = (left: unknown, right: unknown, path: string): string | undefined => {
+  if (valuesEqual(left, right)) return undefined;
+  if (isRecord(left) && isRecord(right)) {
+    for (const key of new Set([...Object.keys(left), ...Object.keys(right)])) {
+      const difference = firstDifference(left[key], right[key], `${path}.${key}`);
+      if (difference !== undefined) return difference;
+    }
+  }
+  return path;
+};
 
 const configValidationError = (
-  path: Path.Path,
-  projectRoot: string,
   config: CliConfig,
-  projectEnvValues: Readonly<Record<string, string>>,
   effectiveEdgeEnabled: boolean,
 ): string | undefined => {
+  const defaults = getDefaultCliConfig();
   const figma = config.auth.external.figma;
   if (config.auth.enabled && figma?.enabled === true)
     return "auth.external.figma is enabled but unsupported by the experimental stack";
+  if (config.auth.signing_keys_path !== undefined)
+    return "auth.signing_keys_path is unsupported by the experimental stack";
+  for (const path of unsupportedConfigPaths) {
+    if (path.startsWith("auth.") && !config.auth.enabled) continue;
+    const value = pathValue(config, path);
+    const baseline = pathValue(defaults, path);
+    const difference = firstDifference(value, baseline, path);
+    if (difference !== undefined) return `${difference} is unsupported by the experimental stack`;
+  }
+  if (config.analytics.enabled && config.analytics.backend !== "postgres")
+    return "analytics.backend must be postgres for the experimental stack";
+  if (
+    config.storage.vector.max_buckets !== defaults.storage.vector.max_buckets ||
+    config.storage.vector.max_indexes !== defaults.storage.vector.max_indexes ||
+    Object.keys(config.storage.vector.buckets).length > 0
+  )
+    return "storage.vector settings are unsupported by the experimental stack";
+  if (config.db.major_version !== 15 && config.db.major_version !== 17)
+    return "db.major_version must be 15 or 17 for the experimental stack";
   if (!effectiveEdgeEnabled) return undefined;
   for (const [name, functionConfig] of Object.entries(config.functions)) {
-    if (functionConfig.enabled === false) continue;
-    for (const [field, value] of [
-      ["import_map", functionConfig.import_map],
-      ["entrypoint", functionConfig.entrypoint],
-      ...functionConfig.static_files.map((path) => ["static_files", path] as const),
+    const functionDefaults = {
+      enabled: true,
+      verify_jwt: true,
+      import_map: "",
+      entrypoint: "",
+      static_files: [],
+      env: {},
+    };
+    for (const field of [
+      "enabled",
+      "verify_jwt",
+      "import_map",
+      "entrypoint",
+      "static_files",
+      "env",
     ] as const) {
-      if (typeof value !== "string") continue;
-      const pathError = functionPathError(path, projectRoot, name, field, value);
-      if (pathError !== undefined) return pathError;
-    }
-    for (const value of Object.values(functionConfig.env)) {
-      if (typeof value !== "string") continue;
-      const match = /^env\(([A-Za-z_][A-Za-z0-9_]*)\)$/.exec(value);
-      const variable = match?.[1];
-      if (variable !== undefined && projectEnvValues[variable] === undefined)
-        return `functions.${name}.env references an unset environment variable ${variable}`;
+      if (!valuesEqual(functionConfig[field], functionDefaults[field]))
+        return `functions.${name}.${field} is unsupported by the experimental stack`;
     }
   }
   return undefined;
 };
 
+const endpoint = (port: number | undefined): { readonly port: number | "auto" } => ({
+  port: port === undefined ? "auto" : port,
+});
+
 /** Loads and translates the effective project config for all stack commands.
  * Pass `opts.context` to reuse an already-loaded project context. */
-export const loadStackConfig = (
-  projectRoot: string,
-  opts?: { readonly context?: LocalProjectContext },
-): StackConfigEffect =>
-  Effect.gen(function* () {
-    const path = yield* Path.Path;
-    const context =
-      opts?.context ??
-      (yield* loadLocalProjectContext(projectRoot, (message) => new StackConfigError({ message })));
-    const effectiveInput = yield* Effect.try({
-      try: () =>
-        resolveEffectiveCliConfig(
-          context.config,
-          context.loaded?.document,
-          context.projectEnvValues,
-        ),
-      catch: (cause) =>
-        new StackConfigError({
-          message: cause instanceof Error ? cause.message : "invalid config overrides",
-        }),
-    });
-    const dotenvPrivateKeys = collectDotenvPrivateKeys(context.projectEnvValues);
-    const validatedConfig = yield* validateCliConfig(withoutUndefined(effectiveInput)).pipe(
-      Effect.mapError((cause) => {
-        const issues = SchemaIssue.makeFormatterStandardSchemaV1({
-          leafHook: () => "Invalid value",
-          checkHook: () => undefined,
-        })(cause.issue).issues;
-        const path = issues[0]?.path
-          ?.map((segment) => String(typeof segment === "object" ? segment.key : segment))
-          .join(".");
-        return new StackConfigError({
-          message: path === undefined ? "invalid config" : `invalid config at ${path}`,
-        });
-      }),
-    );
-    const validationError = yield* Effect.try({
-      try: () =>
-        configValidationError(
-          path,
+export const loadStackConfig = Effect.fn("StackConfig.load")(
+  (projectRoot: string, opts?: { readonly context?: LocalProjectContext }): StackConfigEffect =>
+    Effect.gen(function* () {
+      const context =
+        opts?.context ??
+        (yield* loadLocalProjectContext(
           projectRoot,
-          validatedConfig,
-          context.projectEnvValues,
-          validatedConfig.edge_runtime.enabled,
-        ),
-      catch: (cause) =>
-        new StackConfigError({
-          message: cause instanceof Error ? cause.message : "invalid stack config",
-        }),
-    });
-    if (validationError !== undefined)
-      return yield* new StackConfigError({ message: validationError });
-
-    const environments = yield* readFunctionEnvironments(
-      projectRoot,
-      new Set(
-        Object.entries(validatedConfig.functions)
-          .filter(([, functionConfig]) => functionConfig.enabled === false)
-          .map(([name]) => name),
-      ),
-      !validatedConfig.edge_runtime.enabled,
-    );
-    const input = yield* Effect.try({
-      try: () =>
-        configInput(
-          projectRoot,
-          path,
-          validatedConfig,
-          context.loaded?.document,
-          context.projectEnvValues,
-        ),
-      catch: (cause) =>
-        new StackConfigError({
-          message:
-            cause instanceof StackConfigError
-              ? cause.message
-              : cause instanceof Error
-                ? cause.message
-                : "invalid stack config",
-        }),
-    });
-    const functionSettings: Readonly<Record<string, unknown>> = isRecord(
-      input.capabilities.functions.settings,
-    )
-      ? input.capabilities.functions.settings
-      : {};
-    const functions = isRecord(functionSettings?.functions) ? functionSettings.functions : {};
-    const allFunctions = {
-      ...Object.fromEntries(
-        Object.keys(environments.functions).map((name) => [
-          name,
-          { env: environments.functions[name] },
-        ]),
-      ),
-      ...functions,
-    };
-    const mergedInput =
-      input.capabilities.functions.enabled === false
-        ? input
-        : {
-            ...input,
-            capabilities: {
-              ...input.capabilities,
-              functions: {
-                ...input.capabilities.functions,
-                settings: {
-                  ...functionSettings,
-                  edge_runtime: {
-                    ...(isRecord(functionSettings?.edge_runtime)
-                      ? functionSettings.edge_runtime
-                      : {}),
-                    secrets: {
-                      ...environments.shared,
-                      ...(isRecord(functionSettings?.edge_runtime) &&
-                      isRecord(functionSettings.edge_runtime.secrets)
-                        ? functionSettings.edge_runtime.secrets
-                        : {}),
-                    },
-                  },
-                  functions: Object.fromEntries(
-                    Object.entries(allFunctions).map(([name, value]) => [
-                      name,
-                      {
-                        ...(isRecord(value) ? value : {}),
-                        env: {
-                          ...environments.functions[name],
-                          ...(isRecord(value) && isRecord(value.env) ? value.env : {}),
-                        },
-                      },
-                    ]),
-                  ),
-                },
-              },
-            },
-          };
-    const decrypted = yield* decryptConsumedSecrets(mergedInput, dotenvPrivateKeys);
-    const decoded = yield* Schema.decodeUnknownEffect(StackConfigSchema)(
-      withoutUndefined(decrypted),
-      {
-        onExcessProperty: "error",
-      },
-    ).pipe(
-      Effect.mapError(
-        (cause) =>
+          (message) => new StackConfigError({ message }),
+        ));
+      const effectiveInput = yield* Effect.try({
+        try: () =>
+          resolveEffectiveCliConfig(
+            context.config,
+            context.loaded?.document,
+            context.projectEnvValues,
+          ),
+        catch: (cause) =>
           new StackConfigError({
-            message: `invalid stack config: ${String(cause)}`,
+            message: cause instanceof Error ? cause.message : "invalid config overrides",
           }),
-      ),
-    );
-    return decoded;
-  });
+      });
+      const validatedConfig = yield* validateCliConfig(withoutUndefined(effectiveInput)).pipe(
+        Effect.mapError((cause) => {
+          const issues = SchemaIssue.makeFormatterStandardSchemaV1({
+            leafHook: () => "Invalid value",
+            checkHook: () => undefined,
+          })(cause.issue).issues;
+          const path = issues[0]?.path
+            ?.map((segment) => String(typeof segment === "object" ? segment.key : segment))
+            .join(".");
+          return new StackConfigError({
+            message: path === undefined ? "invalid config" : `invalid config at ${path}`,
+          });
+        }),
+      );
+      const validationError = configValidationError(
+        validatedConfig,
+        validatedConfig.edge_runtime.enabled,
+      );
+      if (validationError !== undefined)
+        return yield* new StackConfigError({ message: validationError });
+
+      const crypto = yield* Crypto.Crypto;
+      const storageFileSizeLimit = yield* Effect.try({
+        try: () => String(parseFileSizeLimit(validatedConfig.storage.file_size_limit)),
+        catch: (cause) =>
+          new StackConfigError({ message: `Invalid storage.file_size_limit: ${String(cause)}` }),
+      });
+      const jwtSecret =
+        validatedConfig.auth.jwt_secret === undefined
+          ? Redacted.make(
+              yield* crypto.randomUUIDv4.pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new StackConfigError({ message: `Unable to generate JWT secret: ${cause}` }),
+                ),
+              ),
+            )
+          : Redacted.make(validatedConfig.auth.jwt_secret);
+      const document = context.loaded?.document;
+      const dbPort = envPortOrConfigured(
+        "SUPABASE_DB_PORT",
+        document,
+        "db",
+        "port",
+        validatedConfig.db.port,
+        context.projectEnvValues,
+      );
+      const apiPort = envPortOrConfigured(
+        "SUPABASE_API_PORT",
+        document,
+        "api",
+        "port",
+        validatedConfig.api.port,
+        context.projectEnvValues,
+      );
+      const studioPort = envPortOrConfigured(
+        "SUPABASE_STUDIO_PORT",
+        document,
+        "studio",
+        "port",
+        validatedConfig.studio.port,
+        context.projectEnvValues,
+      );
+      const poolerPort = envNestedPortOrConfigured(
+        "SUPABASE_DB_POOLER_PORT",
+        document,
+        "db",
+        "pooler",
+        "port",
+        validatedConfig.db.pooler.port,
+        context.projectEnvValues,
+      );
+      const mailPort = envPortOrConfigured(
+        "SUPABASE_LOCAL_SMTP_PORT",
+        document,
+        "local_smtp",
+        "port",
+        validatedConfig.local_smtp.port,
+        context.projectEnvValues,
+      );
+      const mailSmtpPort = envPortOrConfigured(
+        "SUPABASE_LOCAL_SMTP_SMTP_PORT",
+        document,
+        "local_smtp",
+        "smtp_port",
+        validatedConfig.local_smtp.smtp_port ?? 0,
+        context.projectEnvValues,
+      );
+      const mailPop3Port = envPortOrConfigured(
+        "SUPABASE_LOCAL_SMTP_POP3_PORT",
+        document,
+        "local_smtp",
+        "pop3_port",
+        validatedConfig.local_smtp.pop3_port ?? 0,
+        context.projectEnvValues,
+      );
+      const analyticsPort = envPortOrConfigured(
+        "SUPABASE_ANALYTICS_PORT",
+        document,
+        "analytics",
+        "port",
+        validatedConfig.analytics.port,
+        context.projectEnvValues,
+      );
+      const poolMode =
+        validatedConfig.db.pooler.pool_mode === "session" ? ("session" as const) : "transaction";
+      const storagePath = `${projectRoot}/supabase/.temp/stack-uploads`;
+      const createCreations = (
+        stackId: string,
+      ): Effect.Effect<ReadonlyArray<ServiceCreationType>, StackConfigError> =>
+        Effect.gen(function* () {
+          const bootstrap = validatedConfig.edge_runtime.enabled
+            ? yield* typeof SUPABASE_STACK_FUNCTIONS_SERVE_MAIN_TEMPLATE === "string"
+                ? Effect.succeed(SUPABASE_STACK_FUNCTIONS_SERVE_MAIN_TEMPLATE)
+                : Effect.tryPromise({
+                    try: () => import("./stack-functions-bundler.ts"),
+                    catch: (cause) =>
+                      new StackConfigError({
+                        message: `Unable to load Functions bundler: ${String(cause)}`,
+                      }),
+                  }).pipe(
+                    Effect.flatMap(({ bundleStackFunctionsServeMainTemplate }) =>
+                      bundleStackFunctionsServeMainTemplate().pipe(
+                        Effect.mapError(
+                          (cause) => new StackConfigError({ message: cause.message }),
+                        ),
+                      ),
+                    ),
+                  )
+            : undefined;
+          return [
+            {
+              service: "database",
+              config: {
+                version: String(validatedConfig.db.major_version),
+                databasePassword: Redacted.make("postgres"),
+                jwtSecret,
+                jwtExpiry: validatedConfig.auth.jwt_expiry,
+                settings: validatedConfig.db.settings,
+              },
+              endpoints: { sql: endpoint(dbPort) },
+            },
+            ...(validatedConfig.analytics.enabled
+              ? [
+                  {
+                    service: "analytics" as const,
+                    config: {
+                      databaseUrl: "postgresql://placeholder",
+                      backend: "postgres" as const,
+                    },
+                    endpoints: { http: endpoint(analyticsPort) },
+                  } satisfies ServiceCreationType,
+                ]
+              : []),
+            ...(validatedConfig.db.pooler.enabled
+              ? [
+                  {
+                    service: "pooler" as const,
+                    config: {
+                      databaseUrl: "postgresql://placeholder",
+                      jwtSecret: Redacted.value(jwtSecret),
+                      poolMode,
+                    },
+                    endpoints: { http: endpoint(undefined), sql: endpoint(poolerPort) },
+                  } satisfies ServiceCreationType,
+                ]
+              : []),
+            ...(validatedConfig.studio.enabled
+              ? [
+                  {
+                    service: "pgmeta" as const,
+                    config: { databaseUrl: "postgresql://placeholder" },
+                    endpoints: { http: endpoint(undefined) },
+                  } satisfies ServiceCreationType,
+                ]
+              : []),
+            ...(validatedConfig.api.enabled
+              ? [
+                  {
+                    service: "rest" as const,
+                    config: {
+                      databaseUrl: "postgresql://placeholder",
+                      schemas: validatedConfig.api.schemas.join(","),
+                      maxRows: validatedConfig.api.max_rows,
+                      ...(validatedConfig.api.external_url === undefined
+                        ? {}
+                        : { externalApiUrl: validatedConfig.api.external_url }),
+                      jwtSecret: Redacted.value(jwtSecret),
+                    },
+                    endpoints: { http: endpoint(apiPort) },
+                  } satisfies ServiceCreationType,
+                ]
+              : []),
+            ...(validatedConfig.auth.enabled
+              ? [
+                  {
+                    service: "auth" as const,
+                    config: {
+                      databaseUrl: "postgresql://placeholder",
+                      siteUrl: validatedConfig.auth.site_url,
+                      jwtSecret: Redacted.value(jwtSecret),
+                      jwtExpiry: validatedConfig.auth.jwt_expiry,
+                      disableSignup: !validatedConfig.auth.enable_signup,
+                    },
+                    endpoints: { http: endpoint(apiPort) },
+                  } satisfies ServiceCreationType,
+                ]
+              : []),
+            ...(validatedConfig.realtime.enabled
+              ? [
+                  {
+                    service: "realtime" as const,
+                    config: {
+                      databaseUrl: "postgresql://placeholder",
+                      jwtSecret: Redacted.value(jwtSecret),
+                      secretKeyBase: Redacted.value(jwtSecret),
+                    },
+                    endpoints: {
+                      http: endpoint(apiPort),
+                      rpc: endpoint(undefined),
+                    },
+                  } satisfies ServiceCreationType,
+                ]
+              : []),
+            ...(validatedConfig.storage.enabled
+              ? [
+                  {
+                    service: "storage" as const,
+                    config: {
+                      databaseUrl: "postgresql://placeholder",
+                      jwtSecret: Redacted.value(jwtSecret),
+                      filePath: `${storagePath}/${stackId}`,
+                      fileSizeLimit: storageFileSizeLimit,
+                    },
+                    endpoints: { http: endpoint(apiPort) },
+                  } satisfies ServiceCreationType,
+                ]
+              : []),
+            ...(validatedConfig.analytics.enabled
+              ? [
+                  {
+                    service: "vector" as const,
+                    config: { analyticsUrl: "http://analytics" },
+                    endpoints: { http: endpoint(undefined) },
+                  } satisfies ServiceCreationType,
+                ]
+              : []),
+            ...(validatedConfig.storage.image_transformation?.enabled === true
+              ? [
+                  {
+                    service: "imgproxy" as const,
+                    config: { filePath: `${storagePath}/${stackId}` },
+                    endpoints: { http: endpoint(undefined) },
+                  } satisfies ServiceCreationType,
+                ]
+              : []),
+            ...(validatedConfig.edge_runtime.enabled && bootstrap !== undefined
+              ? [
+                  {
+                    service: "functions" as const,
+                    config: {
+                      functionsRoot: `${projectRoot}/supabase/functions`,
+                      bootstrap,
+                      policy: validatedConfig.edge_runtime.policy,
+                      verifyJwt: true,
+                      jwtSecret: Redacted.value(jwtSecret),
+                    },
+                    endpoints: { http: endpoint(apiPort) },
+                  } satisfies ServiceCreationType,
+                ]
+              : []),
+            ...(validatedConfig.studio.enabled
+              ? [
+                  {
+                    service: "studio" as const,
+                    config: { jwtSecret: Redacted.value(jwtSecret) },
+                    endpoints: { http: endpoint(studioPort) },
+                  } satisfies ServiceCreationType,
+                ]
+              : []),
+            ...(validatedConfig.local_smtp.enabled
+              ? [
+                  {
+                    service: "mail" as const,
+                    config: {},
+                    endpoints: {
+                      http: endpoint(mailPort),
+                      smtp: endpoint(mailSmtpPort),
+                      pop3: endpoint(mailPop3Port),
+                    },
+                  } satisfies ServiceCreationType,
+                ]
+              : []),
+          ];
+        });
+      return {
+        creations: createCreations,
+        source: validatedConfig,
+        projectEnvValues: context.projectEnvValues,
+        ...(context.loaded?.document === undefined ? {} : { document: context.loaded.document }),
+      };
+    }),
+);

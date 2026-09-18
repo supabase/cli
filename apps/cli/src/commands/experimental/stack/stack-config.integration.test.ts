@@ -1,544 +1,238 @@
-import { BunPath, BunServices } from "@effect/platform-bun";
+import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, FileSystem, Exit, Layer, Option, Path, Redacted } from "effect";
+import { Effect, Exit, Layer, Schema } from "effect";
+import { ServiceCreation } from "../../../../../../packages/stack/src/services/Catalog.ts";
 import { runtimeInfoLayer } from "../../../shared/runtime/runtime-info.layer.ts";
-import { renderCliConfigTemplate } from "../../../shared/init/project-init.templates.ts";
 
-import { StackConfigError, loadStackConfig } from "../../../command-internal/stack-config.ts";
+import { loadStackConfig } from "../../../command-internal/stack-config.ts";
 import { createStackConfigProject } from "../../../../tests/helpers/stack-config.ts";
 
 const load = (projectRoot: string) =>
   loadStackConfig(projectRoot).pipe(
     Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
   );
+
 const project = (contents: string) =>
-  createStackConfigProject(contents, {
-    sharedFunctionEnvironment: 'SHARED=shared\nOVERRIDE=shared\nQUOTED="hello # world" # comment\n',
-    supabaseEnv: "CONFIG_FN=config-value\n",
-    functionEnvironments: {
-      hello: "LOCAL=local\nOVERRIDE=local\n",
-      world: "WORLD=yes\n",
-    },
-    functionNames: ["hello", "world", "plain", "old.backup", "_shared"],
-  }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)));
-
-describe("loadStackConfig", () => {
-  it.effect("maps service settings, secrets, function files, and explicit ports", () => {
-    return Effect.gen(function* () {
-      const root = yield* project(`
-project_id = "stack-config-test"
-[api]
-port = 55421
-schemas = ["public", "private"]
-[db]
-port = 55422
-[db.pooler]
-enabled = true
-pool_mode = "session"
-default_pool_size = 33
-max_client_conn = 222
-[auth]
-jwt_secret = "01234567890123456789012345678901"
-[auth.email.smtp]
-enabled = true
-host = "smtp.example.test"
-port = 2525
-user = "smtp-user"
-pass = "smtp-secret"
-admin_email = "admin@example.test"
-sender_name = "Test"
-[auth.external.github]
-enabled = true
-client_id = "client"
-secret = "secret"
-[auth.hook.custom_access_token]
-enabled = true
-uri = "pg-functions://custom"
-[edge_runtime]
-enabled = true
-inspector_port = 58083
-[functions.hello]
-verify_jwt = false
-import_map = "./functions/import_map.json"
-entrypoint = "./functions/hello/index.ts"
-env = { API_KEY = "env(CONFIG_FN)" }
-`);
-      const config = yield* load(root);
-      expect(config.listeners).toMatchObject({
-        api: { port: 55421 },
-        database: { port: 55422 },
-        functionsInspector: { port: 58083 },
-      });
-      expect(config.listeners?.studio).toBeUndefined();
-      if (config.capabilities?.rest === undefined || !("settings" in config.capabilities.rest))
-        throw new Error("REST settings missing");
-      expect(config.capabilities.rest.settings?.schemas).toEqual(["public", "private"]);
-      if (
-        config.capabilities?.functions === undefined ||
-        !("settings" in config.capabilities.functions)
-      )
-        throw new Error("Functions settings missing");
-      expect(config.capabilities.functions.settings?.functions?.hello).toMatchObject({
-        verify_jwt: false,
-        import_map: "../import_map.json",
-        entrypoint: "index.ts",
-        env: {
-          API_KEY: expect.anything(),
-          SHARED: expect.anything(),
-          LOCAL: expect.anything(),
-          OVERRIDE: expect.anything(),
-        },
-      });
-      expect(config.capabilities.functions.settings?.functions?.world?.env).toMatchObject({
-        WORLD: expect.anything(),
-      });
-      const helloEnv = config.capabilities.functions.settings?.functions?.hello?.env;
-      const plainEnv = config.capabilities.functions.settings?.functions?.plain?.env;
-      expect(config.capabilities.functions.settings?.functions?.["old.backup"]).toBeUndefined();
-      expect(config.capabilities.functions.settings?.functions?._shared).toBeUndefined();
-      expect(helloEnv).toBeDefined();
-      expect(plainEnv).toBeDefined();
-      if (helloEnv === undefined || plainEnv === undefined) throw new Error("function env missing");
-      expect(Redacted.value(helloEnv.API_KEY!)).toBe("config-value");
-      expect(Redacted.value(helloEnv.OVERRIDE!)).toBe("local");
-      expect(Redacted.value(plainEnv.SHARED!)).toBe("shared");
-      expect(Redacted.value(plainEnv.QUOTED!)).toBe("hello # world");
-      if (config.capabilities.auth === undefined || !("settings" in config.capabilities.auth))
-        throw new Error("auth settings missing");
-      expect(config.capabilities.auth.settings?.email?.smtp).toMatchObject({
-        enabled: true,
-        host: "smtp.example.test",
-      });
-      expect(config.capabilities.auth.settings?.external?.github).toMatchObject({
-        enabled: true,
-        client_id: "client",
-      });
-      expect(config.capabilities.auth.settings?.hook?.custom_access_token).toMatchObject({
-        enabled: true,
-        uri: "pg-functions://custom",
-      });
-      if (config.capabilities.pooler === undefined || !("settings" in config.capabilities.pooler))
-        throw new Error("pooler settings missing");
-      expect(config.capabilities.pooler.settings).toMatchObject({
-        pool_mode: "session",
-        default_pool_size: 33,
-        max_client_conn: 222,
-      });
-      expect(config.security?.jwt?.signing?.kind).toBe("symmetric");
-    }).pipe(Effect.provide(BunServices.layer));
-  });
-
-  it.effect("rejects an enabled provider the stack cannot represent", () => {
-    return Effect.gen(function* () {
-      const root = yield* project(`project_id = "stack-config-figma"
-[auth.external.figma]
-enabled = true
-client_id = "figma-client"
-secret = "figma-secret"
-`);
-      const exit = yield* load(root).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("auth.external.figma");
-    }).pipe(Effect.provide(BunServices.layer));
-  });
-
-  it.effect("accepts hosted-only settings without forwarding them to the local stack", () => {
-    return Effect.gen(function* () {
-      const root = yield* project(`project_id = "stack-config-hosted-only"
-[api]
-auto_expose_new_tables = true
-[api.tls]
-enabled = true
-cert_path = "./server.crt"
-key_path = "./server.key"
-[storage.analytics]
-enabled = true
-max_namespaces = 9
-max_tables = 12
-max_catalogs = 4
-`);
-      const config = yield* load(root);
-      if (config.capabilities?.rest === undefined || !("settings" in config.capabilities.rest))
-        throw new Error("REST settings missing");
-      expect(config.capabilities.rest.settings).toMatchObject({
-        schemas: ["public", "graphql_public"],
-        extra_search_path: ["public", "extensions"],
-        max_rows: 1000,
-      });
-      expect(config.capabilities.rest.settings).not.toHaveProperty("auto_expose_new_tables");
-      expect(config.capabilities.rest.settings).not.toHaveProperty("tls");
-      if (
-        config.capabilities?.storage === undefined ||
-        !("settings" in config.capabilities.storage)
-      )
-        throw new Error("Storage settings missing");
-      expect(config.capabilities.storage.settings).not.toHaveProperty("analytics");
-    }).pipe(Effect.provide(BunServices.layer));
-  });
-
-  it.effect("keeps disabled unsupported providers harmless", () => {
-    return Effect.gen(function* () {
-      const root = yield* project(`project_id = "stack-config-disabled-figma"
-[auth.external.figma]
-enabled = false
-`);
-      const config = yield* load(root);
-      if (config.capabilities?.auth === undefined || !("settings" in config.capabilities.auth))
-        throw new Error("auth settings missing");
-      expect(Object.hasOwn(config.capabilities.auth.settings?.external ?? {}, "figma")).toBe(false);
-    }).pipe(Effect.provide(BunServices.layer));
-  });
-
-  it.effect("rejects an unset function env reference without dropping it", () => {
-    return Effect.gen(function* () {
-      const root = yield* project(`project_id = "stack-config-missing-env"
-[functions.hello]
-env = { TOKEN = "env(SUPABASE_STACK_TEST_MISSING_ENV)" }
-`);
-      const exit = yield* load(root).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("functions.hello.env");
-    }).pipe(Effect.provide(BunServices.layer));
-  });
-
-  it.effect("reports unsupported dotenv keys with the file and key only", () => {
-    return Effect.gen(function* () {
-      const root = yield* project('project_id = "stack-config-invalid-env-key"\n');
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      yield* fs.writeFileString(
-        path.join(root, "supabase", "functions", ".env"),
-        "lowercase=value\nSECRET=value\n",
-      );
-      const exit = yield* load(root).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure)).toBe(true);
-        if (Option.isSome(failure)) expect(failure.value).toBeInstanceOf(StackConfigError);
-        const message = String(exit.cause);
-        expect(message).toContain("functions/.env");
-        expect(message).toContain("lowercase");
-        expect(message).not.toContain("value");
-      }
-    }).pipe(Effect.provide(BunServices.layer));
-  });
-
-  it.effect("sanitizes malformed dotenv parser errors", () => {
-    return Effect.gen(function* () {
-      const root = yield* project('project_id = "stack-config-malformed-env"\n');
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      yield* fs.writeFileString(
-        path.join(root, "supabase", "functions", ".env"),
-        "BROKEN=value\n!=secret-value\n",
-      );
-      const exit = yield* load(root).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(String(exit.cause)).toContain("Failed to parse environment file");
-        expect(String(exit.cause)).not.toContain("secret-value");
-        expect(String(exit.cause)).not.toContain("StackConfigError: StackConfigError");
-      }
-    }).pipe(Effect.provide(BunServices.layer));
-  });
-
-  it.effect("preserves platform-specific absolute signing paths", () => {
-    return Effect.gen(function* () {
-      const root = yield* project(
-        `project_id = "stack-config-windows-signing-path"
-[auth]
-signing_keys_path = 'C:\\keys\\signing.json'
-`,
-      );
-      const nativePath = yield* Path.Path;
-      const winPath = yield* Path.Path.pipe(Effect.provide(BunPath.layerWin32));
-      const config = yield* loadStackConfig(root).pipe(
-        Effect.provideService(Path.Path, { ...nativePath, isAbsolute: winPath.isAbsolute }),
-        Effect.provide(runtimeInfoLayer),
-      );
-      expect(config.security?.jwt?.signing).toEqual({
-        kind: "jwks-file",
-        path: "C:\\keys\\signing.json",
-      });
-    }).pipe(Effect.provide(BunServices.layer));
-  });
-
-  it.effect("rejects encrypted secrets with a targeted diagnostic", () => {
-    return Effect.gen(function* () {
-      const root = yield* project(
-        `project_id = "stack-config-encrypted-secret"
-[auth]
-jwt_secret = "encrypted:not-a-real-ciphertext"
-`,
-      );
-      const exit = yield* load(root).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const message = String(exit.cause);
-        expect(message).toContain("capabilities.auth.settings.jwt_secret uses an encrypted secret");
-        expect(message).not.toContain("not-a-real-ciphertext");
-      }
-    });
-  });
-
-  it.effect("rejects encrypted function dotenv values", () => {
-    return Effect.gen(function* () {
-      const root = yield* project('project_id = "stack-config-encrypted-function-secret"\n');
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      yield* fs.writeFileString(
-        path.join(root, "supabase", "functions", ".env"),
-        "DOTENV=encrypted:dotenv\n",
-      );
-      const exit = yield* load(root).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const message = String(exit.cause);
-        expect(message).toContain("uses an encrypted secret");
-        expect(message).not.toContain("encrypted:dotenv");
-      }
-    }).pipe(Effect.provide(BunServices.layer));
-  });
-
-  it.effect("rejects function paths outside the function root", () => {
-    return Effect.gen(function* () {
-      const root = yield* project(`project_id = "stack-config-outside-function"
-
-[functions.hello]
-import_map = "./import_map.json"
-`);
-      const exit = yield* load(root).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("functions.hello.import_map");
-    });
-  });
-
-  it.effect(
-    "rejects supabase-prefixed function paths that resolve outside the project root",
-    () => {
-      return Effect.gen(function* () {
-        const root = yield* project(`project_id = "stack-config-nested-supabase"
-
-[functions.hello]
-entrypoint = "supabase/functions/hello/index.ts"
-`);
-        const exit = yield* load(root).pipe(Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit))
-          expect(String(exit.cause)).toContain("functions.hello.entrypoint");
-      });
-    },
+  createStackConfigProject(contents).pipe(
+    Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
   );
 
-  it.effect("resolves supabase-prefixed signing paths beneath the config directory", () => {
-    return Effect.gen(function* () {
-      const root = yield* project(
-        `project_id = "stack-config-signing-path"
-[auth]
-signing_keys_path = "supabase/signing-keys.json"
-`,
-      );
-      const config = yield* load(root);
-      expect(config.security?.jwt?.signing).toEqual({
-        kind: "jwks-file",
-        path: "supabase/supabase/signing-keys.json",
-      });
-    });
-  });
+const byService = (services: ReadonlyArray<Schema.Schema.Type<typeof ServiceCreation>>) =>
+  new Map(services.map((service) => [service.service, service]));
 
-  it.effect("lets the stack runtime resolve the API port for Studio's default URL", () => {
-    return Effect.gen(function* () {
-      const root = yield* project('project_id = "stack-config-studio-default"\n');
-      const config = yield* load(root);
-      if (config.capabilities?.studio === undefined || !("settings" in config.capabilities.studio))
-        throw new Error("Studio settings missing");
-      expect(config.capabilities.studio.settings).toEqual({
-        api_url: undefined,
-        openai_api_key: undefined,
-      });
-    });
-  });
-
-  it.effect("parses legacy dotenv expansion and colon assignments", () => {
-    return Effect.gen(function* () {
-      const root = yield* project('project_id = "stack-config-dotenv-compat"\n');
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      yield* fs.writeFileString(
-        path.join(root, "supabase", "functions", ".env"),
-        "BASE=shared\nEXPANDED=$BASE\nCOLON: colon-value\n",
-      );
-      const config = yield* load(root);
-      if (
-        config.capabilities?.functions === undefined ||
-        !("settings" in config.capabilities.functions)
-      )
-        throw new Error("Functions settings missing");
-      const env = config.capabilities.functions.settings?.functions?.hello?.env;
-      expect(env).toBeDefined();
-      if (env === undefined) throw new Error("Function env missing");
-      expect(Redacted.value(env.EXPANDED!)).toBe("shared");
-      expect(Redacted.value(env.COLON!)).toBe("colon-value");
-    }).pipe(Effect.provide(BunServices.layer));
-  });
-
-  it.effect("keeps the gateway listener when API service is disabled for auth", () => {
-    return Effect.gen(function* () {
-      const root = yield* project(`project_id = "stack-config-gateway"
-[api]
-enabled = false
-port = 55430
-[auth]
-enabled = true
-`);
-      const config = yield* load(root);
-      expect(config.listeners?.api).toEqual({ port: 55430 });
-    });
-  });
-
-  it.effect("keeps the gateway listener when analytics is enabled", () => {
-    return Effect.gen(function* () {
-      const root = yield* project(`project_id = "stack-config-analytics-gateway"
-[api]
-enabled = false
-port = 55431
-[auth]
-enabled = false
-[realtime]
-enabled = false
-[storage]
-enabled = false
-[edge_runtime]
-enabled = false
-[analytics]
-enabled = true
-`);
-      const config = yield* load(root);
-      expect(config.listeners?.api).toEqual({ port: 55431 });
-    });
-  });
-
-  it.effect("keeps nested settings on a disabled functions capability", () => {
-    return Effect.gen(function* () {
-      const root = yield* project(`project_id = "stack-config-disabled-functions"
-[edge_runtime]
-enabled = false
-`);
-      const config = yield* load(root);
-      expect(config.capabilities?.functions).toEqual({ enabled: false });
-    });
-  });
-
-  it.effect("leaves listeners absent when ports are omitted", () => {
-    return Effect.gen(function* () {
+describe("loadStackConfig", () => {
+  it.live("decodes the default recipe and leaves listeners automatic", () =>
+    Effect.gen(function* () {
       const root = yield* project(`project_id = "stack-config-defaults"
 [edge_runtime]
 enabled = true
 `);
       const config = yield* load(root);
-      expect(config.listeners).toEqual({});
-      expect(config.listeners?.functionsInspector).toBeUndefined();
-      if (config.capabilities?.database !== undefined && "settings" in config.capabilities.database)
-        expect(config.capabilities.database.settings?.health_timeout).toBe("2m");
-    });
-  });
+      const services = yield* config.creations("stack-defaults");
+      for (const service of services) yield* Schema.decodeEffect(ServiceCreation)(service);
 
-  it.effect("loads the actual initialized stack config template", () => {
-    return Effect.gen(function* () {
-      const root = yield* project(renderCliConfigTemplate("stack-config-init", false));
+      const recipes = byService(services);
+      expect(recipes.get("database")?.endpoints).toEqual({ sql: { port: "auto" } });
+      expect(recipes.get("rest")?.endpoints).toEqual({ http: { port: "auto" } });
+      expect(recipes.get("analytics")?.endpoints).toEqual({ http: { port: "auto" } });
+      const storage = recipes.get("storage");
+      expect(storage?.service === "storage" && storage.config.fileSizeLimit).toBe("52428800");
+      expect(recipes.has("vector")).toBe(true);
+      expect(recipes.has("functions")).toBe(true);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("preserves explicit listener ports while translating every enabled service", () =>
+    Effect.gen(function* () {
+      const root = yield* project(`project_id = "stack-config-ports"
+[api]
+port = 55421
+[db]
+port = 55422
+[db.pooler]
+enabled = true
+port = 55423
+[analytics]
+port = 55424
+[studio]
+enabled = true
+port = 55425
+[local_smtp]
+enabled = true
+port = 55426
+smtp_port = 55427
+pop3_port = 55428
+[storage.image_transformation]
+enabled = true
+`);
       const config = yield* load(root);
-      expect(config.listeners?.api).toEqual({ port: 54321 });
-      expect(config.listeners?.database).toEqual({ port: 54322 });
-      expect(config.listeners?.pooler).toEqual({ enabled: false });
-      expect(config.listeners?.smtp).toBeUndefined();
-      expect(config.listeners?.pop3).toBeUndefined();
-      expect(config.listeners?.functionsInspector).toEqual({ port: 8083 });
-    });
-  });
+      const services = yield* config.creations("stack-ports");
+      const recipes = byService(services);
+      expect(recipes.get("database")?.endpoints).toEqual({ sql: { port: 55422 } });
+      expect(recipes.get("rest")?.endpoints).toEqual({ http: { port: 55421 } });
+      expect(recipes.get("analytics")?.endpoints).toEqual({ http: { port: 55424 } });
+      expect(recipes.get("pooler")?.endpoints).toEqual({
+        http: { port: "auto" },
+        sql: { port: 55423 },
+      });
+      expect(recipes.get("studio")?.endpoints).toEqual({ http: { port: 55425 } });
+      expect(recipes.get("mail")?.endpoints).toEqual({
+        http: { port: 55426 },
+        smtp: { port: 55427 },
+        pop3: { port: 55428 },
+      });
+      expect(recipes.has("pgmeta")).toBe(true);
+      expect(recipes.has("imgproxy")).toBe(true);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
-  it.effect("ignores unresolved function env references when edge runtime is disabled", () => {
-    return Effect.gen(function* () {
-      const root = yield* project(`project_id = "stack-config-disabled-functions-env"
+  it.live("rejects unsupported function settings before creating recipes", () =>
+    Effect.gen(function* () {
+      const root = yield* project(`project_id = "stack-config-functions"
 [edge_runtime]
-enabled = false
+enabled = true
 [functions.hello]
-env = { TOKEN = "env(SUPABASE_STACK_TEST_DISABLED_MISSING_ENV)" }
+entrypoint = "./hello/main.ts"
 `);
-      const config = yield* load(root);
-      expect(config.capabilities?.functions).toEqual({ enabled: false });
-    });
-  });
+      const exit = yield* load(root).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit))
+        expect(String(exit.cause)).toContain(
+          "functions.hello.entrypoint is unsupported by the experimental stack",
+        );
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
-  it.effect("does not read disabled edge runtime dotenv files", () => {
-    return Effect.gen(function* () {
-      const root = yield* project(`project_id = "stack-config-disabled-dotenv"
-[edge_runtime]
-enabled = false
-`);
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      yield* fs.writeFileString(
-        path.join(root, "supabase", "functions", ".env"),
-        "lowercase=value\n",
-      );
-      const config = yield* load(root);
-      expect(config.capabilities?.functions).toEqual({ enabled: false });
-    }).pipe(Effect.provide(BunServices.layer));
-  });
-
-  it.effect("accepts the initialized disabled service listeners with explicit ports", () => {
-    return Effect.gen(function* () {
-      const root = yield* project(`project_id = "stack-config-disabled-listeners"
+  it.live("keeps the shared API port when REST is disabled", () =>
+    Effect.gen(function* () {
+      const root = yield* project(`project_id = "stack-config-auth-port"
 [api]
 enabled = false
 port = 55431
-[auth]
-enabled = false
-[realtime]
-enabled = false
-[storage]
-enabled = false
-[db]
-port = 55432
-[db.pooler]
-enabled = false
-port = 55433
-[studio]
-enabled = false
-port = 55434
-[local_smtp]
-enabled = false
-port = 55435
-smtp_port = 55436
-pop3_port = 55437
-[edge_runtime]
-enabled = false
-inspector_port = 55438
-[analytics]
-enabled = false
 `);
       const config = yield* load(root);
-      expect(config.listeners).toEqual({
-        api: { enabled: false },
-        database: { port: 55432 },
-        pooler: { enabled: false },
-        studio: { enabled: false },
-        mailUi: { enabled: false },
-        smtp: { enabled: false },
-        pop3: { enabled: false },
-        functionsInspector: { enabled: false },
-      });
-    });
-  });
+      const recipes = byService(yield* config.creations("stack-auth-port"));
+      expect(recipes.has("rest")).toBe(false);
+      expect(recipes.get("auth")?.endpoints).toEqual({ http: { port: 55431 } });
+      expect(recipes.get("storage")?.endpoints).toEqual({ http: { port: 55431 } });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
-  it.effect("uses default stack settings when no project config exists", () => {
-    return Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-config-" });
-      const config = yield* loadStackConfig(root);
-      expect(config.listeners).toEqual({});
-      expect(config.capabilities?.database).toMatchObject({ settings: { health_timeout: "2m" } });
-    }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)));
-  });
+  it.live("rejects an analytics backend the stack cannot represent", () =>
+    Effect.gen(function* () {
+      const root = yield* project(`project_id = "stack-config-analytics"
+[analytics]
+enabled = true
+backend = "bigquery"
+`);
+      const exit = yield* load(root).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit))
+        expect(String(exit.cause)).toContain("analytics.backend must be postgres");
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("rejects unsupported effective auth hooks and accepts an explicit disabled hook", () =>
+    Effect.gen(function* () {
+      const unsupported = yield* project(`project_id = "stack-config-auth-hook"
+[auth.hook.custom_access_token]
+enabled = true
+uri = "pg-functions://custom-access-token"
+`);
+      const exit = yield* load(unsupported).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("auth.hook");
+
+      const disabled = yield* project(`project_id = "stack-config-auth-hook-disabled"
+[auth.hook.custom_access_token]
+enabled = false
+`);
+      yield* load(disabled);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("rejects unsupported function JWT settings and edge secrets", () =>
+    Effect.gen(function* () {
+      const functionRoot = yield* project(`project_id = "stack-config-function-jwt"
+[functions.hello]
+verify_jwt = false
+`);
+      const functionExit = yield* load(functionRoot).pipe(Effect.exit);
+      expect(Exit.isFailure(functionExit)).toBe(true);
+      if (Exit.isFailure(functionExit))
+        expect(String(functionExit.cause)).toContain("functions.hello.verify_jwt");
+
+      const secretRoot = yield* project(`project_id = "stack-config-edge-secret"
+[edge_runtime.secrets]
+EXAMPLE = "secret"
+`);
+      const secretExit = yield* load(secretRoot).pipe(Effect.exit);
+      expect(Exit.isFailure(secretExit)).toBe(true);
+      if (Exit.isFailure(secretExit))
+        expect(String(secretExit.cause)).toContain("edge_runtime.secrets");
+
+      const authDisabledRoot = yield* project(`project_id = "stack-config-edge-secret-auth-disabled"
+[auth]
+enabled = false
+[edge_runtime.secrets]
+EXAMPLE = "secret"
+`);
+      const authDisabledExit = yield* load(authDisabledRoot).pipe(Effect.exit);
+      expect(Exit.isFailure(authDisabledExit)).toBe(true);
+      if (Exit.isFailure(authDisabledExit))
+        expect(String(authDisabledExit.cause)).toContain("edge_runtime.secrets");
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("rejects unsupported database versions before creating recipes", () =>
+    Effect.gen(function* () {
+      const root = yield* project(`project_id = "stack-config-db-version"
+[db]
+major_version = 14
+`);
+      const exit = yield* load(root).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit))
+        expect(String(exit.cause)).toContain("db.major_version must be 15 or 17");
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("accepts disabled storage vector settings but rejects custom vector limits", () =>
+    Effect.gen(function* () {
+      const disabled = yield* project(`project_id = "stack-config-vector-disabled"
+[storage.vector]
+enabled = false
+`);
+      yield* load(disabled);
+
+      const custom = yield* project(`project_id = "stack-config-vector-custom"
+[storage.vector]
+max_buckets = 11
+`);
+      const exit = yield* load(custom).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("storage.vector");
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("rejects unsupported OrioleDB and experimental S3 settings", () =>
+    Effect.gen(function* () {
+      const orioledb = yield* project(`project_id = "stack-config-orioledb"
+[experimental]
+orioledb_version = "15.1.1.14"
+`);
+      const orioledbExit = yield* load(orioledb).pipe(Effect.exit);
+      expect(Exit.isFailure(orioledbExit)).toBe(true);
+      if (Exit.isFailure(orioledbExit))
+        expect(String(orioledbExit.cause)).toContain("experimental.orioledb_version");
+
+      const s3 = yield* project(`project_id = "stack-config-experimental-s3"
+[experimental]
+s3_host = "s3.example.test"
+`);
+      const s3Exit = yield* load(s3).pipe(Effect.exit);
+      expect(Exit.isFailure(s3Exit)).toBe(true);
+      if (Exit.isFailure(s3Exit)) expect(String(s3Exit.cause)).toContain("experimental.s3_host");
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 });
