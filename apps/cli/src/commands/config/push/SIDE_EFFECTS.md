@@ -174,9 +174,8 @@ with --yes) [y/N] ` (bare ref, no quotes, when the name is unknown). An EXPLICIT
 prints, and the push proceeds immediately. Declining fails the command
 (`ConfigPushCancelledError`, exit `1`) — the rendered text is `context canceled`
 (`Output.fail`'s standard text-mode rendering, no `--debug` hint) — before any further
-network call (not even the cost-matrix fetch). Unlike this command's other
-confirmations, this gate's default is **no**: a non-TTY run with no piped answer, or
-`--output-format json`/`stream-json`, declines (and fails) rather than proceeding,
+network call (not even the cost-matrix fetch). This gate's default is **no**: a non-TTY run with no affirmative piped answer, or
+a machine-mode TTY run or text run with TTY stdin and redirected stdout, declines (and fails) rather than proceeding,
 unless `--yes`/`SUPABASE_YES` is set. A plain-project target never shows this prompt.
 Then `Comparison scope: <present> (not returned:
 <missing>)` — printed EVERY run, not just when a block is missing (family consistency
@@ -218,9 +217,16 @@ own; `[group-write]` is an undeclared companion the endpoint required alongside 
 declared change, sent at its schema default because the read didn't report the
 project's current value for it. Secret values never appear in output. Every block ends
 on a blank line. Experimental prints `Enabling webhooks for project: <ref>`. The
-per-service confirmations are unchanged from before CLI-2168: they render
-`<title> [Y/n] ` (or `<title> [Y/n] y` when `--yes`) and still exit **0** on decline —
-only the branch confirmation gate described above fails.
+per-service confirmations use a clack confirm widget with a yes default in interactive
+text output; piped text input renders `<title> [y/N] `. For resource confirmations,
+`--yes` renders `<title> [Y/n] y` in every output mode and TTY shape. Piped answers also echo the question and answer to stderr in machine modes,
+matching `--yes`; stdout remains structured. With TTY stdin and redirected text stdout,
+no prompt is rendered and a skipped message explains how to approve with `--yes`.
+Non-TTY text declines also print `Skipped <name>: no affirmative confirmation received.
+Pass --yes (or set SUPABASE_YES) to approve.` on stderr, including empty/invalid input.
+Interactive declines do not print this unattended recovery hint.
+Resource declines still exit **0**; only the branch confirmation gate
+described above fails.
 
 After the resource loop, up to six `Note:` lines report anything the push couldn't do
 or had to work around:
@@ -242,10 +248,11 @@ through the same control-character sanitizing `config diff` uses.
 
 ### `--output-format json` / `stream-json`
 
-Per-service diagnostics stay on stderr; the per-service `keep()` prompts auto-confirm
-(default yes) — but the branch confirmation gate above (CLI-2168) auto-**declines** (and
-fails) without `--yes`, since its default differs from every other confirmation in this
-command. A structured summary is emitted on stdout via `output.success(message, data)`;
+Per-service diagnostics stay on stderr. All confirmations honor piped `y`/`n` answers
+in every output mode. Without `--yes`/`SUPABASE_YES`, empty, unparseable, timed-out,
+or failed reads skip the resource; machine-mode TTYs also skip without reading stdin.
+Interactive text prompts retain their yes default; the branch gate retains its no default.
+A structured summary is emitted on stdout via `output.success(message, data)`;
 a declined/failed branch gate instead emits this command's standard machine error
 envelope (`{_tag: "Error", error: {...}}` in `json` mode, a `{type: "error", ...}` NDJSON
 event in `stream-json` mode) with no success payload.
