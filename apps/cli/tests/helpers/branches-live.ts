@@ -1,4 +1,4 @@
-import { Data, Duration, Effect, Schedule } from "effect";
+import { Data, Duration, Effect, Schedule, Schema } from "effect";
 
 import type { LiveProject } from "./live.ts";
 
@@ -19,6 +19,13 @@ const COMMAND_TIMEOUT = 20_000;
 const POLL_INTERVAL = "2 seconds";
 const READINESS_TIMEOUT = Duration.seconds(60);
 const REMOVAL_TIMEOUT = Duration.seconds(120);
+const UnknownFromJsonString = Schema.fromJsonString(Schema.Unknown);
+const BranchListItem = Schema.Struct({
+  name: Schema.String,
+  project_ref: Schema.String,
+  is_default: Schema.Boolean,
+});
+const BranchList = Schema.Array(BranchListItem);
 
 class BranchCommandFailed extends Data.TaggedError("BranchCommandFailed")<{
   readonly phase: string;
@@ -112,10 +119,8 @@ function isNotFound(result: BranchCliResult): boolean {
 function branchRefFromCreate(
   result: BranchCliResult,
 ): Effect.Effect<string, BranchPayloadInvalid, never> {
-  return Effect.try({
-    try: () => JSON.parse(result.stdout) as unknown,
-    catch: () => new BranchPayloadInvalid({ phase: "branches create" }),
-  }).pipe(
+  return Schema.decodeEffect(UnknownFromJsonString)(result.stdout).pipe(
+    Effect.mapError(() => new BranchPayloadInvalid({ phase: "branches create" })),
     Effect.flatMap((body) =>
       typeof body === "object" &&
       body !== null &&
@@ -198,39 +203,17 @@ function listBranches<E>(
   cli: BranchCli<E>,
   project: LiveProject,
   phase: string,
-): Effect.Effect<ReadonlyArray<Record<string, unknown>>, BranchError<E>, never> {
+): Effect.Effect<ReadonlyArray<Schema.Schema.Type<typeof BranchListItem>>, BranchError<E>, never> {
   return command(
     cli,
     ["branches", "list", "--output", "json", "--project-ref", project.ref],
     phase,
     COMMAND_TIMEOUT,
   ).pipe(
-    Effect.flatMap(
-      (result): Effect.Effect<ReadonlyArray<Record<string, unknown>>, BranchError<E>, never> => {
-        let body: unknown;
-        try {
-          body = JSON.parse(result.stdout);
-        } catch {
-          return Effect.fail(new BranchPayloadInvalid({ phase }));
-        }
-        if (
-          !Array.isArray(body) ||
-          !body.every(
-            (item) =>
-              typeof item === "object" &&
-              item !== null &&
-              "name" in item &&
-              typeof item.name === "string" &&
-              "project_ref" in item &&
-              typeof item.project_ref === "string" &&
-              "is_default" in item &&
-              typeof item.is_default === "boolean",
-          )
-        ) {
-          return Effect.fail(new BranchPayloadInvalid({ phase }));
-        }
-        return Effect.succeed(body as ReadonlyArray<Record<string, unknown>>);
-      },
+    Effect.flatMap((result) =>
+      Schema.decodeEffect(Schema.fromJsonString(BranchList))(result.stdout).pipe(
+        Effect.mapError(() => new BranchPayloadInvalid({ phase })),
+      ),
     ),
   );
 }

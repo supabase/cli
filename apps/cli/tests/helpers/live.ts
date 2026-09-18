@@ -13,14 +13,6 @@ import {
   runSupabase,
   runSupabaseEffect,
 } from "./cli.ts";
-import {
-  awaitLiveBranchEffect,
-  awaitLiveBranchListedEffect,
-  awaitLiveBranchRemovedEffect,
-  awaitLiveBranchesRemovedEffect,
-  createLiveBranchEffect,
-  removeLiveBranchByNameEffect,
-} from "./branches-live.ts";
 import { LIVE_EXIT_TIMEOUT_MS } from "./live-env.ts";
 import type { LiveCliProjectEnvironment } from "./live-project.ts";
 
@@ -183,36 +175,6 @@ export async function removeStorageLiveObject(
   }
 }
 
-/** Waits for deletion acknowledgement when needed, then for exact-ref LIST absence. */
-export async function awaitLiveBranchRemoved(
-  cli: LiveFixtures["cliEffect"],
-  project: LiveProject,
-  branchRef: string,
-  deletionAcknowledged = false,
-): Promise<void> {
-  await Effect.runPromise(
-    awaitLiveBranchRemovedEffect(cli, project, branchRef, deletionAcknowledged),
-  );
-}
-
-/** Creates a branch and returns its immutable reference for exact cleanup. */
-export async function createLiveBranch(
-  cli: LiveFixtures["cliEffect"],
-  project: LiveProject,
-  name: string,
-): Promise<string> {
-  return Effect.runPromise(createLiveBranchEffect(cli, project, name));
-}
-
-/** Exact-name fallback cleanup for a create that did not yield an immutable ref. */
-export async function removeLiveBranchByName(
-  cli: LiveFixtures["cliEffect"],
-  project: LiveProject,
-  name: string,
-): Promise<void> {
-  await Effect.runPromise(removeLiveBranchByNameEffect(cli, project, name));
-}
-
 /** Flags for experimental-gated live tests that address the shared project by
  * ref rather than linking it (contrast `storageLiveFlags`). */
 export function experimentalProjectLiveFlags(project: LiveProject): ReadonlyArray<string> {
@@ -287,45 +249,6 @@ export async function expectPostgresConfigLiveOverride(
   };
   if (Object.is(await read(), expected)) return;
   await expect.poll(read, { interval: 2_000, timeout: 60_000, message: label }).toBe(expected);
-}
-
-/**
- * Waits until `branches get` resolves `branch` on the live project. `branches
- * create` and `update --name` return before the platform can look the branch
- * up, so a caller that acts on it next does one fail-fast read (aborting on
- * anything but a 404) and then polls (2s apart, 60s deadline, each attempt
- * bounded). Reports stderr only since `get` prints secrets on stdout.
- */
-export async function awaitLiveBranch(
-  cli: LiveFixtures["cliEffect"],
-  project: LiveProject,
-  branch: string,
-): Promise<void> {
-  await Effect.runPromise(awaitLiveBranchEffect(cli, project, branch));
-}
-
-/** Waits until the list endpoint contains a named branch. */
-export async function awaitLiveBranchListed(
-  cli: LiveFixtures["cliEffect"],
-  project: LiveProject,
-  branch: string,
-): Promise<void> {
-  await Effect.runPromise(awaitLiveBranchListedEffect(cli, project, branch));
-}
-
-/**
- * Waits until `branches list` shows no non-default branch on the live project.
- * `branches delete` returns before the platform finishes tearing the branch
- * down, and `branches disable` is refused ("Please delete all non-default
- * branches before disabling branching.") while any non-default branch still
- * exists, so a caller that needs an empty branching setup does one fail-fast
- * read and then polls the list (2s apart, 120s deadline, each attempt bounded).
- */
-export async function awaitLiveBranchesRemoved(
-  cli: LiveFixtures["cliEffect"],
-  project: LiveProject,
-): Promise<void> {
-  await Effect.runPromise(awaitLiveBranchesRemovedEffect(cli, project));
 }
 
 /**
