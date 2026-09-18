@@ -1,6 +1,7 @@
 import type { SupabaseApiError } from "@supabase/api/effect";
-import { Effect, Option, Result, Schema } from "effect";
+import { Effect, Option, Result } from "effect";
 
+import { quoteSsoString } from "../sso.json.ts";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
@@ -34,7 +35,7 @@ const handleShowError = (providerId: string, cause: SupabaseApiError) =>
     // `show` does not fire upgrade-suggestion telemetry, unlike add/update/list.
     if (mapped._tag === "SsoShowUnexpectedStatusError" && mapped.status === 404) {
       return yield* new SsoShowNotFoundError({
-        message: `An identity provider with ID ${yield* Schema.encodeEffect(Schema.fromJsonString(Schema.String))(providerId)} could not be found.`,
+        message: `An identity provider with ID ${quoteSsoString(providerId)} could not be found.`,
       });
     }
     return yield* Effect.fail(mapped);

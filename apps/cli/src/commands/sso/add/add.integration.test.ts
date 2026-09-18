@@ -1067,7 +1067,6 @@ describe("sso add integration", () => {
       Effect.gen(function* () {
         const envProfile = yield* writeProfileYaml("env-profile.yml", "http://reconciled.example");
         const alternate = yield* writeProfileYaml("alternate.yml", "http://alternate.example");
-        const profileEnv = envProfile;
         const { layer, api, cache } = setup({
           cliArgs: ["sso", "add", "--type", "saml", "--domains", "--profile", alternate],
           profileFlag: alternate,
@@ -1083,14 +1082,13 @@ describe("sso add integration", () => {
             "--profile",
           ]);
           expect(cache.cachedApiUrl).toBe("http://reconciled.example");
-        }).pipe((body) => withProfileEnv(profileEnv, body), Effect.provide(layer));
+        }).pipe(Effect.provide(layer), (body) => withProfileEnv(envProfile, body));
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.live(
     "profile emulation: --profile consuming a flag-shaped token fails LoadProfile, never POSTs",
     () => {
-      const profileEnv = undefined;
       const { layer, api } = setup({
         cliArgs: [
           "sso",
@@ -1116,7 +1114,7 @@ describe("sso add integration", () => {
           expect(dump).toContain(`failed to read profile: Unsupported Config Type ""`);
         }
         expect(api.requests.length).toBe(0);
-      }).pipe((body) => withProfileEnv(profileEnv, body), Effect.provide(layer));
+      }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
     },
   );
 
@@ -1124,7 +1122,6 @@ describe("sso add integration", () => {
     Effect.gen(function* () {
       const first = yield* writeProfileYaml("first.yml", "http://first.example");
       const second = yield* writeProfileYaml("second.yml", "http://second.example");
-      const profileEnv = undefined;
       const { layer, api } = setup({
         cliArgs: ["sso", "add", "--type", "saml", "--profile", first, "--profile", second],
         profileFlag: first,
@@ -1136,14 +1133,13 @@ describe("sso add integration", () => {
         expect(posts[0]?.url).toBe(
           `http://second.example/v1/projects/${VALID_REF}/config/auth/sso/providers`,
         );
-      }).pipe((body) => withProfileEnv(profileEnv, body), Effect.provide(layer));
+      }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.live(
     "profile emulation: the LoadProfile failure wins over the workdir, required-type, and mutex checks",
     () => {
-      const profileEnv = undefined;
       const { layer, api } = setup({
         cliArgs: [
           "sso",
@@ -1186,7 +1182,7 @@ describe("sso add integration", () => {
           ).toBe(false);
         }
         expect(api.requests.length).toBe(0);
-      }).pipe((body) => withProfileEnv(profileEnv, body), Effect.provide(layer));
+      }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
     },
   );
 
@@ -1195,7 +1191,6 @@ describe("sso add integration", () => {
     () =>
       Effect.gen(function* () {
         const agreed = yield* writeProfileYaml("agreed.yml", "http://agreed.example");
-        const profileEnv = undefined;
         const { layer, api } = setup({
           cliArgs: ["sso", "add", "--type", "saml", "--profile", agreed],
           profileFlag: agreed,
@@ -1207,7 +1202,7 @@ describe("sso add integration", () => {
           expect(posts[0]?.url).toBe(
             `${DEFAULT_API_URL}/v1/projects/${VALID_REF}/config/auth/sso/providers`,
           );
-        }).pipe((body) => withProfileEnv(profileEnv, body), Effect.provide(layer));
+        }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
       }).pipe(Effect.provide(BunServices.layer)),
   );
 });

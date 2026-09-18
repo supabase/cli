@@ -1424,7 +1424,6 @@ describe("sso update integration", () => {
       Effect.gen(function* () {
         const first = yield* writeProfileYaml("first.yml", "http://first.example");
         const second = yield* writeProfileYaml("second.yml", "http://second.example");
-        const profileEnv = undefined;
         const testSetup = setup({
           cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--profile", first, "--profile", second],
           profileFlag: first,
@@ -1442,7 +1441,7 @@ describe("sso update integration", () => {
           expect(api.requests.some((r) => r.url.startsWith("http://first.example/"))).toBe(false);
           expect(testSetup.stitchedResponses).toBeGreaterThan(0);
           expect(cache.cachedApiUrl).toBe("http://second.example");
-        }).pipe((body) => withProfileEnv(profileEnv, body), Effect.provide(layer));
+        }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -1452,7 +1451,6 @@ describe("sso update integration", () => {
       Effect.gen(function* () {
         const first = yield* writeProfileYaml("first-404.yml", "http://first.example");
         const second = yield* writeProfileYaml("second-404.yml", "http://second.example");
-        const profileEnv = undefined;
         const { layer, api } = setup({
           getStatus: 404,
           getBody: {},
@@ -1470,7 +1468,7 @@ describe("sso update integration", () => {
             );
           }
           expect(api.requests.some((r) => r.method === "PUT")).toBe(false);
-        }).pipe((body) => withProfileEnv(profileEnv, body), Effect.provide(layer));
+        }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -1480,7 +1478,6 @@ describe("sso update integration", () => {
       Effect.gen(function* () {
         const first = yield* writeProfileYaml("first-500.yml", "http://first.example");
         const second = yield* writeProfileYaml("second-500.yml", "http://second.example");
-        const profileEnv = undefined;
         const { layer, api } = setup({
           getStatus: 500,
           getBody: { error: "boom" },
@@ -1496,7 +1493,7 @@ describe("sso update integration", () => {
             expect(dump).toContain("unexpected error fetching identity provider:");
           }
           expect(api.requests.some((r) => r.method === "PUT")).toBe(false);
-        }).pipe((body) => withProfileEnv(profileEnv, body), Effect.provide(layer));
+        }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -1506,7 +1503,6 @@ describe("sso update integration", () => {
       Effect.gen(function* () {
         const first = yield* writeProfileYaml("first-merge.yml", "http://first.example");
         const second = yield* writeProfileYaml("second-merge.yml", "http://second.example");
-        const profileEnv = undefined;
         const { layer, api, cache } = setup({
           getBody: {
             id: VALID_PROVIDER_ID,
@@ -1534,7 +1530,7 @@ describe("sso update integration", () => {
           const domains = (put?.body as { domains?: string[] })?.domains ?? [];
           expect([...domains].sort()).toEqual(["new.com", "old1.com"]);
           expect(cache.cachedAccessToken).toBeDefined();
-        }).pipe((body) => withProfileEnv(profileEnv, body), Effect.provide(layer));
+        }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -1542,7 +1538,6 @@ describe("sso update integration", () => {
     Effect.gen(function* () {
       const first = yield* writeProfileYaml("first-notoken.yml", "http://first.example");
       const second = yield* writeProfileYaml("second-notoken.yml", "http://second.example");
-      const profileEnv = undefined;
       const { layer, api } = setup({
         accessToken: Option.none(),
         cliArgs: [
@@ -1567,7 +1562,7 @@ describe("sso update integration", () => {
           expect(dump).toContain("Access token not provided. Supply an access token by running");
         }
         expect(api.requests).toHaveLength(0);
-      }).pipe((body) => withProfileEnv(profileEnv, body), Effect.provide(layer));
+      }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -1575,7 +1570,6 @@ describe("sso update integration", () => {
     Effect.gen(function* () {
       const first = yield* writeProfileYaml("first-order.yml", "http://first.example");
       const second = yield* writeProfileYaml("second-order.yml", "http://second.example");
-      const profileEnv = undefined;
       const { layer, api } = setup({
         accessToken: Option.none(),
         cliArgs: [
@@ -1604,7 +1598,7 @@ describe("sso update integration", () => {
           expect(dump).not.toContain("Access token not provided");
         }
         expect(api.requests).toHaveLength(0);
-      }).pipe((body) => withProfileEnv(profileEnv, body), Effect.provide(layer));
+      }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -1612,7 +1606,6 @@ describe("sso update integration", () => {
     Effect.gen(function* () {
       const first = yield* writeProfileYaml("first-nodom.yml", "http://first.example");
       const second = yield* writeProfileYaml("second-nodom.yml", "http://second.example");
-      const profileEnv = undefined;
       const { layer, api } = setup({
         getBody: { id: VALID_PROVIDER_ID },
         cliArgs: [
@@ -1632,14 +1625,13 @@ describe("sso update integration", () => {
         yield* ssoUpdate({ ...defaultFlags, addDomains: ["new.com"] });
         const put = api.requests.find((r) => r.method === "PUT");
         expect((put?.body as { domains?: string[] })?.domains).toEqual(["new.com"]);
-      }).pipe((body) => withProfileEnv(profileEnv, body), Effect.provide(layer));
+      }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.live(
     "profile emulation: --profile consuming a trailing flag token fails LoadProfile, never GETs",
     () => {
-      const profileEnv = undefined;
       const { layer, api } = setup({
         cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--profile", "--add-domains"],
       });
@@ -1652,7 +1644,7 @@ describe("sso update integration", () => {
           expect(dump).toContain(`failed to read profile: Unsupported Config Type ""`);
         }
         expect(api.requests.length).toBe(0);
-      }).pipe((body) => withProfileEnv(profileEnv, body), Effect.provide(layer));
+      }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
     },
   );
 
@@ -1662,7 +1654,6 @@ describe("sso update integration", () => {
       Effect.gen(function* () {
         const first = yield* writeProfileYaml("first-badjson.yml", "http://first.example");
         const second = yield* writeProfileYaml("second-badjson.yml", "http://second.example");
-        const profileEnv = undefined;
         const { layer, api } = setup({
           getRaw: { status: 200, body: "{not json", contentType: "application/json" },
           cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--profile", first, "--profile", second],
@@ -1681,7 +1672,7 @@ describe("sso update integration", () => {
             expect(classified.error_fingerprint).toBe("tag:SsoUpdateNetworkError:api_response");
           }
           expect(api.requests.some((r) => r.method === "PUT")).toBe(false);
-        }).pipe((body) => withProfileEnv(profileEnv, body), Effect.provide(layer));
+        }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -1691,7 +1682,6 @@ describe("sso update integration", () => {
       Effect.gen(function* () {
         const first = yield* writeProfileYaml("first-nonjson.yml", "http://first.example");
         const second = yield* writeProfileYaml("second-nonjson.yml", "http://second.example");
-        const profileEnv = undefined;
         const { layer, api } = setup({
           getRaw: { status: 200, body: "plain text body", contentType: "text/plain" },
           cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--profile", first, "--profile", second],
@@ -1706,7 +1696,7 @@ describe("sso update integration", () => {
             expect(dump).toContain("unexpected error fetching identity provider: plain text body");
           }
           expect(api.requests.some((r) => r.method === "PUT")).toBe(false);
-        }).pipe((body) => withProfileEnv(profileEnv, body), Effect.provide(layer));
+        }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -1716,7 +1706,6 @@ describe("sso update integration", () => {
       Effect.gen(function* () {
         const first = yield* writeProfileYaml("first-gate.yml", "http://first.example");
         const second = yield* writeProfileYaml("second-gate.yml", "http://second.example");
-        const profileEnv = undefined;
         const { layer, api } = setup({
           getStatus: 403,
           getBody: {},
@@ -1740,12 +1729,11 @@ describe("sso update integration", () => {
             "http://second.example/v1/organizations/acme/entitlements",
           );
           expect(api.requests.some((r) => r.url.startsWith("http://first.example/"))).toBe(false);
-        }).pipe((body) => withProfileEnv(profileEnv, body), Effect.provide(layer));
+        }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.live("profile emulation: the LoadProfile failure loses to the arity check, like Go", () => {
-    const profileEnv = undefined;
     const { layer, api } = setup({
       cliArgs: ["sso", "update", "a", "b", "--profile", "--metadata-url", "u"],
     });
@@ -1762,6 +1750,6 @@ describe("sso update integration", () => {
         ).toBe(false);
       }
       expect(api.requests.length).toBe(0);
-    }).pipe((body) => withProfileEnv(profileEnv, body), Effect.provide(layer));
+    }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
   });
 });

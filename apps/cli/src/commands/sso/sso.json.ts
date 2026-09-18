@@ -1,7 +1,6 @@
 import { Effect, Schema, SchemaIssue } from "effect";
 
-// Both boundaries historically accept any parsed JSON value. Domain narrowing
-// belongs to the consumer; validating a tighter shape here would change behavior.
+// Both boundaries accept any parsed JSON value; consumers own domain narrowing.
 const decodeJson = Schema.decodeEffect(
   Schema.fromJsonString(Schema.Unknown, { preserveNativeError: true }),
 );
@@ -19,3 +18,5 @@ function originalJsonError(error: Schema.SchemaError): Error {
 /** Uses the schema codec while retaining native JSON parse errors via the pinned Effect patch. */
 export const decodeSsoJson = (input: string) =>
   Effect.mapError(decodeJson(input), originalJsonError);
+
+export const quoteSsoString = Schema.encodeSync(Schema.fromJsonString(Schema.String));

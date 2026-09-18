@@ -1,7 +1,7 @@
-import { Effect, FileSystem, Schema } from "effect";
+import { Effect, FileSystem } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 
-import { decodeSsoJson } from "./sso.json.ts";
+import { decodeSsoJson, quoteSsoString } from "./sso.json.ts";
 
 export type SsoFileErrorReason =
   | "not_found"
@@ -49,7 +49,7 @@ export function validateMetadataXmlBytes<E>(
     Effect.mapError(() =>
       nonUtf8Error({
         source,
-        message: `SAML Metadata XML at ${Schema.encodeSync(Schema.fromJsonString(Schema.String))(source)} is not UTF-8 encoded`,
+        message: `SAML Metadata XML at ${quoteSsoString(source)} is not UTF-8 encoded`,
       }),
     ),
     Effect.asVoid,

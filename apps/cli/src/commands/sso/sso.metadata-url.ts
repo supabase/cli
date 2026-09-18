@@ -1,8 +1,9 @@
-import { Duration, Effect, Schema } from "effect";
+import { Duration, Effect } from "effect";
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
+import { quoteSsoString } from "./sso.json.ts";
 import {
   SsoMetadataUrlInvalidError,
   SsoMetadataUrlNetworkError,
@@ -46,7 +47,7 @@ export const validateMetadataUrl = (
       try: () => new URL(metadataUrl),
       catch: (cause) =>
         new SsoMetadataUrlInvalidError({
-          message: `failed to parse metadata uri ${Schema.encodeSync(Schema.fromJsonString(Schema.String))(metadataUrl)}: ${String(cause)}`,
+          message: `failed to parse metadata uri ${quoteSsoString(metadataUrl)}: ${String(cause)}`,
         }),
     });
 

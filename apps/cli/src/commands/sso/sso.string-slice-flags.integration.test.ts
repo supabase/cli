@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Predicate, Effect, Exit, Layer } from "effect";
+import { Cause, Effect, Exit, Layer, Predicate } from "effect";
 import { CliOutput, Command } from "effect/unstable/cli";
 
 import { normalizeCause } from "../../shared/output/normalize-error.ts";

@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
-import { Effect, FileSystem } from "effect";
 import { describe, expect, it } from "@effect/vitest";
+import { Effect, FileSystem } from "effect";
 import { runSupabaseEffect } from "../../../tests/helpers/cli.ts";
 
 const E2E_TIMEOUT_MS = 30_000;

@@ -1,9 +1,9 @@
 import type { SupabaseApiError } from "@supabase/api/effect";
-import { Effect, Option, Redacted, Result, Schema, Stdio } from "effect";
+import { Effect, Option, Redacted, Result, Stdio } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
-import { decodeSsoJson } from "../sso.json.ts";
+import { decodeSsoJson, quoteSsoString } from "../sso.json.ts";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
@@ -119,7 +119,7 @@ const handleGetError = (ref: string, providerId: string, cause: SupabaseApiError
       });
       if (mapped.status === 404) {
         return yield* new SsoUpdateNotFoundError({
-          message: `An identity provider with ID ${yield* Schema.encodeEffect(Schema.fromJsonString(Schema.String))(providerId)} could not be found.`,
+          message: `An identity provider with ID ${quoteSsoString(providerId)} could not be found.`,
           upgradeSuggested,
         });
       }
@@ -210,14 +210,14 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
     const skipUrlValidation = yield* Result.match(
       pflagBoolValue(occurrences, "skip-url-validation"),
       {
-        onFailure: (message: string) => new SsoInvalidFlagValueError({ message }),
+        onFailure: (message: string) => Effect.fail(new SsoInvalidFlagValueError({ message })),
         onSuccess: Effect.succeed,
       },
     );
     const nameIdFormat = yield* Result.match(
       pflagEnumValue(occurrences, "name-id-format", SSO_NAME_ID_FORMATS),
       {
-        onFailure: (message: string) => new SsoInvalidFlagValueError({ message }),
+        onFailure: (message: string) => Effect.fail(new SsoInvalidFlagValueError({ message })),
         onSuccess: Effect.succeed,
       },
     );
@@ -371,7 +371,7 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
         });
         if (response.status === 404) {
           return yield* new SsoUpdateNotFoundError({
-            message: `An identity provider with ID ${yield* Schema.encodeEffect(Schema.fromJsonString(Schema.String))(providerId)} could not be found.`,
+            message: `An identity provider with ID ${quoteSsoString(providerId)} could not be found.`,
             upgradeSuggested,
           });
         }
