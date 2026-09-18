@@ -1,5 +1,5 @@
 import type { V1ListAllBranchesOutput } from "@supabase/api/effect";
-import { Duration, Effect, FileSystem, Option, Path } from "effect";
+import { Duration, Effect, FileSystem, Option, Path, Schema } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 
 import { CommandPlatformApi } from "../../auth/command-platform-api.service.ts";
@@ -83,6 +83,21 @@ const LINK_CACHE_CORRELATION_TIMEOUT = Duration.seconds(5);
 
 const LINK_MAX_LISTED_BRANCHES = 20;
 
+const encodeLinkedProjectCache = Schema.encodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      ref: Schema.String,
+      name: Schema.String,
+      organization_id: Schema.String,
+      organization_slug: Schema.String,
+    }),
+  ),
+);
+
+const encodeLinkedParentCache = Schema.encodeEffect(
+  Schema.fromJsonString(Schema.Struct({ ref: Schema.String })),
+);
+
 function linkBranchNotFoundMessage(
   value: string,
   parentRef: string,
@@ -130,14 +145,10 @@ const resolveLinkBranchRef = Effect.fnUntraced(function* (value: string) {
 
   const parent = yield* resolveLinkedParentRef();
   if (parent.kind === "absent") {
-    return yield* Effect.fail(
-      new LinkBranchNotLinkedError({ message: parentNotLinkedMessage(value) }),
-    );
+    return yield* new LinkBranchNotLinkedError({ message: parentNotLinkedMessage(value) });
   }
   if (parent.kind === "invalid") {
-    return yield* Effect.fail(
-      new LinkParentRefInvalidError({ message: parentRefInvalidMessage(value) }),
-    );
+    return yield* new LinkParentRefInvalidError({ message: parentRefInvalidMessage(value) });
   }
   const parentRef = parent.ref;
 
@@ -165,21 +176,17 @@ const resolveLinkBranchRef = Effect.fnUntraced(function* (value: string) {
     (branch) => branch.name === value || branch.id.toLowerCase() === value.toLowerCase(),
   );
   if (found === undefined) {
-    return yield* Effect.fail(
-      new LinkBranchNotFoundError({
-        message: linkBranchNotFoundMessage(value, parentRef, branches),
-      }),
-    );
+    return yield* new LinkBranchNotFoundError({
+      message: linkBranchNotFoundMessage(value, parentRef, branches),
+    });
   }
 
   if (!PROJECT_REF_PATTERN.test(found.project_ref)) {
-    return yield* Effect.fail(
-      new LinkBranchNotReadyError({
-        branch: found.name,
-        status: found.status,
-        message: `Branch "${sanitizeInlineName(found.name)}" has no project ref yet (status: ${found.status}). Wait for it to finish provisioning, then retry.`,
-      }),
-    );
+    return yield* new LinkBranchNotReadyError({
+      branch: found.name,
+      status: found.status,
+      message: `Branch "${sanitizeInlineName(found.name)}" has no project ref yet (status: ${found.status}). Wait for it to finish provisioning, then retry.`,
+    });
   }
 
   const line = `Resolved branch "${sanitizeInlineName(found.name)}" of project ${parentRef} to project ref ${found.project_ref}.`;
@@ -213,12 +220,10 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
     const projectRefFlag = Option.filter(flags.projectRef, (value) => value.length > 0);
 
     if (Option.isSome(refArg) && Option.isSome(projectRefFlag)) {
-      return yield* Effect.fail(
-        new LinkRefArgConflictError({
-          message:
-            "Cannot use both the [ref-or-branch] argument and the --project-ref flag. Specify the project ref or branch name once.",
-        }),
-      );
+      return yield* new LinkRefArgConflictError({
+        message:
+          "Cannot use both the [ref-or-branch] argument and the --project-ref flag. Specify the project ref or branch name once.",
+      });
     }
 
     const requested = Option.isSome(refArg) ? refArg : projectRefFlag;
@@ -251,14 +256,12 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
     if (Option.isSome(project)) {
       const status = project.value.status;
       if (status === "INACTIVE") {
-        return yield* Effect.fail(
-          new ProjectPausedError({
-            message: "project is paused",
-            suggestion: `An admin must unpause it from the Supabase dashboard at ${dashboardUrl(
-              cliSettings.profile,
-            )}/project/${ref}`,
-          }),
-        );
+        return yield* new ProjectPausedError({
+          message: "project is paused",
+          suggestion: `An admin must unpause it from the Supabase dashboard at ${dashboardUrl(
+            cliSettings.profile,
+          )}/project/${ref}`,
+        });
       }
       if (status !== "ACTIVE_HEALTHY") {
         yield* output.raw(
@@ -279,7 +282,7 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
       .pipe(Effect.catch(mapApiKeysError));
     const { anon, serviceRole } = extractServiceKeys(keys);
     if (anon.length === 0 && serviceRole.length === 0) {
-      return yield* Effect.fail(new LinkMissingKeyError({ message: "Anon key not found." }));
+      return yield* new LinkMissingKeyError({ message: "Anon key not found." });
     }
 
     // 3. Link services — best-effort, using the service-role key for tenant probes.
@@ -298,15 +301,13 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
       const p = project.value;
       // Best-effort: if the rewrite fails while a stale cache for a different project
       // survives, delete it rather than leave the parent chain trusting the old project.
-      yield* writeTempFile(
-        paths.linkedProjectCache,
-        JSON.stringify({
-          ref: p.ref,
-          name: p.name,
-          organization_id: p.organization_id,
-          organization_slug: p.organization_slug,
-        }),
-      ).pipe(
+      yield* encodeLinkedProjectCache({
+        ref: p.ref,
+        name: p.name,
+        organization_id: p.organization_id,
+        organization_slug: p.organization_slug,
+      }).pipe(
+        Effect.flatMap((content) => writeTempFile(paths.linkedProjectCache, content)),
         Effect.catch(() => fs.remove(paths.linkedProjectCache, { force: true })),
         Effect.ignore,
       );
@@ -355,7 +356,8 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
         if (Option.isNone(cachedParent) || cachedParent.value.ref !== parentRef) {
           // If the replacement write fails, delete the stale cache instead of leaving a
           // wrong parent trusted — no parent info beats wrong parent info.
-          yield* writeTempFile(paths.linkedProjectCache, JSON.stringify({ ref: parentRef })).pipe(
+          yield* encodeLinkedParentCache({ ref: parentRef }).pipe(
+            Effect.flatMap((content) => writeTempFile(paths.linkedProjectCache, content)),
             Effect.catch(() => fs.remove(paths.linkedProjectCache, { force: true })),
             Effect.ignore,
           );
@@ -390,7 +392,7 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
         const verified = yield* api.v1.listAllBranches({ ref: cachedParent.value.ref }).pipe(
           Effect.timeout(LINK_CACHE_CORRELATION_TIMEOUT),
           Effect.map((branches) => branches.some((branch) => branch.project_ref === ref)),
-          Effect.catch(() => Effect.succeed(false)),
+          Effect.orElseSucceed(() => false),
           Effect.ensuring(correlating?.clear() ?? Effect.void),
         );
         if (!verified) {

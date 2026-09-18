@@ -157,6 +157,13 @@ export class EphemeralPostgresError extends Data.TaggedError("EphemeralPostgresE
 export class RequiresActivatedProcessError extends Data.TaggedError(
   "RequiresActivatedProcessError",
 )<ErrorFields & { readonly capability: string }> {}
+export class PostgresClientError extends Data.TaggedError("PostgresClientError")<
+  ErrorFields & {
+    readonly reason?: "missing-bin" | "spawn";
+    readonly bin?: string;
+    readonly engine?: ContainerEngineKind;
+  }
+> {}
 
 /** Stable wire tags for errors produced by the managed stack runtime. */
 export const STACK_ERROR_TAGS = [
@@ -188,6 +195,7 @@ export const STACK_ERROR_TAGS = [
   "StackDestructionError",
   "EphemeralPostgresError",
   "RequiresActivatedProcessError",
+  "PostgresClientError",
 ] as const;
 
 export type StackErrorTag = (typeof STACK_ERROR_TAGS)[number];
@@ -223,7 +231,8 @@ export type StackError =
   | ContainerEngineError
   | StackDestructionError
   | EphemeralPostgresError
-  | RequiresActivatedProcessError;
+  | RequiresActivatedProcessError
+  | PostgresClientError;
 
 export const isStackError = (value: unknown): value is StackError =>
   Predicate.hasProperty(value, "_tag") &&
@@ -371,6 +380,16 @@ export const EPHEMERAL_POSTGRES_ERROR_TAGS = [
 export type EphemeralPostgresCreateError = ErrorByTag<
   (typeof EPHEMERAL_POSTGRES_ERROR_TAGS)[number]
 >;
+
+export const POSTGRES_CLIENT_ERROR_TAGS = [
+  "PostgresClientError",
+  "StackVersionUnsupportedError",
+  "StackPreparationError",
+  "ArtifactIntegrityError",
+  "ContainerPullError",
+  "ContainerEngineError",
+] as const satisfies ReadonlyArray<StackErrorTag>;
+export type PostgresClientRunError = ErrorByTag<(typeof POSTGRES_CLIENT_ERROR_TAGS)[number]>;
 
 export const SCHEMA_INIT_ERROR_TAGS = [
   "RequiresActivatedProcessError",

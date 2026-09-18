@@ -62,6 +62,7 @@ ComputeLogsUsageExceededError
 ComputeNewWorkdirError
 ComputeNotDeployedError
 ComputeProjectNotFoundError
+ComputeRouteNotFoundError
 ComputeSourceEscapingLinkError
 ComputeSourceMissingError
 ComputeStacksValidationError
@@ -281,8 +282,10 @@ GenSigningKeyDecodeError
 GenSigningKeyGenerateError
 GenSigningKeyReadError
 GenSigningKeyWriteError
+GenTypesGenerationError
 GenTypesMissingProjectConfigError
 GenTypesNetworkError
+GenTypesNetworkIdUnsupportedError
 GenTypesParseConfigError
 GenTypesUnexpectedStatusError
 GenTypesWorkdirError
@@ -304,7 +307,6 @@ InvalidComputeSourceError
 InvalidFunctionDeploySlugError
 InvalidFunctionDownloadResponseError
 InvalidFunctionSlugError
-InvalidGenTypesDatabaseUrlError
 InvalidGenTypesDurationError
 InvalidLocalServiceVersionsStateError
 InvalidOutputFormatError

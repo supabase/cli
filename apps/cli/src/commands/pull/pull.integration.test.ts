@@ -54,6 +54,7 @@ import { DbConfigResolver } from "../../command-internal/db-config.service.ts";
 import { DbConnection, type DbSession } from "../../command-internal/db-connection.service.ts";
 import { DbExecError } from "../../command-internal/db-connection.errors.ts";
 import { DbPullMigrationConflictError } from "../../command-internal/db-pull-run.errors.ts";
+import { BundledPostgresClient } from "../../command-internal/bundled-postgres-client.ts";
 import { DockerRun } from "../../command-internal/docker-run.service.ts";
 import { EdgeRuntimeScript } from "../../command-internal/edge-runtime-script.service.ts";
 import { MigrationFetchWriteError } from "../migration/fetch/fetch.errors.ts";
@@ -668,6 +669,9 @@ function setup(opts: SetupOpts = {}) {
     pgDelta.layer,
     Layer.succeed(EdgeRuntimeScript, {
       run: () => Effect.die("migra edge runtime unused — every db step forces pg-delta"),
+    }),
+    Layer.succeed(BundledPostgresClient, {
+      run: () => Effect.die("bundled postgres client unused"),
     }),
     Layer.succeed(DockerRun, {
       run: () => Effect.die("run unused"),

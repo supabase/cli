@@ -129,9 +129,13 @@ realistic traffic, and verifies stop/start cycles, stable ports, and persistent 
 CLI is not involved in these runtime tests.
 
 When `runtime` is omitted for a new stack, the package selects Docker when the Docker client is
-installed and native otherwise. The check runs `docker --version`, so a stopped Docker daemon still
-selects Docker. Existing stacks reuse their persisted runtime without probing; native, Docker, and
-Podman preferences remain explicit when supplied. Podman is supported only on local Linux hosts.
+installed and its daemon is reachable, and native otherwise. An installed client with an
+unreachable daemon selects native, and the Effect handle carries a `dockerFallbackNotice` explaining
+that the choice is persisted; switching to Docker later requires destroying the stack or choosing a
+new stack name. The Promise facade does not expose the notice.
+Native is refused when the process runs as uid 0. Existing stacks reuse their persisted runtime
+without probing; native, Docker, and Podman preferences remain explicit when supplied, and an
+explicit Docker runtime does not fall back. Podman is supported only on local Linux hosts.
 
 Stack identity is the length-delimited SHA-256 tuple of the canonical project root, Git branch
 context (or `ordinary-workspace` outside Git), and stack name. Separate worktree roots, branches,
@@ -140,7 +144,7 @@ resolution is read-only; moving a project creates a new identity.
 
 `createTestStack` gives each test stack a unique temporary project root and identity while sharing
 the managed state root used by ordinary package callers. It uses the same runtime selection as
-`createStack`: an installed Docker client selects Docker even when its daemon is stopped. Pass
+`createStack`: a reachable Docker daemon selects Docker, and anything else selects native. Pass
 `runtime: { kind: "native" }` or an explicit container runtime for reproducible test environments.
 Automatic ports therefore
 coordinate across all default callers. Helper project roots and identities remain isolated; a
@@ -167,3 +171,8 @@ the same catalog artifact and bootstrap as a stack database, is not registered i
 Promise facade returns a handle with explicit `destroy()`. Callers own migrations and PGDATA
 cache keys. `exportPgData` is valid only while the cluster is stopped; native and container snapshots
 are not interchangeable.
+
+`runPostgresClient` prepares that same catalog pin and runs caller argv (`bash -c` dump scripts,
+`pg_prove`, …) without starting Postgres. Native prepends `artifact/bin` to `PATH`; container is a
+one-shot `docker|podman run --rm`. It is not an `EffectStack` method, so linked dump can prepare
+tools without a running stack.

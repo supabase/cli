@@ -23,6 +23,7 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
   sequentialExecBatch,
+  withEnvVar,
 } from "../../../tests/helpers/command-mocks.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { classifyCliCauseActionability } from "../../shared/telemetry/error-actionability.ts";
@@ -292,10 +293,66 @@ function freshVolumeRoute(
   };
 }
 
+/**
+ * Vector-capable variant: empty bucket list, a fixed set of existing vector buckets, and a
+ * raw-body recorder for `DeleteVectorBucket` calls; every other request answers a bare 200.
+ */
+function mockStorageVectorHttpClient(existingVectorBuckets: ReadonlyArray<string>) {
+  const deletedVectorBuckets: Array<string> = [];
+  let vectorListCalls = 0;
+  const layer = Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) => {
+      const json = (body: unknown) =>
+        Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response(JSON.stringify(body), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            }),
+          ),
+        );
+      if (request.method === "GET" && request.url.includes("/storage/v1/bucket")) {
+        return json([]);
+      }
+      if (
+        request.method === "POST" &&
+        request.url.includes("/storage/v1/vector/ListVectorBuckets")
+      ) {
+        vectorListCalls += 1;
+        return json({
+          vectorBuckets: existingVectorBuckets.map((name) => ({ vectorBucketName: name })),
+        });
+      }
+      if (
+        request.method === "POST" &&
+        request.url.includes("/storage/v1/vector/DeleteVectorBucket")
+      ) {
+        deletedVectorBuckets.push(
+          request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : "",
+        );
+        return json({});
+      }
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(request, new Response(null, { status: 200 })),
+      );
+    }),
+  );
+  return {
+    layer,
+    deletedVectorBuckets,
+    get vectorListCalls() {
+      return vectorListCalls;
+    },
+  };
+}
+
 /** Storage's `/storage/v1/bucket` GET (list)/POST (create) endpoints — every other request answers a bare 200, matching `alwaysReadyHttpClientLayer`'s permissiveness for the PostgREST/Edge Runtime readiness probes some scenarios also exercise. */
-function mockStorageBucketHttpClient() {
+function mockStorageBucketHttpClient(existingBuckets: ReadonlyArray<string> = []) {
   const createdBucketRequests: Array<string> = [];
   const createdBucketBodies: Array<unknown> = [];
+  const updatedBucketRequests: Array<string> = [];
   /** Every request in order, so a test can assert a readiness probe preceded seeding. */
   const requests: Array<{ method: string; url: string }> = [];
   const layer = Layer.succeed(
@@ -303,10 +360,11 @@ function mockStorageBucketHttpClient() {
     HttpClient.make((request) => {
       requests.push({ method: request.method, url: request.url });
       if (request.method === "GET" && request.url.includes("/storage/v1/bucket")) {
+        const listed = JSON.stringify(existingBuckets.map((name) => ({ id: name, name })));
         return Effect.succeed(
           HttpClientResponse.fromWeb(
             request,
-            new Response("[]", {
+            new Response(listed, {
               status: 200,
               headers: { "content-type": "application/json" },
             }),
@@ -334,12 +392,24 @@ function mockStorageBucketHttpClient() {
           ),
         );
       }
+      if (request.method === "PUT" && request.url.includes("/storage/v1/bucket/")) {
+        updatedBucketRequests.push(request.url);
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response(JSON.stringify({ message: "Successfully updated" }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            }),
+          ),
+        );
+      }
       return Effect.succeed(
         HttpClientResponse.fromWeb(request, new Response(null, { status: 200 })),
       );
     }),
   );
-  return { layer, createdBucketRequests, createdBucketBodies, requests };
+  return { layer, createdBucketRequests, createdBucketBodies, updatedBucketRequests, requests };
 }
 
 /**
@@ -370,6 +440,8 @@ function fakeDbSession() {
 
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
+  /** Piped stdin for the seeding confirmations; `start` must never consume it. */
+  readonly stdinInput?: string;
   readonly route?: (args: ReadonlyArray<string>) => RouteResult;
   /** Observes files decoded from the in-memory tar stream passed to `docker cp -`. */
   readonly onSecretCopy?: (containerPath: string, content: string) => void;
@@ -434,7 +506,7 @@ function setup(opts: SetupOpts = {}) {
     Layer.succeed(ExperimentalFlag, opts.experimental ?? false),
     Layer.succeed(NetworkIdFlag, opts.networkId ?? Option.none()),
     mockTty({ stdinIsTty: false }),
-    mockStdin(false),
+    mockStdin(false, opts.stdinInput),
   );
 
   return { workdir, out, telemetry, analytics, child, dbSession, layer };
@@ -2491,6 +2563,100 @@ content_path = "./supabase/templates/custom_notice.html"
     });
 
     it.live(
+      "keeps a vector bucket missing from config.toml (prune declines without consent)",
+      () => {
+        const http = mockStorageVectorHttpClient(["embeddings", "stale-vec"]);
+        const { layer } = setup({
+          configContents:
+            'project_id = "demo"\n[storage.vector]\nenabled = true\n[storage.vector.buckets.embeddings]\n',
+          route: freshVolumeRoute(defaultRoute()),
+          httpClientLayer: http.layer,
+        });
+        // A truthy ambient `SUPABASE_YES` would auto-confirm the prune.
+        return withEnvVar(
+          "SUPABASE_YES",
+          undefined,
+          Effect.gen(function* () {
+            yield* start(flags({ exclude: ["edge-runtime"] }));
+            expect(http.vectorListCalls).toBe(1);
+            expect(http.deletedVectorBuckets).toHaveLength(0);
+          }).pipe(Effect.provide(layer)),
+        );
+      },
+    );
+
+    it.live(
+      "never asks before overwriting an existing bucket, so piped stdin stays untouched",
+      () => {
+        // The bucket is already present, which is the only way the overwrite confirmation
+        // is reachable; the piped line belongs to a parent script.
+        const http = mockStorageBucketHttpClient(["avatars"]);
+        const { layer, out } = setup({
+          configContents: 'project_id = "demo"\n[storage.buckets.avatars]\npublic = false\n',
+          route: freshVolumeRoute(defaultRoute()),
+          httpClientLayer: http.layer,
+          stdinInput: "n\necho SCRIPT-LINE-2\n",
+        });
+        return withEnvVar(
+          "SUPABASE_YES",
+          undefined,
+          Effect.gen(function* () {
+            yield* start(flags({ exclude: ["edge-runtime"] }));
+            expect(out.stderrText).not.toContain("Do you want to overwrite its properties?");
+          }).pipe(Effect.provide(layer)),
+        );
+      },
+    );
+
+    it.live(
+      "never reads piped stdin for the seeding confirmations, so a piped y cannot consent",
+      () => {
+        const http = mockStorageVectorHttpClient(["embeddings", "stale-vec"]);
+        const { layer, out } = setup({
+          configContents:
+            'project_id = "demo"\n[storage.vector]\nenabled = true\n[storage.vector.buckets.embeddings]\n',
+          route: freshVolumeRoute(defaultRoute()),
+          httpClientLayer: http.layer,
+          // A line a parent script would own. The old prompt read fd 0 here and would have
+          // taken this as consent; `start` must leave it untouched.
+          stdinInput: "y\necho SCRIPT-LINE-2\n",
+        });
+        return withEnvVar(
+          "SUPABASE_YES",
+          undefined,
+          Effect.gen(function* () {
+            yield* start(flags({ exclude: ["edge-runtime"] }));
+            expect(http.deletedVectorBuckets).toHaveLength(0);
+            expect(out.stderrText).not.toContain("Do you want to prune it?");
+            expect(out.stderrText).toContain("Keeping vector bucket");
+          }).pipe(Effect.provide(layer)),
+        );
+      },
+    );
+
+    it.live(
+      "prunes a stale vector bucket on a fresh-volume start when SUPABASE_YES consents",
+      () => {
+        const http = mockStorageVectorHttpClient(["embeddings", "stale-vec"]);
+        const { layer } = setup({
+          configContents:
+            'project_id = "demo"\n[storage.vector]\nenabled = true\n[storage.vector.buckets.embeddings]\n',
+          route: freshVolumeRoute(defaultRoute()),
+          httpClientLayer: http.layer,
+        });
+        return withEnvVar(
+          "SUPABASE_YES",
+          "1",
+          Effect.gen(function* () {
+            yield* start(flags({ exclude: ["edge-runtime"] }));
+            expect(http.deletedVectorBuckets).toHaveLength(1);
+            expect(http.deletedVectorBuckets[0]).toContain("stale-vec");
+          }).pipe(Effect.provide(layer)),
+        );
+      },
+    );
+
+    it.live(
       "does not seed a configured bucket on a non-fresh volume, even with storage enabled",
       () => {
         const http = mockStorageBucketHttpClient();
@@ -3303,6 +3469,49 @@ content_path = "./supabase/templates/custom_notice.html"
           expect(rollbackWasAttempted(child.spawned)).toBe(false);
           expect(analytics.captured.some((c) => c.event === "cli_stack_started")).toBe(false);
         }).pipe(Effect.provide(layer));
+      },
+      45_000,
+    );
+
+    it.live(
+      "keeps a vector bucket missing from config.toml during the recheck-and-seed (prune declines without consent)",
+      () => {
+        const http = mockStorageVectorHttpClient(["embeddings", "stale-vec"]);
+        const neverHealthy = new Set<string>();
+        const route = freshVolumeRoute(defaultRoute({ neverHealthy }));
+        const { layer, out, child, analytics } = setup({
+          configContents:
+            'project_id = "demo"\n[storage.vector]\nenabled = true\n[storage.vector.buckets.embeddings]\n',
+          route: (args) => {
+            if (args[0] === "create") {
+              const name = containerNameFromCreateArgs(args);
+              if (name.includes("_auth_")) neverHealthy.add(name);
+            }
+            return route(args);
+          },
+          httpClientLayer: http.layer,
+        });
+        // A truthy ambient `SUPABASE_YES` would auto-confirm the prune.
+        return withEnvVar(
+          "SUPABASE_YES",
+          undefined,
+          Effect.gen(function* () {
+            yield* start(
+              flags({ exclude: ["postgrest", "edge-runtime"], ignoreHealthCheck: true }),
+            );
+            // Only the downgrade branch seeds while the original health error is still a
+            // warning and `cli_stack_started` never fires — the main path requires a healthy
+            // bulk check, which captures that event.
+            expect(out.stderrText).toContain("is not ready");
+            expect(analytics.captured.some((c) => c.event === "cli_stack_started")).toBe(false);
+            expect(rollbackWasAttempted(child.spawned)).toBe(false);
+            expect(http.vectorListCalls).toBe(1);
+            expect(http.deletedVectorBuckets).toHaveLength(0);
+            expect(out.stderrText).toContain("Keeping vector bucket");
+            expect(out.stderrText).toContain("stale-vec");
+            expect(out.stderrText).not.toContain("Do you want to prune it?");
+          }).pipe(Effect.provide(layer)),
+        );
       },
       45_000,
     );

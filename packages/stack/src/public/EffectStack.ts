@@ -81,6 +81,7 @@ import {
   PortUnavailableError,
   GatewayActivationError,
   InvalidLogCursorError,
+  PostgresClientError,
   type CreateStackError,
   type OpenStackError,
   type StackDiscoveryError,
@@ -251,6 +252,7 @@ const stackErrorFactories = {
   EphemeralPostgresError: (message: string) => new EphemeralPostgresError({ message }),
   RequiresActivatedProcessError: (message: string) =>
     new RequiresActivatedProcessError({ message, capability: "unknown" }),
+  PostgresClientError: (message: string) => new PostgresClientError({ message }),
 } satisfies Record<StackErrorTag, (message: string) => StackError>;
 
 const isOwnerUnreachable = (error: unknown): boolean =>

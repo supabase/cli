@@ -1,4 +1,5 @@
 import { bundleServeMainTemplate } from "../src/shared/functions/serve-main-bundler.ts";
+import { OXFMT_OPTIONAL_PLUGIN_EXTERNALS } from "./bundle-externals.ts";
 
 /**
  * Compiles the CLI to a standalone binary, run via `pnpm build:binary`. Embeds the pre-bundled
@@ -18,6 +19,7 @@ if (packageJson.version === undefined || packageJson.version.length === 0) {
 const result = await Bun.build({
   entrypoints: [entrypoint],
   compile: { outfile },
+  external: [...OXFMT_OPTIONAL_PLUGIN_EXTERNALS],
   define: {
     SUPABASE_CLI_VERSION: JSON.stringify(packageJson.version),
     SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE: JSON.stringify(await bundleServeMainTemplate()),

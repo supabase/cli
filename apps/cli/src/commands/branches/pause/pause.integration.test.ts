@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Option } from "effect";
 
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -153,9 +153,9 @@ describe("branches pause integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("BranchesPauseUnexpectedStatusError");
-        expect(json).toContain("unexpected pause branch status 500");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("BranchesPauseUnexpectedStatusError");
+        expect(causeText).toContain("unexpected pause branch status 500");
       }
     }).pipe(Effect.provide(layer));
   });

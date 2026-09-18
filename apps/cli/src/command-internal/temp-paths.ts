@@ -32,7 +32,6 @@ export interface TempPaths {
   readonly gotrueVersion: string;
   readonly storageVersion: string;
   readonly storageMigration: string;
-  readonly pgmetaVersion: string;
   readonly linkedProjectCache: string;
 }
 
@@ -47,7 +46,6 @@ export function tempPaths(path: Path.Path, workdir: string): TempPaths {
     gotrueVersion: path.join(tempDir, "gotrue-version"),
     storageVersion: path.join(tempDir, "storage-version"),
     storageMigration: path.join(tempDir, "storage-migration"),
-    pgmetaVersion: path.join(tempDir, "pgmeta-version"),
     linkedProjectCache: path.join(tempDir, "linked-project.json"),
   };
 }

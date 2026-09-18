@@ -37,16 +37,6 @@ export class InvalidGenTypesDurationError extends Data.TaggedError("InvalidGenTy
   }
 }
 
-export class InvalidGenTypesDatabaseUrlError extends Data.TaggedError(
-  "InvalidGenTypesDatabaseUrlError",
-)<{
-  readonly message: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
-  }
-}
-
 /**
  * The resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a
  * directory (`validateWorkdirIsDirectory`). Only reachable when the
@@ -80,6 +70,20 @@ export class GenTypesParseConfigError extends Data.TaggedError("GenTypesParseCon
  */
 export class GenTypesMissingProjectConfigError extends Data.TaggedError(
   "GenTypesMissingProjectConfigError",
+)<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
+
+/**
+ * Raised when `--network-id` is set: `gen types` now generates in-process instead of running a
+ * pg-meta container, so there is no Docker network to join.
+ */
+export class GenTypesNetworkIdUnsupportedError extends Data.TaggedError(
+  "GenTypesNetworkIdUnsupportedError",
 )<{
   readonly message: string;
 }> {

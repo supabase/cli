@@ -1,13 +1,17 @@
+import { BunPath } from "@effect/platform-bun";
+import { Effect, Path } from "effect";
 import { describe, expect, it } from "vitest";
 
 import { resolveUploadDstPath } from "./cp.upload.ts";
+
+const posixPath = Effect.runSync(Effect.provide(Path.Path, BunPath.layerPosix));
 
 describe("resolveUploadDstPath", () => {
   describe("single file (relPath === '.')", () => {
     it("appends the file name when the dst prefix is a bucket root", () => {
       // remote "private" → prefix "" is a directory → keep the file name.
       expect(
-        resolveUploadDstPath({
+        resolveUploadDstPath(posixPath, {
           remotePath: "private",
           relPath: ".",
           fileName: "readme.md",
@@ -22,7 +26,7 @@ describe("resolveUploadDstPath", () => {
     it("keeps the destination key when it targets an existing object", () => {
       // remote "private/file" → prefix "file" is not a dir, and the object exists.
       expect(
-        resolveUploadDstPath({
+        resolveUploadDstPath(posixPath, {
           remotePath: "private/file",
           relPath: ".",
           fileName: "readme.md",
@@ -36,7 +40,7 @@ describe("resolveUploadDstPath", () => {
 
     it("appends the file name when the dst dir exists and no same-named file does", () => {
       expect(
-        resolveUploadDstPath({
+        resolveUploadDstPath(posixPath, {
           remotePath: "private/docs",
           relPath: ".",
           fileName: "readme.md",
@@ -52,7 +56,7 @@ describe("resolveUploadDstPath", () => {
   describe("directory walk", () => {
     it("nests under baseName for a new bucket (noSlash empty)", () => {
       expect(
-        resolveUploadDstPath({
+        resolveUploadDstPath(posixPath, {
           remotePath: "",
           relPath: "readme.md",
           fileName: "readme.md",
@@ -66,7 +70,7 @@ describe("resolveUploadDstPath", () => {
 
     it("nests under baseName when the destination dir exists", () => {
       expect(
-        resolveUploadDstPath({
+        resolveUploadDstPath(posixPath, {
           remotePath: "/private/dir/",
           relPath: "readme.md",
           fileName: "readme.md",
@@ -80,7 +84,7 @@ describe("resolveUploadDstPath", () => {
 
     it("preserves a nested relative path under baseName", () => {
       expect(
-        resolveUploadDstPath({
+        resolveUploadDstPath(posixPath, {
           remotePath: "/private/dir/",
           relPath: "docs/api.md",
           fileName: "api.md",
@@ -94,7 +98,7 @@ describe("resolveUploadDstPath", () => {
 
     it("does not nest under baseName when it is '.' (cwd source)", () => {
       expect(
-        resolveUploadDstPath({
+        resolveUploadDstPath(posixPath, {
           remotePath: "/private",
           relPath: "readme.md",
           fileName: "readme.md",

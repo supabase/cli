@@ -1,21 +1,32 @@
+import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option } from "effect";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { Cause, Effect, Exit, FileSystem, Option, Path } from "effect";
 
 import { VALID_REF, useTempWorkdir, withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
 import { setupStorage } from "../../../../tests/helpers/storage.ts";
-import { StackStorageCapabilityError } from "../../../command-internal/stack-storage.ts";
+import {
+  StackStorageCapabilityError,
+  StackStorageUnavailableError,
+} from "../../../command-internal/stack-storage.ts";
+import { StorageGatewayStatusError } from "../../../command-internal/storage-gateway.errors.ts";
 import { storageLs } from "./ls.handler.ts";
 import type { StorageLsFlags } from "./ls.command.ts";
 
 const BUCKET = "/storage/v1/bucket";
 const LIST = (bucket: string) => `/storage/v1/object/list/${bucket}`;
 
-function writeAncestorConfig(root: string, toml: string): void {
-  const dir = join(root, "supabase");
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "config.toml"), toml);
+const writeAncestorConfig = Effect.fnUntraced(function* (root: string, toml: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const dir = path.join(root, "supabase");
+  yield* fs.makeDirectory(dir, { recursive: true });
+  yield* fs.writeFileString(path.join(dir, "config.toml"), toml);
+});
+
+function failureErrors<A, E>(exit: Exit.Exit<A, E>): ReadonlyArray<E> {
+  if (!Exit.isFailure(exit)) return [];
+  expect(exit.cause.reasons.every(Cause.isFailReason)).toBe(true);
+  return exit.cause.reasons.filter(Cause.isFailReason).map((reason) => reason.error);
 }
 
 function lsFlags(
@@ -167,7 +178,9 @@ describe("storage ls", () => {
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("URL must match pattern ss:///bucket/[prefix]");
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("URL must match pattern ss:///bucket/[prefix]");
+      }
       expect(requests).toHaveLength(0);
     });
   });
@@ -183,9 +196,11 @@ describe("storage ls", () => {
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
-      const json = JSON.stringify(exit);
-      expect(json).toContain("failed to parse storage url");
-      expect(json).toContain("missing protocol scheme");
+      if (Exit.isFailure(exit)) {
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("failed to parse storage url");
+        expect(causeText).toContain("missing protocol scheme");
+      }
     });
   });
 
@@ -198,7 +213,9 @@ describe("storage ls", () => {
     return Effect.gen(function* () {
       const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("Error status 503");
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("Error status 503");
+      }
     });
   });
 
@@ -258,9 +275,11 @@ describe("storage ls", () => {
         projectRef: Option.some(FLAG_REF),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain(
-        "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
-      );
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain(
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
+        );
+      }
       expect(requests).toHaveLength(0);
       expect(linkedCache.cached).toBe(false);
     });
@@ -329,20 +348,24 @@ describe("storage ls", () => {
   it.live(
     "fails with a missing-project error when --workdir names a config-less subdirectory of a real ancestor project",
     () => {
-      writeAncestorConfig(tmp.current, 'project_id = "test"\n[api]\nport = 65432\n');
-      const sub = join(tmp.current, "nested", "dir");
-      mkdirSync(sub, { recursive: true });
-      const { layer, requests } = setupStorage(sub, {
-        local: true,
-        explicitWorkdir: true,
-        routes: [{ method: "GET", match: BUCKET, body: [{ name: "test", id: "test" }] }],
-      });
       return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* writeAncestorConfig(tmp.current, 'project_id = "test"\n[api]\nport = 65432\n');
+        const sub = path.join(tmp.current, "nested", "dir");
+        yield* fs.makeDirectory(sub, { recursive: true });
+        const { layer, requests } = setupStorage(sub, {
+          local: true,
+          explicitWorkdir: true,
+          routes: [{ method: "GET", match: BUCKET, body: [{ name: "test", id: "test" }] }],
+        });
         const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(JSON.stringify(exit)).toContain("StorageMissingProjectConfigError");
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("StorageMissingProjectConfigError");
+        }
         expect(requests).toHaveLength(0);
-      });
+      }).pipe(Effect.provide(BunServices.layer));
     },
   );
 
@@ -352,14 +375,16 @@ describe("storage ls", () => {
       // The missing-project hard-fail is local-only: `resolveStorageCredentials` never reads
       // local config on the remote path, so a config-less workdir poses none of the risk the
       // local-target hard-fail guards against.
-      writeAncestorConfig(tmp.current, 'project_id = "test"\n[api]\nport = 65432\n');
-      const sub = join(tmp.current, "nested", "dir");
-      mkdirSync(sub, { recursive: true });
-      const { layer, requests } = setupStorage(sub, {
-        explicitWorkdir: true,
-        routes: [{ method: "GET", match: BUCKET, body: [{ name: "remote", id: "remote" }] }],
-      });
       return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* writeAncestorConfig(tmp.current, 'project_id = "test"\n[api]\nport = 65432\n');
+        const sub = path.join(tmp.current, "nested", "dir");
+        yield* fs.makeDirectory(sub, { recursive: true });
+        const { layer, requests } = setupStorage(sub, {
+          explicitWorkdir: true,
+          routes: [{ method: "GET", match: BUCKET, body: [{ name: "remote", id: "remote" }] }],
+        });
         const exit = yield* storageLs(lsFlags({ local: false })).pipe(
           Effect.provide(layer),
           Effect.exit,
@@ -368,7 +393,7 @@ describe("storage ls", () => {
         expect(requests.some((r) => r.url.startsWith(`https://${VALID_REF}.supabase.co`))).toBe(
           true,
         );
-      });
+      }).pipe(Effect.provide(BunServices.layer));
     },
   );
 
@@ -378,37 +403,45 @@ describe("storage ls", () => {
       // Confirms `missingProjectConfigMessageEffect`'s "Did you mean" hint isn't `config
       // diff`-specific — the full regression is pinned in config/diff/diff.integration.test.ts;
       // this only proves the shared helper reaches storage's message too.
-      writeAncestorConfig(tmp.current, 'project_id = "test"\n[api]\nport = 65432\n');
-      const sub = join(tmp.current, "nested", "dir");
-      mkdirSync(sub, { recursive: true });
-      const { layer, requests } = setupStorage(sub, {
-        local: true,
-        explicitWorkdir: true,
-      });
       return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* writeAncestorConfig(tmp.current, 'project_id = "test"\n[api]\nport = 65432\n');
+        const sub = path.join(tmp.current, "nested", "dir");
+        yield* fs.makeDirectory(sub, { recursive: true });
+        const { layer, requests } = setupStorage(sub, {
+          local: true,
+          explicitWorkdir: true,
+        });
         const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(JSON.stringify(exit)).toContain(`Did you mean --workdir ${tmp.current}?`);
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain(`Did you mean --workdir ${tmp.current}?`);
+        }
         expect(requests).toHaveLength(0);
-      });
+      }).pipe(Effect.provide(BunServices.layer));
     },
   );
 
   it.live(
     "an explicit --workdir naming a directory that does not exist at all fails before any config load",
     () => {
-      const missing = join(tmp.current, "does-not-exist");
-      const { layer, requests } = setupStorage(missing, {
-        local: true,
-        explicitWorkdir: true,
-      });
       return Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const missing = path.join(tmp.current, "does-not-exist");
+        const { layer, requests } = setupStorage(missing, {
+          local: true,
+          explicitWorkdir: true,
+        });
         const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(JSON.stringify(exit)).toContain("StorageWorkdirError");
-        expect(JSON.stringify(exit)).toContain("failed to change workdir: chdir");
+        if (Exit.isFailure(exit)) {
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("StorageWorkdirError");
+          expect(causeText).toContain("failed to change workdir: chdir");
+        }
         expect(requests).toHaveLength(0);
-      });
+      }).pipe(Effect.provide(BunServices.layer));
     },
   );
 });
@@ -476,9 +509,11 @@ describe("stack backend", () => {
       return Effect.gen(function* () {
         const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        const json = JSON.stringify(exit);
-        expect(json).toContain("StackStorageCapabilityError");
-        expect(json).toContain("-x storage");
+        const capability = failureErrors(exit).find(
+          (error) => error instanceof StackStorageCapabilityError,
+        );
+        expect(capability).toBeInstanceOf(StackStorageCapabilityError);
+        expect(capability?.suggestion).toContain("-x storage");
         expect(requests).toHaveLength(0);
       });
     },
@@ -496,9 +531,11 @@ describe("stack backend", () => {
       return Effect.gen(function* () {
         const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        const json = JSON.stringify(exit);
-        expect(json).toContain("StackStorageUnavailableError");
-        expect(json).toContain("supabase start");
+        const unavailable = failureErrors(exit).find(
+          (error) => error instanceof StackStorageUnavailableError,
+        );
+        expect(unavailable).toBeInstanceOf(StackStorageUnavailableError);
+        expect(unavailable?.suggestion).toContain("supabase start");
         expect(requests).toHaveLength(0);
       });
     },
@@ -514,9 +551,11 @@ describe("stack backend", () => {
     return Effect.gen(function* () {
       const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      const json = JSON.stringify(exit);
-      expect(json).toContain("StackStorageUnavailableError");
-      expect(json).toContain("supabase start");
+      const unavailable = failureErrors(exit).find(
+        (error) => error instanceof StackStorageUnavailableError,
+      );
+      expect(unavailable).toBeInstanceOf(StackStorageUnavailableError);
+      expect(unavailable?.suggestion).toContain("supabase start");
       expect(requests).toHaveLength(0);
     });
   });
@@ -533,7 +572,9 @@ describe("stack backend", () => {
       return Effect.gen(function* () {
         const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(JSON.stringify(exit)).toContain("StackStorageUnavailableError");
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("StackStorageUnavailableError");
+        }
         expect(requests).toHaveLength(0);
       });
     },
@@ -551,7 +592,9 @@ describe("stack backend", () => {
       return Effect.gen(function* () {
         const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(JSON.stringify(exit)).toContain("StackStorageUnavailableError");
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("StackStorageUnavailableError");
+        }
         expect(requests).toHaveLength(0);
       });
     },
@@ -567,7 +610,9 @@ describe("stack backend", () => {
     return Effect.gen(function* () {
       const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("StackStorageUnavailableError");
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("StackStorageUnavailableError");
+      }
       expect(requests).toHaveLength(0);
     });
   });
@@ -582,9 +627,11 @@ describe("stack backend", () => {
     return Effect.gen(function* () {
       const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      const json = JSON.stringify(exit);
-      expect(json).toContain("StackStorageCapabilityError");
-      expect(json).toContain("boom");
+      if (Exit.isFailure(exit)) {
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("StackStorageCapabilityError");
+        expect(causeText).toContain("boom");
+      }
     });
   });
 
@@ -615,7 +662,9 @@ describe("stack backend", () => {
       return Effect.gen(function* () {
         const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(JSON.stringify(exit)).toContain("StackStorageCapabilityError");
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("StackStorageCapabilityError");
+        }
       });
     },
   );
@@ -629,7 +678,9 @@ describe("stack backend", () => {
     return Effect.gen(function* () {
       const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("StorageGatewayStatusError");
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("StorageGatewayStatusError");
+      }
     });
   });
 
@@ -667,9 +718,9 @@ describe("stack backend", () => {
           Effect.exit,
         );
         expect(Exit.isFailure(exit)).toBe(true);
-        const json = JSON.stringify(exit);
-        expect(json).toContain("StorageGatewayStatusError");
-        expect(json).not.toContain("StackStorageCapabilityError");
+        const errors = failureErrors(exit);
+        expect(errors.some((error) => error instanceof StorageGatewayStatusError)).toBe(true);
+        expect(errors.some((error) => error instanceof StackStorageCapabilityError)).toBe(false);
         expect(stackCalls.findStack).toHaveLength(0);
       });
     },
@@ -708,10 +759,13 @@ describe("stack backend", () => {
     return Effect.gen(function* () {
       const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      const serialized = JSON.stringify(exit);
-      expect(serialized).toContain("supabase stack stop");
-      expect(serialized).toContain("supabase stack start without -x storage");
-      expect(serialized).not.toContain("supabase stack restart");
+      const capability = failureErrors(exit).find(
+        (error) => error instanceof StackStorageCapabilityError,
+      );
+      expect(capability).toBeInstanceOf(StackStorageCapabilityError);
+      expect(capability?.suggestion).toContain("supabase stack stop");
+      expect(capability?.suggestion).toContain("supabase stack start without -x storage");
+      expect(capability?.suggestion).not.toContain("supabase stack restart");
     });
   });
 
@@ -725,7 +779,11 @@ describe("stack backend", () => {
     return Effect.gen(function* () {
       const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("run supabase start once it has stopped");
+      const unavailable = failureErrors(exit).find(
+        (error) => error instanceof StackStorageUnavailableError,
+      );
+      expect(unavailable).toBeInstanceOf(StackStorageUnavailableError);
+      expect(unavailable?.suggestion).toContain("run supabase start once it has stopped");
     });
   });
 
@@ -741,11 +799,14 @@ describe("stack backend", () => {
       return Effect.gen(function* () {
         const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        const json = JSON.stringify(exit);
-        expect(json).toContain("StackStorageCapabilityError");
-        expect(json).toContain("HTTP 503");
-        expect(json).toContain("upstream down");
-        expect(json).not.toContain("activate");
+        const capability = failureErrors(exit).find(
+          (error) => error instanceof StackStorageCapabilityError,
+        );
+        expect(capability).toBeInstanceOf(StackStorageCapabilityError);
+        expect(capability?.message).toContain("HTTP 503");
+        expect(capability?.message).toContain("upstream down");
+        expect(capability?.message).not.toContain("activate");
+        expect(capability?.suggestion).not.toContain("activate");
       });
     },
   );
@@ -760,7 +821,11 @@ describe("stack backend", () => {
     return Effect.gen(function* () {
       const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("retry shortly");
+      const unavailable = failureErrors(exit).find(
+        (error) => error instanceof StackStorageUnavailableError,
+      );
+      expect(unavailable).toBeInstanceOf(StackStorageUnavailableError);
+      expect(unavailable?.suggestion).toContain("retry shortly");
     });
   });
 
