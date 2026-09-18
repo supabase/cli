@@ -99,7 +99,6 @@ export const DOCS_EXPERIMENTAL_OPTIONAL: ReadonlySet<string> = new Set([
  * suffix) but excluded from the published reference.
  */
 export const DOCS_EXCLUDED: ReadonlySet<string> = new Set([
-  "supabase-gen-keys",
   "supabase-inspect-db-cache-hit",
   "supabase-inspect-db-index-sizes",
   "supabase-inspect-db-index-usage",

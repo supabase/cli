@@ -4,9 +4,9 @@ Native Effect port. Diffs the local project's expected schema (a throwaway shado
 database) against a target database (local / linked / `--db-url`), using one of
 three native engines: bundled in-process pg-delta, migra (edge-runtime), or
 pgAdmin (CLI-1968 — a native `docker run` of the differ container, no
-edge-runtime involved). `--use-pg-schema` is the CLI's sole remaining Go
-delegation on this command — a documented keep-in-Go exception (CLI-1960), not a
-pending port.
+edge-runtime involved). `--use-pg-schema` is removed: the flag stays parsed
+(hidden) only so using it fails with an actionable removal error instead of an
+unknown-flag parse error — see "`--use-pg-schema` is removed" below.
 
 When `[experimental].stack` is on, the shadow is `EphemeralPostgres` under
 `$SUPABASE_HOME/managed/ephemeral-postgres/<identity>/` (`~/.supabase/managed/…` by default). Migra, pgAdmin, and `--use-pg-schema` are
@@ -130,7 +130,8 @@ migra/pg-delta-engine-specific).
 | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`  | success; empty diff ("No schema changes found")                                                                                                                                                                                              |
 | `1`  | `--from` without `--to`; engine-flag mutex; target mutex; unknown explicit target; connection/shadow/engine failure; file IO error; local db not running (`--use-pgadmin`); differ container non-zero exit; unparseable `--json-diff` output |
-| `1`  | `--project-ref` set with a resolved target other than linked; (in explicit mode) `--project-ref` with `--linked` unchanged and neither `--from` nor `--to` being `linked`; `--project-ref` combined with `--use-pg-schema` (see Notes)       |
+| `1`  | `--project-ref` set with a resolved target other than linked; (in explicit mode) `--project-ref` with `--linked` unchanged and neither `--from` nor `--to` being `linked`                                                                    |
+| `1`  | `--use-pg-schema` passed at all (any value, including `=false`) — removed, see Notes                                                                                                                                                         |
 
 ## Output
 
@@ -191,9 +192,10 @@ transaction metadata.
 
 ## Notes / Delegation
 
-- `--use-migra` (default), `--use-pgadmin`, `--use-pg-schema`, `--use-pg-delta` are a
-  mutually-exclusive engine group; `--db-url` / `--linked` / `--local` are a
-  mutually-exclusive target group (default `--local`).
+- `--use-migra` (default), `--use-pgadmin`, `--use-pg-delta` are a mutually-exclusive engine
+  group; `--db-url` / `--linked` / `--local` are a mutually-exclusive target group (default
+  `--local`). `--use-pg-schema` is removed and rejects before this group is even checked (see
+  Notes below), so it is never a live member of the group.
 - **`--project-ref`** (TS-only, no Go equivalent on any user-facing `db`
   command) overrides ONLY the linked-ref resolution `ProjectRefResolver`
   performs (flag > `SUPABASE_PROJECT_ID` > `.temp/project-ref`) — unlike
@@ -211,12 +213,8 @@ transaction metadata.
   (deliberately stricter than `SUPABASE_PROJECT_ID`, which Go's equivalent env
   var simply leaves unused on a non-linked target). `--use-pgadmin --linked`
   honors the flag like every other native engine (CLI-1968 — same target
-  resolve); `--use-pg-schema` rejects it up front, since the delegated Go child
-  never registered `--project-ref` and the flag would otherwise be silently
-  dropped.
-- `--use-pg-schema` rebuilds the argv and exec's the bundled Go binary (its side
-  effects are Go's); the Go child's telemetry is disabled so the single
-  `cli_command_executed` event comes from this TS command.
+  resolve); `--use-pg-schema` is removed and rejects before any target
+  resolution happens (see Notes below), so this guard never runs for it.
 - Explicit `--from`/`--to` mode always uses pg-delta and writes the flattened review
   representation to `--output` (or stdout). It ignores `--file`; normal mode retains
   per-unit migration files for the CLI apply paths.
@@ -289,39 +287,13 @@ reachable. Reaching both databases requires `--network-id host` **plus** a `[db]
 5432` config override — a contrived setup no default user runs. Once both are reachable, this
 port reports the real diff.
 
-### `--use-pg-schema` is deprecated (CLI-1960) — keep-in-Go exception
+### `--use-pg-schema` is removed
 
-`--use-pg-schema` wraps the in-process Go library `stripe/pg-schema-diff`
-(`apps/cli-go/internal/db/diff/pgschema.go`). It is a keep-in-Go exception rather
-than a pending port because:
+The flag is removed: passing it (with any value, including `--use-pg-schema=false`)
+fails with a removal error and a suggestion to use the default migra engine or
+`--use-pg-delta` instead. It is checked before any other engine-conflict or
+target resolution, so combining it with another engine flag (e.g. `--use-pgadmin`)
+still hits the removal error first, not the mutex error.
 
-- it runs **in-process** inside the Go binary, with no container/binary boundary
-  to re-invoke from TS — unlike `--use-pgadmin` (now native, CLI-1968), which shelled
-  out to a container/binary path that could in principle be called from TS;
-- no TS binding and no WASM build of the library exists, or is reasonably
-  buildable, within the M9 "Final Cleanup — Go Removal" milestone's scope;
-- this specific exception (`db diff --use-pg-schema`) was pre-named when the M9
-  milestone was scoped.
-
-The decision record is Linear issue CLI-1960 and the pull request that introduced
-this deprecation notice; re-open only if a TS/WASM binding for
-`stripe/pg-schema-diff` ships. It **is** the CLI's sole remaining Go delegation on
-`db diff` now that `--use-pgadmin`'s delegation is gone (CLI-1968) — the sibling
-`db __db-bootstrap` seam was already removed outright by CLI-1955, and the
-`db __shadow` seam by CLI-1956.
-
-Given that, the flag is now deprecated rather than ported:
-
-- A TS-only stderr deprecation warning is printed immediately before delegating
-  (both text and machine `--output-format` modes — diagnostics stay stderr-only,
-  the CLI-1546 rule): `"--use-pg-schema" is deprecated. Use the pg-delta engine ([experimental.pgdelta] enabled = true / --use-pg-delta) or the default migra engine instead.`
-  The warning text intentionally does not promise a removal timeline.
-- This is **additive** to (printed before) Go's own pre-existing "experimental"
-  warning (`cmd/db.go:121`, unchanged): `--use-pg-schema flag is experimental and may not include all entities, such as views and grants.` The delegated child
-  still prints its own warning; the TS wrapper does not suppress or replace it.
-- `--help` for the flag now also carries a `Deprecated: …` suffix pointing at the
-  same migration path.
-- Actual flag removal and any PostHog usage-telemetry gate for that removal are
-  explicitly out of scope for CLI-1960 — this is a documentation/deprecation-notice
-  change only, tracked as a follow-up decision outside this milestone, with no
-  owning issue yet.
+The flag definition itself stays in `diff.command.ts` (hidden from `--help`) only
+so misuse produces this actionable error instead of an unknown-flag parse error.

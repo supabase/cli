@@ -1,6 +1,9 @@
 import { Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
-import { genKeys } from "./keys.handler.ts";
+import { removedCommand } from "../../../command-internal/removed-command.ts";
+import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
+import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts";
 
 const config = {
   projectRef: Flag.string("project-ref").pipe(
@@ -13,12 +16,14 @@ const config = {
   ),
 } as const;
 
-export type GenKeysFlags = CliCommand.Command.Config.Infer<typeof config>;
-
 export const genKeysCommand = Command.make("keys", config).pipe(
-  Command.withDescription(
-    'Generate keys for preview branch. Deprecated: use "gen signing-key" instead.',
+  Command.withDescription("Removed: use `supabase projects api-keys --project-ref <ref>` instead."),
+  Command.withShortDescription("Removed: use `projects api-keys` instead"),
+  Command.withHandler(() =>
+    removedCommand(
+      "Use `supabase projects api-keys --project-ref <ref>` to read a project's API keys.",
+    ).pipe(withCommandTelemetry(), withJsonErrorHandling),
   ),
-  Command.withShortDescription("Generate keys for preview branch (experimental)"),
-  Command.withHandler((flags) => genKeys(flags)),
+  Command.provide(commandRuntimeLayer(["gen", "keys"])),
+  Command.provide(telemetryStateLayer),
 );

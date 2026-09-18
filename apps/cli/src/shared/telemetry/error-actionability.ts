@@ -113,6 +113,8 @@ const CLI_ERROR_FINGERPRINT_SUFFIXES = [
   "port_conflict",
   "query",
   "registry_pull",
+  "removed_command",
+  "removed_flag",
   "replication_slots_active",
   "replication_slots_query",
   "request_encoding",
@@ -366,6 +368,13 @@ export const actionability = {
     has_suggestion: true,
     suggestion_type: CliSuggestionType.RunCommand,
     suggested_command: "supabase seed buckets",
+  },
+  /** A removed command path or flag; the suggestion is free-form replacement guidance. */
+  removedSurface: {
+    error_kind: CliErrorKind.UserActionable,
+    error_category: CliErrorCategory.InvalidInput,
+    has_suggestion: true,
+    suggestion_type: CliSuggestionType.RunCommand,
   },
   externalNetwork: {
     error_kind: CliErrorKind.ExternalService,

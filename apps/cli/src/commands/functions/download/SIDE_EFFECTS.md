@@ -42,17 +42,9 @@
 | `docker pull <candidate>`                                                                                                                                  | Docker-unbundle path, cache miss on a candidate | pull with 2 retries (4s/8s backoff) before falling through to the next registry candidate                                                                                                                         |
 | `docker network inspect` / `network create` / `volume create`                                                                                              | Docker-unbundle path, when Docker is running    | ensure the shared per-project network/named volume exist (same primitives as `functions deploy`'s Docker bundler); the Deno-cache volume is `supabase_edge_runtime_<project_id>` (mounted at `/root/.cache/deno`) |
 | `docker run --rm ... --label com.supabase.cli.project=<id> --label com.docker.compose.project=<id> <edge-runtime image> unbundle --eszip ... --output ...` | Docker-unbundle path                            | extract the downloaded eszip into `supabase/functions/<slug>/...`; labeled so orphaned containers can be associated with the project                                                                              |
-| `supabase-go functions download ... --legacy-bundle`                                                                                                       | `--legacy-bundle` only                          | preserve the hidden, deprecated pre-1.120.0 bundling fallback (native TS port tracked separately, CLI-1963)                                                                                                       |
 
-The `--legacy-bundle` delegated call runs with `SUPABASE_TELEMETRY_DISABLED=1`
-so the Go child's own `cli_command_executed` doesn't double-count on top of
-this command's own telemetry (mirrors `db pull`/`db diff`'s delegated-call
-pattern). In `--output-format json|stream-json`, the child's stdout is
-captured and discarded instead of inherited (`GoProxy.execCapture`) —
-the raw text never reaches the terminal, and this command emits the `Output`
-envelope itself once the child exits successfully. The Docker-unbundle path's
-own container stdout is routed the same way: to the real stdout in text mode,
-to stderr in machine-output modes (CLI-1546).
+The Docker-unbundle path's own container stdout is routed to the real stdout
+in text mode, to stderr in machine-output modes (CLI-1546).
 
 ## Environment Variables
 
@@ -73,20 +65,21 @@ to stderr in machine-output modes (CLI-1546).
 
 ## Exit Codes
 
-| Code | Condition                                                              |
-| ---- | ---------------------------------------------------------------------- |
-| `0`  | success                                                                |
-| `1`  | API error (non-2xx response)                                           |
-| `1`  | authentication error (no token found)                                  |
-| `1`  | network / connection failure                                           |
-| `1`  | invalid function slug or flag conflict                                 |
-| `1`  | Docker-unbundle container exited non-zero (suggests `--legacy-bundle`) |
+| Code | Condition                                                                                                         |
+| ---- | ----------------------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                                           |
+| `1`  | API error (non-2xx response)                                                                                      |
+| `1`  | authentication error (no token found)                                                                             |
+| `1`  | network / connection failure                                                                                      |
+| `1`  | invalid function slug or flag conflict                                                                            |
+| `1`  | Docker-unbundle container exited non-zero (suggests retrying with `--use-api`, or redeploying if that also fails) |
+| `1`  | `--legacy-bundle` passed at all (any value, including `=false`) — removed, see Notes                              |
 
 ## Telemetry Events Fired
 
-| Event                  | When                                       | Notable properties / groups                                                                                                                                                                                                                          |
-| ---------------------- | ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`project-ref` recorded verbatim, matching `functions list`/`delete`; `use-api`/`use-docker`/`legacy-bundle` also recorded verbatim since they are boolean flags; no flag on this command is currently redacted) |
+| Event                  | When                                       | Notable properties / groups                                                                                                                                                                                                                                                                                                                                         |
+| ---------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`project-ref` recorded verbatim, matching `functions list`/`delete`; `use-api`/`use-docker`/`legacy-bundle` also recorded verbatim since they are boolean flags; no flag on this command is currently redacted); a rejected `--legacy-bundle` fails with `error_fingerprint` ending in `:removed_flag` (`RemovedSurfaceError`) |
 
 ## Output
 
@@ -95,19 +88,17 @@ to stderr in machine-output modes (CLI-1546).
 Prints progress and success messages as functions are downloaded. The Docker-unbundle path prints
 `Downloading function: <slug>` (lowercase "function", unlike the `--use-api` path's "Downloading
 Function:") and does **not** print a final "Downloaded Function ... from project ..." line — that
-line only appears on the `--use-api` and `--legacy-bundle` paths.
+line only appears on the `--use-api` path.
 
 ### `--output-format json`
 
 Prints a structured success result with the downloaded function slugs and project ref. On the
-`--legacy-bundle` proxy path, the Go child's stdout is captured/discarded (never inherited) so it
-can't corrupt the envelope; the slug list is resolved independently for the payload. On the
 Docker-unbundle path, the `unbundle` container's own stdout is routed to stderr instead of stdout
-for the same reason.
+so it can't corrupt the envelope.
 
 ### `--output-format stream-json`
 
-Same envelope as `json` above (including on the proxy and Docker-unbundle paths).
+Same envelope as `json` above (including on the Docker-unbundle path).
 
 ## Notes
 
@@ -120,11 +111,8 @@ Same envelope as `json` above (including on the proxy and Docker-unbundle paths)
   gap, not one introduced by this port. Slugs sourced from the Management API's function
   list (downloading-all) are validated against the same pattern as user-supplied slugs, on both
   paths, before any per-slug download runs (CLI-1891).
-- `--legacy-bundle` is a hidden flag forwarded to the Go binary for backward compatibility — it
-  requires installing a real Deno binary on the host (`InstallOrUpgradeDeno`) and is a pre-1.120.0
-  compatibility fallback; native TS port tracked separately (CLI-1963). `--use-docker` is a hidden
-  flag but now runs natively.
-- `--use-docker`, `--use-api`, and `--legacy-bundle` are mutually exclusive.
+- `--use-docker` is a hidden flag but runs natively.
+- `--use-docker` and `--use-api` are mutually exclusive.
 - `--use-docker` defaults to `true`, so a bare `supabase functions download` runs the
   native Docker-unbundle downloader unless `--use-api` resolves to `true`, which forces the native
   server-side download path instead (the resolved flag value is what's checked, not presence —
@@ -134,7 +122,32 @@ Same envelope as `json` above (including on the proxy and Docker-unbundle paths)
   installed or running.
 - The mutual-exclusivity check only counts flags the user explicitly passed on the command line,
   not `--use-docker`'s default value — so `--use-api` alone never trips the "mutually exclusive"
-  error. The `--legacy-bundle` Go proxy call itself only ever forwards `--legacy-bundle`, never
-  `--use-docker` alongside it, even though `--use-docker` defaults to `true`.
+  error.
 - Refreshes the linked-project telemetry cache and flushes telemetry state after resolving a
   project ref.
+
+### `--legacy-bundle` is removed
+
+The flag is removed: passing it (with any value, including `--legacy-bundle=false`) fails
+with a removal error before any download, Docker, or API work runs. The suggestion reads:
+
+```
+Retry with `supabase functions download --use-api <slug>` to unbundle server-side without Docker.
+```
+
+It is checked before `--use-api`/`--use-docker` mutual-exclusivity validation, so combining
+it with either still hits the removal error first.
+
+The flag definition itself stays in `download.command.ts` (hidden from `--help`) only so
+misuse produces this actionable error, with `error_fingerprint` ending in `:removed_flag`
+(`RemovedSurfaceError`), instead of an unknown-flag parse error with no telemetry at all.
+
+### Docker-extraction failure suggestion
+
+Any Docker-unbundle failure (network/volume creation, container create/start, log
+streaming, or a non-zero container exit) prints a suggestion leading with the
+Docker-avoiding retry:
+
+```
+Retry with supabase functions download --use-api <slug> to unbundle server-side. If that also fails and the Function was deployed with a CLI older than 1.120.0, redeploy it with the current CLI.
+```

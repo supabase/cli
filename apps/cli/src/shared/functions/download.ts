@@ -31,7 +31,7 @@ import {
 import { loadFunctionsCliConfig, type FunctionsGoConfigCompat } from "./functions-config.ts";
 import {
   edgeRuntimeImage,
-  FUNCTIONS_BUNDLER_MUTEX_GROUP,
+  FUNCTIONS_DOWNLOAD_BUNDLER_MUTEX_GROUP,
   invalidFunctionSlugDetail,
   validateFunctionSlugMessage,
 } from "./functions.shared.ts";
@@ -55,7 +55,6 @@ export interface DownloadFunctionsOptions {
   readonly projectRef: Option.Option<string>;
   readonly useApi: boolean;
   readonly useDocker: boolean;
-  readonly legacyBundle: boolean;
 }
 
 export interface DownloadFunctionsResult {
@@ -81,9 +80,8 @@ interface DownloadDockerRuntimeDependencies extends DownloadRuntimeDependencies 
    */
   readonly styleEmphasis?: (text: string) => string;
   /**
-   * Optional shell-specific styling hook for the `--legacy-bundle` command
-   * suggested inside {@link suggestLegacyBundle} — same isolation rationale
-   * as {@link styleEmphasis}.
+   * Optional shell-specific styling hook for the command suggested inside
+   * {@link suggestUseApiRetry} — same isolation rationale as {@link styleEmphasis}.
    */
   readonly styleAqua?: (text: string) => string;
   /**
@@ -110,40 +108,11 @@ interface EdgeRuntimeImageDependencies {
   readonly edgeRuntimeVersion: string;
 }
 
-export interface DownloadFunctionsDependencies<
-  ResolveError,
-  ResolveRequirements,
-  ProxyError,
-  ProxyRequirements,
->
+export interface DownloadFunctionsDependencies<ResolveError, ResolveRequirements>
   extends DownloadDockerRuntimeDependencies, EdgeRuntimeImageDependencies {
   readonly resolveProjectRef: (
     projectRef: Option.Option<string>,
   ) => Effect.Effect<string, ResolveError, ResolveRequirements>;
-  /**
-   * `true` whenever `output.format !== "text"`: the child's raw stdout must
-   * not reach the terminal (it would corrupt the JSON/NDJSON envelope), so
-   * the dependency must capture/discard it instead of inheriting stdio.
-   */
-  readonly proxyDownload: (
-    flags: DownloadFunctionsOptions,
-    projectRef: string,
-    captureOutput: boolean,
-  ) => Effect.Effect<void, ProxyError, ProxyRequirements>;
-}
-
-// `--legacy-bundle` is the only case `downloadFunctions()` still delegates
-// to the Go binary; `functionName` is the one remaining input to forward.
-export function makeGoProxyLegacyBundleArgs(
-  functionName: Option.Option<string>,
-  projectRef: string,
-): ReadonlyArray<string> {
-  const args: string[] = ["functions", "download"];
-  if (Option.isSome(functionName)) {
-    args.push(functionName.value);
-  }
-  args.push("--project-ref", projectRef, "--legacy-bundle");
-  return args;
 }
 
 interface DownloadMetadata {
@@ -217,16 +186,16 @@ function validateDownloadFlags(
   const changed = [
     hasExplicitLongFlag(rawArgs, downloadCommandPath, "use-api") ? "use-api" : undefined,
     hasExplicitLongFlag(rawArgs, downloadCommandPath, "use-docker") ? "use-docker" : undefined,
-    hasExplicitLongFlag(rawArgs, downloadCommandPath, "legacy-bundle")
-      ? "legacy-bundle"
-      : undefined,
   ].filter((flag): flag is string => flag !== undefined);
 
   return changed.length <= 1
     ? Effect.void
     : Effect.fail(
         new ConflictingFunctionDownloadFlagsError({
-          message: cobraMutuallyExclusiveErrorMessage(FUNCTIONS_BUNDLER_MUTEX_GROUP, changed),
+          message: cobraMutuallyExclusiveErrorMessage(
+            FUNCTIONS_DOWNLOAD_BUNDLER_MUTEX_GROUP,
+            changed,
+          ),
         }),
       );
 }
@@ -834,14 +803,12 @@ const downloadEszipBody = Effect.fnUntraced(function* (
   );
 });
 
-function suggestLegacyBundle(
+function suggestUseApiRetry(
   slug: string,
   styleAqua: (text: string) => string = (text) => text,
 ): string {
-  // Preserves the established "trying running" wording (not a typo) and
-  // leading newline; `styleAqua` wraps only the suggested command, not the
-  // whole sentence.
-  return `\nIf your function is deployed using CLI < 1.120.0, trying running ${styleAqua(`supabase functions download --legacy-bundle ${slug}`)} instead.`;
+  // Preserves the established leading newline.
+  return `\nRetry with ${styleAqua(`supabase functions download --use-api ${slug}`)} to unbundle server-side. If that also fails and the Function was deployed with a CLI older than 1.120.0, redeploy it with the current CLI.`;
 }
 
 function suggestDenoV2(styleEmphasis: (text: string) => string = (text) => text): string {
@@ -860,7 +827,7 @@ function suggestDenoV2(styleEmphasis: (text: string) => string = (text) => text)
 function withLegacyBundleSuggestion(slug: string, styleAqua?: (text: string) => string) {
   return (cause: unknown): Error =>
     Object.assign(new Error(describeContainerCliFailure(cause)), {
-      suggestion: suggestLegacyBundle(slug, styleAqua),
+      suggestion: suggestUseApiRetry(slug, styleAqua),
     });
 }
 
@@ -873,7 +840,7 @@ function withLegacyBundleSuggestion(slug: string, styleAqua?: (text: string) => 
 function withDockerStepFailure(step: string, slug: string, styleAqua?: (text: string) => string) {
   return (cause: unknown): Error =>
     Object.assign(new Error(`${step}: ${describeContainerCliFailure(cause)}`), {
-      suggestion: suggestLegacyBundle(slug, styleAqua),
+      suggestion: suggestUseApiRetry(slug, styleAqua),
     });
 }
 
@@ -1048,7 +1015,7 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
           .split(/\r?\n/)
           .some((line) => line.trim().toLowerCase() === "invalid eszip v2");
       const suggestion =
-        (invalidEszipV2 ? suggestDenoV2(styleEmphasis) : "") + suggestLegacyBundle(slug, styleAqua);
+        (invalidEszipV2 ? suggestDenoV2(styleEmphasis) : "") + suggestUseApiRetry(slug, styleAqua);
       return yield* Effect.fail(
         Object.assign(new Error(`error running container: exit ${result.exitCode}`), {
           suggestion,
@@ -1150,14 +1117,9 @@ function attachDownloadWrittenSoFar<E extends object>(
     : Object.assign(error, { writtenSoFar: [...downloadedSoFar] });
 }
 
-export function downloadFunctions<ResolveError, ResolveRequirements, ProxyError, ProxyRequirements>(
+export function downloadFunctions<ResolveError, ResolveRequirements>(
   flags: DownloadFunctionsOptions,
-  dependencies: DownloadFunctionsDependencies<
-    ResolveError,
-    ResolveRequirements,
-    ProxyError,
-    ProxyRequirements
-  >,
+  dependencies: DownloadFunctionsDependencies<ResolveError, ResolveRequirements>,
 ) {
   return Effect.gen(function* () {
     const output = yield* Output;
@@ -1166,52 +1128,6 @@ export function downloadFunctions<ResolveError, ResolveRequirements, ProxyError,
 
     if (Option.isSome(flags.functionName)) {
       yield* validateSlug(flags.functionName.value);
-    }
-
-    // `--legacy-bundle` still delegates to the Go binary: it requires
-    // installing/upgrading a Deno binary on the host and shelling out to an
-    // embedded Deno script, with no other precedent in this codebase.
-    // `--use-docker` (default `true`) runs natively below and falls through
-    // to the same server-side downloader when Docker isn't running.
-    if (flags.legacyBundle) {
-      const projectRef = yield* dependencies.resolveProjectRef(flags.projectRef);
-
-      if (output.format === "text") {
-        yield* dependencies.proxyDownload(flags, projectRef, false);
-        // The slug list is never resolved in text mode here, so this result
-        // is not meaningful — callers never read it (the orchestrator never
-        // sets `legacyBundle: true`).
-        return { projectRef, slugs: [], empty: false };
-      }
-
-      // Resolved before delegating: this list is purely for the JSON
-      // payload (the delegated child's own stdout is captured/discarded, not
-      // inherited, since it never emits the `Output` envelope). Resolving it
-      // first means a transient listing failure is reported before any
-      // download side effect, rather than masking an already-successful
-      // delegated download with an unrelated listing failure after the fact.
-      const slugs = Option.isSome(flags.functionName)
-        ? [flags.functionName.value]
-        : yield* listRemoteFunctionSlugs(dependencies.api, projectRef);
-
-      // Mirrors the native path's empty-project short-circuit below: an
-      // empty project has nothing to delegate, so this reports "No functions
-      // found." instead of invoking the Go child unnecessarily.
-      if (slugs.length === 0) {
-        yield* output.success("No functions found.", {
-          function_slugs: [],
-          project_ref: projectRef,
-        });
-        return { projectRef, slugs: [], empty: true };
-      }
-
-      yield* dependencies.proxyDownload(flags, projectRef, true);
-
-      yield* output.success("Downloaded Edge Function source.", {
-        function_slugs: slugs,
-        project_ref: projectRef,
-      });
-      return { projectRef, slugs, empty: false };
     }
 
     const projectRef = yield* dependencies.resolveProjectRef(flags.projectRef);
@@ -1252,9 +1168,9 @@ export function downloadFunctions<ResolveError, ResolveRequirements, ProxyError,
     }
 
     // Resolved once for the whole invocation, not once per slug — see
-    // `PulledEdgeRuntimeImage`'s own doc comment. The `--legacy-bundle`
-    // suggestion on a resolve failure uses the first slug as a
-    // representative example, since none is "the" one being processed yet.
+    // `PulledEdgeRuntimeImage`'s own doc comment. The redeploy suggestion on
+    // a resolve failure uses the first slug as a representative example,
+    // since none is "the" one being processed yet.
     const styleAqua = dependencies.styleAqua ?? ((text: string) => text);
     const pulledEdgeRuntimeImage: PulledEdgeRuntimeImage | undefined =
       edgeRuntimeImage === undefined

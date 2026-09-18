@@ -6,7 +6,7 @@ import {
   DnsResolverFlag,
   NetworkIdFlag,
 } from "../../../command-internal/global-flags.ts";
-import { GoProxy } from "../../../command-internal/go-proxy.service.ts";
+import { removedFlag } from "../../../command-internal/removed-command.ts";
 import { detectGitBranch } from "../../../shared/git/git-branch.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
@@ -24,7 +24,6 @@ import { getHostname } from "../../../command-internal/hostname.ts";
 import { makeDir } from "../../../command-internal/make-dir.ts";
 import type { PgConnInput } from "../../../command-internal/db-connection.service.ts";
 import { toPostgresURL } from "../../../command-internal/postgres-url.ts";
-import { schemaToCsvField } from "../../../command-internal/schema-flags.ts";
 import { findDropStatements } from "../../../command-internal/sql-split.ts";
 import { buildLocalDbContainerInputs } from "../../../command-internal/db-bootstrap/local-container-inputs.ts";
 import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
@@ -89,12 +88,6 @@ import { diffSchemaPgAdmin } from "./pgadmin-diff.ts";
 const warnDiff = `WARNING: The diff tool is not foolproof, so you may need to manually rearrange and modify the generated migration.
 Run ${aqua("supabase db reset")} to verify that the new migration does not generate errors.`;
 
-// `--use-pg-schema` delegates to the bundled Go binary's in-process `stripe/pg-schema-diff`
-// library, which has no TS/container equivalent (see SIDE_EFFECTS.md); the flag is deprecated in
-// favor of the pg-delta engine. This warning prints before the delegated child's own unchanged
-// "experimental" warning.
-const warnPgSchemaDeprecated = `${yellow("WARNING:")} "--use-pg-schema" is deprecated. Use the pg-delta engine ([experimental.pgdelta] enabled = true / --use-pg-delta) or the default migra engine instead.`;
-
 const declarativeBaselineAdvisory = (declarativePath: string | null) => ({
   code: "DeclarativeSchemaNotUsedAsDiffBaseline",
   severity: "info",
@@ -109,35 +102,13 @@ const declarativeBaselineAdvisory = (declarativePath: string | null) => ({
 const declarativeBaselineNote = (displayPath: string) =>
   `Note: db diff -f uses supabase/migrations as its baseline. Declarative schema files in ${displayPath} are not part of that baseline. If migrations are empty or outdated, the generated migration may include existing declarative objects. -f names the migration; it does not filter objects.\n`;
 
-/**
- * Rebuilds the `db diff` argv for the `--use-pg-schema` delegate path — the CLI's sole remaining
- * Go delegation on this command, since the in-process `stripe/pg-schema-diff` library has no
- * TS/container equivalent. The explicit `--from`/`--to` and engine mutex are already handled
- * before this runs, so it just forwards `--use-pg-schema` plus the target/schema/file flags.
- */
-const rebuildPgSchemaDelegateArgs = (flags: DbDiffFlags): Array<string> => {
-  const args = ["db", "diff", "--use-pg-schema"];
-  const pushTarget = (name: string, value: Option.Option<boolean>) => {
-    // The child binary treats an explicitly passed `--flag=false` as selecting that target, so
-    // forward every explicitly set flag, not just the true ones.
-    if (Option.isSome(value)) args.push(value.value ? `--${name}` : `--${name}=false`);
-  };
-  if (Option.isSome(flags.dbUrl)) args.push("--db-url", flags.dbUrl.value);
-  pushTarget("linked", flags.linked);
-  pushTarget("local", flags.local);
-  if (Option.isSome(flags.file)) args.push("--file", flags.file.value);
-  if (Option.isSome(flags.output)) args.push("--output", flags.output.value);
-  // Re-encoded as a CSV field so the child's pflag CSV parser doesn't re-split a
-  // comma-containing schema (e.g. "tenant,one").
-  for (const s of flags.schema) args.push("--schema", schemaToCsvField(s));
-  return args;
-};
-
 export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
+  if (Option.isSome(flags.usePgSchema)) {
+    return yield* removedFlag("--use-pg-schema", "Use the default migra engine or --use-pg-delta.");
+  }
   const output = yield* Output;
   const resolver = yield* DbConfigResolver;
   const pgDelta = yield* PgDeltaEngine;
-  const proxy = yield* GoProxy;
   const cliSettings = yield* CommandSettings;
   const telemetryState = yield* TelemetryState;
   const linkedProjectCache = yield* LinkedProjectCache;
@@ -153,18 +124,18 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
   let linkedRefForCache: string | undefined;
 
   yield* Effect.gen(function* () {
-    // The engine flags (`use-migra use-pgadmin use-pg-schema use-pg-delta`) and the target flags
+    // The engine flags (`use-migra use-pgadmin use-pg-delta`) and the target flags
     // (`db-url linked local`) are each mutually exclusive groups; "set" means the flag was
-    // explicitly passed (`Option.isSome`).
+    // explicitly passed (`Option.isSome`). `use-pg-schema` is rejected unconditionally above,
+    // so it never reaches `engineSet`.
     const engineSet: Array<string> = [];
     if (Option.isSome(flags.useMigra)) engineSet.push("use-migra");
     if (Option.isSome(flags.usePgAdmin)) engineSet.push("use-pgadmin");
-    if (Option.isSome(flags.usePgSchema)) engineSet.push("use-pg-schema");
     if (Option.isSome(flags.usePgDelta)) engineSet.push("use-pg-delta");
     if (engineSet.length > 1) {
       return yield* Effect.fail(
         new DbDiffEngineConflictError({
-          message: `if any flags in the group [use-migra use-pgadmin use-pg-schema use-pg-delta] are set none of the others can be; [${[...engineSet].sort().join(" ")}] were all set`,
+          message: `if any flags in the group [use-migra use-pgadmin use-pg-delta] are set none of the others can be; [${[...engineSet].sort().join(" ")}] were all set`,
         }),
       );
     }
@@ -194,7 +165,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
 
     // Config is read lazily per path, not unconditionally up front: reading the base config
     // before the ref is known would validate fields a `[remotes.<ref>]` block overrides, which
-    // would fail a linked diff that should succeed. The delegate paths load config themselves.
+    // would fail a linked diff that should succeed. Explicit mode loads its own config below.
 
     // Explicit `--from`/`--to` mode: both required, always pg-delta. An empty value
     // (a shell var expanding to `""`) counts as unset — `--from "" --to ""` falls
@@ -416,48 +387,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
       return;
     }
 
-    // `--use-pg-schema` is an explicit engine selection that doesn't depend on config, so it
-    // short-circuits before the target resolve (disabling the child's telemetry so only this
-    // command's instrumentation fires). `--use-pgadmin` doesn't short-circuit: it needs the same
-    // config validation and target resolve as the other native engines, further down.
     const usePgAdmin = Option.getOrElse(flags.usePgAdmin, () => false);
-    const usePgSchema = Option.getOrElse(flags.usePgSchema, () => false);
-    // The pg-schema engine delegates to the bundled Go binary, whose `db diff` never registered
-    // `--project-ref`, so forwarding it would silently drop the flag and diff the workdir's own
-    // linked ref instead. Fail up front rather than risk the wrong project.
-    if (usePgSchema && Option.isSome(flags.projectRef)) {
-      return yield* Effect.fail(
-        new DbDiffTargetFlagsError({
-          message: "--project-ref is not supported with --use-pg-schema",
-        }),
-      );
-    }
-    if (usePgSchema) {
-      // TS-only deprecation notice, printed before delegating (diagnostics stay stderr-only in
-      // every mode). The delegated Go `db diff --use-pg-schema` still prints its own
-      // experimental warning; this is additive, not a replacement, so don't drop it.
-      yield* output.raw(`${warnPgSchemaDeprecated}\n`, "stderr");
-      const env = { SUPABASE_TELEMETRY_DISABLED: "1" };
-      // In machine-output mode the child's stdout is captured and re-emitted as a structured
-      // envelope, so scripted callers get valid JSON instead of the raw SQL. The delegated
-      // child owns any `--file` write, so the written path isn't introspectable here (`file:
-      // null`).
-      if (output.format !== "text") {
-        const captured = yield* proxy.execCapture(rebuildPgSchemaDelegateArgs(flags), {
-          env,
-          suppressChildTelemetry: true,
-        });
-        yield* output.success("Diff complete.", {
-          diff: captured,
-          file: null,
-          schemas: flags.schema,
-          engine: "pg-schema",
-        });
-        return;
-      }
-      yield* proxy.exec(rebuildPgSchemaDelegateArgs(flags), { env, suppressChildTelemetry: true });
-      return;
-    }
 
     // Native path: resolve the target, provision a live shadow source, then diff.
     const connType: DbConnType = Option.isSome(flags.dbUrl)
@@ -551,7 +481,6 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
     const useDelta = resolveDiffEngine({
       useMigraChanged: Option.isSome(flags.useMigra),
       usePgAdmin,
-      usePgSchema,
       pgDeltaDefault,
     });
     // pg-delta ignores schema_paths when building its migrations baseline.
