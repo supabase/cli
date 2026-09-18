@@ -235,6 +235,18 @@ describe("COMPUTE_RUNTIME_EXCLUSIONS", () => {
     }),
   );
 
+  it.effect("keeps version-control metadata out of a worktree checkout too", () =>
+    Effect.sync(() => {
+      for (const runtime of COMPUTE_RUNTIMES) {
+        const matcher = compile(COMPUTE_RUNTIME_EXCLUSIONS[runtime]);
+
+        expect(matcher.excludes(".git", true)).toBe(true);
+        // A worktree or submodule has `.git` as a file holding the real gitdir path.
+        expect(matcher.excludes(".git", false)).toBe(true);
+      }
+    }),
+  );
+
   it.effect("drops the node runtime's installed tree", () =>
     Effect.sync(() => {
       const matcher = compile(COMPUTE_RUNTIME_EXCLUSIONS.node);
