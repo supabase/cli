@@ -57,8 +57,6 @@
     "!apps/cli/src/command-internal/stack-config.ts",
     "!apps/cli/src/command-internal/stack-local-database.ts",
     "!apps/cli/src/command-internal/stack-shadow.ts",
-    "!apps/cli/src/command-internal/stack-storage.ts",
-    "apps/cli/src/commands/sso/sso.saml.ts",
-    "apps/cli/src/commands/sso/update/update.handler.ts"
+    "!apps/cli/src/command-internal/stack-storage.ts"
   ]
 }

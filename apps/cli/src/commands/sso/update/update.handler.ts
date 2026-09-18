@@ -346,18 +346,15 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
         );
         const contentType = response.headers["content-type"] ?? "";
         if (response.status === 200 && contentType.includes("json")) {
-          let parsed: unknown;
-          try {
-            parsed = JSON.parse(rawBody);
-          } catch (cause) {
-            yield* fetching?.fail() ?? Effect.void;
-            return yield* Effect.fail(
+          const parsed = yield* Effect.try({
+            // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- Native parser errors are CLI output; schema decoding discards their messages.
+            try: (): unknown => JSON.parse(rawBody),
+            catch: (cause) =>
               new SsoUpdateNetworkError({
                 message: `failed to get sso provider: ${cause instanceof Error ? cause.message : String(cause)}`,
                 decode: true,
               }),
-            );
-          }
+          }).pipe(Effect.tapError(() => fetching?.fail() ?? Effect.void));
           return { domains: extractDomainItems(parsed) };
         }
         // A 200 without a JSON content type falls into this branch too.

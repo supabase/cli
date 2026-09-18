@@ -185,6 +185,7 @@ describe("sso list integration", () => {
             ),
           }),
         ),
+        { onExcessProperty: "preserve" },
       )(out.stdoutText);
       expect(out.stdoutText).toContain("0b0d48f6-878b-4190-88d7-2ca33ed800bc");
       expect(out.stdoutText).not.toContain("8682fcf4-4056-455c-bd93-f33295604929");

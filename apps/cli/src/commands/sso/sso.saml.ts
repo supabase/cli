@@ -110,6 +110,7 @@ export const readAttributeMappingFile =
         ),
       );
       const parsed = yield* Effect.try({
+        // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- Native parser errors are CLI output; schema decoding discards their messages.
         try: (): unknown => JSON.parse(content),
         catch: (cause) =>
           factory.openError({
