@@ -665,7 +665,7 @@ function substituteImportMapValue(
       continue;
     }
     // Import-maps spec (implemented by Deno): a key matches exactly, or as a prefix only when it
-    // ends with "/" — see go-cli-divergences.md for why this differs from a naive prefix match.
+    // ends with "/", unlike a naive prefix match.
     if (prefix.endsWith("/")) {
       // Spec normalization: a `/`-suffixed key whose address lacks a trailing
       // `/` is an invalid mapping — dropped, not concatenated.

@@ -80,9 +80,8 @@ and the KPI query semantics (strict recovery, repeat errors, internal/unknown
 bug rate) are documented there in `CliErrorActionabilityMetricDefinitions`.
 A `workflow` property is reserved in the catalog but not emitted yet.
 
-Not every failure is classified: pure Go-proxy commands report through the Go
-binary, which does not emit these fields, and events from CLI versions before
-they existed never carry them. KPI queries therefore scope to
+Not every failure is classified: events from CLI versions before these fields
+existed never carry them. KPI queries therefore scope to
 `error_kind IS NOT NULL`, and the `classificationCoverage` metric definition
 reports the classified share of failures so the covered fraction is explicit
 rather than assumed.

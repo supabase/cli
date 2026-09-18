@@ -7,7 +7,6 @@
  *   pnpm cli-release [--version 0.0.0-local.1234567890]
  *
  * Requires `pnpm local-registry` to be running in another terminal.
- * Requires Go in PATH to build the `supabase-go` sidecar.
  */
 
 import { $ } from "bun";
@@ -39,8 +38,6 @@ type PlatformInfo = {
   bunTarget: string;
   platformPkg: string;
   ext: string;
-  goos: string;
-  goarch: string;
 };
 
 const PLATFORM_MAP: Record<string, PlatformInfo> = {
@@ -48,43 +45,31 @@ const PLATFORM_MAP: Record<string, PlatformInfo> = {
     bunTarget: "bun-darwin-arm64",
     platformPkg: "cli-darwin-arm64",
     ext: "",
-    goos: "darwin",
-    goarch: "arm64",
   },
   "darwin-x64": {
     bunTarget: "bun-darwin-x64",
     platformPkg: "cli-darwin-x64",
     ext: "",
-    goos: "darwin",
-    goarch: "amd64",
   },
   "linux-arm64": {
     bunTarget: "bun-linux-arm64",
     platformPkg: "cli-linux-arm64",
     ext: "",
-    goos: "linux",
-    goarch: "arm64",
   },
   "linux-x64": {
     bunTarget: "bun-linux-x64-baseline",
     platformPkg: "cli-linux-x64",
     ext: "",
-    goos: "linux",
-    goarch: "amd64",
   },
   "win32-x64": {
     bunTarget: "bun-windows-x64-baseline",
     platformPkg: "cli-windows-x64",
     ext: ".exe",
-    goos: "windows",
-    goarch: "amd64",
   },
   "win32-arm64": {
     bunTarget: "bun-windows-arm64",
     platformPkg: "cli-windows-arm64",
     ext: ".exe",
-    goos: "windows",
-    goarch: "arm64",
   },
 };
 
@@ -129,27 +114,6 @@ async function readToken(): Promise<string> {
   }
 }
 
-async function checkGo(): Promise<void> {
-  try {
-    await $`go version`.quiet();
-  } catch {
-    console.error("\nError: `go` not found in PATH.");
-    console.error("Install Go from https://go.dev/dl/ to build the CLI.\n");
-    process.exit(1);
-  }
-}
-
-async function checkGoSource(): Promise<string> {
-  const goSource = path.join(root, "apps", "cli-go");
-  const goMod = Bun.file(path.join(goSource, "go.mod"));
-  if (!(await goMod.exists())) {
-    console.error("\nError: Go CLI source not found at apps/cli-go");
-    console.error("Run: pnpm repos:install\n");
-    process.exit(1);
-  }
-  return goSource;
-}
-
 async function main() {
   const { values } = parseArgs({
     options: {
@@ -162,9 +126,6 @@ async function main() {
   await checkRegistry();
   const token = await readToken();
   const platform = getPlatformInfo();
-
-  await checkGo();
-  const goSource = await checkGoSource();
 
   if (process.platform === "linux") {
     console.warn(
@@ -190,22 +151,8 @@ async function main() {
     const bunBinary = path.join(tmpPlatformBinDir, `supabase${platform.ext}`);
     const libc = libcForBunTarget(platform.bunTarget);
 
-    console.log("[1/3] Compiling CLI binary...");
+    console.log("[1/2] Compiling CLI binary...");
     await $`bun build ${entrypoint} --compile --target=${platform.bunTarget} --define=SUPABASE_LIBC=${JSON.stringify(libc)} --outfile=${bunBinary} ${oxfmtExternalArgs}`;
-
-    {
-      const goBinary = path.join(tmpPlatformBinDir, `supabase-go${platform.ext}`);
-      console.log(`[2/3] Compiling Go CLI binary (${platform.goos}/${platform.goarch})...`);
-      // go build must run from the Go source directory: passing an absolute path as a positional
-      // arg makes Go resolve the module from CWD instead, which fails because the repo root has
-      // no go.mod.
-      await $`go build -trimpath -ldflags="-s -w" -o ${goBinary} .`.cwd(goSource).env({
-        ...process.env,
-        GOOS: platform.goos,
-        GOARCH: platform.goarch,
-        CGO_ENABLED: "0",
-      });
-    }
 
     const tmpCliDir = path.join(tmpDir, "cli");
     const tmpCliDistDir = path.join(tmpCliDir, "dist");
@@ -213,7 +160,7 @@ async function main() {
 
     const shimSrc = path.join(root, "apps", "cli", "src", "shared", "cli", "bin.ts");
     const shimOut = path.join(tmpCliDistDir, "supabase.js");
-    console.log("[3/3] Building Node.js shim...");
+    console.log("[2/2] Building Node.js shim...");
     await $`bun build ${shimSrc} --outfile=${shimOut} --target=node`;
 
     const platformPkgJson = await Bun.file(

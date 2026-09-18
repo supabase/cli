@@ -315,9 +315,9 @@ prose, not structured data.
 
 ## Notes
 
-- **`pg_net` converges with `[experimental.webhooks]` on every non-backup start** (see
-  `docs/go-cli-divergences.md`): a fresh volume installs `pg_net` only when webhooks are
-  enabled or migration history contains a `create extension … pg_net`; an existing volume
+- **`pg_net` converges with `[experimental.webhooks]` on every non-backup start**: a fresh
+  volume installs `pg_net` only when webhooks are enabled or migration history contains a
+  `create extension … pg_net`; an existing volume
   additionally DROPS a `pg_net` that migration history does not own when webhooks are
   disabled. Accepted, documented edge: `pg_net` installed outside migrations (local Studio
   SQL editor / extension toggle) is dropped on the next start, and a tracked dependency on

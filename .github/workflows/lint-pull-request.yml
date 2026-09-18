@@ -50,7 +50,6 @@ jobs:
             api
             cli
             cli-e2e
-            cli-go
             cli-test-helpers
             config
             docs

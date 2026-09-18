@@ -34,7 +34,6 @@ pnpm local-registry
 Publish the CLI into it from another terminal (current platform only, faster than a cross-platform build):
 
 ```sh
-# CLI (Bun SFE + Go sidecar — requires Go on PATH and `pnpm repos:install`):
 pnpm cli-release
 ```
 
@@ -44,7 +43,7 @@ Test it:
 npx --registry http://localhost:4873 supabase@<printed-version> --version
 ```
 
-`[tools/release/local-release.ts](../../../tools/release/local-release.ts)` does the heavy lifting: it builds the platform SFE (+ Go sidecar) and the umbrella `supabase` package, materialises them in a `tmp` dir (so no workspace `package.json` is modified), and publishes both to Verdaccio. The cleanup is automatic even on failure.
+`[tools/release/local-release.ts](../../../tools/release/local-release.ts)` does the heavy lifting: it builds the platform SFE and the umbrella `supabase` package, materialises them in a `tmp` dir (so no workspace `package.json` is modified), and publishes both to Verdaccio. The cleanup is automatic even on failure.
 
 This is the right ring for:
 
@@ -60,7 +59,7 @@ It is **not** a valid test for Homebrew or Scoop — those paths are covered in 
 
 This is how you validate the Homebrew formula, Scoop manifest, and GitHub-Release-host resolution on real infrastructure without touching `supabase/`\* repos or risking a clash with an already-installed `supabase` CLI on the reviewer's machine.
 
-Both updater scripts support a `--name <custom>` flag that pushes the formula / manifest under a different name (e.g., `supabase-shim-poc`) — that is, a different filename and Ruby class / scoop manifest. The installed binary is always `supabase` (matching the Go CLI), so PoC reviewers should `brew uninstall supabase` / `scoop uninstall supabase` first if they already have the official CLI installed.
+Both updater scripts support a `--name <custom>` flag that pushes the formula / manifest under a different name (e.g., `supabase-shim-poc`) — that is, a different filename and Ruby class / scoop manifest. The installed binary is always `supabase`, so PoC reviewers should `brew uninstall supabase` / `scoop uninstall supabase` first if they already have the official CLI installed.
 
 ### One-time setup (per reviewer)
 
@@ -87,7 +86,6 @@ The `--dry-run` flag on both updater scripts produces the `Formula/<name>.rb` an
 
 ```sh
 # Build all eight platform archives + linux packages + checksums.txt.
-# Ships the Go sidecar alongside the Bun SFE.
 bun apps/cli/scripts/build.ts --version 0.0.1
 
 # Render the Homebrew formula against your PoC release host + tap.
@@ -176,13 +174,13 @@ Validated on Windows x64 (`v0.0.1`, 2026-04-21): installed with no SmartScreen b
 
 ### What to validate
 
-Beyond `--version` and `brew test`, exercise a Phase-0 proxied subcommand that requires the `supabase-go` sidecar:
+Beyond `--version` and `brew test`, exercise the actual command tree rather than only a flag resolved at build time:
 
 ```sh
-supabase completion bash
+supabase --help
 ```
 
-This must spawn the colocated `supabase-go` and print the generated completion script — not return `NotFound: ChildProcess.spawn (supabase ...)`. (`supabase --version` is served by the Bun wrapper and never touches the sidecar, so it is not a sufficient check on its own.) If it fails, the Homebrew install step is wrong: check that `[apps/cli/scripts/update-homebrew.ts](../scripts/update-homebrew.ts)`'s install-lines block ran `bin.install "supabase-go" if File.exist?("supabase-go")`, and that the built archive actually contains `supabase-go` (it should, for any release build).
+This must print the full command tree, not fail or truncate — a corrupted or partial binary can still resolve `--version` (a build-time `--define`) while failing on real command dispatch.
 
 ### Local-artifact testing (no GitHub Release upload)
 
@@ -287,12 +285,12 @@ Do not use `workflow_dispatch dry_run=false` as the normal hotfix path. Manual s
 `**build` (ubuntu-latest):\*\*
 
 1. `[pnpm exec bun apps/cli/scripts/sync-versions.ts --version X.Y.Z](../scripts/sync-versions.ts)` — writes the release version into every `package.json` (umbrella + eight platform packages) and resolves the umbrella's `workspace:`\* `optionalDependencies` to `X.Y.Z`.
-2. `[pnpm exec bun apps/cli/scripts/build.ts --version X.Y.Z](../scripts/build.ts)` — cross-compiles the Bun SFE for all eight targets (including windows-arm64), cross-compiles the Go sidecar, **ad-hoc signs the macOS binaries** (see [Code signing (macOS)](#code-signing-macos)), builds the six Linux packages via `nfpm`, produces the tar/zip archives, and writes `dist/checksums.txt`.
+2. `[pnpm exec bun apps/cli/scripts/build.ts --version X.Y.Z](../scripts/build.ts)` — cross-compiles the Bun SFE for all eight targets (including windows-arm64), **ad-hoc signs the macOS binaries** (see [Code signing (macOS)](#code-signing-macos)), builds the six Linux packages via `nfpm`, produces the tar/zip archives, and writes `dist/checksums.txt`.
 3. `actions/upload-artifact` preserves `packages/cli-*/bin/` and `dist/` for the downstream jobs.
 
 `**smoke-test` (matrix: `ubuntu-latest`, `macos-latest`, `macos-15-intel`, `windows-latest`):\*\*
 
-Downloads the build artifact, makes the SFE executable (`chmod +x` on non-Windows), installs Scoop on Windows, and runs `pnpm run test:smoke -- --version X.Y.Z --tag <latest|beta|alpha>` from `apps/cli`. On the macOS legs this also verifies each binary's signature (`codesign --verify --strict`, correct identifier, not linker-signed) and executes `supabase --version`, which is the real AMFI gate. Any failure blocks publishing.
+Downloads the build artifact, makes the SFE executable (`chmod +x` on non-Windows), installs Scoop on Windows, and runs `pnpm run test:smoke -- --version X.Y.Z --tag <latest|beta|alpha>` from `apps/cli`. On the macOS legs this also verifies the binary's signature (`codesign --verify --strict`, correct identifier, not linker-signed) and executes `supabase --version`, which is the real AMFI gate. Any failure blocks publishing.
 
 The matrix does not yet include `windows-11-arm` (gate 6) or an Alpine musl runner (also gate 6). Until those land, arm64 / musl regressions only surface in Ring 2 validation.
 
@@ -316,13 +314,13 @@ Both updaters run automatically from `release-shared.yml`'s `publish-homebrew` a
 Once the channels are live, two reusable workflows run automatically (last in `release-shared.yml`, non-gating — by the time they run the artifacts are already published, so a failure surfaces as a red post-release signal rather than blocking distribution):
 
 - `[setup-cli-smoke-test.yml](../../../.github/workflows/setup-cli-smoke-test.yml)` (`setup-cli-smoke` job) — installs the released version through `supabase/setup-cli` (the GitHub Release download path) on Linux, macOS, Windows, and Alpine.
-- `[verify-install-channels.yml](../../../.github/workflows/verify-install-channels.yml)` (`verify-install-channels` job) — runs a **real** `brew install` (macOS **and** Linux, so both the `on_macos` and `on_linux` stanzas of the formula are exercised), `scoop install`, and `curl|bash` install of the **published** install script (fetched from the release asset, not the repo checkout) against the just-published Homebrew tap, Scoop bucket, and GitHub Release. Each leg then asserts `supabase --version` matches and runs `supabase completion bash` (a Go-proxied command) so a package that omits or misplaces the `supabase-go` sidecar fails too. brew, scoop, and the install script each verify the published `sha256`/`hash` against the downloaded tarball, so this is the signal that would have caught CLI v2.107.0 (where the brew/scoop manifests shipped checksums that did not match the release tarballs and every `brew install` / `scoop install` failed). It only runs for `beta`/`stable` (the channels that publish brew/scoop) and can be dispatched manually against any already-published version via the Actions tab.
+- `[verify-install-channels.yml](../../../.github/workflows/verify-install-channels.yml)` (`verify-install-channels` job) — runs a **real** `brew install` (macOS **and** Linux, so both the `on_macos` and `on_linux` stanzas of the formula are exercised), `scoop install`, and `curl|bash` install of the **published** install script (fetched from the release asset, not the repo checkout) against the just-published Homebrew tap, Scoop bucket, and GitHub Release. Each leg then asserts `supabase --version` matches and runs `supabase --help` to exercise the actual command tree. brew, scoop, and the install script each verify the published `sha256`/`hash` against the downloaded tarball, so this is the signal that would have caught CLI v2.107.0 (where the brew/scoop manifests shipped checksums that did not match the release tarballs and every `brew install` / `scoop install` failed). It only runs for `beta`/`stable` (the channels that publish brew/scoop) and can be dispatched manually against any already-published version via the Actions tab.
 
 ### Code signing (macOS)
 
-The macOS binaries (`supabase` Bun SFE + `supabase-go` sidecar, `darwin-arm64` and `darwin-x64`) are signed inside `build.ts` between compilation and archiving, so the signed bytes flow into every channel that consumes `packages/cli-darwin-*/bin/` — npm platform packages, Homebrew, and the GitHub Release tarballs (which also feed the `install` script and `setup-cli`). Background: [ADR 0014](../../../docs/adr/0014-macos-code-signing-and-notarization.md).
+The macOS binary (`supabase` Bun SFE, `darwin-arm64` and `darwin-x64`) is signed inside `build.ts` between compilation and archiving, so the signed bytes flow into every channel that consumes `packages/cli-darwin-*/bin/` — npm platform packages, Homebrew, and the GitHub Release tarballs (which also feed the `install` script and `setup-cli`). Background: [ADR 0014](../../../docs/adr/0014-macos-code-signing-and-notarization.md).
 
-Why this exists: `bun build --compile` and the Go linker emit only a degenerate "linker-signed" ad-hoc signature (identifier `a.out`, no requirements blob). macOS 26+ AMFI rejects it and SIGKILLs the process at launch ([CLI-1621](https://linear.app/supabase/issue/CLI-1621) / [#5556](https://github.com/supabase/cli/issues/5556)). A full ad-hoc signature fixes it.
+Why this exists: `bun build --compile` emits only a degenerate "linker-signed" ad-hoc signature (identifier `a.out`, no requirements blob). macOS 26+ AMFI rejects it and SIGKILLs the process at launch ([CLI-1621](https://linear.app/supabase/issue/CLI-1621) / [#5556](https://github.com/supabase/cli/issues/5556)). A full ad-hoc signature fixes it.
 
 - **Signing runs on the Linux build runner** via [`rcodesign`](https://github.com/indygreg/apple-platform-rs) (the apple-codesign project), which signs Mach-O binaries without a macOS host. No macOS signing job exists, and **no Apple credentials are required for the current ad-hoc signing** (Phase 1). The version + sha256 are pinned in the "Install rcodesign" step of [`build-cli-artifacts.yml`](../../../.github/workflows/build-cli-artifacts.yml).
 - **CI hard-fails if signing is unavailable**: the build job sets `SUPABASE_CLI_REQUIRE_SIGNING=1`, so a missing `rcodesign` fails the build rather than silently shipping unsigned binaries. Local builds without `rcodesign` degrade to a warning and skip signing.
@@ -374,7 +372,7 @@ Rollback is straightforward because each channel is its own commit / release. Th
 ## See Also
 
 - [ADR 0011](../../../docs/adr/0011-cli-release-and-distribution-strategy.md) — the decision record. Channel choices, signing rationale, open pre-cutover gates.
-- `[apps/cli/docs/binary-distribution.md](./binary-distribution.md)` — why each platform package contains two binaries (`supabase` SFE + `supabase-go` sidecar) and how they're resolved at runtime.
+- `[apps/cli/docs/binary-distribution.md](./binary-distribution.md)` — how each platform package's `supabase` binary is built and resolved at runtime.
 - `[tools/release/local-release.ts](../../../tools/release/local-release.ts)` — Ring 1 implementation.
 - `[apps/cli/scripts/build.ts](../scripts/build.ts)`, `[publish.ts](../scripts/publish.ts)`, `[sync-versions.ts](../scripts/sync-versions.ts)`, `[update-homebrew.ts](../scripts/update-homebrew.ts)`, `[update-scoop.ts](../scripts/update-scoop.ts)` — release script implementations.
 - `[.github/workflows/release.yml](../../../.github/workflows/release.yml)`, `[release-shared.yml](../../../.github/workflows/release-shared.yml)`, `[deploy.yml](../../../.github/workflows/deploy.yml)`, `[deploy-check.yml](../../../.github/workflows/deploy-check.yml)` — Ring 3 pipeline.

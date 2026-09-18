@@ -47,15 +47,9 @@
       "cache": false,
       "passThroughEnv": ["*"]
     },
-    "@supabase/cli-go#build": {
-      "cache": true,
-      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/mise.toml", "$TURBO_ROOT$/mise.lock"],
-      "outputs": ["supabase-go"],
-      "env": ["GO*", "CGO_*", "CC", "CXX"]
-    },
     "supabase#build": {
       "cache": true,
-      "dependsOn": ["@supabase/config#build", "@supabase/cli-go#build"],
+      "dependsOn": ["@supabase/config#build"],
       "inputs": [
         "$TURBO_DEFAULT$",
         "$TURBO_ROOT$/.bun-version",
