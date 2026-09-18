@@ -51,8 +51,7 @@ const COMPUTE_LOG_NAME_ATTRIBUTE = "worker";
  * make it a column here: the Compute Logflare source is not enrolled as a category in the
  * generic logs path, so nothing it sends is promoted, and every key — top-level ones
  * included — arrives flattened into `log_attributes`. Filtering on a bare `subservice`
- * fails the whole query with `Field "subservice" does not exist`. Once the source is
- * enrolled it becomes a real column and this moves with it.
+ * fails the whole query with `Field "subservice" does not exist`.
  */
 const COMPUTE_LOG_STREAM_ATTRIBUTE = "subservice";
 
