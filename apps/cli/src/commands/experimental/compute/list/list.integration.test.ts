@@ -12,6 +12,8 @@ import { ProjectRefNotLinkedError } from "../../../../config/project-ref.errors.
 import { ComputeEnvNotSupportedError } from "../compute.errors.ts";
 import {
   ComputeApiUnexpectedStatusError,
+  ComputeProjectNotFoundError,
+  ComputeRouteNotFoundError,
   ComputeUnavailableError,
 } from "../../../../shared/compute/compute.errors.ts";
 import { computeList } from "./list.handler.ts";
@@ -326,7 +328,10 @@ describe("compute list", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("reports a project outside the alpha as unavailable", () =>
+  // Until the Management API ships `not_found.compute.not_enabled`, an unenrolled
+  // project answers the shared `generic_not_found`, which no branch claims — so
+  // this pins the fallback that carries the alpha refusal until then.
+  it.live("still reports the alpha refusal's pre-rollout body as unavailable", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({
@@ -348,6 +353,87 @@ describe("compute list", () => {
         const error = yield* computeList({ projectRef: Option.none() }).pipe(Effect.flip);
 
         expect(error).toBeInstanceOf(ComputeUnavailableError);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live("reports the alpha refusal's own code as unavailable, not as a missing project", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer } = setupCompute({
+        workdir: repo.dir,
+        routes: {
+          [listRoute]: {
+            status: 404,
+            body: {
+              error: {
+                code: "not_found.compute.not_enabled",
+                message: "Compute is not available for this project",
+              },
+            },
+          },
+        },
+      });
+
+      return yield* Effect.gen(function* () {
+        const error = yield* computeList({ projectRef: Option.none() }).pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(ComputeUnavailableError);
+        expect(error).not.toBeInstanceOf(ComputeProjectNotFoundError);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live("names the unserved route instead of the project when the API has no such route", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer } = setupCompute({
+        workdir: repo.dir,
+        routes: {
+          [listRoute]: {
+            status: 404,
+            body: {
+              error: {
+                code: "not_found",
+                message: `Cannot GET /v2/projects/${COMPUTE_PROJECT_REF}/compute`,
+              },
+            },
+          },
+        },
+      });
+
+      return yield* Effect.gen(function* () {
+        const error = yield* computeList({ projectRef: Option.none() }).pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(ComputeRouteNotFoundError);
+        expect(error).not.toBeInstanceOf(ComputeProjectNotFoundError);
+        expect((error as ComputeRouteNotFoundError).detail).toContain(
+          `GET /v2/projects/${COMPUTE_PROJECT_REF}/compute`,
+        );
+        expect((error as ComputeRouteNotFoundError).suggestion).toContain("supabase issue");
+        expect((error as ComputeRouteNotFoundError).suggestion).not.toContain("supabase link");
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live("still reports a missing project when the 404 is the project's own", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer } = setupCompute({
+        workdir: repo.dir,
+        routes: {
+          [listRoute]: {
+            status: 404,
+            body: { error: { code: "not_found", message: "Not Found" } },
+          },
+        },
+      });
+
+      return yield* Effect.gen(function* () {
+        const error = yield* computeList({ projectRef: Option.none() }).pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(ComputeProjectNotFoundError);
+        expect((error as ComputeProjectNotFoundError).suggestion).toContain("supabase link");
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
