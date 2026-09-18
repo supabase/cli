@@ -3,7 +3,7 @@ import { Effect, Option, Redacted, Result, Stdio } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
-import { decodeSsoJson, quoteSsoString } from "../sso.json.ts";
+import { quoteSsoString } from "../sso.json.ts";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
@@ -343,17 +343,18 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
         );
         const contentType = response.headers["content-type"] ?? "";
         if (response.status === 200 && contentType.includes("json")) {
-          // Invalid JSON retains the native parser message and exits before any PUT.
-          const parsed = yield* decodeSsoJson(rawBody).pipe(
-            Effect.tapError(() => fetching?.fail() ?? Effect.void),
-            Effect.mapError(
-              (cause) =>
-                new SsoUpdateNetworkError({
-                  message: `failed to get sso provider: ${cause.message}`,
-                  decode: true,
-                }),
-            ),
-          );
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(rawBody);
+          } catch (cause) {
+            yield* fetching?.fail() ?? Effect.void;
+            return yield* Effect.fail(
+              new SsoUpdateNetworkError({
+                message: `failed to get sso provider: ${cause instanceof Error ? cause.message : String(cause)}`,
+                decode: true,
+              }),
+            );
+          }
           return { domains: extractDomainItems(parsed) };
         }
         // A 200 without a JSON content type falls into this branch too.

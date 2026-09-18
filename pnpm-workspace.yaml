@@ -130,6 +130,5 @@ supportedArchitectures:
 
 patchedDependencies:
   "@libpg-query/parser@17.6.10": patches/@libpg-query__parser@17.6.10.patch
-  effect@4.0.0-rc.112: patches/effect@4.0.0-rc.112.patch
 
 virtualStoreType: global

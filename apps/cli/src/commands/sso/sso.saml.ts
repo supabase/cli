@@ -1,7 +1,7 @@
 import { Effect, FileSystem } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 
-import { decodeSsoJson, quoteSsoString } from "./sso.json.ts";
+import { quoteSsoString } from "./sso.json.ts";
 
 export type SsoFileErrorReason =
   | "not_found"
@@ -109,13 +109,13 @@ export const readAttributeMappingFile =
           }),
         ),
       );
-      const parsed = yield* decodeSsoJson(content).pipe(
-        Effect.mapError((cause) =>
+      const parsed = yield* Effect.try({
+        try: (): unknown => JSON.parse(content),
+        catch: (cause) =>
           factory.openError({
             message: `failed to parse attribute mapping: ${String(cause)}`,
             reason: "invalid_content",
           }),
-        ),
-      );
+      });
       return parsed;
     });
