@@ -15101,7 +15101,7 @@
                 "type": "string"
               }
             },
-            "required": ["schema_version", "sql"]
+            "required": ["sql"]
           }
         },
         "required": [
@@ -22233,7 +22233,7 @@
           "max_concurrent_users": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 50000,
+            "maximum": 300000,
             "description": "Sets maximum number of concurrent users rate limit",
             "nullable": true
           },
@@ -22326,7 +22326,7 @@
           "max_concurrent_users": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 50000,
+            "maximum": 300000,
             "description": "Sets maximum number of concurrent users rate limit"
           },
           "max_events_per_second": {
