@@ -5,6 +5,7 @@ import { NodeServices } from "@effect/platform-node";
 import { systemError } from "effect/PlatformError";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import type { ChildProcessSpawner as ChildProcessSpawnerType } from "effect/unstable/process/ChildProcessSpawner";
+import type { ExitCode } from "effect/unstable/process/ChildProcessSpawner";
 import { spawnNativeProcess, type NativeProcess, type NativeProcessSpec } from "./NativeProcess.ts";
 
 const targetPid = 87_035;
@@ -19,6 +20,8 @@ interface FakeProcessOptions {
   readonly groupForeignSpawnDefect?: boolean;
   readonly groupStallReady?: Deferred.Deferred<void>;
   readonly groupStallClosed?: Deferred.Deferred<void>;
+  readonly exitStarted?: Deferred.Deferred<void>;
+  readonly exitCode?: Deferred.Deferred<ExitCode>;
 }
 
 const makeSpawner = (options: FakeProcessOptions) => {
@@ -84,7 +87,16 @@ const makeSpawner = (options: FakeProcessOptions) => {
     return Effect.succeed(
       ChildProcessSpawner.makeHandle({
         pid: ChildProcessSpawner.ProcessId(options.targetPid ?? targetPid),
-        exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+        exitCode: (() => {
+          const exit = options.exitCode;
+          return exit === undefined
+            ? Effect.succeed(ChildProcessSpawner.ExitCode(0))
+            : Effect.gen(function* () {
+                if (options.exitStarted !== undefined)
+                  yield* Deferred.succeed(options.exitStarted, undefined);
+                return yield* Deferred.await(exit);
+              });
+        })(),
         isRunning: Effect.succeed(false),
         kill: () => Effect.void,
         stdin: Sink.drain,
@@ -150,6 +162,15 @@ describe("native process group cleanup", () => {
       }),
   );
 
+  it.live.skipIf(process.platform !== "darwin")(
+    "accepts EPERM when a valid process-group listing contains only exiting members",
+    () =>
+      Effect.gen(function* () {
+        const { result } = yield* runKill({ groupOutput: `${targetPid} ?E\n` });
+        expect(Exit.isSuccess(result)).toBe(true);
+      }),
+  );
+
   it.effect.skipIf(process.platform !== "darwin")(
     "preserves EPERM when process-group inspection stalls",
     () =>
@@ -203,6 +224,19 @@ describe("native process group cleanup", () => {
     () =>
       Effect.gen(function* () {
         const { result } = yield* runKill({ groupOutput: `${targetPid} Z\n${targetPid} S\n` });
+        expect(Exit.isFailure(result)).toBe(true);
+        if (Exit.isFailure(result)) {
+          const error = Option.getOrUndefined(Cause.findErrorOption(result.cause));
+          expect(error).toMatchObject({ cause: { code: "EPERM" } });
+        }
+      }),
+  );
+
+  it.live.skipIf(process.platform !== "darwin")(
+    "preserves EPERM when an exiting group also has a live member",
+    () =>
+      Effect.gen(function* () {
+        const { result } = yield* runKill({ groupOutput: `${targetPid} ?E\n${targetPid} S\n` });
         expect(Exit.isFailure(result)).toBe(true);
         if (Exit.isFailure(result)) {
           const error = Option.getOrUndefined(Cause.findErrorOption(result.cause));
@@ -317,6 +351,35 @@ describe("native process group cleanup", () => {
   it.live("keeps ordinary ESRCH cleanup successful", () =>
     runKill({ killCode: "ESRCH" }).pipe(
       Effect.tap(({ result }) => Effect.sync(() => expect(Exit.isSuccess(result)).toBe(true))),
+    ),
+  );
+
+  it.live("keeps the shared exit observation alive after a canceled waiter", () =>
+    withMockedTargetKill(
+      Effect.gen(function* () {
+        const exitStarted = yield* Deferred.make<void>();
+        const exitCode = yield* Deferred.make<ExitCode>();
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const native = yield* spawnNativeProcess(spec, {
+              command: "test-launcher",
+              args: [],
+            });
+            const first = yield* Effect.forkChild(native.exitCode);
+            yield* Deferred.await(exitStarted);
+            yield* Fiber.interrupt(first);
+            yield* Deferred.succeed(exitCode, ChildProcessSpawner.ExitCode(17));
+            expect(yield* native.exitCode).toBe(ChildProcessSpawner.ExitCode(17));
+          }).pipe(
+            Effect.provideService(
+              ChildProcessSpawner.ChildProcessSpawner,
+              makeSpawner({ exitStarted, exitCode }),
+            ),
+          ),
+        );
+      }),
+      targetPid,
+      "ESRCH",
     ),
   );
 });

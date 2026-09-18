@@ -12,7 +12,7 @@ import {
   makeDatabaseSessionFromSqlClient,
   type DatabaseSqlClient,
 } from "./PostgresDatabaseSession.ts";
-import { DatabaseBootstrapError } from "../model/DatabaseBootstrap.ts";
+import { DatabaseBootstrapError } from "./DatabaseBootstrap.ts";
 
 describe("Postgres database session", () => {
   it.live("classifies SQL connection failures without retaining raw causes", () =>

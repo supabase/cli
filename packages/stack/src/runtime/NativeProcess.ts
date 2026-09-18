@@ -1,4 +1,4 @@
-import { Data, Duration, Effect, Option, Scope, Stream } from "effect";
+import { Data, Duration, Effect, Fiber, Option, Scope, Stream } from "effect";
 import { fileURLToPath } from "node:url";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import type { PlatformError } from "effect/PlatformError";
@@ -52,12 +52,11 @@ export interface NativeProcess {
   readonly kill: Effect.Effect<void, NativeProcessError>;
 }
 
-export { NATIVE_PROCESS_DISPATCH_SENTINEL } from "../internal/dispatch-markers.ts";
 import { NATIVE_PROCESS_DISPATCH_SENTINEL } from "../internal/dispatch-markers.ts";
 
 const isBunVirtualPath = (value: string): boolean => /(?:^|[\\/])\$bunfs(?:[\\/]|$)/.test(value);
 
-export const nativeLauncherEntrypointFor = (moduleUrl: string): string => {
+const nativeLauncherEntrypointFor = (moduleUrl: string): string => {
   if (isBunVirtualPath(moduleUrl)) return NATIVE_PROCESS_DISPATCH_SENTINEL;
   const sourceEntrypoint = fileURLToPath(new URL("./native-launcher.ts", moduleUrl));
   return isBunVirtualPath(sourceEntrypoint) ? NATIVE_PROCESS_DISPATCH_SENTINEL : sourceEntrypoint;
@@ -106,16 +105,12 @@ const mapProcessError = (error: unknown, spec: NativeProcessSpec): NativeProcess
  * that pipe and terminates the exact process group. Normal process-tree
  * termination remains owned by Effect's ChildProcessSpawner.
  */
-export const spawnNativeProcess = (
+export const spawnNativeProcess = Effect.fn("NativeProcess.spawn")(function* (
   spec: NativeProcessSpec,
   launcher: NativeProcessLauncher = defaultNativeProcessLauncher(),
   identity?: NativeProcessIdentity,
-): Effect.Effect<
-  NativeProcess,
-  NativeProcessError,
-  import("effect/unstable/process/ChildProcessSpawner").ChildProcessSpawner | Scope.Scope
-> =>
-  Effect.gen(function* () {
+) {
+  return yield* Effect.gen(function* () {
     // Shutdown must precede the spawner's finalizer even when the caller closes in parallel.
     const processScope = yield* Scope.fork(yield* Scope.Scope, "sequential");
     const launcherArgs =
@@ -147,71 +142,76 @@ export const spawnNativeProcess = (
     ): Stream.Stream<Uint8Array, NativeProcessError> =>
       stream.pipe(Stream.mapError((error) => mapProcessError(error, spec)));
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    // Darwin can report EPERM after a process group has become zombie-only.
-    const inspectProcessGroup = Effect.scoped(
-      Effect.gen(function* () {
-        const inspection = yield* ChildProcess.make("/bin/ps", ["-axo", "pgid=,stat="], {
-          killSignal: "SIGKILL",
-          stdin: "ignore",
-          stdout: "pipe",
-          stderr: "ignore",
-        });
-        const [output, exitCode] = yield* Effect.all(
-          [inspection.stdout.pipe(Stream.decodeText, Stream.mkString), inspection.exitCode],
-          { concurrency: 2 },
-        );
-        if (Number(exitCode) !== 0 || output.trim().length === 0) return false;
-        const targetGroup = Number(handle.pid);
-        for (const line of output.split("\n")) {
-          if (line.trim() === "") continue;
-          const match = /^(\d+)\s+(\S+)$/.exec(line.trim());
-          if (match === null) return false;
-          const group = Number(match[1]);
-          const state = match[2];
-          if (state === undefined) return false;
-          if (!Number.isSafeInteger(group)) return false;
-          if (group === targetGroup && !state.startsWith("Z")) return false;
-        }
-        return true;
-      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner)),
-    );
-    const cleanupProcessGroup = Effect.try({
-      try: () => {
-        if (globalThis.process.platform === "win32") return;
-        try {
-          globalThis.process.kill(-Number(handle.pid), "SIGKILL");
-        } catch (error) {
-          if (
-            typeof error === "object" &&
-            error !== null &&
-            "code" in error &&
-            error.code === "ESRCH"
-          )
-            return;
-          throw error;
-        }
-      },
-      catch: (error) => mapProcessError(error, spec),
-    }).pipe(
-      Effect.catch((error) => {
-        const cause = error.cause;
-        if (
-          globalThis.process.platform === "darwin" &&
-          typeof cause === "object" &&
-          cause !== null &&
-          "code" in cause &&
-          cause.code === "EPERM"
-        ) {
-          return inspectProcessGroup.pipe(
-            Effect.timeout("2 seconds"),
-            Effect.catchDefect(() => Effect.fail(error)),
-            Effect.mapError(() => error),
-            Effect.flatMap((noLiveMembers) => (noLiveMembers ? Effect.void : Effect.fail(error))),
+    // Darwin can report EPERM after a process group has become zombie-only or is exiting.
+    const inspectProcessGroup = Effect.fn("NativeProcess.inspectProcessGroup")(function* () {
+      return yield* Effect.scoped(
+        Effect.gen(function* () {
+          const inspection = yield* ChildProcess.make("/bin/ps", ["-axo", "pgid=,stat="], {
+            killSignal: "SIGKILL",
+            stdin: "ignore",
+            stdout: "pipe",
+            stderr: "ignore",
+          });
+          const [output, exitCode] = yield* Effect.all(
+            [inspection.stdout.pipe(Stream.decodeText, Stream.mkString), inspection.exitCode],
+            { concurrency: 2 },
           );
-        }
-        return Effect.fail(error);
-      }),
-    );
+          if (Number(exitCode) !== 0 || output.trim().length === 0) return false;
+          const targetGroup = Number(handle.pid);
+          for (const line of output.split("\n")) {
+            if (line.trim() === "") continue;
+            const match = /^(\d+)\s+(\S+)$/.exec(line.trim());
+            if (match === null) return false;
+            const group = Number(match[1]);
+            const state = match[2];
+            if (state === undefined) return false;
+            if (!Number.isSafeInteger(group)) return false;
+            if (group === targetGroup && !(state.startsWith("Z") || state.includes("E")))
+              return false;
+          }
+          return true;
+        }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+      );
+    });
+    const cleanupProcessGroup = Effect.fn("NativeProcess.cleanupProcessGroup")(function* () {
+      return yield* Effect.try({
+        try: () => {
+          if (globalThis.process.platform === "win32") return;
+          try {
+            globalThis.process.kill(-Number(handle.pid), "SIGKILL");
+          } catch (error) {
+            if (
+              typeof error === "object" &&
+              error !== null &&
+              "code" in error &&
+              error.code === "ESRCH"
+            )
+              return;
+            throw error;
+          }
+        },
+        catch: (error) => mapProcessError(error, spec),
+      }).pipe(
+        Effect.catch((error) => {
+          const cause = error.cause;
+          if (
+            globalThis.process.platform === "darwin" &&
+            typeof cause === "object" &&
+            cause !== null &&
+            "code" in cause &&
+            cause.code === "EPERM"
+          ) {
+            return inspectProcessGroup().pipe(
+              Effect.timeout("2 seconds"),
+              Effect.catchDefect(() => Effect.fail(error)),
+              Effect.mapError(() => error),
+              Effect.flatMap((noLiveMembers) => (noLiveMembers ? Effect.void : Effect.fail(error))),
+            );
+          }
+          return Effect.fail(error);
+        }),
+      );
+    });
     const signalLauncher = (signal: NodeJS.Signals): Effect.Effect<void, NativeProcessError> =>
       Effect.try({
         try: () => {
@@ -229,11 +229,11 @@ export const spawnNativeProcess = (
             : Effect.fail(error);
         }),
       );
-    const killProcess = Effect.gen(function* () {
+    const killProcess = Effect.fn("NativeProcess.kill")(function* () {
       const running = yield* handle.isRunning.pipe(
         Effect.mapError((error) => mapProcessError(error, spec)),
       );
-      if (!running) return yield* cleanupProcessGroup;
+      if (!running) return yield* cleanupProcessGroup();
       // Record the stop in the launcher before it forwards the signal to the workload.
       const graceful =
         globalThis.process.platform === "win32"
@@ -256,15 +256,17 @@ export const spawnNativeProcess = (
             .kill({ killSignal: "SIGKILL" })
             .pipe(Effect.mapError((error) => mapProcessError(error, spec)));
       }
-      if (globalThis.process.platform !== "win32") yield* cleanupProcessGroup;
+      if (globalThis.process.platform !== "win32") yield* cleanupProcessGroup();
     });
     yield* Scope.addFinalizer(
       processScope,
-      killProcess.pipe(Effect.catch((error) => Effect.logError(error.message))),
+      killProcess().pipe(Effect.catch((error) => Effect.logError(error.message))),
     );
     yield* Stream.run(Stream.succeed(encodeSpec(spec)), handle.getInputFd(4));
-    const exitCode = yield* Effect.cached(
-      mapError(handle.exitCode).pipe(Effect.tap(() => cleanupProcessGroup)),
+    const waitForExit = mapError(handle.exitCode).pipe(Effect.tap(() => cleanupProcessGroup()));
+    const getWaiter = yield* Effect.cached(Effect.forkIn(waitForExit, processScope));
+    const exitCode = Effect.uninterruptible(getWaiter).pipe(
+      Effect.flatMap((fiber) => Fiber.join(fiber)),
     );
     return {
       pid: handle.pid,
@@ -272,6 +274,7 @@ export const spawnNativeProcess = (
       stderr: mapStreamError(handle.stderr),
       exitCode,
       isRunning: mapError(handle.isRunning),
-      kill: killProcess,
+      kill: killProcess(),
     } satisfies NativeProcess;
   }).pipe(Effect.mapError((error) => mapProcessError(error, spec)));
+});
