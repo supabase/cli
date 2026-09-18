@@ -11,7 +11,7 @@ import {
 } from "../telemetry/error-actionability.ts";
 
 import type { Path } from "effect";
-import { Data, Effect, Option, Runtime, Stream } from "effect";
+import { Data, Effect, Option, Predicate, Runtime, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { spawnContainerCli } from "../../command-internal/container-cli.ts";
 import { makeDockerImageResolver } from "../../command-internal/docker-image-resolve.ts";
@@ -395,7 +395,7 @@ export function nativePlatformFailure(error: PlatformError): NativeFailure {
   if (reason.cause !== undefined && reason.cause !== null) return nativeFailure(reason.cause);
   // The native filesystem adapter discards synchronous argument errors' causes.
   if (
-    reason._tag === "BadArgument" &&
+    Predicate.isTagged(reason, "BadArgument") &&
     reason.module === "FileSystem" &&
     reason.description?.includes("without null bytes")
   ) {

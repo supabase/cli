@@ -655,7 +655,7 @@ describe("functions serve integration", () => {
     ["project", ".env.development"],
   ] as const)(
     "rejects a BOM-prefixed %s env file without starting the runtime",
-    ([kind, relativePath]) =>
+    ([, relativePath]) =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -677,7 +677,7 @@ describe("functions serve integration", () => {
         const error = yield* functionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
         expect(error.message).toContain(`failed to parse environment file: ${envPath}`);
         expect(error.message).toContain("unexpected character");
-        if (kind !== "project") expect(error.message).not.toContain("secret-value");
+        expect(error.message).not.toContain("secret-value");
         expect(deployMockState.runCalls.some((call) => call.args[0] === "create")).toBe(false);
       }).pipe(Effect.provide(BunServices.layer)),
   );

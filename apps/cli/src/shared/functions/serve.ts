@@ -1,4 +1,3 @@
-export { fileWatcherLayer as serveFileWatcherLayer } from "../runtime/file-watcher.service.ts";
 import { bitbucketCloneDir } from "../../command-internal/bitbucket-pipeline.ts";
 import {
   CliConfigSchema,
@@ -36,6 +35,7 @@ import {
   Effect,
   Exit,
   Option,
+  Predicate,
   Redacted,
   Result,
   Schema,
@@ -849,7 +849,9 @@ const readDotEnvFile = Effect.fnUntraced(function* (pathname: string, optional: 
   const fs = yield* FileSystem.FileSystem;
   const contents = yield* readFileUtf8(fs, pathname).pipe(
     Effect.catch((error) =>
-      optional && error.reason._tag === "NotFound" ? Effect.void : nativePlatformFailure(error),
+      optional && Predicate.isTagged(error.reason, "NotFound")
+        ? Effect.void
+        : nativePlatformFailure(error),
     ),
     Effect.mapError((failure) =>
       nativeFailure(
@@ -1104,7 +1106,7 @@ const loadServeCliProjectEnvironment = Effect.fnUntraced(function* (
       const envPath = path.join(dir, filename);
       const contents = yield* readFileUtf8(fs, envPath).pipe(
         Effect.catch((error) =>
-          error.reason._tag === "NotFound" ? Effect.void : nativePlatformFailure(error),
+          Predicate.isTagged(error.reason, "NotFound") ? Effect.void : nativePlatformFailure(error),
         ),
       );
       if (contents === undefined) {
