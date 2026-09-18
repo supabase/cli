@@ -1,4 +1,4 @@
-import { Result } from "effect";
+import { Result, Schema } from "effect";
 
 import { renderGlamourTable } from "../../output/glamour-table.ts";
 import { SsoInvalidUuidError } from "./sso.errors.ts";
@@ -95,14 +95,16 @@ export function validateUuid(input: string): Result.Result<string, SsoInvalidUui
 }
 
 const pad2 = (n: number): string => String(n).padStart(2, "0");
+const decodeTimestamp = Schema.decodeUnknownResult(Schema.DateFromString);
 
 /**
  * RFC3339 → `YYYY-MM-DD HH:MM:SS` (UTC, no timezone label).
  */
 export function formatSsoTimestamp(input?: string): string {
   if (input === undefined || input === null) return "";
-  const date = new Date(input);
-  if (Number.isNaN(date.getTime())) return input;
+  const decoded = decodeTimestamp(input);
+  if (Result.isFailure(decoded)) return input;
+  const date = decoded.success;
   return (
     `${date.getUTCFullYear()}-${pad2(date.getUTCMonth() + 1)}-${pad2(date.getUTCDate())} ` +
     `${pad2(date.getUTCHours())}:${pad2(date.getUTCMinutes())}:${pad2(date.getUTCSeconds())}`

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Option, Schema } from "effect";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
@@ -169,9 +169,23 @@ describe("sso list integration", () => {
     const { layer, out } = setup({ goOutput: "json", body: { items: [item] } });
     return Effect.gen(function* () {
       yield* ssoList({ projectRef: Option.none() });
-      const emitted = JSON.parse(out.stdoutText) as {
-        providers: Array<{ domains: Array<{ created_at: string; updated_at: string }> }>;
-      };
+      const emitted = yield* Schema.decodeEffect(
+        Schema.fromJsonString(
+          Schema.Struct({
+            providers: Schema.Array(
+              Schema.Struct({
+                domains: Schema.Array(
+                  Schema.Struct({
+                    domain: Schema.String,
+                    created_at: Schema.String,
+                    updated_at: Schema.String,
+                  }),
+                ),
+              }),
+            ),
+          }),
+        ),
+      )(out.stdoutText);
       expect(out.stdoutText).toContain("0b0d48f6-878b-4190-88d7-2ca33ed800bc");
       expect(out.stdoutText).not.toContain("8682fcf4-4056-455c-bd93-f33295604929");
       expect(out.stdoutText).not.toContain("9484591c-a203-4500-bea7-d0aaa845e2f5");
@@ -240,7 +254,7 @@ describe("sso list integration", () => {
       const exit = yield* Effect.exit(ssoList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
+        const dump = Cause.pretty(exit.cause);
         expect(dump).toContain("SsoTomlEncodeError");
         expect(dump).toContain("failed to output toml: toml: cannot encode array with nil element");
       }
@@ -270,7 +284,7 @@ describe("sso list integration", () => {
       const exit = yield* Effect.exit(ssoList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
+        const dump = Cause.pretty(exit.cause);
         expect(dump).toContain("SsoListNetworkError");
         expect(classifyCliCauseActionability(exit.cause)).toMatchObject({
           error_kind: "external_service",
@@ -296,7 +310,7 @@ describe("sso list integration", () => {
       const exit = yield* Effect.exit(ssoList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
+        const dump = Cause.pretty(exit.cause);
         expect(dump).toContain("SsoListSamlDisabledError");
         expect(dump).toContain("Looks like SAML 2.0 support is not enabled");
       }
@@ -325,7 +339,7 @@ describe("sso list integration", () => {
       const exit = yield* Effect.exit(ssoList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
+        const dump = Cause.pretty(exit.cause);
         expect(dump).toContain("SsoListUnexpectedStatusError");
         expect(dump).toContain("unexpected error listing identity providers");
       }
@@ -338,7 +352,7 @@ describe("sso list integration", () => {
       const exit = yield* Effect.exit(ssoList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
+        const dump = Cause.pretty(exit.cause);
         expect(dump).toContain("SsoListNetworkError");
         expect(dump).toContain("failed to list sso providers");
       }

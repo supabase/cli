@@ -1,5 +1,7 @@
-import { Effect, FileSystem } from "effect";
+import { Effect, FileSystem, Schema } from "effect";
 import type { PlatformError } from "effect/PlatformError";
+
+import { decodeSsoJson } from "./sso.json.ts";
 
 export type SsoFileErrorReason =
   | "not_found"
@@ -47,7 +49,7 @@ export function validateMetadataXmlBytes<E>(
     Effect.mapError(() =>
       nonUtf8Error({
         source,
-        message: `SAML Metadata XML at ${JSON.stringify(source)} is not UTF-8 encoded`,
+        message: `SAML Metadata XML at ${Schema.encodeSync(Schema.fromJsonString(Schema.String))(source)} is not UTF-8 encoded`,
       }),
     ),
     Effect.asVoid,
@@ -107,13 +109,13 @@ export const readAttributeMappingFile =
           }),
         ),
       );
-      const parsed = yield* Effect.try({
-        try: () => JSON.parse(content) as unknown,
-        catch: (cause) =>
+      const parsed = yield* decodeSsoJson(content).pipe(
+        Effect.mapError((cause) =>
           factory.openError({
             message: `failed to parse attribute mapping: ${String(cause)}`,
             reason: "invalid_content",
           }),
-      });
+        ),
+      );
       return parsed;
     });

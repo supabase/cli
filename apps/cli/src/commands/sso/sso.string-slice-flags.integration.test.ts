@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer } from "effect";
+import { Cause, Predicate, Effect, Exit, Layer } from "effect";
 import { CliOutput, Command } from "effect/unstable/cli";
 
 import { normalizeCause } from "../../shared/output/normalize-error.ts";
@@ -108,7 +108,11 @@ describe("sso StringSlice flags (pflag CSV parity)", () => {
         const exit = yield* Effect.exit(Command.runWith(testRoot, { version: "0.0.0-test" })(args));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).not.toContain("AccessTokenRequiredError");
+          expect(
+            exit.cause.reasons
+              .filter(Cause.isFailReason)
+              .some((reason) => Predicate.isTagged(reason.error, "AccessTokenRequiredError")),
+          ).toBe(false);
           expect(normalizeCause(exit.cause).message).toBe(message);
         }
         expect(api.requests).toHaveLength(0);

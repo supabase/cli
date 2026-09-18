@@ -1,5 +1,5 @@
 import type { SupabaseApiError } from "@supabase/api/effect";
-import { Effect, Option, Result } from "effect";
+import { Effect, Option, Result, Schema } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
@@ -39,21 +39,17 @@ const handleRemoveError = (ref: string, providerId: string, cause: SupabaseApiEr
         response: gateResponse(cause),
       });
       if (mapped.status === 404) {
-        return yield* Effect.fail(
-          new SsoRemoveNotFoundError({
-            message: `An identity provider with ID ${JSON.stringify(providerId)} could not be found.`,
-            upgradeSuggested,
-          }),
-        );
-      }
-      return yield* Effect.fail(
-        new SsoRemoveUnexpectedStatusError({
-          status: mapped.status,
-          body: mapped.body,
-          message: mapped.message,
+        return yield* new SsoRemoveNotFoundError({
+          message: `An identity provider with ID ${yield* Schema.encodeEffect(Schema.fromJsonString(Schema.String))(providerId)} could not be found.`,
           upgradeSuggested,
-        }),
-      );
+        });
+      }
+      return yield* new SsoRemoveUnexpectedStatusError({
+        status: mapped.status,
+        body: mapped.body,
+        message: mapped.message,
+        upgradeSuggested,
+      });
     }
     return yield* Effect.fail(mapped);
   });

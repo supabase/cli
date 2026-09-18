@@ -1,5 +1,7 @@
-import { describe, expect, it } from "vitest";
-import { Result } from "effect";
+import { describe, expect, it } from "@effect/vitest";
+import { Effect, Result } from "effect";
+
+import { withEnvVar } from "../../../tests/helpers/command-mocks.ts";
 
 import {
   buildInfoPayload,
@@ -20,6 +22,23 @@ import {
 describe("formatSsoTimestamp", () => {
   it("formats RFC3339 input as Go's `YYYY-MM-DD HH:MM:SS` (UTC, no suffix)", () => {
     expect(formatSsoTimestamp("2023-03-28T13:50:14.464Z")).toBe("2023-03-28 13:50:14");
+  });
+
+  it.live("interprets timezone-free timestamps in local time before rendering UTC", () =>
+    withEnvVar(
+      "TZ",
+      "Asia/Kolkata",
+      Effect.sync(() => {
+        expect(formatSsoTimestamp("2023-03-28T13:50:14")).toBe("2023-03-28 08:20:14");
+        expect(formatSsoTimestamp("2023-03-28 13:50:14")).toBe("2023-03-28 08:20:14");
+      }),
+    ),
+  );
+
+  it("retains native parsing of lowercase zones and explicit offsets", () => {
+    expect(formatSsoTimestamp("2023-03-28T13:50:14z")).toBe("2023-03-28 13:50:14");
+    expect(formatSsoTimestamp("2023-03-28T13:50:14+05:30")).toBe("2023-03-28 08:20:14");
+    expect(formatSsoTimestamp("+010000-01-01T00:00:00Z")).toBe("10000-01-01 00:00:00");
   });
 
   it("returns an empty string for undefined input", () => {

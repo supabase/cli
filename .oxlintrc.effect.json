@@ -28,6 +28,7 @@
     "!apps/cli/src/commands/pull/**",
     "!apps/cli/src/commands/secrets/**",
     "!apps/cli/src/commands/seed/**",
+    "!apps/cli/src/commands/sso/**",
     "!apps/cli/src/commands/services/**",
     "!apps/cli/src/commands/snippets/**",
     "!apps/cli/src/commands/ssl-enforcement/**",

@@ -1,7 +1,9 @@
 import type { SupabaseApiError } from "@supabase/api/effect";
-import { Effect, Option, Redacted, Result, Stdio } from "effect";
+import { Effect, Option, Redacted, Result, Schema, Stdio } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+
+import { decodeSsoJson } from "../sso.json.ts";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
@@ -116,21 +118,17 @@ const handleGetError = (ref: string, providerId: string, cause: SupabaseApiError
         response: gateResponse(cause),
       });
       if (mapped.status === 404) {
-        return yield* Effect.fail(
-          new SsoUpdateNotFoundError({
-            message: `An identity provider with ID ${JSON.stringify(providerId)} could not be found.`,
-            upgradeSuggested,
-          }),
-        );
-      }
-      return yield* Effect.fail(
-        new SsoUpdateUnexpectedStatusError({
-          status: mapped.status,
-          body: mapped.body,
-          message: mapped.message,
+        return yield* new SsoUpdateNotFoundError({
+          message: `An identity provider with ID ${yield* Schema.encodeEffect(Schema.fromJsonString(Schema.String))(providerId)} could not be found.`,
           upgradeSuggested,
-        }),
-      );
+        });
+      }
+      return yield* new SsoUpdateUnexpectedStatusError({
+        status: mapped.status,
+        body: mapped.body,
+        message: mapped.message,
+        upgradeSuggested,
+      });
     }
     return yield* Effect.fail(mapped);
   });
@@ -212,14 +210,14 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
     const skipUrlValidation = yield* Result.match(
       pflagBoolValue(occurrences, "skip-url-validation"),
       {
-        onFailure: (message: string) => Effect.fail(new SsoInvalidFlagValueError({ message })),
+        onFailure: (message: string) => new SsoInvalidFlagValueError({ message }),
         onSuccess: Effect.succeed,
       },
     );
     const nameIdFormat = yield* Result.match(
       pflagEnumValue(occurrences, "name-id-format", SSO_NAME_ID_FORMATS),
       {
-        onFailure: (message: string) => Effect.fail(new SsoInvalidFlagValueError({ message })),
+        onFailure: (message: string) => new SsoInvalidFlagValueError({ message }),
         onSuccess: Effect.succeed,
       },
     );
@@ -228,7 +226,7 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
     // reported even when the arg count is also wrong. The TS parser accepts
     // it as unset, so this must run before the arity check.
     if (scan.missingValueError !== undefined) {
-      return yield* Effect.fail(new SsoFlagNeedsArgumentError({ message: scan.missingValueError }));
+      return yield* new SsoFlagNeedsArgumentError({ message: scan.missingValueError });
     }
 
     // Arity is counted from pflag-effective positionals, which shift
@@ -236,11 +234,9 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
     // parser's own arity check can't see that. Gated on `anchored`: an
     // unscoped scan has no positional information.
     if (scan.anchored && scan.positionals.length !== 1) {
-      return yield* Effect.fail(
-        new SsoUpdateArityError({
-          message: `accepts 1 arg(s), received ${scan.positionals.length}`,
-        }),
-      );
+      return yield* new SsoUpdateArityError({
+        message: `accepts 1 arg(s), received ${scan.positionals.length}`,
+      });
     }
 
     // Reconcile the effective `--profile` before the workdir check: an
@@ -258,9 +254,9 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
       : undefined;
     const reconciledTokenForAux =
       reconciledTokenCached === undefined
-        ? Effect.succeed<Option.Option<Redacted.Redacted<string>> | undefined>(undefined)
-        : Effect.catch(reconciledTokenCached, () =>
-            Effect.succeed(Option.none<Redacted.Redacted<string>>()),
+        ? Effect.as(Effect.void, undefined)
+        : Effect.orElseSucceed(reconciledTokenCached, () =>
+            Option.none<Redacted.Redacted<string>>(),
           );
 
     // Validate the effective `--workdir` after arity but before the mutex
@@ -271,11 +267,9 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
     for (const group of SSO_UPDATE_MUTEX_GROUPS) {
       const changed = group.filter((flagName) => occurrences.has(flagName));
       if (changed.length > 1) {
-        return yield* Effect.fail(
-          new SsoMutexFlagError({
-            message: cobraMutuallyExclusiveErrorMessage(group, changed),
-          }),
-        );
+        return yield* new SsoMutexFlagError({
+          message: cobraMutuallyExclusiveErrorMessage(group, changed),
+        });
       }
     }
 
@@ -313,7 +307,7 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
             ? yield* Effect.flatMap(reconciledTokenCached, (resolved) =>
                 Option.isSome(resolved)
                   ? Effect.succeed(resolved)
-                  : Effect.fail(new SsoAccessTokenError({ message: missingAccessTokenMessage() })),
+                  : new SsoAccessTokenError({ message: missingAccessTokenMessage() }),
               )
             : yield* resolveAccessToken;
         const request = HttpClientRequest.get(
@@ -349,20 +343,17 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
         );
         const contentType = response.headers["content-type"] ?? "";
         if (response.status === 200 && contentType.includes("json")) {
-          // A 200 body that fails JSON.parse exits with JSON.parse's own
-          // message, before any PUT.
-          let parsed: unknown;
-          try {
-            parsed = JSON.parse(rawBody);
-          } catch (cause) {
-            yield* fetching?.fail() ?? Effect.void;
-            return yield* Effect.fail(
-              new SsoUpdateNetworkError({
-                message: `failed to get sso provider: ${cause instanceof Error ? cause.message : String(cause)}`,
-                decode: true,
-              }),
-            );
-          }
+          // Invalid JSON retains the native parser message and exits before any PUT.
+          const parsed = yield* decodeSsoJson(rawBody).pipe(
+            Effect.tapError(() => fetching?.fail() ?? Effect.void),
+            Effect.mapError(
+              (cause) =>
+                new SsoUpdateNetworkError({
+                  message: `failed to get sso provider: ${cause.message}`,
+                  decode: true,
+                }),
+            ),
+          );
           return { domains: extractDomainItems(parsed) };
         }
         // A 200 without a JSON content type falls into this branch too.
@@ -379,21 +370,17 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
           )),
         });
         if (response.status === 404) {
-          return yield* Effect.fail(
-            new SsoUpdateNotFoundError({
-              message: `An identity provider with ID ${JSON.stringify(providerId)} could not be found.`,
-              upgradeSuggested,
-            }),
-          );
-        }
-        return yield* Effect.fail(
-          new SsoUpdateUnexpectedStatusError({
-            status: response.status,
-            body: bodyText,
-            message: `unexpected error fetching identity provider: ${bodyText}`,
+          return yield* new SsoUpdateNotFoundError({
+            message: `An identity provider with ID ${yield* Schema.encodeEffect(Schema.fromJsonString(Schema.String))(providerId)} could not be found.`,
             upgradeSuggested,
-          }),
-        );
+          });
+        }
+        return yield* new SsoUpdateUnexpectedStatusError({
+          status: response.status,
+          body: bodyText,
+          message: `unexpected error fetching identity provider: ${bodyText}`,
+          upgradeSuggested,
+        });
       });
 
       // Always GETs first, regardless of which flags are set.
@@ -447,7 +434,7 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
           ? yield* Effect.flatMap(reconciledTokenCached, (resolved) =>
               Option.isSome(resolved)
                 ? Effect.succeed(resolved)
-                : Effect.fail(new SsoAccessTokenError({ message: missingAccessTokenMessage() })),
+                : new SsoAccessTokenError({ message: missingAccessTokenMessage() }),
             )
           : yield* resolveAccessToken;
 
@@ -486,15 +473,13 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
           )),
         });
         yield* fetching?.fail() ?? Effect.void;
-        return yield* Effect.fail(
-          // Reuses the GET error message even for PUT.
-          new SsoUpdateUnexpectedStatusError({
-            status: response.status,
-            body: bodyText,
-            message: `unexpected error fetching identity provider: ${bodyText}`,
-            upgradeSuggested,
-          }),
-        );
+        // Reuses the GET error message even for PUT.
+        return yield* new SsoUpdateUnexpectedStatusError({
+          status: response.status,
+          body: bodyText,
+          message: `unexpected error fetching identity provider: ${bodyText}`,
+          upgradeSuggested,
+        });
       }
 
       const parsedJson = yield* response.json.pipe(Effect.orElseSucceed((): unknown => ({})));

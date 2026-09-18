@@ -1,0 +1,106 @@
+diff --git a/dist/Schema.d.ts b/dist/Schema.d.ts
+index 408b7a0c04a8f4879cdfb52d8ed3fb253a5a4382..9b46a331b8b57085a87b8b33dee50292225eb56a 100644
+--- a/dist/Schema.d.ts
++++ b/dist/Schema.d.ts
+@@ -8207,6 +8207,7 @@ export interface fromJsonString<S extends Constraint> extends decodeTo<S, String
+  * @since 4.0.0
+  */
+ export declare function fromJsonString<S extends Constraint>(schema: S, options?: {
++    readonly preserveNativeError?: boolean | undefined;
+     readonly reviver?: Parameters<typeof JSON.parse>[1] | undefined;
+     readonly replacer?: SchemaGetter.JsonReplacer | undefined;
+     readonly space?: Parameters<typeof JSON.stringify>[2] | undefined;
+diff --git a/dist/SchemaGetter.d.ts b/dist/SchemaGetter.d.ts
+index bab942e4186af34a6efa3d7eab03d94745bacd04..a556e832b428c55595cabe91a2b4542114e8fc7d 100644
+--- a/dist/SchemaGetter.d.ts
++++ b/dist/SchemaGetter.d.ts
+@@ -840,6 +840,7 @@ export declare function toLowerCase<E extends string>(): Getter<string, E>;
+  */
+ export declare function toUpperCase<E extends string>(): Getter<string, E>;
+ type ParseJsonOptions = {
++    readonly preserveNativeError?: boolean | undefined;
+     readonly reviver?: Parameters<typeof JSON.parse>[1];
+ };
+ /**
+diff --git a/dist/SchemaGetter.js b/dist/SchemaGetter.js
+index 6e6df9f23a387ed6b2b625916b6949ccf92dfb8a..85f1d716eab26a9430dfd5c07a3f75f0e5d61b14 100644
+--- a/dist/SchemaGetter.js
++++ b/dist/SchemaGetter.js
+@@ -833,8 +833,9 @@ export function toUpperCase() {
+ export function parseJson(options) {
+   return onSome((input, parseOptions) => Effect.try({
+     try: () => Option.some(JSON.parse(input, options?.reviver)),
+-    catch: () => new SchemaIssue.InvalidValue({
+-      expected: "a valid JSON string"
++    catch: cause => new SchemaIssue.InvalidValue({
++      expected: "a valid JSON string",
++      ...(options?.preserveNativeError ? { "supabase/nativeJsonError": cause } : {})
+     }, input, parseOptions)
+   }));
+ }
+diff --git a/dist/SchemaTransformation.d.ts b/dist/SchemaTransformation.d.ts
+index cb9ccc7918e61562ddcfc4556617903b3f11a699..5063bcfcdad08fd326a07d3c64328f24cdc4dc54 100644
+--- a/dist/SchemaTransformation.d.ts
++++ b/dist/SchemaTransformation.d.ts
+@@ -1327,6 +1327,7 @@ export declare const stringFromUriComponent: Transformation<string, string>;
+  * @since 4.0.0
+  */
+ export declare function fromJsonString(options?: {
++    readonly preserveNativeError?: boolean | undefined;
+     readonly reviver?: Parameters<typeof JSON.parse>[1] | undefined;
+     readonly replacer?: SchemaGetter.JsonReplacer | undefined;
+     readonly space?: Parameters<typeof JSON.stringify>[2] | undefined;
+diff --git a/src/Schema.ts b/src/Schema.ts
+index aa5fcd1e6482256ba73fe5237865f191215ce9c7..bcd0f6d2c4307282d792c277c812c5c948c10f9e 100644
+--- a/src/Schema.ts
++++ b/src/Schema.ts
+@@ -12789,6 +12789,8 @@ export interface fromJsonString<S extends Constraint> extends decodeTo<S, String
+ export function fromJsonString<S extends Constraint>(
+   schema: S,
+   options?: {
++    /** Retain native parser errors in issue annotations for compatibility boundaries. */
++    readonly preserveNativeError?: boolean | undefined
+     readonly reviver?: Parameters<typeof JSON.parse>[1] | undefined
+     readonly replacer?: SchemaGetter.JsonReplacer | undefined
+     readonly space?: Parameters<typeof JSON.stringify>[2] | undefined
+diff --git a/src/SchemaGetter.ts b/src/SchemaGetter.ts
+index 321096f0a8e7c19fbe8b967af9ba5c337ce90375..295ada86e8cdc176c76b1490f72937e35c26ffc9 100644
+--- a/src/SchemaGetter.ts
++++ b/src/SchemaGetter.ts
+@@ -988,6 +988,8 @@ export function toUpperCase<E extends string>(): Getter<string, E> {
+ }
+ 
+ type ParseJsonOptions = {
++  /** Retain native parser errors in issue annotations for compatibility boundaries. */
++  readonly preserveNativeError?: boolean | undefined
+   readonly reviver?: Parameters<typeof JSON.parse>[1]
+ }
+ 
+@@ -1028,9 +1030,12 @@ export function parseJson<E extends string>(options?: ParseJsonOptions | undefin
+   return onSome((input, parseOptions) =>
+     Effect.try({
+       try: () => Option.some(JSON.parse(input, options?.reviver)),
+-      catch: () =>
++      catch: (cause) =>
+         new SchemaIssue.InvalidValue(
+-          { expected: "a valid JSON string" },
++          {
++            expected: "a valid JSON string",
++            ...(options?.preserveNativeError ? { "supabase/nativeJsonError": cause } : {})
++          },
+           input,
+           parseOptions
+         )
+diff --git a/src/SchemaTransformation.ts b/src/SchemaTransformation.ts
+index e90c1a653ca5362871e612e6e4569e6470be8218..82317c68efd68198d5d8932e166cbc8faa25a031 100644
+--- a/src/SchemaTransformation.ts
++++ b/src/SchemaTransformation.ts
+@@ -1670,6 +1670,8 @@ export const stringFromUriComponent: Transformation<string, string> = new Transf
+  * @since 4.0.0
+  */
+ export function fromJsonString(options?: {
++  /** Retain native parser errors in issue annotations for compatibility boundaries. */
++  readonly preserveNativeError?: boolean | undefined
+   readonly reviver?: Parameters<typeof JSON.parse>[1] | undefined
+   readonly replacer?: SchemaGetter.JsonReplacer | undefined
+   readonly space?: Parameters<typeof JSON.stringify>[2] | undefined

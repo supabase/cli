@@ -1,5 +1,5 @@
 import type { SupabaseApiError } from "@supabase/api/effect";
-import { Effect, Option, Result } from "effect";
+import { Effect, Option, Result, Schema } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
@@ -33,11 +33,9 @@ const handleShowError = (providerId: string, cause: SupabaseApiError) =>
     const mapped = yield* Effect.flip(mapStatusOrNetwork(cause));
     // `show` does not fire upgrade-suggestion telemetry, unlike add/update/list.
     if (mapped._tag === "SsoShowUnexpectedStatusError" && mapped.status === 404) {
-      return yield* Effect.fail(
-        new SsoShowNotFoundError({
-          message: `An identity provider with ID ${JSON.stringify(providerId)} could not be found.`,
-        }),
-      );
+      return yield* new SsoShowNotFoundError({
+        message: `An identity provider with ID ${yield* Schema.encodeEffect(Schema.fromJsonString(Schema.String))(providerId)} could not be found.`,
+      });
     }
     return yield* Effect.fail(mapped);
   });
@@ -75,11 +73,9 @@ export const ssoShow = Effect.fn("sso.show")(function* (flags: SsoShowFlags) {
       const goFmt = Option.getOrUndefined(goOutputFlag);
 
       if (goFmt === "env") {
-        return yield* Effect.fail(
-          new SsoShowEnvNotSupportedError({
-            message: "--output env flag is not supported",
-          }),
-        );
+        return yield* new SsoShowEnvNotSupportedError({
+          message: "--output env flag is not supported",
+        });
       }
       if (goFmt === "json") {
         yield* output.raw(encodeGoJson(response));

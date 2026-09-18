@@ -1,4 +1,4 @@
-import { Duration, Effect } from "effect";
+import { Duration, Effect, Schema } from "effect";
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
@@ -46,18 +46,16 @@ export const validateMetadataUrl = (
       try: () => new URL(metadataUrl),
       catch: (cause) =>
         new SsoMetadataUrlInvalidError({
-          message: `failed to parse metadata uri ${JSON.stringify(metadataUrl)}: ${String(cause)}`,
+          message: `failed to parse metadata uri ${Schema.encodeSync(Schema.fromJsonString(Schema.String))(metadataUrl)}: ${String(cause)}`,
         }),
     });
 
     // URL.protocol is already lowercased, so a direct compare against
     // "https:" is safe.
     if (parsed.protocol !== "https:") {
-      return yield* Effect.fail(
-        new SsoMetadataUrlInvalidError({
-          message: "only HTTPS Metadata URLs are supported",
-        }),
-      );
+      return yield* new SsoMetadataUrlInvalidError({
+        message: "only HTTPS Metadata URLs are supported",
+      });
     }
 
     const httpClient = yield* HttpClient.HttpClient;
@@ -69,28 +67,24 @@ export const validateMetadataUrl = (
       // Refuse redirects so the HTTPS-only guard above can't be sidestepped via 3xx → http://internal/.
       Effect.provideService(FetchHttpClient.RequestInit, { redirect: "error" }),
       Effect.timeout(METADATA_URL_TIMEOUT),
-      Effect.catchTag("TimeoutError", () =>
-        Effect.fail(
-          new SsoMetadataUrlNetworkError({
-            message: "failed to fetch metadata url: timeout",
-          }),
-        ),
-      ),
-      Effect.catchTag("HttpClientError", (cause) =>
-        Effect.fail(
-          new SsoMetadataUrlNetworkError({
-            message: `failed to fetch metadata url: ${String(cause)}`,
-          }),
-        ),
-      ),
+      Effect.catchTags({
+        TimeoutError: () =>
+          Effect.fail(
+            new SsoMetadataUrlNetworkError({ message: "failed to fetch metadata url: timeout" }),
+          ),
+        HttpClientError: (cause) =>
+          Effect.fail(
+            new SsoMetadataUrlNetworkError({
+              message: `failed to fetch metadata url: ${String(cause)}`,
+            }),
+          ),
+      }),
     );
 
     if (response.status !== 200) {
-      return yield* Effect.fail(
-        new SsoMetadataUrlNetworkError({
-          message: `unexpected metadata url status: ${response.status}`,
-        }),
-      );
+      return yield* new SsoMetadataUrlNetworkError({
+        message: `unexpected metadata url status: ${response.status}`,
+      });
     }
 
     const arrayBuffer = yield* response.arrayBuffer.pipe(
@@ -103,11 +97,9 @@ export const validateMetadataUrl = (
     );
 
     if (arrayBuffer.byteLength > METADATA_URL_MAX_BYTES) {
-      return yield* Effect.fail(
-        new SsoMetadataUrlNetworkError({
-          message: `metadata url response exceeds maximum allowed size (${METADATA_URL_MAX_BYTES} bytes)`,
-        }),
-      );
+      return yield* new SsoMetadataUrlNetworkError({
+        message: `metadata url response exceeds maximum allowed size (${METADATA_URL_MAX_BYTES} bytes)`,
+      });
     }
 
     yield* validateMetadataXmlBytes(
