@@ -2,6 +2,7 @@ import { Data, Duration, Effect, Fiber, Option, Scope, Stream } from "effect";
 import { fileURLToPath } from "node:url";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import type { PlatformError } from "effect/PlatformError";
+import { isBunVirtualPath } from "../internal/dispatch-markers.ts";
 import type {
   ChildProcessHandle,
   ExitCode,
@@ -53,8 +54,6 @@ export interface NativeProcess {
 }
 
 import { NATIVE_PROCESS_DISPATCH_SENTINEL } from "../internal/dispatch-markers.ts";
-
-const isBunVirtualPath = (value: string): boolean => /(?:^|[\\/])\$bunfs(?:[\\/]|$)/.test(value);
 
 const nativeLauncherEntrypointFor = (moduleUrl: string): string => {
   if (isBunVirtualPath(moduleUrl)) return NATIVE_PROCESS_DISPATCH_SENTINEL;

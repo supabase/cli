@@ -7,7 +7,7 @@
     ".": "./src/index.ts",
     "./effect": "./src/effect.ts",
     "./tools": "./src/Tools.ts",
-    "./internal/host": "./src/internal/host-process.ts"
+    "./internal/dispatch": "./src/internal/dispatch.ts"
   },
   "scripts": {
     "test": "pnpm run test:unit && pnpm run test:integration",

@@ -35,8 +35,7 @@ const writeLine = (value: unknown) =>
     ),
   );
 
-const options = (): Effect.Effect<StackHostOptions, StackHostError> => {
-  const args = process.argv.slice(2);
+const options = (args: ReadonlyArray<string>): Effect.Effect<StackHostOptions, StackHostError> => {
   if (args.length !== 3)
     return Effect.fail(
       new StackHostError({
@@ -59,21 +58,28 @@ const options = (): Effect.Effect<StackHostOptions, StackHostError> => {
   });
 };
 
-const program = Effect.gen(function* () {
-  const host = yield* options();
-  yield* runStackHost(host).pipe(
-    Effect.catchCause((cause) => {
-      const failure = Option.getOrUndefined(Cause.findErrorOption(cause));
-      const reason = causeCode(failure?.cause) === "EADDRINUSE" ? "bind-conflict" : undefined;
-      return writeLine({
-        type: "error",
-        message: String(cause),
-        ...(reason === undefined ? {} : { reason }),
-      }).pipe(Effect.andThen(Effect.failCause(cause)));
-    }),
-  );
-});
+const program = (args: ReadonlyArray<string>) =>
+  Effect.gen(function* () {
+    const host = yield* options(args);
+    yield* runStackHost(host).pipe(
+      Effect.catchCause((cause) => {
+        const failure = Option.getOrUndefined(Cause.findErrorOption(cause));
+        const reason = causeCode(failure?.cause) === "EADDRINUSE" ? "bind-conflict" : undefined;
+        return writeLine({
+          type: "error",
+          message: String(cause),
+          ...(reason === undefined ? {} : { reason }),
+        }).pipe(Effect.andThen(Effect.failCause(cause)));
+      }),
+    );
+  });
 
-Effect.runPromise(program).catch(() => {
-  process.exitCode = 1;
-});
+/** Runs the owner process with its state root, artifact cache and stack identity. */
+export const runHostProcess = (args: ReadonlyArray<string>): Promise<void> =>
+  Effect.runPromise(program(args));
+
+if (import.meta.main) {
+  void runHostProcess(process.argv.slice(2)).catch(() => {
+    process.exitCode = 1;
+  });
+}

@@ -8,6 +8,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { fileURLToPath } from "node:url";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- NodeHttpServer.make requires a native server factory.
 import * as Http from "node:http";
+import { HOST_PROCESS_DISPATCH_SENTINEL, isBunVirtualPath } from "./internal/dispatch-markers.ts";
 import { makePorts, PortError } from "./Ports.ts";
 import type * as State from "./State.ts";
 
@@ -249,7 +250,10 @@ export const launchHost = Effect.fn("HostProcess.launchHost")(function* (
     ),
   );
   if (Option.isSome(existing)) return existing.value;
-  return yield* spawnDetached(options, options.entrypoint ?? sourceHostEntrypoint).pipe(
+  return yield* spawnDetached(
+    options,
+    options.entrypoint ?? hostEntrypointFor(import.meta.url),
+  ).pipe(
     Effect.catchTag("HostProcessError", (failure) =>
       isBindConflict(failure)
         ? connectHost(state, options.stackId).pipe(Effect.mapError(() => failure))
@@ -257,4 +261,9 @@ export const launchHost = Effect.fn("HostProcess.launchHost")(function* (
     ),
   );
 });
-const sourceHostEntrypoint = fileURLToPath(new URL("./internal/host-process.ts", import.meta.url));
+
+const hostEntrypointFor = (moduleUrl: string): string => {
+  if (isBunVirtualPath(moduleUrl)) return HOST_PROCESS_DISPATCH_SENTINEL;
+  const sourceEntrypoint = fileURLToPath(new URL("./internal/host-process.ts", moduleUrl));
+  return isBunVirtualPath(sourceEntrypoint) ? HOST_PROCESS_DISPATCH_SENTINEL : sourceEntrypoint;
+};

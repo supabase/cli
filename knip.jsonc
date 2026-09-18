@@ -59,7 +59,7 @@
       "entry": ["scripts/*.ts"],
     },
     "packages/stack": {
-      // Spawned by NativeProcess through a resolved URL rather than imported as a module.
+      // Source-mode NativeProcess resolves this standalone launcher by URL.
       "entry": ["src/runtime/native-launcher.ts"],
       // Used by the raw WebSocket integration fixture; Knip excludes that test-only import.
       "ignoreDependencies": ["@types/ws", "ws"],
